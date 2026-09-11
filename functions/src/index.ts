@@ -6432,10 +6432,19 @@ function _isPreconditionFailed(e: unknown): boolean {
   return code === 412 || code === "412";
 }
 
-/** 서명 artifact 업로드 결과 — 실제로 유효한 generation과 download token */
+/**
+ * 서명 artifact 확보 결과 — 실제로 유효한 generation과 download token.
+ *
+ * [ADOPTED != OWNED] `createdByThisRequest`는 cleanup 자격을 가른다.
+ *   MD5 일치만으로는 "내 재시도"와 "같은 바이트를 보낸 다른 동시 요청"을 구분할 수 없다.
+ *   따라서 회수(adopt)한 generation은 **다른 요청이 만든 승자일 수 있으므로 삭제 금지**다.
+ *   generation precondition은 "지금 object가 gen1인가"만 보장할 뿐
+ *   "이 요청이 gen1을 만들었는가"는 보장하지 못한다.
+ */
 interface ContractArtifactUpload {
   generation: string;
   token: string;
+  createdByThisRequest: boolean;
 }
 
 /**
@@ -6463,6 +6472,7 @@ async function _saveContractArtifactIfAbsent(
     return {
       generation: String(file.metadata.generation ?? ""),
       token: downloadToken,
+      createdByThisRequest: true,
     };
   } catch (e) {
     if (!_isPreconditionFailed(e)) throw e;
@@ -6474,25 +6484,38 @@ async function _saveContractArtifactIfAbsent(
     if (meta.md5Hash !== ourMd5 || !existingToken) {
       throw e; // 다른 요청의 object — 덮어쓰지도, 삭제하지도 않는다
     }
-    console.warn(`♻️ [SIG-GEN-ADOPT] 동일 바이트 재시도 object 회수 — ${path}`);
+    console.warn(`♻️ [SIG-GEN-ADOPT] 동일 바이트 기존 object 사용 — ${path} (cleanup 비대상)`);
     return {
       generation: String(meta.generation ?? ""),
       token: existingToken,
+      // 내 재시도 결과일 수도, 같은 바이트를 보낸 다른 동시 요청의 승자일 수도 있다.
+      // 구분 불가하므로 소유권을 주장하지 않는다.
+      createdByThisRequest: false,
     };
   }
 }
 
 /**
- * 이 요청이 만든 generation일 때만 삭제한다.
- * generation이 비어 있으면(=업로드하지 않음) 아무것도 하지 않는다 — 승자 object 보호.
+ * 이 요청이 **직접 생성한** artifact일 때만 삭제한다.
+ *
+ * 두 조건을 모두 요구한다:
+ *   1. createdByThisRequest — 회수(adopt)한 generation은 타 요청의 승자일 수 있어 제외
+ *   2. ifGenerationMatch    — 그 사이 다른 generation으로 교체됐으면 삭제하지 않음
+ *
+ * upload가 null이면(=업로드 단계에 도달하지 못함) 아무것도 하지 않는다.
  */
-async function _deleteOwnGeneration(path: string, generation: string): Promise<void> {
-  if (!generation) return;
+async function _deleteArtifactIfCreatedHere(
+  path: string,
+  upload: ContractArtifactUpload | null,
+): Promise<void> {
+  if (!upload || !upload.createdByThisRequest || !upload.generation) return;
   try {
-    await admin.storage().bucket().file(path).delete({ifGenerationMatch: generation});
+    await admin.storage().bucket().file(path)
+      .delete({ifGenerationMatch: upload.generation});
   } catch (err) {
     // 이미 다른 generation으로 교체됐거나 삭제된 경우 — 승자 보호가 목적이므로 무시
-    console.warn(`⚠️ [SIG-GEN-CLEANUP] 자기 generation 정리 실패 — ${path}#${generation}:`, err);
+    console.warn(
+      `⚠️ [SIG-GEN-CLEANUP] 자기 generation 정리 실패 — ${path}#${upload.generation}:`, err);
   }
 }
 
@@ -6562,18 +6585,19 @@ export const callableFinalizeWorkerSignature = onCall(
     // [CONCURRENCY-01] create-only — 동시 서명 요청 중 하나만 바이트를 기록한다.
     const sigStoragePath = `contracts/${contractId}/signature_worker.png`;
     const pdfStoragePath = `contracts/${contractId}/contract.pdf`;
-    let sigGeneration = "";
-    let pdfGeneration = "";
+    // [ADOPTED != OWNED] 두 artifact의 소유권을 각각 추적한다 —
+    //   서명은 회수(adopt)하고 PDF만 새로 만드는 혼합 상태가 실제로 발생한다.
+    let sigUpload: ContractArtifactUpload | null = null;
+    let pdfUpload: ContractArtifactUpload | null = null;
     let sigUrl: string;
     try {
-      const sigUp = await _saveContractArtifactIfAbsent(
+      sigUpload = await _saveContractArtifactIfAbsent(
         sigStoragePath, signatureBytes, "image/png",
         crypto.randomBytes(16).toString("hex"));
-      sigGeneration = sigUp.generation;
       const encodedSigPath = encodeURIComponent(sigStoragePath);
       sigUrl =
         `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-        `${encodedSigPath}?alt=media&token=${sigUp.token}`;
+        `${encodedSigPath}?alt=media&token=${sigUpload.token}`;
     } catch (e) {
       if (_isPreconditionFailed(e)) {
         // 다른 서명 요청이 먼저 기록했다 — 덮어쓰지 않는다.
@@ -6585,17 +6609,16 @@ export const callableFinalizeWorkerSignature = onCall(
     // ── PDF 업로드 (Admin SDK) + URL 생성
     let computedPdfUrl: string;
     try {
-      const pdfUp = await _saveContractArtifactIfAbsent(
+      pdfUpload = await _saveContractArtifactIfAbsent(
         pdfStoragePath, pdfBytes, "application/pdf",
         crypto.randomBytes(16).toString("hex"));
-      pdfGeneration = pdfUp.generation;
       const encodedPdfPath = encodeURIComponent(pdfStoragePath);
       computedPdfUrl =
         `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-        `${encodedPdfPath}?alt=media&token=${pdfUp.token}`;
+        `${encodedPdfPath}?alt=media&token=${pdfUpload.token}`;
     } catch (e) {
-      // PDF 업로드 실패 → 이 요청이 만든 서명 generation만 정리 (승자 object 보호)
-      await _deleteOwnGeneration(sigStoragePath, sigGeneration);
+      // PDF 업로드 실패 → 이 요청이 직접 만든 서명만 정리 (회수한 것은 보존)
+      await _deleteArtifactIfCreatedHere(sigStoragePath, sigUpload);
       if (_isPreconditionFailed(e)) {
         throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
       }
@@ -6680,11 +6703,12 @@ export const callableFinalizeWorkerSignature = onCall(
     } catch (e) {
       // 이미 완료된 계약서(failed-precondition)는 기존 파일 보존 — cleanup 불필요
       // 그 외 Firestore/내부 오류에서만 업로드된 파일을 정리한다.
-      // [CONCURRENCY-01] 경로 단위 일괄 삭제 → 이 요청이 만든 generation만 삭제로 축소.
-      //   동시 요청의 승자 object를 패자가 지우지 못하게 한다.
+      // [CONCURRENCY-01] 경로 단위 일괄 삭제 → 이 요청이 직접 만든 artifact만 삭제.
+      //   [ADOPTED != OWNED] 회수한 generation은 타 요청의 승자일 수 있어 보존한다.
+      //   두 artifact의 소유권은 서로 독립이다 (서명 회수 + PDF 생성 등 혼합 가능).
       if (!(e instanceof HttpsError) || e.code !== "failed-precondition") {
-        await _deleteOwnGeneration(pdfStoragePath, pdfGeneration);
-        await _deleteOwnGeneration(sigStoragePath, sigGeneration);
+        await _deleteArtifactIfCreatedHere(pdfStoragePath, pdfUpload);
+        await _deleteArtifactIfCreatedHere(sigStoragePath, sigUpload);
       }
       throw e;
     }
@@ -6807,15 +6831,14 @@ export const callableFinalizeEmployerSignature = onCall(
     //    다운로드 토큰 수동 생성
     // [CONCURRENCY-01] create-only — precheck를 동시에 통과한 두 요청 중
     //   하나만 바이트를 기록한다. 패자는 승자 object를 덮어쓰지 못한다.
-    let sigGeneration = "";
+    let sigUpload: ContractArtifactUpload | null = null;
     let url: string;
     try {
-      const sigUp = await _saveContractArtifactIfAbsent(
+      sigUpload = await _saveContractArtifactIfAbsent(
         storagePath, signatureBytes, "image/png",
         crypto.randomBytes(16).toString("hex"));
-      sigGeneration = sigUp.generation;
       const encodedPath = encodeURIComponent(storagePath);
-      url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${sigUp.token}`;
+      url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${sigUpload.token}`;
     } catch (e) {
       if (_isPreconditionFailed(e)) {
         throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
@@ -6879,8 +6902,9 @@ export const callableFinalizeEmployerSignature = onCall(
         e instanceof HttpsError &&
         (e.code === "failed-precondition" || e.code === "already-exists");
       if (!isAlreadyDone) {
-        // [CONCURRENCY-01] 무조건 delete → 이 요청이 만든 generation 한정으로 축소.
-        await _deleteOwnGeneration(storagePath, sigGeneration);
+        // [CONCURRENCY-01] 무조건 delete → 이 요청이 직접 만든 artifact 한정으로 축소.
+        // [ADOPTED != OWNED] 회수한 generation은 타 요청의 승자일 수 있어 보존한다.
+        await _deleteArtifactIfCreatedHere(storagePath, sigUpload);
       }
       throw e;
     }
