@@ -39,6 +39,14 @@ class _ContractTemplateListScreenState
   List<ContractTemplateModel> _templates = [];
   bool _loading = false; // initState → _load() 가드 통과를 위해 false 초기화
   bool _isDuplicating = false;
+
+  /// [UX-P2-04] 복사해올 수 있는 다른 사업장 수.
+  /// 0이면 생성 방법 시트에서 "다른 사업장에서 가져오기" 타일을 숨긴다 —
+  /// 소스 후보는 callableGetMyBusiness(adminIds) 기반이라 SUB_ADMIN이나
+  /// 단일 사업장 관리자에게는 항상 0이고, 탭하면 빈 시트만 보게 된다.
+  /// 시트를 열기 전에 확정해야 타일이 깜빡였다 사라지는 flash가 없다.
+  /// 조회 실패 시 0 유지(fail-closed) — 당겨서 새로고침으로 복구 가능.
+  int _otherBusinessCount = 0;
   bool _isDeleting = false;
 
   @override
@@ -63,9 +71,19 @@ class _ContractTemplateListScreenState
     setState(() => _loading = true);
     try {
       if (kDebugMode) debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');
-      final templates = await _service.getTemplates(widget.businessId);
+      // [UX-P2-04] 템플릿 목록과 소스 사업장 수를 병렬 조회 —
+      //   생성 방법 시트를 열기 전에 타일 노출 여부가 확정되도록 한다.
+      //   _countOtherBusinesses는 자체 catch로 0을 반환하므로
+      //   이 조회가 템플릿 로드를 실패시키지 않는다.
+      final results = await Future.wait([
+        _service.getTemplates(widget.businessId),
+        _countOtherBusinesses(),
+      ]);
       if (!mounted) return;
-      setState(() => _templates = templates);
+      setState(() {
+        _templates = results[0] as List<ContractTemplateModel>;
+        _otherBusinessCount = results[1] as int;
+      });
     } catch (e) {
       debugPrint('❌ 템플릿 로드 실패: $e');
       if (mounted) ToastHelper.showError('템플릿 목록을 불러오지 못했습니다');
@@ -74,12 +92,30 @@ class _ContractTemplateListScreenState
     }
   }
 
+  /// [UX-P2-04] 복사 소스가 될 수 있는 다른 사업장 수.
+  ///
+  /// _OtherBusinessTemplateSheet와 **동일한 소스 정의**를 쓴다 —
+  /// getMyBusiness(= callableGetMyBusiness, adminIds 기반)에서 현재 사업장 제외.
+  /// 권한 범위를 넓히지 않으며, 노출 판단에만 쓰인다.
+  Future<int> _countOtherBusinesses() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return 0;
+      final businesses = await FirestoreService().getMyBusiness(uid);
+      return businesses.where((b) => b.id != widget.businessId).length;
+    } catch (e) {
+      debugPrint('⚠️ [다른 사업장 수 조회 실패] 타일 숨김 처리: $e');
+      return 0; // fail-closed — 빈 시트로 유도하지 않는다
+    }
+  }
+
   // ── 새 템플릿: 생성 방법 선택 ──────────────────────────────────
   Future<void> _showCreationMethodChooser() async {
     final method = await DialogHelper.showSheet<_CreationMethod>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => const _CreationMethodSheet(),
+      builder: (ctx) =>
+          _CreationMethodSheet(showCrossBusiness: _otherBusinessCount > 0),
     );
     if (method == null || !mounted) return;
 
@@ -388,7 +424,9 @@ enum _CreationMethod {
 // ─── 생성 방법 선택 시트 ──────────────────────────────────────────
 
 class _CreationMethodSheet extends StatelessWidget {
-  const _CreationMethodSheet();
+  /// [UX-P2-04] 복사 가능한 다른 사업장이 있을 때만 해당 타일을 노출한다.
+  final bool showCrossBusiness;
+  const _CreationMethodSheet({required this.showCrossBusiness});
 
   @override
   Widget build(BuildContext context) {
@@ -461,16 +499,6 @@ class _CreationMethodSheet extends StatelessWidget {
                 SizedBox(height: ResponsiveHelper.spacing(context, 10)),
 
                 _MethodTile(
-                  icon: Icons.business_outlined,
-                  iconColor: AppColors.warning,
-                  bgColor: AppColors.warningBg,
-                  title: '다른 사업장에서 가져오기',
-                  subtitle: '내가 관리하는 다른 사업장의 템플릿을 복사합니다',
-                  onTap: () => Navigator.pop(context, _CreationMethod.copyFromBusiness),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-
-                _MethodTile(
                   icon: Icons.note_add_outlined,
                   iconColor: AppColors.grey500,
                   bgColor: AppColors.grey100,
@@ -478,6 +506,20 @@ class _CreationMethodSheet extends StatelessWidget {
                   subtitle: '조항을 처음부터 직접 작성합니다',
                   onTap: () => Navigator.pop(context, _CreationMethod.blank),
                 ),
+
+                // [UX-P2-04] 조건부 기능은 최하단 — 복사할 사업장이 있을 때만 노출.
+                if (showCrossBusiness) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                  _MethodTile(
+                    icon: Icons.business_outlined,
+                    iconColor: AppColors.warning,
+                    bgColor: AppColors.warningBg,
+                    title: '다른 사업장에서 가져오기',
+                    subtitle: '내가 관리하는 다른 사업장의 템플릿을 복사합니다',
+                    onTap: () =>
+                        Navigator.pop(context, _CreationMethod.copyFromBusiness),
+                  ),
+                ],
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Center(

@@ -364,6 +364,10 @@ class _ContractTemplateEditScreenState
 
 // ─── 조항 편집 카드 ───────────────────────────────────────────────
 
+/// PDF 상단에 시스템이 고정 생성하는 조항 수 (제1조 당사자·제2조 근무조건·제3조 임금).
+/// 편집 가능 조항의 예상 조 번호 표시에만 쓰인다 — 저장 데이터에는 영향이 없다.
+const int _fixedArticleCount = 3;
+
 class _ArticleEntry {
   final TextEditingController titleCtrl;
   final TextEditingController contentCtrl;
@@ -403,22 +407,26 @@ class _ArticleCard extends StatelessWidget {
             ),
             child: Row(
               children: [
+                // [UX-P2-01] 표시 전용 — 실제 PDF에서 custom 조항은 고정 제1~3조
+                //   뒤에 놓이므로 첫 카드가 제4조 위치다. 배지에 index+1(1,2,3…)을
+                //   쓰면 제목의 "제4조"와 항상 어긋나 보인다.
+                //   title/content/Firestore/PDF는 일절 건드리지 않는다.
                 Container(
-                  width: 24,
-                  height: 24,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 6),
+                    vertical: ResponsiveHelper.spacing(context, 3),
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context)
                         .primaryColor
                         .withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: Center(
-                    child: Text(
-                      '${index + 1}',
-                      style: ResponsiveHelper.tinyStyle(context,
-                              color: Theme.of(context).primaryColor)
-                          .copyWith(fontWeight: FontWeight.bold),
-                    ),
+                  child: Text(
+                    '제${index + _fixedArticleCount + 1}조',
+                    style: ResponsiveHelper.tinyStyle(context,
+                            color: Theme.of(context).primaryColor)
+                        .copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),

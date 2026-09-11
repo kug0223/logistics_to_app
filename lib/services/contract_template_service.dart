@@ -15,8 +15,11 @@ class ContractTemplateService {
       {int limit = 100}) async {
     try {
       debugPrint('🔍 [getTemplates] businessId=$businessId');
+      // [UX-P2-02] 최신순 — 방금 만든 템플릿이 목록 최상단에 오도록 한다.
+      //   계약 발송 도중 템플릿을 새로 만들고 Selector로 돌아왔을 때
+      //   스크롤 없이 바로 찾을 수 있어야 한다. (자동 선택은 하지 않음)
       final snap = await _col(businessId)
-          .orderBy('createdAt', descending: false)
+          .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();
       debugPrint('✅ [getTemplates] ${snap.docs.length}개 조회됨');

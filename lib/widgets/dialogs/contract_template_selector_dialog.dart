@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/core/contract_template_model.dart';
 import '../../screens/business_admin/contract_import_paste_screen.dart';
-import '../../screens/business_admin/contract_template_list_screen.dart';
+import '../../screens/business_admin/contract_template_edit_screen.dart';
 import '../../services/contract_template_service.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
@@ -365,6 +365,37 @@ class _SelectorSheetState extends State<_SelectorSheet> {
     }
   }
 
+  // ── [UX-P2-03] ALfit 기본 계약서 직결 ─────────────────────────
+  // 이전에는 이 버튼이 ContractTemplateListScreen(관리 화면)으로 이동해
+  // [추가]→[ALfit 기본]→[유형] 3단계를 더 거치게 했다. 나머지 두 버튼은
+  // 그 자리에서 끝나는데 이것만 맥락이 끊겼다.
+  // _startImportFromEmpty와 동일한 패턴으로 유형 선택 → 편집기 직행.
+  Future<void> _startDefaultFromEmpty() async {
+    // 1. 유형 선택 (Import 경로와 동일 시트 재사용)
+    final type = await DialogHelper.showSheet<String>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => _TypeSelectorSheetInline(),
+    );
+    if (type == null || !mounted) return;
+
+    // 2. 편집기 진입 — initialArticles를 넘기지 않으므로
+    //    ContractTemplateModel.defaultArticlesFor(type)이 적용된다.
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ContractTemplateEditScreen(
+          businessId: widget.businessId,
+          initialTemplateType: type,
+        ),
+      ),
+    );
+    if (saved == true && mounted) {
+      setState(() { _templates = null; _loadError = null; });
+      _load();
+    }
+  }
+
   Widget _buildEmpty(BuildContext context, {String? error}) {
     final theme = Theme.of(context);
     return Padding(
@@ -447,22 +478,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ContractTemplateListScreen(
-                          businessId: widget.businessId),
-                    ),
-                  );
-                  if (mounted) {
-                    setState(() {
-                      _templates = null;
-                      _loadError = null;
-                    });
-                    _load();
-                  }
-                },
+                onPressed: _startDefaultFromEmpty,
                 icon: const Icon(Icons.auto_awesome_outlined, size: 16),
                 label: Text('ALfit 기본 계약서',
                     style: ResponsiveHelper.smallStyle(context,
