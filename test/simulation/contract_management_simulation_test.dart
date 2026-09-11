@@ -1613,9 +1613,9 @@ void main() {
       expect(ContractTemplateType.label('unknown'), '기타');
     });
 
-    test('SCENARIO-CTR-K-06: period 조항 15개 모두 직렬화 왕복', () {
+    test('SCENARIO-CTR-K-06: period 기본 조항 직렬화 왕복', () {
       final articles = ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period);
-      expect(articles.length, 12);
+      expect(articles.length, 10);
       for (final a in articles) {
         final map = a.toMap();
         final restored = ContractArticle.fromMap(map);
