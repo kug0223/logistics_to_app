@@ -31039,8 +31039,17 @@ export const callableGetAdminHomeSummary = onCall(
     }
 
     // 빈 scope → 전부 0 즉시 반환
+    //
+    // [FP-02] available 은 "쿼리가 성공했는가"다(거짓 0 방지용).
+    //   관리 중인 사업장이 0개인 것은 **쿼리 실패가 아니라 정상 상태**다 —
+    //   조회할 scope가 없을 뿐이고, 처리할 일도 실제로 0건이다.
+    //   이전에는 available:false 로 반환해 클라이언트가 다섯 줄 모두
+    //   '조회 실패'로 렌더했고, 갓 가입한 관리자의 첫 홈이 고장난 것처럼 보였다.
+    //   available:true + count:0 으로 두면 클라이언트의 기존 규칙
+    //   (available && count == 0 → 행 숨김)이 그대로 처리한다.
+    //   실제 쿼리 실패는 아래 aggSimple 경로에서 계속 available:false 로 남는다.
     if (businessIds.length === 0) {
-      const emptySimple = {available: false, count: 0, byBusiness: [] as unknown[]};
+      const emptySimple = {available: true, count: 0, byBusiness: [] as unknown[]};
       return {
         scope: {businessCount: 0},
         actions: {
