@@ -1064,14 +1064,24 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  /// [PERM-CONTRACT-DEADEND-01] 계약 생성/서명은 canManageContract 전용 액션.
+  /// 서버(callableGetContractsByBiz·callableFinalizeEmployerSignature)와 rules가
+  /// 모두 canManageContract를 요구하므로 UI 진입도 동일 기준으로 정렬한다.
+  /// BUSINESS_ADMIN은 UserProvider.can()이 항상 true.
+  bool _canManageContract() =>
+      context.read<UserProvider>().can((p) => p.canManageContract);
+
   Widget _buildContractContent(BuildContext context) {
     final contract = _contract;
 
     if (contract == null) {
-      final canCreate = widget.isConfirmed &&
+      // [PERM-CONTRACT-DEADEND-01] 승인/근무자 관리 권한만 있는 SUB_ADMIN에게
+      // 계약서 작성 CTA를 노출하면 템플릿 선택·서명까지 진행 후 서버에서 거부된다.
+      final canCreateBase = widget.isConfirmed &&
           widget.application != null &&
           (widget.toItem != null ||
               widget.application!.toId?.isNotEmpty == true);
+      final canCreate = canCreateBase && _canManageContract();
       return Column(
         children: [
           Container(
@@ -1092,6 +1102,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               ],
             ),
           ),
+          // [PERM-CONTRACT-DEADEND-01] 계약 권한 없는 관리자 안내 —
+          // CTA 대신 요청 경로만 알린다 (별도 modal 없음).
+          if (canCreateBase && !canCreate) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '계약서 발송 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.',
+              style:
+                  ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            ),
+          ],
           if (canCreate) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             SizedBox(
@@ -1917,6 +1937,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       if (mounted) {
         if (newStatus == AppStatus.confirmed) {
           setState(() => _isLoading = false); // _createContractAndSign 진입 가드 해제
+          // [PERM-CONTRACT-DEADEND-01] 승인(canManageTo)과 계약 생성(canManageContract) 분리.
+          // 승인은 이미 서버에서 완료됐으므로 그대로 성공 처리하고,
+          // 계약 권한이 없을 때만 후속 계약 flow를 열지 않는다.
+          if (!_canManageContract()) {
+            final callback = widget.onStatusChanged; // pop 전에 캡처
+            Navigator.pop(context);
+            ToastHelper.showSuccess('승인 처리되었습니다');
+            callback?.call();
+            return;
+          }
           await _createContractAndSign();
         } else {
           Navigator.pop(context);

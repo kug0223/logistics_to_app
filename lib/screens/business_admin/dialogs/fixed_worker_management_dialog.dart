@@ -1255,11 +1255,23 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
   }
 
+  /// [PERM-CONTRACT-DEADEND-01] 계약 연장은 canManageContract 액션 —
+  /// callableCreateContractRenewal이 서버에서 동일 권한을 강제한다.
+  /// BUSINESS_ADMIN은 UserProvider.can()이 항상 true.
+  bool _canManageContract() =>
+      context.read<UserProvider>().can((p) => p.canManageContract);
+
   /// 만료 임박자 일괄 연장
   Future<void> _batchExtendExpiringWorkers() async {
     // TO-06: 계약 일괄 연장 권한 확인
     if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
+    // [PERM-CONTRACT-DEADEND-01] 개별 연장과 동일 기준 — 서버 거부 전 사전 차단
+    if (!_canManageContract()) {
+      ToastHelper.showWarning(
+          '계약 연장 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.');
       return;
     }
     final expiring = _expiringWorkers;
@@ -1541,6 +1553,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }) async {
     if (app.workEndDate == null) return;
     if (extend) {
+      // [PERM-CONTRACT-DEADEND-01] 연장만 계약 권한 액션 — 종료(canManageWorkers)는 그대로 허용.
+      // 확인 다이얼로그를 띄우기 전에 차단해 불필요한 진행을 막는다.
+      if (!_canManageContract()) {
+        ToastHelper.showWarning(
+            '계약 연장 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.');
+        return;
+      }
       // 기존 계약 기간과 동일한 개월수로 종료일 자동 계산
       final originalStart = app.desiredStartDate ?? app.workDate;
       final contractMonths = (app.workEndDate!.year - originalStart.year) * 12
@@ -1594,6 +1613,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     // [FC-FW-PERM] canManageWorkers guard — 계약 연장도 인력 관리 권한 필요
     if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return null;
+    }
+    // [PERM-CONTRACT-DEADEND-01] 계약 연장은 서버(callableCreateContractRenewal)가
+    // canManageContract를 요구하는 계약 액션이다. 클라이언트 가드를 정렬해
+    // 템플릿 선택 시트까지 진입한 뒤 거부되는 dead-end를 차단한다.
+    if (!_canManageContract()) {
+      ToastHelper.showWarning(
+          '계약 연장 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.');
       return null;
     }
     if (!mounted || isLoading) return null;
