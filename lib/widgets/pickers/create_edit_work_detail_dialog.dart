@@ -1970,14 +1970,32 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
 
   /// [CTF-01] ③ 급여·정산 설정 펼침 여부.
   ///
-  /// 기본 접힘인 이유는 "선택이라 덜 중요해서"가 아니라,
-  /// 핵심 모집·근무조건보다 **급여 처리/정산 운영 성격이 강해서** 정보
-  /// 우선순위를 낮춘 것이다. 값 자체는 계약·급여에 그대로 반영된다.
+  /// ③을 뒤로 두는 이유는 "선택이라 덜 중요해서"가 아니라, 핵심 모집·근무조건보다
+  /// **급여 처리/정산 운영 성격이 강해서** 정보 우선순위를 낮춘 것이다.
   ///
-  /// 편집 모드에서도 기본 접힘이다 — 공제 없음/지급 일정 미설정처럼
-  /// default도 값으로 존재하므로 `값이 있다 != 사용자가 설정했다`이다.
-  /// 기존 값은 자동 펼침 대신 헤더 요약으로 인지시킨다.
+  /// 다만 급여 지급 일정은 [_save]의 저장 필수 조건이다(payScheduleType null이면
+  /// 저장 차단). 필수인데 아직 정해지지 않은 결정을 접어서 숨기면 안 되므로
+  /// 초기 펼침은 값의 완결 여부로 정한다 — [_isSettlementComplete] 참조.
+  ///   신규 작성                  → 미완결 → OPEN
+  ///   편집 + 지급 일정 유효       → 완결  → CLOSED (헤더 요약으로 값 인지)
+  ///   편집 + 지급 일정 미설정/불완전 → 미완결 → OPEN (legacy 문서 가능)
+  ///
+  /// 공제 방식은 default(세금 없음)도 유효한 값이라 이 판정에 넣지 않는다 —
+  /// `값이 있다 != 사용자가 설정했다`이고, 저장을 막지도 않는다.
   bool _settlementExpanded = false;
+
+  /// 저장에 필요한 정산 값이 모두 채워져 있는가.
+  ///
+  /// [_save]의 지급 일정 검증과 같은 조건만 본다. 주/월 지급은 지급일까지
+  /// 있어야 저장되므로 함께 확인한다. 별도 dirty/설정 추적 상태를 만들지 않는다.
+  bool _isSettlementComplete() {
+    if (_payScheduleType == null) return false;
+    if ((_payScheduleType == 'weekly' || _payScheduleType == 'monthly') &&
+        _payScheduleDay == null) {
+      return false;
+    }
+    return true;
+  }
 
   @override
   void initState() {
@@ -2018,6 +2036,10 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
       _baseHourlyWageController = TextEditingController();
       _descriptionController = TextEditingController();
     }
+
+    // [CTF-01] ③ 초기 펼침 — 저장 필수인 지급 일정이 미완결이면 펼친 채 시작한다.
+    //   신규는 항상 미완결이므로 OPEN, 유효한 값을 가진 편집만 CLOSED가 된다.
+    _settlementExpanded = !_isSettlementComplete();
 
     // _isDirty 리스너 — 텍스트 필드 변경 시 마킹
     for (final c in [
@@ -2333,10 +2355,12 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
           const SizedBox(height: 20),
 
           // ═══ ③ 급여·정산 설정 ═══
-          // 기본 접힘. 선택이라서가 아니라 핵심 모집·근무조건보다
+          // 마지막에 두는 이유는 선택이라서가 아니라, 핵심 모집·근무조건보다
           // 급여 처리/정산 운영 성격이 강해 정보 우선순위를 낮춘 것이다.
-          // 접힌 상태에서도 헤더 요약으로 현재 값을 알 수 있고,
-          // 이 안에서 검증이 실패하면 _scrollToFirstError가 먼저 펼친다.
+          // 급여 지급 일정은 저장 필수이므로 미완결 상태(신규 포함)에서는
+          // 펼친 채 시작한다. 접히는 것은 유효한 값을 가진 편집뿐이고,
+          // 그 경우 헤더 요약으로 현재 값을 알 수 있다.
+          // 접힌 상태에서 이 안의 검증이 실패하면 _scrollToFirstError가 먼저 펼친다.
           _settlementGroup(context, theme, children: [
               // 공제 방식
               KeyedSubtree(
@@ -2424,8 +2448,9 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
     return '$deduction · $schedule';
   }
 
+  /// payScheduleDay 1~7(월~일) → '금요일' 형태.
   String _weekdayLabel(int day) =>
-      const ['월', '화', '수', '목', '금', '토', '일'][(day - 1).clamp(0, 6)];
+      '${const ['월', '화', '수', '목', '금', '토', '일'][(day - 1).clamp(0, 6)]}요일';
 
   /// ③ 묶음 — 기본 접힘 + 헤더 요약 + 펼침 토글.
   Widget _settlementGroup(BuildContext context, ThemeData theme,

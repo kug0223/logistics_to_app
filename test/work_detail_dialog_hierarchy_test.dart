@@ -7,11 +7,12 @@
 // 해결은 필수/선택 이분법이 아니라 **의미 단위 위계**다.
 //   ① 핵심 모집조건   무엇을·얼마에·몇 명·언제 (기초 시급은 급여 종속값)
 //   ② 추가 근무조건   근무가 실제로 어떻게 이뤄지는가 — 접지 않는다
-//   ③ 급여·정산 설정  돈이 어떻게 처리·지급되는가 — 우선순위만 낮춰 접는다
+//   ③ 급여·정산 설정  돈이 어떻게 처리·지급되는가 — 우선순위만 낮춘다
 //
-// ③을 접는 이유는 "선택이라 덜 중요해서"가 아니다. 실제로 급여 지급
-// 일정은 저장 필수다. 그래서 접힌 상태에서도 헤더 요약으로 값을 알 수 있고,
-// 그 안에서 검증이 실패하면 먼저 펼친 뒤 스크롤해야 한다.
+// ③을 뒤로 두는 이유는 "선택이라 덜 중요해서"가 아니다. 실제로 급여 지급
+// 일정은 저장 필수다(payScheduleType = REQUIRED_FOR_DIALOG_SAVE).
+// 따라서 미완결 상태에서는 접지 않는다 — 신규 작성은 항상 펼친 채 시작하고,
+// 유효한 값을 가진 편집만 접힌다. 접힌 상태의 검증 실패는 먼저 펼친 뒤 스크롤한다.
 
 import 'dart:io';
 
@@ -19,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ALfit/models/core/business_work_type_model.dart';
+import 'package:ALfit/models/core/work_detail_data.dart';
 import 'package:ALfit/widgets/pickers/create_edit_work_detail_dialog.dart';
 
 const _dialogPath = 'lib/widgets/pickers/create_edit_work_detail_dialog.dart';
@@ -39,6 +41,46 @@ List<BusinessWorkTypeModel> _workTypes() => [
         createdAt: DateTime(2026, 1, 1),
       ),
     ];
+
+WorkDetailData _work({
+  required String? payScheduleType,
+  int? payScheduleDay,
+}) =>
+    WorkDetailData(
+      workType: '피킹',
+      wage: 12000,
+      requiredCount: 3,
+      startTime: '09:00',
+      endTime: '18:00',
+      payScheduleType: payScheduleType,
+      payScheduleDay: payScheduleDay,
+    );
+
+/// 업무 수정 다이얼로그를 띄우고 첫 프레임까지 진행한다.
+Future<void> _openEditDialog(WidgetTester tester, WorkDetailData work) async {
+  tester.view.physicalSize = const Size(1200, 4000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(MaterialApp(
+    home: Builder(
+      builder: (ctx) => Scaffold(
+        body: Center(
+          child: ElevatedButton(
+            onPressed: () => WorkDetailDialog.showEditDialog(
+              context: ctx,
+              work: work,
+              businessWorkTypes: _workTypes(),
+              currentCount: 3,
+            ),
+            child: const Text('열기'),
+          ),
+        ),
+      ),
+    ),
+  ));
+  await tester.tap(find.text('열기'));
+  await tester.pumpAndSettle();
+}
 
 /// 업무 추가 다이얼로그를 띄우고 첫 프레임까지 진행한다.
 ///
@@ -87,35 +129,88 @@ void main() {
       expect(find.text('야간수당 설정'), findsOneWidget);
     });
 
-    testWidgets('WDH-03 ③ 내용은 처음에 접혀 있다', (tester) async {
+    testWidgets('WDH-03 신규 작성에서는 ③이 펼쳐진 채 시작한다', (tester) async {
+      // 급여 지급 일정은 저장 필수다. 아직 정해지지 않은 필수 결정을
+      // 접어서 숨기지 않는다.
       await _openAddDialog(tester);
-      // 헤더는 보이되 내부 섹션은 빌드되지 않는다
       expect(find.text('급여·정산 설정'), findsOneWidget);
-      expect(find.text('공제 방식'), findsNothing);
-      expect(find.text('급여 지급 일정'), findsNothing);
-    });
-
-    testWidgets('WDH-04 헤더를 누르면 ③이 펼쳐진다', (tester) async {
-      await _openAddDialog(tester);
-      await tester.tap(find.text('급여·정산 설정'));
-      await tester.pumpAndSettle();
       expect(find.text('공제 방식'), findsOneWidget);
       expect(find.text('급여 지급 일정'), findsOneWidget);
     });
 
-    testWidgets('WDH-05 다시 누르면 접힌다', (tester) async {
+    testWidgets('WDH-04 헤더를 누르면 접을 수 있다', (tester) async {
+      await _openAddDialog(tester);
+      await tester.tap(find.text('급여·정산 설정'));
+      await tester.pumpAndSettle();
+      expect(find.text('공제 방식'), findsNothing);
+      expect(find.text('급여 지급 일정'), findsNothing);
+    });
+
+    testWidgets('WDH-05 다시 누르면 펼쳐진다', (tester) async {
       await _openAddDialog(tester);
       await tester.tap(find.text('급여·정산 설정'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('급여·정산 설정'));
       await tester.pumpAndSettle();
-      expect(find.text('공제 방식'), findsNothing);
+      expect(find.text('공제 방식'), findsOneWidget);
+    });
+  });
+
+  // ── 초기 펼침 판정 ──────────────────────────────────────────────
+  group('WDH-6x 초기 펼침은 저장 필수값의 완결 여부로 정한다', () {
+    testWidgets('WDH-60 편집 + 유효한 지급 일정 → 접힘', (tester) async {
+      await _openEditDialog(tester, _work(payScheduleType: 'same_day'));
+      expect(find.text('급여·정산 설정'), findsOneWidget);
+      expect(find.text('급여 지급 일정'), findsNothing,
+          reason: '값이 완결된 편집은 접혀야 한다');
+      expect(find.textContaining('당일 지급'), findsOneWidget);
+    });
+
+    testWidgets('WDH-61 편집 + 지급 일정 미설정(legacy) → 펼침', (tester) async {
+      // WorkDetailData.payScheduleType은 String? 이고 fromMap도 as String? 이라
+      // 이 검증이 생기기 전 문서는 null일 수 있다.
+      await _openEditDialog(tester, _work(payScheduleType: null));
+      expect(find.text('급여 지급 일정'), findsOneWidget,
+          reason: '필수 미완결인데 접혀 있으면 저장 실패 원인이 숨는다');
+    });
+
+    testWidgets('WDH-62 편집 + 주급인데 지급 요일 없음 → 펼침', (tester) async {
+      // 주/월 지급은 지급일까지 있어야 저장된다.
+      await _openEditDialog(
+          tester, _work(payScheduleType: 'weekly', payScheduleDay: null));
+      expect(find.text('급여 지급 일정'), findsOneWidget);
+    });
+
+    testWidgets('WDH-63 편집 + 주급 + 지급 요일 있음 → 접힘', (tester) async {
+      await _openEditDialog(
+          tester, _work(payScheduleType: 'weekly', payScheduleDay: 5));
+      expect(find.text('급여 지급 일정'), findsNothing);
+      expect(find.textContaining('매주 금요일 지급'), findsOneWidget);
+    });
+
+    test('WDH-64 판정이 _save의 지급 일정 검증과 같은 조건을 쓴다', () {
+      final s = _source(_dialogPath);
+      final i = s.indexOf('bool _isSettlementComplete() {');
+      expect(i, greaterThan(-1));
+      final body = s.substring(i, s.indexOf('\n  }', i));
+      expect(body.contains('_payScheduleType == null'), true);
+      expect(
+          body.contains("_payScheduleType == 'weekly' || _payScheduleType == 'monthly'"),
+          true);
+      expect(body.contains('_payScheduleDay == null'), true);
+      // 공제 방식은 default도 유효한 값이라 판정에 넣지 않는다
+      expect(body.contains('_taxDeductionType'), false);
+    });
+
+    test('WDH-65 initState가 완결 여부로 초기 펼침을 정한다', () {
+      final s = _source(_dialogPath);
+      expect(s.contains('_settlementExpanded = !_isSettlementComplete();'), true);
     });
   });
 
   // ── 헤더 요약 ───────────────────────────────────────────────────
   group('WDH-1x 접힌 상태에서도 값을 알 수 있다', () {
-    testWidgets('WDH-10 신규 작성 시 현재 값이 요약으로 보인다', (tester) async {
+    testWidgets('WDH-10 헤더 요약에 현재 값이 보인다', (tester) async {
       await _openAddDialog(tester);
       // default: 공제 없음 + 지급 일정 미설정
       expect(find.text('세금 없음 · 지급 일정 미설정'), findsOneWidget);
@@ -123,9 +218,7 @@ void main() {
 
     testWidgets('WDH-11 값이 바뀌면 요약도 바뀐다', (tester) async {
       await _openAddDialog(tester);
-      await tester.tap(find.text('급여·정산 설정'));
-      await tester.pumpAndSettle();
-      // 공제 방식을 3.3% 원천징수로 변경
+      // 신규는 이미 펼쳐진 상태 — 공제 방식을 3.3% 원천징수로 변경
       final option = find.text('3.3% 원천징수');
       expect(option, findsWidgets);
       await tester.tap(option.first);
@@ -202,17 +295,25 @@ void main() {
   group('WDH-4x 편집 모드', () {
     late final String s = _source(_dialogPath);
 
-    test('WDH-40 값 존재만으로 자동 펼침하지 않는다', () {
-      // 공제 없음 / 지급 일정 미설정도 값이므로
-      // has value != user configured. initState에서 펼침을 켜지 않는다.
-      final i = s.indexOf('void initState() {');
+    test('WDH-40 공제 방식 값 유무로는 펼치지 않는다', () {
+      // 공제 없음(세금 없음)도 유효한 default 값이고 저장을 막지 않는다.
+      // has value != user configured — 초기 펼침 판정에 넣지 않는다.
+      final i = s.indexOf('bool _isSettlementComplete() {');
       final body = s.substring(i, s.indexOf('\n  }', i));
-      expect(body.contains('_settlementExpanded'), false,
-          reason: '편집 진입 시 값 유무로 자동 펼침하고 있다');
+      expect(body.contains('_taxDeductionType'), false,
+          reason: '공제 방식이 초기 펼침 판정에 들어갔다');
     });
 
-    test('WDH-41 기본값은 접힘이다', () {
+    test('WDH-41 펼침 추적용 새 상태를 만들지 않았다', () {
+      // 화면 로컬 bool 하나뿐 — dirty/configuration engine을 만들지 않았다.
       expect(s.contains('bool _settlementExpanded = false;'), true);
+      for (final banned in const [
+        'settlementDirty',
+        'userConfiguredSettlement',
+        'settlementTouched',
+      ]) {
+        expect(s.contains(banned), false, reason: ' 가 추가됐다');
+      }
     });
   });
 
