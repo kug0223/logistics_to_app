@@ -6452,6 +6452,33 @@ export const callableFinalizeWorkerSignature = onCall(
     const pdfBytes = Buffer.from(pdfBase64, "base64");
     const pdfHash = crypto.createHash("sha256").update(pdfBytes).digest("hex");
 
+    // ═══════════════════════════════════════════════════════════
+    // [GAP-CONTRACT-SIGNATURE-STORAGE-PREAUTH-01] 사전 인가 — Storage 부작용 이전
+    // ───────────────────────────────────────────────────────────
+    // employer 서명 CF와 동일 패턴. contractId가 caller payload이고 경로가 결정적이므로
+    // 검증 이전 업로드는 타인 계약서의 signature_worker.png / contract.pdf 를 덮어쓰고,
+    // 뒤따르는 _cleanupContractFiles가 원본(완료된 계약 PDF 포함)을 삭제할 수 있었다.
+    // 동일 검증이 트랜잭션 내부에도 유지된다(TOCTOU 최종 권위). 새 정책 추가 없음.
+    // ═══════════════════════════════════════════════════════════
+    {
+      const preSnap = await db.collection("employment_contracts").doc(contractId).get();
+      if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+      const preData = preSnap.data()!;
+      if (preData["workerId"] !== uid) {
+        throw new HttpsError("permission-denied", "본인의 계약서만 서명할 수 있습니다.");
+      }
+      const preStatus = preData["status"] as string;
+      if (preStatus !== "pending_worker") {
+        throw new HttpsError("failed-precondition", `서명할 수 없는 계약서 상태입니다: ${preStatus}`);
+      }
+      if (preData["workerSignatureUrl"]) {
+        throw new HttpsError("failed-precondition", "이미 근무자 서명이 완료된 계약서입니다.");
+      }
+      if (!preData["employerSignatureUrl"]) {
+        throw new HttpsError("failed-precondition", "사업주 서명이 완료되지 않은 계약서입니다.");
+      }
+    }
+
     // ── 서명 이미지 업로드 (Admin SDK — storage rules: if false)
     const sigStoragePath = `contracts/${contractId}/signature_worker.png`;
     const sigToken = crypto.randomBytes(16).toString("hex");
@@ -6602,8 +6629,92 @@ export const callableFinalizeEmployerSignature = onCall(
     const employerHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
     const storagePath = `contracts/${contractId}/signature_employer.png`;
     const sigFile = bucket.file(storagePath);
+    const contractRef = db.collection("employment_contracts").doc(contractId);
 
-    // Storage 업로드 (Admin SDK) — 다운로드 토큰 수동 생성
+    // ═══════════════════════════════════════════════════════════
+    // [GAP-CONTRACT-SIGNATURE-STORAGE-PREAUTH-01] 사전 인가 — Storage 부작용 이전
+    // ───────────────────────────────────────────────────────────
+    // 이전 순서: sigFile.save() → assertBizAdmin/canManageContract.
+    //   contractId는 caller payload이고 Storage 경로가 결정적(contracts/{id}/...)이므로
+    //   권한 없는 호출자도 임의 계약서의 signature_employer.png를 덮어쓸 수 있었고,
+    //   이어지는 catch cleanup이 원본 object를 삭제해 정상 계약서의 서명 이미지가 소실됐다.
+    // 아래 검증은 모두 기존 트랜잭션 내부에도 그대로 남아 있다(TOCTOU 재확인).
+    //   여기서는 업로드 이전 차단만 담당하며 새로운 정책을 추가하지 않는다.
+    // ═══════════════════════════════════════════════════════════
+    if (isNewUnsaved === true) {
+      if (!contractData || typeof contractData !== "object") {
+        throw new HttpsError("invalid-argument", "신규 계약서에는 contractData가 필요합니다.");
+      }
+      const bizId = contractData["businessId"] as string | undefined;
+      if (!bizId) throw new HttpsError("invalid-argument", "contractData.businessId가 필요합니다.");
+      const { callerData: signCallerData } = await assertBizAdmin(callerUid, bizId);
+      // [PERM-CONTRACT-01] 서브어드민 canManageContract 세부 권한 검증
+      const signCallerRole = signCallerData?.role as string | undefined;
+      if (signCallerRole !== "BUSINESS_ADMIN" && signCallerRole !== "SUPER_ADMIN") {
+        const memberSnap = await db.collection("businesses").doc(bizId).collection("members").doc(callerUid).get();
+        const memberPerms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+        if (!memberPerms.canManageContract) throw new HttpsError("permission-denied", "계약서 관리 권한이 없습니다.");
+      }
+
+      // [PREAUTH] 기존 계약서 경로 선점 차단 — isNewUnsaved 경로로 타 계약서의
+      //   Storage object를 덮어쓰는 것을 업로드 이전에 차단한다.
+      //   (동일 검사가 트랜잭션에도 존재 — 그쪽이 TOCTOU 최종 권위)
+      const preExisting = await contractRef.get();
+      if (preExisting.exists) throw new HttpsError("already-exists", "이미 계약서가 생성되었습니다.");
+
+      // workerId가 해당 사업장의 확정/계약대기 지원자인지 검증 (임의 UID 주입 방지)
+      const workerId = contractData["workerId"] as string | undefined;
+      if (!workerId) throw new HttpsError("invalid-argument", "contractData.workerId가 필요합니다.");
+      // [EC-L-01] applicationId가 전달된 경우 해당 문서 상태를 직접 검증
+      const targetAppId = contractData["applicationId"] as string | undefined;
+      if (targetAppId) {
+        const appSnap = await db.collection("applications").doc(targetAppId).get();
+        if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+        const appData = appSnap.data()!;
+        if ((appData.businessId as string) !== bizId || (appData.uid as string) !== workerId) {
+          throw new HttpsError("permission-denied", "지원서의 사업장/근로자 정보가 일치하지 않습니다.");
+        }
+        if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appData.status as string)) {
+          throw new HttpsError("failed-precondition", "해당 지원서는 계약서 작성 가능한 상태가 아닙니다.");
+        }
+      } else {
+        const workerAppQuery = await db.collection("applications")
+          .where("businessId", "==", bizId)
+          .where("uid", "==", workerId)
+          .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+          .limit(1)
+          .get();
+        if (workerAppQuery.empty) {
+          throw new HttpsError("permission-denied", "해당 근로자는 이 사업장의 확정된 지원자가 아닙니다.");
+        }
+      }
+    } else {
+      // ── 기존 계약서 재서명: 소속·권한·상태를 업로드 이전에 검증
+      const preSnap = await contractRef.get();
+      if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+      const preData = preSnap.data()!;
+      const reSignBizId = preData["businessId"] as string;
+      const { callerData: reSignCallerData } = await assertBizAdmin(callerUid, reSignBizId);
+      // [PERM-CONTRACT-01] 기존 계약서 재서명도 canManageContract 검증
+      const reSignCallerRole = reSignCallerData?.role as string | undefined;
+      if (reSignCallerRole !== "BUSINESS_ADMIN" && reSignCallerRole !== "SUPER_ADMIN") {
+        const memberSnap = await db.collection("businesses").doc(reSignBizId).collection("members").doc(callerUid).get();
+        const memberPerms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+        if (!memberPerms.canManageContract) throw new HttpsError("permission-denied", "계약서 관리 권한이 없습니다.");
+      }
+      // [PREAUTH] 상태 검증도 업로드 이전으로 이동 — completed/voided/서명완료 계약서의
+      //   기존 서명 이미지를 덮어쓴 뒤 실패하는 경로를 제거한다.
+      const preStatus = preData["status"] as string;
+      if (preStatus !== "pending_employer") {
+        throw new HttpsError("failed-precondition", `서명할 수 없는 계약서 상태입니다: ${preStatus}`);
+      }
+      if (preData["employerSignatureUrl"]) {
+        throw new HttpsError("failed-precondition", "이미 사업주 서명이 완료된 계약서입니다.");
+      }
+    }
+
+    // ── Storage 업로드 (Admin SDK) — 인가·상태 검증 통과 후에만 실행
+    //    다운로드 토큰 수동 생성
     const downloadToken = crypto.randomBytes(16).toString("hex");
     try {
       await sigFile.save(signatureBytes, {
@@ -6616,52 +6727,9 @@ export const callableFinalizeEmployerSignature = onCall(
     const encodedPath = encodeURIComponent(storagePath);
     const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
 
-    const contractRef = db.collection("employment_contracts").doc(contractId);
-
     try {
       if (isNewUnsaved === true) {
-        // ── 신규 계약서: 소속 검증 후 문서 생성
-        if (!contractData || typeof contractData !== "object") {
-          throw new HttpsError("invalid-argument", "신규 계약서에는 contractData가 필요합니다.");
-        }
-        const bizId = contractData["businessId"] as string | undefined;
-        if (!bizId) throw new HttpsError("invalid-argument", "contractData.businessId가 필요합니다.");
-        const { callerData: signCallerData } = await assertBizAdmin(callerUid, bizId);
-        // [PERM-CONTRACT-01] 서브어드민 canManageContract 세부 권한 검증
-        const signCallerRole = signCallerData?.role as string | undefined;
-        if (signCallerRole !== "BUSINESS_ADMIN" && signCallerRole !== "SUPER_ADMIN") {
-          const memberSnap = await db.collection("businesses").doc(bizId).collection("members").doc(callerUid).get();
-          const memberPerms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
-          if (!memberPerms.canManageContract) throw new HttpsError("permission-denied", "계약서 관리 권한이 없습니다.");
-        }
-
-        // workerId가 해당 사업장의 확정/계약대기 지원자인지 검증 (임의 UID 주입 방지)
-        const workerId = contractData["workerId"] as string | undefined;
-        if (!workerId) throw new HttpsError("invalid-argument", "contractData.workerId가 필요합니다.");
-        // [EC-L-01] applicationId가 전달된 경우 해당 문서 상태를 직접 검증
-        const targetAppId = contractData["applicationId"] as string | undefined;
-        if (targetAppId) {
-          const appSnap = await db.collection("applications").doc(targetAppId).get();
-          if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
-          const appData = appSnap.data()!;
-          if ((appData.businessId as string) !== bizId || (appData.uid as string) !== workerId) {
-            throw new HttpsError("permission-denied", "지원서의 사업장/근로자 정보가 일치하지 않습니다.");
-          }
-          if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appData.status as string)) {
-            throw new HttpsError("failed-precondition", "해당 지원서는 계약서 작성 가능한 상태가 아닙니다.");
-          }
-        } else {
-          const workerAppQuery = await db.collection("applications")
-            .where("businessId", "==", bizId)
-            .where("uid", "==", workerId)
-            .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-            .limit(1)
-            .get();
-          if (workerAppQuery.empty) {
-            throw new HttpsError("permission-denied", "해당 근로자는 이 사업장의 확정된 지원자가 아닙니다.");
-          }
-        }
-
+        // ── 신규 계약서 생성 (인가·중복 검증은 위 PREAUTH 블록에서 완료)
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(contractRef);
           if (snap.exists) throw new HttpsError("already-exists", "이미 계약서가 생성되었습니다.");
@@ -6684,21 +6752,8 @@ export const callableFinalizeEmployerSignature = onCall(
           tx.set(contractRef, data);
         });
       } else {
-        // ── 기존 계약서: 소속 검증(트랜잭션 외부) + 상태 검증/업데이트(트랜잭션 내부)
-        // assertBizAdmin을 트랜잭션 외부에서 먼저 수행 — 트랜잭션 내 비트랜잭션 읽기 방지.
-        // businessId는 불변 필드이므로 TOCTOU 위험 없음.
-        const preSnap = await contractRef.get();
-        if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
-        const reSignBizId = preSnap.data()!["businessId"] as string;
-        const { callerData: reSignCallerData } = await assertBizAdmin(callerUid, reSignBizId);
-        // [PERM-CONTRACT-01] 기존 계약서 재서명도 canManageContract 검증
-        const reSignCallerRole = reSignCallerData?.role as string | undefined;
-        if (reSignCallerRole !== "BUSINESS_ADMIN" && reSignCallerRole !== "SUPER_ADMIN") {
-          const memberSnap = await db.collection("businesses").doc(reSignBizId).collection("members").doc(callerUid).get();
-          const memberPerms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
-          if (!memberPerms.canManageContract) throw new HttpsError("permission-denied", "계약서 관리 권한이 없습니다.");
-        }
-
+        // ── 기존 계약서: 소속·권한·상태는 위 PREAUTH 블록에서 검증 완료.
+        //    트랜잭션은 TOCTOU 재확인 + 원자적 업데이트만 담당한다.
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(contractRef);
           if (!snap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
