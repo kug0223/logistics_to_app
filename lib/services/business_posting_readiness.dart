@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/core/business_model.dart';
 import 'firestore_service.dart';
@@ -124,4 +126,81 @@ class BusinessPostingReadiness {
     );
     return Map.fromEntries(entries);
   }
+
+  // ────────────────────────────────────────────────────
+  // [APPROVAL-RECOVERY] 승인 상태 재확인
+  // ────────────────────────────────────────────────────
+
+  /// 사업장 승인 상태를 서버에 다시 확인한다.
+  ///
+  /// 자동 승인은 사업장 생성 시 1회만 실행되고 재평가 트리거가 없다.
+  /// 그 순간 Storage 확인이 실패하면 사업자등록증이 정상인데도
+  /// 미승인 상태가 고착된다. 이 호출은 서버가 자동 승인 정책과
+  /// 사업자등록증을 **다시 판정**하게 하는 경로다.
+  ///
+  /// 승인 권한을 클라이언트가 갖는 것이 아니다 — 판정은 전적으로 서버가 한다.
+  /// 클라이언트는 businessId만 보내고 결과 상태를 받는다.
+  static Future<BusinessApprovalRecheck> recheckApproval(String businessId) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRecheckBusinessApproval');
+      final res = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+      });
+      final status = res.data['status'] as String?;
+      return BusinessApprovalRecheck.values.firstWhere(
+        (e) => e.wireName == status,
+        // 서버가 새 상태를 추가해도 클라이언트가 임의 해석하지 않는다.
+        orElse: () => BusinessApprovalRecheck.temporaryCheckFailed,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ [recheckApproval] ${e.code}: ${e.message}');
+      // 권한/입력 오류는 재시도로 풀리지 않으므로 구분해 올린다.
+      if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
+        return BusinessApprovalRecheck.notPermitted;
+      }
+      if (e.code == 'not-found') return BusinessApprovalRecheck.notFound;
+      return BusinessApprovalRecheck.temporaryCheckFailed;
+    } catch (e) {
+      debugPrint('❌ [recheckApproval] $e');
+      return BusinessApprovalRecheck.temporaryCheckFailed;
+    }
+  }
+}
+
+/// 승인 재확인 결과.
+///
+/// [wireName]은 서버 result contract와 1:1로 대응한다.
+/// 클라이언트가 승인 여부를 스스로 계산하지 않고 이 값만 해석한다.
+enum BusinessApprovalRecheck {
+  /// 이미 승인된 상태 — 반복 호출에 안전
+  alreadyApproved('ALREADY_APPROVED'),
+
+  /// 이번 호출로 승인됨
+  approved('APPROVED'),
+
+  /// 수동 승인 정책(businessAutoApprove=false)이거나 비활성화된 사업장.
+  /// 재확인으로 통과시킬 수 없다.
+  awaitingManualReview('AWAITING_MANUAL_REVIEW'),
+
+  /// 사업자등록증을 확인할 수 없음 (미등록/잘못된 경로/파일 없음)
+  licenseNotReady('LICENSE_NOT_READY'),
+
+  /// 판정 자체를 하지 못함 — 일시적일 수 있으므로 "없음"으로 단정하지 않는다
+  temporaryCheckFailed('TEMPORARY_CHECK_FAILED'),
+
+  /// 소유자가 아니거나 로그인 상태가 아님 (클라이언트 전용 매핑)
+  notPermitted('__NOT_PERMITTED'),
+
+  /// 사업장을 찾을 수 없음 (클라이언트 전용 매핑)
+  notFound('__NOT_FOUND');
+
+  final String wireName;
+  const BusinessApprovalRecheck(this.wireName);
+
+  bool get isApproved =>
+      this == approved || this == alreadyApproved;
+
+  /// 재시도로 해결될 수 있는 상태인가.
+  bool get isRetryable => this == temporaryCheckFailed;
 }

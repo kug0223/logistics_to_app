@@ -118,6 +118,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _hasLicense = false;           // 사업자등록증 등록 여부
   bool _hasSeal = false;              // 인감/서명 등록 여부 (SubAdmin 면제)
   List<_BizReadiness> _businessReadinessList = []; // 멀티 사업장 결핍 정보
+
+  /// [APPROVAL-RECOVERY] 미승인 상태인 내 사업장.
+  /// 자동 승인은 생성 시 1회만 실행되므로, 그때 Storage 확인이 실패하면
+  /// 등록증이 정상인데도 미승인이 고착된다. "다시 확인"에서 서버에
+  /// 재판정을 요청하기 위해 대상 사업장을 들고 있는다.
+  List<BusinessModel> _unapprovedBusinesses = [];
+  bool _isRecheckingApproval = false;
   bool get _allPrerequisitesMet =>
       _businessApproved && _workTypesReady && _contractTemplatesReady &&
       _hasLicense && _hasSeal;
@@ -233,6 +240,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             _businessReadinessList = [];
             _selectedBusiness = initBizFromAll;
             _myBusinesses = [];
+            // [APPROVAL-RECOVERY] 이 사업장만 재확인 대상
+            _unapprovedBusinesses = [initBizFromAll];
             _isLoading = false;
           });
           return;
@@ -248,6 +257,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           _hasLicense = false;
           _hasSeal = hasSeal;
           _businessReadinessList = [];
+          // [APPROVAL-RECOVERY] 승인 상태를 다시 확인할 대상 보관
+          _unapprovedBusinesses =
+              allBusinesses.where((b) => !b.isApproved).toList();
           _isLoading = false;
         });
         return;
@@ -350,6 +362,41 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       if (mounted) setState(() => _isLoading = false);
       if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
+  }
+
+  /// [APPROVAL-RECOVERY] 사전조건 화면의 "다시 확인" 버튼.
+  ///
+  /// 미승인 사업장이 있으면 값을 다시 읽기 전에 **서버에 승인 재판정을 요청**한다.
+  /// 자동 승인은 사업장 생성 시 1회만 실행되고 재평가 트리거가 없어서,
+  /// 그 순간 Storage 확인이 실패하면 등록증이 정상인데도 미승인이 고착된다.
+  /// 그 상태에서는 Firestore를 아무리 다시 읽어도 영원히 바뀌지 않는다.
+  ///
+  /// 승인 여부는 전적으로 서버가 정한다 — 클라이언트는 businessId만 보낸다.
+  /// 수동 승인 정책이면 서버가 AWAITING_MANUAL_REVIEW를 돌려주고 승인하지 않는다.
+  Future<void> _onRecheckPressed() async {
+    if (_isLoading || _isRecheckingApproval) return;
+
+    if (!_businessApproved && _unapprovedBusinesses.isNotEmpty) {
+      setState(() => _isRecheckingApproval = true);
+      var approvedAny = false;
+      var retryable = false;
+      try {
+        for (final biz in _unapprovedBusinesses) {
+          final r = await BusinessPostingReadiness.recheckApproval(biz.id);
+          if (r.isApproved) approvedAny = true;
+          if (r.isRetryable) retryable = true;
+        }
+      } finally {
+        if (mounted) setState(() => _isRecheckingApproval = false);
+      }
+      if (!mounted) return;
+      // 상태를 확인하지 못한 것을 "승인 대기 중"으로 조용히 삼키지 않는다.
+      if (!approvedAny && retryable) {
+        ToastHelper.showWarning('현재 상태를 확인하지 못했어요.\n잠시 후 다시 확인해 주세요.');
+      }
+    }
+
+    await _reCheckPrerequisites();
   }
 
   /// 사전조건 화면에서 "다시 확인" 또는 준비 화면 복귀 시 재체크
@@ -1623,8 +1670,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _reCheckPrerequisites,
-                    icon: const Icon(Icons.refresh),
+                    // [APPROVAL-RECOVERY] 미승인 사업장이 있으면 서버 재판정까지 수행.
+                    //   복구 진입점은 이 버튼 하나로만 둔다 — 같은 기능을
+                    //   여러 버튼에 중복 구현하지 않는다.
+                    onPressed: _isRecheckingApproval ? null : _onRecheckPressed,
+                    icon: _isRecheckingApproval
+                        ? SizedBox(
+                            width: ResponsiveHelper.iconSize(context, 18),
+                            height: ResponsiveHelper.iconSize(context, 18),
+                            child: const CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
                     label: const Text('다시 확인'),
                     style: OutlinedButton.styleFrom(
                       padding: EdgeInsets.symmetric(

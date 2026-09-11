@@ -15415,6 +15415,19 @@ function parseBusinessLicensePath(
 }
 
 /**
+ * 사업자등록증 검증 결과.
+ *
+ * [APPROVAL-RECOVERY] "증빙이 없다"와 "확인하지 못했다"는 다른 사실이다.
+ *   VALID        — Storage object 확인됨
+ *   MISSING      — URL 없음/파싱 불가/잘못된 prefix/object 미존재 (확정)
+ *   CHECK_FAILED — Storage API 오류로 판정 자체를 못 함 (일시적일 수 있음)
+ *
+ * 승인 판정은 VALID 일 때만 통과시키므로 fail-closed 성질은 동일하다.
+ * 구분의 목적은 사용자에게 "등록증이 없다"고 잘못 단정하지 않기 위한 것이다.
+ */
+type BusinessLicenseCheck = "VALID" | "MISSING" | "CHECK_FAILED";
+
+/**
  * [LICENSE-GATE] 사업자등록증이 실제 Storage object로 존재하는지 검증한다.
  *
  * 검증 순서:
@@ -15422,18 +15435,21 @@ function parseBusinessLicensePath(
  *   2. (레거시) users/{ownerId}.businessLicenseImageUrl → URL parse → exists()
  *      (레거시 경로는 businessId prefix 강제 없음; URL parse + exists() 검증)
  *
- * false 반환 조건 (fail-closed):
+ * MISSING 조건:
  *   - null/빈 문자열/임의 문자열
  *   - Firebase Storage URL이 아닌 값 (parse 실패)
  *   - businesses/{otherId}/license/ 등 잘못된 prefix
  *   - Storage object 미존재
- *   - Storage API 오류
+ * CHECK_FAILED 조건:
+ *   - 후보 경로가 있었으나 Storage/Firestore API 오류로 존재 여부를 확인하지 못함
  */
-async function hasValidBusinessLicense(
+async function checkBusinessLicense(
   businessId: string,
   bizData: FirebaseFirestore.DocumentData | undefined,
-): Promise<boolean> {
+): Promise<BusinessLicenseCheck> {
   const bucket = admin.storage().bucket();
+  // 후보 경로가 있었는데 API 오류로 판정하지 못한 적이 있는가.
+  let apiFailed = false;
 
   // 1. canonical: businesses/{bizId}.businessLicenseImageUrl
   const canonicalUrl = bizData?.businessLicenseImageUrl as string | undefined;
@@ -15441,9 +15457,10 @@ async function hasValidBusinessLicense(
   if (canonicalPath) {
     try {
       const [exists] = await bucket.file(canonicalPath).exists();
-      if (exists) return true;
+      if (exists) return "VALID";
     } catch {
-      // Storage API 오류 → fail-closed, 레거시 경로로 계속
+      // Storage API 오류 → 확정 판정 불가. 레거시 경로로 계속 시도한다.
+      apiFailed = true;
     }
   }
 
@@ -15451,23 +15468,42 @@ async function hasValidBusinessLicense(
   // [OWNER-LEGACY] 단순 truthy check 제거 — URL parse + exists() 강제
   const ownerId = bizData?.ownerId as string | undefined;
   if (ownerId) {
-    const ownerSnap = await db.collection("users").doc(ownerId).get();
-    const legacyUrl = ownerSnap.data()?.businessLicenseImageUrl as string | undefined;
-    if (legacyUrl) {
-      const legacyMatch = legacyUrl.match(/\/o\/([^?]+)/);
-      if (legacyMatch && legacyMatch[1]) {
-        try {
-          const legacyPath = decodeURIComponent(legacyMatch[1]);
-          const [legacyExists] = await bucket.file(legacyPath).exists();
-          if (legacyExists) return true;
-        } catch {
-          // Storage API 오류 → fail-closed
+    try {
+      const ownerSnap = await db.collection("users").doc(ownerId).get();
+      const legacyUrl = ownerSnap.data()?.businessLicenseImageUrl as string | undefined;
+      if (legacyUrl) {
+        const legacyMatch = legacyUrl.match(/\/o\/([^?]+)/);
+        if (legacyMatch && legacyMatch[1]) {
+          try {
+            const legacyPath = decodeURIComponent(legacyMatch[1]);
+            const [legacyExists] = await bucket.file(legacyPath).exists();
+            if (legacyExists) return "VALID";
+          } catch {
+            apiFailed = true;
+          }
         }
       }
+    } catch {
+      // owner 문서 조회 실패 — 레거시 후보 확인 불가
+      apiFailed = true;
     }
   }
 
-  return false;
+  return apiFailed ? "CHECK_FAILED" : "MISSING";
+}
+
+/**
+ * [LICENSE-GATE] 승인 gate용 boolean 판정.
+ *
+ * VALID 외에는 모두 false — Storage API 오류(CHECK_FAILED)도 통과시키지 않는다.
+ * 기존 호출부(onBusinessCreated / callableManageBusiness /
+ * assertBusinessPostingReady)의 fail-closed 동작은 그대로다.
+ */
+async function hasValidBusinessLicense(
+  businessId: string,
+  bizData: FirebaseFirestore.DocumentData | undefined,
+): Promise<boolean> {
+  return (await checkBusinessLicense(businessId, bizData)) === "VALID";
 }
 
 // ── Business Posting Readiness 공통 helper ───────────────────
@@ -24958,6 +24994,107 @@ export const callableManageBusiness = onCall(
     await bizRef.update(updateData);
     console.log(`✅ [callableManageBusiness] action=${action} businessId=${businessId} by=${callerUid}`);
     return {success: true};
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [APPROVAL-RECOVERY] callableRecheckBusinessApproval
+//
+// 문제: 자동 승인은 onBusinessCreated 1회만 실행된다. 그 순간 Storage API가
+//   일시적으로 실패하면 hasValidBusinessLicense가 fail-closed로 false를 반환하고,
+//   트리거는 catch 후 종료한다. 재평가 트리거가 없으므로 사업자등록증이 정상
+//   존재하고 businessAutoApprove=true인데도 isApproved=false가 영구 고착된다.
+//   UI는 이를 정상 수동 승인 대기처럼 보여주어 사용자가 스스로 벗어날 수 없다.
+//
+// 이 callable은 **새로운 승인 권한이 아니라 자동 승인 정책의 재평가 경로**다.
+//   · settings/system.businessAutoApprove 를 서버가 다시 읽는다
+//   · 사업자등록증을 동일한 canonical 검증(Storage object 존재)으로 다시 확인한다
+//   · 위 둘을 통과할 때만 승인한다 — 클라이언트가 보낸 값은 신뢰하지 않는다
+//   · businessAutoApprove=false면 절대 self-approve 하지 않는다
+//
+// 호출자 개시(사용자가 "다시 확인"을 누를 때)로만 실행된다.
+// 자동 재시도·스케줄러·업데이트 트리거를 추가하지 않는다.
+// ─────────────────────────────────────────────────────────────────────────────
+export const callableRecheckBusinessApproval = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId} = request.data as {businessId?: unknown};
+    if (!businessId || typeof businessId !== "string" || businessId.trim() === "") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    const bizRef = db.collection("businesses").doc(businessId);
+    const [callerSnap, bizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      bizRef.get(),
+    ]);
+    if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+
+    const callerData = callerSnap.data();
+    const bizData = bizSnap.data();
+    const isSuperAdmin = (callerData?.role as string | undefined) === "SUPER_ADMIN";
+
+    if (!isSuperAdmin) {
+      // [HIGH-AUTH] assertBizAdmin과 동일 — pending 계정 차단
+      const accountStatus = callerData?.accountStatus as string | undefined;
+      if (accountStatus !== undefined && accountStatus !== "active") {
+        throw new HttpsError("permission-denied", "계정 승인 대기 중입니다. 승인 후 이용 가능합니다.");
+      }
+      // 소유자만 재평가할 수 있다. assertBizAdmin은 adminIds·subAdminBusinessIds까지
+      // 인정하므로 여기서는 쓰지 않는다 — SUB_ADMIN에게 사업장 승인 상태를 바꿀
+      // 경로를 열어주지 않기 위해서다.
+      if ((bizData?.ownerId as string | undefined) !== callerUid) {
+        throw new HttpsError("permission-denied", "사업장 소유자만 승인 상태를 다시 확인할 수 있습니다.");
+      }
+    }
+
+    // 1. 이미 승인됨 — 반복 호출 안전
+    if (bizData?.isApproved === true) {
+      return {status: "ALREADY_APPROVED", isApproved: true};
+    }
+
+    // 2. 비활성화된 사업장은 자가 복구 대상이 아니다 (SUPER_ADMIN reactivate 경로 유지)
+    if (bizData?.deactivatedAt) {
+      return {status: "AWAITING_MANUAL_REVIEW", isApproved: false};
+    }
+
+    // 3. 자동 승인 정책을 서버가 다시 읽는다 — 클라이언트 값 신뢰 금지
+    const settingsDoc = await db.collection("settings").doc("system").get();
+    const autoApprove = settingsDoc.exists
+      ? (settingsDoc.data()?.businessAutoApprove as boolean | undefined) ?? true
+      : true; // settings/system 문서 없으면 onBusinessCreated와 동일 기본값
+    if (!autoApprove) {
+      // 수동 승인 정책 — 재확인으로 우회할 수 없다.
+      return {status: "AWAITING_MANUAL_REVIEW", isApproved: false};
+    }
+
+    // 4. 사업자등록증 재검증 (Storage object 존재) — Firestore 쓰기 이전에 수행
+    const licenseCheck = await checkBusinessLicense(businessId, bizData);
+    if (licenseCheck === "CHECK_FAILED") {
+      // 판정 자체를 못 했다 — "등록증 없음"으로 단정하지 않는다.
+      console.warn(`[recheckBusinessApproval] license 확인 실패(일시적 가능): ${businessId}`);
+      return {status: "TEMPORARY_CHECK_FAILED", isApproved: false};
+    }
+    if (licenseCheck === "MISSING") {
+      return {status: "LICENSE_NOT_READY", isApproved: false};
+    }
+
+    // 5. 승인 — onBusinessCreated와 동일한 트랜잭션 패턴으로 approvedAt 중복 기록 방지.
+    //    Storage 검증은 위에서 끝났으므로 트랜잭션 콜백 안에 외부 호출이 없다.
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(bizRef);
+      if (fresh.data()?.isApproved === true) return; // 경합 — 이미 승인됨
+      tx.update(bizRef, {
+        isApproved: true,
+        approvedAt: Timestamp.now(),
+        approvedBy: "system_auto_recheck",
+      });
+    });
+    console.log(`✅ [recheckBusinessApproval] 승인 완료: ${businessId} by=${callerUid}`);
+    return {status: "APPROVED", isApproved: true};
   }
 );
 
