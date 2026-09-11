@@ -787,7 +787,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          '대기 $totalPending',
+                          '지원 $totalPending',
                           style: ResponsiveHelper.tinyStyle(context,
                                   color: AppColors.warning)
                               .copyWith(fontWeight: FontWeight.bold),
@@ -901,7 +901,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // [R4] Hierarchy: 이미 지원한 대기자를 먼저 검토 → outbound invite는 그 아래
         if (g.pendingApps.isNotEmpty) ...[
           _sectionDivider(
-              context, '대기 중 (${g.pendingApps.length}명)', AppColors.warning),
+              context, '지원 (${g.pendingApps.length}명)', AppColors.warning),
           Padding(
             padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 8)),
@@ -1361,7 +1361,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     const SizedBox(width: 8),
                     _actionButton(
                       context,
-                      label: '승인',
+                      label: '확정',
                       color: AppColors.success,
                       filled: true,
                       onTap: () => _approveApp(app),
@@ -2767,7 +2767,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             onPressed: _isProcessing ? null : _batchApprove,
             icon: Icon(Icons.check_circle_outline,
                 size: ResponsiveHelper.iconSize(context, 14)),
-            label: const Text('일괄 승인',  // [4J.0B] DayApplicants는 CONTRACT_PENDING만 생성 → '승인'이 정확한 표현
+            label: const Text('일괄 확정',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
             style: ElevatedButton.styleFrom(
               backgroundColor: brand,
@@ -2854,7 +2854,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       );
       _hasChanges = true;
       if (!mounted) return;
-      ToastHelper.showSuccess('승인되었습니다. 계약서를 작성해 주세요.');  // [4J.0C] CONTRACT_PENDING 결과 — WorkApplicants parity
+      ToastHelper.showSuccess('확정되었습니다. 계약서를 작성해 주세요.');  // [4J.0C] CONTRACT_PENDING 결과 — WorkApplicants parity
       await _load();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
@@ -2944,7 +2944,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return to != null && !to.canApprovePending;
     }).toList();
     if (blockedApps.isNotEmpty) {
-      ToastHelper.showWarning('현재 상태의 공고(정원 초과·만료)에서는 승인할 수 없습니다. 공고 상태를 확인해 주세요.');
+      ToastHelper.showWarning('현재 상태의 공고(정원 초과·만료)에서는 확정할 수 없습니다. 공고 상태를 확인해 주세요.');
       return;
     }
 
@@ -2982,10 +2982,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final count = _selectedIds.length;
       final confirmed = await DialogHelper.showConfirm(
         context,
-        title: '일괄 승인',
+        title: '일괄 확정',
         message:
             '선택한 $count명을 계약 대기 상태로 변경하시겠습니까?\n이후 각 지원자의 계약서를 직접 작성·서명해야 합니다.',
-        confirmText: '일괄 승인',
+        confirmText: '일괄 확정',
       );
       if (!confirmed || !mounted) return;
       final ids = _selectedIds.toList();
@@ -3016,11 +3016,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       // 실패 원인: network 오류 외에 TO 정원 초과(동시 확정)·Application 취소 등
       // 재시도로 해결되지 않는 케이스 포함 → "상태를 확인" 권장
       if (successCount == 0) {
-        ToastHelper.showError('승인에 실패했습니다. 지원자 상태를 확인해 주세요.');
+        ToastHelper.showError('확정에 실패했습니다. 지원자 상태를 확인해 주세요.');
       } else if (successCount < total) {
-        ToastHelper.showWarning('$successCount/$total명 승인 완료. 실패한 지원자의 상태를 확인해 주세요.');
+        ToastHelper.showWarning('$successCount/$total명 확정 완료. 실패한 지원자의 상태를 확인해 주세요.');
       } else {
-        ToastHelper.showSuccess('$successCount명이 승인되었습니다');
+        ToastHelper.showSuccess('$successCount명이 확정되었습니다');
       }
       await _load();
     } finally {

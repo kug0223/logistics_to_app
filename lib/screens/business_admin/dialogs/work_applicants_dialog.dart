@@ -583,7 +583,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ),
       child: Row(
         children: [
-          _buildStatItem(context, '대기', pendingCount, AppColors.warning),
+          _buildStatItem(context, '지원', pendingCount, AppColors.warning),
           SizedBox(width: ResponsiveHelper.spacing(context, 24)),
           _buildStatItem(context, '확정', confirmedCount, AppColors.success),
           const Spacer(),
@@ -754,7 +754,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           children: [
             // 대기 중 섹션 (별 표시 항목 상단 고정)
             if (pending.isNotEmpty) ...[
-              _buildSectionHeader(context, '대기 중', pending.length, AppColors.warning),
+              _buildSectionHeader(context, '지원', pending.length, AppColors.warning),
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ..._sortedPending(pending).asMap().entries.map((entry) =>
                   _buildApplicantCard(context, entry.value, entry.key + 1, isPending: true)),
@@ -878,7 +878,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  '대기 ${pending.length}',
+                  '지원 ${pending.length}',
                   style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
                 ),
               ),
@@ -1601,7 +1601,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                               _buildActionButton(
                                 context,
-                                label: '승인',
+                                label: '확정',
                                 icon: Icons.check,
                                 bgColor: AppColors.success,
                                 textColor: Colors.white,
@@ -1616,8 +1616,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                           Text(
                             widget.toItem.to.isFull
-                                ? '정원이 충족된 공고입니다. 추가 승인이 제한됩니다.'
-                                : '기간이 만료된 공고입니다. 추가 승인이 제한됩니다.',
+                                ? '정원이 충족된 공고입니다. 추가 확정이 제한됩니다.'
+                                : '기간이 만료된 공고입니다. 추가 확정이 제한됩니다.',
                             style: ResponsiveHelper.smallStyle(context,
                                 color: AppColors.grey500),
                           ),
@@ -2109,9 +2109,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final confirm = await DialogHelper.showConfirm(
         context,
-        title: '지원 승인',
-        message: '${user?.name ?? '지원자'}님을 승인하시겠습니까?',
-        confirmText: '승인',
+        title: '지원 확정',
+        message: '${user?.name ?? '지원자'}님을 확정하시겠습니까?',
+        confirmText: '확정',
       );
 
       if (confirm != true || !mounted) return;
@@ -2131,12 +2131,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다. 계약서를 작성해 주세요.');
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 확정되었습니다. 계약서를 작성해 주세요.');
       await _loadApplicants();
       if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      if (mounted) ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2360,7 +2360,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           // 실행 불가 action을 클릭 가능한 상태로 노출하지 않는다.
           _buildBottomBarButton(
             context,
-            label: '승인',
+            label: '확정',
             icon: Icons.check,
             bgColor: (hasSelection && canApproveWithContract) ? AppColors.successBg : AppColors.grey100,
             textColor: (hasSelection && canApproveWithContract) ? AppColors.successDark : AppColors.grey400,
