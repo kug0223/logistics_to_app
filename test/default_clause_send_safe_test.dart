@@ -107,10 +107,11 @@ void main() {
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily)
               .length,
           7);
+      // [RB-01·RB-05] 4대보험 가입·근태 및 복무가 reference default에서 제외됨
       expect(
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
               .length,
-          10);
+          8);
     });
 
     test('DSS-11 제목 조 번호가 제4조부터 끊김 없이 이어진다', () {
@@ -134,6 +135,71 @@ void main() {
         expect(e.value.title.trim().isNotEmpty, true, reason: '${e.key} 제목 비어 있음');
         expect(e.value.content.trim().isNotEmpty, true, reason: '${e.key} 본문 비어 있음');
       }
+    });
+  });
+
+  group('사업장 정책 경계 (RB-01 / RB-05)', () {
+    // ALfit은 사업장 정책이나 법적 적용 여부를 대신 확정하지 않는다.
+    // 아래 두 조항은 그 경계를 넘어 reference default에서 제외됐다.
+    test('DSS-30 period default에 4대보험 가입 조항이 없다', () {
+      final titles =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
+              .map((a) => a.title)
+              .toList();
+      expect(titles.any((t) => t.contains('4대보험')), false,
+          reason: '보험 부담·공제 방식은 사업장 정책이며 시스템 제3조 공제 방식과 충돌할 수 있다');
+    });
+
+    test('DSS-31 period default에 근태 및 복무 조항이 없다', () {
+      final titles =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
+              .map((a) => a.title)
+              .toList();
+      expect(titles.any((t) => t.contains('근태') || t.contains('복무')), false,
+          reason: '징계·복무수칙은 사업장 취업규칙 영역이다');
+    });
+
+    test('DSS-32 period default 본문에 징계·공제 확정 문구가 없다', () {
+      final all =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
+              .map((a) => a.content)
+              .join('\n');
+      expect(all.contains('징계'), false);
+      expect(all.contains('급여에서 공제'), false);
+    });
+
+    test('DSS-33 대체 문구를 새로 창작하지 않았다 (제거만)', () {
+      // 제외한 자리에 "관계 법령에 따른다" 류의 새 보험/복무 문장을 넣지 않았다.
+      final titles =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
+              .map((a) => a.title)
+              .toList();
+      expect(titles, [
+        '제4조 (주휴일 및 공휴일)',
+        '제5조 (연차유급휴가)',
+        '제6조 (퇴직급여)',
+        '제7조 (기간제 차별금지)',
+        '제8조 (직장 내 괴롭힘 금지)',
+        '제9조 (계약 해지 및 해고예고)',
+        '제10조 (개인정보 보호 및 비밀유지)',
+        '제11조 (기타)',
+      ]);
+    });
+
+    test('DSS-34 daily default는 이번 변경에서 불변', () {
+      final titles =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily)
+              .map((a) => a.title)
+              .toList();
+      expect(titles, [
+        '제4조 (4대보험 적용)',
+        '제5조 (근태 및 휴일)',
+        '제6조 (계약 해지 및 해고예고)',
+        '제7조 (임금명세서 교부)',
+        '제8조 (안전·보건 및 산업재해)',
+        '제9조 (개인정보 보호)',
+        '제10조 (기타)',
+      ]);
     });
   });
 

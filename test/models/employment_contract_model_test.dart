@@ -742,18 +742,18 @@ void main() {
 
     // ── I-2. period (12개 조항) ────────────────────────────────────────────────
     // [C-P1-01] 수습기간('__개월' 미완성)과 연장·야간·휴일 수당(5인 조건부)이 제외됨
-    test('I-10 period → 10개 조항', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').length, 10);
+    test('I-10 period → 8개 조항 (RB-01·RB-05 제외 후)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').length, 8);
     });
-    test('I-11 period 첫 조항: 제4조 (4대보험 가입)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').first.title, '제4조 (4대보험 가입)');
+    test('I-11 period 첫 조항: 제4조 (주휴일 및 공휴일)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').first.title, '제4조 (주휴일 및 공휴일)');
     });
-    test('I-12 period 마지막 조항: 제13조 (기타)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').last.title, '제13조 (기타)');
+    test('I-12 period 마지막 조항: 제11조 (기타)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').last.title, '제11조 (기타)');
     });
-    test('I-13 period 4대보험 조항 포함', () {
+    test('I-13 period 4대보험 조항 미포함 — 사업장 정책 영역', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
-      expect(titles.any((t) => t.contains('4대보험')), true);
+      expect(titles.any((t) => t.contains('4대보험')), false);
     });
     test('I-14 period 연차유급휴가 조항 포함', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
@@ -763,9 +763,9 @@ void main() {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
       expect(titles.any((t) => t.contains('퇴직')), true);
     });
-    test('I-16 period 제목에 제4조~제13조 연속 번호', () {
+    test('I-16 period 제목에 제4조~제11조 연속 번호', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
-      for (int i = 4; i <= 13; i++) {
+      for (int i = 4; i <= 11; i++) {
         expect(titles.any((t) => t.contains('제${i}조')), true, reason: '제${i}조 not found');
       }
     });
@@ -1260,7 +1260,7 @@ void main() {
     test('N-41 period 템플릿 적용 + 계약서 확인', () {
       final articles = ContractTemplateModel.defaultArticlesFor('period');
       final c = _contract(articles: articles, templateId: 'template_period_1');
-      expect(c.articles.length, 10);
+      expect(c.articles.length, 8);
       expect(c.templateId, 'template_period_1');
     });
     test('N-42 outsource 템플릿 3.3% 조항 포함', () {
@@ -1345,7 +1345,7 @@ void main() {
       );
       final copied = original.copyWith(articles: []);
       expect(copied.articles.isEmpty, true);
-      expect(original.articles.length, 10);
+      expect(original.articles.length, 8);
     });
 
     // ── N-8. ContractSnapshot toMap → fromMap 왕복 ────────────────────────────

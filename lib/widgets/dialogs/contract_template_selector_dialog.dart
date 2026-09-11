@@ -365,7 +365,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
     }
   }
 
-  // ── [UX-P2-03] ALfit 기본 계약서 직결 ─────────────────────────
+  // ── [UX-P2-03] ALfit 기본 조항 직결 ─────────────────────────
   // 이전에는 이 버튼이 ContractTemplateListScreen(관리 화면)으로 이동해
   // [추가]→[ALfit 기본]→[유형] 3단계를 더 거치게 했다. 나머지 두 버튼은
   // 그 자리에서 끝나는데 이것만 맥락이 끊겼다.
@@ -474,13 +474,15 @@ class _SelectorSheetState extends State<_SelectorSheet> {
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-            // 2) ALfit 기본 계약서 (템플릿 관리 이동)
+            // 2) ALfit 기본 조항 — 유형 선택 → 편집기 직행
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: _startDefaultFromEmpty,
                 icon: const Icon(Icons.auto_awesome_outlined, size: 16),
-                label: Text('ALfit 기본 계약서',
+                // [RB-02] CreationMethodSheet와 동일 명칭 — 완성된 계약서가 아니라
+                //   작성을 시작하기 위한 참고용 기본 조항임을 이름에서 드러낸다.
+                label: Text('ALfit 기본 조항',
                     style: ResponsiveHelper.smallStyle(context,
                         fontWeight: FontWeight.w600)),
                 style: OutlinedButton.styleFrom(

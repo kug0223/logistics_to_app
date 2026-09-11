@@ -127,7 +127,7 @@ class _ContractTemplateListScreenState
         await _startImportFlow(type);
 
       case _CreationMethod.defaultTemplate:
-        // ALfit 기본 계약서: 유형 선택 → 기본 조항 채워진 EditScreen
+        // ALfit 기본 조항: 유형 선택 → 참고용 기본 조항이 채워진 EditScreen
         final type = await _pickTemplateType();
         if (type == null || !mounted) return;
         await _openEditor(templateType: type);
@@ -419,7 +419,7 @@ class _ContractTemplateListScreenState
 
 enum _CreationMethod {
   importExisting,   // 기존 계약서로 시작 (Paste → Parser)
-  defaultTemplate,  // ALfit 기본 계약서
+  defaultTemplate,  // ALfit 기본 조항
   copyFromBusiness, // 다른 사업장에서 가져오기
   blank,            // 빈 템플릿으로 시작
 }
@@ -495,8 +495,11 @@ class _CreationMethodSheet extends StatelessWidget {
                   icon: Icons.auto_awesome_outlined,
                   iconColor: AppColors.success,
                   bgColor: AppColors.successBg,
-                  title: 'ALfit 기본 계약서',
-                  subtitle: '계약 유형에 맞는 법령 기반 가이드 조항이 자동으로 채워집니다',
+                  // [RB-02] '법령 기반' + '자동' 조합은 ALfit이 법적 적합성을
+                  //   보증하는 인상을 준다. ALfit은 계약 내용을 대신 확정하거나
+                  //   적법성을 보증하지 않는 작성 도구이므로 참고용임을 명시한다.
+                  title: 'ALfit 기본 조항',
+                  subtitle: '작성을 시작할 참고용 기본 조항을 불러옵니다. 사업장에 맞게 확인·수정하세요',
                   onTap: () => Navigator.pop(context, _CreationMethod.defaultTemplate),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 10)),
@@ -893,7 +896,7 @@ class _TypeSelectorSheet extends StatelessWidget {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
               Text(
-                '선택한 근무 형태에 맞는 가이드 조항이 자동으로 채워집니다.\n'
+                '선택한 근무 형태에 맞는 참고용 기본 조항을 불러옵니다.\n'
                 '이후 사업장 상황에 맞게 자유롭게 수정하세요.',
                 style: ResponsiveHelper.smallStyle(context,
                     color: AppColors.grey500),

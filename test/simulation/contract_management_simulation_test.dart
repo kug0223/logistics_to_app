@@ -1615,7 +1615,7 @@ void main() {
 
     test('SCENARIO-CTR-K-06: period 기본 조항 직렬화 왕복', () {
       final articles = ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period);
-      expect(articles.length, 10);
+      expect(articles.length, 8);
       for (final a in articles) {
         final map = a.toMap();
         final restored = ContractArticle.fromMap(map);
