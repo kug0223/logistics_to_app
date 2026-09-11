@@ -94,6 +94,14 @@ const contractLimit = cliArgs['limit'] ? parseInt(cliArgs['limit'], 10) : null;
 const skipOrphans   = cliArgs['skip-orphans'] === true;
 const bucketName    = cliArgs['bucket'] || `${projectId}.firebasestorage.app`;
 
+/**
+ * [ORPHAN-SAFETY] orphan 판정은 referencedArtifactPaths 가 "전체 계약"을 담고 있을 때만 유효하다.
+ * --limit 으로 계약 스캔을 잘라내면 스캔 범위 밖 계약의 정상 artifact 가
+ * unreferenced / parentless 로 오분류된다(false positive).
+ * 따라서 --limit 사용 시 열거는 수행하되(파이프라인 런타임 검증 목적) 분류는 비활성화한다.
+ */
+const orphanClassificationEnabled = !contractLimit;
+
 // orphan 판정 하한 — CONTRACT-CONTENT-3.8 권장값.
 // 근거: onCall(v2) 기본 타임아웃 60초 + 플랫폼 자동 재시도 없음.
 //       업로드 후 TX 진행 중인 정상 in-flight attempt를 orphan으로 오판하지 않도록
@@ -108,6 +116,12 @@ console.log(`Concurrency   : ${concurrency}`);
 console.log(`Orphan age    : >= ${ORPHAN_AGE_HOURS}h unreferenced`);
 if (contractLimit) console.log(`Contract limit: ${contractLimit}`);
 if (skipOrphans)   console.log('Orphan scan   : SKIPPED (--skip-orphans)');
+if (!skipOrphans && !orphanClassificationEnabled) {
+  console.log('Orphan scan   : ENUMERATE ONLY — classification DISABLED');
+  console.log('                (--limit truncates the reference set; orphan verdicts');
+  console.log('                 would be false positives. Run without --limit for');
+  console.log('                 an authoritative retention result.)');
+}
 console.log();
 
 // ─── Admin SDK ───────────────────────────────────────────────────────────────
@@ -289,10 +303,16 @@ const agg = {
   crossContractArtifactReference: 0,
   crossBucketArtifactReference: 0,
 
+  /** contracts/ prefix 하위 전체 object 수 — 열거 자체가 동작했는지 구분용
+   *  (이 값이 0이면 "attempt가 없음"이 아니라 "리스팅이 아무것도 못 봤음"이다) */
+  storageObjectsListed: 0,
+  storageListPages: 0,
   attemptObjectsScanned: 0,
   unreferencedRecent: 0,
   agedUnreferencedAttempts: 0,
   parentContractMissing: 0,
+  /** --limit 으로 참조 집합이 불완전해 판정을 보류한 미참조 attempt 수 */
+  orphanClassificationSuppressed: 0,
 
   scanErrors: 0,
 };
@@ -515,6 +535,8 @@ async function auditAttemptOrphans() {
       pageToken,
     });
     if (!files || files.length === 0) break;
+    agg.storageListPages++;
+    agg.storageObjectsListed += files.length;
 
     for (const f of files) {
       const objectPath = f.name;
@@ -522,6 +544,13 @@ async function auditAttemptOrphans() {
       agg.attemptObjectsScanned++;
 
       if (referencedArtifactPaths.has(objectPath)) continue; // 정상 참조됨
+
+      // [ORPHAN-SAFETY] 참조 집합이 불완전하면(=--limit) 판정하지 않는다.
+      // 열거·페이지네이션 런타임은 위에서 이미 검증됐고, 여기서는 오분류만 막는다.
+      if (!orphanClassificationEnabled) {
+        agg.orphanClassificationSuppressed++;
+        continue;
+      }
 
       const ownerId    = contractIdFromPath(objectPath);
       const created    = (f.metadata && f.metadata.timeCreated) || null;
@@ -619,8 +648,20 @@ function printSummary(outPath) {
   console.log(`   UNKNOWN shape                   : ${agg.unknownPathArtifacts}`);
 
   console.log('\n6. Attempt retention');
+  if (!skipOrphans) {
+    // 열거가 실제로 동작했는지와 "attempt가 0개"를 구분해서 보여준다.
+    console.log(`   contracts/ objects listed       : ${agg.storageObjectsListed} (pages: ${agg.storageListPages})`);
+    if (agg.storageObjectsListed === 0) {
+      console.log('   ⚠️  listing returned nothing — enumeration path NOT exercised.');
+    }
+  }
   if (skipOrphans) {
     console.log('   (skipped — --skip-orphans)');
+  } else if (!orphanClassificationEnabled) {
+    console.log(`   attempt objects scanned         : ${agg.attemptObjectsScanned}`);
+    console.log(`   unreferenced, NOT classified    : ${agg.orphanClassificationSuppressed}`);
+    console.log('   ⚠️  classification DISABLED because --limit truncates the reference set.');
+    console.log('       These counts are NOT a retention result. Re-run without --limit.');
   } else {
     console.log(`   attempt objects scanned         : ${agg.attemptObjectsScanned}`);
     console.log(`   UNREFERENCED_BUT_RECENT (<${ORPHAN_AGE_HOURS}h) : ${agg.unreferencedRecent}   ← not orphan candidates`);
@@ -679,6 +720,8 @@ async function main() {
     projectId,
     bucket: bucketName,
     level,
+    contractLimit: contractLimit || null,
+    orphanClassificationEnabled,
     orphanAgeThresholdHours: ORPHAN_AGE_HOURS,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
