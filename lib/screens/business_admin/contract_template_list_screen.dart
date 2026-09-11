@@ -267,7 +267,10 @@ class _ContractTemplateListScreenState
   @override
   Widget build(BuildContext context) {
     return AppPageScaffold(
-      title: '근로계약서 관리',
+      // [UX-P2-05] 진입 메뉴(설정›계약›"계약서 템플릿")와 제목을 일치시킨다.
+      //   기존 '근로계약서 관리'는 실제 계약 목록 화면인
+      //   AdminContractManagement('계약서 관리')와 혼동을 만들었다.
+      title: '계약서 템플릿',
       actions: [
         IconButton(
           icon: const Icon(Icons.home_outlined),
@@ -1200,6 +1203,28 @@ class _TemplateCard extends StatelessWidget {
             ),
           ),
 
+          // [UX-P3-04] 조항 제목 미리보기 — 템플릿이 여러 개일 때
+          //   Preview를 열지 않고도 내용을 구분할 수 있게 한다.
+          //   SelectorDialog와 동일한 "앞 2개 제목 · 외 N개" 패턴.
+          //   본문(article.content)은 노출하지 않는다 — 제목만.
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 16),
+              0,
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 12),
+            ),
+            child: Text(
+              _articleSummary(),
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: template.articles.isEmpty
+                      ? AppColors.grey400
+                      : AppColors.grey500),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+
           // 액션 버튼 행
           const Divider(height: 1, color: AppColors.grey100),
           Row(
@@ -1239,6 +1264,23 @@ class _TemplateCard extends StatelessWidget {
   }
 
   String _fmtDate(DateTime d) => FormatHelper.formatDateDot(d);
+
+  /// [UX-P3-04] 조항 제목 요약 — "제4조 (수당) · 제5조 (휴게) 외 6개"
+  ///
+  /// 조항이 없어도 "빈 계약서"라고 하지 않는다.
+  /// ALfit이 자동 작성하는 제1~3조는 별도로 존재하므로,
+  /// 여기서 비어 있는 것은 "관리자가 덧붙인 추가 조항"뿐이다.
+  String _articleSummary() {
+    final articles = template.articles;
+    if (articles.isEmpty) return '추가 조항 없음';
+
+    final head = articles
+        .take(2)
+        .map((a) => a.title.trim().isEmpty ? '(제목 없음)' : a.title.trim())
+        .join(' · ');
+    final rest = articles.length - 2;
+    return rest > 0 ? '$head 외 $rest개' : head;
+  }
 }
 
 class _ActionBtn extends StatelessWidget {

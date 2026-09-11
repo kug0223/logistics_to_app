@@ -376,12 +376,13 @@ class _ParseFailureSheet extends StatelessWidget {
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-            // 취소
+            // [UX-P3-01] 이 버튼은 시트만 닫고 붙여넣은 원문은 그대로 남긴다.
+            //   '취소'는 "가져오기 전체 취소"로 읽혀 실제 동작과 어긋났다.
             Center(
               child: TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: Text(
-                  '취소',
+                  '돌아가서 수정하기',
                   style: ResponsiveHelper.bodyStyle(context,
                       color: AppColors.grey500),
                 ),

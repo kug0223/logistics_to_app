@@ -3,12 +3,33 @@ import 'package:flutter/material.dart';
 import '../../models/core/contract_template_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/contract_article_parser.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
 import 'contract_template_edit_screen.dart';
+
+/// [UX-P3-03] 검수 선택이 진입 시점 baseline에서 바뀌었는지 판정한다.
+///
+/// dirty 판정의 입력은 오직 각 조항의 `included` 여부다 —
+/// 전문 보기/접기 같은 표시 상태는 **애초에 인자로 받지 않으므로**
+/// 구조적으로 dirty에 영향을 줄 수 없다.
+/// 되돌려서 baseline과 같아지면 다시 clean으로 돌아온다.
+///
+/// 화면 State에서 쓰지만 단위 검증이 가능하도록 top-level로 둔다
+/// (화면 전체는 NotificationProvider→FirestoreService 의존으로 pump 불가).
+bool importSelectionChanged(
+  List<ParsedArticle> articles,
+  List<bool> baselineIncluded,
+) {
+  if (articles.length != baselineIncluded.length) return true;
+  for (var i = 0; i < articles.length; i++) {
+    if (articles[i].included != baselineIncluded[i]) return true;
+  }
+  return false;
+}
 
 /// 기존 계약서 파싱 결과 확인 화면
 ///
@@ -44,14 +65,39 @@ class _ContractImportResultScreenState
   /// 여러 조항을 동시에 펼쳐 서로 비교할 수 있도록 Set으로 둔다(아코디언 아님).
   final Set<int> _expanded = {};
 
+  /// [UX-P3-03] 화면 진입 시점의 included 상태 스냅샷.
+  ///
+  /// 파서 기본값(제1~3조 제외, 나머지 포함)이 baseline이 된다.
+  /// 현재 상태가 여기서 달라졌을 때만 back 시 확인을 띄운다.
+  late final List<bool> _baselineIncluded;
+
   @override
   void initState() {
     super.initState();
     // ParsedArticle.included 는 mutable이므로 UI 토글 시 setState만 필요
     _articles = widget.parseResult.articles;
+    _baselineIncluded = _articles.map((a) => a.included).toList(growable: false);
   }
 
   int get _includedCount => _articles.where((a) => a.included).length;
+
+  bool get _isDirty => importSelectionChanged(_articles, _baselineIncluded);
+
+  /// 선택 내용을 버리고 나갈지 확인.
+  ///
+  /// 이 화면은 저장 화면이 아니므로 "저장하지 않고 나가기"가 아니라
+  /// "선택 내용이 사라진다"로 표현한다.
+  /// PasteScreen과 동일한 DialogHelper.showConfirm 패턴을 재사용한다.
+  Future<bool> _confirmDiscard() async {
+    if (!_isDirty) return true;
+    return DialogHelper.showConfirm(
+      context,
+      title: '가져온 내용 확인을 그만둘까요?',
+      message: '선택한 조항 상태가 사라집니다.\n붙여넣은 내용은 그대로 남아 있습니다.',
+      confirmText: '나가기',
+      cancelText: '계속 확인',
+    );
+  }
 
   // ─── 편집으로 이동 ────────────────────────────────────────────
   Future<void> _goEdit() async {
@@ -80,7 +126,19 @@ class _ContractImportResultScreenState
     final warnCount = widget.parseResult.likelyDuplicateCount;
     final total = widget.parseResult.totalCount;
 
-    return AppPageScaffold(
+    // [UX-P3-03] AppPageScaffold의 AppBar는 기본 BackButton(= Navigator.maybePop)을
+    //   쓰므로 시스템 back과 AppBar back이 이 PopScope 하나로 함께 보호된다.
+    //   Paste/Edit 화면과 동일한 구현 패턴.
+    return PopScope(
+      canPop: !_isDirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final nav = Navigator.of(context);
+        final discard = await _confirmDiscard();
+        if (!context.mounted) return;
+        if (discard) nav.pop();
+      },
+      child: AppPageScaffold(
       title: '가져온 내용 확인',
       actions: [
         IconButton(
@@ -174,6 +232,7 @@ class _ContractImportResultScreenState
 
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         ],
+      ),
       ),
     );
   }
