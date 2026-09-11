@@ -62,8 +62,23 @@ class ContractTemplateService {
     });
   }
 
+  /// [5.11] legacy 분류(outsource)는 복사로 증식시키지 않는다.
+  ///
+  /// 신규 생성 UI에서 outsource를 고를 수 없게 한 것만으로는 부족했다 —
+  /// 복사 경로가 남아 있으면 그것이 사실상 신규 생성 우회로가 된다.
+  /// UI에서 복사 버튼을 감추는 것과 별개로 여기서도 막아, 다른 호출부가
+  /// 생겨도 legacy가 다시 퍼지지 않게 한다. 조회·편집에는 영향이 없다.
+  void _assertCopyable(ContractTemplateModel source) {
+    if (source.isSupportedForNewUse) return;
+    throw StateError(
+      '기존 호환용 템플릿(templateType=${source.templateType})은 복사할 수 없습니다. '
+      '조회와 편집은 그대로 가능합니다.',
+    );
+  }
+
   Future<ContractTemplateModel> duplicateTemplate(
       ContractTemplateModel source) async {
+    _assertCopyable(source);
     final ref = _col(source.businessId).doc();
     final copy = ContractTemplateModel(
       id: ref.id,
@@ -94,6 +109,7 @@ class ContractTemplateService {
     ContractTemplateModel source,
     String targetBusinessId,
   ) async {
+    _assertCopyable(source); // [5.11] legacy 분류는 다른 사업장으로도 복사 금지
     debugPrint(
         '📋 [duplicateTemplateTo] from=${source.businessId} to=$targetBusinessId');
     final ref = _col(targetBusinessId).doc();

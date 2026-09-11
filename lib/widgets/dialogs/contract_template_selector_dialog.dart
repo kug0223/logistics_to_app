@@ -73,6 +73,15 @@ class _SelectorSheetState extends State<_SelectorSheet> {
         list = await _service.getTemplates(widget.businessId);
       }
 
+      // [5.11] 신규 계약에 쓸 수 있는 분류만 후보로 남긴다.
+      //   이 다이얼로그의 목적은 "이번 계약에 사용할 템플릿 선택"이므로
+      //   legacy outsource는 disabled 항목으로 보여주지 않고 후보에서 제외한다.
+      //   결과가 비면 아래 empty flow(기존 계약서 가져오기 / ALfit 기본 조항 /
+      //   빈 계약서)로 이어지므로 dead-end가 생기지 않는다.
+      //   fallback 판정은 필터 이전 결과 기준을 유지한다 — 원래 의도(uid 경로
+      //   실패 시 재조회)를 바꾸지 않기 위해서다.
+      list = ContractTemplateModel.selectableForNewContract(list);
+
       if (mounted) setState(() { _templates = list; _loadError = null; });
     } catch (e) {
       debugPrint('❌ 계약 템플릿 로드 실패: $e');

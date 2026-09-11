@@ -317,7 +317,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _hasAnyBusiness = true;
         _businessApproved = true;
         _workTypesReady = selWorkTypesReady;
-        _contractTemplatesReady = allTemplates.isNotEmpty;
+        // [5.11] 신규 계약에 실제로 쓸 수 있는 템플릿 기준으로 판정한다.
+        //   legacy outsource만 가진 사업장을 "준비 완료"로 보면 공고는 열리는데
+        //   계약 단계에서 고를 템플릿이 0개인 dead-end가 생긴다.
+        //   SelectorDialog 후보와 동일 기준(selectableForNewContract)을 쓴다.
+        _contractTemplatesReady = ContractTemplateModel
+            .selectableForNewContract(allTemplates).isNotEmpty;
         _hasLicense = sel.licenseReady;
         _hasSeal = hasSeal;
         // workTypes 미충족 시 결핍 정보 보존 (readiness 안내용)
@@ -378,7 +383,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       setState(() {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
-        _contractTemplatesReady = allTemplates.isNotEmpty;
+        // [5.11] 신규 계약에 실제로 쓸 수 있는 템플릿 기준으로 판정한다.
+        //   legacy outsource만 가진 사업장을 "준비 완료"로 보면 공고는 열리는데
+        //   계약 단계에서 고를 템플릿이 0개인 dead-end가 생긴다.
+        //   SelectorDialog 후보와 동일 기준(selectableForNewContract)을 쓴다.
+        _contractTemplatesReady = ContractTemplateModel
+            .selectableForNewContract(allTemplates).isNotEmpty;
         _hasLicense = hasLicense;
         _hasSeal = up.isSubAdmin
             ? true

@@ -19,8 +19,21 @@ abstract class ContractTemplateType {
   /// [LEGACY-ONLY] 신규 생성에서는 선택할 수 없다.
   /// UI가 "업무위탁계약서"를 약속했지만 실제 산출물은 근로계약서 구조여서
   /// V1 신규 생성 대상에서 제외했다(제품 약속-산출물 불일치).
-  /// 기존 문서를 읽고 편집·발송하는 하위 호환은 그대로 유지한다.
+  /// 기존 문서를 읽고 편집하는 하위 호환은 그대로 유지한다.
   static const String outsource  = 'outsource';
+
+  /// 신규 사용(계약 선택·복사)에 쓸 수 있는 분류인가.
+  ///
+  /// [LEGACY_OUTSOURCE_POLICY = READ_COMPATIBILITY_ONLY]
+  ///   조회·편집 = 허용 / 신규 계약 선택·복사 = 금지
+  ///
+  /// 신규 생성 UI에서 outsource를 숨기는 것만으로는 부족했다 —
+  /// 기존 outsource 템플릿을 복사(duplicate / cross-business copy)하면
+  /// 신규 생성 금지를 우회해 새 outsource 문서가 계속 생겨났고,
+  /// 계약 선택 다이얼로그에서 골라 그대로 발송할 수도 있었다.
+  /// 선택·복사·readiness 판정이 모두 이 하나의 기준을 쓴다.
+  static bool isSupportedForNewUse(String type) =>
+      type == daily || type == period;
 
   static String label(String type) {
     switch (type) {
@@ -85,6 +98,20 @@ class ContractTemplateModel {
     required this.createdAt,
     this.updatedAt,
   });
+
+  /// 이 템플릿을 신규 계약 선택·복사에 쓸 수 있는가.
+  /// 조회·편집에는 영향이 없다 — legacy 문서는 계속 열고 고칠 수 있다.
+  bool get isSupportedForNewUse =>
+      ContractTemplateType.isSupportedForNewUse(templateType);
+
+  /// 신규 계약에 사용할 수 있는 템플릿만 남긴다.
+  ///
+  /// 계약 선택 후보(SelectorDialog)와 공고 사전조건(readiness)이 **같은 기준**을
+  /// 써야 한다. 한쪽만 legacy를 세면 "템플릿 준비 완료"로 공고는 열리는데
+  /// 정작 계약 단계에서 고를 템플릿이 0개인 dead-end가 생긴다.
+  static List<ContractTemplateModel> selectableForNewContract(
+          Iterable<ContractTemplateModel> all) =>
+      all.where((t) => t.isSupportedForNewUse).toList();
 
   // ──────────────────────────────────────────────────────────────
   // 유형별 기본 조항 (2026 근로기준법·최저임금 기준)

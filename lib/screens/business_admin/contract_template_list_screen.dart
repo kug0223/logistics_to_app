@@ -674,7 +674,10 @@ class _OtherBusinessTemplateSheetState
       for (final biz in others) {
         try {
           final tpls = await _service.getTemplates(biz.id);
-          allTemplates.addAll(tpls);
+          // [5.11] legacy 분류는 다른 사업장으로 복사할 수 없으므로 후보에서 제외.
+          //   골랐다가 실패하는 항목을 보여주지 않는다.
+          allTemplates.addAll(
+              ContractTemplateModel.selectableForNewContract(tpls));
         } catch (_) {}
       }
 
@@ -1029,13 +1032,19 @@ class _TemplateCard extends StatelessWidget {
                 color: AppColors.grey600,
                 onTap: onPreview,
               ),
-              _Vdivider(),
-              _ActionBtn(
-                icon: Icons.copy_outlined,
-                label: '복사',
-                color: AppColors.grey600,
-                onTap: onDuplicate,
-              ),
+              // [5.11] legacy 분류는 복사로 증식시키지 않는다 —
+              //   신규 계약에 쓸 수 없는 템플릿을 복제할 제품적 가치가 없고,
+              //   복사 경로가 신규 생성 금지의 우회로가 된다.
+              //   편집·미리보기·삭제는 그대로 두어 기존 데이터 접근권을 지킨다.
+              if (template.isSupportedForNewUse) ...[
+                _Vdivider(),
+                _ActionBtn(
+                  icon: Icons.copy_outlined,
+                  label: '복사',
+                  color: AppColors.grey600,
+                  onTap: onDuplicate,
+                ),
+              ],
               _Vdivider(),
               _ActionBtn(
                 icon: Icons.edit_outlined,
