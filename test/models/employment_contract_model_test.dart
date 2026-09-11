@@ -705,14 +705,14 @@ void main() {
     // [C-P1-01] send-safe 정리로 연장·야간·휴일근로 수당 조항(구 제6조)이
     //   default에서 제외됨 — 상시근로자 5인 기준 판단을 관리자에게 요구하는
     //   조건부 조항이라 시스템이 문구를 고를 수 없다. 나머지는 제4~10조로 재정렬.
-    test('I-01 daily → 4개 조항 (reference core 축소 후)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('daily').length, 4);
+    test('I-01 daily → 3개 조항 (reference core 축소 후)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('daily').length, 3);
     });
-    test('I-02 daily 첫 조항 제목: 제4조 (계약 해지 및 해고예고)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('daily').first.title, '제4조 (계약 해지 및 해고예고)');
+    test('I-02 daily 첫 조항 제목: 제4조 (안전·보건 및 산업재해)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('daily').first.title, '제4조 (안전·보건 및 산업재해)');
     });
-    test('I-03 daily 마지막 조항 제목: 제7조 (기타)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('daily').last.title, '제7조 (기타)');
+    test('I-03 daily 마지막 조항 제목: 제6조 (기타)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('daily').last.title, '제6조 (기타)');
     });
     test('I-04 daily 조항들 모두 title 비어있지 않음', () {
       for (final a in ContractTemplateModel.defaultArticlesFor('daily')) {
@@ -733,23 +733,23 @@ void main() {
           .map((a) => a.content).join();
       expect(all.contains('산재보험'), true);
     });
-    test('I-08 daily 제목에 제4조~제7조 연속 번호', () {
+    test('I-08 daily 제목에 제4조~제6조 연속 번호', () {
       final titles = ContractTemplateModel.defaultArticlesFor('daily').map((a) => a.title).toList();
-      for (int i = 4; i <= 7; i++) {
+      for (int i = 4; i <= 6; i++) {
         expect(titles.any((t) => t.contains('제${i}조')), true, reason: '제${i}조 not found');
       }
     });
 
     // ── I-2. period (12개 조항) ────────────────────────────────────────────────
     // [C-P1-01] 수습기간('__개월' 미완성)과 연장·야간·휴일 수당(5인 조건부)이 제외됨
-    test('I-10 period → 4개 조항 (reference core 축소 후)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').length, 4);
+    test('I-10 period → 3개 조항 (reference core 축소 후)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').length, 3);
     });
     test('I-11 period 첫 조항: 제4조 (직장 내 괴롭힘 금지)', () {
       expect(ContractTemplateModel.defaultArticlesFor('period').first.title, '제4조 (직장 내 괴롭힘 금지)');
     });
-    test('I-12 period 마지막 조항: 제7조 (기타)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').last.title, '제7조 (기타)');
+    test('I-12 period 마지막 조항: 제6조 (기타)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').last.title, '제6조 (기타)');
     });
     test('I-13 period 4대보험 조항 미포함 — 사업장 정책 영역', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
@@ -763,9 +763,9 @@ void main() {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
       expect(titles.any((t) => t.contains('퇴직')), false);
     });
-    test('I-16 period 제목에 제4조~제7조 연속 번호', () {
+    test('I-16 period 제목에 제4조~제6조 연속 번호', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
-      for (int i = 4; i <= 7; i++) {
+      for (int i = 4; i <= 6; i++) {
         expect(titles.any((t) => t.contains('제${i}조')), true, reason: '제${i}조 not found');
       }
     });
@@ -814,11 +814,11 @@ void main() {
     });
 
     // ── I-4. unknown → daily (default) ────────────────────────────────────────
-    test('I-30 unknown → daily 조항 4개', () {
-      expect(ContractTemplateModel.defaultArticlesFor('unknown').length, 4);
+    test('I-30 unknown → daily 조항 3개', () {
+      expect(ContractTemplateModel.defaultArticlesFor('unknown').length, 3);
     });
-    test('I-31 빈 문자열 → daily 조항 4개', () {
-      expect(ContractTemplateModel.defaultArticlesFor('').length, 4);
+    test('I-31 빈 문자열 → daily 조항 3개', () {
+      expect(ContractTemplateModel.defaultArticlesFor('').length, 3);
     });
     test('I-32 daily 가 default → unknown 과 daily 동일', () {
       final dailyArticles = ContractTemplateModel.defaultArticlesFor('daily');
@@ -1252,15 +1252,15 @@ void main() {
     });
 
     // ── N-5. 템플릿 + 계약서 조합 ────────────────────────────────────────────
-    test('N-40 daily 템플릿 조항 4개 → 계약서에 추가', () {
+    test('N-40 daily 템플릿 조항 3개 → 계약서에 추가', () {
       final articles = ContractTemplateModel.defaultArticlesFor('daily');
       final c = _contract(articles: articles);
-      expect(c.articles.length, 4);
+      expect(c.articles.length, 3);
     });
     test('N-41 period 템플릿 적용 + 계약서 확인', () {
       final articles = ContractTemplateModel.defaultArticlesFor('period');
       final c = _contract(articles: articles, templateId: 'template_period_1');
-      expect(c.articles.length, 4);
+      expect(c.articles.length, 3);
       expect(c.templateId, 'template_period_1');
     });
     test('N-42 outsource 템플릿 3.3% 조항 포함', () {
@@ -1272,14 +1272,16 @@ void main() {
     test('N-43 계약서 조항 copyWith로 수정', () {
       final articles = ContractTemplateModel.defaultArticlesFor('daily');
       final c = _contract(articles: articles);
+      // 마지막 조항을 index로 고정하지 않는다 — reference core 범위가 바뀌어도
+      // "copyWith로 조항 하나를 교체한다"는 검증 의도는 그대로 유지된다.
+      final last = c.articles.length - 1;
       final modifiedArticles = [
-        ...c.articles.take(3),
-        c.articles[3].copyWith(content: '수정된 내용'),
-        ...c.articles.skip(4),
+        ...c.articles.take(last),
+        c.articles[last].copyWith(content: '수정된 내용'),
       ];
       final c2 = c.copyWith(articles: modifiedArticles);
-      expect(c2.articles[3].content, '수정된 내용');
-      expect(c2.articles.length, 4);
+      expect(c2.articles[last].content, '수정된 내용');
+      expect(c2.articles.length, c.articles.length);
     });
 
     // ── N-6. 4대보험 요율 계산 시나리오 ──────────────────────────────────────
@@ -1345,7 +1347,7 @@ void main() {
       );
       final copied = original.copyWith(articles: []);
       expect(copied.articles.isEmpty, true);
-      expect(original.articles.length, 4);
+      expect(original.articles.length, 3);
     });
 
     // ── N-8. ContractSnapshot toMap → fromMap 왕복 ────────────────────────────

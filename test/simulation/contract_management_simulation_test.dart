@@ -1615,7 +1615,8 @@ void main() {
 
     test('SCENARIO-CTR-K-06: period 기본 조항 직렬화 왕복', () {
       final articles = ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period);
-      expect(articles.length, 4);
+      // [5.9] 해지/해고예고 조항이 reference default에서 제거되어 4 → 3.
+      expect(articles.length, 3);
       for (final a in articles) {
         final map = a.toMap();
         final restored = ContractArticle.fromMap(map);

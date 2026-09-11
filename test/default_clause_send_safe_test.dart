@@ -103,15 +103,17 @@ void main() {
 
   group('기본 조항 구조', () {
     test('DSS-10 daily / period 조항 수', () {
+      // [5.9] 해지/해고예고 조항 제거로 각각 4 → 3.
+      //   조항 수 대칭은 목표가 아니다 — 제거 결과가 우연히 같을 뿐이다.
       expect(
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily)
               .length,
-          4);
+          3);
       // [RB-01·RB-05] 4대보험 가입·근태 및 복무가 reference default에서 제외됨
       expect(
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
               .length,
-          4);
+          3);
     });
 
     test('DSS-11 제목 조 번호가 제4조부터 끊김 없이 이어진다', () {
@@ -183,10 +185,9 @@ void main() {
               .map((a) => a.title)
               .toList();
       expect(titles, [
-        '제4조 (계약 해지 및 해고예고)',
-        '제5조 (안전·보건 및 산업재해)',
-        '제6조 (개인정보 보호)',
-        '제7조 (기타)',
+        '제4조 (안전·보건 및 산업재해)',
+        '제5조 (개인정보 보호)',
+        '제6조 (기타)',
       ]);
     });
 
@@ -197,10 +198,97 @@ void main() {
               .toList();
       expect(titles, [
         '제4조 (직장 내 괴롭힘 금지)',
-        '제5조 (계약 해지 및 해고예고)',
-        '제6조 (개인정보 보호 및 비밀유지)',
-        '제7조 (기타)',
+        '제5조 (개인정보 보호)',
+        '제6조 (기타)',
       ]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // [5.9] mixed content finalization
+  //
+  // ALfit 기본값은 사업장 정책(징계·해지 사유, 영업비밀 범위, 책임 범위)이나
+  // 조건부 법률 적용을 대신 확정하지 않는다. 아래는 제거된 세 영역이
+  // 되살아나지 않는지 지키는 불변식이다. 관리자는 필요하면 편집 화면에서
+  // 직접 작성할 수 있으므로 자유도는 줄지 않는다.
+  // ─────────────────────────────────────────────────────────────────
+  group('reference default에 해지/해고 상세 설명이 없다', () {
+    test('DSS-40 해지·해고예고 조항이 어떤 default에도 없다', () {
+      for (final t in _activeTypes) {
+        final titles = ContractTemplateModel.defaultArticlesFor(t)
+            .map((a) => a.title)
+            .toList();
+        expect(titles.any((x) => x.contains('해고')), false,
+            reason: '$t default에 해고 관련 조항 제목이 남아 있음');
+        expect(titles.any((x) => x.contains('계약 해지')), false,
+            reason: '$t default에 계약 해지 조항 제목이 남아 있음');
+      }
+    });
+
+    test('DSS-41 해지 상세 fragment가 본문에 남지 않았다', () {
+      final all = _allActiveDefaults().map((a) => a.content).join('\n');
+      // 5.6 외부 검증에서 부정확·조건부·정책으로 판정된 구체 표현만 검사한다.
+      for (final fragment in const [
+        '해고예고수당',
+        '즉시 해고',
+        '부당해고',
+        '30일 이전에 서면',
+        '30일 전에 예고',
+        '해고예고',
+      ]) {
+        expect(all.contains(fragment), false,
+            reason: 'default 본문에 "$fragment" 가 남아 있음');
+      }
+    });
+  });
+
+  group('사업장 정책 fragment가 기본값에 없다', () {
+    test('DSS-42 안전 조항에 해지 정책이 없다', () {
+      // 일반 안전·보건 내용은 유지하되, 어떤 위반이 계약 해지 사유인지는
+      // 사업장 징계 정책이므로 ALfit이 기본값으로 정하지 않는다.
+      final daily =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily);
+      final safety =
+          daily.firstWhere((a) => a.title.contains('안전·보건'));
+      expect(safety.content.contains('계약 해지 사유'), false);
+      expect(safety.content.contains('안전 수칙 위반'), false);
+
+      // 남아야 하는 일반 내용 — 제거가 과도하지 않았는지 확인
+      expect(safety.content.contains('산업안전보건법'), true);
+      expect(safety.content.contains('산업재해보상보험법'), true);
+      expect(safety.content.contains('안전·보건 지시'), true);
+    });
+
+    test('DSS-43 비밀유지·책임 범위를 기본값이 확정하지 않는다', () {
+      final all = _allActiveDefaults();
+      for (final a in all) {
+        expect(a.title.contains('비밀유지'), false,
+            reason: '"${a.title}" 에 비밀유지가 남아 있음');
+      }
+      final body = all.map((a) => a.content).join('\n');
+      for (final fragment in const [
+        '영업비밀',
+        '고객정보',
+        '내부 운영 정보',
+        '민·형사상 책임',
+        '누설',
+      ]) {
+        expect(body.contains(fragment), false,
+            reason: 'default 본문에 "$fragment" 가 남아 있음');
+      }
+    });
+
+    test('DSS-44 개인정보 core는 양쪽 모두 남아 있다', () {
+      // 제거가 개인정보 보호 자체를 지운 것이 아님을 확인한다.
+      for (final t in _activeTypes) {
+        final arts = ContractTemplateModel.defaultArticlesFor(t);
+        final privacy =
+            arts.where((a) => a.title.contains('개인정보 보호')).toList();
+        expect(privacy.length, 1, reason: '$t 에 개인정보 보호 조항이 정확히 1개가 아님');
+        expect(privacy.single.content.contains('개인정보보호법'), true);
+        expect(privacy.single.content.trim().endsWith('.'), true,
+            reason: '$t 개인정보 조항이 문장으로 완결되지 않음');
+      }
     });
   });
 
@@ -209,7 +297,9 @@ void main() {
       final all = _allActiveDefaults().map((a) => a.content).join('\n');
       expect(all.contains('개인정보'), true);
       expect(all.contains('산업안전보건법'), true);
-      expect(all.contains('해고예고수당'), true);
+      // [5.9] '해고예고수당'은 해지 조항과 함께 제거됐다 — DSS-41이 부재를 지킨다.
+      //   남은 core 주제로 직장 내 괴롭힘 금지를 확인한다.
+      expect(all.contains('직장 내 괴롭힘'), true);
       expect(all.contains('관계 법령'), true);
     });
 
@@ -217,7 +307,9 @@ void main() {
       // 제거만 했으므로 남은 조항의 첫 문장이 원문 그대로여야 한다.
       final daily =
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily);
-      expect(daily.first.content.startsWith('① 계약 기간 만료 시 본 계약은 자동 종료된다.'),
+      expect(
+          daily.first.content
+              .startsWith('① 사업주는 산업안전보건법에 따라 근로자가 안전한 환경에서 근무하도록'),
           true);
       final period =
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period);
