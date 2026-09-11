@@ -1,17 +1,33 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
-// ─── 계약서 유형 상수 ─────────────────────────────────────────────
+// ─── 템플릿 분류 상수 ─────────────────────────────────────────────
+//
+// [V1 SEMANTICS] 이 값은 "생성될 문서의 종류"가 아니라
+//   ① 기본 조항 세트 선택  ② 목록/배지에서의 용도 분류
+// 두 가지만 결정한다.
+//
+// ALfit이 생성하는 문서 renderer는 V1에서 근로계약서 하나뿐이며,
+// 제1조(당사자)·제2조(근무조건)·제3조(임금) 고정 섹션은
+// templateType이 아니라 Application/TO snapshot(isLongTerm·slots·임금 등)으로
+// 결정된다. ContractTemplateWidget은 templateType을 인자로 받지도 않는다.
+// → copy는 "계약서 종류"가 아니라 "어떤 근무 형태에 쓸 템플릿인가"로 표현한다.
 abstract class ContractTemplateType {
-  static const String daily      = 'daily';       // 단기 일용직
-  static const String period     = 'period';      // 기간제(장기)
-  static const String outsource  = 'outsource';   // 업무위탁(3.3% 도급)
+  static const String daily      = 'daily';       // 단기·일용 근무용
+  static const String period     = 'period';      // 기간제·장기 근무용
+
+  /// [LEGACY-ONLY] 신규 생성에서는 선택할 수 없다.
+  /// UI가 "업무위탁계약서"를 약속했지만 실제 산출물은 근로계약서 구조여서
+  /// V1 신규 생성 대상에서 제외했다(제품 약속-산출물 불일치).
+  /// 기존 문서를 읽고 편집·발송하는 하위 호환은 그대로 유지한다.
+  static const String outsource  = 'outsource';
 
   static String label(String type) {
     switch (type) {
-      case daily:     return '단기 일용직';
-      case period:    return '기간제(장기)';
-      case outsource: return '업무위탁(도급)';
+      case daily:     return '단기 근무용';
+      case period:    return '기간제 근무용';
+      // outsource 등 신규 미지원 값은 중립 라벨로 표시 — 지원하지 않는
+      // 문서 종류를 UI가 약속하지 않도록 한다.
       default:        return '기타';
     }
   }
@@ -19,11 +35,9 @@ abstract class ContractTemplateType {
   static String description(String type) {
     switch (type) {
       case daily:
-        return '하루~수주 단기 알바 · 일급/시급 · 산재보험 필수';
+        return '하루~수주 단기 근무에 쓰는 기본 조항';
       case period:
-        return '1개월~2년 장기 계약 · 4대보험 전부 · 연차 발생';
-      case outsource:
-        return '독립 수행 · 사업소득세 3.3% 원천징수 · 4대보험 없음';
+        return '1개월~2년 기간제 근무에 쓰는 기본 조항';
       default:
         return '';
     }
@@ -76,7 +90,10 @@ class ContractTemplateModel {
   // 유형별 기본 조항 (2026 근로기준법·최저임금 기준)
   // ──────────────────────────────────────────────────────────────
 
-  /// 유형별 기본 조항 반환
+  /// 분류별 기본 조항 반환
+  ///
+  /// outsource는 신규 생성 경로가 제거되어 실질적으로 호출되지 않으나,
+  /// 기존 문서 하위 호환과 조항 세트 보존을 위해 분기를 유지한다.
   static List<ContractArticle> defaultArticlesFor(String type) {
     switch (type) {
       case ContractTemplateType.daily:     return _dailyArticles;

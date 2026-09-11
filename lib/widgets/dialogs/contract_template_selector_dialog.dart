@@ -537,13 +537,15 @@ class _TypeSelectorSheetInline extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '어떤 계약서 유형인가요?',
+                  '어떤 근무 형태에 쓸 템플릿인가요?',
                   style: ResponsiveHelper.titleStyle(context)
                       .copyWith(fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 Text(
-                  '불러올 기존 계약서의 유형을 선택해 주세요.',
+                  // Import 경로에서는 붙여넣은 조항이 기본 조항을 대체하므로
+                  // 이 선택은 목록에서 구분하기 위한 분류로만 쓰인다.
+                  '나중에 목록에서 구분할 용도를 선택해 주세요.',
                   style: ResponsiveHelper.smallStyle(context,
                       color: AppColors.grey500),
                 ),
@@ -553,7 +555,7 @@ class _TypeSelectorSheetInline extends StatelessWidget {
                   icon: Icons.calendar_today_outlined,
                   color: AppColors.info,
                   bg: AppColors.infoBg,
-                  label: '단기 일용직',
+                  label: '단기 근무용',
                   onTap: () =>
                       Navigator.pop(context, ContractTemplateType.daily),
                 ),
@@ -562,19 +564,11 @@ class _TypeSelectorSheetInline extends StatelessWidget {
                   icon: Icons.date_range_outlined,
                   color: AppColors.success,
                   bg: AppColors.successBg,
-                  label: '기간제 (장기)',
+                  label: '기간제 근무용',
                   onTap: () =>
                       Navigator.pop(context, ContractTemplateType.period),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                _InlineTypeRow(
-                  icon: Icons.handshake_outlined,
-                  color: AppColors.warning,
-                  bg: AppColors.warningBg,
-                  label: '업무위탁 (3.3%)',
-                  onTap: () => Navigator.pop(
-                      context, ContractTemplateType.outsource),
-                ),
+                // [V1 SCOPE] 업무위탁(도급) 제거 — List 화면과 동일 기준.
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 Center(

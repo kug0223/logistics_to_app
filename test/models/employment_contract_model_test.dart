@@ -672,9 +672,13 @@ void main() {
     test('H-03 outsource = outsource', () => expect(ContractTemplateType.outsource, 'outsource'));
 
     // ── H-2. label ────────────────────────────────────────────────────────────
-    test('H-10 label(daily) = 단기 일용직', () => expect(ContractTemplateType.label('daily'), '단기 일용직'));
-    test('H-11 label(period) = 기간제(장기)', () => expect(ContractTemplateType.label('period'), '기간제(장기)'));
-    test('H-12 label(outsource) = 업무위탁(도급)', () => expect(ContractTemplateType.label('outsource'), '업무위탁(도급)'));
+    // [V1 SEMANTICS] templateType은 문서 종류가 아니라 템플릿 용도 분류.
+    // 라벨도 "계약서 종류"가 아닌 "근무 형태"로 표현한다.
+    test('H-10 label(daily) = 단기 근무용', () => expect(ContractTemplateType.label('daily'), '단기 근무용'));
+    test('H-11 label(period) = 기간제 근무용', () => expect(ContractTemplateType.label('period'), '기간제 근무용'));
+    // outsource는 신규 생성 미지원 — UI가 지원하지 않는 문서 종류를 약속하지
+    // 않도록 중립 라벨로 표시된다. (상수 자체는 legacy read 호환으로 유지)
+    test('H-12 label(outsource) = 기타 (신규 미지원)', () => expect(ContractTemplateType.label('outsource'), '기타'));
     test('H-13 label(unknown) = 기타', () => expect(ContractTemplateType.label('unknown'), '기타'));
     test('H-14 label 빈 문자열 = 기타', () => expect(ContractTemplateType.label(''), '기타'));
 
@@ -682,11 +686,11 @@ void main() {
     test('H-20 description(daily) 포함 키워드: 단기', () {
       expect(ContractTemplateType.description('daily').contains('단기'), true);
     });
-    test('H-21 description(period) 포함 키워드: 장기', () {
-      expect(ContractTemplateType.description('period').contains('장기'), true);
+    test('H-21 description(period) 포함 키워드: 기간제', () {
+      expect(ContractTemplateType.description('period').contains('기간제'), true);
     });
-    test('H-22 description(outsource) 포함 키워드: 3.3%', () {
-      expect(ContractTemplateType.description('outsource').contains('3.3%'), true);
+    test('H-22 description(outsource) = "" (신규 미지원)', () {
+      expect(ContractTemplateType.description('outsource'), '');
     });
     test('H-23 description(unknown) = ""', () {
       expect(ContractTemplateType.description('unknown'), '');

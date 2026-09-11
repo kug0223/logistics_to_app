@@ -842,26 +842,26 @@ class _TypeSelectorSheet extends StatelessWidget {
               ),
 
               Text(
-                '어떤 계약서 유형인가요?',
+                '어떤 근무 형태에 쓸 템플릿인가요?',
                 style: ResponsiveHelper.titleStyle(context)
                     .copyWith(fontWeight: FontWeight.bold),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
               Text(
-                '선택한 유형에 맞는 가이드 조항이 자동으로 채워집니다.\n'
+                '선택한 근무 형태에 맞는 가이드 조항이 자동으로 채워집니다.\n'
                 '이후 사업장 상황에 맞게 자유롭게 수정하세요.',
                 style: ResponsiveHelper.smallStyle(context,
                     color: AppColors.grey500),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-              // ── 단기 일용직 ──
+              // ── 단기·일용 근무용 ──
               _TypeCard(
                 type: ContractTemplateType.daily,
                 icon: Icons.calendar_today_outlined,
                 iconColor: AppColors.info,
                 bgColor: AppColors.infoBg,
-                title: '단기 일용직 근로계약서',
+                title: '단기 근무용',
                 subtitle: '하루~수주 단기 알바에 적합',
                 points: const [
                   '일급·시급 기준 임금 조항',
@@ -881,7 +881,7 @@ class _TypeSelectorSheet extends StatelessWidget {
                 icon: Icons.date_range_outlined,
                 iconColor: AppColors.success,
                 bgColor: AppColors.successBg,
-                title: '기간제 근로계약서 (장기)',
+                title: '기간제 근무용',
                 subtitle: '1개월~2년 장기 계약에 적합',
                 points: const [
                   '4대보험 전부 적용 조항',
@@ -893,29 +893,12 @@ class _TypeSelectorSheet extends StatelessWidget {
                 onTap: () =>
                     Navigator.pop(context, ContractTemplateType.period),
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-              // ── 업무위탁 ──
-              _TypeCard(
-                type: ContractTemplateType.outsource,
-                icon: Icons.handshake_outlined,
-                iconColor: AppColors.warning,
-                bgColor: AppColors.warningBg,
-                title: '업무위탁계약서 (3.3% 도급)',
-                subtitle: '독립 수행 · 사업소득자에 적합',
-                points: const [
-                  '사업소득세 3.3% 원천징수 조항',
-                  '4대보험 미적용 및 자가 납부 안내',
-                  '독립성 보장·지휘명령 배제 조항',
-                  '결과물 귀속·지식재산권 조항',
-                  '위장도급 주의 법적 고지 포함',
-                ],
-                warning:
-                    '실질적으로 지휘·감독을 받는 경우 근로자로 판단될 수 있으며, '
-                    '위장도급 적발 시 4대보험 소급 부과·벌금 등 제재가 있습니다.',
-                onTap: () =>
-                    Navigator.pop(context, ContractTemplateType.outsource),
-              ),
+              // [V1 SCOPE] 업무위탁(도급) 유형 제거 —
+              //   UI는 "업무위탁계약서"를 약속했으나 실제 산출물은
+              //   제1조 근로계약 당사자 / 제2조 근무 조건 / 제3조 임금 구조의
+              //   근로계약서였다. renderer가 templateType을 받지 않으므로
+              //   약속을 지킬 수 없어 신규 생성 대상에서 제외한다.
+              //   기존 outsource 템플릿의 조회·편집·발송은 그대로 유지된다.
 
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Center(
@@ -943,7 +926,6 @@ class _TypeCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final List<String> points;
-  final String? warning;
   final VoidCallback onTap;
 
   const _TypeCard({
@@ -955,7 +937,6 @@ class _TypeCard extends StatelessWidget {
     required this.subtitle,
     required this.points,
     required this.onTap,
-    this.warning,
   });
 
   @override
@@ -1028,32 +1009,6 @@ class _TypeCard extends StatelessWidget {
                       ],
                     ),
                   )),
-              if (warning != null) ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Container(
-                  padding: EdgeInsets.all(
-                      ResponsiveHelper.spacing(context, 10)),
-                  decoration: BoxDecoration(
-                    color: AppColors.warningBg,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.warning_amber_rounded,
-                          size: ResponsiveHelper.iconSize(context, 14),
-                          color: AppColors.warning),
-                      SizedBox(
-                          width: ResponsiveHelper.spacing(context, 6)),
-                      Expanded(
-                        child: Text(warning!,
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.warningDark)),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
             ],
           ),
         ),

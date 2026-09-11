@@ -1605,10 +1605,11 @@ void main() {
       expect(ContractTemplateType.outsource, 'outsource');
     });
 
-    test('SCENARIO-CTR-K-05: ContractTemplateType.label 3종 검증', () {
-      expect(ContractTemplateType.label(ContractTemplateType.daily), '단기 일용직');
-      expect(ContractTemplateType.label(ContractTemplateType.period), '기간제(장기)');
-      expect(ContractTemplateType.label(ContractTemplateType.outsource), '업무위탁(도급)');
+    test('SCENARIO-CTR-K-05: ContractTemplateType.label 검증 (V1 용도 분류)', () {
+      expect(ContractTemplateType.label(ContractTemplateType.daily), '단기 근무용');
+      expect(ContractTemplateType.label(ContractTemplateType.period), '기간제 근무용');
+      // outsource는 신규 생성 미지원 → 중립 라벨. legacy 문서 표시용으로만 남는다.
+      expect(ContractTemplateType.label(ContractTemplateType.outsource), '기타');
       expect(ContractTemplateType.label('unknown'), '기타');
     });
 
