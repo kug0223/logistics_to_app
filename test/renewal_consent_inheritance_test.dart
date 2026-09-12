@@ -232,16 +232,22 @@ void main() {
   group('DS08B3-08 사용자 노출 문구 무변경', () {
     test('지원 동의 문구가 v2 문안이다', () {
       // [DS-08B.4] 접근 종료 기준이 바뀌면서 문구도 함께 개정됐다.
+      // [DS-08B.5] 문구와 버전이 drift하지 않도록 한 파일로 모았다.
+      final consent = File(
+        'lib/widgets/dialogs/apply/document_access_consent.dart',
+      ).readAsStringSync();
+      expect(consent.contains('마지막 근무일로부터 7일 후 자동 종료됩니다'), isTrue);
+      expect(consent.contains('급여처리 관계가 유효한 동안'), isTrue);
+      expect(consent.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
+      expect(consent.contains('확정일로부터 7일간'), isFalse,
+          reason: '구 문구가 남아 있으면 안 된다');
+
       for (final path in [
         'lib/widgets/dialogs/apply/apply_confirm_dialog.dart',
         'lib/widgets/dialogs/apply/multi_apply_confirm_sheet.dart',
       ]) {
-        final copy = File(path).readAsStringSync();
-        expect(copy.contains('마지막 근무일로부터 7일 후 자동 종료됩니다'), isTrue);
-        expect(copy.contains('급여처리 관계가 유효한 동안'), isTrue);
-        expect(copy.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
-        expect(copy.contains('확정일로부터 7일간'), isFalse,
-            reason: '구 문구가 남아 있으면 안 된다');
+        expect(File(path).readAsStringSync().contains('DocumentAccessConsent.card('),
+            isTrue);
       }
     });
 

@@ -12391,7 +12391,48 @@ export const onTODeleted = onDocumentDeleted(
 // 고지 없이 접근 기간을 늘리는 것이 된다.
 // 7일이라는 duration 자체는 두 버전 공통 — 이번에 바뀐 것은 기준점뿐이다.
 const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const DOCUMENT_ACCESS_CONSENT_V1 = "2026-08-21-v1";
 const DOCUMENT_ACCESS_CONSENT_V2 = "2026-09-12-v2";
+const SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS = [
+  DOCUMENT_ACCESS_CONSENT_V1,
+  DOCUMENT_ACCESS_CONSENT_V2,
+];
+
+/**
+ * 지원서에 기록할 서류 접근 동의 버전을 결정한다.
+ *
+ * [DS-08B.5] 기록 값은 "사용자가 실제로 본 고지 문구의 버전"이어야 한다.
+ * 서버 배포 시점의 최신 버전을 무조건 쓰면, Functions가 앱보다 먼저
+ * 배포된 구간에서 v1 문구를 본 사용자에게 v2 범위가 적용된다.
+ *
+ * cohort 판별 근거(코드로 확인 가능):
+ *   · 버전을 보냄            → 그 버전 (allowlist 검증)
+ *   · 버전 없음 + given=true → 75075a5(2026-08-21) 이후 앱.
+ *                              이 cohort만 v1 문구를 표시한다.
+ *   · 버전 없음 + given 없음 → 75075a5 이전 앱. 서류 접근 고지를
+ *                              표시하지 않았으므로 버전을 기록하지 않는다.
+ *                              (버전 없음 = 확정일+7일 — 가장 좁은 창)
+ *
+ * @param {string | undefined} raw 클라이언트가 보낸 버전 문자열
+ * @param {boolean} clientSentDocConsent documentAccessConsentGiven 전송 여부
+ * @return {string | null} 기록할 버전. null이면 필드를 기록하지 않는다.
+ */
+function resolveDocumentAccessConsentVersion(
+  raw: string | undefined,
+  clientSentDocConsent: boolean
+): string | null {
+  if (raw === undefined || raw === null) {
+    return clientSentDocConsent ? DOCUMENT_ACCESS_CONSENT_V1 : null;
+  }
+  if (!SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(raw)) {
+    // 미지원·변조 버전을 조용히 최신 버전으로 치환하지 않는다.
+    throw new HttpsError(
+      "invalid-argument",
+      "지원하지 않는 서류 접근 동의 버전입니다. 앱을 최신 버전으로 업데이트해주세요."
+    );
+  }
+  return raw;
+}
 
 /**
  * 새 접근 창 문구(v2)에 동의한 지원서인지.
@@ -24502,6 +24543,10 @@ export const callableApplyToTO = onCall(
       workDays?: string[] | null;
       desiredStartDateMs?: number | null;
       idCardConsentGiven?: boolean; // [ID-CONSENT] 신분증 열람 사전동의
+      // [DS-08B.5] 클라이언트가 실제로 표시한 서류 접근 고지 문구의 버전.
+      // 서버 최신 버전을 무조건 쓰지 않는다 — 아래 resolveDocumentAccessConsentVersion 참조.
+      documentAccessConsentVersion?: string;
+      documentAccessConsentGiven?: boolean;
     };
 
     // ── 1. 입력값 검증 ──
@@ -24524,6 +24569,11 @@ export const callableApplyToTO = onCall(
     const workDays = Array.isArray(data.workDays) ? data.workDays : null;
     const desiredStartDateMs = data.desiredStartDateMs ?? null;
     const idCardConsentGiven = data.idCardConsentGiven === true; // [ID-CONSENT]
+    // [DS-08B.5] 기록할 동의 버전 = 사용자가 실제로 본 문구의 버전.
+    const resolvedConsentVersion = resolveDocumentAccessConsentVersion(
+      data.documentAccessConsentVersion,
+      data.documentAccessConsentGiven === true
+    );
 
     if (!toId || typeof toId !== "string" || toId.trim() === "") {
       throw new HttpsError("invalid-argument", "toId가 필요합니다.");
@@ -25088,8 +25138,12 @@ export const callableApplyToTO = onCall(
         //                             + 갱신 승계 명시 [DS-08B.4]
         reactivateData["documentAccessConsentGiven"] = true;
         reactivateData["documentAccessConsentAt"] = admin.firestore.FieldValue.serverTimestamp();
-        reactivateData["documentAccessConsentVersion"] =
-          DOCUMENT_ACCESS_CONSENT_V2;
+        // [DS-08B.5] 이번 재지원에서 사용자가 본 문구의 버전을 기록한다.
+        // 이전 application의 버전을 복사하지 않는다.
+        if (resolvedConsentVersion !== null) {
+          reactivateData["documentAccessConsentVersion"] =
+            resolvedConsentVersion;
+        }
         tx.update(appRef, reactivateData);
       } else {
         // [L1-FIX] businessName/toTitle: 클라이언트 제출값 대신 서버 TO 문서값 우선 사용 (텍스트 주입 차단)
@@ -25118,7 +25172,10 @@ export const callableApplyToTO = onCall(
           //                             + 갱신 승계 명시 [DS-08B.4]
           documentAccessConsentGiven: true,
           documentAccessConsentAt: admin.firestore.FieldValue.serverTimestamp(),
-          documentAccessConsentVersion: DOCUMENT_ACCESS_CONSENT_V2,
+          // [DS-08B.5] 사용자가 실제로 본 문구의 버전. 미표시 cohort는 기록 없음.
+          ...(resolvedConsentVersion !== null && {
+            documentAccessConsentVersion: resolvedConsentVersion,
+          }),
         };
         if (slotId) setData["slotId"] = slotId;
         if (workDetailId && workDetailId.length > 0) setData["workDetailId"] = workDetailId;

@@ -128,12 +128,15 @@ void main() {
   // Consent version
   // ───────────────────────────────────────────────────────────
   group('DS08B4-01 새 지원 → v2 기록', () {
-    test('신규 지원과 재지원 모두 v2 상수를 쓴다', () {
+    test('신규 지원과 재지원 모두 해석된 버전을 기록한다', () {
+      // [DS-08B.5] 서버 최신 상수를 무조건 쓰던 것을
+      // "클라이언트가 표시한 버전"을 해석해 쓰도록 바꿨다.
       expect(code.contains('const DOCUMENT_ACCESS_CONSENT_V2 = "$_v2"'), isTrue);
       final apply = _codeOf(_callableBody(source, 'callableApplyToTO'));
-      final writes =
-          'DOCUMENT_ACCESS_CONSENT_V2'.allMatches(apply).length;
-      expect(writes, 2, reason: '신규 지원 1곳 + 재지원 1곳');
+      expect(apply.contains('resolveDocumentAccessConsentVersion('), isTrue);
+      final writes = 'resolvedConsentVersion'.allMatches(apply).length;
+      expect(writes, greaterThanOrEqualTo(3),
+          reason: '해석 1곳 + 신규 지원 기록 + 재지원 기록');
     });
 
     test('구 버전 리터럴을 새로 기록하지 않는다', () {

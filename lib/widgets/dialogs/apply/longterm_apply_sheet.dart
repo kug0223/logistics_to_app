@@ -17,6 +17,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../work_type_icon.dart';
 import 'apply_work_dialog.dart' show ApplyDialogResult;
+import 'document_access_consent.dart';
 
 /// 장기공고 전용 지원 바텀시트
 ///
@@ -352,6 +353,11 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 10)),
                 // ── 안내문 ──
                 _buildInfoMessage(context),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // [DS-08B.5] 서류 접근 사전동의 고지.
+                // 이 시트도 지원 요청을 보내므로 다른 지원 경로와 동일하게 표시한다.
+                // 표시 없이 동의 버전만 기록되면 기록이 거짓이 된다.
+                DocumentAccessConsent.card(widget.to.businessName),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ],
             ),

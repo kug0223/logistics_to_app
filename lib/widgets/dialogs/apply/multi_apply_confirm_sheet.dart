@@ -50,7 +50,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/common_widgets.dart';
-import '../styled_dialog.dart';
+import 'document_access_consent.dart';
 
 // ─ 결과 타입 ──────────────────────────────────────────────────────────────────
 
@@ -579,15 +579,7 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
   // [LEGAL-REVIEW-ID-CONSENT] 동의 문구 및 방식의 법적 적절성은 별도 법무 검토 필요
 
   Widget _buildConsent(BuildContext context) {
-    return StyledDialogInfoCard.warning(
-      '지원하기를 누르면 [${widget.to.businessName}]의 권한 있는 관리자가 '
-      '근무 확정 시 소득신고·급여처리 목적으로 등록된 서류에 접근할 수 있음에 동의합니다.\n'
-      '· 신분증: 근무 확정 시 열람 권한이 활성화되며, '
-      '해당 근무관계의 마지막 근무일로부터 7일 후 자동 종료됩니다.\n'
-      '· 급여계좌·통장사본: 급여처리 관계가 유효한 동안 열람할 수 있습니다.\n'
-      '동일 고용관계의 계약이 갱신되는 경우 기존 서류 접근 동의는 '
-      '갱신된 근무관계에도 승계됩니다.',
-    );
+    return DocumentAccessConsent.card(widget.to.businessName);
   }
 
   // ─ CTA ───────────────────────────────────────────────────────────────────

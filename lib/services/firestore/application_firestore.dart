@@ -351,6 +351,10 @@ extension ApplicationFirestore on FirestoreService {
         // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 — V3 신규
         // 신분증 + 급여계좌 + 통장사본을 권한 있는 관리자가 확인할 수 있음에 동의
         'documentAccessConsentGiven': true,
+        // [DS-08B.5] 이 앱이 실제로 표시한 고지 문구의 버전을 함께 보낸다.
+        // 서버는 이 값을 기록한다 — 배포 시점의 최신 버전을 쓰지 않는다.
+        // 따라서 Functions가 앱보다 먼저 배포돼도 동의 의미가 바뀌지 않는다.
+        'documentAccessConsentVersion': DocumentAccessConsent.version,
       });
       final data = result.data;
       final isReactivation = data['isReactivation'] as bool? ?? false;
