@@ -22,6 +22,7 @@ import '../../services/firestore_service.dart';
 import '../../services/support_review_queue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/loading_state_mixin.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
@@ -229,11 +230,17 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
 
   // ─── 우선순위 분류 ─────────────────────────────────────────────────────────
 
+  /// [AH-V2-04C.1] KST 날짜 경계로 분류 — 서버 Home 요약과 같은 기준.
+  ///
+  /// 기기 local 자정을 쓰면 KST가 아닌 기기에서 서버와 하루가 어긋나
+  /// Home '긴급 N건'과 이 화면의 '기한 지남' 개수가 달라진다.
+  /// FormatHelper.toKstDate는 device timezone 무관한 KST 날짜 비교 키다.
+  ///
+  /// overdue / today / upcoming은 이 한 classifier를 공유하므로
+  /// 셋의 날짜 경계가 서로 모순되지 않는다.
   _Priority _priorityOf(ApplicationModel app) {
-    final now      = DateTime.now();
-    final today    = DateTime(now.year, now.month, now.day);
-    final appDate  = app.workDate;
-    final dateOnly = DateTime(appDate.year, appDate.month, appDate.day);
+    final today    = FormatHelper.toKstDate(DateTime.now());
+    final dateOnly = FormatHelper.toKstDate(app.workDate);
 
     if (dateOnly.isBefore(today))              return _Priority.overdue;
     if (dateOnly.isAtSameMomentAs(today))      return _Priority.today;

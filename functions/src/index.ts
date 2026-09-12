@@ -30874,17 +30874,19 @@ async function srvHomeApproval(
   const snap = await db.collection("applications")
     .where("businessId", "==", bizId)
     .where("status", "==", "PENDING")
-    .select("workDate", "type")
+    .select("workDate")
     .get();
   let total = 0, overdue = 0;
   for (const doc of snap.docs) {
     total++;
     const d = doc.data();
-    // overdue = 단기 공고(type=short)에서 workDate < 오늘
-    if (d["type"] === "short") {
-      const wdTs = d["workDate"] as admin.firestore.Timestamp | undefined;
-      if (wdTs && wdTs.toMillis() < todayMs) overdue++;
-    }
+    // [AH-V2-04C.1] overdue = workDate < KST 오늘 자정. type 조건 없음.
+    //   장기(long_term) 지원서의 workDate는 계약 시작일이므로, 그날이 지났는데
+    //   아직 PENDING이면 단기와 똑같이 방치된 요청이다.
+    //   total은 이미 단기+장기 전체이고 SupportReviewQueue도 그렇다([PHASE-2A]).
+    //   overdue만 short로 좁아 있어 Home 배지와 Queue '기한 지남'이 어긋났다.
+    const wdTs = d["workDate"] as admin.firestore.Timestamp | undefined;
+    if (wdTs && wdTs.toMillis() < todayMs) overdue++;
   }
   return {total, overdue};
 }
