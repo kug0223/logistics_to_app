@@ -48,6 +48,26 @@ class MyRequestsDialog extends StatefulWidget {
     required this.onChanged,
   });
 
+  /// 공용 진입 helper.
+  ///
+  /// [DS-03] 알림 화면과 홈 화면이 같은 방식으로 연다.
+  /// launch 파라미터(barrierDismissible: false)는 기존 알림 화면 동작 그대로다.
+  /// 호출자는 반환된 Future를 await 해서 닫힌 뒤 자기 화면을 갱신할 수 있다.
+  static Future<void> show(
+    BuildContext context, {
+    required String applicantUid,
+    VoidCallback? onChanged,
+  }) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MyRequestsDialog(
+        applicantUid: applicantUid,
+        onChanged: onChanged ?? () {},
+      ),
+    );
+  }
+
   @override
   State<MyRequestsDialog> createState() => _MyRequestsDialogState();
 }

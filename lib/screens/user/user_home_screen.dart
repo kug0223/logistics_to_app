@@ -8,9 +8,11 @@ import '../../services/fcm_service.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/business_model.dart';
+import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/user_model.dart';
 import '../../models/core/user_region.dart';
+import '../../models/ui/pending_id_request_surface.dart';
 import '../../utils/format_helper.dart';
 import '../../providers/user_provider.dart';
 import '../../services/firestore_service.dart';
@@ -31,6 +33,7 @@ import '../common/job_posting_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../common/tour_screen.dart';
 import 'attendance_check_screen.dart';
+import 'dialogs/my_requests_dialog.dart';
 import 'my_applications_screen.dart';
 import 'user_tab_scope.dart';
 import '../../widgets/calendar/app_calendar.dart';
@@ -223,6 +226,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }
   }
 
+  // ── [DS-03] 신분증 열람 요청 진입점 ────────────────────────────
+  // 노출 판단은 요청 컬렉션 조회 결과만 사용한다.
+  // notification 존재 여부·개수는 판단에 쓰지 않는다 — 알림을 지워도
+  // 처리하지 않은 요청은 홈에서 계속 발견할 수 있어야 한다.
+  PendingIdRequestSurface _idRequestSurface = PendingIdRequestSurface.empty;
+  // 첫 조회 완료 전(LOADING)에는 아무것도 그리지 않는다.
+  // 대부분의 사용자는 요청이 0건이라 skeleton을 두면 빈 자리만 깜빡인다.
+  bool _idRequestsLoaded = false;
+
   late final VoidCallback _onFcmRefresh;
   bool _isLoadingHomeData = false;
   DateTime? _lastAutoRefreshAt;
@@ -312,15 +324,20 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         _appFirestore.getMyApplications(uid),
         _appFirestore.getMyMonthlyAttendances(userId: uid, year: now.year, month: now.month),
         _appFirestore.getPublishedTOs(), // Hero C 날짜 카운트용
+        // [DS-03] 홈 요청 진입점 — 기존 홈 로드 1회에 합류시킨다 (중복 호출 없음)
+        _appFirestore.getPendingIdCardRequestsForUser(uid),
       ]);
       if (!mounted) return;
       final apps = results[0] as List<ApplicationModel>;
       final atts = results[1] as List<AttendanceModel>;
       final tos  = results[2] as List<TOModel>;
+      final idReqs = results[3] as List<IdCardAccessRequestModel>;
       // 캐시는 setState 전에 계산 — build 중 재계산 없이 준비된 값 사용
       _applications = apps;
       _attendances  = atts;
       _publishedTos = tos;
+      _idRequestSurface = PendingIdRequestSurface.from(idReqs);
+      _idRequestsLoaded = true;
       _rebuildCaches();
 
       // ── BusinessModel 캐시 로드 — 추천 카드에 사업장 이미지·혜택 표시용
@@ -362,6 +379,25 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     } finally {
       _isLoadingHomeData = false;
     }
+  }
+
+  // ── [DS-03] 요청 처리 후 진입점만 갱신 ─────────────────────────
+  /// 홈 전체를 다시 불러오지 않는다 — 바뀐 것은 요청 목록뿐이다.
+  /// 조회 실패 시 서비스가 빈 목록을 돌려주므로 진입점은 사라진다.
+  Future<void> _reloadPendingIdRequests() async {
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return;
+    final reqs = await _appFirestore.getPendingIdCardRequestsForUser(uid);
+    if (!mounted) return;
+    setState(() => _idRequestSurface = PendingIdRequestSurface.from(reqs));
+  }
+
+  /// 홈 → 기존 요청 다이얼로그. 닫힌 뒤 남은 건수를 다시 조회한다.
+  /// 마지막 1건까지 처리하면 홈 진입점이 즉시 사라진다.
+  Future<void> _openMyRequests(String uid) async {
+    await MyRequestsDialog.show(context, applicantUid: uid);
+    if (!mounted) return;
+    await _reloadPendingIdRequests();
   }
 
   // ── 반응형 스케일: 화면 너비 기준 ──────────────────────────────
@@ -613,6 +649,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         // ② Priority Card — State B(오늘 출근) / State A(새 확정) / 없으면 사라짐
         // 날짜 탐색과 독립 — 확정이 있어도 아래 날짜 탐색은 항상 표시
         _buildPriorityCard(context, s, theme),
+        // [DS-03] 신분증 열람 요청 진입점 — pending 있을 때만 표시.
+        // Priority Card 계산에는 참여하지 않는다 (Hero 우선순위 불변).
+        // 상대방이 기다리는 요청이므로 자기 서류 준비(아래)보다 위에 둔다.
+        _buildIdRequestCard(context, s, up),
         // 지원 준비 Compact Card — 서류 미완료 시만 표시, 날짜 Hero 바로 위
         _buildReadinessCard(context, s, up),
         // ③ 날짜 기반 일자리 탐색 — 상시 노출 (신규/기존 회원 동일)
@@ -1877,6 +1917,85 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               color: AppColors.textHint,
               fontWeight: FontWeight.w600)),
     ]);
+  }
+
+  // ── [DS-03] 신분증 열람 요청 진입점 ────────────────────────────
+  /// 처리 대기 중인 신분증 열람 요청이 있을 때만 표시하는 Compact Card.
+  ///
+  /// - 표시 판단: 요청 컬렉션 조회 결과 (notification 무관)
+  /// - 홈이 담당하는 것: 발견 + 진입. 승인·거절·요청 목록은 다이얼로그가 처리
+  /// - 0건이 되면 자동 소멸
+  ///
+  /// 지원 준비 카드보다 강한 색을 쓰되 경고색(빨강)은 쓰지 않는다.
+  /// 사용자 잘못이 아니라 상대방이 보낸 처리 대기 건이다.
+  Widget _buildIdRequestCard(BuildContext context, double s, UserProvider up) {
+    // LOADING: 첫 조회 전에는 자리 차지 없음
+    if (!_idRequestsLoaded) return const SizedBox.shrink();
+    // EMPTY (조회 실패 포함): 노출 없음
+    if (!_idRequestSurface.isVisible) return const SizedBox.shrink();
+    final uid = up.currentUser?.uid;
+    if (uid == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final accent = theme.primaryColor;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      child: GestureDetector(
+        onTap: () => _openMyRequests(uid),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.32)),
+          ),
+          child: Row(
+            children: [
+              // 채워진 아이콘 배지 — 지원 준비 카드(연한 배지)보다 한 단계 강하게
+              Container(
+                width: 38 * s,
+                height: 38 * s,
+                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                child: Icon(Icons.badge_outlined, size: 20 * s, color: Colors.white),
+              ),
+              SizedBox(width: 12 * s),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _idRequestSurface.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 3 * s),
+                    Text(
+                      _idRequestSurface.subtitle,
+                      style: TextStyle(fontSize: 13, color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              Text('요청 확인',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: accent,
+                  )),
+              Icon(Icons.chevron_right, color: accent, size: 20 * s),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // ── 온보딩 배너 ─────────────────────────────────────────────

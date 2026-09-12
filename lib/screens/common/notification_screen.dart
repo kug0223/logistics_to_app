@@ -1627,14 +1627,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => MyRequestsDialog(
-        applicantUid: uid,
-        onChanged: () {},
-      ),
-    );
+    MyRequestsDialog.show(context, applicantUid: uid);
   }
 
   /// 신분증 열람 승인/거절 알림 → 해당 근무자 상세 다이얼로그
