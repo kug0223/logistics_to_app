@@ -4284,6 +4284,24 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           wageConfirmedAt: null,          // [CF-11] 집계 필드 초기화
           wageTransferredAt: null,        // [CF-11] 집계 필드 초기화
           interimSettledAmount: 0,        // [CF-11] 집계 필드 초기화
+          // ── 서류 접근 사전동의 (원본 snapshot 승계) ──
+          // [DOCUMENT-ACCESS-CONSENT-RENEWAL-POLICY]
+          // 동일 고용관계의 계약 갱신은 원 application의 동의를 그대로 이어받는다.
+          // 갱신마다 재동의를 받지 않으며, 수동 갱신
+          // (callableCreateContractRenewal)과 동일 semantics다.
+          // 값을 만들어내지 않는다 — 원본에 필드가 없으면 새 문서에도 없다.
+          // 확정·갱신됐다는 이유로 동의를 추정하면 안 된다.
+          // freshData 사용: 개인정보 접근을 좌우하는 필드라 TX 격리 snapshot을 읽는다.
+          ...(freshData.documentAccessConsentGiven !== undefined && {
+            documentAccessConsentGiven: freshData.documentAccessConsentGiven,
+          }),
+          ...(freshData.idCardConsentGiven !== undefined && {
+            idCardConsentGiven: freshData.idCardConsentGiven,
+          }),
+          ...(freshData.documentAccessConsentVersion !== undefined && {
+            documentAccessConsentVersion:
+              freshData.documentAccessConsentVersion,
+          }),
           // ── 상태 ──
           status: "CONFIRMED",
           appliedAt: now,
@@ -23775,6 +23793,20 @@ export const callableCreateContractRenewal = onCall(
         // [M-1 수정 2026-07-15] lastContractRequestedAt 복사 차단 — 계약 재발송 24h 쿨다운 오작동 방지
         //   ...freshData 스프레드로 원본 시각이 복사되면 새 계약 첫 발송이 24h 이후에야 가능
         lastContractRequestedAt: null,
+        // ── 서류 접근 사전동의 (원본 snapshot 승계) ──
+        // [DOCUMENT-ACCESS-CONSENT-RENEWAL-POLICY]
+        // ...freshData 스프레드로도 복사되지만 우연한 복사에 의존하지 않는다.
+        // 자동 갱신(processContractRenewalChecks)과 동일 semantics임을 코드로 고정한다.
+        // 값을 만들어내지 않는다 — 원본에 필드가 없으면 새 문서에도 없다.
+        ...(freshData.documentAccessConsentGiven !== undefined && {
+          documentAccessConsentGiven: freshData.documentAccessConsentGiven,
+        }),
+        ...(freshData.idCardConsentGiven !== undefined && {
+          idCardConsentGiven: freshData.idCardConsentGiven,
+        }),
+        ...(freshData.documentAccessConsentVersion !== undefined && {
+          documentAccessConsentVersion: freshData.documentAccessConsentVersion,
+        }),
       };
       // yearMonth는 checkIn 기록 시 설정됨 — 원본 값 제거 (set()에서 FieldValue.delete() 불가)
       delete newData.yearMonth;
