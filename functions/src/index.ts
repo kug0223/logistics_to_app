@@ -27716,7 +27716,11 @@ export const callableCheckIdCardAccess = onCall(
             .collection("businesses").doc(bizId)
             .collection("members").doc(callerUid)
             .get();
-          if (memberSnap.data()?.canManageWage !== true) continue;
+          // [DS-08A] canManageWage는 members/{uid}.permissions 하위.
+          // top-level 조회는 항상 undefined → sentinel 조회를 건너뛰어
+          // 유효한 auto-grant가 있어도 UI에 권한 없음으로 표시되던 버그.
+          // callableGetIdCardSignedUrl(FIELD-PATH-02)과 동일 경로.
+          if (memberSnap.data()?.permissions?.canManageWage !== true) continue;
           const bizSnap = await db.collection("idCardAccessRequests")
             .where("requesterId", "==", `business:${bizId}`)
             .where("targetUserId", "==", targetUserId)
@@ -27816,14 +27820,47 @@ export const callableCheckIdCardAccessBatch = onCall(
     if (missingUids.length > 0) {
       const callerDoc = await db.collection("users").doc(callerUid).get();
       const callerBusinessId = callerDoc.data()?.businessId as string | undefined;
+
+      // [DS-08A] sentinel 조회 대상 businessId 결정.
+      // 단건 callableCheckIdCardAccess와 동일 contract.
+      //   BUSINESS_ADMIN: users.businessId 단일 (기존 동작 그대로)
+      //   SubAdmin: 이 분기가 없어서 유효한 auto-grant가
+      //     batch 응답에 반영되지 않던 누락을 보완.
+      //     canManageWage는 members/{uid}.permissions 하위.
+      //     canManageWorkers/canManageTo는 대체 근거가 아니다.
+      const sentinelBizIds: string[] = [];
       if (callerBusinessId) {
+        sentinelBizIds.push(callerBusinessId);
+      } else {
+        const subAdminBizIds =
+          (callerDoc.data()?.subAdminBusinessIds as string[] | undefined) ?? [];
+        const subAdminOf =
+          (callerDoc.data()?.subAdminOf as string | undefined) ?? "";
+        const allBizIds = [
+          ...new Set([...subAdminBizIds, ...(subAdminOf ? [subAdminOf] : [])]),
+        ];
+        const memberSnaps = await Promise.all(
+          allBizIds.map((bizId) =>
+            db.collection("businesses").doc(bizId)
+              .collection("members").doc(callerUid)
+              .get()
+          )
+        );
+        for (let mi = 0; mi < allBizIds.length; mi++) {
+          if (memberSnaps[mi].data()?.permissions?.canManageWage === true) {
+            sentinelBizIds.push(allBizIds[mi]);
+          }
+        }
+      }
+
+      for (const sentinelBizId of sentinelBizIds) {
         const bizChunks: string[][] = [];
         for (let i = 0; i < missingUids.length; i += 30) bizChunks.push(missingUids.slice(i, i + 30));
         const bizDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
         await Promise.all(
           bizChunks.map(async (chunk) => {
             const bizSnap = await db.collection("idCardAccessRequests")
-              .where("requesterId", "==", `business:${callerBusinessId}`)
+              .where("requesterId", "==", `business:${sentinelBizId}`)
               .where("targetUserId", "in", chunk)
               .get();
             bizDocs.push(...bizSnap.docs);
