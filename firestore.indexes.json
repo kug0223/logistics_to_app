@@ -202,6 +202,15 @@
         { "fieldPath": "requestedAt", "order": "DESCENDING" }
       ]
     },
+    {
+      "collectionGroup": "schedule_change_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "requestedBy", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
 
     {
       "collectionGroup": "monthly_reviews",

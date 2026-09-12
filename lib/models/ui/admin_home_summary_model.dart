@@ -292,6 +292,10 @@ class AdminHomeActionsData {
   /// 퇴사 요청 (resignStatus == PENDING) — D+3 자동 승인 임박 건수 포함
   final AdminHomeResignRequestSection resignRequest;
 
+  /// 스케줄 변경 요청 (PENDING) — 지원자가 보낸 건만.
+  /// 관리자가 보낸 NO_WORK/EXTRA_WORK는 근로자 응답 대기이므로 제외된다.
+  final AdminHomeSimpleSection scheduleChangeRequest;
+
   const AdminHomeActionsData({
     required this.approval,
     required this.unsentContract,
@@ -300,6 +304,7 @@ class AdminHomeActionsData {
     required this.wageChangeRequest,
     required this.settlementRequest,
     required this.resignRequest,
+    required this.scheduleChangeRequest,
   });
 
   factory AdminHomeActionsData.fromMap(Map<String, dynamic> map) {
@@ -325,6 +330,9 @@ class AdminHomeActionsData {
       resignRequest: AdminHomeResignRequestSection.fromMap(
         Map<String, dynamic>.from((map['resignRequest'] as Map?) ?? {}),
       ),
+      scheduleChangeRequest: AdminHomeSimpleSection.fromMap(
+        Map<String, dynamic>.from((map['scheduleChangeRequest'] as Map?) ?? {}),
+      ),
     );
   }
 
@@ -336,7 +344,8 @@ class AdminHomeActionsData {
       unclosed.hasData ||
       wageChangeRequest.hasData ||
       settlementRequest.hasData ||
-      resignRequest.hasData;
+      resignRequest.hasData ||
+      scheduleChangeRequest.hasData;
 
   /// 전체 액션 건수 합산 (배지용)
   int get totalActionCount =>
@@ -346,7 +355,8 @@ class AdminHomeActionsData {
       unclosed.count +
       wageChangeRequest.count +
       settlementRequest.count +
-      resignRequest.count;
+      resignRequest.count +
+      scheduleChangeRequest.count;
 }
 
 class AdminHomeUpcomingData {

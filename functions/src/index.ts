@@ -31309,6 +31309,34 @@ async function srvHomeSettlementRequest(bizId: string): Promise<{count: number}>
   return {count: agg.data().count};
 }
 
+// ─── Section 헬퍼: Schedule Change Request (스케줄 변경 요청) ────────────────
+
+/**
+ * 관리자가 응답해야 하는 스케줄 변경 요청 건수.
+ *
+ * [AH-V2-02C] 방향이 중요하다. requestedBy == "APPLICANT" 인 요청
+ * (LEAVE / CANCEL_LEAVE / CANCEL_EXTRA)만 관리자의 처리 대상이다.
+ * requestedBy == "ADMIN" (NO_WORK / EXTRA_WORK)은 관리자가 보낸 요청의
+ * 근로자 응답을 기다리는 상태이므로 "처리할 일"이 아니다.
+ *
+ * 방향 필터를 쿼리에 포함한다 — PENDING 전체를 받아 메모리에서 거르면
+ * 사업장당 문서 fetch가 발생한다.
+ *
+ * @param {string} bizId 대상 사업장
+ * @return {Promise<{count: number}>} 관리자 응답 대기 건수
+ */
+async function srvHomeScheduleChangeRequest(
+  bizId: string
+): Promise<{count: number}> {
+  const agg = await db.collection("schedule_change_requests")
+    .where("businessId", "==", bizId)
+    .where("status", "==", "PENDING")
+    .where("requestedBy", "==", "APPLICANT")
+    .count()
+    .get();
+  return {count: agg.data().count};
+}
+
 // ─── Section 헬퍼: Resign Request (퇴사 요청) ────────────────────────────────
 
 /**
@@ -31476,6 +31504,7 @@ export const callableGetAdminHomeSummary = onCall(
           wageChangeRequest: emptySimple,
           settlementRequest: emptySimple,
           resignRequest:     {...emptySimple, soonCount: 0},
+          scheduleChangeRequest: emptySimple,
         },
         upcoming: {expiringContract: emptySimple},
         generatedAt: Date.now(),
@@ -31510,6 +31539,7 @@ export const callableGetAdminHomeSummary = onCall(
       wageChangeRequest?: {count: number};
       settlementRequest?: {count: number};
       resignRequest?:     {count: number; soonCount: number};
+      scheduleChange?:    {count: number};
       expiringContract?:  {count: number};
     }
 
@@ -31523,7 +31553,8 @@ export const callableGetAdminHomeSummary = onCall(
         // [AH-V2-02B] 퇴사 요청은 canManageWorkers — 승인 callable과 동일 권한
         const canWork  = !isSubAdmin || perms["canManageWorkers"] === true;
 
-        const [appR, unsentR, unpaidR, unclosedR, wageChgR, settlR, resignR, expiringR] =
+        const [appR, unsentR, unpaidR, unclosedR, wageChgR, settlR, resignR,
+          schedR, expiringR] =
           await Promise.allSettled([
             canTo    ? srvHomeApproval(bizId, todayMs)            : Promise.resolve<undefined>(undefined),
             canContr ? srvHomeUnsentContract(bizId)               : Promise.resolve<undefined>(undefined),
@@ -31532,6 +31563,7 @@ export const callableGetAdminHomeSummary = onCall(
             canWage  ? srvHomeWageChangeRequest(bizId)            : Promise.resolve<undefined>(undefined),
             canWage  ? srvHomeSettlementRequest(bizId)            : Promise.resolve<undefined>(undefined),
             canWork  ? srvHomeResignRequest(bizId, todayKSTMidnight) : Promise.resolve<undefined>(undefined),
+            canWork  ? srvHomeScheduleChangeRequest(bizId)        : Promise.resolve<undefined>(undefined),
             canContr ? srvHomeExpiringContract(bizId, todayMs)    : Promise.resolve<undefined>(undefined),
           ]);
 
@@ -31542,6 +31574,7 @@ export const callableGetAdminHomeSummary = onCall(
         if (wageChgR.status  === "rejected") console.error(`[adminHome] ${bizId} wageChangeRequest 실패:`, wageChgR.reason);
         if (settlR.status    === "rejected") console.error(`[adminHome] ${bizId} settlementRequest 실패:`, settlR.reason);
         if (resignR.status   === "rejected") console.error(`[adminHome] ${bizId} resignRequest 실패:`, resignR.reason);
+        if (schedR.status    === "rejected") console.error(`[adminHome] ${bizId} scheduleChange 실패:`, schedR.reason);
         if (expiringR.status === "rejected") console.error(`[adminHome] ${bizId} expiringContract 실패:`, expiringR.reason);
 
         return {
@@ -31553,6 +31586,7 @@ export const callableGetAdminHomeSummary = onCall(
           wageChangeRequest: wageChgR.status  === "fulfilled" ? wageChgR.value  : undefined,
           settlementRequest: settlR.status    === "fulfilled" ? settlR.value    : undefined,
           resignRequest:     resignR.status   === "fulfilled" ? resignR.value   : undefined,
+          scheduleChange:    schedR.status    === "fulfilled" ? schedR.value    : undefined,
           expiringContract:  expiringR.status === "fulfilled" ? expiringR.value : undefined,
         };
       })
@@ -31683,6 +31717,8 @@ export const callableGetAdminHomeSummary = onCall(
         settlementRequest: aggSimple("canManageWage",    (r) => r.settlementRequest?.count),
         resignRequest: {...aggSimple("canManageWorkers",
           (r) => r.resignRequest?.count), soonCount: resignSoonTotal},
+        scheduleChangeRequest: aggSimple("canManageWorkers",
+          (r) => r.scheduleChange?.count),
       },
       upcoming: {
         expiringContract: aggSimple("canManageContract", (r) => r.expiringContract?.count),

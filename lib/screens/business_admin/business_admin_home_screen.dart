@@ -49,6 +49,7 @@ import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어�
 import 'dialogs/day_applicants_dialog.dart'; // [PHASE-2D] 인력 부족 → 지원자 관리 다이얼로그
 import 'dialogs/attendance_status_dialog.dart'; // [PHASE-R5.2] 확인 필요 → 출근 현황 리뷰
 import 'dialogs/resign_request_management_dialog.dart'; // [AH-V2-02B] 퇴사 요청 → 기존 처리 UI
+import 'dialogs/schedule_request_management_dialog.dart'; // [AH-V2-02C] 스케줄 변경 요청 → 기존 처리 UI
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -2110,6 +2111,49 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             countPerBiz: countMap,
             showPendingSettlementOnly: true,
           );
+        })),
+      );
+    }
+
+    // 2.7 스케줄 변경 요청 — canManageWorkers
+    // [AH-V2-02C] 지원자가 보낸 휴무/휴무취소/추가근무취소 요청.
+    //   서버가 requestedBy == APPLICANT 로 이미 걸러서 내려준다 —
+    //   관리자가 보낸 NO_WORK/EXTRA_WORK는 근로자 응답 대기라 여기 없다.
+    //   자동 처리가 없어 방치하면 영구 PENDING으로 남는다.
+    if (!isSub || up.can((p) => p.canManageWorkers)) {
+      final sched = cs?.actions.scheduleChangeRequest;
+      add(
+        icon: Icons.edit_calendar_outlined, label: '스케줄 변경 요청',
+        color: AppColors.info,
+        count: sched?.count ?? 0, countStr: '${sched?.count ?? 0}건',
+        available: sched?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!up.can((p) => p.canManageWorkers)) {
+            ToastHelper.showWarning('근로자 관리 권한이 없습니다.'); return;
+          }
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.actions.scheduleChangeRequest;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
+          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          final bizId = await _pickBizFromSummary(
+            context: context, sheetTitle: '스케줄 변경 요청', totalCount: sec.count,
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap,
+          );
+          if (bizId == null || !context.mounted) return;
+          // 기존 처리 UI 재사용 — businessId만 받아 목록을 자체 조회하고
+          // requestedBy == APPLICANT 로 필터한 뒤 PENDING을 기본 표시한다.
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => ScheduleRequestManagementDialog(
+              businessId: bizId,
+              onChanged: () {},
+            ),
+          );
+          if (mounted) unawaited(_loadCanonicalSummary());
         })),
       );
     }

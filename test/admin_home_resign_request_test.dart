@@ -341,10 +341,9 @@ void main() {
   });
 
   group('AH-V2-02B 범위 제한', () {
-    test('스케줄 변경·계약해지를 구현하지 않았다', () {
-      expect(rows.contains('스케줄 변경'), isFalse);
+    test('계약해지를 구현하지 않았다', () {
+      // 스케줄 변경 요청은 AH-V2-02C에서 추가됐다 — 범위 경계가 옮겨졌다.
       expect(rows.contains('계약해지'), isFalse);
-      expect(cf.contains('srvHomeScheduleChangeRequest'), isFalse);
       expect(cf.contains('srvHomeTerminationRequest'), isFalse);
     });
 
