@@ -318,7 +318,7 @@ class WageDetailScreen extends StatelessWidget {
                           Text(
                             '통상시급 ${FormatHelper.formatWage(standardHourly)}',
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w500,
                               color: AppColors.textSecondary,
                             ),

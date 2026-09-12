@@ -376,7 +376,7 @@ class _StatCell extends StatelessWidget {
         Text(
           label,
           style: const TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             color: AppColors.textSecondary,
             fontWeight: FontWeight.w500,
           ),
@@ -531,7 +531,7 @@ class _AchievementBadgeChip extends StatelessWidget {
           Text(
             _badgeShortTitle(badge),
             style: const TextStyle(
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: FontWeight.w700,
               color: AppColors.textPrimary,
               letterSpacing: -0.2,
@@ -608,7 +608,7 @@ class _MoreBadgeIndicator extends StatelessWidget {
         child: Text(
           '+$count',
           style: const TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             color: AppColors.textSecondary,
           ),
@@ -638,7 +638,7 @@ class _MenuSection extends StatelessWidget {
             child: Text(
               title,
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: AppColors.textHint,
                 letterSpacing: 0.4,

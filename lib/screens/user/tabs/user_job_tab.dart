@@ -890,7 +890,7 @@ class _UserJobTabState extends State<UserJobTab>
                   '$badgeCount',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
                     height: 1,
                   ),

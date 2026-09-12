@@ -760,7 +760,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
                       style: ResponsiveHelper.bodyStyle(
                         context,
                         color: AppColors.textTertiary,
-                      ).copyWith(fontSize: 11),
+                      ).copyWith(fontSize: 12),
                     ),
                   ],
                 ],
@@ -871,7 +871,7 @@ class _TypeBadge extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
           color: color,
         ),

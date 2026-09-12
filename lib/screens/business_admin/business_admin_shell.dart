@@ -229,11 +229,11 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
           selectedItemColor: theme.primaryColor,
           unselectedItemColor: AppColors.grey500,
           selectedLabelStyle: const TextStyle(
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             letterSpacing: -0.2,
           ),
-          unselectedLabelStyle: const TextStyle(fontSize: 10),
+          unselectedLabelStyle: const TextStyle(fontSize: 12),
           elevation: 0,
           backgroundColor: Colors.white,
           items: [for (final idx in visibleIndices) _navItemAt(idx)],

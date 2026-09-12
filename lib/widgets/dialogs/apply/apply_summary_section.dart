@@ -238,7 +238,7 @@ class ApplySummarySection extends StatelessWidget {
                           context,
                           color: AppColors.infoDark,
                           fontWeight: FontWeight.w700,
-                        ).copyWith(fontSize: 9),
+                        ).copyWith(fontSize: 12),
                       ),
                     ),
                   ],

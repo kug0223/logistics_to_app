@@ -162,11 +162,11 @@ class _UserRootScreenState extends State<UserRootScreen> {
               selectedItemColor: AppColors.infoDark,
               unselectedItemColor: AppColors.grey400,
               selectedLabelStyle: const TextStyle(
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
                 letterSpacing: -0.2,
               ),
-              unselectedLabelStyle: const TextStyle(fontSize: 10),
+              unselectedLabelStyle: const TextStyle(fontSize: 12),
               elevation: 0,
               backgroundColor: Colors.white,
               items: const [

@@ -1123,7 +1123,7 @@ class _DeltaBadge extends StatelessWidget {
           Text(
             '${delta.abs().toStringAsFixed(1)}%',
             style: ResponsiveHelper.tinyStyle(context)
-                .copyWith(color: color, fontWeight: FontWeight.bold, fontSize: 10),
+                .copyWith(color: color, fontWeight: FontWeight.bold, fontSize: 12),
           ),
         ],
       ),

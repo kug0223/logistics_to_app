@@ -58,10 +58,22 @@ class ResponsiveHelper {
     );
   }
   
+  // ── Semantic typography ─────────────────────────────────────────
+  //
+  // [TYPO-02] base size는 실사용 가독성 기준으로 잡는다.
+  //   ALfit은 현장에서 빠르게 판단하는 운영 앱이고 중장년 사용자가 많다.
+  //   화면에 정보를 더 밀어넣는 것보다 한눈에 읽히는 쪽을 택한다.
+  //
+  //   19 / 17 / 15 / 13 / 12 / 12
+  //   이전 18 / 16 / 14 / 12 / 11 / 11 에서 한 단계씩 올렸다.
+  //   계층 간격은 유지했고, 일반 정보의 하한을 12로 둔다 —
+  //   tiny/caption이 담던 '지원 N'·'확정 N'·'최근 90일 노쇼 N회'·'마감'은
+  //   장식이 아니라 판단에 쓰는 정보라 11px에 두지 않는다.
+
   /// 반응형 텍스트 스타일 - 큰 제목 (사업장명 등)
   static TextStyle titleStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
-      fontSize: 18,
+      fontSize: 19,
       fontWeight: fontWeight ?? FontWeight.bold,
       color: color,
     );
@@ -70,7 +82,7 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 중간 제목 (TO 제목 등)
   static TextStyle subtitleStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
-      fontSize: 16,
+      fontSize: 17,
       fontWeight: fontWeight ?? FontWeight.bold,
       color: color ?? AppColors.textPrimary,
     );
@@ -79,7 +91,7 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 본문 (날짜, 정보 등)
   static TextStyle bodyStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
-      fontSize: 14,
+      fontSize: 15,
       color: color ?? AppColors.grey700,
       fontWeight: fontWeight,
     );
@@ -88,7 +100,7 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 작은 텍스트 (배지, 라벨 등)
   static TextStyle smallStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
-      fontSize: 12,
+      fontSize: 13,
       color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
     );
@@ -97,7 +109,7 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 매우 작은 텍스트 (통계 등)
   static TextStyle tinyStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
-      fontSize: 11,
+      fontSize: 12,
       color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
     );
@@ -105,7 +117,7 @@ class ResponsiveHelper {
   /// 반응형 텍스트 스타일 - 캡션 (힌트, 설명 등)
   static TextStyle captionStyle(BuildContext context, {Color? color, FontWeight? fontWeight}) {
     return TextStyle(
-      fontSize: 11,
+      fontSize: 12,
       color: color ?? AppColors.grey600,
       fontWeight: fontWeight,
       height: 1.4,

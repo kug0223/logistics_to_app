@@ -641,7 +641,7 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         label,
         style: const TextStyle(
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.w700,
           color: AppColors.textHint,
           letterSpacing: 0.4,

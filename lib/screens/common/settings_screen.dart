@@ -1435,7 +1435,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         foregroundColor: color,
                       ),
                       child:
-                          const Text('확인하기 →', style: TextStyle(fontSize: 11)),
+                          const Text('확인하기 →', style: TextStyle(fontSize: 12)),
                     ),
                 ],
               ),

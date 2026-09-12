@@ -260,7 +260,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 '$unreadCount',
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: FontWeight.w700,
                   height: 1.2,
                 ),

@@ -70,6 +70,10 @@ class TOCapacityRing extends StatelessWidget {
                     child: Text(
                       '+$pending',
                       style: const TextStyle(
+                        // [TYPO-02] 일반 정보 하한(12)의 예외 —
+                        //   정원 링 그래픽 내부에 겹쳐 그리는 초과 표시라
+                        //   링 지름에 묶여 있다. 같은 정보가 카드 본문에도
+                        //   나오므로 이 숫자만 읽어야 하는 상황은 없다.
                         fontSize: 9,
                         color: AppColors.warning,
                         fontWeight: FontWeight.w800,

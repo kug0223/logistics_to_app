@@ -967,7 +967,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         ? AppColors.grey400
                         : theme.primaryColor,
                 fontWeight: FontWeight.w600,
-                fontSize: 10,
+                fontSize: 12,
               ),
             ),
           ],
@@ -2637,7 +2637,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 child: Text(
                   badgeLabel,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: badgeColor,
                   ),

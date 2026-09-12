@@ -909,7 +909,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: FontWeight.w700,
           color: color,
         ),
@@ -946,7 +946,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       child: Text(
         info.label,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
           color: info.color,
         ),
@@ -1133,7 +1133,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               const SizedBox(height: 2),
               Text(
                 '~${_mdhmFmt.format(app.inviteExpiresAt!)} 만료',
-                style: const TextStyle(fontSize: 11, color: AppColors.grey500),
+                style: const TextStyle(fontSize: 12, color: AppColors.grey500),
               ),
             ],
             const SizedBox(height: 8),

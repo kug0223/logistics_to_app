@@ -1540,7 +1540,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
               color: Colors.orange.shade100,
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Text('직접 입력 필요', style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
+            child: Text('직접 입력 필요', style: TextStyle(fontSize: 12, color: Colors.orange.shade800)),
           ),
         ],
         if (isOptional) ...[

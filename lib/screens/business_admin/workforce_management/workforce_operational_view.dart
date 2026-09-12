@@ -635,7 +635,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
               Text(
                 _weekdayLabel(day.weekday),
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 12,
                   color: isSelected
                       ? Colors.white.withValues(alpha: 0.8)
                       : AppColors.grey500,
@@ -921,7 +921,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
             Text(
               data.label,
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                 color: isSelected ? data.color : AppColors.grey500,
               ),
@@ -1025,7 +1025,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                       child: Text(
                         '${group.workerCount}명',
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: AppColors.grey600,
                         ),
@@ -1043,7 +1043,7 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
               child: Text(
                 group.toTitle,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: AppColors.grey400,
                 ),
                 maxLines: 1,

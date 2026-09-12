@@ -46,22 +46,22 @@ Future<T> _atWidth<T>(WidgetTester tester, double width,
 void main() {
   // ── §25 ResponsiveHelper typography ─────────────────────────────
   group('TYPO-0x 폰트는 화면 폭에 영향받지 않는다', () {
-    testWidgets('TYPO-01 bodyStyle은 모든 폭에서 14', (tester) async {
+    testWidgets('TYPO-01 bodyStyle은 모든 폭에서 15', (tester) async {
       for (final w in _widths) {
         final size =
             (await _atWidth(tester, w, (c) => ResponsiveHelper.bodyStyle(c)))
                 .fontSize;
-        expect(size, 14, reason: 'width ${w}dp 에서 body가 $size');
+        expect(size, 15, reason: 'width ${w}dp 에서 body가 $size');
       }
     });
 
     testWidgets('TYPO-02 나머지 텍스트 헬퍼도 폭 불변', (tester) async {
       final expected = <String, double>{
-        'title': 18,
-        'subtitle': 16,
-        'small': 12,
-        'tiny': 11,
-        'caption': 11,
+        'title': 19,
+        'subtitle': 17,
+        'small': 13,
+        'tiny': 12,
+        'caption': 12,
       };
       for (final w in _widths) {
         final got = await _atWidth(tester, w, (c) => <String, double?>{
@@ -220,21 +220,29 @@ void main() {
 
   // ── 범위 불변식 ─────────────────────────────────────────────────
   group('TYPO-4x 이번 범위 밖', () {
-    test('TYPO-40 base 폰트 크기를 올리지 않았다', () {
+    test('TYPO-40 semantic 계층이 유지된다', () {
+      // [TYPO-02] base를 한 단계씩 올리되 계층을 평탄화하지 않는다.
       final s = _source('lib/utils/responsive_helper.dart');
+      final sizes = <String, int>{};
       for (final pair in const [
-        ['titleStyle', 18],
-        ['subtitleStyle', 16],
-        ['bodyStyle', 14],
-        ['smallStyle', 12],
-        ['tinyStyle', 11],
-        ['captionStyle', 11],
+        ['titleStyle', 19],
+        ['subtitleStyle', 17],
+        ['bodyStyle', 15],
+        ['smallStyle', 13],
+        ['tinyStyle', 12],
+        ['captionStyle', 12],
       ]) {
         final i = s.indexOf('static TextStyle ${pair[0]}(');
         expect(i, greaterThan(-1));
-        expect(s.substring(i, i + 260).contains('fontSize: ${pair[1]},'), true,
-            reason: '${pair[0]} base가 바뀌었다');
+        expect(s.substring(i, i + 400).contains('fontSize: ${pair[1]},'), true,
+            reason: '${pair[0]} base가 ${pair[1]}이 아니다');
+        sizes[pair[0] as String] = pair[1] as int;
       }
+      // 제목 > 부제 > 본문 > 소형 > 초소형 순서가 유지돼야 한다
+      expect(sizes['titleStyle']! > sizes['subtitleStyle']!, true);
+      expect(sizes['subtitleStyle']! > sizes['bodyStyle']!, true);
+      expect(sizes['bodyStyle']! > sizes['smallStyle']!, true);
+      expect(sizes['smallStyle']! > sizes['tinyStyle']!, true);
     });
 
     test('TYPO-41 fontFamily를 적용하지 않았다', () {
@@ -257,6 +265,61 @@ void main() {
     test('TYPO-43 기기 모델 분기를 추가하지 않았다', () {
       final helper = _source('lib/utils/responsive_helper.dart');
       expect(helper.contains('devicePixelRatio'), false);
+    });
+  });
+
+  // ── [TYPO-02] 가독성 하한 ───────────────────────────────────────
+  group('TYPO-5x 사용자 화면 폰트 하한', () {
+    /// 12px 하한에서 제외되는 곳.
+    /// PDF는 문서 레이아웃(PDF point)이라 기기·OS 스케일과 무관하고,
+    /// 온보딩 일러스트는 앱 화면을 축소해 그린 장식용 목업이다.
+    /// to_capacity_ring은 링 그래픽 내부에 겹쳐 그리는 초과 표시 '+N'이다.
+    bool _exempt(String p) =>
+        p.contains('pdf_builder') ||
+        p.contains('attendance_list_pdf') ||
+        p.contains('onboarding_screen') ||
+        p.contains('to_capacity_ring');
+
+    test('TYPO-50 일반 정보에 12px 미만이 없다', () {
+      final re = RegExp(r'fontSize: (8|9|9\.0|9\.5|10|10\.5|11|11\.5)[,)\s]');
+      final hits = <String>[];
+      for (final e in Directory('lib').listSync(recursive: true)) {
+        if (e is! File || !e.path.endsWith('.dart')) continue;
+        final p = e.path.replaceAll(r'\', '/');
+        if (_exempt(p)) continue;
+        final lines = e.readAsStringSync().split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          if (re.hasMatch(lines[i])) hits.add('$p:${i + 1}');
+        }
+      }
+      expect(hits, isEmpty, reason: '12px 미만 사용자 문구: $hits');
+    });
+
+    test('TYPO-51 semantic 토큰 전부 12 이상', () {
+      final s = _source('lib/utils/responsive_helper.dart');
+      for (final m in RegExp(r'fontSize: ([0-9.]+),').allMatches(s)) {
+        expect(double.parse(m.group(1)!) >= 12, true,
+            reason: 'ResponsiveHelper 토큰 ${m.group(1)}');
+      }
+    });
+
+    test('TYPO-52 AppTextStyles도 12 이상', () {
+      // 이 파일은 이미 floor를 충족하고 있어 이번에 값을 바꾸지 않았다.
+      final s = _source('lib/theme/app_text_styles.dart');
+      for (final m in RegExp(r'fontSize: ([0-9.]+),').allMatches(s)) {
+        expect(double.parse(m.group(1)!) >= 12, true,
+            reason: 'AppTextStyles 토큰 ${m.group(1)}');
+      }
+    });
+
+    testWidgets('TYPO-53 body/button 기준 크기 확보', (tester) async {
+      // 운영 판단에 쓰는 본문은 15 이상이어야 한다.
+      final body =
+          (await _atWidth(tester, 360, (c) => ResponsiveHelper.bodyStyle(c)))
+              .fontSize!;
+      expect(body >= 15, true, reason: 'body $body');
+      expect(AppTextStyles.body().fontSize! >= 15, true);
+      expect(AppTextStyles.sectionAction().fontSize! >= 15, true);
     });
   });
 }

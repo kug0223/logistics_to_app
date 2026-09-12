@@ -159,7 +159,7 @@ class _SignatureScreenState extends State<SignatureScreen> {
                   child: const Text(
                     '등록됨',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: AppColors.successDark,
                     ),

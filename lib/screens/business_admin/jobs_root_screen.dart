@@ -330,7 +330,7 @@ class _JobsFilterButton extends StatelessWidget {
                   '$filterCount',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 9,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
                     height: 1,
                   ),

@@ -2853,7 +2853,7 @@ class _PendingCalendarSheetState extends State<_PendingCalendarSheet> {
                   child: Text(
                     '$count명',
                     style: const TextStyle(
-                      fontSize: 9,
+                      fontSize: 12,
                       color: AppColors.error,
                       fontWeight: FontWeight.w700,
                       height: 1.1,

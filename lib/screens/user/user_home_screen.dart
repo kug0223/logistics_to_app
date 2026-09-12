@@ -732,7 +732,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     '24시간 내 수락하지 않으면 자동 만료됩니다',
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 11,
+                      fontSize: 12,
                     ),
                   ),
                 ],
@@ -872,7 +872,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(width: 5 * s),
               Text('오늘의 근무',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: AppColors.infoDark,
                     letterSpacing: 0.5,
@@ -1007,7 +1007,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(width: 5 * s),
               Text('새로운 소식',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: AppColors.successDark,
                     letterSpacing: 0.5,
@@ -1169,7 +1169,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       SizedBox(width: 5 * s),
                       Text('공고 있음',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             color: AppColors.textHint,
                           )),
                     ],
@@ -1319,7 +1319,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         // 요일
                         Text(_dayLabel(day),
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 12,
                               color: dowColor,
                               fontWeight: FontWeight.w500,
                             )),
@@ -1381,7 +1381,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                               ? Text('$count개',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 12,
                                     fontWeight: FontWeight.w700,
                                     color: AppColors.infoDark,
                                   ))
@@ -1612,7 +1612,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         ),
                         child: Text(badgeText,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w700,
                               color: badgeFg,
                             )),
@@ -1822,7 +1822,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 child: Column(children: [
                   Text(_dayLabel(day),
                       style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: dayLabelColor,
                           fontWeight: FontWeight.w600)),
                   SizedBox(height: 4 * s),
@@ -1873,7 +1873,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       SizedBox(width: 4 * s),
       Text(label,
           style: TextStyle(
-              fontSize: 11,
+              fontSize: 12,
               color: AppColors.textHint,
               fontWeight: FontWeight.w600)),
     ]);
@@ -2195,7 +2195,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           Text(
                             '대신 지금 지원 가능한 다른 지역 일자리를 보여드릴게요.',
                             style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12,
                                 color: AppColors.textHint),
                           ),
                         ],
@@ -2563,7 +2563,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         Text(
                           reasonLabel,
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: AppColors.infoDark,
                           ),

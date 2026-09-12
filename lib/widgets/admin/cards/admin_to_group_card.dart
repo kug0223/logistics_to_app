@@ -814,7 +814,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     Text(
                       _weekdayLabel(slotDate),
                       style: const TextStyle(
-                          fontSize: 10, color: AppColors.grey500, height: 1.2),
+                          fontSize: 12, color: AppColors.grey500, height: 1.2),
                     ),
                     const SizedBox(height: 1),
                     Text(
@@ -830,7 +830,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   Text(
                     '${stats.confirmed}/${stats.required}',
                     style: const TextStyle(
-                        fontSize: 10,
+                        fontSize: 12,
                         color: AppColors.grey600,
                         fontWeight: FontWeight.w600,
                         height: 1.2),
@@ -847,7 +847,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       child: Text(
                         '+${stats.pending}대기',
                         style: const TextStyle(
-                            fontSize: 8,
+                            fontSize: 12,
                             color: AppColors.warning,
                             fontWeight: FontWeight.w800,
                             height: 1.2),
