@@ -49,25 +49,36 @@ extension BusinessFirestore on FirestoreService {
   }
 
   /// ID 목록으로 사업장 일괄 조회 — 병렬 doc.get (list 권한 불필요, 오프라인 캐시 활용)
-  Future<List<BusinessModel>> getBusinessesByIds(List<String> ids) async {
+  /// [AH-V2-01] 조회 실패를 빈 목록으로 바꾸지 않는 변형.
+  ///
+  /// 호출부가 "조회 실패"와 "사업장 0개"를 구분해야 할 때 사용한다.
+  /// 둘을 같은 값으로 돌려주면 실패가 정상 0으로 표시된다 (ERROR≠ZERO).
+  /// 개별 문서 파싱 실패는 기존대로 건너뛴다 — 한 건 손상이 전체를 막지 않는다.
+  Future<List<BusinessModel>> getBusinessesByIdsOrThrow(List<String> ids) async {
     if (ids.isEmpty) return [];
+    final uniqueIds = ids.toSet().toList();
+    final docs = await Future.wait(
+      uniqueIds.map((id) => _firestore.collection('businesses').doc(id).get()),
+    );
+    return docs
+        .where((d) => d.exists)
+        .map((d) {
+          try {
+            return BusinessModel.fromFirestore(d);
+          } catch (e) {
+            debugPrint('⚠️ BusinessModel 파싱 실패 [${d.id}]: $e');
+            return null;
+          }
+        })
+        .whereType<BusinessModel>()
+        .toList();
+  }
+
+  /// 실패 시 빈 목록을 반환하는 기존 계약.
+  /// 실패와 0개를 구분해야 하는 호출부는 [getBusinessesByIdsOrThrow]를 쓴다.
+  Future<List<BusinessModel>> getBusinessesByIds(List<String> ids) async {
     try {
-      final uniqueIds = ids.toSet().toList();
-      final docs = await Future.wait(
-        uniqueIds.map((id) => _firestore.collection('businesses').doc(id).get()),
-      );
-      return docs
-          .where((d) => d.exists)
-          .map((d) {
-            try {
-              return BusinessModel.fromFirestore(d);
-            } catch (e) {
-              debugPrint('⚠️ BusinessModel 파싱 실패 [${d.id}]: $e');
-              return null;
-            }
-          })
-          .whereType<BusinessModel>()
-          .toList();
+      return await getBusinessesByIdsOrThrow(ids);
     } catch (e) {
       debugPrint('❌ 사업장 일괄 조회 실패: $e');
       return [];

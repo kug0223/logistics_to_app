@@ -294,7 +294,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final ids = up.currentUser?.isSubAdmin == true
           ? [if (up.effectiveBusinessId != null) up.effectiveBusinessId!]
           : (up.currentUser?.managedBusinessIds ?? []);
-      final businesses = await _firestoreService.getBusinessesByIds(ids);
+      // [AH-V2-01] 실패를 빈 목록으로 받지 않는다.
+      //   []로 받으면 _hasApprovedBusiness=false + _businesses=[] 가 되어
+      //   사업장이 있는 관리자에게 '사업장을 등록하세요' 배너가 뜬다.
+      //   throw하면 아래 catch가 _hasApprovedBusiness를 null로 유지 → 배너 미표시.
+      final businesses = await _firestoreService.getBusinessesByIdsOrThrow(ids);
       if (mounted) {
         setState(() {
           _hasApprovedBusiness = businesses.any((b) => b.isApproved);
@@ -376,7 +380,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Future<void> _loadSummaryCounts() async {
     final myGeneration = ++_summaryRequestGeneration;
 
-    final businesses = await _getBusinesses();
+    // [AH-V2-01] _getBusinesses()가 throw할 수 있다 — unawaited 호출이므로
+    //   여기서 잡지 않으면 unhandled async error가 된다.
+    //   이 값은 화면에 렌더되지 않으므로 실패 시 로딩만 해제한다.
+    final List<BusinessModel> businesses;
+    try {
+      businesses = await _getBusinesses();
+    } catch (e) {
+      debugPrint('❌ 진행 공고 집계용 사업장 조회 실패: $e');
+      if (mounted && myGeneration == _summaryRequestGeneration) {
+        setState(() => _summaryLoading = false);
+      }
+      return;
+    }
     if (businesses.isEmpty || !mounted) {
       if (mounted && myGeneration == _summaryRequestGeneration) {
         setState(() => _summaryLoading = false);
@@ -452,6 +468,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (!mounted) return;
     setState(() => _attendanceLoading = true);
     try {
+      // [AH-V2-01] 여기 도달했다는 것은 사업장 조회가 성공했다는 뜻이다.
+      //   실패는 _getBusinesses()가 throw → 아래 catch에서 ERROR 상태로 간다.
+      //   따라서 이 isEmpty는 "접근 가능한 사업장이 실제로 0개"만 의미한다
+      //   (SubAdmin 권한 0개 포함) → 정상 0 표시.
       final businesses = await _getBusinesses();
       if (businesses.isEmpty) {
         if (mounted) {
@@ -534,6 +554,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return sr.days.first;
   }
 
+  /// 관리 사업장 목록 (최초 1회 조회 후 캐시).
+  ///
+  /// [AH-V2-01] 조회 실패를 빈 목록으로 변환하지 않는다 — throw한다.
+  ///   실패를 []로 바꾸면 호출부가 "사업장 0개"와 구분할 수 없고,
+  ///   오늘 출근이 실패를 '0명'으로, 상태 배너가 '사업장을 등록하세요'로
+  ///   표시하게 된다. 둘 다 관리자에게 거짓 운영 신호다.
+  /// 호출부 계약:
+  ///   · 데이터 로더 — 자체 try/catch에서 error 상태로 전환 (수치 표시 금지)
+  ///   · 네비게이션 — _safeNavigate가 잡아 오류 토스트 표시
   Future<List<BusinessModel>> _getBusinesses() async {
     if (_businesses.isNotEmpty) return _businesses;
     final up = context.read<UserProvider>();
@@ -541,14 +570,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final ids = up.currentUser?.isSubAdmin == true
         ? [if (up.effectiveBusinessId != null) up.effectiveBusinessId!]
         : (up.currentUser?.managedBusinessIds ?? []);
-    try {
-      final businesses = await _firestoreService.getBusinessesByIds(ids);
-      _businesses = businesses; // 캐시만 갱신 — UI에 직접 영향 없으므로 setState 불필요
-      return businesses;
-    } catch (e) {
-      debugPrint('❌ _getBusinesses 조회 실패: $e');
-      return []; // 빈 리스트 반환 → 호출부에서 loading=false 처리
-    }
+    final businesses = await _firestoreService.getBusinessesByIdsOrThrow(ids);
+    _businesses = businesses; // 캐시만 갱신 — UI에 직접 영향 없으므로 setState 불필요
+    return businesses;
   }
 
   /// STATE P/A/B/C 체크 — 모든 기능 진입 전 공통 게이트
