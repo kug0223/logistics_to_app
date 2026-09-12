@@ -38,6 +38,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/attendance_badge_helper.dart';
 import '../../../utils/attendance_status_helper.dart';
+import '../../../utils/attendance_review_helper.dart';
 import '../../../utils/work_detail_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
@@ -779,10 +780,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   /// 탭별 근로자 분류
-  /// 0=검토(이슈·미출근), 1=정상, 2=확인(adminConfirmed), 3=완료(급여확정·노쇼)
+  /// 0=검토(지금 처리 필요), 1=정상, 2=확인(adminConfirmed), 3=완료(급여확정·노쇼·결근)
+  ///
+  /// [AH-V2-04A] 검토 탭 = AttendanceReviewHelper.requiresReviewNow.
+  ///   관리자 Home의 `근태 확인`과 동일한 canonical 판정을 쓴다.
+  ///   이전 조건은 근무 시작 전 인원까지 '미출근'으로 검토 탭에 넣어,
+  ///   아직 출근할 시간도 안 된 사람에게 노쇼 칩이 열려 있었다.
+  ///   결근(absent)은 시스템 확정 결과이므로 검토가 아니라 완료 탭에 둔다.
   List<ApplicationModel> _workersByTab(int tabIndex) {
-    const reviewStatuses = {'late', 'missed_checkout', 'early_leave'};
     const doneUiStatuses = {'transferred', 'final_confirmed', 'wage_confirmed', 'noshow'};
+    final now = DateTime.now();
     return _confirmedWorkers.where((app) {
       final s = _getAttendanceStatus(app)['status'] as String;
       final attendance = _attendanceMap[app.id];
@@ -790,11 +797,19 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                      attendance?.wageStatus == AttendanceModel.wageCalculated ||
                      attendance?.wageStatus == AttendanceModel.wageConfirmed ||
                      attendance?.wageStatus == AttendanceModel.wageTransferred ||
-                     attendance?.status == AttendanceModel.statusNoShow;
+                     attendance?.status == AttendanceModel.statusNoShow ||
+                     attendance?.status == AttendanceModel.statusAbsent;
       final isAdminConfirmed = attendance?.adminConfirmed == true;
+      final needsReview = AttendanceReviewHelper.requiresReviewNow(
+        now: now,
+        workDate: widget.date,
+        scheduledStart: WorkDetailHelper.effectiveStart(app, _workDetailTimeMap),
+        scheduledEnd:   WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap),
+        attendance: attendance,
+      );
       switch (tabIndex) {
-        case 0: return (reviewStatuses.contains(s) || s == 'pending') && !isDone && !isAdminConfirmed;
-        case 1: return !reviewStatuses.contains(s) && s != 'pending' && !isDone && !isAdminConfirmed;
+        case 0: return needsReview;
+        case 1: return !needsReview && !isDone && !isAdminConfirmed;
         case 2: return isAdminConfirmed && !isDone;
         case 3: return isDone;
         default: return true;

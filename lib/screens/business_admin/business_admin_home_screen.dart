@@ -17,6 +17,7 @@ import '../common/tour_screen.dart';
 // Services
 import '../../services/firestore_service.dart';
 import '../../utils/attendance_list_pdf.dart';
+import '../../utils/attendance_review_helper.dart';
 
 // Screens
 import '../common/settings_screen.dart';
@@ -511,25 +512,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       // 출근: checkInAt != null
       final checkedIn = allAttendance.where((a) => a.hasCheckedIn).length;
 
-      // 확인 필요 (1): attendance 기반 — NO_SHOW / absent
-      var needsAttention = allAttendance
-          .where((a) => a.isNoShow || a.isAbsent)
-          .length;
-
-      // 확인 필요 (2): attendance 없음 + 출근 예정 시간 경과 [Case B]
+      // [AH-V2-04A] 근태 확인 — canonical actionability 판정.
+      //   AttendanceReviewHelper가 Home과 AttendanceStatusDialog 검토 탭의
+      //   단일 기준이다. 처리를 끝낸 건(NO_SHOW·결근·정산 진입·관리자 확인)은
+      //   빠지므로, 처리하면 이 숫자가 실제로 줄어든다.
+      //
+      //   모수는 오늘 확정 로스터 — dialog와 동일하며, 지원서 단위 Set이라
+      //   근태 문서가 중복돼도 한 사람은 1로 센다 ('N명' 단위 보장).
+      final reviewAppIds = <String>{};
       for (final app in allConfirmed) {
-        if (attMap.containsKey(app.id)) continue; // attendance 있음 → (1)에서 처리
-        // startTime: "HH:mm" 또는 "HH:mm:ss" (레거시) — 앞 5자리만 사용
-        final raw = app.startTime;
-        final timeStr = raw.length >= 5 ? raw.substring(0, 5) : raw;
-        final parts = timeStr.split(':');
-        if (parts.length < 2) continue;
-        final h = int.tryParse(parts[0]);
-        final m = int.tryParse(parts[1]);
-        if (h == null || m == null) continue;
-        final scheduledStart = DateTime(today.year, today.month, today.day, h, m);
-        if (!nowLocal.isBefore(scheduledStart)) needsAttention++; // now >= scheduledStart
+        if (AttendanceReviewHelper.requiresReviewNow(
+          now: nowLocal,
+          workDate: today,
+          scheduledStart: app.startTime,
+          scheduledEnd: app.endTime,
+          attendance: attMap[app.id],
+        )) {
+          reviewAppIds.add(app.id);
+        }
       }
+      final needsAttention = reviewAppIds.length;
 
       if (!mounted) return;
       setState(() {
@@ -1581,7 +1583,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       child: Row(children: [
         _opsMetric(s, label: '출근', value: _todayCheckedIn!, unit: '명'),
         _opsMetricDivider(s),
-        _opsMetric(s, label: '확인 필요', value: needsAttention, unit: '명',
+        _opsMetric(s, label: '근태 확인', value: needsAttention, unit: '명',
           valueColor: needsAttention > 0 ? AppColors.warning : null,
           onTap: onAttentionTap),
       ]),
