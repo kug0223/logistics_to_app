@@ -48,6 +48,7 @@ import '../../models/ui/staffing_readiness_model.dart';
 import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
 import 'dialogs/day_applicants_dialog.dart'; // [PHASE-2D] 인력 부족 → 지원자 관리 다이얼로그
 import 'dialogs/attendance_status_dialog.dart'; // [PHASE-R5.2] 확인 필요 → 출근 현황 리뷰
+import 'dialogs/resign_request_management_dialog.dart'; // [AH-V2-02B] 퇴사 요청 → 기존 처리 UI
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -1971,6 +1972,50 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (available && count == 0) return; // valid 0 → 숨김 (ZERO_COUNT_ACTION_VISIBILITY = HIDE)
       result.add((icon: icon, label: label, badge: badge, countStr: countStr,
           color: color, count: count, available: available, onTap: onTap));
+    }
+
+    // 0. 퇴사 요청 — canManageWorkers
+    // [AH-V2-02B] 다른 항목과 달리 방치하면 D+3에 시스템이 자동 승인한다.
+    //   관리자가 결정하지 않은 것과 못 본 것이 같은 결과를 내므로 최상단에 둔다.
+    //   기존 발견 경로는 알림뿐이었고, 경고(D+1·D+2)도 알림이라 함께 사라졌다.
+    if (!isSub || up.can((p) => p.canManageWorkers)) {
+      final resign = cs?.actions.resignRequest;
+      final soon = resign?.soonCount ?? 0;
+      add(
+        icon: Icons.logout_outlined, label: '퇴사 요청',
+        color: AppColors.error,
+        badge: soon > 0 ? '내일 자동 승인 $soon건' : null,
+        count: resign?.count ?? 0, countStr: '${resign?.count ?? 0}건',
+        available: resign?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!up.can((p) => p.canManageWorkers)) {
+            ToastHelper.showWarning('근로자 관리 권한이 없습니다.'); return;
+          }
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.actions.resignRequest;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
+          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          final bizId = await _pickBizFromSummary(
+            context: context, sheetTitle: '퇴사 요청', totalCount: sec.count,
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap,
+          );
+          if (bizId == null || !context.mounted) return;
+          // 기존 처리 UI 재사용 — 이 다이얼로그는 businessId만 받아
+          // PENDING 목록을 자체 조회한다 (단건 전용 아님).
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => ResignRequestManagementDialog(
+              businessId: bizId,
+              onChanged: () {},
+            ),
+          );
+          if (mounted) unawaited(_loadCanonicalSummary());
+        })),
+      );
     }
 
     // 1. 지원 검토 — canManageTo

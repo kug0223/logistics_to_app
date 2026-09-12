@@ -39,6 +39,46 @@ class AdminHomeSimpleSection {
   bool get hasData => available && count > 0;
 }
 
+/// 퇴사 요청 섹션 — SimpleSection + 자동 승인 임박 건수.
+///
+/// [AH-V2-02B] 다른 task와 달리 방치하면 D+3에 시스템이 자동 승인한다.
+/// 단순 건수만으로는 기한을 알 수 없어 [soonCount]를 함께 받는다.
+class AdminHomeResignRequestSection {
+  final bool available;
+  final int count;
+
+  /// 다음 자정 스케줄러에서 자동 승인될 건수 (서버가 스케줄러와 동일 기준으로 계산)
+  final int soonCount;
+
+  final List<AdminHomeSimpleBizCount> byBusiness;
+
+  const AdminHomeResignRequestSection({
+    required this.available,
+    required this.count,
+    required this.soonCount,
+    required this.byBusiness,
+  });
+
+  factory AdminHomeResignRequestSection.fromMap(Map<String, dynamic> map) {
+    return AdminHomeResignRequestSection(
+      available: (map['available'] as bool?) ?? false,
+      count: (map['count'] as num?)?.toInt() ?? 0,
+      soonCount: (map['soonCount'] as num?)?.toInt() ?? 0,
+      byBusiness: ((map['byBusiness'] as List?) ?? [])
+          .whereType<Map>()
+          .map((e) => AdminHomeSimpleBizCount.fromMap(Map<String, dynamic>.from(e)))
+          .toList(),
+    );
+  }
+
+  /// 권한 없음 (available:false, count:0)
+  static const AdminHomeResignRequestSection noAccess =
+      AdminHomeResignRequestSection(
+          available: false, count: 0, soonCount: 0, byBusiness: []);
+
+  bool get hasData => available && count > 0;
+}
+
 class AdminHomeSimpleBizCount {
   final String businessId;
   final int count;
@@ -249,6 +289,9 @@ class AdminHomeActionsData {
   /// 중간정산 요청 (PENDING)
   final AdminHomeSimpleSection settlementRequest;
 
+  /// 퇴사 요청 (resignStatus == PENDING) — D+3 자동 승인 임박 건수 포함
+  final AdminHomeResignRequestSection resignRequest;
+
   const AdminHomeActionsData({
     required this.approval,
     required this.unsentContract,
@@ -256,6 +299,7 @@ class AdminHomeActionsData {
     required this.unclosed,
     required this.wageChangeRequest,
     required this.settlementRequest,
+    required this.resignRequest,
   });
 
   factory AdminHomeActionsData.fromMap(Map<String, dynamic> map) {
@@ -278,6 +322,9 @@ class AdminHomeActionsData {
       settlementRequest: AdminHomeSimpleSection.fromMap(
         Map<String, dynamic>.from((map['settlementRequest'] as Map?) ?? {}),
       ),
+      resignRequest: AdminHomeResignRequestSection.fromMap(
+        Map<String, dynamic>.from((map['resignRequest'] as Map?) ?? {}),
+      ),
     );
   }
 
@@ -288,7 +335,8 @@ class AdminHomeActionsData {
       unpaidWage.hasData ||
       unclosed.hasData ||
       wageChangeRequest.hasData ||
-      settlementRequest.hasData;
+      settlementRequest.hasData ||
+      resignRequest.hasData;
 
   /// 전체 액션 건수 합산 (배지용)
   int get totalActionCount =>
@@ -297,7 +345,8 @@ class AdminHomeActionsData {
       unpaidWage.count +
       unclosed.count +
       wageChangeRequest.count +
-      settlementRequest.count;
+      settlementRequest.count +
+      resignRequest.count;
 }
 
 class AdminHomeUpcomingData {

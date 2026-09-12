@@ -315,8 +315,8 @@ void main() {
   });
 
   group('AH-V2-02A 범위 제한', () {
-    test('퇴사·스케줄 변경 row를 만들지 않았다', () {
-      expect(rows.contains('퇴사 요청'), isFalse);
+    test('스케줄 변경·계약해지 row는 아직 없다', () {
+      // 퇴사 요청은 AH-V2-02B에서 추가됐다 — 이 Phase의 범위 경계가 옮겨졌다.
       expect(rows.contains('스케줄 변경'), isFalse);
       expect(rows.contains('계약해지'), isFalse);
     });

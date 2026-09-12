@@ -31309,6 +31309,49 @@ async function srvHomeSettlementRequest(bizId: string): Promise<{count: number}>
   return {count: agg.data().count};
 }
 
+// ─── Section 헬퍼: Resign Request (퇴사 요청) ────────────────────────────────
+
+/**
+ * 퇴사 요청 대기 건수 + 자동 승인 임박 건수.
+ *
+ * [AH-V2-02B] 다른 Home task와 달리 방치하면 시스템이 대신 결정한다.
+ * D+3 자동 승인(processContractRenewalChecks)이 쓰는 것과 동일한 기준을
+ * 그대로 쓴다 — resignRequestedAt, KST 자정, 달력 3일.
+ * 두 기준이 어긋나면 Home이 "아직 여유 있음"으로 보이는데 실제로는
+ * 오늘 밤 자동 승인되는 일이 생긴다.
+ *
+ * soonCount = 다음 자정 스케줄러에서 자동 승인될 건
+ *   = resignRequestedAt <= (오늘 KST 자정 − 2일)
+ *   (스케줄러는 −3일 경계를 쓰므로, 내일 자정에는 −2일 이전 건이 대상이 된다)
+ *
+ * @param {string} bizId 대상 사업장
+ * @param {Date} todayKSTMidnight 오늘 KST 자정의 UTC instant.
+ *   srvHomeKSTMidnight()가 반환하는 값이며, 스케줄러의
+ *   `todayKST.setHours(0,0,0,0) - KST_OFFSET_MS`와 동일한 시점이다.
+ * @return {Promise<{count: number, soonCount: number}>} 대기 건수와 임박 건수
+ */
+async function srvHomeResignRequest(
+  bizId: string,
+  todayKSTMidnight: Date
+): Promise<{count: number; soonCount: number}> {
+  const base = db.collection("applications")
+    .where("businessId", "==", bizId)
+    .where("resignStatus", "==", "PENDING");
+
+  // 스케줄러 경계(−3일)보다 하루 앞선 −2일 → "다음 자정에 자동 승인될 건"
+  // todayKSTMidnight는 이미 UTC instant이므로 offset을 다시 빼지 않는다.
+  const soonBoundary = admin.firestore.Timestamp.fromDate(
+    new Date(todayKSTMidnight.getTime() - 2 * 24 * 60 * 60 * 1000)
+  );
+
+  // count() aggregation — 문서 fetch 없음
+  const [allAgg, soonAgg] = await Promise.all([
+    base.count().get(),
+    base.where("resignRequestedAt", "<=", soonBoundary).count().get(),
+  ]);
+  return {count: allAgg.data().count, soonCount: soonAgg.data().count};
+}
+
 // ─── Section 헬퍼: Expiring Contract (D+15) ──────────────────────────────────
 
 async function srvHomeExpiringContract(
@@ -31432,6 +31475,7 @@ export const callableGetAdminHomeSummary = onCall(
           unclosed:          {...emptySimple, oldestDate: null as string | null},
           wageChangeRequest: emptySimple,
           settlementRequest: emptySimple,
+          resignRequest:     {...emptySimple, soonCount: 0},
         },
         upcoming: {expiringContract: emptySimple},
         generatedAt: Date.now(),
@@ -31465,6 +31509,7 @@ export const callableGetAdminHomeSummary = onCall(
       unclosed?:          {count: number; oldestDate: string | null};
       wageChangeRequest?: {count: number};
       settlementRequest?: {count: number};
+      resignRequest?:     {count: number; soonCount: number};
       expiringContract?:  {count: number};
     }
 
@@ -31475,7 +31520,10 @@ export const callableGetAdminHomeSummary = onCall(
         const canWage  = !isSubAdmin || perms["canManageWage"]     === true;
         const canContr = !isSubAdmin || perms["canManageContract"] === true;
 
-        const [appR, unsentR, unpaidR, unclosedR, wageChgR, settlR, expiringR] =
+        // [AH-V2-02B] 퇴사 요청은 canManageWorkers — 승인 callable과 동일 권한
+        const canWork  = !isSubAdmin || perms["canManageWorkers"] === true;
+
+        const [appR, unsentR, unpaidR, unclosedR, wageChgR, settlR, resignR, expiringR] =
           await Promise.allSettled([
             canTo    ? srvHomeApproval(bizId, todayMs)            : Promise.resolve<undefined>(undefined),
             canContr ? srvHomeUnsentContract(bizId)               : Promise.resolve<undefined>(undefined),
@@ -31483,6 +31531,7 @@ export const callableGetAdminHomeSummary = onCall(
             canWage  ? srvHomeUnclosed(bizId, todayKSTMidnight)   : Promise.resolve<undefined>(undefined),
             canWage  ? srvHomeWageChangeRequest(bizId)            : Promise.resolve<undefined>(undefined),
             canWage  ? srvHomeSettlementRequest(bizId)            : Promise.resolve<undefined>(undefined),
+            canWork  ? srvHomeResignRequest(bizId, todayKSTMidnight) : Promise.resolve<undefined>(undefined),
             canContr ? srvHomeExpiringContract(bizId, todayMs)    : Promise.resolve<undefined>(undefined),
           ]);
 
@@ -31492,6 +31541,7 @@ export const callableGetAdminHomeSummary = onCall(
         if (unclosedR.status === "rejected") console.error(`[adminHome] ${bizId} unclosed 실패:`, unclosedR.reason);
         if (wageChgR.status  === "rejected") console.error(`[adminHome] ${bizId} wageChangeRequest 실패:`, wageChgR.reason);
         if (settlR.status    === "rejected") console.error(`[adminHome] ${bizId} settlementRequest 실패:`, settlR.reason);
+        if (resignR.status   === "rejected") console.error(`[adminHome] ${bizId} resignRequest 실패:`, resignR.reason);
         if (expiringR.status === "rejected") console.error(`[adminHome] ${bizId} expiringContract 실패:`, expiringR.reason);
 
         return {
@@ -31502,6 +31552,7 @@ export const callableGetAdminHomeSummary = onCall(
           unclosed:          unclosedR.status === "fulfilled" ? unclosedR.value : undefined,
           wageChangeRequest: wageChgR.status  === "fulfilled" ? wageChgR.value  : undefined,
           settlementRequest: settlR.status    === "fulfilled" ? settlR.value    : undefined,
+          resignRequest:     resignR.status   === "fulfilled" ? resignR.value   : undefined,
           expiringContract:  expiringR.status === "fulfilled" ? expiringR.value : undefined,
         };
       })
@@ -31596,6 +31647,14 @@ export const callableGetAdminHomeSummary = onCall(
       }
     }
 
+    // [AH-V2-02B] 자동 승인 임박 건수 합산.
+    // 실패 사업장은 값이 없어 빠지며, 그 사실은 available:false가 전달한다.
+    let resignSoonTotal = 0;
+    for (const r of bizResults) {
+      if (!hasBizPerm(r.bizId, "canManageWorkers")) continue;
+      resignSoonTotal += r.resignRequest?.soonCount ?? 0;
+    }
+
     // 최종 결과 조립
     return {
       scope: {businessCount: businessIds.length},
@@ -31622,6 +31681,8 @@ export const callableGetAdminHomeSummary = onCall(
         },
         wageChangeRequest: aggSimple("canManageWage",    (r) => r.wageChangeRequest?.count),
         settlementRequest: aggSimple("canManageWage",    (r) => r.settlementRequest?.count),
+        resignRequest: {...aggSimple("canManageWorkers",
+          (r) => r.resignRequest?.count), soonCount: resignSoonTotal},
       },
       upcoming: {
         expiringContract: aggSimple("canManageContract", (r) => r.expiringContract?.count),
