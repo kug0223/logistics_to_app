@@ -32120,7 +32120,7 @@ export const callableGetStaffingReadiness = onCall(
     }
 
     if (businessIds.length === 0) {
-      return {available: true, days: []};
+      return {available: true, partial: false, failedBusinessCount: 0, days: []};
     }
 
     // ── 2. SubAdmin 권한 맵 (canManageTo || canManageWorkers 필요) ──────────
@@ -32139,7 +32139,9 @@ export const callableGetStaffingReadiness = onCall(
         const p = permMap[bizId] ?? {};
         return p["canManageTo"] === true || p["canManageWorkers"] === true;
       });
-      if (businessIds.length === 0) return {available: true, days: []};
+      if (businessIds.length === 0) {
+        return {available: true, partial: false, failedBusinessCount: 0, days: []};
+      }
     }
 
     // ── 3. D0~D+7 날짜 배열 (KST) ─────────────────────────────────────────
@@ -32447,18 +32449,30 @@ export const callableGetStaffingReadiness = onCall(
       shortageCount: 0, pendingCount: null, byBusiness: [],
     }));
 
-    let overallAvailable        = true;
+    // [AH-V2-03] 사업장 단위 부분 실패를 전체 실패로 만들지 않는다.
+    //   실패한 사업장의 데이터는 합산에서 제외하고(불완전한 값을 정상 합계에
+    //   섞지 않는다), 몇 개가 빠졌는지를 failedBusinessCount로 전달한다.
+    //   available=false는 "쓸 수 있는 결과가 하나도 없다"만 의미한다.
+    let okBusinessCount     = 0;
+    let failedBusinessCount = 0;
     let overallPendingAvailable = true;
 
     for (const r of bizResults) {
       if (r.status === "rejected") {
         console.error("[staffingReadiness] 사업장 처리 실패:", r.reason);
-        overallAvailable        = false;
+        failedBusinessCount++;
         overallPendingAvailable = false; // rejected 사업장 pending 불명
         continue;
       }
       const {bizId, success, pendingAvailable, days} = r.value;
-      if (!success)         overallAvailable        = false;
+      if (!success) {
+        // TO 쿼리 실패 → 이 사업장 집계는 불완전하다. 합산에서 제외.
+        console.error(`[staffingReadiness] ${bizId} staffing 집계 불완전 — 합산 제외`);
+        failedBusinessCount++;
+        overallPendingAvailable = false;
+        continue;
+      }
+      okBusinessCount++;
       if (!pendingAvailable) overallPendingAvailable = false;
 
       const bizName = bizNameMap[bizId] ?? bizId;
@@ -32487,7 +32501,14 @@ export const callableGetStaffingReadiness = onCall(
       for (let i = 0; i < N_DAYS; i++) aggDays[i].pendingCount = aggPending[i];
     }
 
-    return {available: overallAvailable, days: aggDays};
+    // [AH-V2-03] available: 쓸 수 있는 결과가 하나라도 있는가
+    //   partial: 일부 사업장이 빠진 부분합인가 (숫자를 전체 합계로 오해하지 않도록)
+    return {
+      available: okBusinessCount > 0,
+      partial: okBusinessCount > 0 && failedBusinessCount > 0,
+      failedBusinessCount,
+      days: aggDays,
+    };
   }
 );
 

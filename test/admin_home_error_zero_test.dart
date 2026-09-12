@@ -297,8 +297,12 @@ void main() {
       }
     });
 
-    test('empty copy를 바꾸지 않았다', () {
-      expect(homeCode.contains('향후 7일 인원 충원 완료'), isTrue);
+    // [AH-V2-03 갱신] 향후 7일 empty copy는 "대상 없음"/"충원 완료" 두 상태로
+    // 분리됐다. AH-V2-01이 건드리지 않았다는 사실은 그대로이며,
+    // 여기서는 분리된 새 계약을 고정한다.
+    test('empty copy는 AH-V2-03 두 상태 계약을 따른다', () {
+      expect(homeCode.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      expect(homeCode.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
       expect(homeCode.contains('처리할 업무가 없어요'), isTrue);
     });
 

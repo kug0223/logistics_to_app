@@ -93,8 +93,20 @@ class StaffingDayData {
 
 /// callableGetStaffingReadiness 최상위 응답 모델
 class StaffingReadinessModel {
-  /// 쿼리 성공 여부 — false면 days 데이터가 불완전할 수 있음
+  /// 쓸 수 있는 결과가 하나라도 있는지.
+  ///
+  /// [AH-V2-03] false = 조회 대상 사업장이 **전부** 실패했다는 뜻이다.
+  /// 일부만 실패한 경우는 true + [partial]로 표현된다.
   final bool available;
+
+  /// 일부 사업장이 빠진 부분합인지.
+  ///
+  /// true면 days의 숫자는 성공한 사업장만의 합계다.
+  /// 전체 합계로 오해하지 않도록 UI가 이 사실을 표시해야 한다.
+  final bool partial;
+
+  /// 집계에서 빠진 사업장 수 (실패 건수)
+  final int failedBusinessCount;
 
   /// D0~D+7 날짜별 인력 현황 (8일)
   final List<StaffingDayData> days;
@@ -102,10 +114,23 @@ class StaffingReadinessModel {
   const StaffingReadinessModel({
     required this.available,
     required this.days,
+    this.partial = false,
+    this.failedBusinessCount = 0,
   });
 
   factory StaffingReadinessModel.empty() =>
       const StaffingReadinessModel(available: false, days: []);
+
+  /// D0(오늘)에 인력 운영 대상이 존재하는지.
+  ///
+  /// [AH-V2-03] 필요 인원이 0이면 그 날 모집·근무 대상 자체가 없다는 뜻이다.
+  /// "대상 없음"과 "대상은 있는데 0명 부족"은 다른 상태다.
+  bool get hasTodayTarget =>
+      days.isNotEmpty && days.first.requiredCount > 0;
+
+  /// D+1~D+7에 인력 운영 대상이 존재하는지.
+  bool get hasFutureTarget =>
+      days.skip(1).any((d) => d.requiredCount > 0);
 
   factory StaffingReadinessModel.fromCallable(HttpsCallableResult<dynamic> result) {
     final data = result.data;
@@ -119,6 +144,11 @@ class StaffingReadinessModel {
         .map(StaffingDayData.fromMap)
         .toList();
 
-    return StaffingReadinessModel(available: available, days: days);
+    return StaffingReadinessModel(
+      available: available,
+      partial: (map['partial'] as bool?) ?? false,
+      failedBusinessCount: (map['failedBusinessCount'] as num?)?.toInt() ?? 0,
+      days: days,
+    );
   }
 }

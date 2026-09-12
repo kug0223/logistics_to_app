@@ -1464,7 +1464,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 정상: day가 null이면 오늘 staffing 없음 → 0/0/0 (정상 상태)
+    // [AH-V2-03] 오늘 인력 운영 대상 자체가 없는 경우 —
+    //   0/0/0 수치만 보여주면 "운영 중인데 필요 인원이 0"처럼 읽힌다.
+    //   대상 없음은 수치가 아니라 상태로 말한다.
+    if (!_staffingReadiness!.hasTodayTarget) {
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 16 * s),
+        child: Row(children: [
+          Icon(Icons.event_available_outlined,
+              size: 16 * s, color: AppColors.grey300),
+          SizedBox(width: 8 * s),
+          Text('오늘 예정된 인력 운영이 없어요',
+              style: TextStyle(fontSize: 13, color: AppColors.grey400)),
+        ]),
+      );
+    }
+
     final day = _todayStaffingDay;
     final required  = day?.requiredCount  ?? 0;
     final confirmed = day?.confirmedCount ?? 0;
@@ -1475,19 +1490,58 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final canManageTo = !isSub || up.can((p) => p.canManageTo);
     final onShortageDay = (shortage > 0 && canManageTo) ? day : null;
 
+    return Column(children: [
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
+        child: Row(children: [
+          _opsMetric(s, label: '필요',  value: required,  unit: '명'),
+          _opsMetricDivider(s),
+          _opsMetric(s, label: '확정',  value: confirmed, unit: '명'),
+          _opsMetricDivider(s),
+          _opsMetric(s, label: '부족',  value: shortage,  unit: '명',
+            valueColor: shortage > 0 ? AppColors.error : null,
+            onTap: onShortageDay != null
+                ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
+                      context, () => _navigateToDayApplicantsForDate(context, onShortageDay))))
+                : null),
+        ]),
+      ),
+      // [AH-V2-03] 부분합 고지 — 숫자를 전체 합계로 오해하지 않도록
+      _partialStaffingNotice(s),
+    ]);
+  }
+
+  /// [AH-V2-03] 일부 사업장 조회 실패 고지.
+  ///
+  /// 정상 사업장 데이터는 그대로 보여주되, 표시된 숫자가 전체 합계가
+  /// 아니라는 사실을 숨기지 않는다. 실패를 0으로 합산하지 않으므로
+  /// 수치 자체는 "성공한 사업장의 정확한 합"이다.
+  Widget _partialStaffingNotice(double s) {
+    final sr = _staffingReadiness;
+    if (sr == null || !sr.partial) return const SizedBox.shrink();
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 10 * s),
       child: Row(children: [
-        _opsMetric(s, label: '필요',  value: required,  unit: '명'),
-        _opsMetricDivider(s),
-        _opsMetric(s, label: '확정',  value: confirmed, unit: '명'),
-        _opsMetricDivider(s),
-        _opsMetric(s, label: '부족',  value: shortage,  unit: '명',
-          valueColor: shortage > 0 ? AppColors.error : null,
-          onTap: onShortageDay != null
-              ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
-                    context, () => _navigateToDayApplicantsForDate(context, onShortageDay))))
-              : null),
+        Icon(Icons.info_outline, size: 13 * s, color: AppColors.warning),
+        SizedBox(width: 6 * s),
+        Expanded(
+          child: Text(
+            '사업장 ${sr.failedBusinessCount}곳의 정보를 불러오지 못해 '
+            '나머지 사업장 기준으로 표시했어요',
+            style: TextStyle(fontSize: 12, color: AppColors.warning),
+          ),
+        ),
+        InkWell(
+          onTap: () => unawaited(_loadStaffingReadiness()),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 6 * s, vertical: 2 * s),
+            child: Text('재시도',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.warning)),
+          ),
+        ),
       ]),
     );
   }
@@ -1647,8 +1701,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         .where((d) => d.shortageCount > 0)
         .toList();
 
-    // 충원 완료 — 빈 상태 (green card 없음)
+    // 부족 없음 — 두 가지 의미를 구분한다 [AH-V2-03]
+    //   운영 대상 자체가 없음  vs  대상은 있고 전부 충원됨
     if (futureDays.isEmpty) {
+      final hasTarget = _staffingReadiness!.hasFutureTarget;
       return Column(children: [
         _sectionHeader(context, s, '다가오는 인력 부족'),
         SizedBox(height: 8 * s),
@@ -1659,13 +1715,27 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
             decoration: BoxDecoration(
               color: Colors.white, borderRadius: BorderRadius.circular(16)),
-            child: Row(children: [
-              Icon(Icons.check_circle_outline,
-                  size: 16 * s, color: AppColors.grey300),
-              SizedBox(width: 8 * s),
-              Text('향후 7일 인원 충원 완료',
-                  style:
-                      TextStyle(fontSize: 13, color: AppColors.grey400)),
+            child: Column(children: [
+              Row(children: [
+                Icon(
+                    hasTarget
+                        ? Icons.check_circle_outline
+                        : Icons.event_available_outlined,
+                    size: 16 * s, color: AppColors.grey300),
+                SizedBox(width: 8 * s),
+                Expanded(
+                  child: Text(
+                    hasTarget
+                        ? '향후 7일 인원이 모두 충원됐어요'
+                        : '향후 7일 예정된 인력 운영이 없어요',
+                    style: TextStyle(fontSize: 13, color: AppColors.grey400),
+                  ),
+                ),
+              ]),
+              if (_staffingReadiness!.partial) ...[
+                SizedBox(height: 8 * s),
+                _partialStaffingNotice(s),
+              ],
             ]),
           ),
         ),
@@ -1691,13 +1761,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             ],
           ),
           child: Column(
-            children: futureDays.asMap().entries.map((e) =>
-              _buildFutureShortageRow(
-                context, s, theme, up, e.value,
-                isFirst: e.key == 0,
-                isLast: e.key == futureDays.length - 1,
+            children: [
+              ...futureDays.asMap().entries.map((e) =>
+                _buildFutureShortageRow(
+                  context, s, theme, up, e.value,
+                  isFirst: e.key == 0,
+                  isLast: e.key == futureDays.length - 1,
+                ),
               ),
-            ).toList(),
+              // [AH-V2-03] 부분합 고지 — 빠진 사업장의 부족이 누락됐을 수 있다
+              _partialStaffingNotice(s),
+            ],
           ),
         ),
       ),
