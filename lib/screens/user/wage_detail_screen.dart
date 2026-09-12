@@ -142,7 +142,7 @@ class WageDetailScreen extends StatelessWidget {
         title: Text(
           '${d.month}월 급여 상세',
           style: TextStyle(
-            fontSize: 20 * s,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             color: AppColors.textPrimary,
           ),
@@ -179,7 +179,7 @@ class WageDetailScreen extends StatelessWidget {
                   Text(
                     dateStr,
                     style: TextStyle(
-                      fontSize: 22 * s,
+                      fontSize: 22,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
                       letterSpacing: -0.3,
@@ -191,7 +191,7 @@ class WageDetailScreen extends StatelessWidget {
                         (app.selectedWorkType.isNotEmpty
                             ? ' · ${app.selectedWorkType}'
                             : ''),
-                    style: AppTextStyles.businessName(s: s),
+                    style: AppTextStyles.businessName(),
                   ),
                 ],
               ),
@@ -318,7 +318,7 @@ class WageDetailScreen extends StatelessWidget {
                           Text(
                             '통상시급 ${FormatHelper.formatWage(standardHourly)}',
                             style: TextStyle(
-                              fontSize: 11 * s,
+                              fontSize: 11,
                               fontWeight: FontWeight.w500,
                               color: AppColors.textSecondary,
                             ),
@@ -340,7 +340,7 @@ class WageDetailScreen extends StatelessWidget {
                   children: [
                     Text(
                       '현재 상태',
-                      style: AppTextStyles.meta(s: s),
+                      style: AppTextStyles.meta(),
                     ),
                     const Spacer(),
                     Container(
@@ -353,7 +353,7 @@ class WageDetailScreen extends StatelessWidget {
                       child: Text(
                         statusInfo.label,
                         style: AppTextStyles.statusBadge(
-                            s: s, color: statusInfo.color),
+                            color: statusInfo.color),
                       ),
                     ),
                   ],
@@ -560,7 +560,7 @@ class WageDetailScreen extends StatelessWidget {
                 Text(
                   title,
                   // textSecondary: textTertiary 대비 한 단계 진하게 — 섹션 제목 가독성 개선
-                  style: AppTextStyles.caption(s: s, color: AppColors.textSecondary),
+                  style: AppTextStyles.caption(color: AppColors.textSecondary),
                 ),
                 const Spacer(),
                 trailing,
@@ -569,7 +569,7 @@ class WageDetailScreen extends StatelessWidget {
           else
             Text(
               title,
-              style: AppTextStyles.caption(s: s, color: AppColors.textSecondary),
+              style: AppTextStyles.caption(color: AppColors.textSecondary),
             ),
           SizedBox(height: 12 * s),
           ...children,
@@ -589,12 +589,12 @@ class WageDetailScreen extends StatelessWidget {
   }) {
     return Row(
       children: [
-        Text(label, style: AppTextStyles.meta(s: s)),
+        Text(label, style: AppTextStyles.meta()),
         const Spacer(),
         Text(
           value,
           style: TextStyle(
-            fontSize: valueLarge ? 18 * s : (valueBold ? 16 * s : 14 * s),
+            fontSize: valueLarge ? 18 : (valueBold ? 16 : 14),
             fontWeight: valueBold ? FontWeight.w700 : FontWeight.w500,
             color: valueColor ?? AppColors.textPrimary,
             letterSpacing: -0.3,
@@ -651,7 +651,7 @@ class _WageItemRowState extends State<_WageItemRow> {
           behavior: HitTestBehavior.opaque,
           child: Row(
             children: [
-              Text(widget.label, style: AppTextStyles.meta(s: s)),
+              Text(widget.label, style: AppTextStyles.meta()),
               if (hasFormula) ...[
                 SizedBox(width: 3 * s),
                 Icon(
@@ -666,7 +666,7 @@ class _WageItemRowState extends State<_WageItemRow> {
               Text(
                 widget.value,
                 style: TextStyle(
-                  fontSize: 14 * s,
+                  fontSize: 14,
                   fontWeight: FontWeight.w500,
                   color: AppColors.textPrimary,
                   letterSpacing: -0.3,
@@ -687,7 +687,7 @@ class _WageItemRowState extends State<_WageItemRow> {
             child: Text(
               widget.formula!,
               style: TextStyle(
-                fontSize: 13 * s,
+                fontSize: 13,
                 color: AppColors.textSecondary,
                 height: 1.7,
               ),

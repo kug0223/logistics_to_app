@@ -385,7 +385,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
         title: Text(
           '수입 현황',
           style: TextStyle(
-            fontSize: 20 * s,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             color: AppColors.textPrimary,
           ),
@@ -443,7 +443,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                           Text(
                             '$_year년 $_month월',
                             style: TextStyle(
-                              fontSize: 20 * s,
+                              fontSize: 20,
                               fontWeight: FontWeight.w700,
                               color: AppColors.textPrimary,
                             ),
@@ -514,7 +514,6 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                 padding:
                     EdgeInsets.fromLTRB(20 * s, 20 * s, 20 * s, 12 * s),
                 child: SectionHeader(
-                  s: s,
                   title: '$_year년 $_month월 근무 내역',
                 ),
               ),
@@ -537,7 +536,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       Text(
                         '아직 이번 달 수입이 없어요',
                         style: TextStyle(
-                          fontSize: 16 * s,
+                          fontSize: 16,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textSecondary,
                         ),
@@ -546,7 +545,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       Text(
                         '첫 근무를 마치면 여기에 수입이 표시돼요',
                         style: TextStyle(
-                          fontSize: 14 * s,
+                          fontSize: 14,
                           fontWeight: FontWeight.w400,
                           color: AppColors.textTertiary,
                         ),
@@ -592,24 +591,24 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   }) {
     final labelStyle = isTotalRow
         ? TextStyle(
-            fontSize: 17 * s,
+            fontSize: 17,
             fontWeight: FontWeight.w700,
             color: AppColors.brand,
           )
         : TextStyle(
-            fontSize: 16 * s,
+            fontSize: 16,
             fontWeight: FontWeight.w500,
             color: AppColors.textSecondary,
           );
     final valueStyle = isTotalRow
         ? TextStyle(
-            fontSize: 20 * s,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             color: AppColors.brand,
             letterSpacing: -0.5,
           )
         : TextStyle(
-            fontSize: 16 * s,
+            fontSize: 16,
             fontWeight: FontWeight.w600,
             color: AppColors.textPrimary,
             letterSpacing: -0.3,
@@ -714,7 +713,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                   child: Text(
                     dateStr,
                     style: TextStyle(
-                      fontSize: 15 * s,
+                      fontSize: 15,
                       fontWeight: FontWeight.w500,
                       color: AppColors.textSecondary,
                     ),
@@ -728,7 +727,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       Text(
                         app.businessName,
                         style: TextStyle(
-                          fontSize: 16 * s,
+                          fontSize: 16,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textPrimary,
                         ),
@@ -740,7 +739,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                         Text(
                           app.selectedWorkType,
                           style: TextStyle(
-                            fontSize: 14 * s,
+                            fontSize: 14,
                             fontWeight: FontWeight.w400,
                             color: AppColors.textSecondary,
                           ),
@@ -757,7 +756,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                     Text(
                       FormatHelper.formatWage(displayWage),
                       style: TextStyle(
-                        fontSize: 16 * s,
+                        fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary,
                         letterSpacing: -0.3,
@@ -767,7 +766,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                     Text(
                       statusLabel,
                       style: TextStyle(
-                        fontSize: 13 * s,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: statusColor,
                       ),

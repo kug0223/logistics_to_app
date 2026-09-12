@@ -654,13 +654,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('사업장을 등록하세요',
                       style: TextStyle(
-                          fontSize: 14 * s,
+                          fontSize: 14,
                           fontWeight: FontWeight.w700,
                           color: AppColors.textPrimary)),
                   const SizedBox(height: 2),
                   Text('사업장 등록 후 공고·계약·급여 관리를 시작하세요.',
                       style: TextStyle(
-                          fontSize: 11 * s, color: AppColors.textSecondary)),
+                          fontSize: 11, color: AppColors.textSecondary)),
                 ]),
               ),
             ]),
@@ -670,7 +670,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               child: ElevatedButton.icon(
                 icon: Icon(Icons.add_business, size: 16 * s),
                 label: Text('사업장 등록하기',
-                    style: TextStyle(fontSize: 13 * s, fontWeight: FontWeight.w600)),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: theme.primaryColor,
                   foregroundColor: Colors.white,
@@ -720,13 +720,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title,
                   style: TextStyle(
-                      fontSize: 13 * s,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary)),
               const SizedBox(height: 2),
               Text(subtitle,
                   style: TextStyle(
-                      fontSize: 11 * s, color: AppColors.textSecondary)),
+                      fontSize: 11, color: AppColors.textSecondary)),
             ]),
           ),
         ]),
@@ -899,7 +899,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             SizedBox(width: 7 * s),
             Text('ALfit',
                 style: TextStyle(
-                    fontSize: 17 * s,
+                    fontSize: 17,
                     fontWeight: FontWeight.w800,
                     color: AppColors.textPrimary,
                     letterSpacing: 0.5)),
@@ -928,13 +928,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('안녕하세요,',
                 style: TextStyle(
-                    fontSize: 12 * s, color: AppColors.grey500)),
+                    fontSize: 12, color: AppColors.grey500)),
             SizedBox(height: 2 * s),
             Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
               Flexible(
                 child: Text('$name님',
                     style: TextStyle(
-                        fontSize: 22 * s,
+                        fontSize: 22,
                         fontWeight: FontWeight.bold,
                         height: 1.1,
                         color: AppColors.textPrimary,
@@ -953,7 +953,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     ? _businesses.first.name
                     : '${_businesses.length}개 사업장 관리',
                 style: TextStyle(
-                    fontSize: 12 * s,
+                    fontSize: 12,
                     color: AppColors.grey500,
                     fontWeight: FontWeight.w500),
                 maxLines: 1,
@@ -990,7 +990,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (perms.isEmpty) return const SizedBox.shrink();
     return Text(
       '권한: ${perms.join(' · ')}',
-      style: TextStyle(fontSize: 11 * s, color: AppColors.grey400),
+      style: TextStyle(fontSize: 11, color: AppColors.grey400),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
@@ -1026,7 +1026,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Text('관리자',
             style: TextStyle(
                 color: theme.primaryColor,
-                fontSize: 11 * s,
+                fontSize: 11,
                 fontWeight: FontWeight.w600)),
       ]),
     );
@@ -1053,7 +1053,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Text(
           bizName != null ? (isMulti ? '$bizName ▼' : bizName) : '하위관리자',
           style: TextStyle(
-              color: theme.primaryColor, fontSize: 11 * s, fontWeight: FontWeight.w600),
+              color: theme.primaryColor, fontSize: 11, fontWeight: FontWeight.w600),
         ),
       ]),
     );
@@ -1114,7 +1114,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           label,
           style: TextStyle(
             color: selected ? Colors.white : AppColors.grey500,
-            fontSize: 12 * s,
+            fontSize: 12,
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
@@ -1130,7 +1130,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       child: Row(children: [
         Text(title,
             style: TextStyle(
-                fontSize: 16 * s,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: AppColors.textPrimary)),
         const Spacer(),
@@ -1140,7 +1140,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Text(action,
                   style: TextStyle(
-                      fontSize: 12 * s, color: AppColors.textSecondary)),
+                      fontSize: 12, color: AppColors.textSecondary)),
               Icon(Icons.chevron_right,
                   size: 16 * s, color: AppColors.textSecondary),
             ]),
@@ -1201,7 +1201,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   Text(
                     '공고 등록 준비',
                     style: TextStyle(
-                      fontSize: 13 * s,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: AppColors.textPrimary,
                       letterSpacing: -0.2,
@@ -1212,7 +1212,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   Text(
                     '$done / ${FirstPostingReadiness.totalTasks} 완료',
                     style: TextStyle(
-                      fontSize: 11.5 * s,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                       color: theme.primaryColor,
                     ),
@@ -1354,7 +1354,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 12.5 * s,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w500,
                   color: done
                       ? AppColors.textSecondary
@@ -1365,7 +1365,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             if (hint != null)
               Text(
                 hint,
-                style: TextStyle(fontSize: 11 * s, color: AppColors.grey400),
+                style: TextStyle(fontSize: 11, color: AppColors.grey400),
               )
             else if (!done && actionable)
               Icon(Icons.chevron_right,
@@ -1517,11 +1517,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     VoidCallback? onTap,
   }) {
     final col = Column(mainAxisSize: MainAxisSize.min, children: [
-      Text(label, style: TextStyle(fontSize: 10 * s, color: AppColors.grey500)),
+      Text(label, style: TextStyle(fontSize: 10, color: AppColors.grey500)),
       SizedBox(height: 4 * s),
       Row(mainAxisSize: MainAxisSize.min, children: [
         Text('$value$unit', style: TextStyle(
-          fontSize: 18 * s, fontWeight: FontWeight.w800, letterSpacing: -0.3,
+          fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3,
           color: valueColor ?? AppColors.textPrimary,
         )),
         if (onTap != null) ...[
@@ -1552,11 +1552,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Icon(Icons.info_outline, size: 14 * s, color: AppColors.grey400),
         SizedBox(width: 6 * s),
         Expanded(child: Text(message,
-          style: TextStyle(fontSize: 12 * s, color: AppColors.grey400))),
+          style: TextStyle(fontSize: 12, color: AppColors.grey400))),
         GestureDetector(
           onTap: onRetry,
           child: Text('재시도', style: TextStyle(
-            fontSize: 11 * s, color: AppColors.textSecondary,
+            fontSize: 11, color: AppColors.textSecondary,
             decoration: TextDecoration.underline,
           )),
         ),
@@ -1639,7 +1639,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               SizedBox(width: 8 * s),
               Text('향후 7일 인원 충원 완료',
                   style:
-                      TextStyle(fontSize: 13 * s, color: AppColors.grey400)),
+                      TextStyle(fontSize: 13, color: AppColors.grey400)),
             ]),
           ),
         ),
@@ -1715,7 +1715,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           width: 66 * s,
           child: Text(dateLabel,
               style: TextStyle(
-                  fontSize: 13 * s,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary)),
         ),
@@ -1726,16 +1726,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             children: [
               Text(shortageStr,
                   style: TextStyle(
-                      fontSize: 13 * s,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: AppColors.warning)),
               if (pendingStr != null) ...[
                 Text(' · ',
                     style: TextStyle(
-                        fontSize: 12 * s, color: AppColors.grey400)),
+                        fontSize: 12, color: AppColors.grey400)),
                 Text(pendingStr,
                     style: TextStyle(
-                        fontSize: 12 * s, color: AppColors.grey500)),
+                        fontSize: 12, color: AppColors.grey500)),
               ],
             ],
           ),
@@ -1758,7 +1758,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
               textStyle: TextStyle(
-                  fontSize: 12 * s, fontWeight: FontWeight.w600),
+                  fontSize: 12, fontWeight: FontWeight.w600),
             ),
             child: const Text('충원하기'),
           ),
@@ -1902,7 +1902,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               Icon(Icons.check_circle_outline, size: 18 * s, color: AppColors.grey300),
               SizedBox(width: 10 * s),
               Text('처리할 업무가 없어요',
-                  style: TextStyle(fontSize: 13 * s, color: AppColors.grey400)),
+                  style: TextStyle(fontSize: 13, color: AppColors.grey400)),
             ]),
           ),
         )
@@ -2127,11 +2127,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             SizedBox(width: 12 * s),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(item.label, style: TextStyle(
-                  fontSize: 14 * s, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                  fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
               if (item.badge != null) ...[
                 SizedBox(height: 2 * s),
                 // [PH1] badge 텍스트에 item.color 적용 → 긴급 항목("연체 N건") 시각적 강조
-                Text(item.badge!, style: TextStyle(fontSize: 10 * s, color: item.color.withValues(alpha: 0.85))),
+                Text(item.badge!, style: TextStyle(fontSize: 10, color: item.color.withValues(alpha: 0.85))),
               ],
             ])),
             SizedBox(width: 8 * s),
@@ -2141,7 +2141,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 decoration: BoxDecoration(
                   color: AppColors.grey100, borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text('조회 실패', style: TextStyle(fontSize: 11 * s, color: AppColors.grey500)),
+                child: Text('조회 실패', style: TextStyle(fontSize: 11, color: AppColors.grey500)),
               )
             else
               Container(
@@ -2151,7 +2151,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(item.countStr, style: TextStyle(
-                    fontSize: 13 * s, fontWeight: FontWeight.w800, color: item.color)),
+                    fontSize: 13, fontWeight: FontWeight.w800, color: item.color)),
               ),
             SizedBox(width: 4 * s),
             Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),

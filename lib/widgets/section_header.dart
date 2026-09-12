@@ -60,12 +60,12 @@ class SectionHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(title, style: AppTextStyles.sectionTitle(s: s)),
+                    Text(title, style: AppTextStyles.sectionTitle()),
                     SizedBox(height: 2 * s),
-                    Text(subtitle!, style: AppTextStyles.sectionSubtitle(s: s)),
+                    Text(subtitle!, style: AppTextStyles.sectionSubtitle()),
                   ],
                 )
-              : Text(title, style: AppTextStyles.sectionTitle(s: s)),
+              : Text(title, style: AppTextStyles.sectionTitle()),
         ),
         // 우측 액션
         if (actionText != null && onAction != null) ...[
@@ -79,7 +79,7 @@ class SectionHeader extends StatelessWidget {
                   vertical: 8 * s, horizontal: 4 * s),
               child: Text(
                 actionText!,
-                style: AppTextStyles.sectionAction(s: s),
+                style: AppTextStyles.sectionAction(),
               ),
             ),
           ),

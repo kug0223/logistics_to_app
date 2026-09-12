@@ -22,8 +22,8 @@ class AppTextStyles {
   // ══════════════════════════════════════════════════════════
 
   /// 히어로 타이틀 — 24sp, w700, textPrimary
-  static TextStyle heroTitle({double s = 1.0}) => TextStyle(
-        fontSize: 24 * s,
+  static TextStyle heroTitle() => TextStyle(
+        fontSize: 24,
         fontWeight: FontWeight.w700,
         color: AppColors.textPrimary,
         letterSpacing: -0.5,
@@ -31,8 +31,8 @@ class AppTextStyles {
       );
 
   /// 히어로 설명 — 15sp, w400, textSecondary
-  static TextStyle heroDescription({double s = 1.0}) => TextStyle(
-        fontSize: 15 * s,
+  static TextStyle heroDescription() => TextStyle(
+        fontSize: 15,
         fontWeight: FontWeight.w400,
         color: AppColors.textSecondary,
         height: 1.4,
@@ -44,8 +44,8 @@ class AppTextStyles {
 
   /// 섹션 제목 — 20sp, w700, textPrimary
   /// 예: "8월 12일 일자리", "지원 현황", "이번 주 일정", "수입 현황", "나의 ALfit"
-  static TextStyle sectionTitle({double s = 1.0}) => TextStyle(
-        fontSize: 20 * s,
+  static TextStyle sectionTitle() => TextStyle(
+        fontSize: 20,
         fontWeight: FontWeight.w700,
         color: AppColors.textPrimary,
         letterSpacing: -0.3,
@@ -54,16 +54,16 @@ class AppTextStyles {
 
   /// 섹션 부제목 — 13sp, w400, textTertiary
   /// 예: "오산시 주변"
-  static TextStyle sectionSubtitle({double s = 1.0}) => TextStyle(
-        fontSize: 13 * s,
+  static TextStyle sectionSubtitle() => TextStyle(
+        fontSize: 13,
         fontWeight: FontWeight.w400,
         color: AppColors.textTertiary,
       );
 
   /// 섹션 액션 링크 — 15sp, w600, brand (#1565C0)
   /// 예: "3개 모두보기 ›", "전체보기 ›", "일정 ›", "2026년 8월 ›"
-  static TextStyle sectionAction({double s = 1.0}) => TextStyle(
-        fontSize: 15 * s,
+  static TextStyle sectionAction() => TextStyle(
+        fontSize: 15,
         fontWeight: FontWeight.w600,
         color: AppColors.brand,
       );
@@ -73,38 +73,38 @@ class AppTextStyles {
   // ══════════════════════════════════════════════════════════
 
   /// 공고 제목 — 17sp, w700, textPrimary (maxLines: 1)
-  static TextStyle jobTitle({double s = 1.0}) => TextStyle(
-        fontSize: 17 * s,
+  static TextStyle jobTitle() => TextStyle(
+        fontSize: 17,
         fontWeight: FontWeight.w700,
         color: AppColors.textPrimary,
         overflow: TextOverflow.ellipsis,
       );
 
   /// 사업장명 — 14sp, w500, textSecondary
-  static TextStyle businessName({double s = 1.0}) => TextStyle(
-        fontSize: 14 * s,
+  static TextStyle businessName() => TextStyle(
+        fontSize: 14,
         fontWeight: FontWeight.w500,
         color: AppColors.textSecondary,
       );
 
   /// 메타 정보 (날짜, 지역, 시간 등) — 14sp, w400, textSecondary
-  static TextStyle jobMeta({double s = 1.0}) => TextStyle(
-        fontSize: 14 * s,
+  static TextStyle jobMeta() => TextStyle(
+        fontSize: 14,
         fontWeight: FontWeight.w400,
         color: AppColors.textSecondary,
       );
 
   /// 급여 — 18sp, w700, brand (#1565C0)
-  static TextStyle pay({double s = 1.0}) => TextStyle(
-        fontSize: 18 * s,
+  static TextStyle pay() => TextStyle(
+        fontSize: 18,
         fontWeight: FontWeight.w700,
         color: AppColors.brand,
         letterSpacing: -0.5,
       );
 
   /// 상태 배지 텍스트 — 12sp, w600
-  static TextStyle statusBadge({double s = 1.0, Color? color}) => TextStyle(
-        fontSize: 12 * s,
+  static TextStyle statusBadge({Color? color}) => TextStyle(
+        fontSize: 12,
         fontWeight: FontWeight.w600,
         color: color ?? AppColors.textSecondary,
       );
@@ -114,38 +114,38 @@ class AppTextStyles {
   // ══════════════════════════════════════════════════════════
 
   /// 본문 — 15sp, w400, textSecondary
-  static TextStyle body({double s = 1.0, Color? color}) => TextStyle(
-        fontSize: 15 * s,
+  static TextStyle body({Color? color}) => TextStyle(
+        fontSize: 15,
         fontWeight: FontWeight.w400,
         color: color ?? AppColors.textSecondary,
         height: 1.5,
       );
 
   /// 메타/부가정보 — 14sp, w400, textSecondary
-  static TextStyle meta({double s = 1.0, Color? color}) => TextStyle(
-        fontSize: 14 * s,
+  static TextStyle meta({Color? color}) => TextStyle(
+        fontSize: 14,
         fontWeight: FontWeight.w400,
         color: color ?? AppColors.textSecondary,
       );
 
   /// 캡션 — 12sp, w500, textTertiary
-  static TextStyle caption({double s = 1.0, Color? color}) => TextStyle(
-        fontSize: 12 * s,
+  static TextStyle caption({Color? color}) => TextStyle(
+        fontSize: 12,
         fontWeight: FontWeight.w500,
         color: color ?? AppColors.textTertiary,
       );
 
   /// 통계 숫자 — 20sp, w800, textPrimary (또는 상태색)
-  static TextStyle statNumber({double s = 1.0, Color? color}) => TextStyle(
-        fontSize: 20 * s,
+  static TextStyle statNumber({Color? color}) => TextStyle(
+        fontSize: 20,
         fontWeight: FontWeight.w800,
         color: color ?? AppColors.textPrimary,
         letterSpacing: -0.5,
       );
 
   /// 통계 라벨 — 12sp, w500, textTertiary
-  static TextStyle statLabel({double s = 1.0}) => TextStyle(
-        fontSize: 12 * s,
+  static TextStyle statLabel() => TextStyle(
+        fontSize: 12,
         fontWeight: FontWeight.w500,
         color: AppColors.textTertiary,
       );

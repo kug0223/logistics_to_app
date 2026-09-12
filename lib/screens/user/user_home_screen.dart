@@ -515,7 +515,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           SizedBox(width: 8 * s),
           Text('ALfit',
               style: TextStyle(
-                fontSize: 20 * s,
+                fontSize: 20,
                 fontWeight: FontWeight.w900,
                 color: AppColors.infoDark,
                 letterSpacing: -0.6,
@@ -591,7 +591,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           label,
           style: TextStyle(
             color: selected ? Colors.white : AppColors.textSecondary,
-            fontSize: 12 * s,
+            fontSize: 12,
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
@@ -654,14 +654,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         children: [
           Text('안녕하세요,',
               style: TextStyle(
-                fontSize: 13 * s,
+                fontSize: 13,
                 color: AppColors.textHint,
                 fontWeight: FontWeight.w500,
               )),
           SizedBox(height: 2 * s),
           Text('${user?.name ?? '사용자'}님',
               style: TextStyle(
-                fontSize: 22 * s,
+                fontSize: 22,
                 fontWeight: FontWeight.w800,
                 color: AppColors.textPrimary,
                 letterSpacing: -0.6,
@@ -723,7 +723,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     '업무 초대가 $count개 도착했어요!',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 14 * s,
+                      fontSize: 14,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -732,7 +732,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     '24시간 내 수락하지 않으면 자동 만료됩니다',
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 11 * s,
+                      fontSize: 11,
                     ),
                   ),
                 ],
@@ -872,7 +872,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(width: 5 * s),
               Text('오늘의 근무',
                   style: TextStyle(
-                    fontSize: 11 * s,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.infoDark,
                     letterSpacing: 0.5,
@@ -883,7 +883,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             Text(
               hasTime ? '오늘 ${app.startTime} 출근이에요' : '오늘 근무가 있어요',
               style: TextStyle(
-                fontSize: 20 * s,
+                fontSize: 20,
                 fontWeight: FontWeight.w900,
                 color: AppColors.textPrimary,
                 letterSpacing: -0.5,
@@ -900,7 +900,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   app.businessName,
                 if (hasTime) '${app.startTime} – ${app.endTime}',
               ].join('  |  '),
-              style: TextStyle(fontSize: 13 * s, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -918,7 +918,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   children: [
                     Text(progressLabel,
                         style: TextStyle(
-                          fontSize: 13 * s,
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
                           color: AppColors.infoDark,
                         )),
@@ -947,7 +947,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 icon: Icon(Icons.login_rounded, size: 18 * s),
                 label: Text('출근하기',
                     style: TextStyle(
-                        fontSize: 15 * s, fontWeight: FontWeight.w800)),
+                        fontSize: 15, fontWeight: FontWeight.w800)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.infoDark,
                   foregroundColor: Colors.white,
@@ -1007,7 +1007,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(width: 5 * s),
               Text('새로운 소식',
                   style: TextStyle(
-                    fontSize: 11 * s,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.successDark,
                     letterSpacing: 0.5,
@@ -1017,7 +1017,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             // 제목 "N월 N일 근무가 확정됐어요 🎉" (시안 .hA-title)
             Text('$dateStr 근무가\n확정됐어요 🎉',
                 style: TextStyle(
-                  fontSize: 20 * s,
+                  fontSize: 20,
                   fontWeight: FontWeight.w900,
                   color: AppColors.textPrimary,
                   letterSpacing: -0.5,
@@ -1039,7 +1039,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         ? '${app.businessName} · ${app.selectedWorkType}'
                         : app.businessName,
                     style: TextStyle(
-                      fontSize: 14 * s,
+                      fontSize: 14,
                       fontWeight: FontWeight.w800,
                       color: AppColors.textPrimary,
                     ),
@@ -1050,7 +1050,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         ? '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})  ${app.startTime} – ${app.endTime}\n$wageStr'
                         : '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})  $wageStr',
                     style: TextStyle(
-                      fontSize: 13 * s,
+                      fontSize: 13,
                       color: AppColors.textSecondary,
                       height: 1.75,
                     ),
@@ -1063,7 +1063,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             Row(mainAxisSize: MainAxisSize.min, children: [
               Text('근무 확인하기',
                   style: TextStyle(
-                    fontSize: 14 * s,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: AppColors.successDark,
                   )),
@@ -1108,7 +1108,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 ),
                 Text('날짜 선택',
                     style: TextStyle(
-                      fontSize: 16 * s,
+                      fontSize: 16,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
                     )),
@@ -1169,7 +1169,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       SizedBox(width: 5 * s),
                       Text('공고 있음',
                           style: TextStyle(
-                            fontSize: 11 * s,
+                            fontSize: 11,
                             color: AppColors.textHint,
                           )),
                     ],
@@ -1218,7 +1218,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             children: [
               Expanded(
                 child: Text('언제 일하고 싶으세요?',
-                    style: AppTextStyles.heroTitle(s: s)),
+                    style: AppTextStyles.heroTitle()),
               ),
               // 날짜 더보기 — 캘린더 열어 현재 7일 범위 밖 날짜 선택 가능
               GestureDetector(
@@ -1228,7 +1228,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Text('날짜 더보기',
                         style: TextStyle(
-                          fontSize: 12 * s,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: AppColors.infoDark,
                         )),
@@ -1246,7 +1246,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             children: [
               Expanded(
                 child: Text('일할 날짜를 선택해보세요.',
-                    style: AppTextStyles.heroDescription(s: s)),
+                    style: AppTextStyles.heroDescription()),
               ),
               if (hasConfirmedInStrip)
                 Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1262,7 +1262,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   Text(
                     '확정 근무',
                     style: TextStyle(
-                      fontSize: 12 * s,
+                      fontSize: 12,
                       fontWeight: FontWeight.w500,
                       color: AppColors.textSecondary,
                     ),
@@ -1319,7 +1319,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         // 요일
                         Text(_dayLabel(day),
                             style: TextStyle(
-                              fontSize: 10 * s,
+                              fontSize: 10,
                               color: dowColor,
                               fontWeight: FontWeight.w500,
                             )),
@@ -1345,7 +1345,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                               child: Center(
                                 child: Text('${day.day}',
                                     style: TextStyle(
-                                      fontSize: 15 * s,
+                                      fontSize: 15,
                                       fontWeight: FontWeight.w700,
                                       color: dateColor,
                                     )),
@@ -1381,7 +1381,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                               ? Text('$count개',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
-                                    fontSize: 10 * s,
+                                    fontSize: 10,
                                     fontWeight: FontWeight.w700,
                                     color: AppColors.infoDark,
                                   ))
@@ -1429,7 +1429,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           '${_selectedDateChip!.month}월 ${_selectedDateChip!.day}일 '
                           '일자리 ${_toDateCounts[_selectedDateChip] ?? 0}개 보기',
                           style: TextStyle(
-                            fontSize: 14 * s,
+                            fontSize: 14,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1460,7 +1460,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         children: [
           // 섹션 헤더
           SectionHeader(
-            s: s,
             title: '지원 현황',
             actionText: '전체보기 ›',
             onAction: () => Navigator.of(context, rootNavigator: true).push(
@@ -1483,7 +1482,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   SizedBox(height: 8 * s),
                   Text('아직 지원한 일자리가 없어요',
                       style: TextStyle(
-                        fontSize: 13.5 * s,
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                         color: AppColors.textSecondary,
                       ),
@@ -1491,7 +1490,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   SizedBox(height: 4 * s),
                   Text('원하는 날짜의 일을 찾아 첫 지원을 해보세요',
                       style: TextStyle(
-                        fontSize: 12 * s,
+                        fontSize: 12,
                         color: AppColors.textHint,
                       ),
                       textAlign: TextAlign.center),
@@ -1501,7 +1500,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Text('일자리 찾아보기',
                           style: TextStyle(
-                            fontSize: 13 * s,
+                            fontSize: 13,
                             fontWeight: FontWeight.w700,
                             color: AppColors.infoDark,
                           )),
@@ -1580,7 +1579,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                                   ? '${app.businessName} · ${app.selectedWorkType}'
                                   : app.businessName,
                               style: TextStyle(
-                                fontSize: 13 * s,
+                                fontSize: 13,
                                 fontWeight: FontWeight.w700,
                                 color: AppColors.textPrimary,
                               ),
@@ -1593,7 +1592,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                                   ? '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})  ${app.startTime} – ${app.endTime}'
                                   : '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})',
                               style: TextStyle(
-                                fontSize: 12 * s,
+                                fontSize: 12,
                                 color: AppColors.textHint,
                               ),
                               maxLines: 1,
@@ -1613,7 +1612,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         ),
                         child: Text(badgeText,
                             style: TextStyle(
-                              fontSize: 11 * s,
+                              fontSize: 11,
                               fontWeight: FontWeight.w700,
                               color: badgeFg,
                             )),
@@ -1635,10 +1634,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     return Expanded(
       child: Column(children: [
         Text(value,
-            style: AppTextStyles.statNumber(s: s, color: color)),
+            style: AppTextStyles.statNumber(color: color)),
         SizedBox(height: 2 * s),
         Text(label,
-            style: AppTextStyles.statLabel(s: s)),
+            style: AppTextStyles.statLabel()),
       ]),
     );
   }
@@ -1684,7 +1683,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         children: [
           // 섹션 헤더
           SectionHeader(
-            s: s,
             title: '수입 현황',
             actionText: '${now.year}년 ${now.month}월 ›',
             onAction: () => Navigator.push(
@@ -1714,14 +1712,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   SizedBox(height: 8 * s),
                   Text('아직 이번 달 수입이 없어요',
                       style: TextStyle(
-                        fontSize: 13 * s,
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: AppColors.textSecondary,
                       ),
                       textAlign: TextAlign.center),
                   SizedBox(height: 3 * s),
                   Text('첫 근무를 마치면 여기에 수입이 표시돼요',
-                      style: TextStyle(fontSize: 12 * s, color: AppColors.textHint),
+                      style: TextStyle(fontSize: 12, color: AppColors.textHint),
                       textAlign: TextAlign.center),
                 ],
               ),
@@ -1791,7 +1789,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         children: [
           // 섹션 헤더
           SectionHeader(
-            s: s,
             title: '이번 주 일정',
             actionText: '일정 ›',
             // switchToTab(2): 탭0 Navigator에 push하지 않고 일정 탭으로 전환
@@ -1825,7 +1822,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 child: Column(children: [
                   Text(_dayLabel(day),
                       style: TextStyle(
-                          fontSize: 11 * s,
+                          fontSize: 11,
                           color: dayLabelColor,
                           fontWeight: FontWeight.w600)),
                   SizedBox(height: 4 * s),
@@ -1839,7 +1836,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     alignment: Alignment.center,
                     child: Text('${day.day}',
                         style: TextStyle(
-                          fontSize: 14 * s,
+                          fontSize: 14,
                           fontWeight: FontWeight.w700,
                           color: isToday ? Colors.white : AppColors.textPrimary,
                         )),
@@ -1876,7 +1873,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       SizedBox(width: 4 * s),
       Text(label,
           style: TextStyle(
-              fontSize: 11 * s,
+              fontSize: 11,
               color: AppColors.textHint,
               fontWeight: FontWeight.w600)),
     ]);
@@ -1973,14 +1970,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     Row(children: [
                       Text('지원 준비',
                           style: TextStyle(
-                            fontSize: 15 * s,
+                            fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: AppColors.textPrimary,
                           )),
                       SizedBox(width: 6 * s),
                       Text('$completed / 2',
                           style: TextStyle(
-                            fontSize: 13 * s,
+                            fontSize: 13,
                             fontWeight: FontWeight.w500,
                             // ALfit Blue — Warning Orange 사용 금지
                             color: theme.primaryColor,
@@ -1990,7 +1987,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     // 2줄: 안내 문구
                     Text(subText,
                         style: TextStyle(
-                          fontSize: 13 * s,
+                          fontSize: 13,
                           color: AppColors.grey500,
                         )),
                     // 1/2 상태에서만: 얇은 progress bar (카드 크기 변화 없음)
@@ -2109,7 +2106,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             children: [
           // 섹션 헤더 — 동적 제목·부제목, 3개 이상일 때만 액션
           SectionHeader(
-            s: s,
             title: sectionTitle,
             subtitle: sectionSubtitle,
             actionText: totalCount > 2 ? '$totalCount개 모두보기 ›' : null,
@@ -2140,7 +2136,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               alignment: Alignment.center,
               child: Text(
                 '해당 날짜에 지원 가능한 공고가 없어요',
-                style: TextStyle(fontSize: 13 * s, color: AppColors.textHint),
+                style: TextStyle(fontSize: 13, color: AppColors.textHint),
               ),
             )
           else if (recState == 4)
@@ -2153,14 +2149,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   Text(
                     '지금 지원 가능한 일자리가 없어요',
                     style: TextStyle(
-                        fontSize: 13 * s,
+                        fontSize: 13,
                         color: AppColors.textPrimary,
                         fontWeight: FontWeight.w600),
                   ),
                   SizedBox(height: 4 * s),
                   Text(
                     '새로운 일자리가 등록되면 이곳에서 확인할 수 있어요.',
-                    style: TextStyle(fontSize: 12 * s, color: AppColors.textHint),
+                    style: TextStyle(fontSize: 12, color: AppColors.textHint),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -2191,7 +2187,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           Text(
                             '${homeRegion.city}에는 아직 모집 중인 일자리가 없어요',
                             style: TextStyle(
-                                fontSize: 12 * s,
+                                fontSize: 12,
                                 color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w600),
                           ),
@@ -2199,7 +2195,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           Text(
                             '대신 지금 지원 가능한 다른 지역 일자리를 보여드릴게요.',
                             style: TextStyle(
-                                fontSize: 11 * s,
+                                fontSize: 11,
                                 color: AppColors.textHint),
                           ),
                         ],
@@ -2483,7 +2479,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       Expanded(
                         child: Text(
                           to.title.isNotEmpty ? to.title : to.businessName,
-                          style: AppTextStyles.jobTitle(s: s),
+                          style: AppTextStyles.jobTitle(),
                           maxLines: 1,
                         ),
                       ),
@@ -2498,7 +2494,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         ),
                         child: Text(
                           badgeLabel,
-                          style: AppTextStyles.statusBadge(s: s, color: badgeFg),
+                          style: AppTextStyles.statusBadge(color: badgeFg),
                         ),
                       ),
                       SizedBox(width: 4 * s),
@@ -2524,7 +2520,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   // 사업장명 (서브타이틀)
                   Text(
                     to.businessName,
-                    style: AppTextStyles.businessName(s: s),
+                    style: AppTextStyles.businessName(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -2556,7 +2552,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       if (wageText.isNotEmpty)
                         Text(
                           wageText,
-                          style: AppTextStyles.pay(s: s),
+                          style: AppTextStyles.pay(),
                         ),
                       const Spacer(),
                       // 추천 사유 1개 (없으면 미표시)
@@ -2567,7 +2563,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         Text(
                           reasonLabel,
                           style: TextStyle(
-                            fontSize: 11 * s,
+                            fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: AppColors.infoDark,
                           ),
@@ -2600,7 +2596,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     return Row(children: [
       Text(label,
           style: TextStyle(
-            fontSize: 13 * s,
+            fontSize: 13,
             color: labelColor,
             fontWeight: valueBold ? FontWeight.w700 : FontWeight.w500,
           )),
@@ -2616,7 +2612,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               ))
           : Text(value,
               style: TextStyle(
-                fontSize: valueBold ? 15 * s : 13 * s,
+                fontSize: valueBold ? 15 : 13,
                 fontWeight: valueBold ? FontWeight.w900 : FontWeight.w600,
                 color: valueColor,
                 letterSpacing: -0.3,
@@ -2634,7 +2630,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         Expanded(
           child: Text(
             text,
-            style: AppTextStyles.jobMeta(s: s),
+            style: AppTextStyles.jobMeta(),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -2908,20 +2904,20 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               children: [
                 Text('아직 쌓인 근무 경험이 없어요.',
                     style: TextStyle(
-                      fontSize: 14 * s,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textSecondary,
                     )),
                 SizedBox(height: 4 * s),
                 Text('첫 근무부터 나의 기록이 시작됩니다.',
-                    style: TextStyle(fontSize: 13 * s, color: AppColors.textHint)),
+                    style: TextStyle(fontSize: 13, color: AppColors.textHint)),
                 SizedBox(height: 16 * s),
                 GestureDetector(
                   onTap: () => UserTabScope.of(context)?.switchToTab(1),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Text('첫 일자리 찾아보기',
                         style: TextStyle(
-                          fontSize: 13 * s,
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
                           color: AppColors.infoDark,
                         )),
@@ -2936,7 +2932,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           // ── 근무 이력 있는 사용자 — 한 줄 요약 ──
           RichText(
             text: TextSpan(
-              style: TextStyle(fontSize: 13.5 * s, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
               children: [
                 const TextSpan(text: '근무 완료 '),
                 TextSpan(
@@ -2966,7 +2962,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           // 업무 경험 레이블
           Text('업무 경험',
               style: TextStyle(
-                fontSize: 12 * s,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: AppColors.textHint,
                 letterSpacing: 0.5,
@@ -2975,7 +2971,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           // 경험 칩 — 업무 유형별 완료 횟수
           if (sortedStats.isEmpty)
             Text('업무 유형 기록이 없어요',
-                style: TextStyle(fontSize: 12 * s, color: AppColors.textHint))
+                style: TextStyle(fontSize: 12, color: AppColors.textHint))
           else
             Wrap(
               spacing: 6 * s,
@@ -2988,7 +2984,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 ),
                 child: Text('${e.key} ${e.value}회',
                     style: TextStyle(
-                      fontSize: 12 * s,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: AppColors.infoDark,
                     )),
@@ -3001,7 +2997,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Text('근무 기록 보기',
                   style: TextStyle(
-                    fontSize: 13 * s,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: AppColors.infoDark,
                   )),

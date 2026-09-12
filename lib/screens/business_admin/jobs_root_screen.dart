@@ -162,7 +162,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               Text(
                 '공고',
                 style: TextStyle(
-                  fontSize: 20 * s,
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
                   color: AppColors.textPrimary,
                   letterSpacing: -0.5,
@@ -224,7 +224,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
                       child: Text(
                         label,
                         style: TextStyle(
-                          fontSize: 12 * s,
+                          fontSize: 12,
                           color: AppColors.grey500,
                         ),
                         maxLines: 1,

@@ -143,7 +143,7 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen>
               Text(
                 '인력',
                 style: TextStyle(
-                  fontSize: 20 * s,
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
                   color: AppColors.textPrimary,
                   letterSpacing: -0.5,
@@ -163,7 +163,7 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen>
                       child: Text(
                         scopeLabel,
                         style: TextStyle(
-                          fontSize: 12 * s,
+                          fontSize: 12,
                           color: AppColors.grey500,
                         ),
                         maxLines: 1,
