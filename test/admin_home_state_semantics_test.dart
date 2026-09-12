@@ -92,11 +92,14 @@ void main() {
   // P2-A 부분 실패
   // ───────────────────────────────────────────────────────────
   group('AHV2-03-01 일부 사업장 실패 → 전체 실패 아님', () {
-    test('available은 유지되고 partial로 표시된다', () {
-      final m = _model(available: true, partial: true, failed: 1, days: [
+    // [AH-V2-03.1 갱신] 부분 실패의 wire 표현은 available=false + partial=true다.
+    // (구 앱이 부분합을 전체값으로 오인하지 않게 하려는 rollout 제약)
+    // "Home 전체를 ERROR로 만들지 않는다"는 hasUsableData가 담보한다.
+    test('부분 실패는 ERROR가 아니라 부분합으로 표시된다', () {
+      final m = _model(available: false, partial: true, failed: 1, days: [
         _day('2026-09-13', req: 5, conf: 4, short: 1),
       ]);
-      expect(m.available, isTrue, reason: 'Home 전체를 ERROR로 만들면 안 된다');
+      expect(m.hasUsableData, isTrue, reason: 'Home 전체를 ERROR로 만들면 안 된다');
       expect(m.partial, isTrue);
       expect(m.failedBusinessCount, 1);
       expect(m.days.first.shortageCount, 1, reason: '정상 사업장 데이터는 유지');
@@ -132,8 +135,10 @@ void main() {
       expect(m.hasTodayTarget, isFalse);
     });
 
-    test('서버 available은 성공 사업장 수로 결정된다', () {
-      expect(cf.contains('available: okBusinessCount > 0'), isTrue);
+    // [AH-V2-03.1 갱신] available은 rollout 안전을 위해 "전부 성공"이라는
+    // 기존 의미로 되돌렸다. 쓸 수 있는 부분합의 신호는 partial이다.
+    test('서버 available은 실패 0건일 때만 true', () {
+      expect(cf.contains('available: failedBusinessCount === 0,'), isTrue);
       expect(
         cf.contains('partial: okBusinessCount > 0 && failedBusinessCount > 0'),
         isTrue,

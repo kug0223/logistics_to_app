@@ -93,16 +93,23 @@ class StaffingDayData {
 
 /// callableGetStaffingReadiness 최상위 응답 모델
 class StaffingReadinessModel {
-  /// 쓸 수 있는 결과가 하나라도 있는지.
+  /// 대상 사업장을 **전부** 성공적으로 조회했는지.
   ///
-  /// [AH-V2-03] false = 조회 대상 사업장이 **전부** 실패했다는 뜻이다.
-  /// 일부만 실패한 경우는 true + [partial]로 표현된다.
+  /// [AH-V2-03.1] 이 필드의 의미는 구 서버와 동일하게 유지된다.
+  /// partial을 모르는 구 클라이언트가 부분합을 전체 합계로 오인하지
+  /// 않으려면, 부분 실패는 반드시 available=false로 보여야 하기 때문이다.
+  ///
+  /// 따라서 available==false만으로 ERROR를 단정하면 안 된다.
+  /// 반드시 [partial]을 먼저 확인할 것.
   final bool available;
 
   /// 일부 사업장이 빠진 부분합인지.
   ///
-  /// true면 days의 숫자는 성공한 사업장만의 합계다.
-  /// 전체 합계로 오해하지 않도록 UI가 이 사실을 표시해야 한다.
+  /// true면 days의 숫자는 성공한 사업장만의 합계다 — 쓸 수는 있지만
+  /// 전체 합계가 아니다. UI가 이 사실을 표시해야 한다.
+  ///
+  /// 구 서버 응답에는 이 필드가 없어 false로 파싱되며,
+  /// 그 경우 부분 실패는 기존처럼 ERROR로 나타난다 (false success 없음).
   final bool partial;
 
   /// 집계에서 빠진 사업장 수 (실패 건수)
@@ -120,6 +127,17 @@ class StaffingReadinessModel {
 
   factory StaffingReadinessModel.empty() =>
       const StaffingReadinessModel(available: false, days: []);
+
+  /// days를 화면에 써도 되는지 — SUCCESS 또는 PARTIAL_SUCCESS.
+  ///
+  /// [AH-V2-03.1] 상태 판정 순서를 여기 한 곳에만 둔다.
+  ///   partial  == true  → PARTIAL_SUCCESS (부분합 표시 + notice)
+  ///   available == true → SUCCESS / EMPTY
+  ///   그 외              → ERROR
+  ///
+  /// 호출부가 available만 보고 ERROR로 빠지면 부분합을 버리게 되므로,
+  /// 에러 분기는 반드시 이 getter로 판정한다.
+  bool get hasUsableData => partial || available;
 
   /// D0(오늘)에 인력 운영 대상이 존재하는지.
   ///

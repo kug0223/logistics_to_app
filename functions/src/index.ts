@@ -32452,7 +32452,8 @@ export const callableGetStaffingReadiness = onCall(
     // [AH-V2-03] 사업장 단위 부분 실패를 전체 실패로 만들지 않는다.
     //   실패한 사업장의 데이터는 합산에서 제외하고(불완전한 값을 정상 합계에
     //   섞지 않는다), 몇 개가 빠졌는지를 failedBusinessCount로 전달한다.
-    //   available=false는 "쓸 수 있는 결과가 하나도 없다"만 의미한다.
+    //   [AH-V2-03.1] 쓸 수 있는 부분합이 있다는 신호는 available이 아니라
+    //   partial이다. available은 "전부 성공"이라는 기존 의미를 유지한다.
     let okBusinessCount     = 0;
     let failedBusinessCount = 0;
     let overallPendingAvailable = true;
@@ -32501,10 +32502,17 @@ export const callableGetStaffingReadiness = onCall(
       for (let i = 0; i < N_DAYS; i++) aggDays[i].pendingCount = aggPending[i];
     }
 
-    // [AH-V2-03] available: 쓸 수 있는 결과가 하나라도 있는가
-    //   partial: 일부 사업장이 빠진 부분합인가 (숫자를 전체 합계로 오해하지 않도록)
+    // [AH-V2-03.1] available은 기존 의미 그대로 "전체 조회 성공"을 뜻한다.
+    //   partial을 모르는 구 클라이언트는 available=false만 보고 ERROR로 빠지므로,
+    //   부분합을 전체 합계로 오인하지 않는다. (OLD CLIENT + NEW SERVER 안전)
+    //   신규 클라이언트는 partial을 available보다 먼저 해석해 부분합을 쓴다.
+    //
+    //   ALL_SUCCESS   available=true  partial=false
+    //   PARTIAL       available=false partial=true
+    //   ALL_FAILED    available=false partial=false
+    //   EMPTY_SCOPE   available=true  partial=false
     return {
-      available: okBusinessCount > 0,
+      available: failedBusinessCount === 0,
       partial: okBusinessCount > 0 && failedBusinessCount > 0,
       failedBusinessCount,
       days: aggDays,

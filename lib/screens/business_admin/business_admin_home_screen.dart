@@ -549,10 +549,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   /// D0 인력 현황 — _staffingReadiness.days[0] (오늘 날짜, CF가 D0부터 반환)
-  /// available: false 또는 days 비어있으면 null 반환
+  /// 쓸 수 있는 데이터가 없거나(hasUsableData=false) days 비어있으면 null
   StaffingDayData? get _todayStaffingDay {
     final sr = _staffingReadiness;
-    if (sr == null || !sr.available || sr.days.isEmpty) return null;
+    if (sr == null || !sr.hasUsableData || sr.days.isEmpty) return null;
     return sr.days.first;
   }
 
@@ -1456,8 +1456,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 쿼리 실패 — null 또는 available:false
-    if (_staffingReadiness == null || !_staffingReadiness!.available) {
+    // 쿼리 실패 — null 또는 쓸 수 있는 데이터 없음
+    // [AH-V2-03.1] partial(부분합)은 여기서 걸리지 않고 아래로 내려간다.
+    if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return _todayOpsErrorRow(s,
         message: '인력 정보를 불러오지 못했습니다',
         onRetry: () => unawaited(_loadStaffingReadiness()),
@@ -1677,8 +1678,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       ]);
     }
 
-    // 에러: null 또는 available:false (ERROR≠ZERO — 0 표시 금지)
-    if (_staffingReadiness == null || !_staffingReadiness!.available) {
+    // 에러: null 또는 쓸 수 있는 데이터 없음 (ERROR≠ZERO — 0 표시 금지)
+    // [AH-V2-03.1] partial(부분합)은 여기서 걸리지 않고 아래로 내려간다.
+    if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return Column(children: [
         _sectionHeader(context, s, '다가오는 인력 부족'),
         SizedBox(height: 8 * s),
