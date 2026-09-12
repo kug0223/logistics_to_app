@@ -1501,7 +1501,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final canManageTo = !isSub || up.can((p) => p.canManageTo);
     final onShortageDay = (shortage > 0 && canManageTo) ? day : null;
 
+    // [AH-V2-04B] 다사업장에서 이 숫자가 어느 범위의 합계인지 / 어디가 부족한지.
+    //   scope label은 partial일 때 숨긴다 — 성공 사업장 수를 클라이언트가
+    //   안전하게 알 수 없고, partial notice가 이미 범위를 말해주기 때문이다.
+    final scopeLabel = _staffingScopeLabel();
+    final shortageBy = shortage > 0 ? day?.shortageScopeLabel() : null;
+
     return Column(children: [
+      if (scopeLabel != null)
+        Padding(
+          padding: EdgeInsets.fromLTRB(16 * s, 12 * s, 16 * s, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(scopeLabel,
+                style: TextStyle(fontSize: 12, color: AppColors.grey400)),
+          ),
+        ),
       Padding(
         padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
         child: Row(children: [
@@ -1517,9 +1532,42 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 : null),
         ]),
       ),
+      // [AH-V2-04B] 부족 위치 — 부족이 있을 때만, 다사업장일 때만.
+      if (shortageBy != null && _isMultiBusinessScope)
+        Padding(
+          padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+          child: Row(children: [
+            Icon(Icons.place_outlined, size: 13 * s, color: AppColors.grey400),
+            SizedBox(width: 5 * s),
+            Expanded(
+              child: Text(shortageBy,
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ),
+          ]),
+        ),
       // [AH-V2-03] 부분합 고지 — 숫자를 전체 합계로 오해하지 않도록
       _partialStaffingNotice(s),
     ]);
+  }
+
+  /// [AH-V2-04B] 관리 사업장이 2곳 이상인지 — staffing 집계 범위 기준.
+  ///
+  /// _getBusinesses()가 CF와 같은 scope를 쓴다 (SubAdmin: effectiveBusinessId 1곳,
+  /// OWNER: managedBusinessIds). 따라서 SubAdmin은 자연히 false가 된다.
+  bool get _isMultiBusinessScope => _businesses.length > 1;
+
+  /// 오늘 운영 수치의 집계 범위 라벨. 표시할 필요가 없으면 null.
+  ///
+  /// 단일 사업장은 header에 이미 사업장명이 있어 중복이다.
+  /// partial 상태에서는 숨긴다 — '전체 3개 사업장'이 부분합과 정면으로 충돌하고,
+  /// 성공한 사업장 수는 클라이언트가 안전하게 구할 수 없다
+  /// (byBusiness는 그날 대상이 없는 사업장을 아예 담지 않는다).
+  String? _staffingScopeLabel() {
+    if (!_isMultiBusinessScope) return null;
+    if (_staffingReadiness?.partial == true) return null;
+    return '전체 ${_businesses.length}개 사업장 합계';
   }
 
   /// [AH-V2-03] 일부 사업장 조회 실패 고지.
@@ -1813,6 +1861,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ? '지원 대기 ${day.pendingCount}명'
         : null;
 
+    // [AH-V2-04B] 부족 위치 — 다사업장일 때만
+    final bizLine = _isMultiBusinessScope ? day.shortageScopeLabel() : null;
+
     final radius = BorderRadius.only(
       topLeft:     Radius.circular(isFirst ? 16 : 0),
       topRight:    Radius.circular(isFirst ? 16 : 0),
@@ -1833,21 +1884,37 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ),
         SizedBox(width: 8 * s),
         Expanded(
-          child: Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(shortageStr,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.warning)),
-              if (pendingStr != null) ...[
-                Text(' · ',
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(shortageStr,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.warning)),
+                  if (pendingStr != null) ...[
+                    Text(' · ',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.grey400)),
+                    Text(pendingStr,
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.grey500)),
+                  ],
+                ],
+              ),
+              // [AH-V2-04B] 어느 사업장이 부족한지 — 다사업장일 때만 compact subline.
+              //   날짜 row가 사업장 목록으로 커지지 않도록 2곳 + '외 N곳'으로 접는다.
+              if (bizLine != null) ...[
+                SizedBox(height: 2 * s),
+                Text(bizLine,
                     style: TextStyle(
-                        fontSize: 12, color: AppColors.grey400)),
-                Text(pendingStr,
-                    style: TextStyle(
-                        fontSize: 12, color: AppColors.grey500)),
+                        fontSize: 12, color: AppColors.grey500),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
               ],
             ],
           ),
@@ -1952,8 +2019,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final businesses = await _getBusinesses();
     if (!context.mounted) return;
 
-    final shortBizIds = day.byBusiness
-        .where((b) => b.shortageCount > 0)
+    // [AH-V2-04B] Home이 보여준 순서(부족 큰 순)와 같게 넘긴다.
+    //   dialog 초기 선택이 businessIds.first이므로 가장 부족한 곳이 먼저 열린다.
+    //   (직전 사용 사업장이 저장돼 있고 그것도 부족 목록에 있으면 그쪽이 우선된다)
+    final shortBizIds = day.shortageBusinesses
         .map((b) => b.businessId)
         .toList();
     final targetBizIds = shortBizIds.isNotEmpty

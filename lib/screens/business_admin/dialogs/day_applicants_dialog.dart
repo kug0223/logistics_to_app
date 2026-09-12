@@ -521,7 +521,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       title: '지원명단',
       subtitle: FormatHelper.formatDateLong(widget.date),
       onClose: () => Navigator.pop(context, _hasChanges),
-      trailing: widget.businesses.length > 1
+      // [AH-V2-04B] 선택지 기준으로 판단한다. businesses(이름 조회용 전체 목록)로
+      //   판단하면 실제 옵션이 1개여도 selector가 떴다.
+      //   (Home 부족 진입·노쇼 좌석반납 진입이 businessIds를 좁혀서 넘긴다)
+      trailing: widget.businessIds.length > 1
           ? AppSelectField<String>(
               value: _selectedBusinessId,
               hintText: '사업장을 선택하세요',

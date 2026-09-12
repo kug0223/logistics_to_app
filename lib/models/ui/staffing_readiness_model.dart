@@ -75,6 +75,35 @@ class StaffingDayData {
     required this.byBusiness,
   });
 
+  /// [AH-V2-04B] 부족이 있는 사업장만, 큰 것부터.
+  ///
+  /// 관리자가 Home에서 먼저 알아야 하는 것은 "합계 몇 명"보다 "어디가 부족한가"다.
+  /// 동률이면 사업장명 오름차순 — 매 조회마다 순서가 흔들리지 않게 한다.
+  List<StaffingBizData> get shortageBusinesses {
+    final list = byBusiness.where((b) => b.shortageCount > 0).toList();
+    list.sort((a, b) {
+      final byCount = b.shortageCount.compareTo(a.shortageCount);
+      return byCount != 0 ? byCount : a.businessName.compareTo(b.businessName);
+    });
+    return list;
+  }
+
+  /// 부족 사업장 요약 한 줄. 부족이 없으면 null.
+  ///
+  /// 예) 'A센터 4명 · B센터 2명 · 외 1곳'
+  /// [limit]을 넘는 사업장은 개수로만 접는다 — Home이 사업장 목록이 되면 안 된다.
+  String? shortageScopeLabel({int limit = 2}) {
+    final list = shortageBusinesses;
+    if (list.isEmpty) return null;
+    final shown = list.take(limit).map((b) {
+      final name = b.businessName.isNotEmpty ? b.businessName : b.businessId;
+      return '$name ${b.shortageCount}명';
+    }).toList();
+    final rest = list.length - shown.length;
+    if (rest > 0) shown.add('외 $rest곳');
+    return shown.join(' · ');
+  }
+
   factory StaffingDayData.fromMap(Map<Object?, Object?> map) {
     final rawBiz = map['byBusiness'] as List<Object?>? ?? const [];
     return StaffingDayData(
