@@ -188,42 +188,60 @@ void main() {
       }
     });
 
-    test('기존 버전 문자열은 지원 경로에만 남아 있다', () {
-      final hits = '"2026-08-21-v1"'.allMatches(_codeOf(source)).length;
-      expect(hits, 2, reason: 'callableApplyToTO 신규·재지원 2곳 그대로');
+    test('버전을 쓰는 곳은 지원 경로뿐이다', () {
+      // [DS-08B.4] 리터럴 → DOCUMENT_ACCESS_CONSENT_V2 상수로 이동.
+      // 갱신은 원본 값을 승계할 뿐 버전을 새로 기록하지 않는다.
+      final code = _codeOf(source);
+      final writes =
+          'documentAccessConsentVersion'.allMatches(code).length;
+      final inherits = RegExp(
+        r'documentAccessConsentVersion:\s*\n?\s*freshData\.documentAccessConsentVersion',
+      ).allMatches(code).length;
+      final constWrites =
+          'DOCUMENT_ACCESS_CONSENT_V2'.allMatches(code).length;
+      expect(inherits, 3,
+          reason: '자동·수동 갱신 승계 2곳 + 자동 갱신 grant 만료 계산 입력 1곳');
+      expect(constWrites, greaterThanOrEqualTo(2),
+          reason: 'callableApplyToTO 신규·재지원 2곳이 상수로 기록');
+      expect(writes, greaterThan(0));
     });
   });
 
-  group('DS08B3-07 접근권 생성 없음', () {
-    test('갱신 경로가 요청 컬렉션에 쓰지 않는다', () {
-      for (final body in [autoRenewal, manualRenewal]) {
-        expect(body.contains('idCardAccessRequests'), isFalse);
-        expect(body.contains(r'auto_${'), isFalse);
-      }
+  group('DS08B3-07 접근권 생성 — DS-08B.4에서 v2 한정으로 열림', () {
+    // DS-08B.3 시점에는 두 갱신 경로 모두 grant를 만들지 않았다.
+    // DS-08B.4에서 v2 동의 승계 건에 한해 생성하도록 열었고,
+    // v1/legacy cohort는 여전히 생성하지 않는다.
+    test('자동 갱신은 v2 동의일 때만 grant를 만든다', () {
+      expect(autoRenewal.contains('isDocumentAccessConsentV2(freshData)'), isTrue,
+          reason: 'v1/legacy에 새 접근 창을 열면 안 된다');
+      expect(autoRenewal.contains('grantSource: "pre_consent"'), isTrue);
     });
 
-    test('갱신 경로가 열람 기간을 만들지 않는다', () {
-      for (final body in [autoRenewal, manualRenewal]) {
-        expect(body.contains('expiresAt'), isFalse);
-        expect(body.contains('grantSource'), isFalse);
-      }
+    test('수동 갱신은 CONTRACT_PENDING 생성 시점에 grant를 만들지 않는다', () {
+      expect(manualRenewal.contains('idCardAccessRequests'), isFalse);
+      expect(manualRenewal.contains('grantSource'), isFalse);
+      expect(manualRenewal.contains('expiresAt'), isFalse);
     });
 
-    test('auto-grant 생성은 여전히 확정 callable에만 있다', () {
+    test('auto-grant 생성은 확정 callable에도 그대로 있다', () {
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
       expect(confirm.contains('grantSource: "pre_consent"'), isTrue);
     });
   });
 
   group('DS08B3-08 사용자 노출 문구 무변경', () {
-    test('지원 동의 문구가 그대로다', () {
+    test('지원 동의 문구가 v2 문안이다', () {
+      // [DS-08B.4] 접근 종료 기준이 바뀌면서 문구도 함께 개정됐다.
       for (final path in [
         'lib/widgets/dialogs/apply/apply_confirm_dialog.dart',
         'lib/widgets/dialogs/apply/multi_apply_confirm_sheet.dart',
       ]) {
         final copy = File(path).readAsStringSync();
-        expect(copy.contains('신분증: 확정일로부터 7일간'), isTrue);
-        expect(copy.contains('급여계좌·통장사본: 급여처리 관계가 유효한 동안'), isTrue);
+        expect(copy.contains('마지막 근무일로부터 7일 후 자동 종료됩니다'), isTrue);
+        expect(copy.contains('급여처리 관계가 유효한 동안'), isTrue);
+        expect(copy.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
+        expect(copy.contains('확정일로부터 7일간'), isFalse,
+            reason: '구 문구가 남아 있으면 안 된다');
       }
     });
 
@@ -286,9 +304,14 @@ void main() {
       expect(bank.contains('canManageWorkers'), isFalse);
     });
 
-    test('7일 정책이 그대로다', () {
+    test('7일 duration이 그대로다', () {
+      // [DS-08B.4] 리터럴이 ID_CARD_ACCESS_WINDOW_MS 상수로 이동했다.
+      // 바뀐 것은 기준점이고 7일이라는 길이는 유지된다.
+      final code = _codeOf(source);
+      expect(code.contains('const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000'),
+          isTrue);
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('7 * 24 * 60 * 60 * 1000'), isTrue);
+      expect(confirm.contains('calcPreConsentIdCardExpiryMs('), isTrue);
     });
   });
 }

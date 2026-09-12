@@ -217,9 +217,16 @@ void main() {
       expect(confirm.contains('status: "approved"'), isTrue);
     });
 
-    test('7일 정책이 그대로다', () {
+    test('7일 duration이 그대로다', () {
+      // [DS-08B.4] 리터럴이 ID_CARD_ACCESS_WINDOW_MS 상수로 이동했다.
+      // 기준점만 바뀌었고 7일이라는 길이는 유지된다.
+      expect(
+        _codeOf(source).contains(
+            'const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000'),
+        isTrue,
+      );
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('7 * 24 * 60 * 60 * 1000'), isTrue);
+      expect(confirm.contains('calcPreConsentIdCardExpiryMs('), isTrue);
     });
 
     test('통장사본 권한 로직은 건드리지 않았다', () {

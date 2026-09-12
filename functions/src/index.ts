@@ -4230,6 +4230,18 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       const renewNotifRef = db.collection("users").doc(app.uid as string).collection("notifications").doc();
       const newContractRef = db.collection("employment_contracts").doc();
 
+      // [DS-08B.4] 갱신 근무관계용 신분증 auto-grant.
+      // 신분증 등록 여부는 경합 대상이 아니므로 TX 밖에서 미리 읽는다.
+      const renewalWorkerSnap = await db
+        .collection("users").doc(app.uid as string).get();
+      const renewalWorkerData = renewalWorkerSnap.data();
+      const renewalHasIdCard =
+        (renewalWorkerData?.idCardImagePath ?? null) !== null ||
+        (renewalWorkerData?.idCardImageUrl ?? null) !== null;
+      // 문서 id는 새 application 기준 — auto_{oldApplicationId} 재사용 금지.
+      const renewalGrantRef = db
+        .collection("idCardAccessRequests").doc(`auto_${newAppRef.id}`);
+
       let schedulerCommitted = false;
       await db.runTransaction(async (tx) => {
         // 1. Fresh read — stale loop snapshot 대신 TX 격리 snapshot 사용
@@ -4388,6 +4400,45 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         // 걸리지 않음 (renewalDecision="EXTEND" 필드로 이미 처리 완료 표시됨).
         // TODO: RENEWED 상태 추가 후 이전 application status 전환 필요 (Flutter+CF 동시 배포 필요)
         tx.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
+
+        // [DS-08B.4] 갱신 auto-grant — v2 동의를 승계한 경우에만 생성한다.
+        // v1/legacy는 고지한 범위(확정+7일)를 새 근무관계로 확장하지 않는다.
+        //   → 해당 cohort는 기존대로 수동 요청 fallback을 쓴다.
+        // 접근 창은 새 application의 기간으로 계산한다(원본 기간이 아니다).
+        const renewalConsentGiven =
+          freshData.idCardConsentGiven === true ||
+          freshData.documentAccessConsentGiven === true;
+        if (renewalHasIdCard && renewalConsentGiven &&
+            isDocumentAccessConsentV2(freshData)) {
+          const renewalExpiresAt = admin.firestore.Timestamp.fromMillis(
+            calcPreConsentIdCardExpiryMs(
+              {
+                documentAccessConsentVersion:
+                  freshData.documentAccessConsentVersion,
+                workDate: Timestamp.fromDate(newStartDate),
+                workEndDate: Timestamp.fromDate(newEndDate),
+              },
+              now.toMillis()
+            )
+          );
+          tx.set(renewalGrantRef, {
+            requesterId: `business:${app.businessId}`,
+            requesterName: app.businessName ?? "",
+            requesterBusinessId: app.businessId,
+            requesterBusinessName: app.businessName ?? "",
+            targetUserId: app.uid,
+            targetUserName:
+              (renewalWorkerData?.name as string | undefined) ??
+              (app.applicantName as string | undefined) ?? "",
+            reason: "incomeTax",
+            status: "approved",
+            grantSource: "pre_consent",
+            requestedAt: now,
+            respondedAt: now,
+            expiresAt: renewalExpiresAt,
+            applicationId: newAppRef.id,
+          });
+        }
         schedulerCommitted = true;
       }); // TX 전체 원자적 처리 — 새 application + 계약서 + 알림 + 기존 상태 변경
       return schedulerCommitted ? "ok" : "skip";
@@ -4586,8 +4637,14 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           );
         }
 
+        // [DS-08B.4] 종료일이 확정되는 순간 신분증 접근 창도 함께 줄인다.
+        const autoResignGrantRef = db
+          .collection("idCardAccessRequests").doc(`auto_${doc.id}`);
+
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(doc.ref);
+          // [TX-READ-BEFORE-WRITE] grant read도 write 이전에 완료
+          const grantSnap = await tx.get(autoResignGrantRef);
           if (snap.data()?.resignStatus !== "PENDING") return; // 이미 처리됨
           // [DEFERRED-RESIGN] 승인은 결정만 — status=CANCELED·카운터·계약·attendance는 D+1에서 처리
           tx.update(doc.ref, {
@@ -4595,6 +4652,11 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             resignApprovedAt: now,
             actualResignDate: Timestamp.fromDate(actualResignDate),
           });
+          const shortened = shortenedPreConsentExpiry(
+            grantSnap, actualResignDate.getTime());
+          if (shortened) {
+            tx.update(autoResignGrantRef, {expiresAt: shortened});
+          }
         });
 
         // [DEFERRED-RESIGN] TOKEN_REVOKE_AT_EFFECTIVE_D1 — 토큰 무효화는 D+1에서 처리
@@ -6620,6 +6682,15 @@ export const callableFinalizeWorkerSignature = onCall(
     // 트랜잭션 재시도 시 동일 타임스탬프 보장 (Timestamp.now()는 재시도마다 달라짐)
     const signedAt = admin.firestore.Timestamp.now();
 
+    // [DS-08B.4] 서명자(=근무자) 신분증 등록 여부 — auto-grant 생성 조건.
+    // 경합 대상이 아니므로 TX 밖에서 미리 읽는다.
+    const signerSnap = await db.collection("users").doc(uid).get();
+    const signerData = signerSnap.data();
+    const signerHasIdCard =
+      (signerData?.idCardImagePath ?? null) !== null ||
+      (signerData?.idCardImageUrl ?? null) !== null;
+    const signerName = signerData?.name as string | undefined;
+
     try {
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(contractRef);
@@ -6659,6 +6730,13 @@ export const callableFinalizeWorkerSignature = onCall(
         // [TX-READ-BEFORE-WRITE] Firestore 트랜잭션 규칙: 모든 읽기는 쓰기 전에 완료해야 함.
         // appSnaps를 contractRef 쓰기 이전에 일괄 읽어 규칙 준수.
         const appSnaps = await Promise.all(appRefs.map((ref) => tx.get(ref)));
+        // [DS-08B.4] CONTRACT_PENDING → CONFIRMED 전환 시 신분증 auto-grant 생성.
+        // 수동 계약 갱신이 CONFIRMED에 도달하는 유일한 경로가 여기다.
+        // 멱등성: 이미 approved grant가 있으면 덮어쓰지 않는다.
+        const signGrantRefs = applicationIds.map((id) =>
+          db.collection("idCardAccessRequests").doc(`auto_${id}`));
+        const signGrantSnaps = await Promise.all(
+          signGrantRefs.map((ref) => tx.get(ref)));
 
         // ── 모든 읽기 완료 후 쓰기 시작 ──────────────────────────────
         // employment_contracts 완료 처리
@@ -6688,6 +6766,44 @@ export const callableFinalizeWorkerSignature = onCall(
                 action: "CONTRACT_SIGNED",
               }),
             });
+
+            // [DS-08B.4] v2 동의 + 신분증 등록 + grant 미보유일 때만 생성.
+            // v1/legacy는 고지 범위를 확장하지 않는다 → 수동 요청 fallback.
+            const signConsentGiven =
+              appData?.["idCardConsentGiven"] === true ||
+              appData?.["documentAccessConsentGiven"] === true;
+            const signGrantExisting = signGrantSnaps[i];
+            const signGrantAlreadyActive =
+              signGrantExisting.exists &&
+              signGrantExisting.data()?.status === "approved";
+            // appData 존재는 위 조건에서 확인됨 (?. 접근이라 narrowing 안 됨)
+            const signAppData = appData as FirebaseFirestore.DocumentData;
+            const signGrantNeeded =
+              signerHasIdCard && signConsentGiven && !signGrantAlreadyActive;
+            if (signGrantNeeded && isDocumentAccessConsentV2(signAppData)) {
+              const signBizId = appData?.["businessId"] as string | undefined;
+              const signBizName =
+                (appData?.["businessName"] as string | undefined) ?? "";
+              tx.set(signGrantRefs[i], {
+                requesterId: `business:${signBizId ?? ""}`,
+                requesterName: signBizName,
+                requesterBusinessId: signBizId ?? "",
+                requesterBusinessName: signBizName,
+                targetUserId: uid,
+                targetUserName:
+                  signerName ??
+                  (appData?.["applicantName"] as string | undefined) ?? "",
+                reason: "incomeTax",
+                status: "approved",
+                grantSource: "pre_consent",
+                requestedAt: signedAt,
+                respondedAt: signedAt,
+                expiresAt: admin.firestore.Timestamp.fromMillis(
+                  calcPreConsentIdCardExpiryMs(signAppData, signedAt.toMillis())
+                ),
+                applicationId: applicationIds[i],
+              });
+            }
           }
         }
       });
@@ -7508,11 +7624,12 @@ export const callableMarkIdCardVerified = onCall(
 
     // [FIX-1] 신분증 업로드 시 누락된 auto-grant 소급 생성
     // 확정 시점에 신분증 없어서 Grant 생성이 건너뛰어진 Application에 대해 보완 생성.
-    // expiresAt = 원래 confirmedAt + 7일 — 업로드 시각 기준으로 새 7일 계산하지 않음.
-    // confirmedAt + 7일이 이미 지난 Application은 Grant 생성 안 함.
+    // 업로드 시각 기준으로 새 7일을 계산하지 않는다 — 원래 접근 창을 그대로 쓴다.
+    // [DS-08B.4] 접근 창은 확정 경로와 동일한 동의 버전별 공식을 사용한다.
+    //   v2 → max(confirmedAt, 마지막 근무일) + 7일 / v1·legacy → confirmedAt + 7일
+    // 이미 그 창이 지난 Application은 Grant를 만들지 않는다(수동 요청 fallback).
     try {
       const nowMs1 = Date.now();
-      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
       // uid 단일 equality 쿼리 (composite index 의존 없음) — 클라이언트 side에서 추가 필터링
       const allUserAppsSnap = await db.collection("applications")
@@ -7533,7 +7650,8 @@ export const callableMarkIdCardVerified = onCall(
         if (status1 !== "CONFIRMED" && status1 !== "CONTRACT_PENDING") continue;
         const confirmedAt = appData["confirmedAt"] as admin.firestore.Timestamp | null;
         if (!confirmedAt) continue; // confirmedAt 없으면 skip
-        const expiresAtMs = confirmedAt.toMillis() + sevenDaysMs;
+        const expiresAtMs = calcPreConsentIdCardExpiryMs(
+          appData, confirmedAt.toMillis());
         if (expiresAtMs <= nowMs1) continue; // 접근 가능 기간 이미 만료 → Grant 생성 안 함
         retroGrantTargets.push({
           appId: appDoc.id,
@@ -12264,6 +12382,87 @@ export const onTODeleted = onDocumentDeleted(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🪪 신분증 pre-consent auto-grant 접근 창 계산
+// ═══════════════════════════════════════════════════════════
+// [DS-08B.4] 접근 창은 "사용자가 실제로 본 동의 문구"의 범위를 따른다.
+//   v2 "2026-09-12-v2": 확정 시 활성화 → 마지막 근무일 + 7일
+//   v1 "2026-08-21-v1" / 버전 없음(legacy): 고지한 대로 확정일 + 7일
+// 버전을 올려주지 않는다. 사용자가 보지 않은 문구의 범위를 적용하면
+// 고지 없이 접근 기간을 늘리는 것이 된다.
+// 7일이라는 duration 자체는 두 버전 공통 — 이번에 바뀐 것은 기준점뿐이다.
+const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const DOCUMENT_ACCESS_CONSENT_V2 = "2026-09-12-v2";
+
+/**
+ * 새 접근 창 문구(v2)에 동의한 지원서인지.
+ * @param {FirebaseFirestore.DocumentData} appData application 문서 데이터
+ * @return {boolean} v2 동의 여부
+ */
+function isDocumentAccessConsentV2(
+  appData: FirebaseFirestore.DocumentData
+): boolean {
+  return appData["documentAccessConsentVersion"] === DOCUMENT_ACCESS_CONSENT_V2;
+}
+
+/**
+ * pre_consent auto-grant의 expiresAt(ms).
+ *
+ * lastWorkDate = actualResignDate ?? workEndDate ?? workDate
+ *   단기는 workDate가 곧 종료일, 장기는 workEndDate,
+ *   조기 종료가 확정된 뒤에는 actualResignDate가 우선한다.
+ * max(confirmedAt, lastWorkDate)를 쓰는 이유: 소급·당일 확정에서
+ *   창이 현행(확정+7일)보다 짧아지지 않도록 하한을 둔다.
+ *
+ * @param {FirebaseFirestore.DocumentData} appData application 문서 데이터
+ * @param {number} confirmedAtMs 확정 시각(ms). serverTimestamp가 아직
+ *   확정되지 않은 신규 확정 경로에서는 호출자가 현재 시각을 전달한다.
+ * @return {number} 접근 창 종료 시각(ms)
+ */
+function calcPreConsentIdCardExpiryMs(
+  appData: FirebaseFirestore.DocumentData,
+  confirmedAtMs: number
+): number {
+  if (!isDocumentAccessConsentV2(appData)) {
+    return confirmedAtMs + ID_CARD_ACCESS_WINDOW_MS;
+  }
+  const lastWork =
+    (appData["actualResignDate"] as admin.firestore.Timestamp | undefined) ??
+    (appData["workEndDate"] as admin.firestore.Timestamp | undefined) ??
+    (appData["workDate"] as admin.firestore.Timestamp | undefined);
+  const lastWorkMs = lastWork?.toMillis?.() ?? confirmedAtMs;
+  return Math.max(confirmedAtMs, lastWorkMs) + ID_CARD_ACCESS_WINDOW_MS;
+}
+
+/**
+ * 조기 종료 확정 시 pre_consent auto-grant 만료를 단축한 값.
+ *
+ * 단축 방향만 허용한다 — 조기 종료를 근거로 접근을 늘리지 않는다.
+ * 그래서 v1/v2 구분 없이 안전하게 적용할 수 있다.
+ * 닫힌 grant(expired/revoked/rejected)와 수동 요청 grant는 건드리지 않는다.
+ *
+ * @param {FirebaseFirestore.DocumentSnapshot} grantSnap 대상 grant 스냅샷
+ * @param {number} resignDateMs 확정된 종료일(ms)
+ * @return {admin.firestore.Timestamp | null} 단축된 만료 시각.
+ *   단축이 필요 없거나 대상이 아니면 null.
+ */
+function shortenedPreConsentExpiry(
+  grantSnap: FirebaseFirestore.DocumentSnapshot,
+  resignDateMs: number
+): admin.firestore.Timestamp | null {
+  const g = grantSnap.data();
+  if (!g) return null;
+  if (g.status !== "approved") return null;
+  const src = g.grantSource as string | undefined;
+  if (typeof src !== "string" || !src.startsWith("pre_consent")) return null;
+  const existingMs =
+    (g.expiresAt as admin.firestore.Timestamp | undefined)?.toMillis();
+  if (existingMs === undefined) return null;
+  const candidateMs = resignDateMs + ID_CARD_ACCESS_WINDOW_MS;
+  if (candidateMs >= existingMs) return null; // 연장 금지
+  return admin.firestore.Timestamp.fromMillis(candidateMs);
+}
+
+// ═══════════════════════════════════════════════════════════
 // 🪪 신분증 서명 URL 발급 (ID-1 보안: Firestore 평문 URL 직접 노출 차단)
 // ═══════════════════════════════════════════════════════════
 // [PRODUCT-POLICY] 신분증 열람 authority 기준
@@ -12367,8 +12566,19 @@ export const callableGetIdCardSignedUrl = onCall(
 
       // 클라이언트 시계 조작으로 expiresAt이 7일보다 길게 설정된 경우 차단
       // respondedAt(serverTimestamp) + 7일을 서버에서 직접 계산하여 재검증
+      //
+      // [DS-08B.4] 이 상한은 '수동 요청 승인' grant 전용이다.
+      // pre_consent 계열 auto-grant는 서버가 직접 계산해 쓴 값이라
+      // 클라이언트 위조 경로가 없고, canonical 만료는 expiresAt 하나뿐이다.
+      // 여기서 respondedAt+7일로 다시 자르면 v2 접근 창
+      // (마지막 근무일 + 7일)이 확정일+7일에서 무효가 된다.
+      const capGrantSource =
+        accessSnap.docs[0].data().grantSource as string | undefined;
+      const isPreConsentGrant =
+        typeof capGrantSource === "string" &&
+        capGrantSource.startsWith("pre_consent");
       const respondedAt = accessSnap.docs[0].data().respondedAt as Timestamp | undefined;
-      if (respondedAt) {
+      if (!isPreConsentGrant && respondedAt) {
         const maxExpiry = new Date(respondedAt.toMillis() + 7 * 24 * 60 * 60 * 1000);
         if (new Date() > maxExpiry) {
           throw new HttpsError("permission-denied", "신분증 열람 권한이 만료되었습니다.");
@@ -17024,6 +17234,11 @@ export const callableApproveTermination = onCall(
           : null;
       }
 
+      // [DS-08B.4] 신분증 접근 창 단축 — read-before-write 구간에서 읽는다.
+      const termGrantRef = db
+        .collection("idCardAccessRequests").doc(`auto_${applicationId}`);
+      const termGrantSnap = await tx.get(termGrantRef);
+
       const terminationEffectiveDate =
         (d.terminationEffectiveDate as admin.firestore.Timestamp | null) ?? null;
       resolvedData = {
@@ -17047,6 +17262,16 @@ export const callableApproveTermination = onCall(
         canceledAt: admin.firestore.FieldValue.serverTimestamp(),
         confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(), // [GAP-TERMINATION-WDID-01 FIX] double-decrement 방지
       });
+      // [DS-08B.4] 해지 효력일 기준으로 신분증 접근 창 단축 (동일 TX).
+      // terminationEffectiveDate가 없으면 serverTimestamp로 즉시 종료되므로
+      // 그 근사치인 현재 시각을 기준으로 삼는다.
+      const termResignMs =
+        terminationEffectiveDate?.toMillis() ?? Date.now();
+      const termShortened = shortenedPreConsentExpiry(
+        termGrantSnap, termResignMs);
+      if (termShortened) {
+        tx.update(termGrantRef, {expiresAt: termShortened});
+      }
       // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
       if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
         tx.update(contractRef, {
@@ -17212,8 +17437,14 @@ export const callableApproveResignation = onCall(
     };
     let resolvedData: ResignationResolved | null = null;
 
+    // [DS-08B.4] 종료일이 확정되는 순간 신분증 접근 창도 함께 줄인다.
+    const resignGrantRef = db
+      .collection("idCardAccessRequests").doc(`auto_${applicationId}`);
+
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(appRef);
+      // [TX-READ-BEFORE-WRITE] grant read도 write 이전에 완료
+      const resignGrantSnap = await tx.get(resignGrantRef);
       if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
       const d = snap.data()!;
       if (d.resignStatus !== "PENDING") {
@@ -17241,6 +17472,14 @@ export const callableApproveResignation = onCall(
         actualResignDate:
           resignRequestDate ?? admin.firestore.FieldValue.serverTimestamp(),
       });
+      // [DS-08B.4] 퇴사일 기준으로 신분증 접근 창 단축 (동일 TX).
+      // resignRequestDate가 없으면 serverTimestamp로 즉시 종료되므로
+      // 그 근사치인 현재 시각을 기준으로 삼는다.
+      const resignShortened = shortenedPreConsentExpiry(
+        resignGrantSnap, resignRequestDate?.toMillis() ?? Date.now());
+      if (resignShortened) {
+        tx.update(resignGrantRef, {expiresAt: resignShortened});
+      }
     });
 
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
@@ -21314,8 +21553,11 @@ export const callableConfirmApplication = onCall(
           const existingGrant = await grantRef.get();
           if (!existingGrant.exists || existingGrant.data()?.status !== "approved") {
             const nowMs = admin.firestore.Timestamp.now().toMillis();
+            // [DS-08B.4] 동의 버전별 접근 창 — calcPreConsentIdCardExpiryMs 참조.
+            //   v2 → max(확정, 마지막 근무일) + 7일
+            //   v1/legacy → 확정 + 7일 (고지한 범위 그대로)
             const expiresAt = admin.firestore.Timestamp.fromMillis(
-              nowMs + 7 * 24 * 60 * 60 * 1000 // 7일 — [PD-ID-ACCESS-WINDOW] 미결
+              calcPreConsentIdCardExpiryMs(appDataPre, nowMs)
             );
             await grantRef.set({
               // requesterId 센티널: "business:${businessId}"
@@ -24841,10 +25083,13 @@ export const callableApplyToTO = onCall(
         reactivateData["idCardConsentVersion"] = "2026-08-v1";
         // [DOCUMENT-CONSENT] 재지원 시 서류 통합 동의 갱신
         // 버전 이력: "2026-08-v1" = 신분증만 언급 (구 문구)
-        //           "2026-08-21-v1" = 신분증(7일)+급여계좌·통장사본(고용관계 유효 기간) 명시 (V3 최종 문구)
+        //           "2026-08-21-v1" = 신분증(확정일+7일)+급여계좌·통장사본 명시
+        //           "2026-09-12-v2" = 신분증 종료 기준을 마지막 근무일+7일로 변경
+        //                             + 갱신 승계 명시 [DS-08B.4]
         reactivateData["documentAccessConsentGiven"] = true;
         reactivateData["documentAccessConsentAt"] = admin.firestore.FieldValue.serverTimestamp();
-        reactivateData["documentAccessConsentVersion"] = "2026-08-21-v1";
+        reactivateData["documentAccessConsentVersion"] =
+          DOCUMENT_ACCESS_CONSENT_V2;
         tx.update(appRef, reactivateData);
       } else {
         // [L1-FIX] businessName/toTitle: 클라이언트 제출값 대신 서버 TO 문서값 우선 사용 (텍스트 주입 차단)
@@ -24866,12 +25111,14 @@ export const callableApplyToTO = onCall(
           idCardConsentAt: admin.firestore.FieldValue.serverTimestamp(),
           idCardConsentVersion: "2026-08-v1",
           // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 (V3)
-          // 신분증(확정일+7일) + 급여계좌·통장사본(고용관계 유효 기간) 접근에 동의
+          // 신분증(마지막 근무일+7일) + 급여계좌·통장사본(고용관계 유효 기간) 접근에 동의
           // 버전 이력: "2026-08-v1" = 신분증만 언급 (구 문구)
-          //           "2026-08-21-v1" = 신분증(7일)+급여계좌·통장사본(고용관계 유효 기간) 명시 (V3 최종 문구)
+          //           "2026-08-21-v1" = 신분증(확정일+7일)+급여계좌·통장사본 명시
+          //           "2026-09-12-v2" = 신분증 종료 기준을 마지막 근무일+7일로 변경
+          //                             + 갱신 승계 명시 [DS-08B.4]
           documentAccessConsentGiven: true,
           documentAccessConsentAt: admin.firestore.FieldValue.serverTimestamp(),
-          documentAccessConsentVersion: "2026-08-21-v1",
+          documentAccessConsentVersion: DOCUMENT_ACCESS_CONSENT_V2,
         };
         if (slotId) setData["slotId"] = slotId;
         if (workDetailId && workDetailId.length > 0) setData["workDetailId"] = workDetailId;
