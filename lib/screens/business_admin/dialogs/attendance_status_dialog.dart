@@ -39,6 +39,7 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/attendance_badge_helper.dart';
 import '../../../utils/attendance_status_helper.dart';
 import '../../../utils/attendance_review_helper.dart';
+import '../../../services/work_detail_time_service.dart';
 import '../../../utils/work_detail_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
@@ -3057,123 +3058,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   ///
   /// TO 템플릿이 아닌 슬롯 문서를 우선 읽어 날짜별 수정 사항을 반영한다.
   /// workers를 넘기면 해당 근무자들의 slotId 기반으로 조회; null이면 _confirmedWorkers 사용.
-  Future<Map<String, dynamic>> _getWorkDetailTimes([List<ApplicationModel>? workers]) async {
-    final Map<String, dynamic> timeInfoMap = {};
-
-    final targetWorkers = workers ?? _confirmedWorkers;
-    if (targetWorkers.isEmpty) return timeInfoMap;
-
-    // 고유한 (toId, slotId) 쌍 수집 — 동일 toId에 여러 슬롯 가능하므로 Set으로 보관
-    final slotPairs = <String, Set<String>>{}; // toId → Set<slotId>
-    final toIds = <String>{};                  // slotId 없는 경우 TO 폴백용
-    for (final app in targetWorkers) {
-      if (app.toId == null || app.toId!.isEmpty) continue;
-      if (app.slotId != null && app.slotId!.isNotEmpty) {
-        slotPairs.putIfAbsent(app.toId!, () => {}).add(app.slotId!);
-      } else {
-        toIds.add(app.toId!);
-      }
-    }
-
-    void extractFromWorkDetails(List<dynamic> raw) {
-      for (var wd in raw) {
-        final data = Map<String, dynamic>.from(wd as Map);
-        final workType = data['workType'] as String? ?? '';
-        // 'HH:mm:ss' → 'HH:mm' 정규화 (레거시 데이터 대응)
-        final rawStart = data['startTime'] as String? ?? '';
-        final rawEnd = data['endTime'] as String? ?? '';
-        final startTime = rawStart.length >= 5 ? rawStart.substring(0, 5) : rawStart;
-        final endTime = rawEnd.length >= 5 ? rawEnd.substring(0, 5) : rawEnd;
-        if (workType.isEmpty) continue;
-        final compositeKey = '${workType}_${startTime}_$endTime';
-        final entry = {
-          'startTime': startTime,
-          'endTime': endTime,
-          'wage': data['wage'] ?? 0,
-          'wageType': data['wageType'] ?? 'hourly',
-          'breakMinutes': data['breakMinutes'] ?? 0,
-          'nightAllowanceApplied': data['nightAllowanceApplied'] ?? true,
-          'nightIncluded': data['nightIncluded'] ?? false,
-          'shiftType': data['shiftType'],
-          'baseHourlyWage': (data['baseHourlyWage'] as num?)?.toInt(),
-          'weeklyHolidayIncluded': data['weeklyHolidayIncluded'] as bool? ?? false,
-          'scheduledDaysPerWeek': (data['scheduledDaysPerWeek'] as num?)?.toInt(),
-          'taxDeductionType': data['taxDeductionType'] as String?,
-          'payScheduleType': data['payScheduleType'] as String?,
-          'payScheduleDay': (data['payScheduleDay'] as num?)?.toInt(),
-        };
-        timeInfoMap[compositeKey] = entry;
-        timeInfoMap[workType] ??= entry; // 레거시 폴백 키 (마지막 값 덮어씀)
-      }
-    }
-
-    try {
-      // 슬롯 문서 병렬 조회 (toId당 여러 슬롯 가능)
-      final slotFutures = slotPairs.entries.expand((e) =>
-          e.value.map((slotId) => FirebaseFirestore.instance
-              .collection('tos').doc(e.key)
-              .collection('slots').doc(slotId)
-              .get()));
-      final slotDocs = await Future.wait(slotFutures);
-      for (final doc in slotDocs) {
-        if (!doc.exists) continue;
-        final raw = doc.data()?['workDetails'] as List<dynamic>?;
-        if (raw != null && raw.isNotEmpty) extractFromWorkDetails(raw);
-      }
-
-      // slotId 없는 경우 TO 문서 폴백
-      if (toIds.isNotEmpty) {
-        final toFutures = toIds.map((id) =>
-            FirebaseFirestore.instance.collection('tos').doc(id).get());
-        final toDocs = await Future.wait(toFutures);
-        for (final doc in toDocs) {
-          if (!doc.exists) continue;
-          final raw = doc.data()?['workDetails'] as List<dynamic>?;
-          if (raw != null) extractFromWorkDetails(raw);
-        }
-      }
-
-      // TO 마스터로 slotId 없는 경우의 workType 키 폴백 보정
-      // 슬롯 문서가 이미 데이터를 채웠으면 덮어쓰지 않음 (??=)
-      // → 슬롯 수정 시 TO 마스터(구시간)가 최신 슬롯값을 되돌리는 버그 방지
-      final masterIds = slotPairs.keys.toSet();
-      if (masterIds.isNotEmpty) {
-        final masterFutures = masterIds.map((id) =>
-            FirebaseFirestore.instance.collection('tos').doc(id).get());
-        final masterDocs = await Future.wait(masterFutures);
-        for (final doc in masterDocs) {
-          if (!doc.exists) continue;
-          final raw = doc.data()?['workDetails'] as List<dynamic>?;
-          if (raw == null) continue;
-          for (var wd in raw) {
-            final data = Map<String, dynamic>.from(wd as Map);
-            final workType = data['workType'] as String? ?? '';
-            if (workType.isEmpty) continue;
-            timeInfoMap[workType] ??= {
-              'startTime': data['startTime'] ?? '',
-              'endTime': data['endTime'] ?? '',
-              'wage': data['wage'] ?? 0,
-              'wageType': data['wageType'] ?? 'hourly',
-              'breakMinutes': data['breakMinutes'] ?? 0,
-              'nightAllowanceApplied': data['nightAllowanceApplied'] ?? true,
-              'nightIncluded': data['nightIncluded'] ?? false,
-              'shiftType': data['shiftType'],
-              'baseHourlyWage': (data['baseHourlyWage'] as num?)?.toInt(),
-              'weeklyHolidayIncluded': data['weeklyHolidayIncluded'] as bool? ?? false,
-              'scheduledDaysPerWeek': (data['scheduledDaysPerWeek'] as num?)?.toInt(),
-              'taxDeductionType': data['taxDeductionType'] as String?,
-              'payScheduleType': data['payScheduleType'] as String?,
-              'payScheduleDay': (data['payScheduleDay'] as num?)?.toInt(),
-            };
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('❌ WorkDetail 시간 조회 실패: $e');
-    }
-
-    return timeInfoMap;
-  }
+  /// [AH-V2-04A.1] 실제 로딩은 WorkDetailTimeService가 담당한다.
+  ///   관리자 Home도 같은 서비스를 써서 동일한 근무시간 기준을 갖는다.
+  Future<Map<String, dynamic>> _getWorkDetailTimes([List<ApplicationModel>? workers]) =>
+      WorkDetailTimeService.load(workers ?? _confirmedWorkers);
 
 
   // ═══════════════════════════════════════════════════════════

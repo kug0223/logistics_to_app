@@ -18,6 +18,8 @@ import '../common/tour_screen.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/attendance_list_pdf.dart';
 import '../../utils/attendance_review_helper.dart';
+import '../../utils/work_detail_helper.dart';
+import '../../services/work_detail_time_service.dart';
 
 // Screens
 import '../common/settings_screen.dart';
@@ -512,6 +514,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       // 출근: checkInAt != null
       final checkedIn = allAttendance.where((a) => a.hasCheckedIn).length;
 
+      // [AH-V2-04A.1] 실제 적용 근무시간 — AttendanceStatusDialog·급여 확정과
+      //   같은 소스. 지원서 원본 시각만 쓰면 workDetail override가 걸린 근무에서
+      //   Home과 Dialog의 시간 경계가 갈린다.
+      //   비용은 근로자 수가 아니라 고유 (toId, slotId) 쌍 수에 비례한다.
+      final timeMap = await WorkDetailTimeService.load(allConfirmed);
+
       // [AH-V2-04A] 근태 확인 — canonical actionability 판정.
       //   AttendanceReviewHelper가 Home과 AttendanceStatusDialog 검토 탭의
       //   단일 기준이다. 처리를 끝낸 건(NO_SHOW·결근·정산 진입·관리자 확인)은
@@ -524,8 +532,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         if (AttendanceReviewHelper.requiresReviewNow(
           now: nowLocal,
           workDate: today,
-          scheduledStart: app.startTime,
-          scheduledEnd: app.endTime,
+          scheduledStart: WorkDetailHelper.effectiveStart(app, timeMap),
+          scheduledEnd: WorkDetailHelper.effectiveEnd(app, timeMap),
           attendance: attMap[app.id],
         )) {
           reviewAppIds.add(app.id);
