@@ -344,12 +344,17 @@ void main() {
       expect(before.contains('if ('), isFalse, reason: 'total에 새 조건이 붙으면 안 된다');
     });
 
-    test('§14 initialFilter를 구현하지 않았다', () {
-      expect(queue.contains('initialFilter'), isFalse);
+    // [AH-V2-04C 갱신] initialFilter는 이 Phase에서는 금지였고, 후속 04C에서
+    // canonical overdueCount를 근거로 연결됐다. 그 연결이 overdue 계약을
+    // 그대로 쓰는지만 여기서 고정한다.
+    test('§14 후속 initialFilter가 canonical overdueCount를 근거로 한다', () {
       final home = _codeOf(
           _src('lib/screens/business_admin/business_admin_home_screen.dart'));
-      expect(home.contains('initialFilter'), isFalse);
       expect(home.contains('SupportReviewQueueScreen.route('), isTrue);
+      expect(home.contains('initialFilter: (approval?.overdueCount ?? 0) > 0'),
+          isTrue);
+      expect(home.contains('? SupportReviewFilter.overdue'), isTrue);
+      expect(home.contains(': SupportReviewFilter.all,'), isTrue);
     });
 
     test('§16 새 query·index 없음', () {
@@ -360,19 +365,33 @@ void main() {
           reason: '투영은 오히려 줄었다');
     });
 
+    // [AH-V2-04C 갱신] _Filter는 route 파라미터로 쓰기 위해
+    // SupportReviewFilter로 공개 승격됐다. 값 4종은 그대로다.
     test('Queue 필터 4종 유지', () {
       for (final l in ['전체', '기한 지남', '오늘', '예정']) {
         expect(queue.contains("return '$l';"), isTrue, reason: l);
       }
-      expect(queue.contains('_Filter.all'), isTrue);
-      expect(queue.contains('_Filter.overdue'), isTrue);
-      expect(queue.contains('_Filter.today'), isTrue);
-      expect(queue.contains('_Filter.upcoming'), isTrue);
+      for (final v in ['all', 'overdue', 'today', 'upcoming']) {
+        expect(queue.contains('SupportReviewFilter.$v'), isTrue, reason: v);
+      }
+      expect(queue.contains('enum SupportReviewFilter { all, overdue, today, upcoming }'),
+          isTrue);
     });
 
+    // [AH-V2-04C 갱신] 기본값은 상수 초기화에서 route/생성자 기본 파라미터로
+    // 옮겨갔다. 지정하지 않으면 여전히 all이다.
     test('Queue 기본 필터는 여전히 all', () {
-      expect(queue.contains('_Filter _filter               = _Filter.all;'),
-          isTrue);
+      expect(
+        queue.contains('this.initialFilter = SupportReviewFilter.all,'),
+        isTrue,
+        reason: '생성자 기본값',
+      );
+      expect(
+        queue.contains('SupportReviewFilter initialFilter = SupportReviewFilter.all,'),
+        isTrue,
+        reason: 'route 기본값',
+      );
+      expect(queue.contains('_filter = widget.initialFilter;'), isTrue);
     });
 
     test('날짜 grouping·정렬 유지', () {

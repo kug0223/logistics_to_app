@@ -2186,10 +2186,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           final businesses = await _getBusinesses();
           if (businesses.isEmpty || !context.mounted) return;
+          // [AH-V2-04C] Home이 '긴급 N건'을 강조했으면 그 집합으로 바로 착지한다.
+          //   긴급이 0이면 기존대로 전체 — 오늘/예정으로 임의 이동하지 않는다.
+          //   매 진입 시 최신 canonical summary를 기준으로 다시 판단한다.
           final changed = await Navigator.push<bool>(context,
             SupportReviewQueueScreen.route(
               businessIds: businesses.map((b) => b.id).toList(),
               businesses: businesses,
+              initialFilter: (approval?.overdueCount ?? 0) > 0
+                  ? SupportReviewFilter.overdue
+                  : SupportReviewFilter.all,
             ),
           );
           if (changed == true && mounted) unawaited(_loadCanonicalSummary());

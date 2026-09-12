@@ -65,15 +65,15 @@ extension _PriorityLabel on _Priority {
 
 // ─── 필터 ─────────────────────────────────────────────────────────────────────
 
-enum _Filter { all, overdue, today, upcoming }
+enum SupportReviewFilter { all, overdue, today, upcoming }
 
-extension _FilterLabel on _Filter {
+extension SupportReviewFilterLabel on SupportReviewFilter {
   String get label {
     switch (this) {
-      case _Filter.all:      return '전체';
-      case _Filter.overdue:  return '기한 지남';
-      case _Filter.today:    return '오늘';
-      case _Filter.upcoming: return '예정';
+      case SupportReviewFilter.all:      return '전체';
+      case SupportReviewFilter.overdue:  return '기한 지남';
+      case SupportReviewFilter.today:    return '오늘';
+      case SupportReviewFilter.upcoming: return '예정';
     }
   }
 }
@@ -153,19 +153,28 @@ class SupportReviewQueueScreen extends StatefulWidget {
     super.key,
     required this.businessIds,
     required this.businesses,
+    this.initialFilter = SupportReviewFilter.all,
   });
 
   final List<String> businessIds;
   final List<BusinessModel> businesses;
 
+  /// [AH-V2-04C] 진입 시 선택될 필터.
+  ///
+  /// Home이 '긴급 N건'을 강조해 보여준 뒤 들어오면 그 집합으로 바로 착지한다.
+  /// 생략하면 기존대로 전체. 다른 진입 경로의 동작은 바뀌지 않는다.
+  final SupportReviewFilter initialFilter;
+
   static Route<bool> route({
     required List<String> businessIds,
     required List<BusinessModel> businesses,
+    SupportReviewFilter initialFilter = SupportReviewFilter.all,
   }) =>
       MaterialPageRoute<bool>(
         builder: (_) => SupportReviewQueueScreen(
           businessIds: businessIds,
           businesses: businesses,
+          initialFilter: initialFilter,
         ),
       );
 
@@ -181,7 +190,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
 
   List<ApplicationModel> _apps  = [];
   Map<String, UserModel> _users = {};
-  _Filter _filter               = _Filter.all;
+  late SupportReviewFilter _filter;
   bool _hasChanges              = false;
   bool _isActing                = false;  // 승인/거절 중 중복 방지
   // [CR-01 FIX] ERROR != EMPTY 분리 — CF callable 실패 시 에러 상태
@@ -195,6 +204,10 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   @override
   void initState() {
     super.initState();
+    // [AH-V2-04C] 호출부가 지정한 필터로 시작. 로드 후 자동 전환은 하지 않는다 —
+    //   '기한 지남'으로 들어왔는데 그 사이 다 처리됐다면 해당 필터의 빈 상태를
+    //   보여주는 것이 맞다. 몰래 전체로 되돌리면 무엇을 보고 있는지 알 수 없다.
+    _filter = widget.initialFilter;
     _load();
   }
 
@@ -254,10 +267,10 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
     final filtered = _apps.where((app) {
       final p = _priorityOf(app);
       switch (_filter) {
-        case _Filter.all:      return true;
-        case _Filter.overdue:  return p == _Priority.overdue;
-        case _Filter.today:    return p == _Priority.today;
-        case _Filter.upcoming: return p == _Priority.upcoming;
+        case SupportReviewFilter.all:      return true;
+        case SupportReviewFilter.overdue:  return p == _Priority.overdue;
+        case SupportReviewFilter.today:    return p == _Priority.today;
+        case SupportReviewFilter.upcoming: return p == _Priority.upcoming;
       }
     }).toList();
 
@@ -308,7 +321,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
 
     for (final group in groups) {
       // priority 구분선 헤더
-      if (group.priority != lastPriority && _filter == _Filter.all) {
+      if (group.priority != lastPriority && _filter == SupportReviewFilter.all) {
         final priorityCount = groups
             .where((g) => g.priority == group.priority)
             .fold(0, (sum, g) => sum + g.count);
@@ -569,7 +582,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        children: _Filter.values.map((f) {
+        children: SupportReviewFilter.values.map((f) {
           final selected = _filter == f;
           return Padding(
             padding: const EdgeInsets.only(right: 8),
@@ -807,7 +820,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
       icon: Icons.filter_list_off,
       title: '해당 조건의 지원이 없어요',
       action: TextButton(
-        onPressed: () => setState(() => _filter = _Filter.all),
+        onPressed: () => setState(() => _filter = SupportReviewFilter.all),
         child: const Text('전체 보기'),
       ),
     );
