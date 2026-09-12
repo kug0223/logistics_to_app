@@ -2012,6 +2012,63 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
+    // 2.5 급여 변경 요청 — canManageWage
+    // [AH-V2-02A] 근로자가 보낸 급여 지급주기 변경 요청(payment_change_requests
+    //   status=PENDING). CF·DTO는 이미 집계해 내려보내고 있었고 Home row만 없었다.
+    //   방치하면 effectiveFrom(다음 지급 주기) 전에 처리되지 못한다.
+    if (!isSub || up.can((p) => p.canManageWage)) {
+      final wageChange = cs?.actions.wageChangeRequest;
+      add(
+        icon: Icons.edit_calendar_outlined, label: '급여 변경 요청',
+        color: AppColors.info,
+        count: wageChange?.count ?? 0, countStr: '${wageChange?.count ?? 0}건',
+        available: wageChange?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.actions.wageChangeRequest;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
+          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          // 변경요청 탭(2) — 급여 첫 화면이 아니라 실제 처리 목록으로 진입
+          await _toPayrollTabDrilldown(
+            context: context, tab: 2, sheetTitle: '급여 변경 요청',
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap,
+          );
+        })),
+      );
+    }
+
+    // 2.6 중간정산 요청 — canManageWage
+    // [AH-V2-02A] 근로자가 보낸 중간정산 요청(interim_settlement_requests
+    //   status=PENDING). showPendingSettlementOnly는 "홈 진입 시 true"로
+    //   설계돼 있었으나 Home에서 넘기는 곳이 없어 dead parameter였다.
+    if (!isSub || up.can((p) => p.canManageWage)) {
+      final settlement = cs?.actions.settlementRequest;
+      add(
+        icon: Icons.payments_outlined, label: '중간정산 요청',
+        color: AppColors.info,
+        count: settlement?.count ?? 0, countStr: '${settlement?.count ?? 0}건',
+        available: settlement?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.actions.settlementRequest;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
+          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          // 중간정산 탭(3) + PENDING 전용 필터 — 승인·거절·처리완료 건 제외
+          await _toPayrollTabDrilldown(
+            context: context, tab: 3, sheetTitle: '중간정산 요청',
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap,
+            showPendingSettlementOnly: true,
+          );
+        })),
+      );
+    }
+
     // 3. 계약 미발송 — canManageContract
     if (!isSub || up.can((p) => p.canManageContract)) {
       final unsent = cs?.actions.unsentContract;
