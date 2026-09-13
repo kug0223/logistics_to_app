@@ -257,11 +257,11 @@ void main() {
               'if (selected != null && !refreshed.subAdminBusinessIds.contains(selected)) '
               '{ _selectedSubAdminBusinessId = null; _memberPermsSub?.cancel();'),
           true);
-      // 새 선택 사업장으로 listener를 옮긴다
-      expect(
-          body.contains('if (active != null && _memberPermsSub == null) { '
-              '_startMemberPermsListener(active, uid);'),
-          true);
+      // [C3] 선택 context 정상화는 공용 helper가 맡는다
+      expect(body.contains('_normalizeSelectedContext(uid);'), true);
+      final norm = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _normalizeSelectedContext(')));
+      expect(norm.contains('_startMemberPermsListener(active, uid);'), true);
     });
 
     test('03-c access → data 순서로 전체 error를 예방한다 (§4)', () {
@@ -503,10 +503,8 @@ void main() {
       final body = _flat(_codeOf(_bodyOf(
           _src(_providerPath), 'Future<void> _recoverFromSelectedMembershipLoss(')));
       expect(body.contains('await refreshSubAdminAccessState();'), true);
-      expect(
-          body.contains(
-              'user.subAdminBusinessIds.where((id) => id != lostBusinessId).toList();'),
-          true);
+      // [C3] 잃은 사업장 제거가 canonical state에 반영된 뒤 판정한다
+      expect(body.contains('_pruneKnownLostMembership(lostBusinessId);'), true);
       expect(body.contains('if (remaining.isEmpty) { _endAdminMode(); return; }'),
           true);
     });
@@ -527,25 +525,149 @@ void main() {
       expect(getter.contains('if (selected != null && user.subAdminBusinessIds.contains(selected))'),
           true);
       expect(getter.contains('return user.subAdminBusinessIds.firstOrNull;'), true);
-      final refresh = _flat(_codeOf(_bodyOf(
-          _src(_providerPath), 'Future<void> _runSubAdminAccessRefresh(')));
-      expect(refresh.contains('final active = effectiveBusinessId;'), true,
+      // [C3] 선택 결정은 _normalizeSelectedContext가 effectiveBusinessId로만 한다
+      final norm = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _normalizeSelectedContext(')));
+      expect(norm.contains('final active = effectiveBusinessId;'), true,
           reason: '별도 ordering 정책을 만들면 안 된다');
-      expect(refresh.contains('ids.first'), false);
+      expect(norm.contains('ids.first'), false);
     });
 
     test('09-h listener를 새 selected로 옮기고 저장값도 정렬한다 (§5)', () {
-      final body = _flat(_codeOf(_bodyOf(
-          _src(_providerPath), 'Future<void> _runSubAdminAccessRefresh(')));
-      expect(
-          body.contains('if (active != null && _memberPermsSub == null) { '
-              '_startMemberPermsListener(active, uid);'),
-          true);
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _normalizeSelectedContext(')));
+      expect(body.contains('_startMemberPermsListener(active, uid);'), true);
       expect(body.contains('prefs.setString(_kSubAdminLastBizKey, active);'), true);
       // 중복 구독 방지: 연결 전 cancel은 listener 정의에 그대로 있다
       final listener = _flat(_codeOf(
           _bodyOf(_src(_providerPath), 'void _startMemberPermsListener(')));
       expect(listener.contains('_memberPermsSub?.cancel();'), true);
+    });
+  });
+
+  // ── BLOCKER(C3): refresh 실패 시 known-lost membership ──────────
+  group('FRESH-12 서버 재조회가 실패해도 잃은 사업장은 scope에서 빠진다', () {
+    /// _pruneKnownLostMembership replica — canonical state를 실제로 바꾼다.
+    _Access prune(_Access a, String lost) {
+      a.assigned = a.assigned.where((id) => id != lost).toList();
+      a.map.remove(lost);
+      return a;
+    }
+
+    test('12-a [A,B] · B 상실 · refresh 실패 → canonical scope가 [A]', () {
+      final a = _Access(assigned: ['A', 'B'], map: {'A': _manage, 'B': _manage});
+      // refresh 실패 — 서버 값을 못 받았다. 확실히 관찰한 B만 제거한다.
+      prune(a, 'B');
+      expect(a.assigned, ['A']);
+      expect(a.postingScope, ['A'],
+          reason: 'callableGetAdminTOs([A,B])를 보내면 전체가 거부된다');
+      expect(a.canForBusiness('B', (p) => p.canManageTo), false);
+      expect(a.canManagePostingAnywhere, true, reason: 'A 권한은 보존');
+      expect(a.createToPicker, ['A']);
+    });
+
+    test('12-b 다른 배정은 추측해서 제거하지 않는다 (§4, §10.D)', () {
+      final a = _Access(
+          assigned: ['A', 'B', 'C'],
+          map: {'A': _manage, 'B': _manage, 'C': _manage});
+      prune(a, 'B');
+      expect(a.assigned, ['A', 'C']);
+      expect(a.canForBusiness('A', (p) => p.canManageTo), true);
+      expect(a.canForBusiness('C', (p) => p.canManageTo), true);
+    });
+
+    test('12-c [B] 하나뿐 · refresh 실패 → scope 0 · 관리자 모드 종료', () {
+      final a = _Access(assigned: ['B'], map: {'B': _manage});
+      prune(a, 'B');
+      expect(a.assigned, isEmpty);
+      expect(a.postingScope, isEmpty);
+      expect(a.canManagePostingAnywhere, false);
+    });
+
+    test('12-d canonical state를 실제로 바꾼다 — 지역 변수가 아니다', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_providerPath), 'void _pruneKnownLostMembership(')));
+      expect(
+          body.contains('_currentUser = user.copyWith( subAdminBusinessIds: '
+              'user.subAdminBusinessIds .where((id) => id != lostBusinessId) .toList(), );'),
+          true,
+          reason: 'subAdminBusinessIds가 그대로면 Posting READ scope에 남는다');
+      expect(body.contains('_setBusinessPermission(lostBusinessId, null);'), true);
+      expect(
+          body.contains(
+              'if (_selectedSubAdminBusinessId == lostBusinessId) { _selectedSubAdminBusinessId = null; }'),
+          true);
+    });
+
+    test('12-e refresh 뒤에 prune이 온다 (성공 시 no-op)', () {
+      final body = _codeOf(_bodyOf(
+          _src(_providerPath), 'Future<void> _recoverFromSelectedMembershipLoss('));
+      final refreshIdx = body.indexOf('await refreshSubAdminAccessState();');
+      final pruneIdx = body.indexOf('_pruneKnownLostMembership(lostBusinessId);');
+      expect(refreshIdx, greaterThan(-1));
+      expect(pruneIdx, greaterThan(refreshIdx));
+      // 판정은 지역 변수가 아니라 갱신된 canonical state로 한다
+      expect(
+          _flat(body).contains('final remaining = user == null || !user.isSubAdmin '
+              '? const <String>[] : user.subAdminBusinessIds;'),
+          true);
+    });
+
+    test('12-f 삭제된 문서를 계속 구독하지 않는다', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_providerPath), 'void _pruneKnownLostMembership(')));
+      expect(
+          body.contains('if (_memberPermsBusinessId == lostBusinessId) { '
+              '_memberPermsSub?.cancel();'),
+          true,
+          reason: 'refresh가 stale ids로 삭제된 사업장에 다시 붙었을 수 있다');
+      // 구독 대상 추적이 존재한다
+      final listener = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _startMemberPermsListener(')));
+      expect(listener.contains('_memberPermsBusinessId = businessId;'), true);
+    });
+
+    test('12-g selected는 recovered scope 기준으로 정상화된다 (§5)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _normalizeSelectedContext(')));
+      // 대상이 다르면 옮긴다 — null 여부만 보지 않는다
+      expect(
+          body.contains(
+              'if (_memberPermsSub != null && _memberPermsBusinessId == active) return;'),
+          true);
+      expect(body.contains('prefs.setString(_kSubAdminLastBizKey, active);'), true);
+      // 남은 배정이 없으면 구독을 끊는다
+      expect(
+          body.contains('if (active == null) { _memberPermsSub?.cancel(); '
+              '_memberPermsSub = null; _memberPermsBusinessId = null; return; }'),
+          true);
+      // 복구 경로가 이 helper를 쓴다
+      final recover = _codeOf(_bodyOf(
+          _src(_providerPath), 'Future<void> _recoverFromSelectedMembershipLoss('));
+      expect(recover.contains('_normalizeSelectedContext(uid);'), true);
+    });
+
+    test('12-h 관리자 모드 종료 시 잔여 구독/권한이 남지 않는다 (§7, §8)', () {
+      final body =
+          _flat(_codeOf(_bodyOf(_src(_providerPath), 'void _endAdminMode(')));
+      expect(body.contains('_memberPermsSub?.cancel(); _memberPermsSub = null; '
+          '_memberPermsBusinessId = null; _memberPermissions = null;'), true);
+      // 기존 SM-05 정리도 그대로
+      expect(body.contains('_isAdminMode = false;'), true);
+      expect(body.contains('FCMService().updateAdminStatus(false);'), true);
+      expect(body.contains('prefs.setBool(_kSubAdminIsAdminModeKey, false);'), true);
+    });
+
+    test('12-i Posting scope가 canonical ids를 그대로 쓴다 (§6)', () {
+      // client가 보내는 ids = subAdminBusinessIds. prune이 그것을 줄인다.
+      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      expect(body.contains('businessIds = user.subAdminBusinessIds;'), true);
+      // 서버 정책은 건드리지 않았다
+      final fns = _src('functions/src/index.ts');
+      expect(
+          _flat(fns).contains(
+              'await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));'),
+          true);
     });
   });
 

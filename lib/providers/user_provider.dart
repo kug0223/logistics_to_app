@@ -65,6 +65,10 @@ class UserProvider with ChangeNotifier {
 
   StreamSubscription? _authSubscription;
   StreamSubscription? _memberPermsSub; // members/{uid} 실시간 권한 감지
+  // [POSTING-V2-03B.1-C3] 위 구독이 **어느 사업장**을 보고 있는지.
+  //   구독 대상을 모르면, 배정이 사라진 사업장에 listener가 다시 붙어도
+  //   `_memberPermsSub != null`이라는 이유로 그대로 유지된다.
+  String? _memberPermsBusinessId;
   bool _disposed = false;
   // [NEW-03] Ghost session 방지용 세대 카운터
   // signOut() 또는 새 _loadUserData 호출 시 증가 → in-flight load가 stale 여부를 확인
@@ -171,6 +175,7 @@ class UserProvider with ChangeNotifier {
   void _startMemberPermsListener(String businessId, String uid) {
     // BUG-7 수정: 새 리스너 연결 전에 구 리스너를 먼저 취소 → 구 사업장 이벤트가 새 권한을 덮어쓰는 경쟁조건 방지
     _memberPermsSub?.cancel();
+    _memberPermsBusinessId = businessId;
     _memberPermsSub = FirebaseFirestore.instance
         .collection('businesses')
         .doc(businessId)
@@ -213,6 +218,7 @@ class UserProvider with ChangeNotifier {
             // 이 사업장 listener는 더 의미가 없다 — 복구가 새 사업장에 다시 건다.
             _memberPermsSub?.cancel();
             _memberPermsSub = null;
+    _memberPermsBusinessId = null;
             unawaited(_recoverFromSelectedMembershipLoss(businessId));
           }
         }
@@ -234,6 +240,7 @@ class UserProvider with ChangeNotifier {
     _memberPermissions = null;
     _memberPermsSub?.cancel();
     _memberPermsSub = null;
+    _memberPermsBusinessId = null;
     FCMService().updateAdminStatus(false);
     // fire-and-forget: 모드 상태 영속 (await 불필요)
     SharedPreferences.getInstance().then((prefs) {
@@ -404,27 +411,94 @@ class UserProvider with ChangeNotifier {
   /// 관리자 모드를 유지하고 selected context만 정상화한다.
   /// 모든 배정이 사라진 경우에만 기존 정책대로 관리자 모드를 끝낸다.
   Future<void> _recoverFromSelectedMembershipLoss(String lostBusinessId) async {
+    final uid = _currentUser?.uid;
     await refreshSubAdminAccessState();
     if (_disposed) return;
-    final user = _currentUser;
 
-    // 배정 조회가 실패했어도 "이 사업장을 잃었다"는 사실은 확실하다 —
-    // stale 목록에서 그것만 빼고 판단한다(추측으로 넓히지 않는다).
+    // [POSTING-V2-03B.1-C3] 서버 재조회가 실패했어도 "이 사업장을 잃었다"는
+    //   snapshot으로 **직접 관찰한 사실**이다. canonical scope에서 그것만 지운다.
+    //   지역 변수로만 빼면 subAdminBusinessIds에 그대로 남아 Posting READ scope
+    //   (02G canonical)가 계속 그 사업장을 포함하고, callableGetAdminTOs가
+    //   통째로 거부된다. refresh가 성공했다면 이미 빠져 있어 no-op이다.
+    _pruneKnownLostMembership(lostBusinessId);
+
+    final user = _currentUser;
     final remaining = user == null || !user.isSubAdmin
         ? const <String>[]
-        : user.subAdminBusinessIds.where((id) => id != lostBusinessId).toList();
+        : user.subAdminBusinessIds;
 
     if (remaining.isEmpty) {
       _endAdminMode();
       return;
     }
-    // 남은 배정이 있다 — refreshSubAdminAccessState가 selected context와
-    // listener를 이미 정상화했다. 상태만 알린다.
+    // 남은 배정이 있다 — prune으로 selected가 비었을 수 있으므로 정상화한다.
+    if (uid != null) _normalizeSelectedContext(uid);
     notifyListeners();
+  }
+
+  /// [POSTING-V2-03B.1-C3] 직접 관찰한 membership 상실만 canonical state에 반영한다.
+  ///
+  /// 허용: [A,B] − knownLost(B) = [A]
+  /// 금지: 서버 조회 실패를 이유로 나머지 배정이나 권한까지 추측해 제거하는 것.
+  /// 다음 성공적인 사용자 재조회가 이 로컬 보정을 서버 값으로 덮는다.
+  void _pruneKnownLostMembership(String lostBusinessId) {
+    final user = _currentUser;
+    if (user == null) return;
+    if (user.subAdminBusinessIds.contains(lostBusinessId)) {
+      _currentUser = user.copyWith(
+        subAdminBusinessIds: user.subAdminBusinessIds
+            .where((id) => id != lostBusinessId)
+            .toList(),
+      );
+    }
+    _setBusinessPermission(lostBusinessId, null);
+    if (_selectedSubAdminBusinessId == lostBusinessId) {
+      _selectedSubAdminBusinessId = null;
+    }
+    // 삭제된 문서를 계속 구독하지 않는다. refresh가 stale ids로 여기에
+    // 다시 붙였을 수 있다 — _normalizeSelectedContext가 새 대상으로 옮긴다.
+    if (_memberPermsBusinessId == lostBusinessId) {
+      _memberPermsSub?.cancel();
+      _memberPermsSub = null;
+      _memberPermsBusinessId = null;
+    }
+  }
+
+  /// [POSTING-V2-03B.1-C3] 선택 사업장 context 정상화 — refresh와 복구가 공유한다.
+  ///
+  /// 새 선택은 effectiveBusinessId의 기존 canonical resolver가 정한다.
+  /// listener는 연결 전 cancel이 있어 동시에 살아 있는 구독이 하나를 넘지 않는다.
+  void _normalizeSelectedContext(String uid) {
+    final active = effectiveBusinessId;
+    _memberPermissions =
+        active == null ? null : _subAdminPermissionsByBusinessView[active];
+    if (active == null) {
+      // 남은 배정이 없다 — 어떤 사업장도 구독하지 않는다.
+      _memberPermsSub?.cancel();
+      _memberPermsSub = null;
+      _memberPermsBusinessId = null;
+      return;
+    }
+    // 이미 그 사업장을 보고 있으면 그대로 둔다. 다른 사업장(또는 배정이
+    // 사라진 사업장)을 보고 있으면 옮긴다 — _startMemberPermsListener가
+    // 연결 전에 이전 구독을 cancel한다.
+    if (_memberPermsSub != null && _memberPermsBusinessId == active) return;
+    _startMemberPermsListener(active, uid);
+    // 저장된 선택 사업장도 새 context로 정렬 — 다음 실행에서 이미 없는
+    // 사업장을 복원하려 시도하지 않게 한다.
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString(_kSubAdminLastBizKey, active);
+    });
   }
 
   /// [POSTING-V2-03B.1-C2] 관리자 모드 종료 — 기존 SM-05 정리 패턴 그대로.
   void _endAdminMode() {
+    // [POSTING-V2-03B.1-C3] 관리 scope가 하나도 없다 — 남은 구독을 정리한다.
+    //   (호출 전에 이미 끊겼으면 no-op)
+    _memberPermsSub?.cancel();
+    _memberPermsSub = null;
+    _memberPermsBusinessId = null;
+    _memberPermissions = null;
     if (!_isAdminMode) {
       notifyListeners();
       return;
@@ -492,6 +566,7 @@ class UserProvider with ChangeNotifier {
       // 관리자 자격 자체를 잃었다 — 남은 권한 상태를 비운다.
       _memberPermsSub?.cancel();
       _memberPermsSub = null;
+    _memberPermsBusinessId = null;
       _memberPermissions = null;
       _clearSubAdminPermissionMap();
       notifyListeners();
@@ -506,26 +581,15 @@ class UserProvider with ChangeNotifier {
       _selectedSubAdminBusinessId = null;
       _memberPermsSub?.cancel();
       _memberPermsSub = null;
+    _memberPermsBusinessId = null;
     }
 
     await _hydrateSubAdminPermissions(refreshed, uid, force: true);
     if (_disposed) return;
 
-    // 선택 사업장 권한을 map과 같은 snapshot으로 맞춘다.
-    final active = effectiveBusinessId;
-    _memberPermissions =
-        active == null ? null : _subAdminPermissionsByBusinessView[active];
+    // 선택 사업장 권한·listener·저장값을 최신 scope로 맞춘다.
     _permissionsLoaded = true;
-    // 선택 사업장이 바뀌었으면 realtime listener를 새 사업장으로 옮긴다.
-    // (연결 전 cancel이 있으므로 동시에 살아 있는 구독은 항상 하나다)
-    if (active != null && _memberPermsSub == null) {
-      _startMemberPermsListener(active, uid);
-      // [POSTING-V2-03B.1-C2] 저장된 선택 사업장도 새 context로 정렬한다 —
-      //   다음 실행에서 이미 없는 사업장을 복원하려 시도하지 않게 한다.
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setString(_kSubAdminLastBizKey, active);
-      });
-    }
+    _normalizeSelectedContext(uid);
     notifyListeners();
   }
 
@@ -960,6 +1024,7 @@ class UserProvider with ChangeNotifier {
 
       _memberPermsSub?.cancel();
       _memberPermsSub = null;
+    _memberPermsBusinessId = null;
 
       // FCM 토큰 삭제
       await FCMService().clearToken();
@@ -1004,6 +1069,7 @@ class UserProvider with ChangeNotifier {
       }
       _memberPermsSub?.cancel();
       _memberPermsSub = null;
+    _memberPermsBusinessId = null;
       _currentUser = null;
       _memberPermissions = null;
       _permissionsLoaded = false;
