@@ -21,6 +21,26 @@ class WorkforceController extends ChangeNotifier {
   bool _disposed = false;
   final Set<String> _loadingGroupIds = {};
 
+  // ── [POSTING-V2-01B] ERROR != EMPTY ─────────────────────────────────
+  // 조회 실패를 '결과 0건'으로 커밋하지 않는다. 실패는 별도 상태로 남기고
+  // items는 건드리지 않는다 — refresh 실패가 기존 목록을 지우면 그것도 empty다.
+  //
+  // 소비자 계약:
+  //   isLoading == true                    → LOADING
+  //   loadError != null && items.isEmpty   → ERROR (본문 전체)
+  //   loadError != null && items.isNotEmpty→ 마지막 성공 데이터 + 실패 알림
+  //   loadError == null && items.isEmpty   → 정상 EMPTY
+  //   loadError == null && items.isNotEmpty→ SUCCESS
+  Object? _loadError;
+  final Set<String> _groupDetailErrorIds = {};
+
+  /// 마지막 목록 조회 실패. 성공하면 반드시 null로 돌아간다.
+  Object? get loadError => _loadError;
+
+  /// 특정 공고의 슬롯/상세 조회가 실패한 상태인지 여부.
+  bool hasGroupDetailError(String groupId) =>
+      _groupDetailErrorIds.contains(groupId);
+
   // ── Cross-tab data invalidation ──────────────────────────────────────
   // reload() 호출 시 dataRevision을 증가시켜 다른 Root의 controller에 변경을 알린다.
   // 각 Root는 dataRevision listener에서 자신의 controller.load()를 트리거한다.
@@ -142,6 +162,9 @@ class WorkforceController extends ChangeNotifier {
     if (_isLoading) return;
     _service.invalidateListCache();
     _isLoading = true;
+    // [POSTING-V2-01B] 새 시도 시작 — 이전 실패 상태를 먼저 지운다.
+    // 성공으로 끝나면 그대로 null, 실패하면 catch에서 다시 채워진다.
+    _loadError = null;
     notifyListeners();
 
     try {
@@ -177,6 +200,9 @@ class WorkforceController extends ChangeNotifier {
       );
       _maxActiveTOs = await limitFuture;
       _items = await itemsFuture;
+      // [POSTING-V2-01B] items가 새 인스턴스로 교체되므로 이전 detail 실패도 무효.
+      // 남겨두면 복구된 공고가 계속 error로 보인다.
+      _groupDetailErrorIds.clear();
       // 사업장 이름 캐시 업데이트 — items 0건이어도 이전 캐시 유지
       final loadedNames = _items
           .map((g) => g.businessName)
@@ -210,11 +236,18 @@ class WorkforceController extends ChangeNotifier {
       } // else 블록 닫힘
     } catch (e) {
       debugPrint('❌ WorkforceController.load 실패: $e');
-      _items = [];
+      // [POSTING-V2-01B] _items = [] 금지.
+      // 실패를 빈 결과로 커밋하면 '공고 0건'과 구분할 수 없고,
+      // refresh 실패에서는 멀쩡하던 목록까지 사라진다.
+      _loadError = e;
     } finally {
       _isLoading = false;
       if (!_disposed) notifyListeners();
     }
+
+    // [POSTING-V2-01B] 실패한 로드의 stale items로 후처리를 돌리지 않는다.
+    // 특히 cascade close는 write이므로 신뢰할 수 없는 상태에서 실행하지 않는다.
+    if (_loadError != null) return;
 
     // flex TO 슬롯 데이터를 백그라운드에서 사전 로드
     // → collapsed 상태에서도 slot.workDetails 기반 마감 판단 가능
@@ -324,6 +357,8 @@ class WorkforceController extends ChangeNotifier {
     if (group.isGroupDetailLoaded || _loadingGroupIds.contains(group.id)) return;
 
     _loadingGroupIds.add(group.id);
+    // [POSTING-V2-01B] 재시도 시작 — 이전 실패 표시를 먼저 지운다
+    _groupDetailErrorIds.remove(group.id);
     notifyListeners();
 
     try {
@@ -333,6 +368,9 @@ class WorkforceController extends ChangeNotifier {
       group.setSlotDates(toItems.map((t) => t.slotDate).whereType<DateTime>().toList());
     } catch (e) {
       debugPrint('❌ WorkforceController.loadGroupDetails 실패: $e');
+      // [POSTING-V2-01B] 실패를 '슬롯 없음'으로 커밋하지 않는다.
+      // setGroupTOs([])를 호출하지 않으므로 isGroupDetailLoaded도 false로 남는다.
+      _groupDetailErrorIds.add(group.id);
     } finally {
       _loadingGroupIds.remove(group.id);
       if (!_disposed) notifyListeners();
@@ -354,10 +392,15 @@ class WorkforceController extends ChangeNotifier {
       slot.setWorkDetails(
         workDetails,
         result['workStats'] as Map<String, Map<String, int>>,
+        // [POSTING-V2-01B] 통계 조회 실패를 0으로 표시하지 않도록 전달
+        statsFailed: result['statsFailed'] == true,
       );
       if (!_disposed) notifyListeners();
     } catch (e) {
       debugPrint('❌ WorkforceController.loadWorkDetails 실패: $e');
+      // [POSTING-V2-01B] 실패를 '확정 0 / 대기 0'으로 커밋하지 않는다
+      slot.markWorkDetailStatsFailed();
+      if (!_disposed) notifyListeners();
     }
   }
 }

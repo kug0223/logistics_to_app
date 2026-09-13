@@ -136,7 +136,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _closedDisplayCount = _closedPageSize;
       _lastCachedItems = null;
     });
-    await context.read<WorkforceController>().reload(context);
+    final controller = context.read<WorkforceController>();
+    await controller.reload(context);
+    // [POSTING-V2-01B] refresh 실패는 기존 목록을 지우지 않으므로 화면만으로는
+    // 알 수 없다. 마지막 성공 데이터를 계속 보여주되 실패 사실은 알린다.
+    if (!mounted) return;
+    if (controller.loadError != null && controller.items.isNotEmpty) {
+      ToastHelper.showError('공고 목록을 새로고침하지 못했습니다');
+    }
   }
 
   /// 탭·필터가 바뀌지 않으면 이전 결과를 그대로 반환 (H2)
@@ -325,7 +332,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final theme = Theme.of(context);
     final isSelected = _selectedTab == tab;
     final isActiveTab = tab == TOStatus.active;
-    final activeCount = isActiveTab ? controller.activeToCount : null;
+    // [POSTING-V2-01B] ERROR != ZERO.
+    // 조회 실패로 보여줄 데이터가 없을 때 '진행중 (0/N)'을 표시하면
+    // 장애가 '진행중 공고 0건'으로 확정돼 보인다. 이 경우 count 자체를 숨긴다.
+    // 마지막 성공 데이터가 남아 있으면 그 known count를 그대로 유지한다.
+    final countIsTrustworthy =
+        controller.loadError == null || controller.items.isNotEmpty;
+    final activeCount =
+        (isActiveTab && countIsTrustworthy) ? controller.activeToCount : null;
     final isMaxed = isActiveTab && (activeCount ?? 0) >= controller.maxActiveTOs;
     // 분모(/N) 표시 여부는 "현재 scope가 단일 사업장인가"로 판단 (item 기반 추론 금지).
     // canonical source: UserProvider.managedBusinessIds.length (jobs_root_screen._computeScopeLabel 동일 기준)
@@ -403,6 +417,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   void _showFilterDialog() {
     final controller = context.read<WorkforceController>();
+    // [POSTING-V2-01B] 사업장 옵션은 controller.items에서 파생된다.
+    // 목록 조회가 실패해 items가 비어 있으면 '사업장 0개'처럼 보이므로 열지 않는다.
+    // (새 사업장 query를 추가하지 않는다 — 목록이 복구되면 옵션도 복구된다)
+    if (controller.loadError != null && controller.items.isEmpty) {
+      ToastHelper.showError('공고 목록을 불러온 뒤 필터를 사용할 수 있습니다');
+      return;
+    }
     // [PATCH-IDENTITY] key=businessId, value=businessName.
     // id로 필터링하고 name을 chip label로 표시.
     // 동명 사업장이 있어도 id가 다르면 별개 항목으로 유지됨.
@@ -436,6 +457,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
     if (controller.isLoading) {
       return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+    }
+
+    // [POSTING-V2-01B] ERROR != EMPTY.
+    // 조회 실패 + 보여줄 데이터 없음 → empty state가 아니라 error state.
+    // 실패 상태에서 '새 공고를 등록하세요'를 권하면 장애 중에 잘못된 행동을 유도한다.
+    // 마지막 성공 데이터가 남아 있으면 그것을 계속 보여준다(_reload의 토스트가 실패를 알림).
+    if (controller.loadError != null && controller.items.isEmpty) {
+      return _buildErrorState();
     }
 
     final allFilteredItems = _getFilteredItems(controller.items);
@@ -486,6 +515,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                   await _handleTOExpand(matches.first);
                 },
                 isGroupLoading: _loadingGroups.contains(groupItem.id),
+                // [POSTING-V2-01B] 슬롯 조회 실패를 '슬롯 없음'으로 보이게 하지 않는다.
+                // 범위는 이 카드까지 — root 전체를 ERROR로 올리지 않는다.
+                hasGroupDetailError:
+                    controller.hasGroupDetailError(groupItem.id),
+                onRetryGroupDetail: () => _handleGroupDetailRetry(groupItem),
                 loadingTOs: _loadingTOs,
                 onAffectedTOsChanged: (_) => _reload(),
                 isAnyExpanded: _expandedGroups.isNotEmpty || _activeGroupKey != null,
@@ -511,6 +545,23 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       icon: Icons.inbox_outlined,
       title: '조건에 맞는 공고가 없습니다',
       subtitle: '필터를 변경하거나 새로운 공고를 등록하세요',
+    );
+  }
+
+  /// [POSTING-V2-01B] 목록 조회 실패 — 공통 AppEmptyState를 error 톤으로 재사용한다.
+  /// primary action은 '공고 등록'이 아니라 '다시 시도'다.
+  Widget _buildErrorState() {
+    return AppEmptyState(
+      icon: Icons.cloud_off_rounded,
+      iconColor: AppColors.grey400,
+      title: '공고 목록을 불러오지 못했습니다',
+      subtitle: '네트워크 상태를 확인한 뒤 다시 시도해주세요',
+      action: TextButton.icon(
+        onPressed: _reload,
+        icon: Icon(Icons.refresh,
+            size: ResponsiveHelper.iconSize(context, 16)),
+        label: const Text('다시 시도'),
+      ),
     );
   }
 
@@ -564,14 +615,41 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
         final workStats = result['workStats'] as Map<String, Map<String, int>>?;
         if (workStats != null) {
-          groupItem.setWorkDetailStats(workStats);
+          groupItem.setWorkDetailStats(
+            workStats,
+            // [POSTING-V2-01B] 통계 조회 실패를 0으로 표시하지 않도록 전달
+            statsFailed: result['statsFailed'] == true,
+          );
+        } else {
+          groupItem.markWorkDetailStatsFailed();
         }
       } catch (e) {
         debugPrint('❌ 그룹 상세 로드 실패: $e');
+        // [POSTING-V2-01B] 실패를 '확정 0 / 대기 0'으로 남기지 않는다
+        groupItem.markWorkDetailStatsFailed();
         if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       } finally {
         if (mounted) setState(() => _loadingTOs.remove(key));
       }
+    }
+  }
+
+  /// [POSTING-V2-01B] 슬롯/상세 조회 재시도 — 기존 canonical load 경로를 그대로 쓴다.
+  /// 신규 API를 만들지 않는다.
+  Future<void> _handleGroupDetailRetry(TOGroupItem groupItem) async {
+    final key = groupItem.id;
+    final controller = context.read<WorkforceController>();
+    setState(() => _loadingGroups.add(key));
+    try {
+      await controller.loadGroupDetails(context, groupItem);
+    } finally {
+      if (mounted) setState(() => _loadingGroups.remove(key));
+    }
+    if (!mounted) return;
+    // 단일 슬롯 flex TO: 업무 상세 통계도 함께 복구
+    if (groupItem.groupTOs.length == 1 &&
+        groupItem.groupTOs.first.needsWorkDetailLoad) {
+      await controller.loadWorkDetails(groupItem.groupTOs.first);
     }
   }
 

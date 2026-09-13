@@ -20,6 +20,10 @@ class TOGroupItem {
   Map<String, Map<String, int>>? workDetailStats;
   bool isWorkDetailLoaded = false;
 
+  /// [POSTING-V2-01B] 통계 조회가 실패했는지 여부.
+  /// true면 [workDetailStats]는 실제 수치가 아니므로 화면에 숫자로 표시하면 안 된다.
+  bool workDetailStatsFailed = false;
+
   // flex TO 슬롯 날짜 캐시 (캘린더 필터용)
   List<DateTime>? _slotDates;
 
@@ -34,9 +38,25 @@ class TOGroupItem {
     this.isGroupDetailLoaded = false,
   }) : _groupTOs = groupTOs;
 
-  void setWorkDetailStats(Map<String, Map<String, int>> stats) {
+  void setWorkDetailStats(
+    Map<String, Map<String, int>> stats, {
+    bool statsFailed = false,
+  }) {
     workDetailStats = stats;
     isWorkDetailLoaded = true;
+    workDetailStatsFailed = statsFailed;
+  }
+
+  /// [POSTING-V2-01B] 통계 조회 실패를 기록한다 — 0으로 확정하지 않기 위해.
+  void markWorkDetailStatsFailed() {
+    isWorkDetailLoaded = true;
+    workDetailStatsFailed = true;
+  }
+
+  /// [POSTING-V2-01B] 재시도를 위해 통계 로드 상태를 되돌린다.
+  void resetWorkDetailStats() {
+    isWorkDetailLoaded = false;
+    workDetailStatsFailed = false;
   }
 
   // ── 기본 정보 ──────────────────────────────────────────
@@ -204,6 +224,10 @@ class TOItem {
 
   Map<String, Map<String, int>>? workDetailStats;
 
+  /// [POSTING-V2-01B] 통계 조회가 실패했는지 여부.
+  /// true면 [workDetailStats]는 실제 수치가 아니다.
+  bool workDetailStatsFailed = false;
+
   TOItem({
     required this.to,
     this.slot,
@@ -219,12 +243,27 @@ class TOItem {
 
   void setWorkDetails(
     List<WorkDetailData> details,
-    Map<String, Map<String, int>> stats,
-  ) {
+    Map<String, Map<String, int>> stats, {
+    bool statsFailed = false,
+  }) {
     _workDetails = details;
     workDetailStats = stats;
     isWorkDetailLoaded = true;
+    workDetailStatsFailed = statsFailed;
     // confirmedCount/pendingCount는 슬롯 문서의 값을 유지 (헤더 수치 일관성)
+  }
+
+  /// [POSTING-V2-01B] 통계 조회 실패를 기록한다.
+  /// workDetails가 이미 있으면 그대로 두고 통계만 신뢰 불가로 표시한다.
+  void markWorkDetailStatsFailed() {
+    isWorkDetailLoaded = true;
+    workDetailStatsFailed = true;
+  }
+
+  /// [POSTING-V2-01B] 재시도를 위해 로드 상태를 되돌린다.
+  void resetWorkDetailLoad() {
+    isWorkDetailLoaded = false;
+    workDetailStatsFailed = false;
   }
 
   void updateOuterStats({
@@ -252,6 +291,15 @@ class TOItem {
   /// - workDetails 로드됨: workDetailStats 기준 (업무유형별 정확한 수치)
   /// - 미로드: slot 수준 confirmedCount/pendingCount 사용
   ({int confirmed, int pending, int required}) resolveStats() {
+    // [POSTING-V2-01B] 통계 조회가 실패했으면 전부 0인 workDetailStats를 쓰지 않는다.
+    // 슬롯 문서의 denormalized counter는 별도 source라 그대로 유효하다 — 이쪽으로 폴백.
+    if (workDetailStatsFailed) {
+      return (
+        confirmed: confirmedCount,
+        pending: pendingCount,
+        required: totalRequired
+      );
+    }
     if (isWorkDetailLoaded && workDetails.isNotEmpty) {
       var c = 0, p = 0, r = 0;
       for (final work in workDetails) {

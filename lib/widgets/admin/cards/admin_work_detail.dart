@@ -39,6 +39,14 @@ class WorkDetailRow extends StatefulWidget {
   final VoidCallback? onLocalStatsChanged;
   final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;  // 🔥 추가
 
+  /// [POSTING-V2-01B] 지원 통계 조회가 실패한 상태.
+  /// true면 확정/대기/미충원 수치를 표시하지 않는다 — 조회 실패는 0이 아니다.
+  /// 업무명·시간·급여는 TO/슬롯 문서에서 오므로 그대로 유효하다.
+  final bool statsFailed;
+
+  /// [POSTING-V2-01B] 통계 재조회. null이면 재시도 버튼을 숨긴다.
+  final VoidCallback? onRetryStats;
+
   const WorkDetailRow({
     super.key,
     required this.work,
@@ -49,6 +57,8 @@ class WorkDetailRow extends StatefulWidget {
     required this.onChanged,
     this.onLocalStatsChanged,
     this.onAffectedTOsChanged,  // 🔥 추가
+    this.statsFailed = false,
+    this.onRetryStats,
   });
 
   @override
@@ -95,7 +105,10 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isFull = _confirmedCount >= widget.work.requiredCount;
+    // [POSTING-V2-01B] 통계 실패 시 isFull을 판정하지 않는다.
+    // 0/N을 근거로 '모집중'이나 '모집 완료'를 주장할 수 없다.
+    final isFull =
+        !widget.statsFailed && _confirmedCount >= widget.work.requiredCount;
     // work.isFull은 항상 false(모델에 통계 없음) → 로컬 isFull 사용
     final slotDate = widget.toItem.slot?.date;
     final isClosed = (widget.toItem.slot?.isEffectivelyClosed ?? false) ||
@@ -173,7 +186,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                         ),
                       ),
                     ),
-                    if (totalApplicants > 0) ...[
+                    // [POSTING-V2-01B] 통계 실패 시 '지원자 0'을 만들지 않기 위해 숨김
+                    if (!widget.statsFailed && totalApplicants > 0) ...[
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -198,9 +212,11 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                     ],
                   ],
                 ),
-                // ② 데이터 바
-                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                _buildProgressBar(isClosed),
+                // ② 데이터 바 — 통계 실패 시 진행률을 그리지 않는다
+                if (!widget.statsFailed) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                  _buildProgressBar(isClosed),
+                ],
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 // ③ 시간 + 임금 (한 줄)
                 Row(
@@ -258,7 +274,11 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                 ],
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 // ⑤ 확정/대기/미충원 도트 + N/total
-                _buildPersonnelStatus(context, isFull, isClosed, missing),
+                // [POSTING-V2-01B] 조회 실패를 '확정 0 · 미충원 N'으로 표시하지 않는다
+                if (widget.statsFailed)
+                  _buildStatsErrorRow(context)
+                else
+                  _buildPersonnelStatus(context, isFull, isClosed, missing),
                   ],
                 ),
               ),
@@ -358,6 +378,40 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                       : AppColors.grey600)
               .copyWith(fontWeight: FontWeight.w700),
         ),
+      ],
+    );
+  }
+
+  /// [POSTING-V2-01B] 지원 통계 조회 실패 행 — 숫자 자리에 실패 사실을 둔다.
+  Widget _buildStatsErrorRow(BuildContext context) {
+    return Row(
+      children: [
+        Icon(Icons.cloud_off_rounded,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.grey500),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Expanded(
+          child: Text(
+            '지원 현황을 불러오지 못했습니다',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (widget.onRetryStats != null)
+          TextButton(
+            onPressed: widget.onRetryStats,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 6)),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text('재시도',
+                style: ResponsiveHelper.tinyStyle(context,
+                        color: Theme.of(context).primaryColor)
+                    .copyWith(fontWeight: FontWeight.w700)),
+          ),
       ],
     );
   }

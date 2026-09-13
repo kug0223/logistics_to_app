@@ -78,6 +78,11 @@ class TOGroupCard extends StatefulWidget {
   
   // ✨ Lazy Loading 상태
   final bool isGroupLoading;      // 그룹 로딩 중
+  /// [POSTING-V2-01B] 이 공고의 슬롯/상세 조회가 실패한 상태.
+  /// true면 펼침 영역을 '슬롯 없음'이 아니라 error로 표시한다.
+  final bool hasGroupDetailError;
+  /// [POSTING-V2-01B] 슬롯/상세 재조회 — 부모가 canonical load 경로를 넘긴다.
+  final VoidCallback? onRetryGroupDetail;
   final Set<String> loadingTOs;   // 로딩 중인 TO 목록
   final void Function(Set<String> affectedTOIds)? onAffectedTOsChanged;
   /// 리스트에서 다른 카드가 하나라도 펼쳐진 상태인지 (dimming용)
@@ -106,6 +111,8 @@ class TOGroupCard extends StatefulWidget {
     required this.onToggleTOExpand,
     this.selectedDate,
     this.isGroupLoading = false,
+    this.hasGroupDetailError = false,
+    this.onRetryGroupDetail,
     this.loadingTOs = const <String>{},
     this.onAffectedTOsChanged,
     this.isAnyExpanded = false,
@@ -651,6 +658,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
       );
     }
 
+    // [POSTING-V2-01B] 슬롯 조회 실패 — TO 템플릿 workDetails를 실제 현황처럼
+    // 보여주면 조회 장애가 정상 데이터로 둔갑한다. 이 카드 범위만 error로 표시.
+    if (widget.hasGroupDetailError) {
+      return _buildDetailErrorBox(
+        context,
+        message: '근무 일정을 불러오지 못했습니다',
+        onRetry: widget.onRetryGroupDetail,
+      );
+    }
+
     // 단건 슬롯 / 장기 / 캘린더 — 업무 상세
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -688,9 +705,117 @@ class _TOGroupCardState extends State<TOGroupCard> {
             onChanged: widget.onChanged,
             onLocalStatsChanged: () => setState(() {}),
             onAffectedTOsChanged: widget.onAffectedTOsChanged,
+            // [POSTING-V2-01B] 통계 조회 실패 여부 — 0으로 표시하지 않기 위해
+            statsFailed: _singleTOStatsFailed(),
+            onRetryStats: () => _retrySingleTOStats(),
           );
         }),
       ],
+    );
+  }
+
+  /// [POSTING-V2-01B] 단건/장기 카드의 통계 조회 실패 여부.
+  /// _getSingleTOStats와 같은 우선순위로 source를 고른다.
+  bool _singleTOStatsFailed() {
+    if (widget.calendarSlot != null) {
+      return widget.calendarSlot!.workDetailStatsFailed;
+    }
+    if (widget.groupItem.groupTOs.isNotEmpty) {
+      return widget.groupItem.groupTOs.first.workDetailStatsFailed;
+    }
+    return widget.groupItem.workDetailStatsFailed;
+  }
+
+  /// [POSTING-V2-01B] 단건/장기 카드 통계 재조회.
+  /// 기존 loadTOWorkDetails를 그대로 재사용한다 — 신규 API 없음.
+  Future<void> _retrySingleTOStats() async {
+    final target = widget.calendarSlot ??
+        (widget.groupItem.groupTOs.isNotEmpty
+            ? widget.groupItem.groupTOs.first
+            : null);
+    if (target != null) {
+      await _retryWorkDetailStats(target);
+      return;
+    }
+    // groupTOs가 없는 단건/장기 TO — 통계는 TOGroupItem에 저장된다
+    final group = widget.groupItem;
+    setState(() => group.resetWorkDetailStats());
+    try {
+      final result =
+          await widget.firestoreService.loadTOWorkDetails(group.masterTO);
+      group.setWorkDetailStats(
+        result['workStats'] as Map<String, Map<String, int>>,
+        statsFailed: result['statsFailed'] == true,
+      );
+    } catch (e) {
+      debugPrint('❌ 업무 통계 재조회 실패: $e');
+      group.markWorkDetailStatsFailed();
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// [POSTING-V2-01B] 슬롯 단위 통계 재조회.
+  Future<void> _retryWorkDetailStats(TOItem item) async {
+    setState(() => item.resetWorkDetailLoad());
+    try {
+      final result = await widget.firestoreService.loadTOWorkDetails(
+        item.to,
+        slotId: item.slot?.id,
+        slotWorkDetails: item.slot?.workDetails,
+      );
+      item.setWorkDetails(
+        result['workDetails'] as List<WorkDetailData>,
+        result['workStats'] as Map<String, Map<String, int>>,
+        statsFailed: result['statsFailed'] == true,
+      );
+    } catch (e) {
+      debugPrint('❌ 업무 통계 재조회 실패: $e');
+      item.markWorkDetailStatsFailed();
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// [POSTING-V2-01B] 카드 내부 조회 실패 표시 — 기존 톤/spacing 재사용.
+  /// root 전체를 ERROR로 올리지 않고 실패한 범위만 표시한다.
+  Widget _buildDetailErrorBox(
+    BuildContext context, {
+    required String message,
+    VoidCallback? onRetry,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 16),
+        horizontal: ResponsiveHelper.spacing(context, 8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off_rounded,
+              size: ResponsiveHelper.iconSize(context, 16),
+              color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              message,
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey600),
+            ),
+          ),
+          if (onRetry != null)
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8)),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text('재시도',
+                  style: ResponsiveHelper.smallStyle(context,
+                          color: Theme.of(context).primaryColor)
+                      .copyWith(fontWeight: FontWeight.w600)),
+            ),
+        ],
+      ),
     );
   }
 
@@ -959,6 +1084,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     onChanged: widget.onChanged,
                     onLocalStatsChanged: () => setState(() {}),
                     onAffectedTOsChanged: widget.onAffectedTOsChanged,
+                    // [POSTING-V2-01B] 이 슬롯의 통계 조회 실패 여부
+                    statsFailed: toItem.workDetailStatsFailed,
+                    onRetryStats: () => _retryWorkDetailStats(toItem),
                   );
                 }).toList(),
               ),
@@ -1588,6 +1716,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
               calSlot.setWorkDetails(
                 result['workDetails'] as List<WorkDetailData>,
                 result['workStats'] as Map<String, Map<String, int>>,
+                // [POSTING-V2-01B] 통계 실패를 0으로 확정하지 않는다
+                statsFailed: result['statsFailed'] == true,
               );
             } catch (e) {
               if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
@@ -2002,6 +2132,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
             toItemForManage.setWorkDetails(
               result['workDetails'] as List<WorkDetailData>,
               result['workStats'] as Map<String, Map<String, int>>,
+              // [POSTING-V2-01B] 통계 실패를 0으로 확정하지 않는다
+              statsFailed: result['statsFailed'] == true,
             );
           } catch (e) {
             if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');

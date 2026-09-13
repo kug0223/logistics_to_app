@@ -373,6 +373,12 @@ class FirestoreService {
   /// 구 loadTOWorkDetails — TO 내장 workDetails + 실제 지원 통계 반환
   /// [slotId] 전달 시 해당 슬롯(날짜) 지원서만 집계 (flex 타입 날짜별 정확한 수치)
   /// [slotWorkDetails] 전달 시 마스터 TO workDetails 대신 슬롯 문서의 workDetails 사용
+  ///
+  /// 반환: `{workDetails, workStats, statsFailed}`
+  /// [POSTING-V2-01B] `statsFailed == true`면 workStats는 초기값(전부 0)이며
+  /// **실제 통계가 아니다**. 이 값을 '확정 0 / 대기 0'으로 표시하면 조회 장애가
+  /// 정상 수치로 둔갑한다. 소비자는 statsFailed를 확인해야 한다.
+  /// workDetails 자체는 TO/슬롯 문서에서 오므로 통계 실패와 무관하게 유효하다.
   Future<Map<String, dynamic>> loadTOWorkDetails(
     TOModel to, {
     String? slotId,
@@ -385,6 +391,7 @@ class FirestoreService {
     final Map<String, Map<String, int>> workStats = {
       for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0},
     };
+    var statsFailed = false;
     try {
       // slotId 쿼리는 보안 규칙 제한 — toId 전체를 가져와 클라이언트에서 필터
       // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
@@ -414,8 +421,14 @@ class FirestoreService {
       }
     } catch (e) {
       debugPrint('⚠️ loadTOWorkDetails stats 조회 실패: $e');
+      // [POSTING-V2-01B] 실패를 0으로 확정하지 않는다 — 소비자에게 전달한다
+      statsFailed = true;
     }
-    return {'workDetails': workDetails, 'workStats': workStats};
+    return {
+      'workDetails': workDetails,
+      'workStats': workStats,
+      'statsFailed': statsFailed,
+    };
   }
 
   /// TO 목록 조회 — callableGetAdminTOs CF를 경유하여 server-side 교차검증
@@ -453,7 +466,11 @@ class FirestoreService {
         ..sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
     } catch (e) {
       debugPrint('❌ getTOGroupItemsLight 실패: $e');
-      return [];
+      // [POSTING-V2-01B] ERROR != EMPTY.
+      // 빈 배열로 바꾸면 조회 장애가 '공고 0건'으로 보이고, 관리자는 장애 중에
+      // 새 공고를 만들라는 안내를 받는다. 유일한 caller(WorkforceController.load)가
+      // loadError로 받아 처리한다.
+      rethrow;
     }
   }
 
@@ -491,7 +508,9 @@ class FirestoreService {
       }).whereType<TOItem>().toList();
     } catch (e) {
       debugPrint('❌ loadGroupTOsLight 실패: $e');
-      return [];
+      // [POSTING-V2-01B] ERROR != EMPTY — '슬롯 없음'으로 보이면 안 된다.
+      // caller: _preloadFlexTOSlots(.catchError 보유) / loadGroupDetails(try-catch 보유)
+      rethrow;
     }
   }
 
