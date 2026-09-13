@@ -2051,14 +2051,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 반환하기 때문에 클라이언트에서 먼저 권한 기반 필터링을 적용한다.
     final isSub = up.currentUser?.isSubAdmin == true;
 
+    // [AH-V2-05B.3] atIndex는 '이체 대기' 연체 상향 한 곳에만 쓴다.
+    //   행 목록을 점수로 재정렬하는 구조가 아니라, 정해진 자리에 넣는 것이다.
     void add({
       required IconData icon, required String label, required Color color,
       String? badge, required int count, required bool available, required String countStr,
       required VoidCallback onTap,
+      int? atIndex,
     }) {
       if (available && count == 0) return; // valid 0 → 숨김 (ZERO_COUNT_ACTION_VISIBILITY = HIDE)
-      result.add((icon: icon, label: label, badge: badge, countStr: countStr,
-          color: color, count: count, available: available, onTap: onTap));
+      final row = (icon: icon, label: label, badge: badge, countStr: countStr,
+          color: color, count: count, available: available, onTap: onTap);
+      if (atIndex != null) {
+        result.insert(atIndex, row);
+      } else {
+        result.add(row);
+      }
     }
 
     // 1. 퇴사 요청 — canManageWorkers
@@ -2104,6 +2112,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         })),
       );
     }
+
+    // [AH-V2-05B.3] 연체 급여가 있을 때 '이체 대기'가 들어갈 자리.
+    //   퇴사 요청 바로 뒤 — 퇴사 요청이 권한·0건으로 빠졌으면 자연히 맨 앞이 된다.
+    //   라벨 비교가 아니라 이 시점의 길이를 쓰므로 뒤 행이 늘어도 흔들리지 않는다.
+    final overdueWageSlot = result.length;
 
     // 2. 지원 검토 — canManageTo
     if (!isSub || up.can((p) => p.canManageTo)) {
@@ -2293,11 +2306,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명');
       // count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산
       final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
+      // [AH-V2-05B.3] 지급예정일이 지난 급여가 있으면 퇴사 요청 바로 뒤로 올린다.
+      //   평상시에는 8순위 그대로 — 정기 이체 대기 물량이 많다는 것은 긴급이 아니다.
+      //   조건은 canonical overdueCount 하나뿐이다. count·missingDueDateCount·
+      //   배지 문자열은 이동 근거로 쓰지 않는다.
+      //   available=false면 숫자를 신뢰할 수 없으므로 옮기지 않는다 — 그때 행은
+      //   '조회 실패' 칩을 달고 제자리에 남는다.
+      final wageOverdue = wage?.available == true && (wage?.overdueCount ?? 0) > 0;
       add(
         icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
         color: AppColors.error, badge: wageParts.isNotEmpty ? wageParts.join(' · ') : null,
         count: wageTotal, countStr: '$wageTotal건',
         available: wage?.available ?? false,
+        atIndex: wageOverdue ? overdueWageSlot : null,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_ensureCanonicalSummary(context)) return;
           final w = _canonicalSummary!.actions.unpaidWage;
