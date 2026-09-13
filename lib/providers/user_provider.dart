@@ -185,9 +185,17 @@ class UserProvider with ChangeNotifier {
           // 권한은 멤버 문서의 'permissions' 서브맵 안에 있음 (getMemberPermissions와 동일 구조)
           _memberPermissions = MemberPermissions.fromMap(
               (data['permissions'] as Map<String, dynamic>?) ?? {});
+          // [POSTING-V2-03B.1] Posting UI는 02G.1 이후 canonical map을 본다.
+          //   이 listener가 _memberPermissions만 갱신하던 탓에, 실시간으로
+          //   들어온 권한 회수가 공고 탭·카드에 반영되지 않았다.
+          //   같은 snapshot으로 map도 정렬한다 — 새 listener도, 새 read도 없다.
+          _setBusinessPermission(businessId, _memberPermissions);
         } else {
           // BUG-2 수정: 멤버 문서 삭제(권한 전면 해제) 시 캐시를 null로 초기화
           _memberPermissions = null;
+          // [POSTING-V2-03B.1] membership 자체가 사라졌으므로 map에서도 제거한다.
+          //   fail-closed: canForBusiness가 곧바로 false를 돌려준다.
+          _setBusinessPermission(businessId, null);
           // [NEW-QA-01 FIX] membership 상실 → 모든 in-flight switchToAdminMode 무효화.
           // 원칙: "membership 상실 시 모든 in-flight switch는 즉시 stale 처리된다."
           // _switchGeneration++를 _isAdminMode 조건 바깥에 배치:
@@ -316,16 +324,40 @@ class UserProvider with ChangeNotifier {
         whenUnknown: can((p) => p.canManageTo),
       );
 
+  /// [POSTING-V2-03B.1] 사업장 하나의 권한만 map에 반영한다.
+  ///
+  /// [perms]가 null이면 membership이 사라진 것으로 보고 entry를 제거하고
+  /// hydrated 집합에서도 빼, 다음 하이드레이션이 그 사업장을 다시 확인하게 한다.
+  void _setBusinessPermission(String businessId, MemberPermissions? perms) {
+    final next =
+        Map<String, MemberPermissions>.from(_subAdminPermissionsByBusinessView);
+    final hydrated = Set<String>.from(_hydratedPermissionBusinessIds);
+    if (perms == null) {
+      next.remove(businessId);
+      hydrated.remove(businessId);
+    } else {
+      next[businessId] = perms;
+      hydrated.add(businessId);
+    }
+    _subAdminPermissionsByBusinessView = Map.unmodifiable(next);
+    _hydratedPermissionBusinessIds = hydrated;
+  }
+
   /// 배정 사업장별 권한을 채운다.
   ///
   /// 범위는 **배정 집합**이지 선택 사업장이 아니다 — 사업장을 A→B로 바꿨다고
   /// N개를 다시 읽지 않는다. 배정 집합이 달라졌거나 이전에 실패한 사업장이
   /// 있을 때만 조회한다. 사업장별 try/catch로 한 곳의 실패가 나머지를
   /// 무효로 만들지 않는다(실패한 곳은 fail-closed로 남고 다음 기회에 재시도).
+  ///
+  /// [force] = true면 이미 채워진 사업장도 다시 읽는다.
+  /// 배정 집합은 그대로인데 권한만 바뀐 경우는 캐시 비교로 알 수 없기 때문이다 —
+  /// 명시적 access refresh 전용이고 일반 하이드레이션은 기존 최적화를 유지한다.
   Future<void> _hydrateSubAdminPermissions(
     UserModel user,
     String uid, {
     int? gen,
+    bool force = false,
   }) async {
     final ids = user.subAdminBusinessIds;
     if (ids.isEmpty) {
@@ -336,7 +368,8 @@ class UserProvider with ChangeNotifier {
     }
 
     final idSet = ids.toSet();
-    if (_subAdminPermissionsLoaded &&
+    if (!force &&
+        _subAdminPermissionsLoaded &&
         _hydratedPermissionBusinessIds.length == idSet.length &&
         _hydratedPermissionBusinessIds.containsAll(idSet)) {
       return; // 같은 배정 집합이고 전부 성공 — 재조회 없음
@@ -362,6 +395,88 @@ class UserProvider with ChangeNotifier {
     // 성공한 사업장만 기록 — 실패분은 다음 하이드레이션에서 다시 시도된다.
     _hydratedPermissionBusinessIds = map.keys.toSet();
     _subAdminPermissionsLoaded = true;
+  }
+
+  /// [POSTING-V2-03B.1] SUB_ADMIN 접근 상태 전체를 서버 기준으로 다시 맞춘다.
+  ///
+  /// users/{uid}에는 realtime listener가 없고, 선택하지 않은 사업장의 member
+  /// 문서에도 listener가 없다. 그래서 다른 관리자·다른 기기가 바꾼 배정과 권한은
+  /// 이 명시적 경로로만 따라잡을 수 있다.
+  ///
+  ///   1. users/{uid} 재조회 → 최신 subAdminBusinessIds
+  ///   2. 배정에서 빠진 선택 사업장 정리 (listener도 해제)
+  ///   3. 배정 전체 권한 **강제** 재조회 (force: 캐시가 있어도 다시 읽는다 —
+  ///      배정은 그대로인데 권한만 바뀐 경우를 캐시 비교로는 알 수 없다)
+  ///   4. 남은 사업장 기준으로 선택 사업장 권한·listener 정렬
+  ///
+  /// 동시 호출은 하나로 합친다 — resume과 당겨서 새로고침이 겹쳐도 read가 두 배가
+  /// 되지 않는다. 새 realtime listener는 만들지 않는다.
+  Future<void> refreshSubAdminAccessState() {
+    final inFlight = _accessRefreshInFlight;
+    if (inFlight != null) return inFlight;
+    final started = _runSubAdminAccessRefresh();
+    _accessRefreshInFlight = started;
+    return started.whenComplete(() {
+      if (identical(_accessRefreshInFlight, started)) {
+        _accessRefreshInFlight = null;
+      }
+    });
+  }
+
+  Future<void>? _accessRefreshInFlight;
+
+  Future<void> _runSubAdminAccessRefresh() async {
+    final current = _currentUser;
+    if (current == null || !current.isSubAdmin) return;
+    final uid = current.uid;
+
+    try {
+      final doc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (_disposed) return;
+      // 계정 전환 후 stale 응답이 덮어쓰는 것 방지 (_loadUserData와 동일 방어)
+      if (_authService.currentUser?.uid != uid) return;
+      final data = doc.data();
+      if (doc.exists && data != null) {
+        _currentUser = UserModel.fromMap(data, doc.id);
+      }
+    } catch (e) {
+      // 배정을 못 읽었으면 기존 상태를 유지한다 — 추측해서 범위를 줄이지 않는다.
+      debugPrint('⚠️ [03B.1] 배정 갱신 실패: $e');
+    }
+
+    final refreshed = _currentUser;
+    if (_disposed || refreshed == null) return;
+    if (!refreshed.isSubAdmin) {
+      // 관리자 자격 자체를 잃었다 — 남은 권한 상태를 비운다.
+      _memberPermsSub?.cancel();
+      _memberPermsSub = null;
+      _memberPermissions = null;
+      _clearSubAdminPermissionMap();
+      notifyListeners();
+      return;
+    }
+
+    final selected = _selectedSubAdminBusinessId;
+    if (selected != null && !refreshed.subAdminBusinessIds.contains(selected)) {
+      _selectedSubAdminBusinessId = null;
+      _memberPermsSub?.cancel();
+      _memberPermsSub = null;
+    }
+
+    await _hydrateSubAdminPermissions(refreshed, uid, force: true);
+    if (_disposed) return;
+
+    // 선택 사업장 권한을 map과 같은 snapshot으로 맞춘다.
+    final active = effectiveBusinessId;
+    _memberPermissions =
+        active == null ? null : _subAdminPermissionsByBusinessView[active];
+    _permissionsLoaded = true;
+    // 선택 사업장이 바뀌었으면 realtime listener를 새 사업장으로 옮긴다.
+    if (active != null && _memberPermsSub == null) {
+      _startMemberPermsListener(active, uid);
+    }
+    notifyListeners();
   }
 
   void _clearSubAdminPermissionMap() {

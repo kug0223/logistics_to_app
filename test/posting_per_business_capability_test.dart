@@ -423,16 +423,22 @@ void main() {
 
   // ── §26, §53 WorkApplicantsDialog ───────────────────────────────
   group('CAP-08 WorkApplicantsDialog 계약', () {
-    test('08-a 기존 targetPermissions 패턴이 그대로다', () {
+    // [POSTING-V2-03B.1] targetPermissions는 canonical에서 UNKNOWN 폴백으로 내려갔다.
+    //   provider가 그 사업장 권한을 LOADED로 갖고 있으면 그쪽이 이긴다.
+    //   지켜야 할 것은 "알림 경로가 넘긴 정확한 권한이 버려지지 않는다"이다.
+    test('08-a targetPermissions가 UNKNOWN 폴백으로 살아 있다', () {
       final code = _flat(_codeOf(_src(_workPath)));
       expect(code.contains('final MemberPermissions? targetPermissions;'), true);
-      expect(
-          code.contains('final target = widget.targetPermissions; '
-              'if (target != null) return target.canManageTo;'),
+      final body = _flat(_codeOf(_bodyOf(_src(_workPath), 'bool _permissionFor(')));
+      expect(body.contains('if (up.subAdminPermissionsLoaded) {'), true);
+      expect(body.contains('final target = widget.targetPermissions; '
+          'if (target != null) return check(target);'), true);
+      // canManageTo / canManageContract 둘 다 같은 경로를 쓴다
+      expect(code.contains('bool _canManageTo() => _permissionFor((p) => p.canManageTo);'),
           true);
       expect(
-          code.contains('final target = widget.targetPermissions; '
-              'if (target != null) return target.canManageContract;'),
+          code.contains(
+              'bool _canManageContract() => _permissionFor((p) => p.canManageContract);'),
           true);
     });
 
@@ -560,8 +566,9 @@ void main() {
     test('11-a 배정 집합이 같으면 재조회하지 않는다 (§12)', () {
       final body = _flat(_codeOf(_bodyOf(
           _src(_providerPath), 'Future<void> _hydrateSubAdminPermissions(')));
+      // [POSTING-V2-03B.1] 명시적 access refresh만 force로 이 최적화를 건너뛴다.
       expect(
-          body.contains('if (_subAdminPermissionsLoaded && '
+          body.contains('if (!force && _subAdminPermissionsLoaded && '
               '_hydratedPermissionBusinessIds.length == idSet.length && '
               '_hydratedPermissionBusinessIds.containsAll(idSet)) { return;'),
           true,
@@ -577,8 +584,12 @@ void main() {
       final code = _codeOf(_src(_providerPath));
       expect(code.contains('void _startMemberPermsListener(String businessId, String uid)'),
           true);
-      expect('_startMemberPermsListener('.allMatches(code).length, 3,
-          reason: '정의 1 + 호출 2 (switchToAdminMode, _loadUserData)');
+      // [POSTING-V2-03B.1] +1 — access refresh가 선택 사업장 변경 시 listener를 옮긴다.
+      //   여전히 **동시에 살아 있는 구독은 하나**다(연결 전 cancel).
+      expect('_startMemberPermsListener('.allMatches(code).length, 4,
+          reason: '정의 1 + 호출 3 (switchToAdminMode, _loadUserData, access refresh)');
+      expect('snapshots()'.allMatches(code).length, 1,
+          reason: 'realtime 구독 지점은 하나뿐이어야 한다');
     });
 
     test('11-c 액션마다 조회하지 않는다 (§5)', () {
@@ -600,8 +611,9 @@ void main() {
 
     test('11-e 하이드레이션 지점이 배선돼 있다 (§12, §42)', () {
       final code = _codeOf(_src(_providerPath));
-      expect('_hydrateSubAdminPermissions('.allMatches(code).length, 4,
-          reason: '정의 1 + 초기 로드 / 관리자 모드 전환 / 사용자 갱신 3곳');
+      // [POSTING-V2-03B.1] +1 — 명시적 access refresh(force)
+      expect('_hydrateSubAdminPermissions('.allMatches(code).length, 5,
+          reason: '정의 1 + 초기 로드 / 관리자 모드 전환 / 사용자 갱신 / access refresh');
     });
   });
 
@@ -660,10 +672,11 @@ void main() {
       expect(dialogs.contains("'공고 재오픈에 실패했습니다.'"), true);
     });
 
-    test('12-g 로그아웃 시 map이 정리된다', () {
+    test('12-g 권한 map이 정리되는 지점', () {
       final code = _codeOf(_src(_providerPath));
-      expect('_clearSubAdminPermissionMap();'.allMatches(code).length, 2,
-          reason: 'signOut 성공 경로 + 실패 경로');
+      // [POSTING-V2-03B.1] +1 — access refresh에서 SubAdmin 자격 상실 감지
+      expect('_clearSubAdminPermissionMap();'.allMatches(code).length, 3,
+          reason: 'signOut 성공/실패 2 + 자격 상실 1');
       expect(code.contains('void _clearSubAdminPermissionMap() {'), true);
     });
   });

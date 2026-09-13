@@ -11,6 +11,9 @@ import '../../../services/firestore_service.dart';
 // Controllers
 import '../../../controllers/workforce_controller.dart';
 
+// Providers
+import '../../../providers/user_provider.dart';
+
 // Utils
 import '../../../utils/format_helper.dart';
 
@@ -236,6 +239,15 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _closedDisplayCount = _closedPageSize;
       _lastCachedItems = null;
     });
+    // [POSTING-V2-03B.1] access → data 순서.
+    //   stale한 subAdminBusinessIds로 먼저 조회하면, 배정이 해제된 사업장 하나
+    //   때문에 callableGetAdminTOs가 통째로 거부돼(assertBizAdmin all-or-nothing)
+    //   멀쩡한 사업장 공고까지 못 보게 된다. 최신 scope를 먼저 확정한다.
+    final up = context.read<UserProvider>();
+    if (up.isSubAdmin) {
+      await up.refreshSubAdminAccessState();
+      if (!mounted) return;
+    }
     final controller = context.read<WorkforceController>();
     await controller.reload(context);
     // [POSTING-V2-01B] refresh 실패는 기존 목록을 지우지 않으므로 화면만으로는

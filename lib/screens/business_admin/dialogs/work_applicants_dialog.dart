@@ -119,23 +119,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // key = userId, value = 슬롯 날짜(or 주간)에 checkIn/급여확정 기록 존재 여부
   Map<String, bool> _hasWorkedMap = {};
 
-  // [BIZCTX-PATCH] target business canManageTo 해소.
-  // targetPermissions 주입 시 해당 객체 사용 (알림 cross-biz SUB_ADMIN 대응).
-  // null이면 UserProvider.can() 폴백 — non-notification 경로 / BUSINESS_ADMIN.
-  bool _canManageTo() {
+  // [BIZCTX-PATCH] target business 기준 권한 판정.
+  // [POSTING-V2-03B.1] 생성자 snapshot(targetPermissions)을 canonical로 쓰지 않는다.
+  //   다이얼로그가 열려 있는 동안 권한이 회수돼도 처음 받은 값을 계속 써서
+  //   확정·거절·초대 CTA가 남아 있었다. provider가 그 사업장 권한을 **LOADED**로
+  //   갖고 있으면 그쪽이 canonical이고, 아직 UNKNOWN일 때만 snapshot으로 폴백한다.
+  //   (UNKNOWN ≠ DENIED — 02G tri-state 유지)
+  bool _permissionFor(bool Function(MemberPermissions p) check) {
+    final up = context.read<UserProvider>();
+    final user = up.currentUser;
+    if (user == null) return false;
+    if (user.isBusinessAdmin || user.isSuperAdmin) return true;
+    if (!user.isSubAdmin) return false;
+    if (up.subAdminPermissionsLoaded) {
+      return up.canForBusiness(widget.toItem.to.businessId, check);
+    }
+    // 아직 하이드레이션 전 — 알림 경로가 정확히 조회해 넘긴 값을 쓴다.
     final target = widget.targetPermissions;
-    if (target != null) return target.canManageTo;
-    return context.read<UserProvider>().can((p) => p.canManageTo);
+    if (target != null) return check(target);
+    return false; // fail-closed
   }
 
+  bool _canManageTo() => _permissionFor((p) => p.canManageTo);
+
   // [CSA-02] canManageContract: canManageTo와 대칭 구조.
-  // targetPermissions 우선 — notification cross-biz SUB_ADMIN 정확한 권한 반영.
-  // null이면 UserProvider.can() 폴백 — BUSINESS_ADMIN은 항상 true.
-  bool _canManageContract() {
-    final target = widget.targetPermissions;
-    if (target != null) return target.canManageContract;
-    return context.read<UserProvider>().can((p) => p.canManageContract);
-  }
+  bool _canManageContract() => _permissionFor((p) => p.canManageContract);
 
   // [CSA-01] Employer seal canonical resolver.
   // BUSINESS_ADMIN: 현재 사용자(사업주 본인) seal 사용.
@@ -456,6 +464,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [POSTING-V2-03B.1] 대상 사업장 권한이 바뀌면 이 다이얼로그도 다시 그린다.
+    //   _permissionFor는 read로 평가되므로(이벤트 핸들러에서도 호출된다)
+    //   구독은 여기 한 줄로만 건다.
+    context.watch<UserProvider>();
 
     final pending = _pending;
     final confirmed = _confirmed;

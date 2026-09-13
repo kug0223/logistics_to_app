@@ -141,7 +141,20 @@ class _JobsRootScreenState extends State<JobsRootScreen>
         return;
       }
       _lastResumedAt = now;
-      if (mounted) _controller.reload(context);
+      if (!mounted) return;
+      // [POSTING-V2-03B.1] 복귀 시 접근 상태를 먼저 맞춘다.
+      //   다른 관리자·다른 기기가 바꾼 배정과 비선택 사업장 권한은
+      //   realtime listener가 없어 이 지점에서만 따라잡을 수 있다.
+      //   access → data 순서를 지켜야 stale scope로 서버를 부르지 않는다.
+      //   동시 호출은 provider가 하나로 합친다.
+      final up = context.read<UserProvider>();
+      if (up.isSubAdmin) {
+        up.refreshSubAdminAccessState().whenComplete(() {
+          if (mounted) _controller.reload(context);
+        });
+      } else {
+        _controller.reload(context);
+      }
     }
   }
 

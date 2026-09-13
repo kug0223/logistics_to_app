@@ -389,10 +389,24 @@ void main() {
       expect(body.contains('UserProvider'), isFalse);
     });
 
-    test('UserProvider import가 목록 뷰에서 사라졌다', () {
-      expect(list.contains("import '../../../providers/user_provider.dart';"),
-          isFalse,
-          reason: 'quota scope 추정을 위한 의존이 남아 있다');
+    // [POSTING-V2-03B.1] 목록 뷰가 UserProvider를 다시 참조한다 —
+    //   당겨서 새로고침이 access 갱신을 먼저 하기 위해서다(quota와 무관).
+    //   지켜야 할 것은 import 유무가 아니라 "quota를 추정하지 않는다"이다.
+    test('목록 뷰가 quota를 추정하지 않는다', () {
+      // 주석에는 제거 경위가 남아 있다 — 실행 코드만 본다.
+      final code = _codeOf(list);
+      for (final forbidden in [
+        'maxActiveTOs',
+        'activeToCount',
+        'maxActiveTOPerBusiness',
+        'isMaxed',
+      ]) {
+        expect(code.contains(forbidden), isFalse,
+            reason: 'quota scope 추정 의존이 남아 있다: $forbidden');
+      }
+      // UserProvider 사용처는 access 갱신 한 곳뿐이다
+      expect('context.read<UserProvider>()'.allMatches(code).length, 1);
+      expect(code.contains('refreshSubAdminAccessState()'), isTrue);
     });
   });
 

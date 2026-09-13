@@ -503,6 +503,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // [POSTING-V2-03B.1] 대상 사업장 권한 변경에 반응한다.
+    //   _canForSelectedBiz는 listen:false로 평가되므로(이벤트 핸들러 겸용)
+    //   rebuild 구독은 여기 한 줄로만 건다.
+    context.watch<UserProvider>();
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {

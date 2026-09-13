@@ -207,6 +207,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return;
       }
 
+      // [POSTING-V2-03B.1] picker는 membership ∩ canManageTo다 — 둘 다 realtime이
+      //   아니므로 진입 시 한 번 맞춘다. 공고를 만들 수 없는 사업장을 고르게 한 뒤
+      //   제출에서 거부하는 것보다, 여기서 정확한 목록을 보여주는 편이 옳다.
+      //   동시 호출은 provider가 합치므로 새로고침과 겹쳐도 read가 두 배가 되지 않는다.
+      if (userProvider.isSubAdmin) {
+        await userProvider.refreshSubAdminAccessState();
+        if (!mounted) {
+          return;
+        }
+      }
+
       final List<BusinessModel> membershipBusinesses;
       if (userProvider.isSubAdmin) {
         final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
