@@ -220,28 +220,34 @@ class WorkforceController extends ChangeNotifier {
           .toSet()
           .toList();
       if (loadedNames.isNotEmpty) _knownBusinessNames = loadedNames;
-      // flex TO 슬롯 날짜 일괄 로드 (캘린더 날짜 필터링용)
-      final flexIds =
-          _items.where((g) => g.masterTO.isFlexType).map((g) => g.id).toList();
-      if (flexIds.isNotEmpty) {
-        // Firestore whereIn 30개 제한 대응 — 청크 분할 병렬 처리
-        const chunkSize = 30;
-        final allDatesMap = <String, List<DateTime>>{};
-        final chunks = <List<String>>[];
-        for (int i = 0; i < flexIds.length; i += chunkSize) {
-          chunks.add(flexIds.sublist(
-              i, i + chunkSize > flexIds.length ? flexIds.length : i + chunkSize));
-        }
-        final results = await Future.wait(
-          chunks.map((chunk) => _service.getFlexTOSlotDates(chunk)),
-        );
-        for (final map in results) {
-          allDatesMap.addAll(map);
-        }
-        for (final group in _items) {
-          final dates = allDatesMap[group.id];
-          if (dates != null) group.setSlotDates(dates);
-        }
+      // [POSTING-V2-02D.1] flex 슬롯을 TO당 정확히 한 번 읽는다.
+      //
+      // 이전에는 날짜용 query(getFlexTOSlotDates)와 전체 모델용 preload가
+      // 같은 slots 컬렉션을 각각 읽어 TO당 2회였다. Dart SDK에 projection이
+      // 없어 날짜용 query도 문서 전량을 받았으므로 절반이 순수 낭비였다.
+      //
+      // 첫 렌더 전에 await한다 — slotDates가 비어 있으면 모든 슬롯이 지난
+      // flex 공고가 진행중 탭에 잘못 남는다(TOGroupItem.isClosed 폴백).
+      final flexGroups =
+          _items.where((g) => g.masterTO.isFlexType).toList();
+      if (flexGroups.isNotEmpty) {
+        await Future.wait(flexGroups.map((group) async {
+          try {
+            final loaded = await _service.loadFlexSlots(
+              group.id,
+              masterTO: group.masterTO,
+            );
+            group.setGroupTOs(loaded.groupTOs);
+            // setGroupTOs 뒤에 둔다 — 최종 _slotDates는 raw snapshot 기준이어야
+            // createdAt 없는 레거시 슬롯의 날짜가 살아남는다.
+            group.setSlotDates(loaded.slotDates);
+          } catch (e) {
+            // [POSTING-V2-01B] TO 하나의 실패가 목록 전체를 ERROR로 만들지 않는다.
+            //   해당 그룹만 detail error로 표시하고 펼침 시 재시도 경로를 쓴다.
+            debugPrint('❌ flex 슬롯 로드 실패 ${group.id}: $e');
+            _groupDetailErrorIds.add(group.id);
+          }
+        }));
       }
       } // else 블록 닫힘
     } catch (e) {
@@ -259,38 +265,17 @@ class WorkforceController extends ChangeNotifier {
     // 특히 cascade close는 write이므로 신뢰할 수 없는 상태에서 실행하지 않는다.
     if (_loadError != null) return;
 
-    // flex TO 슬롯 데이터를 백그라운드에서 사전 로드
-    // → collapsed 상태에서도 slot.workDetails 기반 마감 판단 가능
-    _preloadFlexTOSlots();
+    // [POSTING-V2-02D.1] 모든 슬롯이 만료됐는데 TO가 ACTIVE면 Firestore cascade close.
+    //   write이므로 load 전체가 성공한 뒤에만 실행한다(01B: 신뢰할 수 없는
+    //   상태에서 write 금지). 슬롯 로드에 실패한 그룹은 isGroupDetailLoaded가
+    //   false로 남아 대상에서 빠진다 — '슬롯 없음'으로 오인해 마감하지 않는다.
+    for (final group in _items.where(
+        (g) => g.masterTO.isFlexType && g.isGroupDetailLoaded)) {
+      _maybeCascadeCloseExpiredTO(group, group.groupTOs);
+    }
 
     // contract TO 게시 만료 자동 마감
     _maybeCascadeCloseExpiredContractTOs();
-  }
-
-  /// flex TO 슬롯 목록을 백그라운드에서 모두 로드
-  /// 로딩 인디케이터 없이 조용히 실행, 완료마다 UI 갱신
-  void _preloadFlexTOSlots() {
-    for (final group in _items.where(
-        (g) => g.masterTO.isFlexType && !g.isGroupDetailLoaded)) {
-      if (_loadingGroupIds.contains(group.id)) continue;
-      _loadingGroupIds.add(group.id);
-      _service
-          .loadGroupTOsLight(group.id, masterTO: group.masterTO)
-          .then((toItems) {
-        if (_disposed) return;
-        group.setGroupTOs(toItems);
-        // slotDates도 동기화 — groupTOs와 slotDates 불일치 방지
-        group.setSlotDates(toItems.map((t) => t.slotDate).whereType<DateTime>().toList());
-        notifyListeners();
-
-        // 모든 슬롯이 만료됐는데 TO가 여전히 ACTIVE면 Firestore cascade close
-        _maybeCascadeCloseExpiredTO(group, toItems);
-      }).whenComplete(() {
-        _loadingGroupIds.remove(group.id);
-      }).catchError((e) {
-        debugPrint('❌ 슬롯 사전로드 실패 ${group.id}: $e');
-      });
-    }
   }
 
   /// 모든 슬롯이 시간만료 + TO가 ACTIVE 상태인 경우 자동 cascade close
@@ -374,10 +359,13 @@ class WorkforceController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final toItems =
-          await _service.loadGroupTOsLight(group.id, masterTO: group.masterTO);
-      group.setGroupTOs(toItems);
-      group.setSlotDates(toItems.map((t) => t.slotDate).whereType<DateTime>().toList());
+      // [POSTING-V2-02D.1] root load와 같은 single-snapshot loader를 쓴다.
+      //   이전에는 slotDates를 toItems에서 파생했는데, SlotModel이 createdAt을
+      //   필수로 요구하므로 date만 있는 레거시 슬롯의 날짜가 여기서 사라졌다.
+      final loaded =
+          await _service.loadFlexSlots(group.id, masterTO: group.masterTO);
+      group.setGroupTOs(loaded.groupTOs);
+      group.setSlotDates(loaded.slotDates);
     } catch (e) {
       debugPrint('❌ WorkforceController.loadGroupDetails 실패: $e');
       // [POSTING-V2-01B] 실패를 '슬롯 없음'으로 커밋하지 않는다.

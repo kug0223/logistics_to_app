@@ -173,15 +173,19 @@ void main() {
       );
     });
 
-    test('loadGroupTOsLight가 빈 배열 대신 예외를 올린다', () {
+    // [POSTING-V2-02D.1] 슬롯 로더가 loadGroupTOsLight → loadFlexSlots로 통합됐다.
+    //   ERROR != EMPTY 계약은 그대로 canonical loader 하나에 걸린다.
+    test('loadFlexSlots가 빈 결과 대신 예외를 올린다', () {
       final body =
-          _codeOf(_bodyOf(svc, 'Future<List<TOItem>> loadGroupTOsLight('));
+          _codeOf(_bodyOf(svc, 'Future<FlexSlotLoad> loadFlexSlots('));
       final catchIdx = body.indexOf('} catch (e) {');
       expect(catchIdx, isNot(-1));
       expect(body.substring(catchIdx).contains('rethrow;'), isTrue);
-      expect(body.substring(catchIdx).contains('return [];'), isFalse);
-      // 슬롯이 실제로 0건인 경우는 여전히 빈 배열
-      expect(body.contains('if (snap.docs.isEmpty) return [];'), isTrue,
+      expect(body.substring(catchIdx).contains('return empty;'), isFalse);
+      expect(body.substring(catchIdx).contains('return {};'), isFalse,
+          reason: '옛 getFlexTOSlotDates의 ERROR==EMPTY 의미가 되살아났다');
+      // 슬롯이 실제로 0건인 경우는 여전히 빈 결과
+      expect(body.contains('if (snap.docs.isEmpty) return empty;'), isTrue,
           reason: '슬롯 0건이라는 진짜 empty는 보존돼야 한다');
     });
 
@@ -690,9 +694,13 @@ void main() {
       final flat = _flat(body);
       expect(flat.contains('if (_loadError != null) return;'), isTrue);
       final guardIdx = body.indexOf('if (_loadError != null) return;');
-      final preloadIdx = body.indexOf('_preloadFlexTOSlots();');
+      // [POSTING-V2-02D.1] _preloadFlexTOSlots가 사라지고 flex cascade close가
+      //   guard 뒤로 직접 옮겨졌다. 지켜야 할 것은 "write는 guard 뒤"다.
+      final flexCascadeIdx =
+          body.indexOf('_maybeCascadeCloseExpiredTO(group, group.groupTOs);');
       final cascadeIdx = body.indexOf('_maybeCascadeCloseExpiredContractTOs();');
-      expect(guardIdx < preloadIdx && guardIdx < cascadeIdx, isTrue,
+      expect(flexCascadeIdx, isNot(-1), reason: 'flex cascade close 지점을 찾지 못함');
+      expect(guardIdx < flexCascadeIdx && guardIdx < cascadeIdx, isTrue,
           reason: '신뢰할 수 없는 상태에서 cascade close write가 실행된다');
     });
   });
@@ -702,8 +710,9 @@ void main() {
   // ═════════════════════════════════════════════════════════════
   group('malformed document 정책 무변경', () {
     test('슬롯 파싱 실패는 여전히 해당 문서만 skip한다', () {
-      final body =
-          _codeOf(_bodyOf(_src(_svcPath), 'Future<List<TOItem>> loadGroupTOsLight('));
+      // [POSTING-V2-02D.1] 파서가 _slotItemsFromSnapshot으로 분리됐다 — 정책은 동일.
+      final body = _codeOf(
+          _bodyOf(_src(_svcPath), 'List<TOItem> _slotItemsFromSnapshot('));
       expect(body.contains("debugPrint('⚠️ 슬롯 파싱 실패 (id=\${d.id}): \$e');"),
           isTrue);
       expect(body.contains('.whereType<TOItem>().toList();'), isTrue,
@@ -781,10 +790,25 @@ void main() {
       }
     });
 
-    test('duplicate flex read(P2-4) 최적화하지 않았다', () {
+    // [POSTING-V2-02D.1] duplicate flex read(P2-4)가 해소됐다.
+    //   01B가 지켜야 하는 것은 "flex slot 조회 실패가 root error나 empty로
+    //   둔갑하지 않는다"이지, 특정 helper의 존재가 아니다. 새 계약으로 옮긴다.
+    test('flex slot 조회 실패는 group-detail error로만 남는다', () {
       final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
-      expect(body.contains('_service.getFlexTOSlotDates(chunk)'), isTrue,
-          reason: 'getFlexTOSlotDates 경로가 사라졌다 — 이번 범위 아님');
+      final start = body.indexOf('flexGroups.map((group) async {');
+      final end = body.indexOf('} // else 블록 닫힘');
+      expect(start, isNot(-1), reason: 'flex slot 로드 지점을 찾지 못함');
+      expect(end, greaterThan(start));
+      final flexBlock = body.substring(start, end);
+
+      expect(flexBlock.contains('_groupDetailErrorIds.add(group.id);'), isTrue,
+          reason: 'flex slot 실패가 어떤 error truth에도 기록되지 않는다');
+      expect(flexBlock.contains('_loadError'), isFalse,
+          reason: 'TO 하나의 슬롯 실패가 목록 전체를 ERROR로 만든다');
+      expect(flexBlock.contains('rethrow'), isFalse);
+      // 실패한 그룹은 setGroupTOs를 거치지 않으므로 '슬롯 없음'으로 굳지 않는다
+      expect(flexBlock.contains('setGroupTOs(const [])'), isFalse);
+      expect(flexBlock.contains('setSlotDates(const [])'), isFalse);
     });
   });
 }

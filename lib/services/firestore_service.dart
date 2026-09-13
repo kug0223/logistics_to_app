@@ -121,6 +121,13 @@ String _fmtDate(DateTime d) =>
     '${d.month.toString().padLeft(2, '0')}-'
     '${d.day.toString().padLeft(2, '0')}';
 
+/// [POSTING-V2-02D.1] flex TO 슬롯 1회 조회 결과 — 같은 snapshot의 두 projection.
+///
+/// 이전에는 같은 `tos/{toId}/slots`를 두 번 읽었다. 한 번은 날짜만 쓰려고
+/// (getFlexTOSlotDates), 한 번은 전체 모델을 만들려고. Dart SDK에 projection이
+/// 없어 날짜용 query도 문서 전량을 전송받았으므로 순수한 중복이었다.
+typedef FlexSlotLoad = ({List<TOItem> groupTOs, List<DateTime> slotDates});
+
 class FirestoreService {
   // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
   static final FirestoreService _instance = FirestoreService._internal();
@@ -474,72 +481,88 @@ class FirestoreService {
     }
   }
 
-  /// flex TO의 슬롯을 날짜순으로 로드하여 TOItem 목록 반환
-  /// [masterTO] 전달 시 TO 문서 재조회 생략
-  Future<List<TOItem>> loadGroupTOsLight(String toId, {TOModel? masterTO}) async {
-    try {
-      // [PERF-F4] Source.server 제거(캐시 활용) + limit 500 (무제한 읽기 차단)
-      final snap = await _firestore
+  /// flex TO 슬롯의 canonical query — 이 한 곳에서만 정의한다.
+  /// [PERF-F4] Source.server 제거(캐시 활용) + limit 500 (무제한 읽기 차단)
+  Future<QuerySnapshot<Map<String, dynamic>>> _flexSlotSnapshot(String toId) =>
+      _firestore
           .collection('tos')
           .doc(toId)
           .collection('slots')
           .orderBy('date')
           .limit(500)
           .get();
-      if (snap.docs.isEmpty) return [];
+
+  /// [POSTING-V2-02D.1] raw 슬롯 문서에서 날짜만 뽑는다.
+  ///
+  /// **`groupTOs.map((t) => t.slot.date)`로 대체하면 안 된다.**
+  /// SlotModel.fromMap은 createdAt을 필수로 요구하므로, date는 멀쩡한데
+  /// createdAt이 없는 레거시 슬롯이 모델 파싱에서 탈락한다. 그 슬롯의 날짜는
+  /// 마감 판정(TOGroupItem.isClosed)과 날짜 필터의 폴백 truth이므로,
+  /// 성능 수정 때문에 사라지면 안 된다. 모델 검증을 느슨하게 푸는 대신
+  /// raw 문서에서 별도로 파생한다.
+  ///
+  /// date가 없거나 Timestamp가 아닌 문서는 **그 문서 하나만** 건너뛴다.
+  @visibleForTesting
+  static List<DateTime> slotDatesFromRaw(
+    Iterable<Map<String, dynamic>> rawDocs,
+  ) {
+    final dates = <DateTime>[];
+    for (final data in rawDocs) {
+      final raw = data['date'];
+      // as 캐스트가 아니라 타입 검사 — 잘못된 타입 하나가 TO 전체를 날리지 않는다
+      if (raw is Timestamp) dates.add(raw.toDate().toLocal());
+    }
+    return dates;
+  }
+
+  /// 슬롯 문서 → TOItem. 문서별 try/catch로 malformed 슬롯만 제외한다.
+  List<TOItem> _slotItemsFromSnapshot(
+    QuerySnapshot<Map<String, dynamic>> snap,
+    TOModel model,
+    String toId,
+  ) {
+    return snap.docs.map((d) {
+      try {
+        final slot = SlotModel.fromMap(d.data(), d.id, toId);
+        return TOItem(
+          to: model,
+          slot: slot,
+          confirmedCount: slot.confirmedCount,
+          pendingCount: slot.pendingCount,
+          totalRequired: slot.totalRequired,
+        );
+      } catch (e) {
+        debugPrint('⚠️ 슬롯 파싱 실패 (id=${d.id}): $e');
+        return null;
+      }
+    }).whereType<TOItem>().toList();
+  }
+
+  /// [POSTING-V2-02D.1] flex TO 슬롯을 **한 번만** 읽어 두 projection을 만든다.
+  ///
+  /// caller: WorkforceController.load          (root, TO별 try/catch 보유)
+  ///         WorkforceController.loadGroupDetails (펼침/재시도, try-catch 보유)
+  Future<FlexSlotLoad> loadFlexSlots(String toId, {TOModel? masterTO}) async {
+    const empty = (groupTOs: <TOItem>[], slotDates: <DateTime>[]);
+    try {
+      final snap = await _flexSlotSnapshot(toId);
+      if (snap.docs.isEmpty) return empty;
 
       final model = masterTO ?? await getTO(toId);
-      if (model == null) return [];
+      if (model == null) return empty;
 
-      return snap.docs.map((d) {
-        try {
-          final slot = SlotModel.fromMap(d.data(), d.id, toId);
-          return TOItem(
-            to: model,
-            slot: slot,
-            confirmedCount: slot.confirmedCount,
-            pendingCount: slot.pendingCount,
-            totalRequired: slot.totalRequired,
-          );
-        } catch (e) {
-          debugPrint('⚠️ 슬롯 파싱 실패 (id=${d.id}): $e');
-          return null;
-        }
-      }).whereType<TOItem>().toList();
+      return (
+        groupTOs: _slotItemsFromSnapshot(snap, model, toId),
+        // 같은 snapshot — 추가 조회 없음
+        slotDates: slotDatesFromRaw(snap.docs.map((d) => d.data())),
+      );
     } catch (e) {
-      debugPrint('❌ loadGroupTOsLight 실패: $e');
+      debugPrint('❌ loadFlexSlots 실패 ($toId): $e');
       // [POSTING-V2-01B] ERROR != EMPTY — '슬롯 없음'으로 보이면 안 된다.
-      // caller: _preloadFlexTOSlots(.catchError 보유) / loadGroupDetails(try-catch 보유)
       rethrow;
     }
   }
 
-  /// flex TO 목록의 슬롯 날짜를 일괄 조회 (캘린더 필터용)
-  /// Returns: { toId: [slotDate, ...] }
-  Future<Map<String, List<DateTime>>> getFlexTOSlotDates(List<String> toIds) async {
-    if (toIds.isEmpty) return {};
-    try {
-      final futures = toIds.map((toId) async {
-        // [PERF-F5] limit 500 — date 필드만 필요하나 select() 미지원으로 limit만 적용
-        final snap = await _firestore
-            .collection('tos')
-            .doc(toId)
-            .collection('slots')
-            .limit(500)
-            .get();
-        final dates = snap.docs
-            .map((d) => (d.data()['date'] as Timestamp?)?.toDate().toLocal())
-            .whereType<DateTime>()
-            .toList();
-        return MapEntry(toId, dates);
-      });
-      final entries = await Future.wait(futures);
-      return Map.fromEntries(entries.where((e) => e.value.isNotEmpty));
-    } catch (e) {
-      debugPrint('❌ getFlexTOSlotDates 실패: $e');
-      return {};
-    }
-  }
 
   /// 구 getActiveTOs — getPublishedTOs 위임
   Future<List<TOModel>> getActiveTOs({String? businessId, bool publishedOnly = false}) async {
