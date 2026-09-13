@@ -591,13 +591,14 @@ void main() {
       expect(c.contains('Object? get loadError => _loadError;'), isTrue);
     });
 
-    test('quota / freshness / readiness 무변경', () {
+    // [POSTING-V2-02A.1] activeToCount는 02A.1에서 제거됐다(quota 분자 계약 폐기).
+    // delete lifecycle이 quota/freshness에 영향을 주지 않는다는 점만 고정한다.
+    test('freshness 무변경 · quota는 controller에서 제거된 상태 유지', () {
       final c = _codeOf(_src(_ctrlPath));
-      expect(
-        c.contains('int get activeToCount => _items.where((g) => !g.isClosed).length;'),
-        isTrue,
-      );
-      expect(c.contains('static void notifyDataChanged()'), isTrue);
+      expect(c.contains('static void notifyDataChanged()'), isTrue,
+          reason: 'freshness API가 사라졌다');
+      expect(c.contains('activeToCount'), isFalse,
+          reason: '거부된 quota 분자가 되살아났다');
     });
   });
 }

@@ -344,9 +344,12 @@ void main() {
             '|| controller.items.isNotEmpty;'),
         isTrue,
       );
+      // [POSTING-V2-02A.1] count source가 controller.activeToCount에서
+      // 렌더 목록 기반 _visibleActiveCount로 바뀌었다. ERROR != ZERO 계약
+      // (실패 + 데이터 없음 → count 숨김)은 그대로다.
       expect(
         flat.contains('final activeCount = (isActiveTab && countIsTrustworthy) '
-            '? controller.activeToCount : null;'),
+            '? _visibleActiveCount(controller) : null;'),
         isTrue,
       );
     });
@@ -739,17 +742,22 @@ void main() {
       );
     });
 
-    test('quota 계산 무변경 (P2-1 범위 밖)', () {
+    // [POSTING-V2-02A.1] 이 테스트는 원래 'quota 계산 무변경'을 고정했다
+    // (01B 당시 P2-1은 범위 밖이었다). 02A.1에서 탭의 quota 표현을 제거했으므로,
+    // 이제 고정해야 할 것은 "탭 count가 ERROR != ZERO 계약을 유지한다"이다.
+    test('탭 count가 quota가 아닌 렌더 수를 쓰되 ERROR != ZERO는 유지한다', () {
       final ctrl = _codeOf(_src(_ctrlPath));
-      expect(
-        ctrl.contains('int get activeToCount => _items.where((g) => !g.isClosed).length;'),
-        isTrue,
-        reason: 'activeToCount 산식이 바뀌었다',
-      );
+      expect(ctrl.contains('activeToCount'), isFalse,
+          reason: '거부된 quota 분자 계약이 controller에 남아 있다');
+      expect(ctrl.contains('maxActiveTOs'), isFalse);
+
       final tab = _codeOf(_bodyOf(_src(_listPath), 'Widget _buildTab('));
+      expect(_flat(tab).contains('showDenominator'), isFalse,
+          reason: 'quota 분모 노출 로직이 남아 있다');
+      // 실패 + 데이터 없음 → count 숨김 계약은 그대로
       expect(
-        _flat(tab).contains('final showDenominator = up.isSubAdmin || '
-            'managedCount <= 1 || isBusinessFiltered;'),
+        _flat(tab).contains('final countIsTrustworthy = controller.loadError == null '
+            '|| controller.items.isNotEmpty;'),
         isTrue,
       );
     });

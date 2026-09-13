@@ -11,9 +11,6 @@ import '../../../services/firestore_service.dart';
 // Controllers
 import '../../../controllers/workforce_controller.dart';
 
-// Providers
-import '../../../providers/user_provider.dart';
-
 // Utils
 import '../../../utils/format_helper.dart';
 
@@ -167,14 +164,92 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     return _cachedFilteredItems;
   }
 
-  /// controller.items 에서 탭·사업장·날짜 필터 적용
+  /// [POSTING-V2-02A.1] 탭을 제외한 필터 술어 — 목록 렌더와 탭 count의 단일 source.
+  ///
+  /// 탭 숫자가 "바로 아래 보이는 카드 수"를 말하려면 같은 조건을 써야 한다.
+  /// 술어를 복제하면 다시 어긋나므로 여기 한 곳에만 둔다.
   /// [PATCH-IDENTITY] 사업장 필터는 businessId 기반 — 동명 사업장 충돌 방지.
-  List<TOGroupItem> _computeFilteredItems(List<TOGroupItem> allItems, WorkforceController controller) {
+  bool _matchesFilters(TOGroupItem groupItem, WorkforceController controller) {
     final selectedBusinessId = controller.selectedBusinessId;
     final selectedTOType = controller.selectedTOType;
     final selectedPublishStatus = controller.selectedPublishStatus;
     final selectedDateRange = controller.selectedDateRange;
 
+    if (selectedBusinessId != null &&
+        groupItem.businessId != selectedBusinessId) {
+      return false;
+    }
+
+    if (selectedTOType != null &&
+        groupItem.masterTO.type != selectedTOType) {
+      return false;
+    }
+
+    if (selectedPublishStatus != null) {
+      final to = groupItem.masterTO;
+      switch (selectedPublishStatus) {
+        case 'published':
+          if (!to.isPublished) return false;
+        case 'unpublished':
+          if (to.isPublished || to.isPendingPublish) return false;
+        case 'pending':
+          if (!to.isPendingPublish) return false;
+      }
+    }
+
+    if (selectedDateRange != null) {
+      final filterStart = DateTime.utc(
+        selectedDateRange.start.year,
+        selectedDateRange.start.month,
+        selectedDateRange.start.day,
+      );
+      final filterEnd = DateTime.utc(
+        selectedDateRange.end.year,
+        selectedDateRange.end.month,
+        selectedDateRange.end.day,
+        23, 59, 59,
+      );
+
+      if (groupItem.masterTO.isFlexType) {
+        // flex TO: 슬롯별 날짜로 필터 (로드 순서: groupTOs → slotDates → masterTO.date)
+        final slotDates = groupItem.groupTOs.isNotEmpty
+            ? groupItem.groupTOs
+                .map((t) => t.slot?.date)
+                .whereType<DateTime>()
+                .toList()
+            : groupItem.slotDates;
+        if (slotDates.isNotEmpty) {
+          final hasMatch = slotDates.any((d) {
+            final day = FormatHelper.toKstDate(d);
+            return !day.isBefore(filterStart) && !day.isAfter(filterEnd);
+          });
+          if (!hasMatch) return false;
+        } else {
+          if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
+            return false;
+          }
+        }
+      } else {
+        if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /// [POSTING-V2-02A.1] 진행중 탭에 실제 렌더되는 카드 수.
+  ///
+  /// quota가 아니다. 서버 생성 한도는 owner 전체 scope에서 ACTIVE+FULL을 세고
+  /// DRAFT/SCHEDULED를 빼지만, 이 숫자는 오직 "이 탭에 몇 개가 보이는가"만 말한다.
+  /// 두 모집단이 다르므로 하나의 숫자로 묶지 않는다.
+  int _visibleActiveCount(WorkforceController controller) => controller.items
+      .where((g) => !g.isClosed && _matchesFilters(g, controller))
+      .length;
+
+  /// controller.items 에서 탭·사업장·날짜 필터 적용
+  List<TOGroupItem> _computeFilteredItems(List<TOGroupItem> allItems, WorkforceController controller) {
     final Iterable<TOGroupItem> source;
     if (_selectedTab == TOStatus.active) {
       source = allItems.where((g) => !g.isClosed);
@@ -182,70 +257,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       source = allItems.where((g) => g.isClosed);
     }
 
-    final filtered = source.where((groupItem) {
-      if (selectedBusinessId != null &&
-          groupItem.businessId != selectedBusinessId) {
-        return false;
-      }
-
-      if (selectedTOType != null &&
-          groupItem.masterTO.type != selectedTOType) {
-        return false;
-      }
-
-      if (selectedPublishStatus != null) {
-        final to = groupItem.masterTO;
-        switch (selectedPublishStatus) {
-          case 'published':
-            if (!to.isPublished) return false;
-          case 'unpublished':
-            if (to.isPublished || to.isPendingPublish) return false;
-          case 'pending':
-            if (!to.isPendingPublish) return false;
-        }
-      }
-
-      if (selectedDateRange != null) {
-        final filterStart = DateTime.utc(
-          selectedDateRange.start.year,
-          selectedDateRange.start.month,
-          selectedDateRange.start.day,
-        );
-        final filterEnd = DateTime.utc(
-          selectedDateRange.end.year,
-          selectedDateRange.end.month,
-          selectedDateRange.end.day,
-          23, 59, 59,
-        );
-
-        if (groupItem.masterTO.isFlexType) {
-          // flex TO: 슬롯별 날짜로 필터 (로드 순서: groupTOs → slotDates → masterTO.date)
-          final slotDates = groupItem.groupTOs.isNotEmpty
-              ? groupItem.groupTOs
-                  .map((t) => t.slot?.date)
-                  .whereType<DateTime>()
-                  .toList()
-              : groupItem.slotDates;
-          if (slotDates.isNotEmpty) {
-            final hasMatch = slotDates.any((d) {
-              final day = FormatHelper.toKstDate(d);
-              return !day.isBefore(filterStart) && !day.isAfter(filterEnd);
-            });
-            if (!hasMatch) return false;
-          } else {
-            if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
-              return false;
-            }
-          }
-        } else {
-          if (!_isDateInRange(groupItem.masterTO, filterStart, filterEnd)) {
-            return false;
-          }
-        }
-      }
-
-      return true;
-    });
+    final filtered = source.where((g) => _matchesFilters(g, controller));
 
     if (_selectedTab != TOStatus.closed) return filtered.toList();
 
@@ -333,29 +345,20 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final isSelected = _selectedTab == tab;
     final isActiveTab = tab == TOStatus.active;
     // [POSTING-V2-01B] ERROR != ZERO.
-    // 조회 실패로 보여줄 데이터가 없을 때 '진행중 (0/N)'을 표시하면
+    // 조회 실패로 보여줄 데이터가 없을 때 '진행중 (0)'을 표시하면
     // 장애가 '진행중 공고 0건'으로 확정돼 보인다. 이 경우 count 자체를 숨긴다.
     // 마지막 성공 데이터가 남아 있으면 그 known count를 그대로 유지한다.
     final countIsTrustworthy =
         controller.loadError == null || controller.items.isNotEmpty;
+    // [POSTING-V2-02A.1] 탭 숫자는 렌더되는 카드 수다 — quota가 아니다.
+    // 이전에는 '(N/max)'로 목록 수와 생성 한도를 한 숫자에 묶었는데,
+    // 서버 quota는 owner 전체 scope의 ACTIVE+FULL을 세고 DRAFT/SCHEDULED를 빼므로
+    // 두 모집단이 애초에 다르다. 분모·isMaxed 경고 색을 모두 제거하고,
+    // 한도는 실제로 작동하는 순간(생성·공개)에 서버가 안내한다.
     final activeCount =
-        (isActiveTab && countIsTrustworthy) ? controller.activeToCount : null;
-    final isMaxed = isActiveTab && (activeCount ?? 0) >= controller.maxActiveTOs;
-    // 분모(/N) 표시 여부는 "현재 scope가 단일 사업장인가"로 판단 (item 기반 추론 금지).
-    // canonical source: UserProvider.managedBusinessIds.length (jobs_root_screen._computeScopeLabel 동일 기준)
-    //   - SubAdmin → effectiveBusinessId 고정 → 단일 → 분모 표시
-    //   - managedBusinessIds.length == 1 → 단일 → 분모 표시
-    //   - managedBusinessIds.length >= 2 + no business filter → 멀티 전체 scope → 분모 숨김
-    //   - managedBusinessIds.length >= 2 + business filter 선택 → 단일 필터 → 분모 표시
-    final up = context.read<UserProvider>();
-    final isBusinessFiltered = controller.selectedBusinessId != null;
-    final managedCount = up.currentUser?.managedBusinessIds.length ?? 1;
-    final showDenominator = up.isSubAdmin || managedCount <= 1 || isBusinessFiltered;
-    final displayLabel = isActiveTab && activeCount != null
-        ? showDenominator
-            ? '$label ($activeCount/${controller.maxActiveTOs})'
-            : '$label ($activeCount)'
-        : label;
+        (isActiveTab && countIsTrustworthy) ? _visibleActiveCount(controller) : null;
+    final displayLabel =
+        activeCount != null ? '$label ($activeCount)' : label;
 
     return GestureDetector(
       onTap: () {
@@ -389,12 +392,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // [POSTING-V2-02A.1] 탭 count는 정보이지 경고가 아니다.
+            // 한도 도달 여부를 탭이 추정하던 error 색상(isMaxed)을 제거했다.
             Icon(
               icon,
               size: ResponsiveHelper.iconSize(context, 16),
-              color: isSelected
-                  ? (isMaxed ? AppColors.error : theme.primaryColor)
-                  : AppColors.grey500,
+              color: isSelected ? theme.primaryColor : AppColors.grey500,
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 5)),
             Flexible(
@@ -402,9 +405,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 displayLabel,
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                  color: isSelected
-                      ? (isMaxed ? AppColors.error : theme.primaryColor)
-                      : AppColors.grey500,
+                  color: isSelected ? theme.primaryColor : AppColors.grey500,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),

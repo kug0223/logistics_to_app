@@ -83,14 +83,17 @@ class WorkforceController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool isGroupLoading(String groupId) => _loadingGroupIds.contains(groupId);
 
-  // ── 공고 카운트 ───────────────────────────────────────────────
-  // SUPER_ADMIN이 settings/app_config.maxActiveTOPerBusiness로 동적 설정.
-  // load() 시 Firestore에서 읽어온 값으로 갱신되며, 로드 전에는 기본값 4 사용.
-  int _maxActiveTOs = 4;
-  int get maxActiveTOs => _maxActiveTOs;
-
-  /// 현재 진행중(active) 공고 수
-  int get activeToCount => _items.where((g) => !g.isClosed).length;
+  // ── [POSTING-V2-02A.1] 공고 한도는 controller가 들고 있지 않는다 ──────
+  // 이전에는 maxActiveTOs(+ activeToCount)를 load()에서 읽어 공고 탭이
+  // '진행중 (N/max)'와 한도 초과 경고색을 그렸다. 그 두 값은 서버 quota와
+  // 다른 모집단이었다 — 서버는 owner 전체 scope에서 ACTIVE+FULL을 세고
+  // DRAFT/SCHEDULED를 빼는데, 클라이언트는 FULL을 빼고 DRAFT/SCHEDULED를
+  // 포함하며 한도는 오너가 아닌 호출자 문서에서 읽었다.
+  //
+  // 한도의 canonical source는 서버 하나뿐이고, 실제로 작동하는 순간
+  // (callableCreateTO / callablePublishTO / reopen)에 MAX_ACTIVE_TO_LIMIT로
+  // 정확한 값을 돌려준다. 클라이언트가 미리 추정하지 않는다.
+  // 탭 숫자는 WorkforceListView가 렌더 목록에서 직접 센다.
 
   // ── 필터 상태 ─────────────────────────────────────────────────
   DateTimeRange? _selectedDateRange;
@@ -186,20 +189,15 @@ class WorkforceController extends ChangeNotifier {
       }
 
       if (businessIds != null && businessIds.isEmpty) {
-        // 아이템은 없지만 한도는 로드
-        _maxActiveTOs = await _service.getMaxActiveTOLimit(adminUID: user.uid);
         _items = [];
         // early return 하지 않고 finally + 후처리(_preload 등)가 실행되도록 통과
       } else {
-      // 두 호출은 서로 독립 — 동시에 실행
-      final limitFuture = _service.getMaxActiveTOLimit(adminUID: user.uid);
-      final itemsFuture = _service.getTOGroupItemsLight(
+      // [POSTING-V2-02A.1] 한도 조회 제거 — 탭 표시 외에 소비자가 없었다
+      _items = await _service.getTOGroupItemsLight(
         activeOnly: false,
         closedOnly: false,
         businessIds: businessIds,
       );
-      _maxActiveTOs = await limitFuture;
-      _items = await itemsFuture;
       // [POSTING-V2-01B] items가 새 인스턴스로 교체되므로 이전 detail 실패도 무효.
       // 남겨두면 복구된 공고가 계속 error로 보인다.
       _groupDetailErrorIds.clear();
