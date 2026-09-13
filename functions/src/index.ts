@@ -30964,7 +30964,8 @@ async function srvHomeUnpaidWage(
   const snap = await db.collection("attendance")
     .where("businessId", "==", bizId)
     .where("wageStatus", "==", "confirmed")
-    .select("userId", "paymentDueDate")
+    // [AH-V2-05B.2] status/finalWage는 terminal non-payable 판별용 — 추가 쿼리 없음
+    .select("userId", "paymentDueDate", "status", "finalWage")
     .get();
 
   const groups = new Map<string, number>(); // groupKey → dueDate millis
@@ -30978,6 +30979,18 @@ async function srvHomeUnpaidWage(
     // [HOME-WAGE-01] top-level 필드에서 직접 읽기 (wageDetail 내부 아님)
     const pdTs = d["paymentDueDate"] as admin.firestore.Timestamp | undefined;
     if (!pdTs) {
+      // [AH-V2-05B.2] 노쇼·결근은 지급할 임금이 없는 종결 상태다.
+      //   자동결근/자동노쇼(단기·장기)/수동노쇼 다섯 경로 모두
+      //   status + finalWage:0 + wageStatus:"confirmed"를 쓰고 paymentDueDate를 쓰지
+      //   않으므로, 그대로 두면 '지급일 확인 필요'에 영구히 남아 줄지 않는다.
+      //   review_request 트리거도 같은 조건으로 이들을 "실제 근무 없음"으로 제외한다.
+      //
+      //   확실한 false positive만 제거한다 — status를 알 수 없거나 finalWage가
+      //   0이 아닌 문서는 계속 포함해 관리자가 확인하게 둔다.
+      const st = d["status"] as string | undefined;
+      const fw = (d["finalWage"] as number | undefined) ?? 0;
+      const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;
+      if (nonPayable) continue;
       missingUserIds.add(uid); // doc-count 아님 — unique userId 집계
       continue;
     }
