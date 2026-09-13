@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../providers/user_provider.dart';
 
 // Models
 import '../../../models/core/work_detail_model.dart';
@@ -519,6 +522,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
         toItem: widget.toItem,
         work: widget.work,
         onChanged: widget.onChanged,
+        // [POSTING-V2-02G.1] 공고 카드 진입도 알림 진입과 같은 계약을 쓴다 —
+        //   권한은 이 공고가 속한 사업장 기준이다. SubAdmin이 다른 배정 사업장을
+        //   선택 중이어도 판정이 달라지지 않는다.
+        targetPermissions: context
+            .read<UserProvider>()
+            .permissionsForBusiness(widget.toItem.to.businessId),
       ),
     );
     

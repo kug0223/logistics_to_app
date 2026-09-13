@@ -207,16 +207,29 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return;
       }
 
-      final List<BusinessModel> allBusinesses;
+      final List<BusinessModel> membershipBusinesses;
       if (userProvider.isSubAdmin) {
         final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
-        allBusinesses = bizIds.isNotEmpty
+        membershipBusinesses = bizIds.isNotEmpty
             ? await _firestoreService.getBusinessesByIds(bizIds)
             : [];
       } else {
         final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
-        allBusinesses = await _firestoreService.getBusinessesByIds(managedIds);
+        membershipBusinesses =
+            await _firestoreService.getBusinessesByIds(managedIds);
       }
+
+      // [POSTING-V2-02G.1] 공고를 만들 수 있는 사업장만 선택 대상이다.
+      //
+      // membership(조회 범위)과 canManageTo(생성 권한)는 서버에서 분리돼 있다.
+      // 이전에는 membership 전체를 picker에 올려, 권한 없는 사업장을 고르고
+      // 폼까지 진행한 뒤 제출 시점에야 서버가 거부했다.
+      // BUSINESS_ADMIN/SUPER_ADMIN은 canForBusiness가 항상 true라 영향이 없다.
+      final allBusinesses = membershipBusinesses
+          .where((b) =>
+              userProvider.canForBusiness(b.id, (p) => p.canManageTo))
+          .toList();
+
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
       // 인감/서명: UserModel.sealBase64 기준 (SubAdmin 면제 — 계약서 날인은 사업주 계정)
       final bool hasSeal = userProvider.isSubAdmin

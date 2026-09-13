@@ -197,10 +197,12 @@ void main() {
         isTrue,
         reason: 'DRAFT 판정이 masterTO.status 기반이 아니다',
       );
-      // 권한 계약 자체는 그대로
+      // [POSTING-V2-02G.1] 권한 판정 단위가 선택 사업장 → 대상 사업장으로 바뀌었다.
+      //   owner/super 예외와 canManageTo 요구는 그대로다.
       expect(
         _flat(menuBody).contains('final canDelete = user?.isBusinessAdmin == true '
-            '|| user?.isSuperAdmin == true || up.can((p) => p.canManageTo);'),
+            '|| user?.isSuperAdmin == true || up.canForBusiness('
+            'widget.groupItem.businessId, (p) => p.canManageTo);'),
         isTrue,
         reason: 'permission 계약이 바뀌었다',
       );
@@ -568,11 +570,16 @@ void main() {
       }
     });
 
-    test('permission 계약 무변경', () {
+    // [POSTING-V2-02G.1] 지켜야 할 것은 "쓰기 액션이 canManageTo를 요구한다"이지
+    //   그 값을 어느 사업장에서 읽는가가 아니다. 판정 단위만 대상 사업장으로 옮겼다.
+    test('permission 계약 무변경 — 쓰기 액션은 여전히 canManageTo를 요구한다', () {
       expect(
-        _flat(cardCode).contains('final canManageTo = up.can((p) => p.canManageTo);'),
+        _flat(cardCode).contains('final canManageTo = up.canForBusiness('
+            'widget.groupItem.businessId, (p) => p.canManageTo);'),
         isTrue,
       );
+      expect(_flat(cardCode).contains('canManageWorkers'), isFalse,
+          reason: '공고 쓰기 권한이 다른 축으로 바뀌었다');
     });
 
     test('POSTING-V2-01A 회귀 없음', () {

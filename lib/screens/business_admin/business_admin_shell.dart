@@ -135,7 +135,10 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
   /// 권한 기반 표시 탭 인덱스 목록 — 홈(0)·MY(4)는 항상 포함
   List<int> _visibleTabIndices(UserProvider up) => [
         0, // 홈 — 항상 표시
-        if (up.can((p) => p.canManageTo)) 1,      // 공고
+        // [POSTING-V2-02G.1] 공고 탭은 "지금 선택한 사업장에서 관리할 수 있는가"가
+        //   아니라 "관리할 수 있는 배정 사업장이 하나라도 있는가"다. 선택 사업장
+        //   기준이던 때는 A에 권한이 있어도 B를 고르면 탭이 사라지고 홈으로 튕겼다.
+        if (up.canManagePostingAnywhere) 1,       // 공고
         if (up.can((p) => p.canManageWorkers)) 2, // 인력
         if (up.can((p) => p.canManageWage)) 3,    // 정산
         4, // MY — 항상 표시

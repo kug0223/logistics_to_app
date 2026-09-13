@@ -18,6 +18,7 @@ import '../../../models/core/monthly_review_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_data.dart';
+import '../../../models/core/business_member_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../screens/common/settings_screen.dart';
 import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
@@ -119,6 +120,19 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   bool _isProcessing = false;
   bool _hasChanges = false;
   String? _selectedBusinessId;
+
+  // [POSTING-V2-02G.1] 권한은 **이 다이얼로그가 보고 있는 사업장** 기준이다.
+  //
+  // UserProvider.can()은 Shell에서 선택한 사업장의 권한이라, 여기서 다른
+  // 사업장의 지원자를 보고 있으면 실행 불가능한 액션이 활성화된다.
+  // 서버는 confirm/reject/cancel 모두 대상 사업장의 canManageTo를 요구한다.
+  // 사업장을 특정할 수 없을 때만 기존 판정으로 폴백한다.
+  bool _canForSelectedBiz(bool Function(MemberPermissions p) check) {
+    final up = Provider.of<UserProvider>(context, listen: false);
+    final bizId = _selectedBusinessId;
+    if (bizId == null || bizId.isEmpty) return up.can(check);
+    return up.canForBusiness(bizId, check);
+  }
 
   List<ApplicationModel> _pendingApps = [];
   List<ApplicationModel> _confirmedApps = [];
@@ -587,8 +601,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               onTap: () {
                 // BATCH-STRIP-01: 일괄 확정 진입 시 canManageTo 확인
                 if (!_isBatchMode) {
-                  final up = Provider.of<UserProvider>(context, listen: false);
-                  if (!up.can((p) => p.canManageTo)) {
+                  if (!_canForSelectedBiz((p) => p.canManageTo)) {
                     ToastHelper.showWarning('일괄 확정 권한이 없습니다.');
                     return;
                   }
@@ -931,8 +944,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     ? g.pendingApps.first.slotId
                     : null);
             if (slotId == null) return const SizedBox.shrink();
-            final up = Provider.of<UserProvider>(ctx, listen: false);
-            if (!up.can((p) => p.canManageTo)) return const SizedBox.shrink();
+            if (!_canForSelectedBiz((p) => p.canManageTo)) {
+              return const SizedBox.shrink();
+            }
             return _buildInviteButton(g, slotId);
           }),
 
@@ -1124,9 +1138,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final isSelected = _selectedIds.contains(app.id);
     final isStarred = isPending && _starredIds.contains(app.id);
     final idCardStatus = _idCardStatusMap[user?.uid ?? ''] ?? 'none';
-    final up = Provider.of<UserProvider>(context, listen: false);
-    final canManageTo = up.can((p) => p.canManageTo);
-    final canManageContract = up.can((p) => p.canManageContract);
+    final canManageTo = _canForSelectedBiz((p) => p.canManageTo);
+    final canManageContract = _canForSelectedBiz((p) => p.canManageContract);
 
     final Color cardBg;
     final Color cardBorder;
@@ -1981,7 +1994,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Future<void> _batchCreateContracts(_GroupData g) async {
     // BATCH-CONTRACT-01: 계약서 일괄작성 권한 확인
     final up = Provider.of<UserProvider>(context, listen: false);
-    if (!up.can((p) => p.canManageContract)) {
+    if (!_canForSelectedBiz((p) => p.canManageContract)) {
       ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
       return;
     }
@@ -2924,8 +2937,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<void> _batchApprove() async {
     // PERM-01: 실행 시점 재확인 — UI 토글이 우회되더라도 서버 전 최후 방어
-    final up = Provider.of<UserProvider>(context, listen: false);
-    if (!up.can((p) => p.canManageTo)) {
+    if (!_canForSelectedBiz((p) => p.canManageTo)) {
       ToastHelper.showWarning('일괄 확정 권한이 없습니다.');
       return;
     }

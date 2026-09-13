@@ -1382,7 +1382,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final isFull = widget.groupItem.isFull; // [4I.1A] FULL guard용
     final up = context.read<UserProvider>();
     final user = up.currentUser;
-    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true || up.can((p) => p.canManageTo);
+    // [POSTING-V2-02G.1] 대상 사업장 기준 — 서버 guard와 같은 단위.
+    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true ||
+        up.canForBusiness(widget.groupItem.businessId, (p) => p.canManageTo);
     // [POSTING-V2-01C.2] 삭제는 미공개(DRAFT) 공고 정리 수단으로만 남긴다.
     // 공개된 공고는 수정 / 종료 / 재오픈 / 다시 모집 lifecycle로 운영하고 기록을 남긴다.
     // 서버(callableDeleteTO/Slots)는 relation-zero면 어떤 status든 허용하지만,
@@ -1391,7 +1393,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
     // 최종 가능 여부는 서버가 판정한다 (DRAFT에도 초대가 붙어 있을 수 있다).
     final isDraft = widget.groupItem.masterTO.status == TOStatus.draft;
     // TO-02: 쓰기 작업 항목은 canManageTo 권한 있을 때만 표시
-    final canManageTo = up.can((p) => p.canManageTo);
+    final canManageTo =
+        up.canForBusiness(widget.groupItem.businessId, (p) => p.canManageTo);
     // [REPOST-GAPFIX] WHITELIST / FAIL-CLOSED:
     // 알려진 정상 모집 종료 상태만 명시 허용. 알 수 없는 미래 closedReason은 기본 비표시.
     final repostReasonCode = widget.groupItem.closedReasonCode;
@@ -1552,9 +1555,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final isManualClosed = widget.groupItem.isManualClosed;
     final up = context.read<UserProvider>();
     final user = up.currentUser;
-    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true || up.can((p) => p.canManageTo);
+    // [POSTING-V2-02G.1] 대상 사업장 기준 — 서버 guard와 같은 단위.
+    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true ||
+        up.canForBusiness(widget.groupItem.businessId, (p) => p.canManageTo);
     // TO-02: 쓰기 작업 항목은 canManageTo 권한 있을 때만 표시
-    final canManageTo = up.can((p) => p.canManageTo);
+    final canManageTo =
+        up.canForBusiness(widget.groupItem.businessId, (p) => p.canManageTo);
 
     if (isContract) {
       AppMenuSheet.show(

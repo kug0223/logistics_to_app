@@ -499,14 +499,22 @@ void main() {
           true);
     });
 
-    test('10-c permission gating 무변경 (§18)', () {
+    test('10-c permission gating은 scope label과 독립이다 (§18)', () {
+      // [POSTING-V2-02G.1] 권한 판정 단위가 대상 사업장으로 바뀌었다.
+      //   scope label은 그 변화와 무관하게 businessIds만 본다 — 그 독립성을 고정한다.
       final shell =
           _codeOf(_src('lib/screens/business_admin/business_admin_shell.dart'));
-      expect(shell.contains('if (up.can((p) => p.canManageTo)) 1,'), true);
+      expect(shell.contains('if (up.canManagePostingAnywhere) 1,'), true);
       final card =
           _codeOf(_src('lib/widgets/admin/cards/admin_to_group_card.dart'));
-      expect(card.contains('final canManageTo = up.can((p) => p.canManageTo);'),
+      expect(
+          card.contains('up.canForBusiness(widget.groupItem.businessId, '
+              '(p) => p.canManageTo)'),
           true);
+      // scope label resolver가 permission을 참조하지 않는다
+      final label = _codeOf(_src(_labelPath));
+      expect(label.contains('canManageTo'), false);
+      expect(label.contains('MemberPermissions'), false);
     });
 
     test('10-d 근무 탭의 다른 동작을 건드리지 않았다 (§11)', () {

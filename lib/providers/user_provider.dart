@@ -38,6 +38,25 @@ class UserProvider with ChangeNotifier {
   String? _selectedSubAdminBusinessId;
   Map<String, String> _subAdminBusinessNames = {};
   Map<String, String> _subAdminBusinessNamesView = const {};
+
+  // [POSTING-V2-02G.1] 배정 사업장별 권한.
+  //
+  // _memberPermissions는 **선택된 한 사업장**의 권한이라, 배정 전체를 조회하는
+  // 공고 목록에는 맞지 않는다. 서버는 mutation마다 대상 사업장의 canManageTo를
+  // 보므로 클라이언트도 같은 단위의 truth가 필요하다.
+  // 선택-사업장 권한(_memberPermissions)과 listener는 그대로 두고 추가로만 보관한다.
+  Map<String, MemberPermissions> _subAdminPermissionsByBusinessView = const {};
+
+  /// 배정 사업장 권한을 한 번이라도 채웠는지.
+  ///
+  /// false = UNKNOWN(하이드레이션 전/진행 중)이며 "권한 없음"과 **다르다**.
+  /// 빈 map을 거부로 읽으면 공고 탭이 잠깐 사라졌다 돌아오고, Shell이 그 사이
+  /// 현재 탭을 홈으로 되돌린다.
+  bool _subAdminPermissionsLoaded = false;
+
+  /// 지금 map이 담고 있는 사업장 집합 — 재조회 필요 여부 판단용.
+  /// 조회에 성공한 사업장만 담는다(실패분은 다음 하이드레이션에서 재시도).
+  Set<String> _hydratedPermissionBusinessIds = const {};
   // SA-01: switchToAdminMode 경쟁조건 방지용 세대 카운터
   int _switchGeneration = 0;
 
@@ -133,6 +152,14 @@ class UserProvider with ChangeNotifier {
     }
     if (_switchGeneration != gen) return; // SA-01: stale-check
     _permissionsLoaded = true;
+    // [POSTING-V2-02G.1] 배정 집합이 그대로면 재조회하지 않는다 —
+    // 사업장 전환 자체로 N개를 다시 읽지 않는다. 관리자 모드 최초 진입 등
+    // 아직 map이 비어 있는 경우에만 채운다.
+    final switchUser = _currentUser;
+    if (switchUser != null && uid != null) {
+      await _hydrateSubAdminPermissions(switchUser, uid);
+      if (_switchGeneration != gen) return;
+    }
     // permissions 완료 후 FCM 업데이트 (race condition 방지)
     FCMService().updateAdminStatus(true);
     // 사업장 변경 시 리스너도 새 사업장으로 재연결
@@ -230,6 +257,117 @@ class UserProvider with ChangeNotifier {
     if (_currentUser?.isBusinessAdmin == true) return true;
     if (_memberPermissions != null) return check(_memberPermissions!);
     return false;
+  }
+
+  // ── [POSTING-V2-02G.1] 사업장별 권한 ──────────────────────────────
+  //
+  // can()은 **선택된 사업장** 기준이고 다른 화면들이 그 의미로 쓰고 있으므로
+  // 그대로 둔다. 아래는 대상 사업장을 명시하는 별도 계약이다.
+
+  /// 배정 사업장 권한 하이드레이션 완료 여부. false면 UNKNOWN(거부 아님).
+  bool get subAdminPermissionsLoaded => _subAdminPermissionsLoaded;
+
+  /// 해당 사업장의 권한. 없으면 null(미배정·조회 실패·미하이드레이션).
+  MemberPermissions? permissionsForBusiness(String businessId) =>
+      _subAdminPermissionsByBusinessView[businessId];
+
+  /// 대상 사업장 기준 권한 판정 — 서버 guard와 같은 단위다.
+  ///
+  /// SUPER_ADMIN은 assertBizAdmin이 early-return으로 허용하므로 true.
+  /// SUB_ADMIN은 그 사업장 권한이 map에 없으면 fail-closed(false).
+  bool canForBusiness(
+    String businessId,
+    bool Function(MemberPermissions p) check,
+  ) {
+    final user = _currentUser;
+    if (user == null) return false;
+    if (user.isBusinessAdmin || user.isSuperAdmin) return true;
+    if (!user.isSubAdmin) return false;
+    final perms = _subAdminPermissionsByBusinessView[businessId];
+    if (perms == null) return false;
+    return check(perms);
+  }
+
+  /// 배정 사업장 중 [check]를 만족하는 곳이 하나라도 있는가.
+  ///
+  /// 하이드레이션 전에는 [whenUnknown]을 돌려준다 — 빈 map을 "전부 권한 없음"
+  /// 으로 읽으면 없던 false negative가 생긴다.
+  bool canForAnyBusiness(
+    bool Function(MemberPermissions p) check, {
+    required bool whenUnknown,
+  }) {
+    final user = _currentUser;
+    if (user == null) return false;
+    if (user.isBusinessAdmin || user.isSuperAdmin) return true;
+    if (!user.isSubAdmin) return false;
+    if (!_subAdminPermissionsLoaded) return whenUnknown;
+    return user.subAdminBusinessIds.any((id) {
+      final p = _subAdminPermissionsByBusinessView[id];
+      return p != null && check(p);
+    });
+  }
+
+  /// 공고를 관리할 수 있는 배정 사업장이 하나라도 있는가 — 공고 탭 노출 조건.
+  ///
+  /// 하이드레이션 전에는 기존 선택-사업장 판정을 그대로 쓴다. 그래야 탭이
+  /// 잠깐 사라졌다 돌아오고 Shell이 현재 탭을 홈으로 되돌리는 일이 없다.
+  bool get canManagePostingAnywhere => canForAnyBusiness(
+        (p) => p.canManageTo,
+        whenUnknown: can((p) => p.canManageTo),
+      );
+
+  /// 배정 사업장별 권한을 채운다.
+  ///
+  /// 범위는 **배정 집합**이지 선택 사업장이 아니다 — 사업장을 A→B로 바꿨다고
+  /// N개를 다시 읽지 않는다. 배정 집합이 달라졌거나 이전에 실패한 사업장이
+  /// 있을 때만 조회한다. 사업장별 try/catch로 한 곳의 실패가 나머지를
+  /// 무효로 만들지 않는다(실패한 곳은 fail-closed로 남고 다음 기회에 재시도).
+  Future<void> _hydrateSubAdminPermissions(
+    UserModel user,
+    String uid, {
+    int? gen,
+  }) async {
+    final ids = user.subAdminBusinessIds;
+    if (ids.isEmpty) {
+      _subAdminPermissionsByBusinessView = const {};
+      _hydratedPermissionBusinessIds = const {};
+      _subAdminPermissionsLoaded = true;
+      return;
+    }
+
+    final idSet = ids.toSet();
+    if (_subAdminPermissionsLoaded &&
+        _hydratedPermissionBusinessIds.length == idSet.length &&
+        _hydratedPermissionBusinessIds.containsAll(idSet)) {
+      return; // 같은 배정 집합이고 전부 성공 — 재조회 없음
+    }
+
+    final entries = await Future.wait(ids.map((bizId) async {
+      try {
+        return MapEntry(bizId, await MemberService().getMemberPermissions(bizId, uid));
+      } catch (e) {
+        debugPrint('⚠️ [02G.1] 사업장 권한 조회 실패 ($bizId): $e');
+        return MapEntry(bizId, null);
+      }
+    }));
+    if (_disposed) return;
+    if (gen != null && _loadGeneration != gen) return;
+
+    final map = <String, MemberPermissions>{};
+    for (final e in entries) {
+      final v = e.value;
+      if (v != null) map[e.key] = v;
+    }
+    _subAdminPermissionsByBusinessView = Map.unmodifiable(map);
+    // 성공한 사업장만 기록 — 실패분은 다음 하이드레이션에서 다시 시도된다.
+    _hydratedPermissionBusinessIds = map.keys.toSet();
+    _subAdminPermissionsLoaded = true;
+  }
+
+  void _clearSubAdminPermissionMap() {
+    _subAdminPermissionsByBusinessView = const {};
+    _hydratedPermissionBusinessIds = const {};
+    _subAdminPermissionsLoaded = false;
   }
 
   @override
@@ -368,6 +506,8 @@ class UserProvider with ChangeNotifier {
           final namesFuture = user.subAdminBusinessIds.length > 1
               ? FirestoreService().getBusinessNames(user.subAdminBusinessIds)
               : Future.value(<String, String>{});
+          // [POSTING-V2-02G.1] 배정 사업장별 권한 — 이름 배치와 같은 지점에서 한 번.
+          final permMapFuture = _hydrateSubAdminPermissions(user, uid, gen: gen);
 
           await fcmFuture;
           if (_loadGeneration != gen) return; // [NEW-03]
@@ -383,6 +523,9 @@ class UserProvider with ChangeNotifier {
           _subAdminBusinessNames = await namesFuture;
           if (_loadGeneration != gen) return; // [NEW-03]
           _subAdminBusinessNamesView = Map.unmodifiable(_subAdminBusinessNames);
+          // [POSTING-V2-02G.1] 사업장별 실패는 내부에서 격리된다 — 여기서 throw 없음.
+          await permMapFuture;
+          if (_loadGeneration != gen) return; // [NEW-03]
 
           // permissions 로드 완료 후 저장된 모드 상태를 FCM에 반영
           if (savedIsAdminMode) {
@@ -670,6 +813,7 @@ class UserProvider with ChangeNotifier {
       _selectedSubAdminBusinessId = null;
       _subAdminBusinessNames = {};
       _subAdminBusinessNamesView = const {};
+      _clearSubAdminPermissionMap();
       _pendingContracts = [];
       _error = null;
       _isLoading = false;
@@ -702,6 +846,7 @@ class UserProvider with ChangeNotifier {
       _selectedSubAdminBusinessId = null;
       _subAdminBusinessNames = {};
       _subAdminBusinessNamesView = const {};
+      _clearSubAdminPermissionMap();
       _pendingContracts = [];
       _error = null;
       FirestoreService().clearCache();
@@ -742,6 +887,10 @@ class UserProvider with ChangeNotifier {
               }
               if (_disposed) return;
             }
+            // [POSTING-V2-02G.1] 새 배정 집합을 인지하는 지점 —
+            // 사업장별 권한 map도 같은 집합 기준으로 다시 채운다.
+            await _hydrateSubAdminPermissions(_currentUser!, _currentUser!.uid);
+            if (_disposed) return;
           }
           notifyListeners();
         }
