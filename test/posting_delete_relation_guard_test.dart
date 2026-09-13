@@ -795,17 +795,34 @@ void main() {
       );
     });
 
-    test('client 삭제 UI 무변경', () {
+    // [POSTING-V2-01C.2] 이 테스트는 원래 '클라이언트 삭제 UI 무변경'을 고정했다.
+    // 01C.2에서 클라이언트를 DRAFT-only로 좁혔으므로, 이제 고정해야 할 것은
+    // "클라이언트가 좁아져도 서버 guard는 여전히 독립적인 최종 권위"라는 관계다.
+    // 구버전 클라이언트와 직접 callable 호출이 서버만으로 보호되어야 한다.
+    test('서버 guard가 클라이언트 UI 정책에 의존하지 않는다', () {
+      for (final name in ['assertNoPostingRelations', 'assertNoSlotRelations']) {
+        final body = _codeOf(_fnBody(fn, name));
+        // 서버는 DRAFT 여부를 보지 않는다 — 관계만 본다
+        expect(body.contains('"DRAFT"'), isFalse,
+            reason: '$name 이 클라이언트의 DRAFT-only 정책을 서버에 복제한다');
+        expect(body.contains('status'), isFalse,
+            reason: '$name 이 lifecycle status에 결합됐다');
+      }
+      // deleteTO/deleteSlots도 status 기반 예외를 두지 않는다
+      final toBody = _codeOf(_callableBody(fn, 'callableDeleteTO'));
+      expect(toBody.contains('toStatus === "ACTIVE"'), isFalse);
+    });
+
+    test('클라이언트는 서버보다 좁게 노출한다 (의도된 비대칭)', () {
       final card = _codeOf(_src(_cardPath));
+      // 01C.2: DRAFT에서만 삭제 메뉴 노출
+      expect(card.contains('if (canDelete && isDraft)'), isTrue,
+          reason: '클라이언트 DRAFT-only gate가 사라졌다');
+      // 서버는 relation-zero면 어떤 status든 허용하므로,
+      // 이 비대칭은 UI 정책이지 서버 안전성의 전제가 아니다.
       expect(
-        card.contains("label: isContract ? '삭제' : '일괄삭제',"),
-        isTrue,
-        reason: '클라이언트 삭제 메뉴를 수정했다 — 01C.2 범위',
-      );
-      expect(
-        _flat(card).contains("'선택한 \${deleteSlots.length}개 날짜를 삭제하시겠습니까?"),
-        isTrue,
-        reason: '삭제 확인 문구를 수정했다 — 01C.2 범위',
+        _codeOf(_fnBody(fn, 'assertNoPostingRelations')).contains('isDraft'),
+        isFalse,
       );
     });
 

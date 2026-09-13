@@ -676,7 +676,15 @@ extension TOFirestore on FirestoreService {
       return true;
     } catch (e) {
       debugPrint('❌ [TO] 공고 삭제 실패: $e');
-      ToastHelper.showError('공고 삭제에 실패했습니다.');
+      // [POSTING-V2-01C.2] 서버가 쓴 안내를 그대로 전달한다.
+      // callableDeleteTO는 관계가 있으면 failed-precondition과 함께
+      // '…모집을 중단하려면 공고 종료를 이용해주세요.'를 반환하는데,
+      // 이를 '삭제에 실패했습니다'로 덮으면 다음 행동을 알 수 없다.
+      final msg = (e is FirebaseFunctionsException &&
+              (e.message?.isNotEmpty ?? false))
+          ? e.message!
+          : '공고 삭제에 실패했습니다.';
+      ToastHelper.showError(msg);
       return false;
     } finally {
       GlobalLoadingController.hide();

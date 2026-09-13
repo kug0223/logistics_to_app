@@ -23,45 +23,31 @@ class TOListDialogs {
     required this.onChanged,
   });
 
-/// TO 삭제 다이얼로그
+/// TO 삭제 다이얼로그 — [POSTING-V2-01C.2] 미공개(DRAFT) 공고 정리 전용.
+  ///
+  /// 옛 계약은 '삭제하면 지원서가 자동 취소된다'였고, 그래서 확정 근무자 수를
+  /// 미리 세어 경고했다. 서버 계약이 relation-zero only로 바뀌면서 관계가 있으면
+  /// 삭제 자체가 거부되므로 '자동 취소' 전제가 사라졌다.
+  ///
+  /// 관계 존재 여부는 클라이언트가 판정하지 않는다 — checkTOBeforeDelete는
+  /// 활성 지원서만 보므로 REJECTED/CANCELED/EXPIRED·계약 기록을 놓치고,
+  /// 그 결과로 "삭제 가능"이라 안심시킨 뒤 서버가 거부하는 상태가 된다.
+  /// canonical 판정은 서버 하나로 둔다.
   Future<void> showDeleteTODialog(TOItem toItem) async {
     final to = toItem.to;
-
-    final checkResult = await firestoreService.checkTOBeforeDelete(to.id, businessId: to.businessId);
-    if (checkResult['hasError'] == true) {
-      if (context.mounted) ToastHelper.showError('지원자 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.');
-      return;
-    }
-    final hasApplicants = checkResult['hasApplicants'] as bool;
-    final confirmedCount = checkResult['confirmedCount'] as int;
-    final totalCount = checkResult['totalCount'] as int;
-
-    // [4I.1A] delete dialog copy 개선 — StyledDialog 패턴, 정확한 semantics
-    // 삭제: Firestore 문서 제거(되돌릴 수 없음), 계약/근무 기록 유지, 지원서 자동 취소
-    String bodyText =
-        '삭제한 공고는 목록에서 제거되며 되돌릴 수 없습니다.\n'
-        '이미 생성된 계약·근무 기록은 유지됩니다.';
-    if (hasApplicants) {
-      if (confirmedCount > 0) {
-        bodyText += '\n\n확정 근무자 $confirmedCount명 포함, 총 $totalCount명의 지원서가 자동 취소됩니다.';
-      } else {
-        bodyText += '\n\n대기 중인 지원서 $totalCount건이 자동 취소됩니다.';
-      }
-    }
 
     if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (dialogCtx) => StyledDialog(
-        title: '공고 삭제',
+        title: '미공개 공고 삭제',
         subtitle: to.title,
         icon: Icons.delete_forever,
         headerColor: AppColors.error,
-        content: StyledDialogInfoCard(
-          message: bodyText,
-          icon: confirmedCount > 0 ? Icons.warning_amber : Icons.info_outline,
-          color: confirmedCount > 0 ? AppColors.warning : AppColors.info,
+        content: StyledDialogInfoCard.warning(
+          '삭제한 공고는 복구할 수 없습니다.\n'
+          '지원·초대·근무 기록이 있는 공고는 삭제할 수 없습니다.',
         ),
         actions: [
           StyledDialogButton.cancel(
@@ -77,12 +63,13 @@ class TOListDialogs {
 
     if (confirmed == true) {
       try {
+        // [POSTING-V2-01C.2] 실패 시 deleteTO가 서버 메시지를 그대로 토스트한다.
+        // 여기서 다시 generic 토스트를 띄우면 그 안내를 덮는다.
+        // 낙관적 제거도 하지 않는다 — 성공한 경우에만 onChanged로 목록을 갱신한다.
         final success = await firestoreService.deleteTO(to.id);
         if (success) {
           if (!context.mounted) return;
           onChanged();
-        } else {
-          if (context.mounted) ToastHelper.showError('공고 삭제에 실패했습니다.');
         }
       } catch (e) {
         debugPrint('❌ TO 삭제 실패: $e');

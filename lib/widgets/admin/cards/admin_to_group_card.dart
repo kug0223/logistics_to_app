@@ -1374,6 +1374,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final up = context.read<UserProvider>();
     final user = up.currentUser;
     final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true || up.can((p) => p.canManageTo);
+    // [POSTING-V2-01C.2] 삭제는 미공개(DRAFT) 공고 정리 수단으로만 남긴다.
+    // 공개된 공고는 수정 / 종료 / 재오픈 / 다시 모집 lifecycle로 운영하고 기록을 남긴다.
+    // 서버(callableDeleteTO/Slots)는 relation-zero면 어떤 status든 허용하지만,
+    // 클라이언트는 의도적으로 더 좁게 노출한다 — ACTIVE에 지원자가 없다고 해서
+    // 삭제를 권할 이유가 없고, 잘못 낸 공고의 정상 해결책은 수정 또는 종료다.
+    // 최종 가능 여부는 서버가 판정한다 (DRAFT에도 초대가 붙어 있을 수 있다).
+    final isDraft = widget.groupItem.masterTO.status == TOStatus.draft;
     // TO-02: 쓰기 작업 항목은 canManageTo 권한 있을 때만 표시
     final canManageTo = up.can((p) => p.canManageTo);
     // [REPOST-GAPFIX] WHITELIST / FAIL-CLOSED:
@@ -1512,12 +1519,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
               onTap: () => _showSentInvitesSheet(context),
             ),
           ],
-        // 삭제 (BUSINESS_ADMIN 이상만)
-        if (canDelete)
+        // [POSTING-V2-01C.2] 삭제 — 미공개(DRAFT) 공고에서만 노출
+        // 공개 이후(SCHEDULED/ACTIVE/FULL/CLOSED/EXPIRED)에는 메뉴 자체가 없다.
+        if (canDelete && isDraft)
           [
             AppMenuSheetItem(
               icon: Icons.delete,
-              label: isContract ? '삭제' : '일괄삭제',
+              label: isContract ? '미공개 공고 삭제' : '날짜 일괄삭제',
               color: AppColors.error,
               isDanger: true,
               onTap: () => _handleSingleTOMenuAction(context, isContract ? 'delete' : 'batchDelete'),
@@ -1971,13 +1979,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: this.context,
           barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
-            title: '일괄 삭제',
-            subtitle: deletesAll
-                ? '모든 날짜를 삭제하면 공고 자체도 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.'
-                : '선택한 ${deleteSlots.length}개 날짜를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.',
+            title: '날짜 삭제',
+            subtitle: '선택한 ${deleteSlots.length}개 날짜를 삭제하시겠습니까?',
             icon: Icons.delete_forever,
             headerColor: AppColors.error,
-            content: const SizedBox.shrink(),
+            // [POSTING-V2-01C.2] 서버 계약(relation-zero only)과 같은 말을 한다.
+            // 옛 문구는 '자동 취소'를 전제했지만 이제 관계가 있으면 삭제 자체가 거부된다.
+            content: StyledDialogInfoCard.warning(
+              '삭제한 날짜는 복구할 수 없습니다.\n'
+              '지원·초대·근무 기록이 있는 날짜는 삭제할 수 없습니다.'
+              '${deletesAll ? '\n\n모든 날짜를 삭제하면 미공개 공고도 함께 삭제됩니다.' : ''}',
+            ),
             actions: [
               StyledDialogButton.cancel(
                   onPressed: () => Navigator.pop(dialogCtx, false)),
