@@ -28,6 +28,7 @@ import '../../../controllers/workforce_controller.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/fcm_service.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/admin_business_scope_label.dart';
 import 'workforce_operational_view.dart';
 
 class WorkforceRootScreen extends StatefulWidget {
@@ -183,26 +184,23 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen>
     );
   }
 
-  /// 사업장 scope label 계산
-  /// - 로딩 중이면 호출되지 않음 (Consumer에서 isLoading 체크 불필요 — 항상 scope 표시)
+  /// 사업장 scope label 계산 — [POSTING-V2-02F.1] 공고 탭과 같은 resolver를 쓴다.
+  ///
+  /// 두 Root는 같은 데이터 범위(managedBusinessIds / subAdminBusinessIds)를
+  /// 조회하므로 같은 문구로 설명해야 한다. 이 화면의 query·filter·permission·
+  /// layout은 바뀌지 않는다 — 표시 문구만 공용 규칙을 따른다.
   /// - controller.knownBusinessNames: items 0건이어도 마지막 로드 이름 유지
   String _computeScopeLabel(WorkforceController controller, UserProvider up) {
-    if (up.isSubAdmin) {
-      final bizId = up.effectiveBusinessId;
-      return (bizId != null ? up.subAdminBusinessNames[bizId] : null) ??
-          '내 사업장';
-    }
-    final names = controller.items.isNotEmpty
-        ? controller.items
-            .map((g) => g.businessName)
-            .where((n) => n.isNotEmpty)
-            .toSet()
-        : controller.knownBusinessNames.toSet();
-    if (names.length == 1) return names.first;
-    final count = up.currentUser?.managedBusinessIds.length ?? 0;
-    if (count > 1) return '전체 사업장';
-    if (names.isNotEmpty) return names.first;
-    return count == 1 ? '내 사업장' : '';
+    final user = up.currentUser;
+    return resolveAdminBusinessScopeLabel(
+      isSubAdmin: up.isSubAdmin,
+      managedBusinessIds: user?.managedBusinessIds ?? const [],
+      subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],
+      subAdminBusinessNames: up.subAdminBusinessNames,
+      loadedBusinessNames: controller.items.isNotEmpty
+          ? controller.items.map((g) => g.businessName).toList()
+          : controller.knownBusinessNames,
+    );
   }
 
   double _scale(BuildContext context) {

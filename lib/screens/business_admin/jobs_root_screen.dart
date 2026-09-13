@@ -33,6 +33,7 @@ import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/admin_business_scope_label.dart';
 import '../../utils/admin_tab_switcher.dart';
 import '../../utils/navigation_helper.dart';
 import 'to_management/create_to_screen.dart';
@@ -250,27 +251,23 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     );
   }
 
-  /// 사업장 scope label 계산
-  /// SubAdmin → 배정 사업장 이름
-  /// 단일 사업장 관리자 → 사업장 이름 (items 0건이어도 knownBusinessNames 캐시 사용)
-  /// 다중 사업장 관리자 → "전체 사업장"
+  /// 사업장 scope label 계산 — [POSTING-V2-02F.1] 공용 resolver에 위임.
+  ///
+  /// 범위 판정은 businessIds만 본다. effectiveBusinessId(Home context)나
+  /// 로드된 공고의 사업장 분포로 범위를 말하지 않는다.
+  /// 근무 탭(WorkforceRootScreen)도 같은 resolver를 쓴다 — 같은 데이터 범위를
+  /// 두 화면이 다르게 설명하지 않도록.
   String _computeScopeLabel(WorkforceController controller, UserProvider up) {
-    if (up.isSubAdmin) {
-      final bizId = up.effectiveBusinessId;
-      return (bizId != null ? up.subAdminBusinessNames[bizId] : null) ??
-          '내 사업장';
-    }
-    final names = controller.items.isNotEmpty
-        ? controller.items
-            .map((g) => g.businessName)
-            .where((n) => n.isNotEmpty)
-            .toSet()
-        : controller.knownBusinessNames.toSet();
-    if (names.length == 1) return names.first;
-    final count = up.currentUser?.managedBusinessIds.length ?? 0;
-    if (count > 1) return '전체 사업장';
-    if (names.isNotEmpty) return names.first;
-    return count == 1 ? '내 사업장' : '';
+    final user = up.currentUser;
+    return resolveAdminBusinessScopeLabel(
+      isSubAdmin: up.isSubAdmin,
+      managedBusinessIds: user?.managedBusinessIds ?? const [],
+      subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],
+      subAdminBusinessNames: up.subAdminBusinessNames,
+      loadedBusinessNames: controller.items.isNotEmpty
+          ? controller.items.map((g) => g.businessName).toList()
+          : controller.knownBusinessNames,
+    );
   }
 
   double _scale(BuildContext context) {
