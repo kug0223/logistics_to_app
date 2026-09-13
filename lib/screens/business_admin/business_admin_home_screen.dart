@@ -15,6 +15,7 @@ import '../../utils/tour_helper.dart';
 import '../common/tour_screen.dart';
 
 // Services
+import '../../controllers/workforce_controller.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/attendance_list_pdf.dart';
 import '../../utils/attendance_review_helper.dart';
@@ -110,6 +111,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   late final VoidCallback _onFcmRefresh;
 
+  // [POSTING-V2-02B.2] 다른 탭에서 성공한 mutation 수신
+  int _lastSeenMutationRevision = 0;
+
   // [PH1C] SUB_ADMIN 사업장 전환 감지 — provider listener 패턴
   // nullable: addPostFrameCallback 실행 전 dispose 엣지케이스 방어
   UserProvider? _cachedUp;
@@ -121,6 +125,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
     FCMService().addAdminRefreshListener(_onFcmRefresh);
+    // [POSTING-V2-02B.2] 공고·근무 탭에서 성공한 mutation을 받는다.
+    //   관리자 자신의 action은 FCM으로 회수되지 않고, Shell이 IndexedStack이라
+    //   탭 재진입으로도 loader가 다시 돌지 않는다. 이 신호가 유일한 회수 경로다.
+    //   Home 자신이 낸 mutation은 origin으로 걸러 중복 full refresh를 막는다.
+    _lastSeenMutationRevision = WorkforceController.dataRevision.value;
+    WorkforceController.dataRevision.addListener(_onAdminMutation);
     AttendanceListPdf.preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // [PH1C] 사업장 전환 감지 초기화 — 최초 렌더 전 기준값 확정
@@ -150,6 +160,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FCMService().removeAdminRefreshListener(_onFcmRefresh);
+    WorkforceController.dataRevision.removeListener(_onAdminMutation);
     // [PH1C] 사업장 전환 감지 리스너 해제 (postFrameCallback 실행 전 dispose 방어)
     _cachedUp?.removeListener(_onBusinessSwitchCheck);
     super.dispose();
@@ -179,6 +190,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   // 자동 트리거(FCM·앱 복귀)용 — 30초 쿨다운 + 동시 실행 방어
+  // [POSTING-V2-02B.2] 공고·근무 탭 mutation 수신.
+  // Home이 낸 mutation은 이미 해당 성공 콜백이 필요한 loader만 돌렸으므로 건너뛴다.
+  // _autoRefresh를 재사용하므로 기존 30초 쿨다운이 연속 mutation을 흡수한다.
+  void _onAdminMutation() {
+    final rev = WorkforceController.dataRevision.value;
+    if (rev <= _lastSeenMutationRevision) return;
+    _lastSeenMutationRevision = rev;
+    if (WorkforceController.lastMutationOrigin == AdminMutationOrigin.home) {
+      return;
+    }
+    if (mounted) _autoRefresh();
+  }
+
   void _autoRefresh() {
     final now = DateTime.now();
     if (_lastAutoRefreshAt != null &&
@@ -2013,7 +2037,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       ),
     );
     // [R7.4-A] DAD 내 확정/거절 → shortageCount 변동 시 Home 인력 현황 최신화
-    if ((changed ?? false) && mounted) unawaited(_loadStaffingReadiness());
+    if ((changed ?? false) && mounted) {
+      unawaited(_loadStaffingReadiness());
+      // [POSTING-V2-02B.2] 확정·거절·초대·업무유형 변경·확정 취소·좌석 반납은
+      //   전부 slot confirmed/pending 또는 workDetailCounts를 움직인다.
+      //   공고·근무 탭이 stale해지므로 알린다. Home 자신은 위 loader로 이미 갱신됐다.
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.home,
+      );
+    }
   }
 
   // ── [PHASE-3A] 처리할 일 — 우선순위 액션 리스트 ─────────────────
@@ -2183,7 +2215,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   : SupportReviewFilter.all,
             ),
           );
-          if (changed == true && mounted) unawaited(_loadCanonicalSummary());
+          if (changed == true && mounted) {
+            unawaited(_loadCanonicalSummary());
+            // [POSTING-V2-02B.2] 승인/거절은 DayApplicantsDialog와 같은
+            //   updateApplicationStatus CF를 타므로 동일 카운터를 움직인다.
+            WorkforceController.notifyDataChanged(
+              origin: AdminMutationOrigin.home,
+            );
+          }
         })),
       );
     }

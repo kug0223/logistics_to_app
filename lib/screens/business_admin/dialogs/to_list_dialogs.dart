@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../../../controllers/workforce_controller.dart';
 import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
@@ -136,6 +137,12 @@ class TOListDialogs {
     if (success) {
       ToastHelper.showSuccess('공고가 종료되었습니다.');
       onChanged();
+      // [POSTING-V2-02B.2] 종료는 Home 인력 현황의 모집 대상을 줄인다.
+      //   generic onChanged가 아니라 이 action 지점에서만 알린다 —
+      //   같은 콜백을 쓰는 삭제·초대는 Home에 영향이 없다.
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.jobs,
+      );
     } else {
       ToastHelper.showError('공고 종료에 실패했습니다.');
     }
@@ -211,6 +218,10 @@ class TOListDialogs {
     if (success) {
       ToastHelper.showSuccess('공고가 재오픈되었습니다.');
       onChanged();
+      // [POSTING-V2-02B.2] 재오픈은 Home 인력 현황의 모집 대상을 되살린다
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.jobs,
+      );
     } else {
       ToastHelper.showError('공고 재오픈에 실패했습니다.');
     }

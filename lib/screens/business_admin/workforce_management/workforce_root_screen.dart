@@ -79,8 +79,11 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen>
     final rev = WorkforceController.dataRevision.value;
     if (rev <= _lastSeenRevision) return;
     _lastSeenRevision = rev;
-    // 이 controller가 직접 revision을 발생시켰으면 skip (자기 중복 로드 방지)
-    if (_controller.wasLastGlobalBumpByMe) return;
+    // [POSTING-V2-02B.2] 이 탭에서 일어난 mutation은 이미 local refresh를 끝냈다
+    if (WorkforceController.lastMutationOrigin ==
+        AdminMutationOrigin.workforce) {
+      return;
+    }
     if (!mounted || _controller.isLoading) return;
     // load(): revision 재증가 없음 → 무한루프 차단
     _controller.load(context);

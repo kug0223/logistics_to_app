@@ -90,8 +90,10 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     final rev = WorkforceController.dataRevision.value;
     if (rev <= _lastSeenRevision) return;
     _lastSeenRevision = rev;
-    // 이 controller가 직접 revision을 발생시켰으면 skip (자기 중복 로드 방지)
-    if (_controller.wasLastGlobalBumpByMe) return;
+    // [POSTING-V2-02B.2] 이 탭에서 일어난 mutation은 이미 local refresh를 끝냈다
+    if (WorkforceController.lastMutationOrigin == AdminMutationOrigin.jobs) {
+      return;
+    }
     if (!mounted || _controller.isLoading) return;
     // load(): revision 재증가 없음 → 무한루프 차단
     _controller.load(context);
@@ -195,8 +197,15 @@ class _JobsRootScreenState extends State<JobsRootScreen>
                       context,
                       destination: AdminCreateTOScreen(initialBusinessId: initBizId),
                       useRootNavigator: true,
+                      // onChanged는 result == true(생성 성공)일 때만 호출된다
                       onChanged: () {
-                        if (mounted) _controller.reload(context);
+                        if (!mounted) return;
+                        _controller.reload(context);
+                        // [POSTING-V2-02B.2] 새 공고는 Home의 인력 현황과
+                        //   첫 공고 준비 카드에 모두 영향을 준다.
+                        WorkforceController.notifyDataChanged(
+                          origin: AdminMutationOrigin.jobs,
+                        );
                       },
                     );
                   },

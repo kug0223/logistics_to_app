@@ -1396,7 +1396,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           businesses: businesses,
         ),
       );
-      if (changed == true && mounted) _reload();
+      if (changed == true && mounted) {
+        _reload();
+        // [POSTING-V2-02B.2] 이 _reload는 자기 day data만 갱신한다.
+        //   확정·거절·초대는 공고 탭 카운터와 Home staffing에도 영향을 주므로 알린다.
+        WorkforceController.notifyDataChanged(
+          origin: AdminMutationOrigin.workforce,
+        );
+      }
     } catch (e) {
       debugPrint('❌ 지원명단 조회 실패: $e');
       if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');

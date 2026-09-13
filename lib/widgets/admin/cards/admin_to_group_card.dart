@@ -17,6 +17,9 @@ import '../../../utils/dialog_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/slot_status_util.dart';
 
+// Controllers
+import '../../../controllers/workforce_controller.dart';
+
 // Services
 import '../../../services/firestore_service.dart';
 
@@ -1183,7 +1186,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
         filterToId: masterTO.id,
       ),
     );
-    if (hasChanges == true && mounted) widget.onChanged();
+    if (hasChanges == true && mounted) {
+      widget.onChanged();
+      // [POSTING-V2-02B.2] 확정·거절·초대·좌석 반납은 Home 인력 현황에 영향을 준다
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.jobs,
+      );
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -1674,9 +1683,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   /// 인력 초대 다이얼로그 (일반 모드 — TO 카드 메뉴 진입)
-  void _showInviteWorkerDialog(BuildContext context) {
+  /// [POSTING-V2-02B.2] 초대 성공 시 이 카드만 갱신한다.
+  ///
+  /// 초대는 slot.pendingCount / workDetailCounts.pendingCount / TO.totalPending을
+  /// 올리므로 카드의 '대기' 수치가 바뀐다. InviteWorkerDialog는 이미 성공 시
+  /// `Navigator.pop(context, true)`를 반환하는데 그동안 호출부가 무시하고 있었다.
+  ///
+  /// Home에는 알리지 않는다 — Home 인력 현황은 confirmed 기준이고
+  /// 지원 검토 건수는 PENDING 기준이라 초대(INVITED)로 바뀌지 않는다.
+  Future<void> _showInviteWorkerDialog(BuildContext context) async {
     final masterTO = widget.groupItem.masterTO;
-    showDialog(
+    final invited = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => InviteWorkerDialog(
@@ -1685,6 +1702,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         businessName: widget.groupItem.businessName,
       ),
     );
+    if (invited == true && mounted) widget.onChanged();
   }
 
   /// 보낸 초대 관리 바텀시트 — INVITED 상태 지원서 목록 + 취소 버튼
@@ -1875,6 +1893,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.firestoreService.clearCache(toId: masterTO.id);
           if (mounted) {
             widget.onChanged();
+            // [POSTING-V2-02B.2] 날짜 종료는 Home 인력 현황의 대상 날짜를 줄인다
+            WorkforceController.notifyDataChanged(
+              origin: AdminMutationOrigin.jobs,
+            );
             ToastHelper.showSuccess('${closeSlots.length}개 날짜가 종료되었습니다');
           }
         } catch (e) {
@@ -1934,6 +1956,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.firestoreService.clearCache(toId: masterTO.id);
           if (mounted) {
             widget.onChanged();
+            // [POSTING-V2-02B.2] 날짜 재오픈은 Home 인력 현황의 대상 날짜를 늘린다
+            WorkforceController.notifyDataChanged(
+              origin: AdminMutationOrigin.jobs,
+            );
             // [4I.1] Partial success UX — CF 응답 reopenedCount 비교
             final requestedCount = reopenSlots.length;
             final reopenedCount =
@@ -2050,6 +2076,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
             initialBusinessId: masterTO.businessId,
             initialTO: masterTO,
           ),
+          // [POSTING-V2-02B.2] CreateTO는 성공 시 popWithChange(true)를 반환하는데
+          //   그동안 호출부가 결과를 받지 않아 새 공고가 목록에 나타나지 않았다.
+          //   onChanged는 result == true일 때만 호출된다.
+          onChanged: () {
+            if (!mounted) return;
+            widget.onChanged();
+            // 새 공고는 Home 인력 현황·첫 공고 준비에도 영향을 준다
+            WorkforceController.notifyDataChanged(
+              origin: AdminMutationOrigin.jobs,
+            );
+          },
         );
         break;
 

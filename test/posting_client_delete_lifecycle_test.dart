@@ -592,13 +592,27 @@ void main() {
     });
 
     // [POSTING-V2-02A.1] activeToCount는 02A.1에서 제거됐다(quota 분자 계약 폐기).
-    // delete lifecycle이 quota/freshness에 영향을 주지 않는다는 점만 고정한다.
-    test('freshness 무변경 · quota는 controller에서 제거된 상태 유지', () {
+    // [POSTING-V2-02B.2] notifyDataChanged는 origin 인자를 받는 mutation 전용 API가 됐다.
+    // delete lifecycle이 quota/freshness 계약에 영향을 주지 않는다는 점만 고정한다.
+    test('freshness API 유지 · quota는 controller에서 제거된 상태 유지', () {
       final c = _codeOf(_src(_ctrlPath));
-      expect(c.contains('static void notifyDataChanged()'), isTrue,
-          reason: 'freshness API가 사라졌다');
+      expect(
+        c.contains(
+            'static void notifyDataChanged({required AdminMutationOrigin origin})'),
+        isTrue,
+        reason: 'freshness API가 사라졌다',
+      );
       expect(c.contains('activeToCount'), isFalse,
           reason: '거부된 quota 분자가 되살아났다');
+    });
+
+    // DRAFT 삭제는 Home truth에 영향이 없다 — 02B.2가 정한 경계를 여기서도 고정한다.
+    test('DRAFT 삭제가 Home invalidation을 유발하지 않는다', () {
+      final card = _codeOf(_src(_cardPath));
+      final delIdx = card.indexOf("case 'batchDelete':");
+      expect(delIdx, isNot(-1));
+      final block = card.substring(delIdx, card.indexOf('break;', delIdx));
+      expect(block.contains('notifyDataChanged'), isFalse);
     });
   });
 }

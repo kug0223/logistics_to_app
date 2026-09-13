@@ -5,6 +5,9 @@ import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 
+// Controllers
+import '../../../controllers/workforce_controller.dart';
+
 // Services
 import '../../../services/firestore_service.dart';
 
@@ -524,6 +527,11 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       setState(() {});  // 자기 자신 rebuild
       widget.onLocalStatsChanged?.call();  // 부모 TOGroupCard rebuild
       widget.onChanged();  // 그룹 카드 헤더 통계 갱신 (전체 reload)
+      // [POSTING-V2-02B.2] 확정·거절은 Home의 인력 부족·지원 검토 건수를 바꾼다.
+      //   공고 탭 자신은 위 onChanged로 이미 갱신됐다.
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.jobs,
+      );
 
       // 🔥 충돌로 영향받은 다른 TO가 있으면 상위에 알림
       if (result.affectedTOIds.isNotEmpty) {

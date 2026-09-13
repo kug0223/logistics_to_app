@@ -71,19 +71,44 @@ void main() {
       }
     });
 
-    test('이 값만 갱신하던 revision listener도 함께 사라졌다', () {
+    // [POSTING-V2-02B.2] 05A는 '죽은 activeTO 카운트만 갱신하던 revision listener'를
+    // 제거했다. 02B.2가 Home을 다시 consumer로 만들었지만 목적이 다르다 —
+    // 이번엔 화면에 표시 중인 운영 수치(인력 부족·처리할 일)를 회수하기 위한 것이고,
+    // 죽은 심볼과 죽은 로더는 여전히 돌아오지 않아야 한다.
+    test('05A가 제거한 죽은 revision 심볼은 돌아오지 않았다', () {
       for (final sym in [
         '_lastSeenPostingRevision',
         '_onPostingRevisionChanged',
-        'WorkforceController.dataRevision',
+        'callableGetTOsByBiz',
+        '_summaryActiveTO',
       ]) {
         expect(home.contains(sym), isFalse, reason: sym);
       }
     });
 
-    test('연쇄 미사용 import가 정리됐다', () {
+    test('새 revision listener는 mutation 수신 전용이다', () {
+      // 02B.2: origin != home 인 성공 mutation만 받아 기존 _autoRefresh를 돌린다
+      expect(home.contains('void _onAdminMutation()'), isTrue);
+      expect(
+        home.contains(
+            'WorkforceController.dataRevision.addListener(_onAdminMutation);'),
+        isTrue,
+      );
+      expect(
+        home.contains(
+            'WorkforceController.dataRevision.removeListener(_onAdminMutation);'),
+        isTrue,
+      );
+      // 죽은 카운트를 위한 로드를 다시 만들지 않았다
+      expect(home.contains('getTOsByBusiness'), isFalse);
+    });
+
+    test('import는 revision 수신 목적으로만 복귀했다', () {
       expect(raw.contains("import '../../controllers/workforce_controller.dart';"),
-          isFalse);
+          isTrue);
+      // 그 외 controller API는 Home에서 쓰지 않는다
+      expect(home.contains('WorkforceController('), isFalse,
+          reason: 'Home이 controller 인스턴스를 갖게 되면 05A 이전으로 되돌아간다');
     });
 
     test('ignore: unused_field 우회가 남아 있지 않다', () {

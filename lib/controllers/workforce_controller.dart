@@ -8,6 +8,12 @@ import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../utils/close_state_utils.dart';
 
+/// [POSTING-V2-02B.2] mutation이 일어난 화면.
+///
+/// 자기 화면은 이미 성공 콜백으로 local refresh를 끝냈으므로,
+/// global invalidation으로 자기 자신을 다시 갱신하지 않는다.
+enum AdminMutationOrigin { home, jobs, workforce }
+
 /// 리스트·캘린더 뷰가 공유하는 단일 데이터 소스
 ///
 /// 두 뷰는 이 컨트롤러의 [items]를 읽기만 한다.
@@ -41,35 +47,41 @@ class WorkforceController extends ChangeNotifier {
   bool hasGroupDetailError(String groupId) =>
       _groupDetailErrorIds.contains(groupId);
 
-  // ── Cross-tab data invalidation ──────────────────────────────────────
-  // reload() 호출 시 dataRevision을 증가시켜 다른 Root의 controller에 변경을 알린다.
-  // 각 Root는 dataRevision listener에서 자신의 controller.load()를 트리거한다.
-  // reload()를 직접 호출한 Root는 wasLastGlobalBumpByMe로 자기 중복 로드를 방지한다.
+  // ── [POSTING-V2-02B.2] Cross-entry mutation invalidation ─────────────
   //
-  // [PATCH-R2] notifyDataChanged(): controller instance 없이 외부에서 revision만 bump.
-  // Home Quick Create 등 controller.reload()를 직접 호출할 수 없는 mutation source에서 사용.
-  // bump된 revision은 Jobs/Workforce/Home 등 모든 listener가 수신한다.
+  // dataRevision은 **성공한 business mutation** 전용 신호다.
+  //
+  // 이전에는 reload()가 revision을 올렸는데, reload()는 FCM·앱 복귀·
+  // 당겨서 새로고침·에러 재시도에서도 호출된다. 그래서 데이터가 바뀌지 않았는데도
+  // 다른 탭이 로드됐고, FCM 1건이 Jobs·Workforce를 각각 두 번 로드시킬 수 있었다.
+  // 세 화면 모두 자기 FCM 콜백과 자기 resume 옵저버를 이미 갖고 있어
+  // 그 cross-sync는 처음부터 중복이었다.
+  //
+  // 이제 producer는 notifyDataChanged() 하나뿐이고, 서버 write 성공 이후에만 호출된다.
+  // consumer는 load()로 갱신한다 — load()는 revision을 올리지 않으므로 루프가 없다.
+  //
+  // origin: mutation이 일어난 화면. 그 화면은 이미 자기 성공 콜백으로 갱신을
+  // 끝냈으므로 자기 신호를 무시한다. Home full refresh는 2 callable + 약 4N query라
+  // 자기 mutation마다 한 번 더 지불할 이유가 없다.
   static int _globalReloadCounter = 0;
   static final ValueNotifier<int> dataRevision = ValueNotifier<int>(0);
-  int _myLastBumpId = 0;
+  static AdminMutationOrigin? _lastMutationOrigin;
 
-  /// true: 이 인스턴스가 가장 최근 전역 revision 증가를 유발 → listener에서 자기 reload skip 가능
-  bool get wasLastGlobalBumpByMe =>
-      _myLastBumpId > 0 && _myLastBumpId == _globalReloadCounter;
+  /// 가장 최근 [dataRevision] 증가를 유발한 화면.
+  /// ValueNotifier는 동기 통지이므로 리스너는 자기 차례의 origin을 정확히 읽는다.
+  static AdminMutationOrigin? get lastMutationOrigin => _lastMutationOrigin;
 
-  /// 전역 revision을 증가시키는 단일 private helper.
-  /// 반환값은 이 bump에 할당된 revision id.
-  static int _bumpDataRevision() {
-    final revision = ++_globalReloadCounter;
-    dataRevision.value = revision;
-    return revision;
-  }
-
-  /// controller instance 없이 호출할 수 있는 외부 invalidation API.
-  /// TO 생성·수정·삭제 등 mutation 후 dataRevision listener가 있는 모든 consumer를 갱신한다.
-  /// BuildContext 불필요 — Firestore fetch를 직접 수행하지 않음.
-  static void notifyDataChanged() {
-    _bumpDataRevision();
+  /// 성공한 business mutation을 관련 화면에 알린다.
+  ///
+  /// 반드시 **서버 write 성공 이후**에만 호출한다.
+  /// [origin] 화면은 이 신호를 무시하므로, 자기 local refresh는 따로 유지해야 한다.
+  ///
+  /// 모든 mutation에 호출하지 않는다 — 다른 화면의 truth가 실제로 바뀌는
+  /// action에서만 호출한다. (예: 공고 탭 인력 초대는 Home staffing/summary를
+  /// 바꾸지 않으므로 Posting local refresh만 하고 이 신호를 보내지 않는다)
+  static void notifyDataChanged({required AdminMutationOrigin origin}) {
+    _lastMutationOrigin = origin;
+    dataRevision.value = ++_globalReloadCounter;
   }
 
   // 사업장 이름 캐시 — items가 0건이어도 마지막 성공 로드의 이름 유지 (scope chip용)
@@ -338,13 +350,15 @@ class WorkforceController extends ChangeNotifier {
     super.dispose();
   }
 
-  /// 데이터 변경 후 호출 — 두 뷰가 동시 갱신된다.
-  /// 전역 dataRevision을 증가시켜 다른 탭의 controller도 갱신 신호를 받는다.
+  /// 이 controller만 다시 로드한다 — [POSTING-V2-02B.2] local only.
+  ///
+  /// 더 이상 dataRevision을 올리지 않는다. reload()는 mutation뿐 아니라
+  /// FCM·앱 복귀·당겨서 새로고침·에러 재시도에서도 호출되므로,
+  /// 여기서 전역 신호를 내보내면 데이터가 안 바뀐 경우까지 다른 탭을 로드시킨다.
+  /// 다른 화면에 알려야 하는 mutation은 호출부가
+  /// [notifyDataChanged]를 명시적으로 호출한다.
   Future<void> reload(BuildContext context) {
     _onExternalReloadCallback?.call();
-    // Cross-tab invalidation: 이 인스턴스가 revision을 발생시켰음을 기록
-    // _bumpDataRevision()으로 통합 — 외부 notifyDataChanged()와 동일 경로
-    _myLastBumpId = _bumpDataRevision();
     return load(context);
   }
 
