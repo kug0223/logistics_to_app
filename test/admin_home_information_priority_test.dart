@@ -375,8 +375,9 @@ void main() {
       }
     });
 
-    test('§16 visual 미변경 — shadow 3곳', () {
-      expect('BoxShadow('.allMatches(home).length, 3);
+    // [AH-V2-05C 갱신] Home의 elevation은 05C에서 전부 제거됐다.
+    test('visual 미변경 — Home은 flat surface', () {
+      expect('BoxShadow'.allMatches(home).length, 0);
     });
 
     test('AH-V2-01 ERROR != ZERO 유지', () {

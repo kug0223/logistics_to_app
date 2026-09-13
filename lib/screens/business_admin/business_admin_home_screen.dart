@@ -1364,13 +1364,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       Padding(
         padding: EdgeInsets.symmetric(horizontal: 16 * s),
         child: Container(
+          // [AH-V2-05C] flat surface — 다른 관리자 화면과 같은 depth.
+          //   상태(정상/에러)에 따라 카드 깊이가 달라지던 것도 함께 사라진다.
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10, offset: const Offset(0, 3),
-            )],
           ),
           child: Column(children: [
             if (canSeeStaffing) _buildStaffingMetrics(s, theme, up),
@@ -1740,16 +1738,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       Padding(
         padding: EdgeInsets.symmetric(horizontal: 16 * s),
         child: Container(
+          // [AH-V2-05C] flat surface — 부족 목록이 있을 때만 그림자가 생겨
+          //   같은 섹션이 상태에 따라 다른 깊이로 보이던 것을 없앤다.
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              )
-            ],
           ),
           child: Column(
             children: [
@@ -2022,13 +2015,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
           child: Container(
+            // [AH-V2-05C] flat surface — 할 일이 있을 때만 그림자가 생겨
+            //   로딩·빈 상태와 깊이가 달라지던 것을 없앤다.
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
-              boxShadow: [BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10, offset: const Offset(0, 3),
-              )],
             ),
             child: Column(
               children: rows.asMap().entries.map((e) =>
