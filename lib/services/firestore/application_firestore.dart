@@ -1246,16 +1246,38 @@ extension ApplicationFirestore on FirestoreService {
   }
 
 
-  /// 특정 날짜 × 사업장의 확정 근무자 조회 (단기 + 장기 병합)
-  /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs, workEndDateGteMs)
+  /// 특정 날짜 × 사업장의 확정 근무자 조회 — 실패 시 [] (기존 계약).
+  ///
+  /// 조회 실패와 "근무자 없음"을 구분해야 하는 호출부는
+  /// [getConfirmedWorkersByDateAndBusinessOrThrow]를 쓴다.
   Future<List<ApplicationModel>> getConfirmedWorkersByDateAndBusiness({
+    required DateTime date,
+    required String businessId,
+  }) async {
+    try {
+      return await getConfirmedWorkersByDateAndBusinessOrThrow(
+          date: date, businessId: businessId);
+    } catch (e) {
+      debugPrint('❌ 확정 근무자 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// [AH-V2-06] 확정 근무자 조회 — 실패를 throw로 전파한다.
+  ///
+  /// 관리자 Home처럼 이 목록으로 사람 수를 세는 곳은 조회 실패가 0명으로
+  /// 보이면 안 된다 (ERROR != ZERO). 파싱 단계의 per-doc 방어는 그대로 두고,
+  /// 네트워크·권한 실패만 밖으로 내보낸다.
+  ///
+  /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs, workEndDateGteMs)
+  Future<List<ApplicationModel>> getConfirmedWorkersByDateAndBusinessOrThrow({
     required DateTime date,
     required String businessId,
   }) async {
     final dateStart = DateTime(date.year, date.month, date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
 
-    try {
+    {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetApplicationsByBiz',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
@@ -1339,9 +1361,6 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       return result;
-    } catch (e) {
-      debugPrint('❌ 확정 근무자 조회 실패: $e');
-      return [];
     }
   }
 

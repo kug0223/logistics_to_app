@@ -99,6 +99,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // [PHASE-2C] 오늘 운영 — 출근/확인 필요
   // null = 쿼리 실패 (ERROR≠ZERO 원칙, 0과 구분)
   int? _todayCheckedIn;
+  // [AH-V2-06] 지금까지 출근했어야 할 인원 (분모). null = 조회 실패
+  int? _todayDueNow;
   int? _todayNeedsAttention;
   bool _attendanceLoading = true;
 
@@ -390,11 +392,23 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   //
   // 그레이스 피리어드: 없음 (코드베이스 전체에 미정의, isLate()도 0분 이상이 기준)
   //
-  // [LIMITATION] getConfirmedWorkersByDateAndBusiness는 내부 try-catch로 실패 시 []
-  // 반환 → Case B를 집계 못하더라도 확인 필요가 false-zero가 되지 않으려면
-  // attendance 기반 (1)이 fallback. attendance 자체 실패 시 전체 null.
+  // [AH-V2-06] roster는 OrThrow variant를 쓴다. 이전에는 내부 try-catch가 []를
+  // 반환해 조회 실패가 '확인 필요 0'·'출근 0'으로 새어나갔다 (ERROR != ZERO 위반).
+  // 이제 roster·attendance 중 하나라도 실패하면 세 숫자가 함께 null이 된다.
   //
   // 실패 시 _todayCheckedIn = null 유지 — false zero 방지 (ERROR≠ZERO)
+  /// [AH-V2-06] "HH:mm"(레거시 "HH:mm:ss") → 오늘 날짜의 DateTime.
+  ///   해석할 수 없으면 null — 임의 시각을 만들어 분모에 넣지 않는다.
+  static DateTime? _todayStartAt(DateTime day, String raw) {
+    final t = raw.length >= 5 ? raw.substring(0, 5) : raw;
+    final parts = t.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return DateTime(day.year, day.month, day.day, h, m);
+  }
+
   Future<void> _loadTodayAttendance() async {
     if (!mounted) return;
     setState(() => _attendanceLoading = true);
@@ -408,6 +422,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         if (mounted) {
           setState(() {
             _todayCheckedIn      = 0;
+            _todayDueNow         = 0;
             _todayNeedsAttention = 0;
             _attendanceLoading   = false;
           });
@@ -424,7 +439,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           businessId: b.id, date: today)),
       );
       final rosterFuture = Future.wait(
-        businesses.map((b) => _firestoreService.getConfirmedWorkersByDateAndBusiness(
+        businesses.map((b) => _firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow(
           date: today, businessId: b.id)),
       );
 
@@ -437,14 +452,35 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         if (a.applicationId.isNotEmpty) attMap[a.applicationId] = a;
       }
 
-      // 출근: checkInAt != null
-      final checkedIn = allAttendance.where((a) => a.hasCheckedIn).length;
-
       // [AH-V2-04A.1] 실제 적용 근무시간 — AttendanceStatusDialog·급여 확정과
       //   같은 소스. 지원서 원본 시각만 쓰면 workDetail override가 걸린 근무에서
       //   Home과 Dialog의 시간 경계가 갈린다.
       //   비용은 근로자 수가 아니라 고유 (toId, slotId) 쌍 수에 비례한다.
       final timeMap = await WorkDetailTimeService.load(allConfirmed);
+
+      // [AH-V2-06] 출근 x / y — 오늘 확정 로스터 하나의 모집단에서 센다.
+      //   이전에는 분자를 attendance 문서에서 세어, 로스터에 없는 문서(취소된
+      //   지원자의 잔존 기록·applicationId 없는 문서)까지 들어갔다. 옆의
+      //   '근태 확인'은 로스터 기준이라 같은 카드에서 모집단이 달랐다.
+      //
+      //   분모 = 지금까지 근무 시작 시각이 도래한 사람 ∪ 이미 출근한 사람.
+      //   '오늘 전체 확정 인원'을 쓰면 아직 출근할 시간이 아닌 오후·야간
+      //   근무자가 미출근처럼 보이고, 옆의 '확정'과 같은 값을 두 번 보여준다.
+      //   조기 출근이 막혀 있지 않으므로(서버 게이트는 날짜만 검사) 이미
+      //   출근한 사람을 분모에 함께 넣어야 x <= y가 깨지지 않는다.
+      //
+      //   노쇼는 분모에 남는다 — 출근 대상이었으나 오지 않은 결과이므로
+      //   빼면 출근 상황이 실제보다 좋아 보인다.
+      var checkedIn = 0;
+      var dueNow = 0;
+      for (final app in allConfirmed) {
+        final hasCheckedIn = attMap[app.id]?.checkInAt != null;
+        if (hasCheckedIn) checkedIn++;
+        final startAt = _todayStartAt(
+            today, WorkDetailHelper.effectiveStart(app, timeMap));
+        final started = startAt != null && !nowLocal.isBefore(startAt);
+        if (started || hasCheckedIn) dueNow++;
+      }
 
       // [AH-V2-04A] 근태 확인 — canonical actionability 판정.
       //   AttendanceReviewHelper가 Home과 AttendanceStatusDialog 검토 탭의
@@ -470,6 +506,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (!mounted) return;
       setState(() {
         _todayCheckedIn      = checkedIn;
+        _todayDueNow         = dueNow;
         _todayNeedsAttention = needsAttention;
         _attendanceLoading   = false;
       });
@@ -478,6 +515,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (!mounted) return;
       setState(() {
         _todayCheckedIn      = null; // 에러 상태 — 0 표시 금지 (ERROR≠ZERO)
+        _todayDueNow         = null;
         _todayNeedsAttention = null;
         _attendanceLoading   = false;
       });
@@ -1563,10 +1601,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   context, () => _openTodayAttendanceDialog(context))))
         : null;
 
+    // [AH-V2-06] 분모 0 = 오늘 근무는 있지만 아직 첫 시작 시각 전.
+    //   '0 / 0'은 운영이 없는 것처럼 읽히므로 상태로 말한다.
+    //   오늘 로스터 자체가 없는 경우는 staffing의 hasTodayTarget 분기가 위에서
+    //   이미 '오늘 예정된 인력 운영이 없어요'로 처리한다.
+    final dueNow = _todayDueNow ?? 0;
+    final checkedInText =
+        dueNow == 0 ? '예정 전' : '${_todayCheckedIn!} / $dueNow';
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
       child: Row(children: [
-        _opsMetric(s, label: '출근', value: _todayCheckedIn!, unit: '명'),
+        _opsMetric(s, label: '현재 출근', value: _todayCheckedIn!, unit: '명',
+          valueText: checkedInText),
         _opsMetricDivider(s),
         _opsMetric(s, label: '근태 확인', value: needsAttention, unit: '명',
           valueColor: needsAttention > 0 ? AppColors.warning : null,
@@ -1577,10 +1624,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   /// 오늘 운영 수치 셀 (Expanded — Row 내 균등 분배)
   /// [PHASE-R5.2] onTap 옵션: 수치 > 0 + 권한 있을 때 탭 가능, subtle chevron 표시
+  /// [AH-V2-06] valueText를 주면 그것을 그대로 쓴다 ('12 / 15', '예정 전').
+  ///   주지 않으면 기존대로 '$value$unit'.
   Widget _opsMetric(double s, {
     required String label,
     required int value,
     required String unit,
+    String? valueText,
     Color? valueColor,
     VoidCallback? onTap,
   }) {
@@ -1588,7 +1638,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       Text(label, style: TextStyle(fontSize: 12, color: AppColors.grey500)),
       SizedBox(height: 4 * s),
       Row(mainAxisSize: MainAxisSize.min, children: [
-        Text('$value$unit', style: TextStyle(
+        Text(valueText ?? '$value$unit', style: TextStyle(
           fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3,
           color: valueColor ?? AppColors.textPrimary,
         )),

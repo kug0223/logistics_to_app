@@ -440,14 +440,22 @@ void main() {
       expect(home.contains("label: '확인 필요'"), isFalse);
     });
 
-    test('출근·필요·확정·부족 지표를 건드리지 않았다', () {
-      expect(home.contains("label: '출근'"), isTrue);
+    // [AH-V2-06 갱신] 04A는 출근 지표를 건드리지 않았고, 06에서 분자 모집단이
+    // attendance 문서 → 오늘 확정 로스터로 교정되고 라벨이 '현재 출근'이 됐다.
+    // 04A가 만든 '근태 확인'과 같은 모집단을 쓰게 된 것이 핵심이다.
+    test('필요·확정·부족은 그대로, 출근은 같은 로스터를 쓴다', () {
       expect(home.contains("label: '필요'"), isTrue);
       expect(home.contains("label: '확정'"), isTrue);
       expect(home.contains("label: '부족'"), isTrue);
+      expect(home.contains("label: '현재 출근'"), isTrue);
       final l = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(l.contains('allAttendance.where((a) => a.hasCheckedIn).length'),
+          isFalse, reason: '로스터 밖 문서까지 세던 경로');
+      expect(l.contains('final hasCheckedIn = attMap[app.id]?.checkInAt != null;'),
           isTrue);
+      // 근태 확인과 같은 루프·같은 모집단
+      expect(l.contains('for (final app in allConfirmed) {'), isTrue);
+      expect(l.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
     });
 
     test('상태별 Home row를 추가하지 않았다', () {

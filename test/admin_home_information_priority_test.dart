@@ -401,10 +401,12 @@ void main() {
       expect(home.contains('shortageScopeLabel()'), isTrue);
     });
 
-    test('§17 check-in denominator를 건드리지 않았다', () {
+    // [AH-V2-06 갱신] 05B는 분모를 건드리지 않았고, 06에서 추가됐다.
+    test('§17 check-in 지표는 AH-V2-06 계약을 따른다', () {
       final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect(m.contains("label: '출근'"), isTrue);
-      expect(m.contains('/'), isFalse, reason: '분모 표기를 추가하지 않았다');
+      expect(m.contains("label: '현재 출근'"), isTrue);
+      expect(m.contains(r"'${_todayCheckedIn!} / $dueNow'"), isTrue);
+      expect(m.contains("dueNow == 0 ? '예정 전'"), isTrue);
     });
   });
 }
