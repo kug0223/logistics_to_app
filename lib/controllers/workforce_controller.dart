@@ -312,7 +312,11 @@ class WorkforceController extends ChangeNotifier {
     if (!allExpired) return;
 
     // 모두 만료 → Firestore TO 상태를 CLOSED로 업데이트 (cascade)
-    _service.markTOAsExpired(to.id).then((_) {
+    // [POSTING-V2-03E.1] 화면이 만료로 판단한 그 시점의 revision을 넘긴다.
+    //   그 사이 다른 관리자가 공고를 수정했다면 이 자동 마감은 실패해야 한다.
+    _service
+        .markTOAsExpired(to.id, expectedEditRevision: to.editRevision)
+        .then((_) {
       if (_disposed) return;
       debugPrint('✅ 시간만료 TO 자동 마감: ${to.id}');
       // 다음 reload 시 CLOSED 탭으로 이동됨
@@ -336,7 +340,10 @@ class WorkforceController extends ChangeNotifier {
       if (to.status == TOStatus.draft) continue; // 미공개 TO는 만료 처리 대상 아님
       if (!to.isPostingExpired && !to.isDeadlinePassed) continue;
 
-      _service.markTOAsExpired(to.id).then((_) {
+      // [POSTING-V2-03E.1] 위와 동일 — stale revision이면 덮어쓰지 않는다.
+      _service
+          .markTOAsExpired(to.id, expectedEditRevision: to.editRevision)
+          .then((_) {
         if (_disposed) return;
         debugPrint('✅ 게시만료 고정TO Firestore 동기화: ${to.id}');
       }).catchError((e) {

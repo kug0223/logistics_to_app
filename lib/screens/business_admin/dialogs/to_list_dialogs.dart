@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
@@ -127,25 +128,26 @@ class TOListDialogs {
     try {
       success = await firestoreService.closeTOManually(to.id, adminUID);
     } catch (e) {
+      // [POSTING-V2-03E.1] 서버는 '이미 수동 마감된 공고입니다' · 'TO 관리 권한이
+      //   없습니다' · '마감 불가 상태입니다: …'를 구분해 보낸다. 그 말을 그대로 쓴다.
       debugPrint('❌ TO 마감 실패: $e');
-      if (context.mounted) ToastHelper.showError('공고 종료 중 오류가 발생했습니다.');
+      if (context.mounted) {
+        ToastHelper.showError(
+            _cfErrorMessage(e, fallback: '공고 종료에 실패했습니다.'));
+      }
     } finally {
       if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
     }
 
-    if (success == null) return;
-    if (success) {
-      ToastHelper.showSuccess('공고가 종료되었습니다.');
-      onChanged();
-      // [POSTING-V2-02B.2] 종료는 Home 인력 현황의 모집 대상을 줄인다.
-      //   generic onChanged가 아니라 이 action 지점에서만 알린다 —
-      //   같은 콜백을 쓰는 삭제·초대는 Home에 영향이 없다.
-      WorkforceController.notifyDataChanged(
-        origin: AdminMutationOrigin.jobs,
-      );
-    } else {
-      ToastHelper.showError('공고 종료에 실패했습니다.');
-    }
+    if (success != true) return;
+    ToastHelper.showSuccess('공고가 종료되었습니다.');
+    onChanged();
+    // [POSTING-V2-02B.2] 종료는 Home 인력 현황의 모집 대상을 줄인다.
+    //   generic onChanged가 아니라 이 action 지점에서만 알린다 —
+    //   같은 콜백을 쓰는 삭제·초대는 Home에 영향이 없다.
+    WorkforceController.notifyDataChanged(
+      origin: AdminMutationOrigin.jobs,
+    );
   }
 
   /// TO 재오픈 다이얼로그
@@ -206,25 +208,47 @@ class TOListDialogs {
 
     bool? success;
     try {
-      success = await firestoreService.reopenTO(to.id, adminUID);
+      // [POSTING-V2-03E.1] 사용자가 지금 보고 있는 이 TO의 revision을 넘긴다.
+      //   그 사이 다른 관리자가 수정했다면 서버가 거부하고, 그 안내가 아래
+      //   catch를 통해 그대로 표시된다. stale edit 방지가 정책이다.
+      success = await firestoreService.reopenTO(to.id, adminUID,
+          expectedEditRevision: to.editRevision);
     } catch (e) {
+      // 서버는 readiness 미충족 · 이미 재개됨 · 다른 관리자가 수정함 · 권한 없음을
+      // 서로 다른 문구로 보낸다. 여기서 하나로 압축하지 않는다.
       debugPrint('❌ TO 재오픈 실패: $e');
-      if (context.mounted) ToastHelper.showError('공고 재오픈 중 오류가 발생했습니다.');
+      if (context.mounted) {
+        ToastHelper.showError(
+            _cfErrorMessage(e, fallback: '공고 재오픈에 실패했습니다.'));
+      }
     } finally {
       if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
     }
 
-    if (success == null) return;
-    if (success) {
-      ToastHelper.showSuccess('공고가 재오픈되었습니다.');
-      onChanged();
-      // [POSTING-V2-02B.2] 재오픈은 Home 인력 현황의 모집 대상을 되살린다
-      WorkforceController.notifyDataChanged(
-        origin: AdminMutationOrigin.jobs,
-      );
-    } else {
-      ToastHelper.showError('공고 재오픈에 실패했습니다.');
+    if (success != true) return;
+    ToastHelper.showSuccess('공고가 재오픈되었습니다.');
+    onChanged();
+    // [POSTING-V2-02B.2] 재오픈은 Home 인력 현황의 모집 대상을 되살린다
+    WorkforceController.notifyDataChanged(
+      origin: AdminMutationOrigin.jobs,
+    );
+  }
+
+  /// [POSTING-V2-03E.1] 서버가 실어 보낸 사용자 문구를 그대로 쓴다.
+  ///
+  /// 날짜 일괄 종료·재오픈이 이미 쓰는 것과 같은 규칙이다 —
+  /// 같은 lifecycle action이 TO 단위냐 날짜 단위냐에 따라 실패 설명의
+  /// 품질이 달라질 이유가 없다.
+  ///
+  /// code별 문구 표를 클라이언트에 새로 만들지 않는다. 권한·상태 충돌·
+  /// readiness·stale revision을 구분하는 것은 이미 서버가 하고 있고,
+  /// 그 구분을 여기서 다시 뭉개는 것이 03E가 찾은 문제였다.
+  String _cfErrorMessage(Object error, {required String fallback}) {
+    if (error is FirebaseFunctionsException) {
+      final msg = error.message;
+      if (msg != null && msg.isNotEmpty) return msg;
     }
+    return fallback;
   }
 
   // ========================================

@@ -425,10 +425,15 @@ void main() {
 
   // ── §20 cascade close ──────────────────────────────────────────
   group('FLEX-SINGLE-READ-10 cascade close semantics 보존', () {
+    // [POSTING-V2-03E.1 재작성] fire-and-forget 성격은 그대로다. 호출 시그니처에
+    // expectedEditRevision이 추가됐을 뿐이다 — 없으면 서버가 모든 호출을 거부했다.
     test('10-a 여전히 fire-and-forget write다', () {
       final body = _flat(_codeOf(
           _bodyOf(_src(_ctrlPath), 'void _maybeCascadeCloseExpiredTO(')));
-      expect(body.contains('_service.markTOAsExpired(to.id).then((_) {'), true);
+      expect(
+          body.contains('_service .markTOAsExpired(to.id, '
+              'expectedEditRevision: to.editRevision) .then((_) {'),
+          true);
       expect(body.contains('.catchError('), true);
     });
 

@@ -329,6 +329,11 @@ class FirestoreService {
   /// TO 수동 마감 — CF callableCloseTOManually 위임
   // [M-2] closedBy 서버 UID 강제: CF에서 request.auth.uid 사용 → 클라이언트 위조 불가
   // [Charter] AUTO_CANCELED 법적 상태 전이: CF Admin SDK 전용으로 이전
+  ///
+  /// [POSTING-V2-03E.1] 실패는 예외로 전파한다. `false`로 바꾸면 서버가 구분해
+  /// 보낸 거부 사유(이미 마감됨 · 권한 없음 · 마감 불가 상태 · 공고 없음)가
+  /// 여기서 전부 사라지고, 화면은 어떤 실패든 한 문구만 말하게 된다.
+  /// 성공은 `true` 하나뿐이다 — 반환값으로 실패를 표현하지 않는다.
   Future<bool> closeTOManually(String toId, String adminUID) async {
     GlobalLoadingController.show('공고 마감 중...');
     try {
@@ -341,7 +346,7 @@ class FirestoreService {
       return true;
     } catch (e) {
       debugPrint('❌ TO 수동 마감 실패: $e');
-      return false;
+      rethrow;
     } finally {
       GlobalLoadingController.hide();
     }
@@ -349,7 +354,20 @@ class FirestoreService {
 
   /// TO 시간만료 자동 마감 — callableUpdateTO CF 위임 (status:CLOSED)
   /// [D-2 FIX 2026-07-15] 직접 쓰기는 isSuperAdmin() 전용 규칙에 의해 일반 관리자 PERMISSION_DENIED
-  Future<void> markTOAsExpired(String toId) async {
+  ///
+  /// [POSTING-V2-03E.1] callableUpdateTO는 `expectedEditRevision`을 fail-closed로
+  /// 요구한다. 이 raw caller가 그것을 빼먹어 **모든 호출이 invalid-argument로
+  /// 거부되고 있었다** — best-effort라 실패가 조용해서 드러나지 않았다.
+  ///
+  /// 여기서 넘기는 것은 호출 시점에 화면이 들고 있던 TO의 revision이다.
+  /// 그 사이 다른 관리자가 공고를 수정했다면 이 쓰기는 실패해야 한다 —
+  /// 자동 만료 처리가 남의 최신 수정을 덮어쓰는 것이 더 나쁘다.
+  /// 최신 revision을 다시 읽어 강제로 덮어쓰지 않는다. canonical 만료 처리는
+  /// 서버 스케줄러이고, 이 경로는 어디까지나 화면 상태를 따라가는 보조 쓰기다.
+  Future<void> markTOAsExpired(
+    String toId, {
+    required int expectedEditRevision,
+  }) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableUpdateTO',
@@ -357,9 +375,11 @@ class FirestoreService {
       await callable.call<Map<String, dynamic>>({
         'toId': toId,
         'updates': {'status': TOStatus.closed},
+        'expectedEditRevision': expectedEditRevision,
       });
       clearCache(toId: toId);
     } catch (e) {
+      // best-effort — 다음 reload나 서버 스케줄러가 canonical 상태를 복구한다.
       debugPrint('❌ markTOAsExpired 실패 ($toId): $e');
     }
   }
@@ -371,7 +391,21 @@ class FirestoreService {
   ///   reopenTO 클라이언트 직접 쓰기는 PERMISSION_DENIED로 실패함.
   ///   callableUpdateTO가 isManualClosed:false 재오픈 로직을 서버에서 처리:
   ///   reopenedBy=callerUid·reopenedAt/closedAt/closedBy=serverTimestamp()/delete() 강제.
-  Future<bool> reopenTO(String toId, String adminUID) async {
+  ///
+  /// [POSTING-V2-03E.1] `expectedEditRevision`은 **required**다.
+  ///   callableUpdateTO가 이 필드를 fail-closed로 요구하는데 이 raw caller가
+  ///   빼먹어, 재오픈은 권한 검증에 닿기도 전에 invalid-argument로 거부됐다.
+  ///   즉 정상 공고의 재오픈이 100% 실패하고 있었다. optional로 두면 같은 누락이
+  ///   조용히 재발하므로, 빠뜨리면 컴파일이 깨지게 둔다.
+  ///
+  ///   넘기는 값은 **사용자가 지금 보고 있는 TO**의 revision이다. 그 사이 다른
+  ///   관리자가 수정했다면 서버가 거부하고 그 안내가 화면까지 올라간다 —
+  ///   stale edit 방지가 정책이므로 최신 revision을 다시 읽어 우회하지 않는다.
+  Future<bool> reopenTO(
+    String toId,
+    String adminUID, {
+    required int expectedEditRevision,
+  }) async {
     GlobalLoadingController.show('공고 재오픈 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -383,13 +417,16 @@ class FirestoreService {
           'isManualClosed': false,
           'status': TOStatus.active,
         },
+        'expectedEditRevision': expectedEditRevision,
       });
       clearCache(toId: toId);
       debugPrint('✅ TO 재오픈 완료 (CF): $toId');
       return true;
     } catch (e) {
+      // [POSTING-V2-03E.1] readiness·이미 재개됨·stale revision·권한 회수는
+      //   서버가 이미 서로 다른 문구로 구분해 보낸다. false로 뭉개지 않는다.
       debugPrint('❌ TO 재오픈 실패: $e');
-      return false;
+      rethrow;
     } finally {
       GlobalLoadingController.hide();
     }

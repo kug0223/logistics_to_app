@@ -606,6 +606,9 @@ void main() {
           isTrue);
     });
 
+    // [POSTING-V2-03E.1 재작성] invariant는 그대로다 — 서버가 성공한 뒤에만
+    // 알린다. 다만 실패를 bool false로 표현하던 삼분기(`if (success) … else`)가
+    // 사라지고 early-return guard가 그 자리를 대신한다. 실패는 이제 예외다.
     test('종료/재오픈 producer가 success 분기 안에 있다', () {
       final dialogs = _src(_dialogsPath);
       for (final sig in [
@@ -615,8 +618,13 @@ void main() {
         final body = _flat(_codeOf(_bodyOf(dialogs, sig)));
         final idx = body.indexOf('notifyDataChanged');
         expect(idx, isNot(-1));
-        expect(body.substring(0, idx).contains('if (success) {'), isTrue,
+        expect(body.substring(0, idx).contains('if (success != true) return;'),
+            isTrue,
             reason: '$sig 가 서버 성공 전에 알린다');
+        // 실패 경로가 producer에 도달할 수 없다
+        final guardIdx = body.indexOf('if (success != true) return;');
+        expect(body.substring(guardIdx, idx).contains('showError'), isFalse,
+            reason: '$sig — guard 이후에는 실패 처리가 남아 있으면 안 된다');
       }
     });
 
