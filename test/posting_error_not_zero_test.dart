@@ -240,11 +240,16 @@ void main() {
     test('error 분기가 empty 분기보다 먼저 평가된다', () {
       final body = _codeOf(_bodyOf(_src(_listPath), 'Widget _buildTOList('));
       final errIdx = body.indexOf('return _buildErrorState();');
-      final emptyIdx = body.indexOf('return _buildEmptyState();');
+      // [POSTING-V2-02E.1] 성공 empty가 셋으로 갈렸다 — error는 그 **전부**보다 앞선다.
+      final emptyIdx = body.indexOf('_buildEmptyState(');
       expect(errIdx, isNot(-1), reason: 'error state 분기가 없다');
       expect(emptyIdx, isNot(-1));
       expect(errIdx < emptyIdx, isTrue,
           reason: 'empty가 먼저 평가되면 실패가 empty로 새어나간다');
+      for (final kind in ['root', 'filtered', 'tab']) {
+        expect(body.contains('_PostingEmptyKind.$kind'), isTrue,
+            reason: '성공 empty가 ROOT / FILTERED / TAB로 갈리지 않는다');
+      }
       expect(
         _flat(body).contains(
             'if (controller.loadError != null && controller.items.isEmpty) {'),

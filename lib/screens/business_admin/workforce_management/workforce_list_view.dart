@@ -31,6 +31,21 @@ import '../../../widgets/admin/cards/admin_to_group_card.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_empty_state.dart';
 
+/// [POSTING-V2-02E.1] 성공 조회 후 0건의 세 가지 의미.
+///
+/// 조회 실패(ERROR)는 이 집합에 넣지 않는다 — 01B에서 별도 renderer로 분리됐고
+/// 그 계약은 그대로다.
+enum _PostingEmptyKind {
+  /// 공고 자체가 0개 (DRAFT/SCHEDULED 포함해서 0)
+  root,
+
+  /// 공고는 있지만 필터가 전부 걸러냄
+  filtered,
+
+  /// 필터는 없고 이 탭에만 없음 — 반대 탭에 공고가 있다
+  tab,
+}
+
 /// 인력 관리 - 리스트 뷰
 class WorkforceListView extends StatefulWidget {
   const WorkforceListView({super.key});
@@ -468,10 +483,19 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       return _buildErrorState();
     }
 
+    // [POSTING-V2-02E.1] 성공 조회 후의 0건은 원인이 셋이고 다음 행동도 다르다.
+    //   공고 자체가 없음 / 필터가 걸러냄 / 이 탭에만 없음.
+    //   items.isEmpty를 필터보다 먼저 본다 — 공고가 0개면 필터는 원인이 아니다.
+    if (controller.items.isEmpty) {
+      return _buildEmptyState(_PostingEmptyKind.root);
+    }
+
     final allFilteredItems = _getFilteredItems(controller.items);
 
     if (allFilteredItems.isEmpty) {
-      return _buildEmptyState();
+      return _buildEmptyState(controller.hasActiveFilters
+          ? _PostingEmptyKind.filtered
+          : _PostingEmptyKind.tab);
     }
 
     // 마감됨 탭: 표시 개수 제한 (스크롤 시 추가 로드)
@@ -541,12 +565,65 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  Widget _buildEmptyState() {
-    return const AppEmptyState(
+  /// [POSTING-V2-02E.1] 성공 조회 후의 빈 목록 — 세 의미를 한 renderer에서 분기.
+  ///
+  /// 이전에는 네 상황이 '조건에 맞는 공고가 없습니다 / 필터를 변경하거나 새로운
+  /// 공고를 등록하세요' 하나로 수렴했다. 필터가 없는데 필터를 의심하게 만들고,
+  /// 마감됨 탭에서는 실행해도 그 탭이 채워지지 않는 행동을 권했다.
+  ///
+  /// readiness는 보지 않는다 — '왜 공고를 만들 수 없는가'는 CreateTO 사전조건
+  /// 화면과 Home 준비 카드가 canonical하게 갖는다. 여기서 다시 판단하면
+  /// 같은 사실을 세 곳이 따로 계산하게 된다.
+  Widget _buildEmptyState(_PostingEmptyKind kind) {
+    final (String title, String subtitle) copy = switch (kind) {
+      // 헤더 '+ 공고 등록'이 같은 화면에 이미 있다 — 본문에 중복 CTA를 두지 않는다.
+      _PostingEmptyKind.root => (
+          '등록된 공고가 없습니다',
+          '상단 + 버튼에서 새 공고를 등록할 수 있습니다',
+        ),
+      _PostingEmptyKind.filtered => (
+          '조건에 맞는 공고가 없습니다',
+          '필터를 초기화하거나 조건을 변경해 보세요',
+        ),
+      // items가 있는데 이 탭만 0 → 반대 탭에 공고가 있다.
+      // 탭 전환 버튼은 두지 않는다 — 탭 바가 바로 위에 있고 진행중은 수까지 보인다.
+      _PostingEmptyKind.tab => _selectedTab == TOStatus.active
+          ? (
+              '진행중인 공고가 없습니다',
+              '마감된 공고는 마감됨 탭에서 확인할 수 있습니다',
+            )
+          : (
+              '마감된 공고가 없습니다',
+              '진행 중인 공고는 진행중 탭에서 확인할 수 있습니다',
+            ),
+    };
+
+    return AppEmptyState(
       icon: Icons.inbox_outlined,
-      title: '조건에 맞는 공고가 없습니다',
-      subtitle: '필터를 변경하거나 새로운 공고를 등록하세요',
+      title: copy.$1,
+      subtitle: copy.$2,
+      // 유일하게 body action을 갖는 상태. 여기서 '공고 등록'을 권하면
+      // 필터만 풀면 보이는 기존 공고를 놓치고 중복 공고를 만들게 된다.
+      action: kind == _PostingEmptyKind.filtered
+          ? TextButton.icon(
+              onPressed: _clearFilters,
+              icon: Icon(Icons.filter_alt_off_outlined,
+                  size: ResponsiveHelper.iconSize(context, 16)),
+              label: const Text('필터 초기화'),
+            )
+          : null,
     );
+  }
+
+  /// [POSTING-V2-02E.1] 필터 전체 해제 — 기존 목록을 그대로 다시 거른다.
+  /// Firestore 재조회 없음. 확장 상태 초기화는 필터 변경 콜백과 같은 처리다.
+  void _clearFilters() {
+    setState(() {
+      _expandedGroups.clear();
+      _expandedTOs.clear();
+      _activeGroupKey = null;
+    });
+    context.read<WorkforceController>().clearFilters();
   }
 
   /// [POSTING-V2-01B] 목록 조회 실패 — 공통 AppEmptyState를 error 톤으로 재사용한다.

@@ -156,6 +156,21 @@ class WorkforceController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// [POSTING-V2-02E.1] 네 필터를 한 번에 해제한다 — 순수 편의 helper.
+  ///
+  /// setter를 연달아 호출하면 notifyListeners가 네 번 돌아 목록이 네 번
+  /// 다시 그려진다. 같은 field를 null로 되돌린 뒤 한 번만 알린다.
+  /// 새 filter model도, persisted state도, Firestore 접근도 없다 —
+  /// 이미 로드된 items를 다시 거를 뿐이다.
+  void clearFilters() {
+    if (!hasActiveFilters) return;
+    _selectedBusinessId = null;
+    _selectedDateRange = null;
+    _selectedTOType = null;
+    _selectedPublishStatus = null;
+    notifyListeners();
+  }
+
   // ── 필터 다이얼로그 콜백 (WorkforceListView에서 등록) ──────────
   VoidCallback? _showFilterCallback;
 
