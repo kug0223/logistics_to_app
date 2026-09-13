@@ -316,16 +316,19 @@ void main() {
           lessThan(rr.indexOf('_loadPostingReadiness()')));
     });
 
-    test('기존 4종 refresh가 유지된다', () {
+    // [AH-V2-05A 갱신] _loadSummaryCounts는 dead loader라 제거됐다.
+    // refresh가 커버해야 할 실제 로더 집합을 고정한다.
+    test('refresh가 실제 로더를 모두 호출한다', () {
       final r = _bodyOf(home, 'Future<void> _refresh(');
       for (final loader in [
-        '_loadSummaryCounts()',
         '_loadCanonicalSummary()',
         '_loadStaffingReadiness()',
         '_loadTodayAttendance()',
+        '_reloadReadiness()',
       ]) {
-        expect(r.contains(loader), isTrue);
+        expect(r.contains(loader), isTrue, reason: loader);
       }
+      expect(r.contains('_loadSummaryCounts'), isFalse);
     });
 
     test('pull-to-refresh가 그 경로에 연결돼 있다', () {

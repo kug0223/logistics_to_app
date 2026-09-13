@@ -223,14 +223,29 @@ void main() {
       }
     });
 
+    // [AH-V2-05A 갱신] 이 단정의 원래 대상(_loadSummaryCounts)은 dead loader라
+    // 제거됐다. 의도는 그대로 살아 있는 unawaited 로더들에 적용한다.
     test('unawaited 로더가 throw를 밖으로 흘리지 않는다', () {
-      final body = _bodyOf(homeCode, 'Future<void> _loadSummaryCounts(');
+      for (final sig in [
+        'Future<void> _loadCanonicalSummary(',
+        'Future<void> _loadStaffingReadiness(',
+        'Future<void> _loadTodayAttendance(',
+        'Future<void> _loadPostingReadiness(',
+      ]) {
+        expect(_bodyOf(homeCode, sig).contains('} catch'), isTrue, reason: sig);
+      }
+    });
+
+    test('_getBusinesses가 throw해도 로더 안에서 잡힌다', () {
+      // 사업장 조회는 strict(OrThrow)다. 이를 쓰는 unawaited 로더는
+      // 호출을 try 안에 두어 unhandled async error가 되지 않아야 한다.
+      final body = _bodyOf(homeCode, 'Future<void> _loadTodayAttendance(');
       final fetchAt = body.indexOf('await _getBusinesses()');
       final tryAt = body.indexOf('try {');
       expect(tryAt, isNot(-1));
       expect(tryAt, lessThan(fetchAt),
           reason: '_getBusinesses 호출이 try 안에 있어야 한다');
-      expect(body.contains('_summaryLoading = false'), isTrue,
+      expect(body.contains('_attendanceLoading   = false'), isTrue,
           reason: '실패해도 영구 로딩이 남으면 안 된다');
     });
 
@@ -306,8 +321,12 @@ void main() {
       expect(homeCode.contains('처리할 업무가 없어요'), isTrue);
     });
 
-    test('dead query를 제거하지 않았다 (AH-V2-05 범위)', () {
-      expect(homeCode.contains('_summaryActiveTO'), isTrue);
+    // [AH-V2-05A 갱신] 당시에는 AH-V2-01 범위 밖이라 남겨둔 dead query였다.
+    // 05A에서 제거됐으므로, 이제는 되살아나지 않는 것을 고정한다.
+    test('dead query가 다시 생기지 않는다', () {
+      expect(homeCode.contains('_summaryActiveTO'), isFalse);
+      expect(homeCode.contains('_loadSummaryCounts'), isFalse);
+      expect(homeCode.contains('getTOsByBusiness'), isFalse);
     });
   });
 }

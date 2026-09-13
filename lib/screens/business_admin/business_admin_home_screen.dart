@@ -45,7 +45,6 @@ import 'widgets/business_action_drill_down_sheet.dart';
 import '../../widgets/common/business_selector_sheet.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/admin_tab_switcher.dart';
-import '../../controllers/workforce_controller.dart';
 import '../../services/staffing_readiness_service.dart';
 import '../../models/ui/staffing_readiness_model.dart';
 import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
@@ -81,19 +80,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   final _contractTemplateService = ContractTemplateService();
   FirstPostingReadiness? _firstPosting;
 
-  // [PHASE-3A] activeTO 카운트 (revision listener로 갱신됨)
-  // Phase 2C 이후 Home에서 직접 표시 없음 — Phase 2E에서 표시 또는 완전 제거 예정
-  // ignore: unused_field
-  int _summaryActiveTO = 0;
-  // ignore: unused_field
-  bool _summaryLoading = true;
-
-  // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — Posting global revision listener
-  // WorkforceController.dataRevision 변경 시 Home summary를 자동 갱신한다.
-  // _lastSeenPostingRevision: mount 시점 revision 이전 신호는 무시 (과거 replay 방지)
-  // _summaryRequestGeneration: 비동기 summary 요청 중 stale overwrite 방지 (latest-wins)
-  int _lastSeenPostingRevision = 0;
-  int _summaryRequestGeneration = 0;
+  // [AH-V2-05A] activeTO 카운트와 posting revision listener 제거.
+  //   Phase 2C 이후 화면에 표시되지 않는 값이었고, Home 진입·새로고침마다
+  //   사업장 수만큼 callableGetTOsByBiz를 호출한 뒤 결과를 버리고 있었다.
+  //   revision listener도 이 값만 갱신했으므로 함께 정리한다.
+  //   Home의 신선도는 FCM·앱 복귀(_autoRefresh)와 당겨서 새로고침이 담당한다.
 
   // [PHASE-2C] Canonical Action Summary — 4개 Action 셀의 정규 source
   // unsentContract / unpaidWage / wageChangeRequest / settlementRequest
@@ -128,10 +119,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
     FCMService().addAdminRefreshListener(_onFcmRefresh);
-    // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — posting revision listener 등록
-    // mount 시점 revision 캡처 → 이후 변경만 수신 (과거 신호 replay 방지)
-    _lastSeenPostingRevision = WorkforceController.dataRevision.value;
-    WorkforceController.dataRevision.addListener(_onPostingRevisionChanged);
     AttendanceListPdf.preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // [PH1C] 사업장 전환 감지 초기화 — 최초 렌더 전 기준값 확정
@@ -149,7 +136,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         if (mounted) await TourHelper.markCompleted(TourHelper.adminHome);
       }
       if (mounted) {
-        unawaited(_loadSummaryCounts());       // activeTO only
         unawaited(_loadCanonicalSummary());   // [PHASE-2C] canonical actions
         unawaited(_loadStaffingReadiness()); // [PHASE-2C] D0~D+7 인력 현황
         unawaited(_loadTodayAttendance());   // [PHASE-2C] 오늘 출근 현황
@@ -162,22 +148,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FCMService().removeAdminRefreshListener(_onFcmRefresh);
-    // [PATCH-R2] posting revision listener 해제
-    WorkforceController.dataRevision.removeListener(_onPostingRevisionChanged);
     // [PH1C] 사업장 전환 감지 리스너 해제 (postFrameCallback 실행 전 dispose 방어)
     _cachedUp?.removeListener(_onBusinessSwitchCheck);
     super.dispose();
-  }
-
-  // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — global posting revision change handler
-  // Jobs·Workforce 탭 경유 TO mutation(create/edit/close/delete/reopen) + Home quick-create 모두 수신.
-  // `_summaryLoading`으로 신호를 drop하지 않음 — async load 중에도 revision 수신 → 재요청 허용.
-  // 중복·outdated 결과 방지는 _summaryRequestGeneration(latest-wins)이 담당.
-  void _onPostingRevisionChanged() {
-    final revision = WorkforceController.dataRevision.value;
-    if (!mounted || revision <= _lastSeenPostingRevision) return;
-    _lastSeenPostingRevision = revision;
-    _loadSummaryCounts();
   }
 
   @override
@@ -197,7 +170,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // _businesses 캐시 초기화 → 새 사업장 기준 재조회
     setState(() => _businesses = []);
     _loadApprovedBusinessStatus();
-    unawaited(_loadSummaryCounts());
     unawaited(_loadStaffingReadiness());
     unawaited(_loadTodayAttendance());
     unawaited(_loadPostingReadiness());
@@ -219,7 +191,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     _isRefreshing = true;
     try {
       await Future.wait([
-        _loadSummaryCounts(),
         _loadCanonicalSummary(),
         _loadStaffingReadiness(),
         _loadTodayAttendance(),
@@ -376,51 +347,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다.');
     } finally {
       _isNavigating = false;
-    }
-  }
-
-  // [PHASE-3A] activeTO만 로드 — approval/unclosed 등은 canonical summary에서
-  // [PATCH-R2] latest-wins 보호: _summaryRequestGeneration으로 outdated async 결과 폐기.
-  // 동시 호출 허용 — 가장 최근 호출의 결과만 setState에 반영.
-  Future<void> _loadSummaryCounts() async {
-    final myGeneration = ++_summaryRequestGeneration;
-
-    // [AH-V2-01] _getBusinesses()가 throw할 수 있다 — unawaited 호출이므로
-    //   여기서 잡지 않으면 unhandled async error가 된다.
-    //   이 값은 화면에 렌더되지 않으므로 실패 시 로딩만 해제한다.
-    final List<BusinessModel> businesses;
-    try {
-      businesses = await _getBusinesses();
-    } catch (e) {
-      debugPrint('❌ 진행 공고 집계용 사업장 조회 실패: $e');
-      if (mounted && myGeneration == _summaryRequestGeneration) {
-        setState(() => _summaryLoading = false);
-      }
-      return;
-    }
-    if (businesses.isEmpty || !mounted) {
-      if (mounted && myGeneration == _summaryRequestGeneration) {
-        setState(() => _summaryLoading = false);
-      }
-      return;
-    }
-    final bizIds = businesses.map((b) => b.id).toList();
-    try {
-      final lists = await Future.wait(
-        bizIds.map((id) => _firestoreService.getTOsByBusiness(id, activeOnly: true)),
-      );
-      final activeTO = lists.expand((l) => l).where((t) => t.status == 'ACTIVE').length;
-      // latest-wins: 더 새로운 요청이 완료됐으면 이 결과를 버린다
-      if (!mounted || myGeneration != _summaryRequestGeneration) return;
-      setState(() {
-        _summaryActiveTO = activeTO;
-        _summaryLoading  = false;
-      });
-    } catch (e) {
-      debugPrint('❌ 진행 공고 집계 실패: $e');
-      if (mounted && myGeneration == _summaryRequestGeneration) {
-        setState(() => _summaryLoading = false);
-      }
     }
   }
 

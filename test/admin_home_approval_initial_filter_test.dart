@@ -282,7 +282,7 @@ void main() {
     test('§8 Home에 loader를 추가하지 않았다', () {
       final r = _dartBody(home, 'Future<void> _refresh(');
       for (final l in [
-        '_loadSummaryCounts()', '_loadCanonicalSummary()',
+        '_loadCanonicalSummary()',
         '_loadStaffingReadiness()', '_loadTodayAttendance()', '_reloadReadiness()',
       ]) {
         expect(r.contains(l), isTrue);
@@ -292,12 +292,12 @@ void main() {
           .allMatches(_src(_homePath))
           .map((m) => m.group(1))
           .toSet();
+      // [AH-V2-05A 갱신] _loadSummaryCounts는 dead loader라 제거됐다.
       expect(loaders, {
         '_loadApprovedBusinessStatus',
         '_loadCanonicalSummary',
         '_loadPostingReadiness',
         '_loadStaffingReadiness',
-        '_loadSummaryCounts',
         '_loadTodayAttendance',
       });
     });
