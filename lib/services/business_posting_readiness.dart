@@ -112,6 +112,17 @@ class BusinessPostingReadiness {
     );
   }
 
+  /// [POSTING-V2-02C.1] 실제로 공고를 만들 수 있는 사업장이 하나라도 있는가.
+  ///
+  /// `any(hasLicense) && any(hasActiveWorkTypes)` 형태로 풀어 쓰지 않는다 —
+  /// 그렇게 접으면 A의 등록증과 B의 업무가 합쳐져, 존재하지 않는
+  /// "준비된 사업장"이 만들어진다. 서버 gate는 business 단위이므로
+  /// 조건도 같은 business 안에서 모두 성립해야 한다.
+  static bool hasReadyBusiness(
+    Map<String, BusinessPostingReadiness> readinessMap,
+  ) =>
+      readinessMap.values.any((r) => r.isReady);
+
   /// 여러 사업장 readiness 병렬 조회.
   /// 반환: bizId → BusinessPostingReadiness
   static Future<Map<String, BusinessPostingReadiness>> forBusinesses(
@@ -203,7 +214,11 @@ class FirstPostingReadiness {
   /// 승인 + 사업자등록증을 모두 갖춘 사업장이 있는가
   final bool businessReady;
 
-  /// 승인된 사업장 중 활성 업무가 있는 곳이 있는가
+  /// [POSTING-V2-02C.1] 공고를 실제로 만들 수 있는 사업장이 있는가.
+  ///
+  /// "승인된 사업장 중 활성 업무가 있는 곳이 있는가"가 아니다 —
+  /// 승인·등록증·업무가 **같은 사업장**에서 모두 성립해야 한다.
+  /// (`BusinessPostingReadiness.hasReadyBusiness`)
   final bool workTypesReady;
 
   /// 신규 계약에 쓸 수 있는 템플릿이 있는가 (관리자 보유 전 사업장 합산)

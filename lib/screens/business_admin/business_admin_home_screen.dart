@@ -81,6 +81,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   final _contractTemplateService = ContractTemplateService();
   FirstPostingReadiness? _firstPosting;
 
+  /// [POSTING-V2-02C.1] 사업장별 readiness — 4개 task로 접기 전의 원본.
+  ///   task bool만 남기면 "어느 사업장이 무엇이 없는지"가 사라져
+  ///   CTA가 결핍과 무관한 사업장으로 이동한다. 추가 조회 없이
+  ///   _loadPostingReadiness가 이미 받아온 값을 그대로 보관한다.
+  Map<String, BusinessPostingReadiness> _readinessMap = const {};
+
   // [AH-V2-05A] activeTO 카운트와 posting revision listener 제거.
   //   Phase 2C 이후 화면에 표시되지 않는 값이었고, Home 진입·새로고침마다
   //   사업장 수만큼 callableGetTOsByBiz를 호출한 뒤 결과를 버리고 있었다.
@@ -348,20 +354,72 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     if (!mounted) return;
-    final sealReady =
-        context.read<UserProvider>().currentUser?.sealBase64?.isNotEmpty ?? false;
+    // [POSTING-V2-02C.1] SubAdmin은 사업장 인감을 소유하지 않는다.
+    //   CreateTO는 이미 면제하는데 Home만 검사해, SubAdmin에게는 끝나지 않는
+    //   준비 항목이 남아 있었다. 계약을 CreateTO 쪽으로 맞춘다.
+    final up = context.read<UserProvider>();
+    final sealReady = up.currentUser?.isSubAdmin == true ||
+        (up.currentUser?.sealBase64?.isNotEmpty ?? false);
 
     setState(() {
+      _readinessMap = readinessMap;
       _firstPosting = FirstPostingReadiness(
         hasAnyBusiness: _businesses.isNotEmpty,
-        businessReady: readinessMap.values.any((r) => r.isApproved && r.hasLicense),
-        workTypesReady: readinessMap.values.any((r) => r.hasActiveWorkTypes),
+        // 사업장 task는 승인 + 등록증까지만 본다 — 업무는 다음 task가 맡는다.
+        businessReady:
+            readinessMap.values.any((r) => r.isApproved && r.hasLicense),
+        // [POSTING-V2-02C.1] 업무 task는 business identity를 유지한다.
+        //   any(hasActiveWorkTypes)로 보면 A(등록증만)와 B(업무만)를 합쳐
+        //   어느 사업장으로도 공고를 낼 수 없는데 준비 완료로 판정된다.
+        workTypesReady: BusinessPostingReadiness.hasReadyBusiness(readinessMap),
         contractTemplateReady: hasTemplate,
         sealReady: sealReady,
       );
       _readinessLoaded = true;
     });
   }
+
+  // ── [POSTING-V2-02C.1] readiness CTA 대상 사업장 ────────────────
+  // 이전에는 세 CTA가 모두 `_businesses.first`로 갔다. 업무가 없는 쪽이 A인데
+  // 이미 업무가 있는 B의 화면이 열리면, 관리자는 "업무가 있는데 왜 미완료인가"를
+  // 보게 된다. 아래 선택은 모두 _readinessMap 위의 순수 계산이다 — 추가 조회 없음.
+  //
+  // _businesses의 기존 순서를 그대로 쓴다. 새 정렬 정책을 만들지 않는다.
+
+  BusinessModel? _firstBusinessWhere(
+    bool Function(BusinessPostingReadiness? r) test,
+  ) {
+    for (final b in _businesses) {
+      if (test(_readinessMap[b.id])) return b;
+    }
+    return null;
+  }
+
+  /// 업무 등록 CTA 대상.
+  ///   1순위 — 업무만 추가하면 바로 공고를 만들 수 있는 사업장
+  ///   2순위 — 승인됐지만 업무가 없는 사업장 (등록증 결핍은 사업장 task 몫)
+  ///   3순위 — 아직 승인 전이라 readiness를 알 수 없는 사업장
+  ///           (승인 전에도 업무를 준비할 수 있다는 기존 계약 유지)
+  /// 셋 다 없으면 null — 이동시키지 않고 '선행 필요'로 남긴다.
+  BusinessModel? get _workTypeCtaBusiness =>
+      _firstBusinessWhere((r) =>
+          r != null && r.isApproved && r.hasLicense && !r.hasActiveWorkTypes) ??
+      _firstBusinessWhere(
+          (r) => r != null && r.isApproved && !r.hasActiveWorkTypes) ??
+      _firstBusinessWhere((r) => r == null);
+
+  /// 사업장 task CTA 대상 — 승인이나 등록증이 빠진 사업장.
+  /// readinessMap은 승인 사업장만 담으므로 r == null은 미승인을 뜻한다.
+  BusinessModel? get _businessCtaBusiness =>
+      _firstBusinessWhere((r) => r == null || !r.isApproved || !r.hasLicense);
+
+  /// 계약서 템플릿 CTA 대상. 템플릿은 관리자 전체 합산이라 사업장별 결핍이
+  /// 없다 — 실제로 공고를 낼 사업장을 우선하고, 없으면 준비 중인 사업장.
+  BusinessModel? get _templateCtaBusiness =>
+      _firstBusinessWhere((r) => r != null && r.isReady) ??
+      _firstBusinessWhere((r) => r != null && r.isApproved && r.hasLicense) ??
+      _firstBusinessWhere((r) => r != null && r.isApproved) ??
+      _firstBusinessWhere((r) => r == null);
 
   Future<void> _safeNavigate(Future<void> Function() action) async {
     if (_isNavigating) return;
@@ -1198,8 +1256,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (r == null || r.allReady) return const SizedBox.shrink();
 
     final done = r.completedCount;
-    final navBizId = _businesses.isNotEmpty ? _businesses.first.id : null;
-    final navBiz = _businesses.isNotEmpty ? _businesses.first : null;
+    // [POSTING-V2-02C.1] CTA 대상은 task별 결핍 사업장 — 목록의 첫 번째가 아니다.
+    final bizTarget = _businessCtaBusiness;
+    final wtTarget = _workTypeCtaBusiness;
+    final tplTarget = _templateCtaBusiness;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(20 * s, 0, 20 * s, 16 * s),
@@ -1264,9 +1324,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => navBiz == null
+                    builder: (_) => bizTarget == null
                         ? const BusinessFormScreen()
-                        : BusinessFormScreen(business: navBiz),
+                        : BusinessFormScreen(business: bizTarget),
                   ),
                 );
                 await _reloadReadiness();
@@ -1279,15 +1339,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               icon: Icons.work_outline,
               label: '업무 등록',
               lockedHint: '사업장 등록 후 가능',
-              onTap: navBizId == null
+              onTap: wtTarget == null
                   ? null
                   : () => _safeNavigate(() async {
                         await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (_) => WorkTypeManagementScreen(
-                              businessId: navBizId,
-                              businessName: navBiz!.name,
+                              businessId: wtTarget.id,
+                              businessName: wtTarget.name,
                             ),
                           ),
                         );
@@ -1302,14 +1362,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               icon: Icons.description_outlined,
               label: '계약서 템플릿',
               lockedHint: '사업장 등록 후 가능',
-              onTap: navBizId == null
+              onTap: tplTarget == null
                   ? null
                   : () => _safeNavigate(() async {
                         await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) =>
-                                ContractTemplateListScreen(businessId: navBizId),
+                            builder: (_) => ContractTemplateListScreen(
+                              businessId: tplTarget.id,
+                            ),
                           ),
                         );
                         await _reloadReadiness();
@@ -1362,7 +1423,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     VoidCallback? onTap,
   }) {
     final done = r.isDone(task);
-    final actionable = r.isActionable(task);
+    // [POSTING-V2-02C.1] 이동할 대상 사업장이 없으면 '지금 가능'으로 보이게
+    //   두지 않는다 — 화살표만 뜨고 눌러도 아무 일이 없는 상태가 된다.
+    //   (예: 승인된 사업장 전부가 업무는 있고 등록증만 없는 경우 —
+    //    올바른 다음 행동은 업무가 아니라 사업자등록증이다)
+    final actionable = r.isActionable(task) && (done || onTap != null);
     final hint = done ? null : (actionable ? pendingHint : lockedHint);
 
     return InkWell(
