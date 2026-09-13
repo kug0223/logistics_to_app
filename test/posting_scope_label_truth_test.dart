@@ -157,11 +157,15 @@ void main() {
 
     test('00-h reachability 근거 — 알림에서 JobsRootScreen을 직접 push한다', () {
       final notif = _codeOf(_src('lib/screens/common/notification_screen.dart'));
+      // [POSTING-V2-03A.1] BUSINESS_ADMIN/SUB_ADMIN은 Shell 탭으로 통일됐지만
+      //   SUPER_ADMIN은 Shell이 없어 여전히 standalone push로 도달한다.
       expect(
           _flat(notif).contains(
-              'MaterialPageRoute(builder: (_) => const JobsRootScreen()),'),
+              'builder: (_) => JobsRootScreen(initialTargetToId: expiredToId),'),
           true,
           reason: 'SUPER_ADMIN이 도달하는 경로가 사라졌다면 이 테스트를 재작성해야 한다');
+      expect(_flat(notif).contains('final isSuper ='), true,
+          reason: 'role 분기 없이 standalone을 쓰면 SUPER_ADMIN 전용 경로가 아니다');
       // 그 경로의 guard는 SUPER_ADMIN을 막지 않는다
       expect(
           notif.contains(

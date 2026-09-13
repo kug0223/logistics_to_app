@@ -48,7 +48,14 @@ enum _PostingEmptyKind {
 
 /// 인력 관리 - 리스트 뷰
 class WorkforceListView extends StatefulWidget {
-  const WorkforceListView({super.key});
+  /// [POSTING-V2-03A.1] 알림에서 지정한 공고 — 1회성으로만 reveal한다.
+  ///
+  /// 사용자의 persistent filter(controller.selected*)는 건드리지 않는다.
+  /// 이 공고가 현재 필터/탭에 가려져 있어도 이번 진입에 한해 목록 맨 위에
+  /// 펼친 상태로 보여주고, 사용자가 탭·필터를 건드리거나 새로고침하면 해제된다.
+  final String? targetToId;
+
+  const WorkforceListView({super.key, this.targetToId});
 
   @override
   State<WorkforceListView> createState() => _WorkforceListViewState();
@@ -84,7 +91,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   String? _lastCachedTOType;
   String? _lastCachedPublishStatus;
   DateTimeRange? _lastCachedDateRange;
+  String? _lastCachedRevealToId;
   List<TOGroupItem> _cachedFilteredItems = [];
+
+  // [POSTING-V2-03A.1] 알림 target 1회성 reveal 상태.
+  //   _revealToId가 살아 있는 동안에만 해당 공고가 필터를 우회하고 목록 맨 위에 온다.
+  String? _revealToId;
+  // 같은 target을 두 번 소비하지 않기 위한 표시 (로드 완료 후 1회 정리)
+  bool _revealResolved = false;
 
   @override
   void initState() {
@@ -95,6 +109,78 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       onChanged: _reload,
     );
     _scrollController.addListener(_onScroll);
+    _revealToId = widget.targetToId;
+  }
+
+  @override
+  void didUpdateWidget(covariant WorkforceListView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 새 알림 target이 들어오면 이전 reveal을 덮어쓴다.
+    if (widget.targetToId != null && widget.targetToId != oldWidget.targetToId) {
+      setState(() {
+        _revealToId = widget.targetToId;
+        _revealResolved = false;
+      });
+    }
+  }
+
+  /// [POSTING-V2-03A.1] reveal 해제 — 사용자가 탭·필터를 바꾸거나 새로고침하면
+  /// 알림 진입 상태를 유지하지 않는다. persistent filter는 건드리지 않는다.
+  void _clearReveal() {
+    if (_revealToId == null) return;
+    _revealToId = null;
+    _revealResolved = false;
+    _lastCachedItems = null; // 필터 캐시 무효화 — reveal 예외가 빠져야 한다
+  }
+
+  /// target 공고를 목록에서 찾아 탭·펼침 상태를 맞춘다.
+  ///
+  /// 로드가 끝난 뒤 1회만 실행된다. 찾지 못하면 기존 알림 경로와 같은 문구로
+  /// 명시적으로 알린다 — 조용히 root 목록을 보여주며 실패를 숨기지 않는다.
+  void _resolveRevealTarget(WorkforceController controller) {
+    final target = _revealToId;
+    if (target == null || _revealResolved) return;
+    if (controller.isLoading) return;
+    _revealResolved = true;
+
+    TOGroupItem? found;
+    for (final g in controller.items) {
+      if (g.id == target) {
+        found = g;
+        break;
+      }
+    }
+
+    if (found == null) {
+      // 삭제됨 / scope 밖 / stale payload / 조회 실패
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ToastHelper.showError(controller.loadError != null
+            ? '공고 데이터를 불러올 수 없습니다'
+            : '공고를 찾을 수 없습니다');
+        setState(_clearReveal);
+      });
+      return;
+    }
+
+    // 마감된 공고면 해당 탭으로 맞춘다 — 진행중 탭에서는 렌더되지 않는다.
+    final targetTab = found.isClosed ? TOStatus.closed : TOStatus.active;
+    final foundItem = found;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        if (_selectedTab != targetTab) {
+          _selectedTab = targetTab;
+          _closedDisplayCount = _closedPageSize;
+          _lastCachedItems = null;
+        }
+        _expandedGroups
+          ..clear()
+          ..add(foundItem.id);
+        _expandedTOs.clear();
+        _activeGroupKey = foundItem.id;
+      });
+    });
   }
 
   @override
@@ -140,6 +226,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   // [WF-UI-03] async로 변환 — RefreshIndicator의 onRefresh가 완료를 await할 수 있도록
   Future<void> _reload() async {
     setState(() {
+      // [POSTING-V2-03A.1] 새로고침하면 알림 reveal 상태를 유지하지 않는다.
+      _clearReveal();
       _expandedGroups.clear();
       _expandedTOs.clear();
       _loadingGroups.clear();
@@ -162,6 +250,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   List<TOGroupItem> _getFilteredItems(List<TOGroupItem> allItems) {
     final controller = context.read<WorkforceController>();
     if (identical(allItems, _lastCachedItems) &&
+        _revealToId == _lastCachedRevealToId &&
         _selectedTab == _lastCachedTab &&
         controller.selectedBusinessId == _lastCachedBusinessId &&
         controller.selectedTOType == _lastCachedTOType &&
@@ -170,6 +259,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       return _cachedFilteredItems;
     }
     _lastCachedItems = allItems;
+    _lastCachedRevealToId = _revealToId;
     _lastCachedTab = _selectedTab;
     _lastCachedBusinessId = controller.selectedBusinessId;
     _lastCachedTOType = controller.selectedTOType;
@@ -272,12 +362,20 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       source = allItems.where((g) => g.isClosed);
     }
 
-    final filtered = source.where((g) => _matchesFilters(g, controller));
+    // [POSTING-V2-03A.1] 알림 target은 필터에 가려져 있어도 이번 진입에는 보여준다.
+    //   controller의 필터 값 자체는 그대로다 — 여기서 술어만 1회성으로 우회한다.
+    final reveal = _revealToId;
+    final filtered = source
+        .where((g) => g.id == reveal || _matchesFilters(g, controller));
 
-    if (_selectedTab != TOStatus.closed) return filtered.toList();
+    if (_selectedTab != TOStatus.closed) {
+      final list = filtered.toList();
+      _liftRevealTarget(list);
+      return list;
+    }
 
     // 마감됨 탭: closedAt 기준 최신순 정렬
-    return filtered.toList()
+    final sorted = filtered.toList()
       ..sort((a, b) {
         final aDate = a.masterTO.closedAt ??
             a.masterTO.statusUpdatedAt ??
@@ -287,6 +385,22 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             b.masterTO.date;
         return bDate.compareTo(aDate);
       });
+    _liftRevealTarget(sorted);
+    return sorted;
+  }
+
+  /// [POSTING-V2-03A.1] 알림 target을 목록 맨 위로 올린다.
+  ///
+  /// 스크롤 제어(GlobalKey + ensureVisible) 대신 순서를 바꾼다 — 마감됨 탭의
+  /// 페이지네이션(take(_closedDisplayCount))에도 안전하고, post-frame 스크롤
+  /// 타이밍에 의존하지 않는다. 정렬 자체는 이번 진입에만 적용된다.
+  void _liftRevealTarget(List<TOGroupItem> items) {
+    final reveal = _revealToId;
+    if (reveal == null || items.isEmpty) return;
+    final idx = items.indexWhere((g) => g.id == reveal);
+    if (idx <= 0) return;
+    final target = items.removeAt(idx);
+    items.insert(0, target);
   }
 
   /// 날짜 범위 체크 (장기/단기 공고 모두 고려)
@@ -379,6 +493,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       onTap: () {
         if (_selectedTab != tab) {
           setState(() {
+            // [POSTING-V2-03A.1] 사용자가 탭을 바꾸면 알림 reveal을 해제한다.
+            _clearReveal();
             _selectedTab = tab;
             _expandedGroups.clear();
             _expandedTOs.clear();
@@ -461,15 +577,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         isUserMode: false,
         showTOTypeFilter: true,
         showPublishStatusFilter: true,
-        onBusinessChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setBusinessIdFilter(v); },
-        onDateRangeChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setDateRangeFilter(v); },
-        onTOTypeChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setTOTypeFilter(v); },
-        onPublishStatusChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setPublishStatusFilter(v); },
+        onBusinessChanged: (v) { setState(() { _clearReveal(); _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setBusinessIdFilter(v); },
+        onDateRangeChanged: (v) { setState(() { _clearReveal(); _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setDateRangeFilter(v); },
+        onTOTypeChanged: (v) { setState(() { _clearReveal(); _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setTOTypeFilter(v); },
+        onPublishStatusChanged: (v) { setState(() { _clearReveal(); _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setPublishStatusFilter(v); },
       ),
     );
   }
 
   Widget _buildTOList(WorkforceController controller) {
+    // [POSTING-V2-03A.1] 알림 target 해석 — 로드가 끝난 뒤 1회만 실행된다.
+    _resolveRevealTarget(controller);
 
     if (controller.isLoading) {
       return const LoadingWidget(message: '공고 목록을 불러오는 중...');

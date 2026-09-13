@@ -552,9 +552,11 @@ class FCMService {
       case 'toInviteAccepted':
       case 'toInviteDeclined':
         if (_currentUserIsAdmin) {
-          if (!AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab)) {
-            _navigateToNotificationScreen();
-          }
+          // [POSTING-V2-03A.1] 이 알림의 대상은 공고가 아니라 **특정 지원자**다.
+          //   Jobs root만 열면 어느 초대인지 알 수 없어 목록에서 찾아야 했다.
+          //   알림함의 canonical resolver(_openWorkApplicantsFromNotification)로
+          //   payload를 흘려보내 NotificationScreen 직접 탭과 같은 결과를 만든다.
+          _navigateToNotificationScreen(autoDispatchPayload: data);
         } else {
           _pushFcmScreen(
             destinationKey: 'my_applications',
@@ -784,12 +786,19 @@ class FCMService {
         );
         break;
       // ─── 공고 만료 임박 (관리자 전용, CF masterScheduler) ────
-      case 'toDetail': // toPostingExpiringTomorrow 알림의 screen 필드 값
+      case 'toDetail': // toPostingExpired / toPostingExpiringTomorrow의 screen 값
         if (_currentUserIsAdmin) {
-          // Shell 활성 시 Jobs 탭 전환. 미활성(disposed) edge case → NotificationScreen fallback.
-          // 정상 cold-start에서는 AdminTabSwitcher가 initState 동기 등록 → switchToTab 항상 true.
-          if (!AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab)) {
-            _navigateToNotificationScreen();
+          // [POSTING-V2-03A.1] payload의 toId까지 전달해 해당 공고를 연다 —
+          //   Jobs root만 열면 어느 공고가 만료됐는지 목록에서 찾아야 했다.
+          //   filter는 건드리지 않는다(1회성 reveal).
+          final expiredToId = data['toId']?.toString();
+          final switched = expiredToId != null && expiredToId.isNotEmpty
+              ? AdminTabSwitcher.instance.switchToJobsWithTarget(expiredToId)
+              : AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab);
+          // Shell 미활성(disposed) edge case → 알림함 fallback.
+          // 정상 cold-start에서는 AdminTabSwitcher가 initState 동기 등록 → true.
+          if (!switched) {
+            _navigateToNotificationScreen(autoDispatchPayload: data);
           }
         } else {
           _navigateToNotificationScreen();
@@ -893,7 +902,12 @@ class FCMService {
   }
 
   /// 알림 화면으로 이동 — 이미 열려있으면 중복 push 차단
-  void _navigateToNotificationScreen() {
+  /// [POSTING-V2-03A.1] [autoDispatchPayload]를 주면 알림함이 열리자마자
+  /// 그 payload를 기존 tap handler로 흘려 정확한 대상까지 연다.
+  /// 없으면 종전대로 목록만 연다.
+  void _navigateToNotificationScreen({
+    Map<String, dynamic>? autoDispatchPayload,
+  }) {
     if (_navigatorKey?.currentState == null) {
       debugPrint('⚠️ Navigator가 아직 준비되지 않음');
       return;
@@ -902,7 +916,10 @@ class FCMService {
 
     _notificationScreenVisible = true;
     _navigatorKey!.currentState!.push(
-      MaterialPageRoute(builder: (_) => const NotificationScreen()),
+      MaterialPageRoute(
+        builder: (_) =>
+            NotificationScreen(autoDispatchPayload: autoDispatchPayload),
+      ),
     ).then((_) {
       _notificationScreenVisible = false;
     });

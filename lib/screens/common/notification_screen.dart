@@ -71,7 +71,16 @@ enum _AdminAccessResult {
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
-  const NotificationScreen({super.key});
+  /// [POSTING-V2-03A.1] FCM tap payload — 열리자마자 canonical dispatcher로 보낸다.
+  ///
+  /// _navigateToNotificationScreen()은 알림 목록만 열 뿐 payload를 dispatch하지
+  /// 않는다. 그래서 FCM이 여기로 위임하면 사용자가 같은 알림을 한 번 더 눌러야
+  /// 정확한 대상에 도달했다. 이 필드가 있으면 기존 _handleNotificationTap을
+  /// 그대로 태워 destination·권한 검증을 한 경로로 수렴시킨다.
+  /// 새 라우팅 로직을 복제하지 않는다.
+  final Map<String, dynamic>? autoDispatchPayload;
+
+  const NotificationScreen({super.key, this.autoDispatchPayload});
 
   @override
   State<NotificationScreen> createState() => _NotificationScreenState();
@@ -97,7 +106,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (!mounted) return;
       _secondaryAnimation = ModalRoute.of(context)?.secondaryAnimation;
       _secondaryAnimation?.addStatusListener(_onSecondaryAnimationStatus);
+      _dispatchInitialPayload();
     });
+  }
+
+  /// [POSTING-V2-03A.1] FCM payload를 기존 tap handler로 그대로 흘린다.
+  ///
+  /// 합성 NotificationModel의 id는 빈 문자열이다 — Firestore 문서 id가 아니므로
+  /// 읽음 처리는 건너뛴다(원 알림은 사용자가 알림함에서 직접 읽음 처리한다).
+  Future<void> _dispatchInitialPayload() async {
+    final payload = widget.autoDispatchPayload;
+    if (payload == null || payload.isEmpty) return;
+    final rawType = (payload['type'] ?? payload['screen'])?.toString();
+    if (rawType == null || rawType.isEmpty) return;
+    if (!mounted) return;
+    final provider = context.read<NotificationProvider>();
+    final synthetic = NotificationModel.fromMap({
+      'userId': context.read<UserProvider>().currentUser?.uid ?? '',
+      'type': rawType,
+      'title': '',
+      'body': '',
+      'data': payload,
+    }, '');
+    await _handleNotificationTap(context, synthetic, provider);
   }
 
   /// 위에 올린 화면(detail, dialog 등)이 pop될 때 열린 카드를 닫는다.
@@ -598,7 +629,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
     // 예외 없이 정상 완료해도 마지막에 해제되므로 중복 탭 방어가 유지된다.
     try {
       // 1. 읽음 처리 — 완료를 기다리지 않고 fire-and-forget (UI 반응성 우선)
-      provider.markAsRead(notification.id).catchError((_) {});
+      // [POSTING-V2-03A.1] FCM payload로 합성된 알림은 Firestore 문서 id가 없다.
+      if (notification.id.isNotEmpty) {
+        provider.markAsRead(notification.id).catchError((_) {});
+      }
 
       if (!context.mounted) return;
 
@@ -1253,10 +1287,33 @@ class _NotificationScreenState extends State<NotificationScreen> {
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const JobsRootScreen()),
-            );
+            // [POSTING-V2-03A.1] 특정 공고의 lifecycle 이벤트다 — payload의 toId로
+            //   해당 공고까지 연다. container는 role별 canonical을 따른다.
+            final expiredToId = notification.data?['toId']?.toString();
+            final isSuper =
+                context.read<UserProvider>().currentUser?.isSuperAdmin == true;
+            // SUPER_ADMIN은 BusinessAdminShell에 진입하지 않으므로 standalone이
+            // canonical이다. 나머지는 Shell Jobs 탭으로 통일한다 —
+            // standalone은 하단 탭·back을 잃고 두 번째 controller를 만든다.
+            final switched = !isSuper &&
+                (expiredToId != null && expiredToId.isNotEmpty
+                    ? AdminTabSwitcher.instance
+                        .switchToJobsWithTarget(expiredToId)
+                    : AdminTabSwitcher.instance
+                        .switchToTab(AdminTabSwitcher.jobsTab));
+            if (switched) {
+              // Shell 탭을 바꿔도 이 화면이 root navigator 위에 남아 있으면
+              // 사용자는 아무 변화를 보지 못한다. 알림함을 닫아야 Jobs가 드러난다.
+              Navigator.of(context).pop();
+            } else {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      JobsRootScreen(initialTargetToId: expiredToId),
+                ),
+              );
+            }
           }
         }
         break;

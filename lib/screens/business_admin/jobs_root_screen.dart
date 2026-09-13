@@ -40,7 +40,12 @@ import 'to_management/create_to_screen.dart';
 import 'workforce_management/workforce_list_view.dart';
 
 class JobsRootScreen extends StatefulWidget {
-  const JobsRootScreen({super.key});
+  /// [POSTING-V2-03A.1] 알림에서 지정한 공고 — standalone 진입(SUPER_ADMIN,
+  /// Shell 미활성 fallback)에서 target을 전달받는 경로.
+  /// Shell 탭 진입은 AdminTabSwitcher.switchToJobsWithTarget이 담당한다.
+  final String? initialTargetToId;
+
+  const JobsRootScreen({super.key, this.initialTargetToId});
 
   @override
   State<JobsRootScreen> createState() => _JobsRootScreenState();
@@ -57,14 +62,27 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   // Cross-tab invalidation
   int _lastSeenRevision = 0;
 
+  /// [POSTING-V2-03A.1] 알림이 지정한 공고 — WorkforceListView에 1회성으로 전달.
+  String? _targetToId;
+  late final void Function(String toId) _onJobsTarget;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _targetToId = widget.initialTargetToId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.load(context);
     });
+
+    // [POSTING-V2-03A.1] 알림 → Jobs 탭 target 수신.
+    //   filter를 바꾸지 않는다 — 목록이 target을 1회 보여주고 끝난다.
+    _onJobsTarget = (toId) {
+      if (!mounted) return;
+      setState(() => _targetToId = toId);
+    };
+    AdminTabSwitcher.instance.registerJobsTargetHandler(_onJobsTarget);
 
     // [PHASE-2A] Home 인력 블록 → Jobs 탭 intent 핸들러 등록
     // businessId가 제공되면 business filter를 교체하고, 없으면 기존 filter를 유지.
@@ -104,6 +122,9 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   void dispose() {
     // [PHASE-2A] Jobs 탭 intent 핸들러 해제 — Shell 해제와 별도로 관리
     AdminTabSwitcher.instance.unregisterJobsNavHandler();
+    // [POSTING-V2-03A.1] 자기가 등록한 핸들러일 때만 해제 —
+    //   standalone 인스턴스가 Shell의 등록을 지우지 않게 한다.
+    AdminTabSwitcher.instance.unregisterJobsTargetHandler(_onJobsTarget);
     WorkforceController.dataRevision.removeListener(_onDataRevisionChanged);
     FCMService().removeAdminRefreshListener(_fcmRefreshCallback);
     WidgetsBinding.instance.removeObserver(this);
@@ -140,7 +161,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               // Consumer<WorkforceController>가 내부에서 context를 해석 — provider scope 안
               _buildHeader(s),
               // 공고 목록 (진행중/마감됨 탭 포함)
-              const Expanded(child: WorkforceListView()),
+              Expanded(child: WorkforceListView(targetToId: _targetToId)),
             ],
           ),
         ),

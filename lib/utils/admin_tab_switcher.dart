@@ -45,6 +45,11 @@ class AdminTabSwitcher {
   void Function({required DateTimeRange dateRange, String? businessId})?
       _jobsNavFn;
 
+  // [POSTING-V2-03A.1] 알림 → Jobs 탭 + 특정 공고 1회성 reveal 핸들러.
+  //   filter를 바꾸지 않는다 — _jobsNavFn(날짜/사업장 filter intent)과 목적이 다르므로
+  //   같은 slot을 쓰지 않는다.
+  void Function(String toId)? _jobsTargetFn;
+
   /// Shell이 활성화되어 탭 전환 가능한 상태인지 여부
   bool get isRegistered => _switchFn != null;
 
@@ -71,6 +76,34 @@ class AdminTabSwitcher {
 
   /// [JobsRootScreen 전용] dispose에서 호출 — Jobs 탭 intent 핸들러 해제.
   void unregisterJobsNavHandler() => _jobsNavFn = null;
+
+  /// [JobsRootScreen 전용] 알림 target 핸들러 등록.
+  ///
+  /// [POSTING-V2-03A.1] Shell 밖 standalone 인스턴스가 Shell의 등록을 덮어쓰고
+  /// dispose에서 지워버리는 문제를 막기 위해 **identity 기반**으로 해제한다.
+  void registerJobsTargetHandler(void Function(String toId) fn) =>
+      _jobsTargetFn = fn;
+
+  /// [JobsRootScreen 전용] dispose에서 호출 — 자기가 등록한 핸들러일 때만 해제.
+  void unregisterJobsTargetHandler(void Function(String toId) fn) {
+    if (identical(_jobsTargetFn, fn)) _jobsTargetFn = null;
+  }
+
+  /// 알림 → Jobs 탭으로 전환하며 특정 공고를 1회성으로 reveal한다.
+  ///
+  /// 사용자의 persistent filter를 바꾸지 않는다 — target이 현재 필터에 가려져
+  /// 있어도 **이번 진입에 한해서만** 보이게 한다.
+  ///
+  /// [return] true = target 전달 + 탭 전환 성공; false = 핸들러/Shell 미등록
+  bool switchToJobsWithTarget(String toId) {
+    final fn = _jobsTargetFn;
+    if (fn == null) return false;
+    // 탭 전환이 거부되면(Shell 미등록·권한 없는 탭) target을 넘기지 않는다 —
+    // 보여주지 않을 화면에 reveal 상태만 남기지 않기 위해서다.
+    if (!switchToTab(jobsTab)) return false;
+    fn(toId);
+    return true;
+  }
 
   /// Home 인력 블록 → Jobs 탭으로 전환하며 날짜/사업장 필터 intent를 전달.
   ///
