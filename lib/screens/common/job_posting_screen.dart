@@ -100,6 +100,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   SlotModel? _slot;
   List<SlotModel> _allSlots = [];
+
+  /// [POSTING-V2-03C.1] 근무일 목록을 **완전하게** 확보하지 못했다.
+  ///
+  /// 501+ 근무일이라 잘린 목록만 받은 경우다. `_allSlots`를 비우는 것만으로는
+  /// "근무일이 실제로 0개"인 상태와 구분되지 않아 '선택 가능한 근무 날짜가
+  /// 없습니다'로 보인다 — ERROR != ZERO 위반이다. 별도 상태로 갈라 놓는다.
+  bool _slotLoadError = false;
   List<ApplicationModel> _myApplications = [];
   String? _applicantUid;
 
@@ -349,6 +356,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   Future<void> _loadSlots() async {
     try {
+      _slotLoadError = false;
       final slots = await _firestoreService.getSlots(_to!.id, visibleOnly: false);
       final now = DateTime.now();
       _allSlots = slots
@@ -383,13 +391,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       }
       _selectedSlotDate ??= _allSlots.firstOrNull?.date;
     } on FlexSlotOverflowException catch (e) {
-      // [POSTING-V2-03C.1] 다른 caller들과 달리 이 경로는 실패를 debugPrint로만
-      //   삼켜, 근무일이 있는데 '날짜 없음'으로 보일 수 있었다. 잘린 목록을
-      //   정상처럼 두지 않고 명시적으로 알린다.
+      // [POSTING-V2-03C.1] 잘린 목록을 정상처럼 두지 않는다.
+      //   toast만으로는 신호가 사라지므로 화면에 남는 실패 상태로 기록한다 —
+      //   '근무 날짜 없음'과 같은 화면이 되면 안 된다.
       debugPrint('⚠️ 슬롯 로드 실패(상한 초과): $e');
       _allSlots = [];
+      _slotLoadError = true;
       if (mounted) {
-        ToastHelper.showError('근무일이 너무 많아 불러올 수 없습니다. 관리자에게 문의해주세요.');
+        ToastHelper.showError('근무 일정을 불러오지 못했습니다');
       }
     } catch (e) {
       debugPrint('⚠️ 슬롯 로드 실패: $e');
@@ -426,7 +435,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                           // 내 지원에서 진입 시: Application 상태 카드
                           if (widget.myApplication != null)
                             _buildMyApplicationSection(context),
-                          if (_to!.isFlexType && _allSlots.isNotEmpty)
+                          // [POSTING-V2-03C.1] 불러오기 실패가 '날짜 없음'과
+                          //   같은 화면이 되지 않도록 먼저 가른다.
+                          if (_to!.isFlexType && _slotLoadError)
+                            _buildSlotLoadErrorMessage(context)
+                          else if (_to!.isFlexType && _allSlots.isNotEmpty)
                             _buildDatePicker(context)
                           else if (_to!.isFlexType && _allSlots.isEmpty)
                             _buildNoSlotsMessage(context),
@@ -838,6 +851,35 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           Text(
             '현재 선택 가능한 근무 날짜가 없습니다.',
             style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [POSTING-V2-03C.1] 근무일 목록을 완전하게 불러오지 못했을 때.
+  ///
+  /// _buildNoSlotsMessage와 같은 컨테이너를 쓰되 **실패**임을 말한다.
+  /// 근무일이 실제로 없는 것이 아니라 확인할 수 없는 상태다.
+  Widget _buildSlotLoadErrorMessage(BuildContext context) {
+    return Container(
+      color: Colors.white,
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 20),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off_rounded,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: AppColors.grey400),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Text(
+              '근무 일정을 불러오지 못했습니다.\n잠시 후 다시 시도해주세요.',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            ),
           ),
         ],
       ),
@@ -2406,6 +2448,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     if (!meetsApplyPrerequisites(user, isFlexType: _to!.isFlexType)) {
       final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: _to!.isFlexType);
       if (!ok || !mounted) return;
+    }
+
+    // [POSTING-V2-03C.1] 근무일 목록이 불완전하면 지원을 진행하지 않는다.
+    //   _allSlots가 비어 있어도 아래 폴백이 _currentWorkDetails로 items를
+    //   채우므로, 잘린 데이터 위에서 지원이 성립할 수 있었다.
+    //   공고 전체를 잠그지는 않고 slot 의존 action만 막는다.
+    if (_to!.isFlexType && _slotLoadError) {
+      ToastHelper.showError('근무 일정을 불러오지 못했습니다');
+      return;
     }
 
     // 선택 목록 수집

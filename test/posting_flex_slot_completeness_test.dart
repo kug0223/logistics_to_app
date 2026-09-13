@@ -251,6 +251,87 @@ void main() {
     });
   });
 
+  // ── EMPTY != OVERFLOW (지원자 화면) ─────────────────────────────
+  group('COMPLETE-08 overflow가 true empty로 표현되지 않는다', () {
+    test('08-a 별도 실패 상태가 있다', () {
+      final code = _codeOf(_src(_jobPostingPath));
+      expect(code.contains('bool _slotLoadError = false;'), true,
+          reason: '_allSlots=[] 만으로는 "근무일 0개"와 구분되지 않는다');
+      final load = _flat(
+          _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
+      // 매 로드 시작 시 초기화되고, overflow에서만 세워진다
+      expect(load.contains('_slotLoadError = false;'), true);
+      expect(load.contains('_slotLoadError = true;'), true);
+    });
+
+    test('08-b 실패 분기가 empty 분기보다 먼저 평가된다', () {
+      final code = _codeOf(_src(_jobPostingPath));
+      final errIdx = code.indexOf('if (_to!.isFlexType && _slotLoadError)');
+      final emptyIdx = code.indexOf('else if (_to!.isFlexType && _allSlots.isEmpty)');
+      expect(errIdx, greaterThan(-1), reason: '실패 분기가 없다');
+      expect(emptyIdx, greaterThan(errIdx),
+          reason: 'empty가 먼저면 overflow가 "날짜 없음"으로 표시된다');
+    });
+
+    test('08-c toast가 유일한 신호가 아니다 — 화면에 남는다', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_jobPostingPath), 'Widget _buildSlotLoadErrorMessage(')));
+      expect(body.contains("'근무 일정을 불러오지 못했습니다.\\n잠시 후 다시 시도해주세요.'"),
+          true);
+      // 기존 앱 error language 재사용 (카드 group detail error와 같은 문구 계열)
+      final card =
+          _codeOf(_src('lib/widgets/admin/cards/admin_to_group_card.dart'));
+      expect(card.contains("message: '근무 일정을 불러오지 못했습니다',"), true);
+    });
+
+    test('08-d true empty 문구는 그대로다', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_jobPostingPath), 'Widget _buildNoSlotsMessage(')));
+      expect(body.contains("'현재 선택 가능한 근무 날짜가 없습니다.'"), true);
+      expect(body.contains('Icons.event_busy_outlined'), true);
+      // 두 화면이 서로 다른 것을 말한다
+      final err = _flat(_codeOf(_bodyOf(
+          _src(_jobPostingPath), 'Widget _buildSlotLoadErrorMessage(')));
+      expect(err.contains('Icons.cloud_off_rounded'), true);
+      expect(err.contains('선택 가능한 근무 날짜가 없습니다'), false);
+    });
+
+    test('08-e slot 의존 지원 action이 차단된다', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_jobPostingPath), 'Future<void> _showConfirmAndApply(')));
+      expect(
+          body.contains('if (_to!.isFlexType && _slotLoadError) { '
+              "ToastHelper.showError('근무 일정을 불러오지 못했습니다'); return; }"),
+          true,
+          reason: '_allSlots가 비어도 _currentWorkDetails 폴백으로 지원이 성립했다');
+      // 차단이 items 수집보다 앞이어야 한다
+      final guardIdx = body.indexOf('_slotLoadError) {');
+      final itemsIdx = body.indexOf('final List<({SlotModel? slot, WorkDetailModel work})> items');
+      expect(guardIdx, greaterThan(-1));
+      expect(itemsIdx, greaterThan(guardIdx));
+    });
+
+    test('08-f 공고 전체를 unusable하게 만들지 않았다', () {
+      final code = _codeOf(_src(_jobPostingPath));
+      // 헤더·업무 섹션·하단바 조건은 그대로 (flex slot 의존 action만 차단)
+      expect(code.contains('_isLoading || _to == null ? null : _buildBottomBar(context)'),
+          true);
+      expect(code.contains('_buildPostingHeader(context),'), true);
+      expect(code.contains('_buildWorkSection(context),'), true);
+    });
+
+    test('08-g 일반 slot 실패 동작은 확대 수정하지 않았다 (§5)', () {
+      final body = _flat(
+          _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
+      // generic catch는 여전히 debugPrint만 — _slotLoadError를 세우지 않는다
+      expect(body.contains("} catch (e) { debugPrint('⚠️ 슬롯 로드 실패: \$e'); }"),
+          true);
+      final get = _flat(
+          _codeOf(_bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
+      expect(get.contains('return []; }'), true);
+    });
+  });
+
   // ── §1, §6 60일/14개의 성격과 서버 결정 ─────────────────────────
   group('COMPLETE-06 write contract', () {
     test('06-a flex 날짜 selector 상한이 그대로다', () {
