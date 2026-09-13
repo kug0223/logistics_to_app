@@ -19,6 +19,7 @@
 
 /// 관리자 탭 scope chip 문구를 만든다.
 ///
+/// [isSuperAdmin]            SUPER_ADMIN 여부. 가장 먼저 판정한다.
 /// [isSubAdmin]              SUB_ADMIN 여부.
 /// [managedBusinessIds]      BUSINESS_ADMIN이 관리하는 사업장 전체.
 /// [subAdminBusinessIds]     SUB_ADMIN이 배정받은 사업장 전체.
@@ -29,12 +30,19 @@
 ///
 /// 반환이 빈 문자열이면 chip을 표시하지 않는다.
 String resolveAdminBusinessScopeLabel({
+  required bool isSuperAdmin,
   required bool isSubAdmin,
   required List<String> managedBusinessIds,
   required List<String> subAdminBusinessIds,
   required Map<String, String> subAdminBusinessNames,
   required List<String> loadedBusinessNames,
 }) {
+  // SUPER_ADMIN은 businessIds 목록으로 범위가 정해지지 않는다 —
+  // WorkforceController.load()가 businessIds = null을 보내 서버가 전체를 조회한다.
+  // 그래서 managedBusinessIds가 비어 있어도 "범위 없음"이 아니라 "전체"다.
+  // 역할 판정을 가장 먼저 두어 일반 관리자의 진짜 빈 범위와 섞이지 않게 한다.
+  if (isSuperAdmin) return '전체 사업장';
+
   final ids = isSubAdmin ? subAdminBusinessIds : managedBusinessIds;
 
   // 정상 진입에서는 도달하지 않는다(범위가 없으면 탭 자체가 없다).

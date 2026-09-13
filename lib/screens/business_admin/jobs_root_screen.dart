@@ -260,6 +260,9 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   String _computeScopeLabel(WorkforceController controller, UserProvider up) {
     final user = up.currentUser;
     return resolveAdminBusinessScopeLabel(
+      // SUPER_ADMIN은 load()가 businessIds = null로 전체를 조회한다 —
+      // 이 화면은 알림에서 직접 push될 수 있다.
+      isSuperAdmin: user?.isSuperAdmin ?? false,
       isSubAdmin: up.isSubAdmin,
       managedBusinessIds: user?.managedBusinessIds ?? const [],
       subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],

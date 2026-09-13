@@ -72,6 +72,7 @@ String _bodyOf(String source, String signature) {
 }
 
 String _label({
+  bool isSuperAdmin = false,
   bool isSubAdmin = false,
   List<String> managed = const [],
   List<String> assigned = const [],
@@ -79,6 +80,7 @@ String _label({
   List<String> loadedNames = const [],
 }) =>
     resolveAdminBusinessScopeLabel(
+      isSuperAdmin: isSuperAdmin,
       isSubAdmin: isSubAdmin,
       managedBusinessIds: managed,
       subAdminBusinessIds: assigned,
@@ -87,6 +89,100 @@ String _label({
     );
 
 void main() {
+  // ── [02F.1-SUPERADMIN] §12, §13 SUPER_ADMIN ─────────────────────
+  //
+  // reachability: SUPER_ADMIN은 BusinessAdminShell에 진입할 수 없지만
+  // (main.dart의 role switch가 AdminHomeScreen으로 보낸다),
+  // NotificationScreen에서 JobsRootScreen을 **직접 push**하는 경로가 있다.
+  // 그 화면의 load()는 isSuperAdmin → businessIds = null로 전체를 조회한다.
+  group('SCOPE-00 SUPER_ADMIN', () {
+    test('00-a businessIds가 비어도 전체 사업장', () {
+      expect(_label(isSuperAdmin: true), '전체 사업장');
+    });
+
+    test('00-b ids 길이에 의존하지 않는다 (§13)', () {
+      for (final managed in [<String>[], ['A'], ['A', 'B']]) {
+        expect(_label(isSuperAdmin: true, managed: managed), '전체 사업장',
+            reason: 'SUPER_ADMIN 범위가 businessIds 길이에 좌우된다');
+      }
+    });
+
+    test('00-c 일반 관리자의 빈 범위와 구분된다 (§11)', () {
+      expect(_label(isSuperAdmin: true), '전체 사업장');
+      expect(_label(), '', reason: '진짜 빈 범위는 chip을 숨긴다');
+      expect(_label(isSubAdmin: true), '');
+    });
+
+    test('00-d 역할 판정이 SUPER_ADMIN → SUB_ADMIN → BUSINESS_ADMIN 순이다 (§8)', () {
+      final body = _codeOf(_bodyOf(
+          _src(_labelPath), 'String resolveAdminBusinessScopeLabel('));
+      final superIdx = body.indexOf("if (isSuperAdmin) return '전체 사업장';");
+      final idsIdx = body.indexOf('final ids = isSubAdmin ?');
+      expect(superIdx, greaterThan(-1), reason: 'SUPER_ADMIN 분기가 없다');
+      expect(idsIdx, greaterThan(superIdx),
+          reason: 'SUPER_ADMIN 판정이 ids 분기보다 앞서야 한다');
+    });
+
+    test('00-e 별도 카피 체계를 만들지 않았다 (§5)', () {
+      final code = _codeOf(_src(_labelPath));
+      for (final forbidden in ['플랫폼', '모든 사업장', '슈퍼관리자']) {
+        expect(code.contains(forbidden), false);
+      }
+    });
+
+    test('00-f 두 caller 모두 isSuperAdmin을 전달한다 (§9)', () {
+      for (final p in [_jobsPath, _wfPath]) {
+        final body =
+            _flat(_codeOf(_bodyOf(_src(p), 'String _computeScopeLabel(')));
+        expect(body.contains('isSuperAdmin: user?.isSuperAdmin ?? false,'), true,
+            reason: '$p 가 SUPER_ADMIN을 전달하지 않는다');
+      }
+    });
+
+    test('00-g reachability 근거 — Shell 진입은 막혀 있다', () {
+      final main = _codeOf(_src('lib/main.dart'));
+      // role switch: SUPER_ADMIN → AdminHomeScreen, Shell 아님
+      expect(
+          _flat(main).contains(
+              'case UserRole.SUPER_ADMIN: debugPrint(\'🎯 SUPER_ADMIN → AdminHomeScreen으로 이동\'); '
+              'return const AdminHomeScreen();'),
+          true);
+      // SubAdmin 경로도 role == USER 안에서만 성립한다
+      final model = _codeOf(_src('lib/models/core/user_model.dart'));
+      expect(
+          model.contains(
+              'bool get isSubAdmin => role == UserRole.USER && subAdminBusinessIds.isNotEmpty;'),
+          true);
+    });
+
+    test('00-h reachability 근거 — 알림에서 JobsRootScreen을 직접 push한다', () {
+      final notif = _codeOf(_src('lib/screens/common/notification_screen.dart'));
+      expect(
+          _flat(notif).contains(
+              'MaterialPageRoute(builder: (_) => const JobsRootScreen()),'),
+          true,
+          reason: 'SUPER_ADMIN이 도달하는 경로가 사라졌다면 이 테스트를 재작성해야 한다');
+      // 그 경로의 guard는 SUPER_ADMIN을 막지 않는다
+      expect(
+          notif.contains(
+              'final isUser = userProvider.isUser && !userProvider.isSubAdmin;'),
+          true);
+      expect(
+          notif.contains('if (!up.isSubAdmin) return _AdminAccessResult.allowed;'),
+          true);
+      // SUPER_ADMIN은 알림 화면 자체에 접근한다
+      final superHome =
+          _codeOf(_src('lib/screens/super_admin/super_admin_home_screen.dart'));
+      expect(superHome.contains('const NotificationScreen()'), true);
+    });
+
+    test('00-i SUPER_ADMIN query scope는 그대로 전체다 (§10)', () {
+      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      expect(body.contains('if (user.isSuperAdmin) { businessIds = null;'), true,
+          reason: 'display 수정이 query scope를 건드렸다');
+    });
+  });
+
   // ── §20, §2 BUSINESS_ADMIN 단일 ─────────────────────────────────
   group('SCOPE-01 BUSINESS_ADMIN 단일 사업장', () {
     test('01-a 사업장 이름을 그대로 쓴다', () {

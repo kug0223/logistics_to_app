@@ -193,6 +193,7 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen>
   String _computeScopeLabel(WorkforceController controller, UserProvider up) {
     final user = up.currentUser;
     return resolveAdminBusinessScopeLabel(
+      isSuperAdmin: user?.isSuperAdmin ?? false,
       isSubAdmin: up.isSubAdmin,
       managedBusinessIds: user?.managedBusinessIds ?? const [],
       subAdminBusinessIds: user?.subAdminBusinessIds ?? const [],
