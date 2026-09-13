@@ -112,8 +112,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   /// [POSTING-V2-03A.1] FCM payload를 기존 tap handler로 그대로 흘린다.
   ///
-  /// 합성 NotificationModel의 id는 빈 문자열이다 — Firestore 문서 id가 아니므로
-  /// 읽음 처리는 건너뛴다(원 알림은 사용자가 알림함에서 직접 읽음 처리한다).
+  /// id는 payload의 `notificationId` — onNotificationCreated(CF)가 Firestore
+  /// 문서를 만들면서 fcmData 첫 필드로 싣는 **그 문서의 id**다. 덕분에 FCM으로
+  /// 열어도 알림함에서 누른 것과 같은 문서가 읽음 처리된다.
+  /// 없으면 빈 문자열로 두어 읽음 처리를 건너뛴다 — 어느 문서인지 추측해서
+  /// 엉뚱한 알림을 읽음 처리하지 않는다.
   Future<void> _dispatchInitialPayload() async {
     final payload = widget.autoDispatchPayload;
     if (payload == null || payload.isEmpty) return;
@@ -127,7 +130,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       'title': '',
       'body': '',
       'data': payload,
-    }, '');
+    }, payload['notificationId']?.toString() ?? '');
     await _handleNotificationTap(context, synthetic, provider);
   }
 
@@ -1280,10 +1283,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isUser) {
           ToastHelper.showWarning('관리자 전용 알림입니다.');
         } else {
+          // [POSTING-V2-03A.1] 공고를 여는 것은 READ action이다.
+          //   02G canonical: READ = membership, MUTATION = 대상 사업장 canManageTo.
+          //   여기서 canManageTo를 요구하면 membership만 있는 사업장의 만료 알림이
+          //   막히는데, FCM 경로는 Jobs의 정상 READ scope로 같은 공고를 보여준다 —
+          //   entry point에 따라 결과가 갈렸다. requiredPermission을 주지 않으면
+          //   SubAdmin은 멤버십만 검증되고 BUSINESS_ADMIN/SUPER_ADMIN은 그대로 통과한다.
+          //   공고를 연 뒤의 mutation은 카드의 canForBusiness(canManageTo)가 계속 막는다.
           final access = await _validateAdminNotificationAccess(
             context,
             businessId: notification.data?['businessId']?.toString(),
-            requiredPermission: (p) => p.canManageTo,
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {

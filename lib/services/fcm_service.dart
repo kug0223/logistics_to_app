@@ -16,6 +16,7 @@ import '../screens/user/attendance_check_screen.dart';
 import '../screens/user/my_reviews_screen.dart';
 import '../screens/common/job_posting_screen.dart';         // [Phase 8.1C] toMatch 공고 상세 진입
 import 'contract_service.dart';
+import 'firestore_service.dart';
 import '../models/core/employment_contract_model.dart';
 import '../utils/admin_tab_switcher.dart';
 import '../utils/app_navigator_observer.dart';
@@ -795,9 +796,15 @@ class FCMService {
           final switched = expiredToId != null && expiredToId.isNotEmpty
               ? AdminTabSwitcher.instance.switchToJobsWithTarget(expiredToId)
               : AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab);
-          // Shell 미활성(disposed) edge case → 알림함 fallback.
-          // 정상 cold-start에서는 AdminTabSwitcher가 initState 동기 등록 → true.
-          if (!switched) {
+          if (switched) {
+            // [POSTING-V2-03A.1] 알림함을 거치지 않는 경로라 읽음 처리가 빠진다.
+            //   같은 알림을 알림함에서 누르면 읽음이 되므로 entry point에 따라
+            //   read 상태가 갈린다. payload의 notificationId로 그 문서만 처리한다.
+            _markNotificationReadFromPayload(data);
+          } else {
+            // Shell 미활성(disposed) edge case → 알림함 fallback.
+            // 정상 cold-start에서는 AdminTabSwitcher가 initState 동기 등록 → true.
+            // (이 경로는 NotificationScreen이 읽음 처리를 맡는다)
             _navigateToNotificationScreen(autoDispatchPayload: data);
           }
         } else {
@@ -902,6 +909,24 @@ class FCMService {
   }
 
   /// 알림 화면으로 이동 — 이미 열려있으면 중복 push 차단
+  /// [POSTING-V2-03A.1] 알림함을 거치지 않는 FCM 경로의 읽음 처리.
+  ///
+  /// payload의 `notificationId`는 onNotificationCreated(CF)가 Firestore 문서를
+  /// 만들며 실어 보낸 **그 문서의 id**다. 이 값이 없으면 아무 것도 하지 않는다 —
+  /// type·toId로 최신 알림을 추정해 엉뚱한 문서를 읽음 처리하지 않는다.
+  /// NotificationProvider는 snapshot stream 기반이라 이 write가 목록에 반영된다.
+  void _markNotificationReadFromPayload(Map<String, dynamic> data) {
+    final uid = _currentUserId;
+    final notificationId = data['notificationId']?.toString();
+    if (uid == null || notificationId == null || notificationId.isEmpty) return;
+    FirestoreService()
+        .markNotificationAsRead(uid, notificationId)
+        .catchError((Object e) {
+      debugPrint('⚠️ [FCM] 알림 읽음 처리 실패: $e');
+      return false;
+    });
+  }
+
   /// [POSTING-V2-03A.1] [autoDispatchPayload]를 주면 알림함이 열리자마자
   /// 그 payload를 기존 tap handler로 흘려 정확한 대상까지 연다.
   /// 없으면 종전대로 목록만 연다.

@@ -130,7 +130,7 @@ void main() {
           true);
     });
 
-    test('00-c 합성 알림은 읽음 처리를 건너뛴다', () {
+    test('00-c id가 없을 때만 읽음 처리를 건너뛴다', () {
       final body = _codeOf(_bodyOf(_src(_notifPath), 'Future<void> _handleNotificationTap('));
       expect(
           _flat(body).contains('if (notification.id.isNotEmpty) { '
@@ -408,13 +408,119 @@ void main() {
     });
   });
 
+  // ── BLOCKER 1: lifecycle READ gate가 02G canonical과 맞는가 ─────
+  group('NAV-10 공고 만료 알림은 READ gate를 쓴다', () {
+    test('10-a lifecycle은 membership만 검증한다', () {
+      final block = _flat(_codeOf(_caseBlock(
+          _src(_notifPath), 'case NotificationType.toPostingExpiringTomorrow:')));
+      expect(block.contains('_validateAdminNotificationAccess('), true,
+          reason: '멤버십 검증까지 없애면 scope 밖 사업장이 열린다');
+      expect(block.contains('requiredPermission:'), false,
+          reason: '공고를 여는 것은 READ다 — canManageTo를 요구하면 '
+              'membership만 있는 사업장이 FCM과 다른 결과를 낸다');
+    });
+
+    test('10-b requiredPermission이 없으면 permission 단계가 생략된다', () {
+      final body = _flat(_codeOf(_bodyOf(_src(_notifPath),
+          'Future<_AdminAccessResult> _validateAdminNotificationAccess(')));
+      // 멤버십은 항상 검증
+      expect(body.contains('subAdminBusinessIds.contains(businessId)'), true);
+      expect(body.contains('return _AdminAccessResult.noBusinessAccess;'), true);
+      // permission 단계는 requiredPermission이 있을 때만
+      expect(body.contains('if (requiredPermission != null &&'), true);
+    });
+
+    test('10-c BUSINESS_ADMIN / SUPER_ADMIN은 그대로 통과한다', () {
+      final body = _flat(_codeOf(_bodyOf(_src(_notifPath),
+          'Future<_AdminAccessResult> _validateAdminNotificationAccess(')));
+      expect(body.contains('if (!up.isSubAdmin) return _AdminAccessResult.allowed;'),
+          true);
+    });
+
+    test('10-d application 계열 알림의 권한은 건드리지 않았다', () {
+      final code = _flat(_codeOf(_src(_notifPath)));
+      // newApplication / toInviteAccepted 등은 여전히 canManageTo를 요구한다
+      expect(
+          'requiredPermission: (p) => p.canManageTo,'.allMatches(code).length,
+          greaterThanOrEqualTo(3),
+          reason: 'lifecycle 외 알림의 권한 계약까지 바뀌었다');
+      final invite = _flat(_codeOf(
+          _caseBlock(_src(_notifPath), 'case NotificationType.toInviteAccepted:')));
+      expect(invite.contains('requiredPermission: (p) => p.canManageTo,'), true);
+      final newApp = _flat(_codeOf(
+          _caseBlock(_src(_notifPath), 'case NotificationType.newApplication:')));
+      expect(newApp.contains('requiredPermission: (p) => p.canManageTo,'), true);
+    });
+
+    test('10-e mutation은 여전히 canManageTo가 막는다', () {
+      final card =
+          _codeOf(_src('lib/widgets/admin/cards/admin_to_group_card.dart'));
+      expect(
+          card.contains('up.canForBusiness(widget.groupItem.businessId, '
+              '(p) => p.canManageTo)'),
+          true,
+          reason: 'READ gate를 풀면서 WRITE gate까지 풀리면 안 된다');
+    });
+  });
+
+  // ── BLOCKER 2: 읽음 처리 parity ─────────────────────────────────
+  group('NAV-11 FCM tap과 알림함 tap의 읽음 처리가 같다', () {
+    test('11-a 서버가 payload에 notificationId를 싣는다', () {
+      final fns = _src('functions/src/index.ts');
+      expect(fns.contains('document: "users/{userId}/notifications/{notificationId}"'),
+          true);
+      expect(
+          _flat(fns).contains('const fcmData: Record<string, string> = { '
+              'notificationId: notificationId,'),
+          true,
+          reason: 'client-only 수정의 전제가 사라졌다');
+    });
+
+    test('11-b 합성 모델이 그 id를 쓴다', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_notifPath), 'Future<void> _dispatchInitialPayload(')));
+      expect(body.contains("payload['notificationId']?.toString() ?? ''"), true);
+    });
+
+    test('11-c 알림함을 거치지 않는 FCM 경로도 읽음 처리한다', () {
+      final block = _flat(_codeOf(_caseBlock(_src(_fcmPath), "case 'toDetail':")));
+      expect(block.contains('if (switched) { _markNotificationReadFromPayload(data);'),
+          true);
+    });
+
+    test('11-d id가 없으면 아무 문서도 읽음 처리하지 않는다 (§CASE C 금지)', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_fcmPath), 'void _markNotificationReadFromPayload(')));
+      expect(
+          body.contains(
+              'if (uid == null || notificationId == null || notificationId.isEmpty) return;'),
+          true);
+      // 추정 query 금지 — 최신 unread 하나 고르기 등
+      for (final forbidden in [
+        'orderBy',
+        'where(',
+        'limit(',
+        'isRead',
+      ]) {
+        expect(body.contains(forbidden), false,
+            reason: '$forbidden — 어느 알림인지 추측하면 엉뚱한 문서를 읽음 처리한다');
+      }
+      expect(body.contains('markNotificationAsRead(uid, notificationId)'), true);
+    });
+
+    test('11-e 다른 FCM route의 읽음 처리를 바꾸지 않았다', () {
+      final code = _codeOf(_src(_fcmPath));
+      expect('_markNotificationReadFromPayload('.allMatches(code).length, 2,
+          reason: '정의 1 + toDetail 1 — unrelated 타입까지 손대면 안 된다');
+    });
+  });
+
   // ── §6 permission 무회귀 ────────────────────────────────────────
   group('NAV-07 02G permission 계약 무회귀', () {
-    test('07-a 접근 검증이 그대로다', () {
+    test('07-a 접근 검증 자체는 남아 있다', () {
       final block = _flat(_codeOf(_caseBlock(
           _src(_notifPath), 'case NotificationType.toPostingExpiringTomorrow:')));
       expect(block.contains('_validateAdminNotificationAccess('), true);
-      expect(block.contains('requiredPermission: (p) => p.canManageTo,'), true);
       expect(block.contains('if (_handleAdminAccess(access))'), true);
     });
 
@@ -436,11 +542,13 @@ void main() {
           reason: 'navigation 경로가 permission context를 우회하면 안 된다');
     });
 
-    test('07-d read-only business 정책은 이번에 바꾸지 않았다 (§6)', () {
+    test('07-d application 계열의 read-only 차단은 유지된다', () {
+      // lifecycle(READ)만 membership으로 풀었다. 관리 action surface를 여는
+      // application 계열은 여전히 대상 사업장 canManageTo를 요구한다.
+      // → [BACKLOG-NOTIFICATION-READONLY-BUSINESS-BLOCKED]는 그 범위로 축소된다.
       final body = _codeOf(_bodyOf(
           _src(_notifPath), 'Future<void> _openWorkApplicantsFromNotification('));
-      expect(body.contains('canManageTo'), true,
-          reason: '[BACKLOG-NOTIFICATION-READONLY-BUSINESS-BLOCKED] 유지');
+      expect(body.contains('canManageTo'), true);
     });
   });
 
