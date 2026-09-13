@@ -128,6 +128,34 @@ String _fmtDate(DateTime d) =>
 /// 없어 날짜용 query도 문서 전량을 전송받았으므로 순수한 중복이었다.
 typedef FlexSlotLoad = ({List<TOItem> groupTOs, List<DateTime> slotDates});
 
+/// [POSTING-V2-03C.1] 한 flex 공고에서 클라이언트가 다룰 수 있는 slot 문서 상한.
+///
+/// 이 수를 넘으면 `orderBy('date')` + limit 조합이 **가장 미래의 날짜부터** 잘라낸다.
+/// slotDates와 groupTOs가 같은 snapshot에서 파생되므로 둘이 나란히 틀리고,
+/// 서로 어긋나지 않는다는 사실이 정상이라는 근거가 되지 못한다.
+const int kMaxFlexSlotsPerTO = 500;
+
+/// 상한 초과를 **탐지**하기 위해 한 건을 더 읽는다.
+/// 정상 공고(현재 UI 상한 14일)의 read cost는 달라지지 않는다 —
+/// ceiling만 500 → 501이고 실제로 읽히는 문서 수는 그대로다.
+const int _kFlexSlotProbeLimit = kMaxFlexSlotsPerTO + 1;
+
+/// [POSTING-V2-03C.1] flex 슬롯이 지원 상한을 넘어 전체를 읽지 못했다.
+///
+/// 잘린 앞부분을 정상 결과로 돌려주지 않는다 — 실제로 근무일이 있는데
+/// '공고 없음' · '마감됨' · '조건에 맞는 공고 없음'으로 보이는 편이 더 위험하다.
+/// TRUNCATED != SUCCESS.
+class FlexSlotOverflowException implements Exception {
+  final String toId;
+  final int limit;
+
+  const FlexSlotOverflowException(this.toId, this.limit);
+
+  @override
+  String toString() =>
+      'FlexSlotOverflowException(toId: $toId, 근무일이 $limit개를 넘어 전체를 불러올 수 없음)';
+}
+
 class FirestoreService {
   // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
   static final FirestoreService _instance = FirestoreService._internal();
@@ -482,14 +510,15 @@ class FirestoreService {
   }
 
   /// flex TO 슬롯의 canonical query — 이 한 곳에서만 정의한다.
-  /// [PERF-F4] Source.server 제거(캐시 활용) + limit 500 (무제한 읽기 차단)
+  /// [PERF-F4] Source.server 제거(캐시 활용) + 무제한 읽기 차단
+  /// [POSTING-V2-03C.1] limit이 상한+1이라 "정확히 상한"과 "상한 초과"를 구분할 수 있다.
   Future<QuerySnapshot<Map<String, dynamic>>> _flexSlotSnapshot(String toId) =>
       _firestore
           .collection('tos')
           .doc(toId)
           .collection('slots')
           .orderBy('date')
-          .limit(500)
+          .limit(_kFlexSlotProbeLimit)
           .get();
 
   /// [POSTING-V2-02D.1] raw 슬롯 문서에서 날짜만 뽑는다.
@@ -546,6 +575,12 @@ class FirestoreService {
     const empty = (groupTOs: <TOItem>[], slotDates: <DateTime>[]);
     try {
       final snap = await _flexSlotSnapshot(toId);
+      // [POSTING-V2-03C.1] 상한을 넘었다 — 잘린 앞부분을 정상 결과로 쓰지 않는다.
+      //   caller(WorkforceController.load / loadGroupDetails)가 이미 이 공고만
+      //   group detail error로 표시하는 경로를 갖고 있다.
+      if (snap.docs.length > kMaxFlexSlotsPerTO) {
+        throw FlexSlotOverflowException(toId, kMaxFlexSlotsPerTO);
+      }
       if (snap.docs.isEmpty) return empty;
 
       final model = masterTO ?? await getTO(toId);

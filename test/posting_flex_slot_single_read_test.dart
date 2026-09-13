@@ -217,9 +217,13 @@ void main() {
       // 단건 .doc(slotId) 접근이나 cascade 평가용 query는 이 대상이 아니다.
       expect("collection('slots') .orderBy('date')".allMatches(code).length, 1,
           reason: 'slot 목록 query가 둘 이상 — 중복 구현이 다시 생겼다');
+      // [POSTING-V2-03C.1] limit 리터럴이 상한+1 상수로 바뀌었다.
+      //   고정해야 할 것은 "정렬된 단일 bounded query"이지 숫자 자체가 아니다.
       final body = _flat(_codeOf(_bodyOf(
           _src(_svcPath), 'Future<QuerySnapshot<Map<String, dynamic>>>')));
-      expect(body.contains(".orderBy('date') .limit(500) .get()"), true);
+      expect(
+          body.contains(".orderBy('date') .limit(_kFlexSlotProbeLimit) .get()"),
+          true);
     });
 
     test('01-b root load가 flex TO별로 loadFlexSlots를 정확히 한 번 부른다', () {
@@ -376,11 +380,15 @@ void main() {
 
   // ── §17, §38, §39 ordering / limit ─────────────────────────────
   group('FLEX-SINGLE-READ-09 정렬과 limit 계약', () {
-    test('09-a canonical query는 date ASC · limit 500', () {
+    test('09-a canonical query는 date ASC · bounded', () {
       final body = _flat(_codeOf(_bodyOf(
           _src(_svcPath), 'Future<QuerySnapshot<Map<String, dynamic>>>')));
       expect(body.contains(".orderBy('date')"), true);
-      expect(body.contains('.limit(500)'), true);
+      // [POSTING-V2-03C.1] 상한은 kMaxFlexSlotsPerTO, query는 그보다 1 크다
+      expect(body.contains('.limit(_kFlexSlotProbeLimit)'), true,
+          reason: '무제한 read로 바뀌면 안 된다');
+      final svc = _flat(_codeOf(_src(_svcPath)));
+      expect(svc.contains('const int kMaxFlexSlotsPerTO = 500;'), true);
     });
 
     test('09-b slotDates에 별도 정렬 정책을 넣지 않았다 (§17)', () {

@@ -744,13 +744,19 @@ extension TOFirestore on FirestoreService {
   /// [visibleOnly] true 면 visibleFrom <= 현재시각인 슬롯만 반환 (유저용)
   Future<List<SlotModel>> getSlots(String toId, {bool visibleOnly = false}) async {
     try {
-      // [PERF-F7] limit 500 — 무제한 슬롯 읽기 차단
+      // [PERF-F7] 무제한 슬롯 읽기 차단
+      // [POSTING-V2-03C.1] 상한+1을 읽어 truncation을 탐지한다 —
+      //   같은 공고를 어느 화면에서 읽든 completeness semantics가 같아야 한다.
       final snap = await _firestore
           .collection('tos').doc(toId)
           .collection('slots')
           .orderBy('date')
-          .limit(500)
+          .limit(_kFlexSlotProbeLimit)
           .get(const GetOptions(source: Source.server));
+
+      if (snap.docs.length > kMaxFlexSlotsPerTO) {
+        throw FlexSlotOverflowException(toId, kMaxFlexSlotsPerTO);
+      }
 
       final slots = snap.docs
           .map((d) => SlotModel.tryFromMap(d.data(), d.id, toId))
@@ -763,6 +769,11 @@ extension TOFirestore on FirestoreService {
       return slots
           .where((s) => s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
           .toList();
+    } on FlexSlotOverflowException {
+      // [POSTING-V2-03C.1] TRUNCATED != SUCCESS — 빈 목록으로 삼키지 않는다.
+      //   caller 네 곳(일괄 종료/재오픈 · 수정 · 지원자 상세 · 날짜 일괄삭제)이
+      //   모두 catch에서 실패를 알린다.
+      rethrow;
     } catch (e) {
       debugPrint('❌ [TO] 슬롯 조회 실패: $e');
       return [];

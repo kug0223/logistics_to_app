@@ -382,6 +382,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         }
       }
       _selectedSlotDate ??= _allSlots.firstOrNull?.date;
+    } on FlexSlotOverflowException catch (e) {
+      // [POSTING-V2-03C.1] 다른 caller들과 달리 이 경로는 실패를 debugPrint로만
+      //   삼켜, 근무일이 있는데 '날짜 없음'으로 보일 수 있었다. 잘린 목록을
+      //   정상처럼 두지 않고 명시적으로 알린다.
+      debugPrint('⚠️ 슬롯 로드 실패(상한 초과): $e');
+      _allSlots = [];
+      if (mounted) {
+        ToastHelper.showError('근무일이 너무 많아 불러올 수 없습니다. 관리자에게 문의해주세요.');
+      }
     } catch (e) {
       debugPrint('⚠️ 슬롯 로드 실패: $e');
     }
