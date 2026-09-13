@@ -274,8 +274,9 @@ void main() {
       expect(rows.contains('cs?.actions.unpaidWage'), isTrue);
     });
 
-    test('기존 row 상대 순서가 바뀌지 않았다 — 삽입만 했다', () {
-      final order = ['지원 검토', '마감 필요', '계약 미발송', '계약 종료 예정', '이체 대기'];
+    // [AH-V2-05B 갱신] 운영 urgency 기준으로 재정렬됐다.
+    test('기존 row가 새 우선순위 순서를 따른다', () {
+      final order = ['지원 검토', '계약 미발송', '마감 필요', '이체 대기', '계약 종료 예정'];
       var prev = -1;
       for (final label in order) {
         final at = rows.indexOf("label: '$label'");
@@ -284,14 +285,18 @@ void main() {
       }
     });
 
-    test('신규 2종은 마감 필요와 계약 미발송 사이에 들어갔다', () {
-      final unclosed = rows.indexOf("label: '마감 필요'");
-      final wage = rows.indexOf("label: '급여 변경 요청'");
-      final settle = rows.indexOf("label: '중간정산 요청'");
+    // [AH-V2-05B 갱신] 삽입 위치가 아니라 운영 urgency가 순서를 정한다.
+    //   근무 전 계약 발송 < 근무 후 마감 < 근로자 요청(정산/급여변경) < 이체
+    test('신규 2종이 마감 필요 뒤, 이체 대기 앞에 온다', () {
       final unsent = rows.indexOf("label: '계약 미발송'");
-      expect(wage, greaterThan(unclosed));
-      expect(settle, greaterThan(wage));
-      expect(unsent, greaterThan(settle));
+      final unclosed = rows.indexOf("label: '마감 필요'");
+      final settle = rows.indexOf("label: '중간정산 요청'");
+      final wage = rows.indexOf("label: '급여 변경 요청'");
+      final pay = rows.indexOf("label: '이체 대기'");
+      expect(unclosed, greaterThan(unsent));
+      expect(settle, greaterThan(unclosed));
+      expect(wage, greaterThan(settle));
+      expect(pay, greaterThan(wage));
     });
 
     test('이체 대기의 전체기간 뷰 파라미터가 유지된다', () {
@@ -327,9 +332,10 @@ void main() {
         '_buildHeader(',
         '_buildStateBanner(',
         '_buildPostingSetupCard(',
+        // [AH-V2-05B] TODAY → TASK → NEXT
         '_buildTodayOps(',
-        '_buildFutureStaffing(',
         '_buildActionDashboard(',
+        '_buildFutureStaffing(',
       ];
       var prev = -1;
       for (final m in order) {

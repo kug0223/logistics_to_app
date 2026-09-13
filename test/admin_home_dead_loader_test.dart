@@ -216,7 +216,8 @@ void main() {
       var prev = -1;
       for (final m in [
         '_buildHeader(', '_buildStateBanner(', '_buildPostingSetupCard(',
-        '_buildTodayOps(', '_buildFutureStaffing(', '_buildActionDashboard(',
+        // [AH-V2-05B] TODAY → TASK → NEXT
+        '_buildTodayOps(', '_buildActionDashboard(', '_buildFutureStaffing(',
       ]) {
         final at = b.indexOf(m);
         expect(at, greaterThan(prev), reason: m);
@@ -224,11 +225,13 @@ void main() {
       }
     });
 
-    test('§14 처리할 일 9종 순서 그대로', () {
+    // [AH-V2-05B 갱신] 05A는 순서를 건드리지 않았고, 05B에서 운영
+    // urgency 기준으로 재정렬됐다. 9종 집합은 그대로다.
+    test('§14 처리할 일 9종이 우선순위 순서를 따른다', () {
       final rows = _bodyOf(home, '_makeActionRows(BuildContext context');
       const order = [
-        '퇴사 요청', '지원 검토', '마감 필요', '급여 변경 요청', '중간정산 요청',
-        '스케줄 변경 요청', '계약 미발송', '계약 종료 예정', '이체 대기',
+        '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
+        '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 종료 예정',
       ];
       var prev = -1;
       for (final label in order) {

@@ -824,11 +824,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     _buildStateBanner(context, s, theme, up),
                     // [PH1] 준비 미완료 시 운영 섹션보다 먼저 인지되어야 함 (완료 시 자동 숨김)
                     _buildPostingSetupCard(context, s, theme),
+                    // [AH-V2-05B] TODAY → TASK → NEXT.
+                    //   오늘 상황을 본 다음 바로 지금 처리할 일이 오고,
+                    //   다음 운영 준비(향후 인력 부족)가 마지막이다.
+                    //   처리할 일이 0건이어도 이 순서는 고정한다 — Home 위치가
+                    //   매번 달라지면 관리자가 화면을 학습할 수 없다.
                     _buildTodayOps(context, s, theme, up),
                     SizedBox(height: 16 * s),
-                    _buildFutureStaffing(context, s, theme, up), // [PHASE-2D]
-                    SizedBox(height: 16 * s),
                     _buildActionDashboard(context, s, theme, up),
+                    SizedBox(height: 16 * s),
+                    _buildFutureStaffing(context, s, theme, up), // [PHASE-2D]
                     SizedBox(height: 32 * s), // Bottom Nav가 gesture bar padding 내부 처리
                   ],
                 ),
@@ -2056,7 +2061,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           color: color, count: count, available: available, onTap: onTap));
     }
 
-    // 0. 퇴사 요청 — canManageWorkers
+    // 1. 퇴사 요청 — canManageWorkers
     // [AH-V2-02B] 다른 항목과 달리 방치하면 D+3에 시스템이 자동 승인한다.
     //   관리자가 결정하지 않은 것과 못 본 것이 같은 결과를 내므로 최상단에 둔다.
     //   기존 발견 경로는 알림뿐이었고, 경고(D+1·D+2)도 알림이라 함께 사라졌다.
@@ -2100,7 +2105,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 1. 지원 검토 — canManageTo
+    // 2. 지원 검토 — canManageTo
     if (!isSub || up.can((p) => p.canManageTo)) {
       final approval = cs?.actions.approval;
       add(
@@ -2129,80 +2134,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 2. 마감 필요 — canManageWage
-    if (!isSub || up.can((p) => p.canManageWage)) {
-      final unclosed = cs?.actions.unclosed;
-      add(
-        icon: Icons.lock_open_outlined, label: '마감 필요',
-        color: AppColors.error,
-        badge: unclosed?.oldestDate != null ? '가장 오래된: ${unclosed!.oldestDate}' : null,
-        count: unclosed?.count ?? 0, countStr: '${unclosed?.count ?? 0}일',
-        available: unclosed?.available ?? false,
-        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          final changed = await Navigator.push<bool>(context, UnclosedActionQueueScreen.route());
-          if (changed == true && mounted) unawaited(_loadCanonicalSummary());
-        })),
-      );
-    }
-
-    // 2.5 급여 변경 요청 — canManageWage
-    // [AH-V2-02A] 근로자가 보낸 급여 지급주기 변경 요청(payment_change_requests
-    //   status=PENDING). CF·DTO는 이미 집계해 내려보내고 있었고 Home row만 없었다.
-    //   방치하면 effectiveFrom(다음 지급 주기) 전에 처리되지 못한다.
-    if (!isSub || up.can((p) => p.canManageWage)) {
-      final wageChange = cs?.actions.wageChangeRequest;
-      add(
-        icon: Icons.edit_calendar_outlined, label: '급여 변경 요청',
-        color: AppColors.info,
-        count: wageChange?.count ?? 0, countStr: '${wageChange?.count ?? 0}건',
-        available: wageChange?.available ?? false,
-        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!_ensureCanonicalSummary(context)) return;
-          final sec = _canonicalSummary!.actions.wageChangeRequest;
-          if (!sec.available) { _showCanonicalError(context); return; }
-          if (sec.count == 0) return;
-          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
-          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
-          // 변경요청 탭(2) — 급여 첫 화면이 아니라 실제 처리 목록으로 진입
-          await _toPayrollTabDrilldown(
-            context: context, tab: 2, sheetTitle: '급여 변경 요청',
-            bizIds: affectedBiz.map((b) => b.businessId).toList(),
-            countPerBiz: countMap,
-          );
-        })),
-      );
-    }
-
-    // 2.6 중간정산 요청 — canManageWage
-    // [AH-V2-02A] 근로자가 보낸 중간정산 요청(interim_settlement_requests
-    //   status=PENDING). showPendingSettlementOnly는 "홈 진입 시 true"로
-    //   설계돼 있었으나 Home에서 넘기는 곳이 없어 dead parameter였다.
-    if (!isSub || up.can((p) => p.canManageWage)) {
-      final settlement = cs?.actions.settlementRequest;
-      add(
-        icon: Icons.payments_outlined, label: '중간정산 요청',
-        color: AppColors.info,
-        count: settlement?.count ?? 0, countStr: '${settlement?.count ?? 0}건',
-        available: settlement?.available ?? false,
-        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!_ensureCanonicalSummary(context)) return;
-          final sec = _canonicalSummary!.actions.settlementRequest;
-          if (!sec.available) { _showCanonicalError(context); return; }
-          if (sec.count == 0) return;
-          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
-          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
-          // 중간정산 탭(3) + PENDING 전용 필터 — 승인·거절·처리완료 건 제외
-          await _toPayrollTabDrilldown(
-            context: context, tab: 3, sheetTitle: '중간정산 요청',
-            bizIds: affectedBiz.map((b) => b.businessId).toList(),
-            countPerBiz: countMap,
-            showPendingSettlementOnly: true,
-          );
-        })),
-      );
-    }
-
-    // 2.7 스케줄 변경 요청 — canManageWorkers
+    // 3. 스케줄 변경 요청 — canManageWorkers
     // [AH-V2-02C] 지원자가 보낸 휴무/휴무취소/추가근무취소 요청.
     //   서버가 requestedBy == APPLICANT 로 이미 걸러서 내려준다 —
     //   관리자가 보낸 NO_WORK/EXTRA_WORK는 근로자 응답 대기라 여기 없다.
@@ -2245,7 +2177,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 3. 계약 미발송 — canManageContract
+    // 4. 계약 미발송 — canManageContract
     if (!isSub || up.can((p) => p.canManageContract)) {
       final unsent = cs?.actions.unsentContract;
       add(
@@ -2280,7 +2212,109 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 3.5 계약 종료 예정 — canManageContract
+    // 5. 마감 필요 — canManageWage
+    if (!isSub || up.can((p) => p.canManageWage)) {
+      final unclosed = cs?.actions.unclosed;
+      add(
+        icon: Icons.lock_open_outlined, label: '마감 필요',
+        color: AppColors.error,
+        badge: unclosed?.oldestDate != null ? '가장 오래된: ${unclosed!.oldestDate}' : null,
+        count: unclosed?.count ?? 0, countStr: '${unclosed?.count ?? 0}일',
+        available: unclosed?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          final changed = await Navigator.push<bool>(context, UnclosedActionQueueScreen.route());
+          if (changed == true && mounted) unawaited(_loadCanonicalSummary());
+        })),
+      );
+    }
+
+    // 6. 중간정산 요청 — canManageWage
+    // [AH-V2-02A] 근로자가 보낸 중간정산 요청(interim_settlement_requests
+    //   status=PENDING). showPendingSettlementOnly는 "홈 진입 시 true"로
+    //   설계돼 있었으나 Home에서 넘기는 곳이 없어 dead parameter였다.
+    if (!isSub || up.can((p) => p.canManageWage)) {
+      final settlement = cs?.actions.settlementRequest;
+      add(
+        icon: Icons.payments_outlined, label: '중간정산 요청',
+        color: AppColors.info,
+        count: settlement?.count ?? 0, countStr: '${settlement?.count ?? 0}건',
+        available: settlement?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.actions.settlementRequest;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
+          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          // 중간정산 탭(3) + PENDING 전용 필터 — 승인·거절·처리완료 건 제외
+          await _toPayrollTabDrilldown(
+            context: context, tab: 3, sheetTitle: '중간정산 요청',
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap,
+            showPendingSettlementOnly: true,
+          );
+        })),
+      );
+    }
+
+    // 7. 급여 변경 요청 — canManageWage
+    // [AH-V2-02A] 근로자가 보낸 급여 지급주기 변경 요청(payment_change_requests
+    //   status=PENDING). CF·DTO는 이미 집계해 내려보내고 있었고 Home row만 없었다.
+    //   방치하면 effectiveFrom(다음 지급 주기) 전에 처리되지 못한다.
+    if (!isSub || up.can((p) => p.canManageWage)) {
+      final wageChange = cs?.actions.wageChangeRequest;
+      add(
+        icon: Icons.edit_calendar_outlined, label: '급여 변경 요청',
+        color: AppColors.info,
+        count: wageChange?.count ?? 0, countStr: '${wageChange?.count ?? 0}건',
+        available: wageChange?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.actions.wageChangeRequest;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final affectedBiz = sec.byBusiness.where((b) => b.count > 0).toList();
+          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          // 변경요청 탭(2) — 급여 첫 화면이 아니라 실제 처리 목록으로 진입
+          await _toPayrollTabDrilldown(
+            context: context, tab: 2, sheetTitle: '급여 변경 요청',
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap,
+          );
+        })),
+      );
+    }
+
+    // 8. 이체 대기 — canManageWage
+    if (!isSub || up.can((p) => p.canManageWage)) {
+      final wage = cs?.actions.unpaidWage;
+      final wageParts = <String>[];
+      if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
+      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명');
+      // count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산
+      final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
+      add(
+        icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
+        color: AppColors.error, badge: wageParts.isNotEmpty ? wageParts.join(' · ') : null,
+        count: wageTotal, countStr: '$wageTotal건',
+        available: wage?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!_ensureCanonicalSummary(context)) return;
+          final w = _canonicalSummary!.actions.unpaidWage;
+          if (!w.available) { _showCanonicalError(context); return; }
+          if (w.count == 0 && w.missingDueDateCount == 0) return;
+          final affectedBiz = w.byBusiness.where((b) => b.count > 0 || b.missingDueDateCount > 0).toList();
+          final countMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.count};
+          final missingMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.missingDueDateCount};
+          await _toPayrollTabDrilldown(
+            context: context, tab: 0, sheetTitle: '이체 대기',
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap, showAllOutstanding: true,
+            secondaryLabel: '지급일 확인 필요', secondaryCountPerBiz: missingMap,
+          );
+        })),
+      );
+    // 9. 계약 종료 예정 — canManageContract
     // [GAP-CONTRACT-EXPIRING-UI-01 FIX] ExpiringContractsScreen 진입점 추가
     // 홈 upcoming.expiringContract 데이터가 계산되지만 UI 진입 경로가 없었던 P2 갭 수정
     if (!isSub || up.can((p) => p.canManageContract)) {
@@ -2322,35 +2356,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 4. 이체 대기 — canManageWage
-    if (!isSub || up.can((p) => p.canManageWage)) {
-      final wage = cs?.actions.unpaidWage;
-      final wageParts = <String>[];
-      if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
-      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명');
-      // count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산
-      final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
-      add(
-        icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
-        color: AppColors.error, badge: wageParts.isNotEmpty ? wageParts.join(' · ') : null,
-        count: wageTotal, countStr: '$wageTotal건',
-        available: wage?.available ?? false,
-        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!_ensureCanonicalSummary(context)) return;
-          final w = _canonicalSummary!.actions.unpaidWage;
-          if (!w.available) { _showCanonicalError(context); return; }
-          if (w.count == 0 && w.missingDueDateCount == 0) return;
-          final affectedBiz = w.byBusiness.where((b) => b.count > 0 || b.missingDueDateCount > 0).toList();
-          final countMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.count};
-          final missingMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.missingDueDateCount};
-          await _toPayrollTabDrilldown(
-            context: context, tab: 0, sheetTitle: '이체 대기',
-            bizIds: affectedBiz.map((b) => b.businessId).toList(),
-            countPerBiz: countMap, showAllOutstanding: true,
-            secondaryLabel: '지급일 확인 필요', secondaryCountPerBiz: missingMap,
-          );
-        })),
-      );
     }
 
     return result;

@@ -386,7 +386,8 @@ void main() {
       var prev = -1;
       for (final m in [
         '_buildHeader(', '_buildStateBanner(', '_buildPostingSetupCard(',
-        '_buildTodayOps(', '_buildFutureStaffing(', '_buildActionDashboard(',
+        // [AH-V2-05B] TODAY → TASK → NEXT
+        '_buildTodayOps(', '_buildActionDashboard(', '_buildFutureStaffing(',
       ]) {
         final at = b.indexOf(m);
         expect(at, greaterThan(prev));

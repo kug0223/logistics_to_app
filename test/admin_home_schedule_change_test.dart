@@ -316,12 +316,16 @@ void main() {
   });
 
   group('AH-V2-02C 우선순위·인덱스·비용', () {
-    test('스케줄 변경이 중간정산 뒤, 계약 미발송 앞이다', () {
-      final settle = rows.indexOf("label: '중간정산 요청'");
+    // [AH-V2-05B 갱신] 스케줄 변경 요청은 근무일이 지나면 처리 의미가
+    //   사라지므로, 근무 후 정산 계열(마감·중간정산)보다 앞으로 올라갔다.
+    test('스케줄 변경이 지원 검토 뒤, 계약 미발송 앞이다', () {
+      final approval = rows.indexOf("label: '지원 검토'");
       final sched = rows.indexOf("label: '스케줄 변경 요청'");
       final unsent = rows.indexOf("label: '계약 미발송'");
-      expect(sched, greaterThan(settle));
+      final settle = rows.indexOf("label: '중간정산 요청'");
+      expect(sched, greaterThan(approval));
       expect(unsent, greaterThan(sched));
+      expect(settle, greaterThan(sched), reason: '근무 후 정산보다 앞');
     });
 
     test('필요한 복합 인덱스를 추가했다', () {
@@ -360,10 +364,11 @@ void main() {
       }
     });
 
-    test('기존 row 상대 순서가 유지된다', () {
+    // [AH-V2-05B 갱신] 운영 urgency 기준으로 재정렬됐다.
+    test('기존 row가 새 우선순위 순서를 따른다', () {
       final order = [
-        '퇴사 요청', '지원 검토', '마감 필요', '급여 변경 요청', '중간정산 요청',
-        '계약 미발송', '계약 종료 예정', '이체 대기',
+        '퇴사 요청', '지원 검토', '계약 미발송', '마감 필요', '중간정산 요청',
+        '급여 변경 요청', '이체 대기', '계약 종료 예정',
       ];
       var prev = -1;
       for (final label in order) {

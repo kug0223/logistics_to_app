@@ -300,9 +300,10 @@ void main() {
         '_buildHeader(',
         '_buildStateBanner(',
         '_buildPostingSetupCard(',
+        // [AH-V2-05B] TODAY → TASK → NEXT
         '_buildTodayOps(',
-        '_buildFutureStaffing(',
         '_buildActionDashboard(',
+        '_buildFutureStaffing(',
       ];
       var prev = -1;
       for (final m in order) {
