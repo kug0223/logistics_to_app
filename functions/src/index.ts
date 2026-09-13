@@ -17782,6 +17782,172 @@ export const callableRecalculateTOStats = onCall(
   }
 );
 
+// ── [POSTING-V2-01C.1] 삭제 관계 guard ───────────────────────────────────────
+//
+// 정책(MODEL B): 공고/날짜에 외부 관계가 **한 번도** 생기지 않았을 때만 삭제할 수 있다.
+// 관계가 생긴 뒤에는 삭제가 아니라 모집 마감(callableCloseTOManually /
+// callableCloseSlots)으로 운영하고 기록은 남긴다.
+//
+// status allowlist를 쓰지 않는 이유:
+//   REJECTED / CANCELED / AUTO_CANCELED / EXPIRED 도 "이 사람과 이 공고가 한 번
+//   연결됐다"는 기록이다. 그리고 삭제 안전성이 application status enum의 변화에
+//   의존하면, 새 status가 추가될 때마다 guard에 구멍이 생긴다.
+//   → application 문서의 **존재 자체**가 canonical 기준이다.
+//
+// attendance / schedule_change_requests 를 직접 질의하지 않는 이유:
+//   두 컬렉션 모두 toId·slotId 필드가 없고 applicationId로만 공고에 연결된다.
+//   (attendance 문서 id = `${applicationId}_${yyyyMMdd}`)
+//   즉 application 없이는 생성될 수 없고, 이 프로젝트의 어떤 경로도 application을
+//   물리 삭제하지 않는다(삭제·탈퇴 모두 status 업데이트). 따라서 application 존재
+//   검사가 두 관계를 전이적으로 포함한다. workDate만으로 질의하면 같은 날짜의
+//   **다른 공고** 기록까지 걸리므로 그 방향은 쓰지 않는다.
+//
+// employment_contracts 는 toId를 직접 가지므로 별도로 확인한다 — application이
+// 외부 요인으로 유실된 legacy 상태에서도 계약 기록이 관계 성립을 증명한다.
+
+// 관계 확인 결과. blocked면 삭제 불가, reason은 메시지 분기·로그용.
+type RelationCheck = {blocked: boolean; reason: string};
+
+/**
+ * [POSTING-V2-01C.1] TO 전체에 연결된 관계가 하나라도 있는지 확인한다.
+ * lifecycle status(DRAFT/SCHEDULED/ACTIVE/FULL/CLOSED/EXPIRED)와 무관하게 동일 적용.
+ * 질의 실패는 관계 0으로 보지 않고 차단한다 — destructive라 fail-closed.
+ * @param {string} toId 대상 공고 id
+ * @param {string} businessId 교차검증된 사업장 id
+ * @return {Promise<RelationCheck>} blocked=true면 삭제 불가
+ */
+async function assertNoPostingRelations(
+  toId: string,
+  businessId: string,
+): Promise<RelationCheck> {
+  try {
+    const [appSnap, contractSnap] = await Promise.all([
+      // status 필터 없음 — 문서 존재 자체가 관계다
+      db.collection("applications")
+        .where("toId", "==", toId)
+        .where("businessId", "==", businessId)
+        .limit(1)
+        .get(),
+      db.collection("employment_contracts")
+        .where("toId", "==", toId)
+        .limit(1)
+        .get(),
+    ]);
+    if (!appSnap.empty) return {blocked: true, reason: "APPLICATION_EXISTS"};
+    if (!contractSnap.empty) return {blocked: true, reason: "CONTRACT_EXISTS"};
+    return {blocked: false, reason: ""};
+  } catch (e) {
+    console.error(`[deleteGuard] 관계 확인 실패 (toId=${toId}):`, e);
+    // ERROR != ZERO 보다 강한 fail-closed: 확인 못 했으면 지우지 않는다
+    return {blocked: true, reason: "RELATION_CHECK_FAILED"};
+  }
+}
+
+/**
+ * TO 삭제 차단 메시지 — 다음 행동(공고 종료)을 함께 안내한다.
+ * @param {string} reason assertNoPostingRelations가 반환한 사유
+ * @return {string} 사용자에게 보여줄 메시지
+ */
+function postingRelationBlockMessage(reason: string): string {
+  if (reason === "RELATION_CHECK_FAILED") {
+    return "지원·근무 기록을 확인하지 못해 삭제할 수 없습니다. 잠시 후 다시 시도해주세요.";
+  }
+  return "이 공고에는 지원·초대·근무 기록이 있어 삭제할 수 없습니다. " +
+    "모집을 중단하려면 공고 종료를 이용해주세요.";
+}
+
+/**
+ * Timestamp → KST 'yyyy-MM-dd' (employment_contracts.workDate 포맷).
+ * @param {admin.firestore.Timestamp} ts 변환할 시각
+ * @return {string} KST 기준 날짜 키
+ */
+function kstDateKey(ts: admin.firestore.Timestamp): string {
+  const kst = new Date(ts.toMillis() + 9 * 60 * 60 * 1000);
+  return `${kst.getUTCFullYear()}-` +
+    `${String(kst.getUTCMonth() + 1).padStart(2, "0")}-` +
+    `${String(kst.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * [POSTING-V2-01C.1] 선택한 슬롯들에 연결된 관계가 있는지 확인한다.
+ * 하나라도 걸리면 요청 전체를 차단한다 — 부분 삭제는 하지 않는다.
+ *
+ * application은 slotId로 정확히 연결한다. workDate만으로 질의하면 같은 날짜의
+ * 다른 슬롯·다른 공고 지원서까지 섞이므로 쓰지 않는다.
+ * contract는 slotId가 없어 toId로 모아 슬롯 날짜(KST)와 대조한다.
+ * @param {string} toId 대상 공고 id
+ * @param {string} businessId 교차검증된 사업장 id
+ * @param {string[]} slotIds 삭제 요청된 슬롯 id 목록
+ * @param {admin.firestore.DocumentSnapshot[]} slotSnaps 호출자가 이미 읽은 슬롯 문서
+ * @return {Promise<RelationCheck>} blocked=true면 삭제 불가
+ */
+async function assertNoSlotRelations(
+  toId: string,
+  businessId: string,
+  slotIds: string[],
+  slotSnaps: admin.firestore.DocumentSnapshot[],
+): Promise<RelationCheck> {
+  try {
+    // 1. 선택 슬롯의 지원서 — status 필터 없음, 문서 존재 자체가 관계
+    const appSnaps = await Promise.all(
+      slotIds.map((slotId) =>
+        db.collection("applications")
+          .where("toId", "==", toId)
+          .where("businessId", "==", businessId)
+          .where("slotId", "==", slotId)
+          .limit(1)
+          .get()
+      )
+    );
+    if (appSnaps.some((s) => !s.empty)) {
+      return {blocked: true, reason: "APPLICATION_EXISTS"};
+    }
+
+    // 2. 계약 — slotId가 없으므로 toId로 모아 슬롯 날짜와 대조
+    const CONTRACT_SCAN_LIMIT = 300;
+    const contractSnap = await db.collection("employment_contracts")
+      .where("toId", "==", toId)
+      .limit(CONTRACT_SCAN_LIMIT)
+      .get();
+    if (contractSnap.size >= CONTRACT_SCAN_LIMIT) {
+      // 전수 확인 불가 — 이만큼 계약이 있는 공고의 날짜를 지우게 두지 않는다
+      return {blocked: true, reason: "CONTRACT_SCAN_TRUNCATED"};
+    }
+    if (!contractSnap.empty) {
+      const targetDates = new Set<string>();
+      for (const snap of slotSnaps) {
+        if (!snap.exists) continue;
+        const d = snap.data()?.date as admin.firestore.Timestamp | undefined;
+        if (d?.toMillis) targetDates.add(kstDateKey(d));
+      }
+      for (const doc of contractSnap.docs) {
+        const wd = doc.data().workDate as string | undefined;
+        if (wd && targetDates.has(wd)) {
+          return {blocked: true, reason: "CONTRACT_EXISTS"};
+        }
+      }
+    }
+
+    return {blocked: false, reason: ""};
+  } catch (e) {
+    console.error(`[deleteGuard] 슬롯 관계 확인 실패 (toId=${toId}):`, e);
+    return {blocked: true, reason: "RELATION_CHECK_FAILED"};
+  }
+}
+
+/**
+ * 슬롯 삭제 차단 메시지 — 다음 행동(날짜 종료)을 함께 안내한다.
+ * @param {string} reason assertNoSlotRelations가 반환한 사유
+ * @return {string} 사용자에게 보여줄 메시지
+ */
+function slotRelationBlockMessage(reason: string): string {
+  if (reason === "RELATION_CHECK_FAILED") {
+    return "지원·근무 기록을 확인하지 못해 삭제할 수 없습니다. 잠시 후 다시 시도해주세요.";
+  }
+  return "선택한 날짜에 지원 또는 근무 기록이 있어 삭제할 수 없습니다. " +
+    "해당 날짜의 모집을 중단하려면 날짜 종료를 이용해주세요.";
+}
+
 // ─── 11. callableDeleteTO ─────────────────────────────────────────────────────
 export const callableDeleteTO = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -17810,23 +17976,22 @@ export const callableDeleteTO = onCall(
       if (!memberPerms.canManageTo) throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
     }
 
-    // [M-3-FIX] CONFIRMED 근로자 있는 ACTIVE/FULL TO 삭제 차단 — 실근무 중 계약 강제 취소 방지
-    const toStatus = toData.status as string | undefined;
-    if (toStatus === "ACTIVE" || toStatus === "FULL") {
-      const confirmedCheckSnap = await db.collection("applications")
-        .where("toId", "==", toId)
-        .where("businessId", "==", businessId)
-        .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-        .limit(1)
-        .get();
-      if (!confirmedCheckSnap.empty) {
-        throw new HttpsError(
-          "failed-precondition",
-          "확정된 근로자가 있는 공고는 삭제할 수 없습니다. 먼저 계약 해지 처리 후 삭제하세요."
-        );
-      }
+    // [POSTING-V2-01C.1] 관계 guard — 모든 write 이전에 완료된다.
+    // 이전 계약: status ∈ {ACTIVE, FULL} 이고 CONFIRMED/CONTRACT_PENDING 존재 시에만 차단.
+    //   → CLOSED/EXPIRED는 확정 근로자가 있어도 통과했고,
+    //     PENDING/INVITED/과거 REJECTED 기록은 어느 상태에서도 보호되지 않았다.
+    //     그리고 전 슬롯을 callableDeleteSlots로 먼저 지우면 이 guard가 무력화됐다.
+    // 새 계약: lifecycle status와 무관하게 관계가 하나라도 있으면 차단.
+    const toRelation = await assertNoPostingRelations(toId, businessId);
+    if (toRelation.blocked) {
+      throw new HttpsError(
+        "failed-precondition",
+        postingRelationBlockMessage(toRelation.reason)
+      );
     }
 
+    // 이 지점 이후에만 mutation이 일어난다. 관계가 0으로 확인됐으므로 아래
+    // application 처리 루프의 대상 문서는 0건이다(코드는 방어적으로 유지).
     const ACTIVE_STATUSES = ["PENDING", "CONFIRMED", "CONTRACT_PENDING"];
     const now = Timestamp.now();
 
@@ -18492,6 +18657,22 @@ export const callableDeleteSlots = onCall(
       );
       removedConfirmed += Number(d.confirmedCount) || 0;
       // [SLOT-002] removedPending은 stale pendingCount 대신 실제 쿼리 결과에서 계산 (아래에서 설정)
+    }
+
+    // [POSTING-V2-01C.1] 관계 guard — 여기까지는 전부 read이고, 아래부터 write가 시작된다.
+    // 이전에는 guard가 아예 없어 확정 근로자까지 REJECTED 처리하고 슬롯 문서를
+    // 물리 삭제했다. 슬롯 문서는 workDetails(업무·시간·급여·휴게·세금유형)를 담은
+    // 근로조건 원본이고 wage_confirm_dialog / WorkDetailTimeService /
+    // loadTOWorkDetails가 조회하므로, 지우면 급여 산정 근거가 사라진다.
+    // 선택 슬롯 중 하나라도 관계가 있으면 요청 전체를 차단한다 — 부분 삭제 없음.
+    const slotRelation = await assertNoSlotRelations(
+      toId, toBusinessId, slotIds, slotSnaps
+    );
+    if (slotRelation.blocked) {
+      throw new HttpsError(
+        "failed-precondition",
+        slotRelationBlockMessage(slotRelation.reason)
+      );
     }
 
     // 활성 지원서 조회 (slotId별 병렬)
