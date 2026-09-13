@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
+import '../../../models/core/work_detail_data.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../services/member_service.dart';
 import '../../../providers/user_provider.dart';
@@ -18,8 +19,16 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 ///
 /// ## 일반 모드 (general mode)
 /// TOGroupCard 메뉴 → [인력 초대] 에서 진입.
-/// - 단기 TO: 슬롯 날짜 선택 후 근무 제안
-/// - 장기 TO: 시작일 + 종료일 지정 후 근무 제안
+/// - 단기 TO: 슬롯 날짜 선택 → 업무(시간대) 선택 후 근무 제안
+/// - 장기 TO: 시작일 + 종료일 지정 → 업무(시간대) 선택 후 근무 제안
+///
+/// ## [POSTING-V2-01A] workDetail identity 필수
+/// 일반 모드도 contextual 모드와 동일하게
+/// `selectedWorkType` + `workDetailStartTime` + `workDetailEndTime`를 전송한다.
+/// 이 3개가 없으면 서버(callableInviteWorker)가 exact workDetail resolve 블록을
+/// 통째로 건너뛰어 wdId / wage / wageType 없는 Application이 생성되고,
+/// 수락 시 업무별 capacity 재검증도 skip된다.
+/// 따라서 업무를 선택하지 않으면 발송 자체를 막는다 — 임의 첫 번째 선택 금지.
 ///
 /// ## 컨텍스트 모드 (contextual mode) — [Phase 8.1B.3]
 /// DayApplicantsDialog → [인력 초대] → [직접 초대] 에서 진입.
@@ -122,6 +131,10 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
   DateTime? _startDate;
   DateTime? _endDate;
 
+  // [POSTING-V2-01A] 선택된 업무(workDetail) key — WorkDetailData.id
+  // ('${workType}_${startTime}_$endTime'). 일반 모드 전용.
+  String? _selectedWorkDetailKey;
+
   // 컨텍스트 모드에서는 항상 단기(슬롯 있는) 케이스
   bool get _isLong => widget.isContextualMode
       ? false
@@ -146,6 +159,47 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
     return dates.map((d) => (date: d, slotId: null)).toList();
   }
 
+  // ── [POSTING-V2-01A] 업무(workDetail) 후보 ───────────────────────
+  //
+  // 서버 callableInviteWorker 5.5 블록의 canonical source와 동일한 우선순위를 쓴다:
+  //   slotId 있음 → slot.workDetails, 비어 있으면 TO.workDetails
+  //   slotId 없음(장기) → TO.workDetails
+  // 추가 Firestore 조회를 하지 않는다 — 목록 로드 시 이미 확보된 데이터만 사용.
+  List<WorkDetailData> get _workDetailOptions {
+    final gi = widget.groupItem;
+    if (gi == null) return const [];
+    if (!_isLong && _selectedSlotId != null) {
+      final matched = gi.groupTOs
+          .where((t) => t.slot?.id == _selectedSlotId)
+          .firstOrNull;
+      final slotWds = matched?.slot?.workDetails ?? const <WorkDetailData>[];
+      if (slotWds.isNotEmpty) return slotWds;
+    }
+    return gi.masterTO.workDetails;
+  }
+
+  /// 현재 선택된 workDetail. 미선택이거나 후보에서 사라졌으면 null.
+  WorkDetailData? get _selectedWorkDetail {
+    final key = _selectedWorkDetailKey;
+    if (key == null) return null;
+    return _workDetailOptions.where((w) => w.id == key).firstOrNull;
+  }
+
+  /// 날짜(=슬롯)가 바뀌면 업무 후보 집합 자체가 달라지므로 선택을 초기화한다.
+  /// 단, 후보가 정확히 1개면 선택의 여지가 없으므로 그것으로 확정한다
+  /// (임의 first-match가 아니라 유일 후보 — 화면에도 선택된 상태로 보인다).
+  void _syncWorkDetailSelection() {
+    final options = _workDetailOptions;
+    if (options.length == 1) {
+      _selectedWorkDetailKey = options.first.id;
+      return;
+    }
+    if (_selectedWorkDetailKey != null &&
+        !options.any((w) => w.id == _selectedWorkDetailKey)) {
+      _selectedWorkDetailKey = null;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -157,6 +211,9 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       _startDate = toStart.isAfter(today) ? toStart : today;
       _endDate = to.rangeEnd ?? to.postingExpiryDate;
     }
+    // [POSTING-V2-01A] 장기는 후보가 고정이라 여기서 1회 확정 가능.
+    // 단기는 날짜(슬롯) 선택 시점에 _syncWorkDetailSelection()을 다시 호출한다.
+    if (!widget.isContextualMode) _syncWorkDetailSelection();
   }
 
   @override
@@ -232,8 +289,11 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
 
   bool get _canSend {
     if (_found == null || _sending) return false;
-    // 컨텍스트 모드: date pre-filled → 날짜 선택 불필요
+    // 컨텍스트 모드: date/workDetail pre-filled → 재선택 불필요
     if (widget.isContextualMode) return true;
+    // [POSTING-V2-01A] 업무(workDetail)가 확정되지 않으면 발송 금지.
+    // 서버가 workType만으로 임의 resolve하지 않도록 클라이언트에서 먼저 막는다.
+    if (_selectedWorkDetail == null) return false;
     if (_isLong) return _startDate != null && _endDate != null;
     return _selectedDate != null;
   }
@@ -247,6 +307,16 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       final adminUid = up.currentUser?.uid;
       if (adminUid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
+        return;
+      }
+
+      // [POSTING-V2-01A] 일반 모드 fail-closed:
+      // workDetail이 확정되지 않은 초대는 보내지 않는다. wage/wdId 없는
+      // Application이 생성되면 급여 기준액이 0으로 떨어진다.
+      final generalWd =
+          widget.isContextualMode ? null : _selectedWorkDetail;
+      if (!widget.isContextualMode && generalWd == null) {
+        ToastHelper.showWarning('초대할 업무를 선택해주세요');
         return;
       }
 
@@ -278,10 +348,18 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
         } else if (!_isLong) ...{
           'workDate': _selectedDate!.toIso8601String(),
           if (_selectedSlotId != null) 'slotId': _selectedSlotId,
+          // [POSTING-V2-01A] contextual 모드와 동일한 3중 매칭 payload
+          'selectedWorkType': generalWd!.workType,
+          'workDetailStartTime': generalWd.startTime,
+          'workDetailEndTime': generalWd.endTime,
         } else ...{
           'workDate': _startDate!.toIso8601String(),
           'workEndDate': _endDate!.toIso8601String(),
           'workDays': widget.groupItem!.masterTO.workDays,
+          // [POSTING-V2-01A] 장기도 동일 — TO.workDetails 기준 exact resolve
+          'selectedWorkType': generalWd!.workType,
+          'workDetailStartTime': generalWd.startTime,
+          'workDetailEndTime': generalWd.endTime,
         },
       });
 
@@ -386,6 +464,12 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                     _isLong
                         ? _buildLongTermDateSection(theme, s)
                         : _buildShortTermSlotSection(theme, s),
+                    // [POSTING-V2-01A] 업무(시간대) 선택 — 단기는 날짜 확정 후 표시.
+                    // 날짜에 따라 슬롯 workDetails가 달라지므로 순서를 지킨다.
+                    if (_isLong || _selectedDate != null) ...[
+                      SizedBox(height: 12 * s),
+                      _buildWorkDetailSection(theme, s),
+                    ],
                   ],
                 ],
               ),
@@ -661,6 +745,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                       : () => setState(() {
                             _selectedDate = entry.date;
                             _selectedSlotId = entry.slotId;
+                            // [POSTING-V2-01A] 슬롯이 바뀌면 업무 후보 집합도 바뀐다
+                            _syncWorkDetailSelection();
                           }),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
@@ -686,6 +772,118 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                             fontWeight: isSelected
                                 ? FontWeight.w600
                                 : FontWeight.normal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── [POSTING-V2-01A] 업무(시간대) 선택 ──────────────────────────
+  //
+  // 같은 workType이 시간대별로 여러 개일 수 있으므로 workType만으로 고르지 않는다.
+  // 후보가 1개면 유일 후보로 확정 표시, 2개 이상이면 명시적 선택을 요구한다.
+  Widget _buildWorkDetailSection(ThemeData theme, double s) {
+    final options = _workDetailOptions;
+    return Container(
+      decoration: CommonWidgets.compactCardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(14 * s, 12 * s, 14 * s, 8 * s),
+            child: Row(
+              children: [
+                Icon(Icons.work_outline,
+                    size: ResponsiveHelper.iconSize(context, 14),
+                    color: AppColors.grey500),
+                SizedBox(width: 6 * s),
+                Expanded(
+                  child: Text(
+                    options.length > 1 ? '초대할 업무 선택' : '초대할 업무',
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.grey700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (options.isEmpty)
+            Padding(
+              padding: EdgeInsets.fromLTRB(14 * s, 0, 14 * s, 12 * s),
+              child: Text(
+                '업무 정보를 불러오지 못했습니다.\n공고를 새로고침한 뒤 다시 시도해주세요.',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.error),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: options.length,
+              separatorBuilder: (_, __) =>
+                  Divider(height: 1, indent: 14 * s, endIndent: 14 * s),
+              itemBuilder: (_, i) {
+                final wd = options[i];
+                final isSelected = _selectedWorkDetailKey == wd.id;
+                return InkWell(
+                  onTap: _sending
+                      ? null
+                      : () =>
+                          setState(() => _selectedWorkDetailKey = wd.id),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 14 * s, vertical: 10 * s),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isSelected
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          color: isSelected
+                              ? theme.primaryColor
+                              : AppColors.grey400,
+                          size: ResponsiveHelper.iconSize(context, 18),
+                        ),
+                        SizedBox(width: 10 * s),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                wd.workType,
+                                style: ResponsiveHelper.bodyStyle(context)
+                                    .copyWith(
+                                  color: isSelected
+                                      ? theme.primaryColor
+                                      : AppColors.grey800,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              SizedBox(height: 2 * s),
+                              Text(
+                                '${wd.startTime} ~ ${wd.endTime}'
+                                '  ·  ${wd.wageTypeLabel} '
+                                '${FormatHelper.formatWage(wd.wage)}',
+                                style: ResponsiveHelper.tinyStyle(context,
+                                    color: AppColors.grey500),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
                         ),
                       ],
