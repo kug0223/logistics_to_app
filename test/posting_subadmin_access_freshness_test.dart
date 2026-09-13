@@ -159,9 +159,10 @@ void main() {
           true, reason: 'listener가 map을 갱신하지 않으면 02G.1 회귀가 남는다');
       expect(body.contains('_setBusinessPermission(businessId, null);'), true,
           reason: '문서 삭제 시 map에서도 빠져야 한다');
-      // 기존 selected-business 제거 동작 보존
-      expect(body.contains('_isAdminMode = false;'), true);
+      // in-flight switch 무효화는 그대로
       expect(body.contains('_switchGeneration++;'), true);
+      // [C2] 관리자 모드 종료는 listener가 단독으로 결정하지 않는다
+      expect(body.contains('_recoverFromSelectedMembershipLoss(businessId)'), true);
     });
 
     test('01-e 새 listener도 새 read도 없다 (§1 조건)', () {
@@ -258,8 +259,8 @@ void main() {
           true);
       // 새 선택 사업장으로 listener를 옮긴다
       expect(
-          body.contains(
-              'if (active != null && _memberPermsSub == null) { _startMemberPermsListener(active, uid); }'),
+          body.contains('if (active != null && _memberPermsSub == null) { '
+              '_startMemberPermsListener(active, uid);'),
           true);
     });
 
@@ -342,13 +343,18 @@ void main() {
           _bodyOf(_src(_createToPath), 'Future<void> _loadMyBusinesses(')));
       expect(
           body.contains(
-              'if (userProvider.isSubAdmin) { await userProvider.refreshSubAdminAccessState();'),
+              'if (refreshAccess && userProvider.isSubAdmin) { await userProvider.refreshSubAdminAccessState();'),
           true);
       expect('refreshSubAdminAccessState'.allMatches(body).length, 1,
           reason: '중복 refresh');
+      // provider가 이미 아는 변화로 재로드할 때는 refresh를 건너뛴다
+      expect(
+          _flat(_codeOf(_src(_createToPath)))
+              .contains('_loadMyBusinesses(refreshAccess: false)'),
+          true);
     });
 
-    test('05-e refresh 호출 지점이 넷뿐이다', () {
+    test('05-e refresh 호출 지점이 정해진 넷뿐이다', () {
       var hits = 0;
       for (final f in Directory('lib')
           .listSync(recursive: true)
@@ -358,8 +364,8 @@ void main() {
         if (f.path.endsWith('user_provider.dart')) continue; // 정의 측 제외
         hits += 'refreshSubAdminAccessState()'.allMatches(code).length;
       }
-      expect(hits, 3,
-          reason: 'pull/retry(공유) 1 + resume 1 + CreateTO 1 — 무분별한 추가 금지');
+      // pull/retry(공유) 1 + resume 1 + CreateTO 진입 1 + CreateTO submit preflight 1
+      expect(hits, 4, reason: '무분별한 refresh 추가 금지');
     });
   });
 
@@ -450,6 +456,194 @@ void main() {
       final a = _Access(assigned: ['A', 'B'], map: {'A': _manage, 'B': _manage});
       a.refresh(['A', 'B'], {'A': _noManage, 'B': _noManage});
       expect(a.canManagePostingAnywhere, false);
+    });
+  });
+
+  // ── BLOCKER 1: selected membership ≠ 관리자 자격 ───────────────
+  group('FRESH-09 선택 사업장 하나를 잃어도 다른 배정이 남으면 유지한다', () {
+    /// 복구 판정 replica — refresh 실패까지 고려해 잃은 사업장만 제외한다.
+    bool endsAdminMode(List<String> assignedAfter, String lost) =>
+        assignedAfter.where((id) => id != lost).isEmpty;
+
+    test('09-a assigned [A,B] · selected B 회수 → 관리자 모드 유지', () {
+      expect(endsAdminMode(['A'], 'B'), false);
+      final a = _Access(assigned: ['A', 'B'], map: {'A': _manage, 'B': _manage});
+      a.setBusinessPermission('B', null); // listener delete
+      a.refresh(['A'], {'A': _manage}); // 복구
+      expect(a.assigned, ['A']);
+      expect(a.canManagePostingAnywhere, true, reason: 'A 관리 권한은 그대로다');
+      expect(a.postingScope, ['A']);
+      expect(a.createToPicker, ['A']);
+      expect(a.canForBusiness('B', (p) => p.canManageTo), false);
+    });
+
+    test('09-b assigned [B] 하나뿐 · B 회수 → 관리자 모드 종료', () {
+      expect(endsAdminMode(const [], 'B'), true);
+    });
+
+    test('09-c 배정 조회 실패해도 잃은 사업장은 제외하고 판단한다', () {
+      // refresh가 실패해 stale 목록 [A,B]가 남아도 B는 확실히 잃었다.
+      expect(endsAdminMode(['A', 'B'], 'B'), false, reason: 'A가 남아 유지');
+      expect(endsAdminMode(['B'], 'B'), true, reason: '잃은 것뿐이면 종료');
+    });
+
+    test('09-d listener가 즉시 종료하지 않고 최신 배정을 확인한다', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _startMemberPermsListener(')));
+      expect(body.contains('_recoverFromSelectedMembershipLoss(businessId)'), true);
+      // 무조건 종료하던 코드가 남아 있으면 안 된다
+      expect(
+          body.contains('if (_isAdminMode) { _isAdminMode = false; '
+              '_permissionsLoaded = false;'),
+          false,
+          reason: '다중 배정 SubAdmin이 남은 사업장까지 잃는다');
+    });
+
+    test('09-e 복구 판정이 잃은 사업장만 제외한다', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_providerPath), 'Future<void> _recoverFromSelectedMembershipLoss(')));
+      expect(body.contains('await refreshSubAdminAccessState();'), true);
+      expect(
+          body.contains(
+              'user.subAdminBusinessIds.where((id) => id != lostBusinessId).toList();'),
+          true);
+      expect(body.contains('if (remaining.isEmpty) { _endAdminMode(); return; }'),
+          true);
+    });
+
+    test('09-f 종료 경로는 기존 SM-05 정리 패턴 그대로다', () {
+      final body =
+          _flat(_codeOf(_bodyOf(_src(_providerPath), 'void _endAdminMode(')));
+      expect(body.contains('_isAdminMode = false;'), true);
+      expect(body.contains('_permissionsLoaded = false;'), true);
+      expect(body.contains('FCMService().updateAdminStatus(false);'), true);
+      expect(body.contains('prefs.setBool(_kSubAdminIsAdminModeKey, false);'), true);
+    });
+
+    test('09-g 새 selected는 기존 canonical resolver가 정한다 (§4)', () {
+      // effectiveBusinessId: 유효하면 유지, 아니면 첫 배정. 새 정책을 만들지 않았다.
+      final getter =
+          _flat(_codeOf(_bodyOf(_src(_providerPath), 'String? get effectiveBusinessId')));
+      expect(getter.contains('if (selected != null && user.subAdminBusinessIds.contains(selected))'),
+          true);
+      expect(getter.contains('return user.subAdminBusinessIds.firstOrNull;'), true);
+      final refresh = _flat(_codeOf(_bodyOf(
+          _src(_providerPath), 'Future<void> _runSubAdminAccessRefresh(')));
+      expect(refresh.contains('final active = effectiveBusinessId;'), true,
+          reason: '별도 ordering 정책을 만들면 안 된다');
+      expect(refresh.contains('ids.first'), false);
+    });
+
+    test('09-h listener를 새 selected로 옮기고 저장값도 정렬한다 (§5)', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_providerPath), 'Future<void> _runSubAdminAccessRefresh(')));
+      expect(
+          body.contains('if (active != null && _memberPermsSub == null) { '
+              '_startMemberPermsListener(active, uid);'),
+          true);
+      expect(body.contains('prefs.setString(_kSubAdminLastBizKey, active);'), true);
+      // 중복 구독 방지: 연결 전 cancel은 listener 정의에 그대로 있다
+      final listener = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'void _startMemberPermsListener(')));
+      expect(listener.contains('_memberPermsSub?.cancel();'), true);
+    });
+  });
+
+  // ── BLOCKER 2: 이미 열린 CreateTO ───────────────────────────────
+  group('FRESH-10 열린 CreateTO가 접근 변화를 반영한다', () {
+    test('10-a provider 변경을 구독한다', () {
+      final code = _flat(_codeOf(_src(_createToPath)));
+      expect(
+          code.contains('_accessProvider = Provider.of<UserProvider>(context, listen: false) '
+              '..addListener(_onAccessStateChanged);'),
+          true);
+      expect(code.contains('_accessProvider?.removeListener(_onAccessStateChanged);'),
+          true, reason: 'listener 누수');
+    });
+
+    test('10-b 실제 eligibility 변화에만 반응한다', () {
+      final body = _flat(
+          _codeOf(_bodyOf(_src(_createToPath), 'void _onAccessStateChanged(')));
+      expect(body.contains('if (setEquals(eligible, _eligibleBusinessIds)) return;'),
+          true, reason: '매 notify마다 재로드하면 안 된다');
+      expect(body.contains('_loadMyBusinesses(refreshAccess: false);'), true,
+          reason: 'provider가 이미 아는 변화에 access refresh를 또 돌리면 안 된다');
+    });
+
+    test('10-c 선택한 사업장이 자격을 잃으면 폼을 잠근다', () {
+      final body = _flat(
+          _codeOf(_bodyOf(_src(_createToPath), 'void _onAccessStateChanged(')));
+      expect(body.contains('_formUnlocked = false; _selectedBusiness = null;'), true,
+          reason: '일방향 래치 때문에 무효한 선택으로 입력을 계속하게 된다');
+      expect(body.contains("ToastHelper.showError('선택한 사업장의 공고 관리 권한이 변경되었습니다')"),
+          true);
+    });
+
+    test('10-d eligibility는 membership ∩ canManageTo로 계산한다', () {
+      final body = _flat(
+          _codeOf(_bodyOf(_src(_createToPath), 'Set<String> _computeEligible(')));
+      expect(body.contains('up.currentUser?.subAdminBusinessIds'), true);
+      expect(body.contains('up.canForBusiness(id, (p) => p.canManageTo)'), true);
+    });
+
+    test('10-e picker 필터가 같은 규칙을 쓴다 (02G.1 무회귀)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_createToPath), 'Future<void> _loadMyBusinesses(')));
+      expect(
+          body.contains('membershipBusinesses .where((b) => '
+              'userProvider.canForBusiness(b.id, (p) => p.canManageTo)) .toList();'),
+          true);
+    });
+  });
+
+  group('FRESH-11 submit preflight', () {
+    test('11-a 제출 전에 접근 상태를 재검증한다', () {
+      final body = _flat(_codeOf(_bodyOf(_src(_createToPath), 'Future<void> _createTO(')));
+      expect(body.contains('if (submitUp.isSubAdmin) { await submitUp.refreshSubAdminAccessState();'),
+          true);
+      expect(
+          body.contains(
+              'submitUp.canForBusiness(targetBizId, (p) => p.canManageTo);'),
+          true);
+      expect(body.contains('subAdminBusinessIds.contains(targetBizId)'), true,
+          reason: 'membership도 함께 확인해야 한다');
+    });
+
+    test('11-b 무효면 callable을 보내지 않는다', () {
+      final body = _codeOf(_bodyOf(_src(_createToPath), 'Future<void> _createTO('));
+      final guardIdx = body.indexOf('if (!stillAllowed) {');
+      final callIdx = body.indexOf('callableCreateTO');
+      expect(guardIdx, greaterThan(-1));
+      if (callIdx > -1) {
+        expect(callIdx, greaterThan(guardIdx),
+            reason: 'stale 권한으로 서버 제출을 시도하면 안 된다');
+      }
+      expect(_flat(body).contains('if (!stillAllowed) { _scrollToSection(_businessSectionKey);'),
+          true);
+      expect(_flat(body).contains("ToastHelper.showError('선택한 사업장의 공고 관리 권한이 변경되었습니다'); "
+          'await _loadMyBusinesses(refreshAccess: false); return; }'), true);
+    });
+
+    test('11-c 새 permission query를 복제하지 않았다', () {
+      final code = _codeOf(_src(_createToPath));
+      expect(code.contains('getMemberPermissions('), false,
+          reason: '기존 access refresh를 재사용해야 한다');
+      expect(code.contains("collection('members')"), false);
+    });
+
+    test('11-d BUSINESS_ADMIN / SUPER_ADMIN 추가 read 0', () {
+      final body = _flat(_codeOf(_bodyOf(_src(_createToPath), 'Future<void> _createTO(')));
+      expect(body.contains('if (submitUp.isSubAdmin) {'), true,
+          reason: 'SubAdmin이 아닐 때 preflight가 돌면 read가 늘어난다');
+      final load = _flat(_codeOf(
+          _bodyOf(_src(_createToPath), 'Future<void> _loadMyBusinesses(')));
+      expect(load.contains('if (refreshAccess && userProvider.isSubAdmin) {'), true);
+    });
+
+    test('11-e 동시 호출은 provider가 합친다', () {
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_providerPath), 'Future<void> refreshSubAdminAccessState(')));
+      expect(body.contains('if (inFlight != null) return inFlight;'), true);
     });
   });
 

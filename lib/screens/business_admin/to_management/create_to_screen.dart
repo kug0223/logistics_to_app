@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -172,6 +173,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   @override
   void initState() {
     super.initState();
+    // [POSTING-V2-03B.1-C2] 열린 뒤의 접근 변화를 반영한다.
+    //   watch를 쓰지 않는 화면이라 명시적으로 구독한다.
+    _accessProvider = Provider.of<UserProvider>(context, listen: false)
+      ..addListener(_onAccessStateChanged);
     _loadMyBusinesses();
     // 제목 입력 시 _hasChanges 활성화
     for (final ctrl in [_titleController, _groupTitleController, _descriptionController]) {
@@ -185,6 +190,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   @override
   void dispose() {
+    _accessProvider?.removeListener(_onAccessStateChanged);
     _titleController.dispose();
     _groupTitleController.dispose();
     _descriptionController.dispose();
@@ -195,7 +201,46 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 데이터 로딩
   // ============================================================
 
-  Future<void> _loadMyBusinesses() async {
+  // ── [POSTING-V2-03B.1-C2] 열린 상태에서의 접근 변화 ──────────────
+  //
+  // _myBusinesses / _selectedBusiness는 진입 시 1회 계산되는 local state이고
+  // 이 화면은 UserProvider를 watch하지 않는다. 그래서 provider가 이미 최신
+  // 상태를 알고 있어도 picker와 선택이 그대로 남아 있었다.
+  UserProvider? _accessProvider;
+  Set<String> _eligibleBusinessIds = const {};
+
+  Set<String> _computeEligible(UserProvider up) {
+    final assigned = up.currentUser?.subAdminBusinessIds ?? const <String>[];
+    return assigned
+        .where((id) => up.canForBusiness(id, (p) => p.canManageTo))
+        .toSet();
+  }
+
+  void _onAccessStateChanged() {
+    if (!mounted) return;
+    final up = _accessProvider;
+    if (up == null || !up.isSubAdmin) return;
+    final eligible = _computeEligible(up);
+    if (setEquals(eligible, _eligibleBusinessIds)) return; // 실제 변화만 반영
+    _eligibleBusinessIds = eligible;
+
+    final selected = _selectedBusiness;
+    final lostSelection =
+        selected != null && !eligible.contains(selected.id);
+    if (lostSelection) {
+      // 폼을 열어둔 채로 권한이 사라졌다 — 입력을 계속하게 두지 않는다.
+      // _formUnlocked 일방향 래치를 이 경우에만 되돌린다.
+      setState(() {
+        _formUnlocked = false;
+        _selectedBusiness = null;
+      });
+      ToastHelper.showError('선택한 사업장의 공고 관리 권한이 변경되었습니다');
+    }
+    // 이미 provider가 아는 변화다 — 여기서 다시 access refresh를 돌리지 않는다.
+    _loadMyBusinesses(refreshAccess: false);
+  }
+
+  Future<void> _loadMyBusinesses({bool refreshAccess = true}) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -211,11 +256,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       //   아니므로 진입 시 한 번 맞춘다. 공고를 만들 수 없는 사업장을 고르게 한 뒤
       //   제출에서 거부하는 것보다, 여기서 정확한 목록을 보여주는 편이 옳다.
       //   동시 호출은 provider가 합치므로 새로고침과 겹쳐도 read가 두 배가 되지 않는다.
-      if (userProvider.isSubAdmin) {
+      if (refreshAccess && userProvider.isSubAdmin) {
         await userProvider.refreshSubAdminAccessState();
         if (!mounted) {
           return;
         }
+      }
+      if (userProvider.isSubAdmin) {
+        _eligibleBusinessIds = _computeEligible(userProvider);
       }
 
       final List<BusinessModel> membershipBusinesses;
@@ -1058,6 +1106,29 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       _scrollToSection(_businessSectionKey);
       ToastHelper.showError('업무를 먼저 등록해주세요.\n사업장 설정에서 업무를 추가할 수 있습니다.');
       return;
+    }
+
+    // [POSTING-V2-03B.1-C2] 제출 직전 접근 상태 재검증.
+    //   선택하지 않은 사업장에는 realtime listener가 없다 — 폼을 채우는 동안
+    //   외부에서 권한이 회수돼도 provider가 모를 수 있다. 서버가 마지막에
+    //   거부하게 두는 대신 여기서 확인한다. 새 권한 query를 만들지 않고
+    //   기존 access refresh를 재사용한다(동시 호출은 provider가 합친다).
+    final submitUp = Provider.of<UserProvider>(context, listen: false);
+    if (submitUp.isSubAdmin) {
+      await submitUp.refreshSubAdminAccessState();
+      if (!mounted) return;
+      final targetBizId = _selectedBusiness?.id;
+      final stillAllowed = targetBizId != null &&
+          (submitUp.currentUser?.subAdminBusinessIds.contains(targetBizId) ??
+              false) &&
+          submitUp.canForBusiness(targetBizId, (p) => p.canManageTo);
+      if (!stillAllowed) {
+        _scrollToSection(_businessSectionKey);
+        ToastHelper.showError('선택한 사업장의 공고 관리 권한이 변경되었습니다');
+        // picker/eligibility를 최신 상태로 다시 세운다(access는 방금 갱신됐다).
+        await _loadMyBusinesses(refreshAccess: false);
+        return;
+      }
     }
 
     // LOW-2: DateTime.now()를 메서드 진입 시점에 한 번만 캡처

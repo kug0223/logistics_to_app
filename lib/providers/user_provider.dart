@@ -204,15 +204,16 @@ class UserProvider with ChangeNotifier {
           //   · 그러나 미래 코드 변경(await 추가 등)에 대한 방어적 구조와
           //     "membership 상실 = 무조건 invalidation" 원칙의 정확한 표현을 위해 외부 배치.
           _switchGeneration++;
-          // [SM-05 수정] 관리자가 권한 회수(member 문서 삭제) 시 관리자 모드 즉시 강제 해제
-          // toggleAdminMode()와 동일한 정리 패턴 — FCM 상태 + SharedPreferences 포함
+          // [SM-05 수정] 관리자가 권한 회수(member 문서 삭제) 시 정리.
+          // [POSTING-V2-03B.1-C2] 단, 이 이벤트는 "**이 사업장** membership이
+          //   사라졌다"는 뜻이지 "모든 SUB_ADMIN 자격이 사라졌다"가 아니다.
+          //   배정이 [A, B]이고 B만 회수된 다중 사업장 SubAdmin을 A까지
+          //   관리자 모드에서 내보내면 안 된다. 최신 배정을 확인한 뒤 판단한다.
           if (_isAdminMode) {
-            _isAdminMode = false;
-            _permissionsLoaded = false;
-            FCMService().updateAdminStatus(false);
-            SharedPreferences.getInstance().then((prefs) {
-              prefs.setBool(_kSubAdminIsAdminModeKey, false);
-            });
+            // 이 사업장 listener는 더 의미가 없다 — 복구가 새 사업장에 다시 건다.
+            _memberPermsSub?.cancel();
+            _memberPermsSub = null;
+            unawaited(_recoverFromSelectedMembershipLoss(businessId));
           }
         }
         notifyListeners();
@@ -397,6 +398,46 @@ class UserProvider with ChangeNotifier {
     _subAdminPermissionsLoaded = true;
   }
 
+  /// [POSTING-V2-03B.1-C2] 선택 사업장 membership만 사라졌을 때의 복구.
+  ///
+  /// selected business ≠ 관리자 자격이다. 남은 배정이 하나라도 있으면
+  /// 관리자 모드를 유지하고 selected context만 정상화한다.
+  /// 모든 배정이 사라진 경우에만 기존 정책대로 관리자 모드를 끝낸다.
+  Future<void> _recoverFromSelectedMembershipLoss(String lostBusinessId) async {
+    await refreshSubAdminAccessState();
+    if (_disposed) return;
+    final user = _currentUser;
+
+    // 배정 조회가 실패했어도 "이 사업장을 잃었다"는 사실은 확실하다 —
+    // stale 목록에서 그것만 빼고 판단한다(추측으로 넓히지 않는다).
+    final remaining = user == null || !user.isSubAdmin
+        ? const <String>[]
+        : user.subAdminBusinessIds.where((id) => id != lostBusinessId).toList();
+
+    if (remaining.isEmpty) {
+      _endAdminMode();
+      return;
+    }
+    // 남은 배정이 있다 — refreshSubAdminAccessState가 selected context와
+    // listener를 이미 정상화했다. 상태만 알린다.
+    notifyListeners();
+  }
+
+  /// [POSTING-V2-03B.1-C2] 관리자 모드 종료 — 기존 SM-05 정리 패턴 그대로.
+  void _endAdminMode() {
+    if (!_isAdminMode) {
+      notifyListeners();
+      return;
+    }
+    _isAdminMode = false;
+    _permissionsLoaded = false;
+    FCMService().updateAdminStatus(false);
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool(_kSubAdminIsAdminModeKey, false);
+    });
+    notifyListeners();
+  }
+
   /// [POSTING-V2-03B.1] SUB_ADMIN 접근 상태 전체를 서버 기준으로 다시 맞춘다.
   ///
   /// users/{uid}에는 realtime listener가 없고, 선택하지 않은 사업장의 member
@@ -457,6 +498,9 @@ class UserProvider with ChangeNotifier {
       return;
     }
 
+    // [POSTING-V2-03B.1-C2] 선택 사업장이 배정에서 빠졌으면 선택만 해제한다.
+    //   새 선택은 effectiveBusinessId의 기존 canonical resolver가 정한다 —
+    //   여기서 별도 ordering 정책을 만들지 않는다(유효하면 유지, 아니면 첫 배정).
     final selected = _selectedSubAdminBusinessId;
     if (selected != null && !refreshed.subAdminBusinessIds.contains(selected)) {
       _selectedSubAdminBusinessId = null;
@@ -473,8 +517,14 @@ class UserProvider with ChangeNotifier {
         active == null ? null : _subAdminPermissionsByBusinessView[active];
     _permissionsLoaded = true;
     // 선택 사업장이 바뀌었으면 realtime listener를 새 사업장으로 옮긴다.
+    // (연결 전 cancel이 있으므로 동시에 살아 있는 구독은 항상 하나다)
     if (active != null && _memberPermsSub == null) {
       _startMemberPermsListener(active, uid);
+      // [POSTING-V2-03B.1-C2] 저장된 선택 사업장도 새 context로 정렬한다 —
+      //   다음 실행에서 이미 없는 사업장을 복원하려 시도하지 않게 한다.
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setString(_kSubAdminLastBizKey, active);
+      });
     }
     notifyListeners();
   }
