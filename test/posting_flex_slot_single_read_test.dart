@@ -97,37 +97,50 @@ void main() {
       expect(dates.first, d);
     });
 
-    test('02-b 같은 슬롯은 SlotModel 파싱에서 탈락한다 (기존 계약 유지)', () {
-      // §5 — 이 계약을 완화하는 방식으로 해결하지 않는다.
-      expect(
-        () => SlotModel.fromMap(
-            _rawSlot(d, withCreatedAt: false), 'slot1', 'to1'),
-        throwsA(isA<ArgumentError>()),
-      );
+    // [POSTING-V2-03D.1 TC2 재작성] 02D.1 시점의 계약은 "createdAt 없는 슬롯은
+    // 파싱에서 탈락하므로 날짜를 raw에서 따로 건진다"였다. 그 탈락이 조회 밖에서도
+    // (일괄 쓰기·삭제 개수 판정) 정상 슬롯을 지우는 원인이 되어, TC2에서 원인 쪽을
+    // 고쳤다 — createdAt은 nullable 메타데이터다. 이제 같은 슬롯이 그냥 파싱된다.
+    test('02-b 같은 슬롯이 SlotModel로도 파싱된다 (LEGACY != MALFORMED)', () {
+      final slot =
+          SlotModel.fromMap(_rawSlot(d, withCreatedAt: false), 'slot1', 'to1');
+      expect(slot.date, d, reason: '슬롯의 정체는 date다');
+      expect(slot.createdAt, isNull, reason: '모르는 값을 지어내지 않는다');
+      expect(SlotModel.tryFromMap(_rawSlot(d, withCreatedAt: false), 's', 't'),
+          isNotNull);
     });
 
-    test('02-c 따라서 slotDates는 groupTOs에서 파생될 수 없다', () {
-      // 두 projection이 갈라지는 지점을 명시적으로 고정한다.
+    test('02-b2 date가 없거나 타입이 틀리면 여전히 파싱 실패다', () {
+      expect(
+        () => SlotModel.fromMap(_rawSlot(d, omitDate: true), 'slot1', 'to1'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(SlotModel.tryFromMap(_rawSlot(d, omitDate: true), 's', 't'), isNull);
+      expect(
+          SlotModel.tryFromMap(
+              _rawSlot(d, dateOverride: 'not-a-timestamp'), 's', 't'),
+          isNull);
+    });
+
+    test('02-c slotDates는 여전히 groupTOs와 독립적으로 파생된다', () {
+      // 두 projection이 갈라질 수 있는 지점을 명시적으로 고정한다.
+      // (레거시 createdAt은 더 이상 갈라짐의 원인이 아니다 — malformed가 그 자리다)
       final raws = [
         _rawSlot(DateTime(2026, 9, 20)),
-        _rawSlot(DateTime(2026, 9, 21), withCreatedAt: false), // 레거시
+        _rawSlot(DateTime(2026, 9, 21), withCreatedAt: false), // 레거시 — 이제 살아남는다
+        _rawSlot(DateTime(2026, 9, 22), dateOverride: 'broken'), // malformed
       ];
       final dates = FirestoreService.slotDatesFromRaw(raws);
-      expect(dates.length, 2, reason: 'raw projection이 레거시 슬롯을 잃었다');
+      expect(dates.length, 2, reason: 'date가 Timestamp인 문서만 날짜를 낸다');
 
       final parsed = raws
-          .map((r) {
-            try {
-              return SlotModel.fromMap(r, 'x', 'to1');
-            } catch (_) {
-              return null;
-            }
-          })
+          .map((r) => SlotModel.tryFromMap(r, 'x', 'to1'))
           .whereType<SlotModel>()
           .toList();
-      expect(parsed.length, 1);
-      // DATE_VISIBILITY_REGRESSION = NO 의 근거
-      expect(dates.length, greaterThan(parsed.length));
+      expect(parsed.length, 2, reason: '레거시 슬롯이 파싱에서 탈락하면 안 된다');
+      // DATE_VISIBILITY_REGRESSION = NO 의 근거 — 두 projection이 서로를 대체하지 않는다
+      expect(dates.length, parsed.length);
+      expect(parsed.where((s) => s.createdAt == null).length, 1);
     });
 
     test('02-d 소스가 groupTOs 기반 파생을 쓰지 않는다', () {
@@ -522,14 +535,27 @@ void main() {
       expect(fns.contains('export const callableGetAdminTOs'), true);
     });
 
-    test('12-g SlotModel required 필드 정책 무변경 (§5)', () {
+    // [POSTING-V2-03D.1 TC2 재작성] 02D.1 §5는 "성능 수정을 핑계로 모델 검증을
+    // 풀지 않는다"였고 그때는 옳았다. TC2는 성능이 아니라 correctness를 근거로,
+    // 읽히지도 않는 메타데이터 하나가 정상 슬롯 전체를 무효로 만드는 것을 고친다.
+    // 지켜야 할 선은 그대로다 — date는 여전히 required.
+    test('12-g SlotModel의 파싱 실패 조건은 date 하나뿐이다', () {
       final m = _codeOf(_src('lib/models/core/slot_model.dart'));
       expect(m.contains("(throw ArgumentError('SlotModel: date is required'))"),
-          true);
+          true, reason: '날짜 없는 근무일은 어떤 화면에서도 의미가 없다');
       expect(
           m.contains(
               "(throw ArgumentError('SlotModel: createdAt is required'))"),
-          true);
+          false,
+          reason: 'LEGACY != MALFORMED — 읽지도 않는 필드로 슬롯을 버리지 않는다');
+      expect('ArgumentError('.allMatches(m).length, 1,
+          reason: '파싱 실패 조건이 조용히 늘어나면 안 된다');
+      expect(m.contains('final DateTime? createdAt;'), true);
+      expect(
+          m.contains(
+              "createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal(),"),
+          true,
+          reason: '없는 createdAt을 지어내지 않는다 — 모르면 null (§4)');
     });
   });
 }

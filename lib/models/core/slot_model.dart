@@ -75,7 +75,19 @@ class SlotModel {
   /// [STALE-EDIT] 설정 변경 버전 카운터 — callableUpdateSlotWorkDetails에 전달하여 lost-update 방지
   final int editRevision;
 
-  final DateTime createdAt;
+  /// 슬롯 문서 생성 시각 — **순수 메타데이터**.
+  ///
+  /// [POSTING-V2-03D.1] nullable로 둔다. 이 앱 어디에서도 이 값을 읽지 않는다:
+  /// 정렬은 전부 `orderBy('date')`이고, 마감·공개·정원 판정은 date/workDetails만 쓴다.
+  /// 반면 결측은 실제로 발생한다 —
+  ///   · 서버가 `serverTimestamp()`로 쓰므로 pending-write 스냅샷에서는 null이다
+  ///   · 그보다 앞서 만들어진 레거시 슬롯에는 필드 자체가 없다
+  /// 이것을 required로 두면 **멀쩡한 슬롯이 파싱에서 통째로 탈락**한다.
+  /// 날짜가 사라지고, 일괄 수정 대상에서 빠지고, 개수로 판단하는 곳이 오판한다.
+  ///
+  /// 없을 때 `DateTime.now()` 같은 가짜 값을 만들지 않는다 — 모르는 것은 null이다.
+  /// 파싱 실패로 남겨야 하는 것은 [date]처럼 슬롯의 정체를 이루는 필드뿐이다.
+  final DateTime? createdAt;
 
   const SlotModel({
     required this.id,
@@ -95,7 +107,7 @@ class SlotModel {
     this.reopenedAt,
     this.reopenedBy,
     this.editRevision = 0,
-    required this.createdAt,
+    this.createdAt,
   });
 
   static SlotModel? tryFromMap(Map<String, dynamic> data, String documentId, String toId) {
@@ -136,8 +148,9 @@ class SlotModel {
       reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate().toLocal(),
       reopenedBy: data['reopenedBy'] as String?,
       editRevision: (data['editRevision'] as num?)?.toInt() ?? 0,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal() ??
-          (throw ArgumentError('SlotModel: createdAt is required')),
+      // [POSTING-V2-03D.1] 결측을 파싱 실패로 삼지 않는다 — 필드 설명 참조.
+      // LEGACY != MALFORMED. 슬롯을 무효로 만드는 것은 date뿐이다.
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal(),
     );
   }
 
@@ -163,7 +176,7 @@ class SlotModel {
       if (reopenedAt != null) 'reopenedAt': Timestamp.fromDate(reopenedAt!),
       'reopenedBy': reopenedBy,
       'editRevision': editRevision,
-      'createdAt': Timestamp.fromDate(createdAt),
+      if (createdAt != null) 'createdAt': Timestamp.fromDate(createdAt!),
     };
   }
 

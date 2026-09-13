@@ -14,17 +14,23 @@
 //   · 상한 초과                   → FlexSlotOverflowException (03C.1)
 //   · requireComplete + 파싱 누락 → SlotDataException
 //
-// CASE B(§4) 근거: `createdAt`이 없는 레거시 슬롯이 실재하므로(02D.1에서
-// 확인·수용) 파싱 실패를 항상 오류로 볼 수 없다. 따라서 완전성은 opt-in이며,
-// 개수로 파괴적 판단을 내리는 호출부만 이를 요구한다.
+// [TARGETED CORRECTION 2] LEGACY != MALFORMED.
+//   처음에는 완전성을 opt-in으로만 두고 파싱 실패를 "허용된 손실"로 봤는데,
+//   그 손실의 정체가 **정상 슬롯**이었다. `SlotModel.createdAt`은 앱 어디에서도
+//   읽히지 않는 메타데이터인데 required라서, 결측 문서 하나가 통째로 버려졌다.
+//   (서버는 serverTimestamp로 쓰므로 pending-write 스냅샷에서도 결측이 보인다)
+//   → 모델을 nullable로 고쳐 정상 슬롯이 모든 caller에서 살아남게 하고,
+//     completeness는 진짜 파손(date 결측/타입오류)만 가리키게 한다.
 //
 // FirestoreService는 Firebase 초기화를 요구해 단위 테스트로 호출할 수 없다.
 // 예외 계약은 타입으로, 배선은 소스로 검증한다.
 
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/services/firestore_service.dart';
 
 const _toPath = 'lib/services/firestore/to_firestore.dart';
@@ -84,6 +90,33 @@ String _caseBlock(String source, String caseLabel) {
 
 /// 완전성 판정 replica — 문서 수와 파싱 수만으로 갈린다.
 bool incomplete({required int docs, required int parsed}) => parsed != docs;
+
+// ── raw 슬롯 fixture ─────────────────────────────────────────────
+enum SlotShape {
+  /// 현재 스키마 — createdAt 포함
+  current,
+
+  /// supported legacy — createdAt 없음 (서버 serverTimestamp pending 포함)
+  legacy,
+
+  /// genuinely malformed — date 자체가 없거나 Timestamp가 아니다
+  malformed,
+}
+
+Map<String, dynamic> _rawSlot(DateTime date, SlotShape shape) => {
+      if (shape != SlotShape.malformed) 'date': Timestamp.fromDate(date),
+      if (shape == SlotShape.malformed) 'date': 'not-a-timestamp',
+      'status': 'open',
+      'confirmedCount': 0,
+      'pendingCount': 0,
+      if (shape == SlotShape.current) 'createdAt': Timestamp.fromDate(date),
+    };
+
+/// getSlots의 파싱 단계 replica — 실제 canonical parser를 그대로 쓴다.
+List<SlotModel> _parse(List<Map<String, dynamic>> raws) => raws
+    .map((r) => SlotModel.tryFromMap(r, 'doc_${raws.indexOf(r)}', 'to1'))
+    .whereType<SlotModel>()
+    .toList();
 
 void main() {
   // ── §1 계약 값 ─────────────────────────────────────────────────
@@ -156,11 +189,14 @@ void main() {
 
   // ── §4, §5 완전성은 opt-in, visibleOnly보다 앞 ──────────────────
   group('GETSLOTS-03 완전성 요구는 선택이고 필터보다 앞이다', () {
-    test('03-a requireComplete 기본값이 false다 (레거시 호환)', () {
+    // [TC2 재작성] 기본값이 false인 이유가 "레거시 손실을 눈감아 주기 위해"였는데,
+    // 그 레거시는 이제 정상 파싱된다. 기본값은 그대로 두되 이유가 바뀌었다:
+    // 표시 전용 화면은 파손 문서 하나 때문에 전체가 안 보이는 편이 더 나쁘다.
+    test('03-a requireComplete 기본값이 false다 (표시 화면 우선)', () {
       final body = _flat(_codeOf(
           _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
       expect(body.contains('bool requireComplete = false,'), true,
-          reason: 'createdAt 없는 레거시 슬롯을 조회·표시에서 배제하면 회귀다');
+          reason: '파손 문서 1개로 나머지 날짜까지 못 보게 만들지 않는다');
     });
 
     test('03-b requireComplete일 때만 SlotDataException을 던진다', () {
@@ -191,10 +227,21 @@ void main() {
       expect(completeIdx, greaterThan(parseIdx));
     });
 
-    test('03-e SlotModel의 required field 정책을 바꾸지 않았다', () {
+    // [TC2 재작성] 이전 판단("파싱 완화가 아니라 완전성 요구로 해결한다")이
+    // 틀렸다. 완전성 요구만으로는 정상 레거시 슬롯이 계속 버려진 채였고,
+    // caller마다 그 손실을 다르게 감췄다. 원인을 canonical parser에서 고친다.
+    test('03-e canonical parser 한 곳에서 해결했다 (caller별 우회 없음)', () {
       final code = _codeOf(_src('lib/models/core/slot_model.dart'));
-      expect(code.contains('static SlotModel? tryFromMap('), true,
-          reason: '파싱 완화가 아니라 완전성 요구로 해결한다');
+      expect(code.contains('static SlotModel? tryFromMap('), true);
+      expect(code.contains('final DateTime? createdAt;'), true);
+
+      // 어느 caller도 자체 파서/raw 디코딩 우회로를 만들지 않았다 (§7)
+      for (final p in [_jobPostingPath, _batchDialogPath, _editToPath, _cardPath]) {
+        final c = _codeOf(_src(p));
+        expect(c.contains("['createdAt']"), false, reason: p);
+        expect(c.contains('SlotModel.fromMap('), false, reason: p);
+        expect(c.contains('SlotModel.tryFromMap('), false, reason: p);
+      }
     });
   });
 
@@ -375,18 +422,36 @@ void main() {
   });
 
   // ── §10 내부 write helper ──────────────────────────────────────
-  group('GETSLOTS-08 내부 write helper는 no-op 판정을 유지한다', () {
-    test('08-a empty면 조용히 끝낸다 (§10)', () {
+  group('GETSLOTS-08 내부 write helper는 부분 쓰기를 성공으로 보고하지 않는다', () {
+    // [TC2 재작성] 이전 판단("쓰기 대상은 파싱된 슬롯뿐이므로 완전성을 요구하지
+    // 않는다")이 정확히 틀린 지점이었다. 파싱하지 못한 문서는 갱신에서 빠지는데
+    // 호출부는 성공이라고 말한다 — 그 날짜만 옛 마감·공개 설정을 유지한다.
+    // PARTIAL WRITE != SUCCESS.
+    test('08-a empty면 조용히 끝내되, 불완전하면 실패한다 (§10)', () {
       for (final sig in [
         'Future<void> updateSlotsDeadlines(',
         'Future<void> updateSlotsPublishSettings(',
       ]) {
         final body = _flat(_codeOf(_bodyOf(_src(_toPath), sig)));
-        expect(body.contains('final slots = await getSlots(toId); if (slots.isEmpty) return;'),
+        expect(
+            body.contains('final slots = await getSlots(toId, requireComplete: true); '
+                'if (slots.isEmpty) return;'),
             true,
-            reason: '$sig — 근무일이 없으면 갱신할 대상도 없다');
-        expect(body.contains('requireComplete'), false,
-            reason: '$sig — 쓰기 대상은 파싱된 슬롯뿐이므로 완전성을 요구하지 않는다');
+            reason: '$sig — TRUE EMPTY는 no-op, 부분 해석은 실패여야 한다');
+      }
+    });
+
+    test('08-a2 완전성 요구가 no-op 판정보다 앞이다', () {
+      for (final sig in [
+        'Future<void> updateSlotsDeadlines(',
+        'Future<void> updateSlotsPublishSettings(',
+      ]) {
+        final body = _codeOf(_bodyOf(_src(_toPath), sig));
+        final getIdx = body.indexOf('requireComplete: true');
+        final emptyIdx = body.indexOf('if (slots.isEmpty) return;');
+        expect(getIdx, greaterThan(-1), reason: sig);
+        expect(emptyIdx, greaterThan(getIdx),
+            reason: '$sig — 실패를 "슬롯 0개"로 읽으면 안 된다');
       }
     });
 
@@ -423,7 +488,183 @@ void main() {
           _bodyOf(_src(_svcPath), 'Future<FlexSlotLoad> loadFlexSlots(')));
       expect('_flexSlotSnapshot(toId)'.allMatches(body).length, 1);
       expect(body.contains('requireComplete'), false,
-          reason: '표시용 reader는 레거시 슬롯을 계속 허용한다');
+          reason: '표시용 reader는 파손 문서 하나로 전체를 막지 않는다');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // [TARGETED CORRECTION 2] LEGACY != MALFORMED
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── §1, §2, §8 canonical decoding ──────────────────────────────
+  group('LEGACY-01 supported legacy와 malformed를 구분한다', () {
+    final d = DateTime(2026, 9, 20);
+
+    test('01-a createdAt 없는 슬롯은 정상 파싱된다', () {
+      final slot = SlotModel.tryFromMap(_rawSlot(d, SlotShape.legacy), 's1', 'to1');
+      expect(slot, isNotNull, reason: '정상 데이터를 파서가 버리면 안 된다');
+      expect(slot!.date, d);
+      expect(slot.createdAt, isNull, reason: '모르는 값을 지어내지 않는다 (§4)');
+    });
+
+    test('01-b createdAt이 슬롯 의미를 바꾸지 않는다', () {
+      final withCa = SlotModel.tryFromMap(_rawSlot(d, SlotShape.current), 's', 'to1')!;
+      final without = SlotModel.tryFromMap(_rawSlot(d, SlotShape.legacy), 's', 'to1')!;
+      expect(without.date, withCa.date);
+      expect(without.status, withCa.status);
+      expect(without.isEffectivelyClosed, withCa.isEffectivelyClosed);
+      expect(without.totalRequired, withCa.totalRequired);
+    });
+
+    test('01-c date가 파손된 문서만 파싱 실패다', () {
+      expect(SlotModel.tryFromMap(_rawSlot(d, SlotShape.malformed), 's', 'to1'),
+          isNull);
+    });
+
+    test('01-d 혼합 집합 — 10개 중 legacy 2개 포함해 10개가 나온다 (§10)', () {
+      final raws = [
+        for (var i = 0; i < 8; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+        _rawSlot(d.add(const Duration(days: 8)), SlotShape.legacy),
+        _rawSlot(d.add(const Duration(days: 9)), SlotShape.legacy),
+      ];
+      final parsed = _parse(raws);
+      expect(parsed.length, 10);
+      expect(incomplete(docs: raws.length, parsed: parsed.length), false,
+          reason: 'legacy 2개가 completeness failure로 세어지면 안 된다');
+    });
+
+    test('01-e malformed가 섞이면 완전성 실패다 (§9)', () {
+      final raws = [
+        for (var i = 0; i < 9; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+        _rawSlot(d.add(const Duration(days: 9)), SlotShape.malformed),
+      ];
+      final parsed = _parse(raws);
+      expect(parsed.length, 9);
+      expect(incomplete(docs: raws.length, parsed: parsed.length), true);
+    });
+  });
+
+  // ── §10 write sync ─────────────────────────────────────────────
+  group('LEGACY-02 write sync가 legacy를 누락하지 않는다', () {
+    final d = DateTime(2026, 9, 20);
+
+    test('02-a legacy 포함 10개 전부가 sync 대상이다', () {
+      // updateSlotsDeadlines / updateSlotsPublishSettings는 getSlots 결과를
+      // 그대로 순회한다 — 파싱된 수가 곧 쓰기 대상 수다.
+      final raws = [
+        for (var i = 0; i < 8; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+        _rawSlot(d.add(const Duration(days: 8)), SlotShape.legacy),
+        _rawSlot(d.add(const Duration(days: 9)), SlotShape.legacy),
+      ];
+      final writeTargets = _parse(raws);
+      expect(writeTargets.length, raws.length,
+          reason: 'legacy 2개가 옛 마감/공개 설정을 유지한 채 남으면 안 된다');
+      expect(
+          writeTargets.where((s) => s.createdAt == null).length, 2,
+          reason: 'legacy가 실제로 대상에 들어 있다');
+    });
+
+    test('02-b legacy만 있는 공고도 slotSyncFailed가 아니다', () {
+      final raws = [
+        for (var i = 0; i < 3; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.legacy),
+      ];
+      final parsed = _parse(raws);
+      expect(incomplete(docs: raws.length, parsed: parsed.length), false);
+    });
+
+    test('02-c malformed 포함 시 partial success가 아니다 (§10)', () {
+      final raws = [
+        for (var i = 0; i < 9; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+        _rawSlot(d.add(const Duration(days: 9)), SlotShape.malformed),
+      ];
+      final parsed = _parse(raws);
+      // requireComplete: true → SlotDataException → EditTO catch → slotSyncFailed
+      expect(incomplete(docs: raws.length, parsed: parsed.length), true,
+          reason: '9개만 갱신하고 "공고가 수정되었습니다"라고 말하면 안 된다');
+      final e = SlotDataException('to1', raws.length, parsed.length);
+      expect(e.documentCount, 10);
+      expect(e.parsedCount, 9);
+    });
+  });
+
+  // ── §11 destructive count ──────────────────────────────────────
+  group('LEGACY-03 legacy 때문에 deletesAll이 뒤집히지 않는다', () {
+    final d = DateTime(2026, 9, 20);
+
+    List<SlotModel> tenWithTwoLegacy() => _parse([
+          for (var i = 0; i < 8; i++)
+            _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+          _rawSlot(d.add(const Duration(days: 8)), SlotShape.legacy),
+          _rawSlot(d.add(const Duration(days: 9)), SlotShape.legacy),
+        ]);
+
+    test('03-a 10개 중 8개 선택 → deletesAll = false', () {
+      final all = tenWithTwoLegacy();
+      expect(all.length, 10, reason: 'legacy 2개가 빠지면 8 >= 8이 되어 공고가 삭제된다');
+      expect(8 >= all.length, false);
+    });
+
+    test('03-b 10개 전부 선택 → deletesAll = true', () {
+      final all = tenWithTwoLegacy();
+      expect(10 >= all.length, true);
+    });
+
+    test('03-c malformed가 있으면 개수 판정 자체에 도달하지 않는다 (§9)', () {
+      final raws = [
+        for (var i = 0; i < 9; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+        _rawSlot(d.add(const Duration(days: 9)), SlotShape.malformed),
+      ];
+      expect(incomplete(docs: raws.length, parsed: _parse(raws).length), true);
+      // 배선: 일괄삭제만 requireComplete: true → totalSlotCount == null → return
+      final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
+      expect(block.contains('requireComplete: true'), true);
+      expect(block.indexOf('if (totalSlotCount == null) {'),
+          lessThan(block.indexOf('final deletesAll =')));
+    });
+  });
+
+  // ── §12 JobPostingScreen ───────────────────────────────────────
+  group('LEGACY-04 legacy만 있는 공고가 false empty가 되지 않는다', () {
+    final d = DateTime(2026, 9, 20);
+
+    test('04-a legacy 슬롯만 있어도 표시할 날짜가 남는다', () {
+      final parsed = _parse([
+        for (var i = 0; i < 3; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.legacy),
+      ]);
+      expect(parsed.isEmpty, false,
+          reason: "빈 목록이면 '현재 선택 가능한 근무 날짜가 없습니다'가 뜬다");
+      expect(parsed.length, 3);
+    });
+
+    test('04-b 표시 화면은 requireComplete를 쓰지 않는다 (§12)', () {
+      final body = _flat(
+          _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
+      expect(body.contains('requireComplete'), false,
+          reason: 'malformed 1개로 정상 날짜까지 못 보게 되면 과교정이다');
+      expect(body.contains("getSlots(_to!.id, visibleOnly: false)"), true);
+    });
+
+    test('04-c legacy 슬롯도 지원 flow를 막지 않는다', () {
+      final slot = SlotModel.tryFromMap(_rawSlot(d, SlotShape.legacy), 's', 'to1')!;
+      // 지원 가능 판정은 date/status/workDetails만 본다
+      expect(slot.isOpen, true);
+      expect(slot.isManualClosed, false);
+      expect(slot.visibleFrom, isNull);
+    });
+
+    test('04-d SlotBatchSelectDialog / EditTO도 같은 집합을 쓴다 (§7)', () {
+      for (final p in [_batchDialogPath, _editToPath]) {
+        final code = _codeOf(_src(p));
+        expect(code.contains('getSlots('), true, reason: p);
+        expect(code.contains('requireComplete'), false, reason: p);
+      }
     });
   });
 }

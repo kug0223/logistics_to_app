@@ -813,7 +813,12 @@ extension TOFirestore on FirestoreService {
     DateTime? fixedDeadline,
   }) async {
     try {
-      final slots = await getSlots(toId);
+      // [POSTING-V2-03D.1 TC2] PARTIAL WRITE != SUCCESS.
+      //   해석하지 못한 문서는 이 일괄 갱신에서 빠지는데, 호출부(EditTO)는
+      //   그것을 "성공"으로 보고한다. 그러면 그 날짜만 옛 마감시간을 유지한 채
+      //   공고에 남는다. 하나라도 못 읽으면 부분 성공 대신 실패로 만든다.
+      //   (createdAt 없는 슬롯은 이제 정상 파싱되므로 여기에 걸리지 않는다)
+      final slots = await getSlots(toId, requireComplete: true);
       if (slots.isEmpty) return;
 
       var batch = _firestore.batch();
@@ -1072,7 +1077,10 @@ extension TOFirestore on FirestoreService {
     String? publishTime,
   }) async {
     try {
-      final slots = await getSlots(toId);
+      // [POSTING-V2-03D.1 TC2] PARTIAL WRITE != SUCCESS.
+      //   빠진 슬롯은 옛 visibleFrom을 그대로 들고 있다가 관리자가 바꾼 적 없는
+      //   시각에 공개된다. 부분 갱신을 성공으로 보고하지 않는다.
+      final slots = await getSlots(toId, requireComplete: true);
       if (slots.isEmpty) return;
 
       var batch = _firestore.batch();

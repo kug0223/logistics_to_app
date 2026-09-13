@@ -147,15 +147,15 @@ const int _kFlexSlotProbeLimit = kMaxFlexSlotsPerTO + 1;
 /// TRUNCATED != SUCCESS.
 /// [POSTING-V2-03D.1] 슬롯 문서를 모두 모델로 만들지 못했다.
 ///
-/// `SlotModel.fromMap`은 `date`와 `createdAt`을 필수로 요구하는데,
-/// `createdAt`이 없는 레거시 슬롯이 실재한다(02D.1에서 확인·수용한 형태).
-/// 따라서 파싱 실패를 **항상** 오류로 볼 수는 없다 — 조회·표시 화면은
-/// 지금까지처럼 파싱된 것만 쓰면 된다.
+/// **LEGACY != MALFORMED.** `createdAt`이 없는 슬롯은 정상 데이터이며
+/// (TC2에서 `SlotModel.createdAt`을 nullable로 확정) 그대로 파싱된다.
+/// 여기까지 오는 것은 `date`가 없거나 Timestamp가 아닌 문서 —
+/// 날짜 없는 근무일은 어떤 화면에서도 의미를 가질 수 없는 **진짜 파손**이다.
 ///
-/// 문제는 **개수로 판단하는 파괴적 동작**이다. 일부가 빠진 목록을 전부라고
-/// 믿으면 "선택한 날짜 = 전체 날짜"가 되어 공고까지 지운다.
-/// 그런 호출만 `requireComplete: true`로 완전한 집합을 요구하고,
-/// 하나라도 빠지면 이 예외로 중단한다.
+/// 그런 문서를 조용히 건너뛰면, 남은 목록이 전부인 것처럼 보인다.
+/// 개수로 판단하는 파괴적 동작(선택한 날짜 = 전체 날짜 → 공고까지 삭제)과
+/// 전체 대상 일괄 쓰기(빠진 슬롯만 옛 설정을 유지한 채 성공 보고)에서
+/// `requireComplete: true`로 완전한 집합을 요구하고, 어긋나면 이 예외로 멈춘다.
 class SlotDataException implements Exception {
   final String toId;
   final int documentCount;
@@ -547,11 +547,16 @@ class FirestoreService {
   /// [POSTING-V2-02D.1] raw 슬롯 문서에서 날짜만 뽑는다.
   ///
   /// **`groupTOs.map((t) => t.slot.date)`로 대체하면 안 된다.**
-  /// SlotModel.fromMap은 createdAt을 필수로 요구하므로, date는 멀쩡한데
-  /// createdAt이 없는 레거시 슬롯이 모델 파싱에서 탈락한다. 그 슬롯의 날짜는
-  /// 마감 판정(TOGroupItem.isClosed)과 날짜 필터의 폴백 truth이므로,
-  /// 성능 수정 때문에 사라지면 안 된다. 모델 검증을 느슨하게 푸는 대신
-  /// raw 문서에서 별도로 파생한다.
+  /// 날짜는 마감 판정(TOGroupItem.isClosed)과 날짜 필터의 폴백 truth이므로,
+  /// 모델 파싱이 어떤 이유로 실패하든 그와 무관하게 확보돼야 한다.
+  /// 여기서 필요한 것은 `date` 하나뿐이니, 모델 전체의 해석 성공에
+  /// 의존시키지 않는다.
+  ///
+  /// [POSTING-V2-03D.1 TC2] 이 함수가 처음 생긴 이유였던 "createdAt 없는
+  /// 레거시 슬롯이 모델 파싱에서 탈락한다"는 조건은 해소됐다 —
+  /// `SlotModel.createdAt`이 nullable이 되어 그 슬롯도 정상 파싱된다.
+  /// 그래도 이 함수는 남긴다: 파싱 실패를 date 손실로 번지지 않게 하는
+  /// 방어선이고, 두 projection의 독립성이 02D 계약이다.
   ///
   /// date가 없거나 Timestamp가 아닌 문서는 **그 문서 하나만** 건너뛴다.
   @visibleForTesting

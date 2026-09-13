@@ -254,7 +254,8 @@ class WorkforceController extends ChangeNotifier {
             );
             group.setGroupTOs(loaded.groupTOs);
             // setGroupTOs 뒤에 둔다 — 최종 _slotDates는 raw snapshot 기준이어야
-            // createdAt 없는 레거시 슬롯의 날짜가 살아남는다.
+            // 모델 파싱에 실패한 슬롯의 날짜도 살아남는다.
+            // ([POSTING-V2-03D.1 TC2] createdAt 결측은 더 이상 파싱 실패가 아니다)
             group.setSlotDates(loaded.slotDates);
           } catch (e) {
             // [POSTING-V2-01B] TO 하나의 실패가 목록 전체를 ERROR로 만들지 않는다.
@@ -375,8 +376,9 @@ class WorkforceController extends ChangeNotifier {
 
     try {
       // [POSTING-V2-02D.1] root load와 같은 single-snapshot loader를 쓴다.
-      //   이전에는 slotDates를 toItems에서 파생했는데, SlotModel이 createdAt을
-      //   필수로 요구하므로 date만 있는 레거시 슬롯의 날짜가 여기서 사라졌다.
+      //   이전에는 slotDates를 toItems에서 파생했는데, 모델 파싱에 실패한
+      //   슬롯의 날짜가 여기서 함께 사라졌다.
+      //   ([POSTING-V2-03D.1 TC2] 그 원인이던 createdAt 필수 요구는 해소됐다)
       final loaded =
           await _service.loadFlexSlots(group.id, masterTO: group.masterTO);
       group.setGroupTOs(loaded.groupTOs);
