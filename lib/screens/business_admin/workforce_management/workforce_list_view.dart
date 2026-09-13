@@ -446,6 +446,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     return Column(
       children: [
         _buildTabBar(controller),
+        // [POSTING-V2-03F.1] 목록 위의 freshness layer.
+        //   본문 state(목록/필터 0건/탭 0건)와 별개 차원이므로 _buildTOList
+        //   안이 아니라 그 위에 둔다 — 어떤 본문이 나오든 함께 보여야 한다.
+        //   카드의 CTA를 누르기 전에 먼저 눈에 들어와야 해서 목록보다 위다.
+        _buildStaleBanner(controller),
         Expanded(child: _buildTOList(controller)),
       ],
     );
@@ -608,7 +613,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // [POSTING-V2-01B] ERROR != EMPTY.
     // 조회 실패 + 보여줄 데이터 없음 → empty state가 아니라 error state.
     // 실패 상태에서 '새 공고를 등록하세요'를 권하면 장애 중에 잘못된 행동을 유도한다.
-    // 마지막 성공 데이터가 남아 있으면 그것을 계속 보여준다(_reload의 토스트가 실패를 알림).
+    // 마지막 성공 데이터가 남아 있으면 그것을 계속 보여준다 —
+    // 최신이 아니라는 사실은 위의 _buildStaleBanner가 계속 표시한다.
+    // [POSTING-V2-03F.1] 이 분기가 먼저다: items가 비어 있으면 배너가 아니라
+    //   본문 전체가 error다. ROOT_EMPTY는 성공 조회에서만 성립한다.
     if (controller.loadError != null && controller.items.isEmpty) {
       return _buildErrorState();
     }
@@ -616,6 +624,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // [POSTING-V2-02E.1] 성공 조회 후의 0건은 원인이 셋이고 다음 행동도 다르다.
     //   공고 자체가 없음 / 필터가 걸러냄 / 이 탭에만 없음.
     //   items.isEmpty를 필터보다 먼저 본다 — 공고가 0개면 필터는 원인이 아니다.
+    //
+    // [POSTING-V2-03F.1] 아래 세 empty는 "지금 들고 있는 데이터 기준"의 해석이고
+    //   그 해석 자체는 stale 상태에서도 참이다. 그래서 문구를 바꾸지 않는다.
+    //   최신 서버 기준이라고 오인하지 않게 하는 일은 배너가 맡는다 —
+    //   empty taxonomy 위에 freshness 차원을 얹는 것이지, 겹쳐 쓰지 않는다.
     if (controller.items.isEmpty) {
       return _buildEmptyState(_PostingEmptyKind.root);
     }
@@ -754,6 +767,73 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _activeGroupKey = null;
     });
     context.read<WorkforceController>().clearFilters();
+  }
+
+  /// [POSTING-V2-03F.1] 마지막 성공 데이터는 살아 있는데 최신화에 실패한 상태.
+  ///
+  /// `loadError != null && items.isNotEmpty` — 01B가 세워 두고 소비자가
+  /// 이행하지 않던 계약이다. 목록을 지우지 않는 것(STALE != EMPTY)까지는
+  /// 되어 있었지만, 그 목록이 최신이 아니라는 사실은 토스트 한 번으로 끝났다.
+  /// 토스트는 3초 뒤 사라지고 화면에는 흔적이 남지 않아, 남은 목록이
+  /// 최신처럼 보였다(STALE == FRESH).
+  ///
+  /// 이 배너는 controller state만 읽는다. 그래서 당겨서 새로고침뿐 아니라
+  /// 앱 복귀 · dataRevision · FCM · mutation 후 reload처럼 토스트 경로를
+  /// 거치지 않는 실패까지 같은 표시로 수렴한다 — trigger마다 안내를 따로
+  /// 붙이지 않는다.
+  ///
+  /// `items.isEmpty`일 때는 나오지 않는다. 그 경우는 보여줄 데이터 자체가
+  /// 없으므로 본문 전체가 error state다(01B).
+  Widget _buildStaleBanner(WorkforceController controller) {
+    final isStale =
+        controller.loadError != null && controller.items.isNotEmpty;
+    if (!isStale) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      color: AppColors.warningBg,
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.cloud_off_rounded,
+            size: ResponsiveHelper.iconSize(context, 16),
+            color: AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              // 내부 예외 메시지를 노출하지 않는다 — 운영 상태만 말한다.
+              '최신 정보를 불러오지 못했습니다. 다시 시도해 주세요.',
+              style: ResponsiveHelper.smallStyle(context)
+                  .copyWith(color: AppColors.warningDarkest),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          // canonical reload를 그대로 쓴다 — SubAdmin의 access → data 순서가
+          // _reload 안에 있으므로 controller를 직접 부르면 그 순서를 잃는다.
+          TextButton(
+            onPressed: _reload,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+              ),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              foregroundColor: AppColors.warningDark,
+            ),
+            child: Text('다시 시도',
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.warningDark,
+                )),
+          ),
+        ],
+      ),
+    );
   }
 
   /// [POSTING-V2-01B] 목록 조회 실패 — 공통 AppEmptyState를 error 톤으로 재사용한다.
