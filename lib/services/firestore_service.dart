@@ -145,6 +145,29 @@ const int _kFlexSlotProbeLimit = kMaxFlexSlotsPerTO + 1;
 /// 잘린 앞부분을 정상 결과로 돌려주지 않는다 — 실제로 근무일이 있는데
 /// '공고 없음' · '마감됨' · '조건에 맞는 공고 없음'으로 보이는 편이 더 위험하다.
 /// TRUNCATED != SUCCESS.
+/// [POSTING-V2-03D.1] 슬롯 문서를 모두 모델로 만들지 못했다.
+///
+/// `SlotModel.fromMap`은 `date`와 `createdAt`을 필수로 요구하는데,
+/// `createdAt`이 없는 레거시 슬롯이 실재한다(02D.1에서 확인·수용한 형태).
+/// 따라서 파싱 실패를 **항상** 오류로 볼 수는 없다 — 조회·표시 화면은
+/// 지금까지처럼 파싱된 것만 쓰면 된다.
+///
+/// 문제는 **개수로 판단하는 파괴적 동작**이다. 일부가 빠진 목록을 전부라고
+/// 믿으면 "선택한 날짜 = 전체 날짜"가 되어 공고까지 지운다.
+/// 그런 호출만 `requireComplete: true`로 완전한 집합을 요구하고,
+/// 하나라도 빠지면 이 예외로 중단한다.
+class SlotDataException implements Exception {
+  final String toId;
+  final int documentCount;
+  final int parsedCount;
+
+  const SlotDataException(this.toId, this.documentCount, this.parsedCount);
+
+  @override
+  String toString() => 'SlotDataException(toId: $toId, '
+      '문서 $documentCount개 중 $parsedCount개만 해석됨)';
+}
+
 class FlexSlotOverflowException implements Exception {
   final String toId;
   final int limit;

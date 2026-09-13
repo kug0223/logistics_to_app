@@ -401,7 +401,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         ToastHelper.showError('근무 일정을 불러오지 못했습니다');
       }
     } catch (e) {
+      // [POSTING-V2-03D.1] 상한 초과만 실패로 다루지 않는다.
+      //   네트워크·권한 등 일반 조회 실패도 근무 날짜를 모르는 상태이므로
+      //   '근무 날짜 없음' 화면으로 내려앉으면 안 된다. ERROR != EMPTY.
       debugPrint('⚠️ 슬롯 로드 실패: $e');
+      _allSlots = [];
+      _slotLoadError = true;
+      if (mounted) {
+        ToastHelper.showError('근무 일정을 불러오지 못했습니다');
+      }
     }
   }
 

@@ -742,7 +742,20 @@ extension TOFirestore on FirestoreService {
 
   /// 슬롯 목록 조회
   /// [visibleOnly] true 면 visibleFrom <= 현재시각인 슬롯만 반환 (유저용)
-  Future<List<SlotModel>> getSlots(String toId, {bool visibleOnly = false}) async {
+  ///
+  /// [POSTING-V2-03D.1] 계약:
+  ///   · 조회 성공 + 문서 0개 → `[]`  (TRUE EMPTY — 그대로 유지)
+  ///   · 조회 실패(네트워크·권한·index·Source.server 등) → **예외**
+  ///   · 상한 초과 → FlexSlotOverflowException (03C.1)
+  ///   · [requireComplete] 이면서 파싱하지 못한 문서가 있으면 → SlotDataException
+  ///
+  /// 이전에는 모든 실패를 `[]`로 바꿔, 호출부의 실패 UI가 있어도 실행되지 않았고
+  /// 조회 실패와 "근무일 0개"가 같은 화면이 됐다. ERROR != ZERO.
+  Future<List<SlotModel>> getSlots(
+    String toId, {
+    bool visibleOnly = false,
+    bool requireComplete = false,
+  }) async {
     try {
       // [PERF-F7] 무제한 슬롯 읽기 차단
       // [POSTING-V2-03C.1] 상한+1을 읽어 truncation을 탐지한다 —
@@ -763,6 +776,13 @@ extension TOFirestore on FirestoreService {
           .whereType<SlotModel>()
           .toList();
 
+      // [POSTING-V2-03D.1] 완전성 판정은 visibleOnly 필터보다 **앞**이다.
+      //   숨겨진 슬롯 때문에 불완전하다고 보지도, 파싱 실패를 visibility로
+      //   사라진 것처럼 취급하지도 않는다.
+      if (requireComplete && slots.length != snap.docs.length) {
+        throw SlotDataException(toId, snap.docs.length, slots.length);
+      }
+
       if (!visibleOnly) return slots;
 
       final now = DateTime.now();
@@ -775,8 +795,12 @@ extension TOFirestore on FirestoreService {
       //   모두 catch에서 실패를 알린다.
       rethrow;
     } catch (e) {
+      // [POSTING-V2-03D.1] ERROR != ZERO.
+      //   조회 실패를 `[]`로 바꾸면 "근무일이 하나도 없는 공고"와 구분되지 않는다.
+      //   그 결과 개수로 판단하는 호출부(날짜 일괄삭제의 deletesAll)가
+      //   "전부 삭제"로 오판하고, 실패 안내 UI는 영원히 실행되지 않는다.
       debugPrint('❌ [TO] 슬롯 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 

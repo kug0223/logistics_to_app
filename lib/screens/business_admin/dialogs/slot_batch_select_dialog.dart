@@ -64,6 +64,11 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
   List<SlotModel> _slots = [];
   final Set<String> _selectedIds = {};
 
+  /// [POSTING-V2-03D.1] 조회 실패와 "선택할 날짜가 없음"은 다른 상태다.
+  ///   toast는 사라지지만 목록은 남는다 — 실패한 채 '등록된 날짜가 없습니다'를
+  ///   보여주면 관리자는 날짜가 정말 없다고 믿는다. ERROR != EMPTY.
+  bool _loadError = false;
+
   @override
   void initState() {
     super.initState();
@@ -93,11 +98,16 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       setState(() {
         _slots = filtered;
         _isLoading = false;
+        _loadError = false;
       });
     } catch (e) {
       debugPrint('❌ 슬롯 로드 실패: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _slots = [];
+          _isLoading = false;
+          _loadError = true;
+        });
         ToastHelper.showError('날짜 목록을 불러오는데 실패했습니다.');
       }
     }
@@ -146,6 +156,26 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
   Widget _buildContent() {
     if (_isLoading) {
       return const LoadingWidget();
+    }
+
+    // [POSTING-V2-03D.1] 실패 분기가 빈 목록 분기보다 앞이다.
+    if (_loadError) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off,
+                size: ResponsiveHelper.iconSize(context, 48),
+                color: AppColors.grey400),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '날짜 목록을 불러오는데 실패했습니다.',
+              style: ResponsiveHelper.bodyStyle(context,
+                  color: AppColors.grey600),
+            ),
+          ],
+        ),
+      );
     }
 
     if (_slots.isEmpty) {

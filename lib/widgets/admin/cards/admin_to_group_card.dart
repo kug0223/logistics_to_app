@@ -2003,9 +2003,26 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (deleteSlots == null || deleteSlots.isEmpty || !mounted) return;
 
         // 전체 슬롯 수 확인 — 마지막 날짜 삭제 시 공고 자체가 삭제됨을 안내
-        final allSlots = await widget.firestoreService.getSlots(masterTO.id);
+        //
+        // [POSTING-V2-03D.1] 이 개수 하나로 "공고까지 지울지"가 갈린다.
+        //   조회가 실패했거나(ERROR != ZERO) 일부 문서만 해석됐다면 그 수는
+        //   전체가 아니므로, deletesAll 계산에 도달하기 전에 중단한다.
+        //   [BACKLOG-BATCH-DELETE-DELETESALL-DERIVED-FROM-COUNT]
+        //   개수 비교로 "전부 삭제"를 추론하는 구조 자체의 한계는 남아 있다.
+        int? totalSlotCount;
+        try {
+          final allSlots = await widget.firestoreService
+              .getSlots(masterTO.id, requireComplete: true);
+          totalSlotCount = allSlots.length;
+        } catch (e) {
+          debugPrint('❌ [TO] 일괄삭제 전체 날짜 확인 실패: $e');
+        }
         if (!mounted) return;
-        final deletesAll = deleteSlots.length >= allSlots.length;
+        if (totalSlotCount == null) {
+          ToastHelper.showError('날짜 목록을 불러오는데 실패했습니다.');
+          return;
+        }
+        final deletesAll = deleteSlots.length >= totalSlotCount;
 
         final deleteConfirmed = await showDialog<bool>(
           context: this.context,

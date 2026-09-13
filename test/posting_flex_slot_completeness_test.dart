@@ -155,14 +155,19 @@ void main() {
       expect(get.contains('sublist('), false);
     });
 
-    test('03-b getSlots가 초과만 rethrow하고 generic 동작은 유지한다', () {
+    // [POSTING-V2-03D.1 재작성] 03C 시점에는 generic 실패가 범위 밖이라
+    // `return [];` 유지가 계약이었다. 03D에서 그 return이 "조회 실패를
+    // 근무일 0개로 바꾸는" 경로임이 확인되어, 이제 두 실패 모두 전파된다.
+    test('03-b getSlots가 초과도 일반 실패도 삼키지 않는다', () {
       final body = _flat(_codeOf(
           _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
       expect(body.contains('} on FlexSlotOverflowException { rethrow; }'), true,
-          reason: '기존 catch가 빈 목록으로 삼킨다');
-      // 일반 실패 동작은 이번 범위 밖 — 그대로 둔다
+          reason: 'TRUNCATED != SUCCESS');
       expect(body.contains('} catch (e) { debugPrint('), true);
-      expect(body.contains('return []; }'), true);
+      expect(body.contains('return []; }'), false,
+          reason: 'ERROR != ZERO — 실패를 빈 목록으로 바꾸면 caller가 구분할 수 없다');
+      expect(body.endsWith('rethrow; } }'), true,
+          reason: '마지막 catch가 전파로 끝나야 한다');
     });
 
     test('03-c 예외가 어느 공고인지 말한다', () {
@@ -238,16 +243,20 @@ void main() {
       }
     });
 
-    test('05-c 삼키던 caller 1곳만 최소 보완했다', () {
+    // [POSTING-V2-03D.1 재작성] 03C에서는 generic 실패가 범위 밖이라
+    // `catch { debugPrint; }` 유지가 계약이었다. 이제 같은 실패 상태로 합류한다.
+    test('05-c 삼키던 caller가 두 실패를 모두 기록한다', () {
       final body = _flat(
           _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
       expect(body.contains('} on FlexSlotOverflowException catch (e) {'), true);
       expect(body.contains('_allSlots = [];'), true,
           reason: '잘린 목록을 화면에 남기지 않는다');
       expect(body.contains('ToastHelper.showError('), true);
-      // 일반 실패 동작은 유지 (이번 범위 밖)
       expect(body.contains("} catch (e) { debugPrint('⚠️ 슬롯 로드 실패: \$e'); }"),
-          true);
+          false,
+          reason: '일반 실패만 무표시로 남으면 "근무 날짜 없음"과 같은 화면이 된다');
+      expect('_slotLoadError = true;'.allMatches(body).length, 2,
+          reason: 'overflow · 일반 실패 두 경로 모두');
     });
   });
 
@@ -259,7 +268,8 @@ void main() {
           reason: '_allSlots=[] 만으로는 "근무일 0개"와 구분되지 않는다');
       final load = _flat(
           _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
-      // 매 로드 시작 시 초기화되고, overflow에서만 세워진다
+      // 매 로드 시작 시 초기화되고, 실패 경로에서 세워진다
+      // (03C: overflow만 / 03D.1: 일반 조회 실패 포함)
       expect(load.contains('_slotLoadError = false;'), true);
       expect(load.contains('_slotLoadError = true;'), true);
     });
@@ -320,15 +330,20 @@ void main() {
       expect(code.contains('_buildWorkSection(context),'), true);
     });
 
-    test('08-g 일반 slot 실패 동작은 확대 수정하지 않았다 (§5)', () {
+    // [POSTING-V2-03D.1 재작성] 03C에서는 "일반 실패는 다음 phase 범위"라는
+    // 뜻으로 현상 유지를 고정했다. 03D가 그 범위를 열었으므로, 이제 같은
+    // 테스트가 "overflow 전용 UI를 따로 만들지 않았다"를 지킨다.
+    test('08-g overflow 전용 UI를 따로 만들지 않았다 (§8)', () {
+      final code = _codeOf(_src(_jobPostingPath));
+      // 실패 상태·문구·차단은 하나로 공유된다 — overflow 전용 분기가 없다
+      expect('bool _slotLoadError'.allMatches(code).length, 1);
+      expect(code.contains('_overflowError'), false);
+      expect('Widget _buildSlotLoadErrorMessage('.allMatches(code).length, 1);
       final body = _flat(
           _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
-      // generic catch는 여전히 debugPrint만 — _slotLoadError를 세우지 않는다
-      expect(body.contains("} catch (e) { debugPrint('⚠️ 슬롯 로드 실패: \$e'); }"),
-          true);
-      final get = _flat(
-          _codeOf(_bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
-      expect(get.contains('return []; }'), true);
+      expect("ToastHelper.showError('근무 일정을 불러오지 못했습니다')".allMatches(body).length,
+          2,
+          reason: 'overflow · 일반 실패가 같은 문구를 쓴다');
     });
   });
 

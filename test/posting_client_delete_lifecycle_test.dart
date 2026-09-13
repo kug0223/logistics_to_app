@@ -300,12 +300,28 @@ void main() {
           reason: 'success 블록 밖에서도 onChanged가 호출된다');
     });
 
+    // [POSTING-V2-03D.1 재작성] batchDelete case에 catch가 둘이 됐다.
+    //   (1) 전체 날짜 수 조회 실패 — 삭제를 시작조차 하지 않는다
+    //   (2) 삭제 실패 — 원래부터 검사하던 대상
+    // 첫 catch만 보면 (1) 뒤의 정상 경로 onChanged를 실패 경로로 오인한다.
     test('flex 날짜 삭제도 실패 시 onChanged를 부르지 않는다', () {
       final body = _flat(_codeOf(_caseOf(card, 'batchDelete')));
-      final catchIdx = body.indexOf('} catch (e) {');
-      expect(catchIdx, isNot(-1));
-      expect(body.substring(catchIdx).contains('widget.onChanged()'), isFalse,
+
+      // (2) 삭제 실패 catch — batchDeleteSlots 뒤에 오는 catch
+      final deleteIdx = body.indexOf('batchDeleteSlots(');
+      expect(deleteIdx, isNot(-1));
+      final deleteCatchIdx = body.indexOf('} catch (e) {', deleteIdx);
+      expect(deleteCatchIdx, isNot(-1));
+      expect(body.substring(deleteCatchIdx).contains('widget.onChanged()'), isFalse,
           reason: '삭제 실패 후에도 목록을 갱신한다');
+
+      // (1) 조회 실패 catch — 삭제 자체에 도달하지 않는다
+      final loadCatchIdx = body.indexOf('} catch (e) {');
+      expect(loadCatchIdx, lessThan(deleteIdx));
+      expect(
+          body.substring(loadCatchIdx, deleteIdx).contains('widget.onChanged()'),
+          isFalse,
+          reason: '날짜 수를 모르는 채 목록만 새로고침하면 아무 일도 없던 것처럼 보인다');
     });
   });
 
