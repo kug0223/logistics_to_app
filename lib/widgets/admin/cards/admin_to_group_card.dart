@@ -1826,7 +1826,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         break;
 
       case 'batchEdit':
-        final editSlots = await SlotBatchSelectDialog.show(
+        final editSelection = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
@@ -1834,7 +1834,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
           confirmLabel: '수정',
           openOnly: true, // [4H.0C-CLOSED-02] 마감된 슬롯 선택 방지
         );
-        if (editSlots == null || editSlots.isEmpty || !mounted) return;
+        if (editSelection == null || editSelection.isEmpty || !mounted) return;
+        final editSlots = editSelection.slots;
         await NavigationHelper.push<bool>(
           this.context,
           useRootNavigator: true,
@@ -1853,7 +1854,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (_isLifecycleActionRunning) return;
         // uid는 await 이전에 캡처 (async gap 후 context 접근 방지)
         final closeUid = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
-        final closeSlots = await SlotBatchSelectDialog.show(
+        final closeSelection = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
@@ -1861,7 +1862,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
           confirmLabel: '종료',
           openOnly: true,
         );
-        if (closeSlots == null || closeSlots.isEmpty || !mounted) return;
+        if (closeSelection == null || closeSelection.isEmpty || !mounted) return;
+        final closeSlots = closeSelection.slots;
         final confirmed = await showDialog<bool>(
           context: this.context,
           barrierDismissible: false,
@@ -1918,7 +1920,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
       case 'batchReopen':
         // [4I.1] 로딩 guard — 연타 방지
         if (_isLifecycleActionRunning) return;
-        final reopenSlots = await SlotBatchSelectDialog.show(
+        final reopenSelection = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
@@ -1927,7 +1929,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
           confirmLabel: '다시 열기',
           closedAndReopenable: true,
         );
-        if (reopenSlots == null || reopenSlots.isEmpty || !mounted) return;
+        if (reopenSelection == null || reopenSelection.isEmpty || !mounted) {
+          return;
+        }
+        final reopenSlots = reopenSelection.slots;
         final reopenConfirmed = await showDialog<bool>(
           context: this.context,
           barrierDismissible: false,
@@ -1993,14 +1998,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
       case 'batchDelete':
         // [4I.1] 로딩 guard — 연타 방지
         if (_isLifecycleActionRunning) return;
-        final deleteSlots = await SlotBatchSelectDialog.show(
+        // [POSTING-V2-03M.1] 해석하지 못한 슬롯도 복구 항목으로 함께 고른다.
+        //   서버는 slotId만 알면 지울 수 있는데, 이전에는 목록에서 조용히
+        //   빠져 있어 그 날짜를 가진 미공개 공고를 정리할 방법이 없었다.
+        final deleteSelection = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
           title: '일괄삭제 날짜 선택',
           confirmLabel: '삭제',
+          includeMalformed: true,
         );
-        if (deleteSlots == null || deleteSlots.isEmpty || !mounted) return;
+        if (deleteSelection == null || deleteSelection.isEmpty || !mounted) {
+          return;
+        }
+        final deleteSlotIds = deleteSelection.slotIds;
+        final hasMalformedSelected = deleteSelection.malformedSlotIds.isNotEmpty;
 
         // [POSTING-V2-03L.1] 여기서 "전부 삭제인가"를 계산하지 않는다.
         //   이전에는 전체 날짜 수를 읽어 선택 수와 비교한 뒤, 그 boolean으로
@@ -2015,7 +2028,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
           barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
             title: '날짜 삭제',
-            subtitle: '선택한 ${deleteSlots.length}개 날짜를 삭제하시겠습니까?',
+            // [POSTING-V2-03M.1] 날짜를 읽을 수 없는 항목이 섞이면 '날짜'라고
+            //   부를 수 없다 — '항목'으로 말한다.
+            subtitle: hasMalformedSelected
+                ? '선택한 ${deleteSlotIds.length}개 항목을 삭제하시겠습니까?'
+                : '선택한 ${deleteSlotIds.length}개 날짜를 삭제하시겠습니까?',
             icon: Icons.delete_forever,
             headerColor: AppColors.error,
             // [POSTING-V2-01C.2] 서버 계약(relation-zero only)과 같은 말을 한다.
@@ -2025,6 +2042,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             content: StyledDialogInfoCard.warning(
               '삭제한 날짜는 복구할 수 없습니다.\n'
               '지원·초대·근무 기록이 있는 날짜는 삭제할 수 없습니다.\n\n'
+              '${hasMalformedSelected ? '날짜 정보를 확인할 수 없는 항목이 포함되어 있습니다.\n' : ''}'
               '삭제 후 남은 날짜가 없으면 미공개 공고도 함께 삭제됩니다.',
             ),
             actions: [
@@ -2043,7 +2061,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           final result = await widget.firestoreService.batchDeleteSlots(
             toId: masterTO.id,
             businessId: masterTO.businessId,
-            slotIds: deleteSlots.map((s) => s.id).toList(),
+            slotIds: deleteSlotIds,
           );
           if (!mounted) return;
           widget.firestoreService.clearCache(toId: masterTO.id);
@@ -2062,8 +2080,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
             ToastHelper.showSuccess('공고가 삭제되었습니다');
           } else {
             final deleted =
-                (result['deletedSlotCount'] as num?)?.toInt() ?? deleteSlots.length;
-            ToastHelper.showSuccess('$deleted개 날짜가 삭제되었습니다');
+                (result['deletedSlotCount'] as num?)?.toInt() ??
+                    deleteSlotIds.length;
+            // [POSTING-V2-03M.1] 복구 항목이 섞였으면 '날짜'로 부르지 않는다.
+            ToastHelper.showSuccess(hasMalformedSelected
+                ? '$deleted개 항목이 삭제되었습니다'
+                : '$deleted개 날짜가 삭제되었습니다');
           }
         } catch (e) {
           if (mounted) {

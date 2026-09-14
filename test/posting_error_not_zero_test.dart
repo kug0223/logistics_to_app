@@ -748,10 +748,13 @@ void main() {
       expect(card.contains('batchDeleteSlots('), isTrue);
     });
 
+    // [POSTING-V2-03M.1] 변수명이 deleteSlotIds로 바뀌고, 해석 불가 항목이
+    //   섞이면 '항목'으로 부르는 분기가 생겼다. 고정하려는 것은 그대로다 —
+    //   이 Phase가 삭제 문구를 건드리지 않았다는 사실.
     test('P1-3 슬롯 삭제 문구 무변경', () {
       final flat = _flat(_codeOf(_src(_cardPath)));
       expect(
-        flat.contains("'선택한 \${deleteSlots.length}개 날짜를 삭제하시겠습니까?"),
+        flat.contains("'선택한 \${deleteSlotIds.length}개 날짜를 삭제하시겠습니까?'"),
         isTrue,
       );
     });

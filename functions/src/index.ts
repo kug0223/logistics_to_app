@@ -18268,10 +18268,22 @@ async function assertNoSlotRelations(
     }
     if (!contractSnap.empty) {
       const targetDates = new Set<string>();
+      // [POSTING-V2-03M.1] 날짜를 읽을 수 없는 슬롯은 어떤 계약과도 대조할 수
+      //   없다. 이전에는 그런 슬롯이 targetDates에 들어가지 않아 계약 검사에서
+      //   조용히 빠졌다 — 그 날짜의 계약이 있어도 삭제가 통과했다.
+      //   지원서는 slotId로 정확히 보므로 영향이 없지만, 계약은 slotId가 없어
+      //   날짜로만 잇는다. 그래서 계약이 하나라도 있으면 그 슬롯의 날짜일
+      //   가능성을 배제할 근거가 없고, 보수적으로 막는다.
+      //   계약이 아예 없으면 이 분기에 오지 않으므로 정리는 계속 가능하다.
+      let hasUndatedTarget = false;
       for (const snap of slotSnaps) {
         if (!snap.exists) continue;
         const d = snap.data()?.date as admin.firestore.Timestamp | undefined;
         if (d?.toMillis) targetDates.add(kstDateKey(d));
+        else hasUndatedTarget = true;
+      }
+      if (hasUndatedTarget) {
+        return {blocked: true, reason: "CONTRACT_EXISTS"};
       }
       for (const doc of contractSnap.docs) {
         const wd = doc.data().workDate as string | undefined;

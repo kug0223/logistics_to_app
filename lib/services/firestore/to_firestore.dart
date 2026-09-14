@@ -756,6 +756,34 @@ extension TOFirestore on FirestoreService {
     bool visibleOnly = false,
     bool requireComplete = false,
   }) async {
+    final result = await getSlotCandidates(toId);
+
+    // [POSTING-V2-03D.1] 완전성 판정은 visibleOnly 필터보다 **앞**이다.
+    //   숨겨진 슬롯 때문에 불완전하다고 보지도, 파싱 실패를 visibility로
+    //   사라진 것처럼 취급하지도 않는다.
+    if (requireComplete && result.malformedIds.isNotEmpty) {
+      throw SlotDataException(
+          toId, result.documentCount, result.slots.length);
+    }
+
+    if (!visibleOnly) return result.slots;
+
+    final now = DateTime.now();
+    return result.slots
+        .where((s) => s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
+        .toList();
+  }
+
+  /// 슬롯 조회 결과를 **해석된 것과 해석하지 못한 것으로 나눠** 돌려준다.
+  ///
+  /// [POSTING-V2-03M.1] `getSlots`는 파싱 실패 문서를 조용히 버린다.
+  /// 날짜 일괄삭제 화면은 그 때문에 실제보다 적은 날짜를 보여줬고, 관리자는
+  /// 그것이 전부라고 믿었다. 서버는 slotId만 알면 지울 수 있으므로,
+  /// 같은 조회 한 번에서 문서 id를 함께 넘겨 복구 경로를 만든다.
+  ///
+  /// 실패·상한 계약은 [getSlots]와 동일하다 — 조회 실패는 예외,
+  /// 상한 초과는 [FlexSlotOverflowException]. **추가 조회는 없다.**
+  Future<SlotLoadResult> getSlotCandidates(String toId) async {
     try {
       // [PERF-F7] 무제한 슬롯 읽기 차단
       // [POSTING-V2-03C.1] 상한+1을 읽어 truncation을 탐지한다 —
@@ -771,24 +799,18 @@ extension TOFirestore on FirestoreService {
         throw FlexSlotOverflowException(toId, kMaxFlexSlotsPerTO);
       }
 
-      final slots = snap.docs
-          .map((d) => SlotModel.tryFromMap(d.data(), d.id, toId))
-          .whereType<SlotModel>()
-          .toList();
-
-      // [POSTING-V2-03D.1] 완전성 판정은 visibleOnly 필터보다 **앞**이다.
-      //   숨겨진 슬롯 때문에 불완전하다고 보지도, 파싱 실패를 visibility로
-      //   사라진 것처럼 취급하지도 않는다.
-      if (requireComplete && slots.length != snap.docs.length) {
-        throw SlotDataException(toId, snap.docs.length, slots.length);
+      // 한 pass로 가른다 — 같은 문서를 두 번 파싱하지 않는다.
+      final slots = <SlotModel>[];
+      final malformedIds = <String>[];
+      for (final d in snap.docs) {
+        final parsed = SlotModel.tryFromMap(d.data(), d.id, toId);
+        if (parsed == null) {
+          malformedIds.add(d.id);
+        } else {
+          slots.add(parsed);
+        }
       }
-
-      if (!visibleOnly) return slots;
-
-      final now = DateTime.now();
-      return slots
-          .where((s) => s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
-          .toList();
+      return SlotLoadResult(slots: slots, malformedIds: malformedIds);
     } on FlexSlotOverflowException {
       // [POSTING-V2-03C.1] TRUNCATED != SUCCESS — 빈 목록으로 삼키지 않는다.
       //   caller 네 곳(일괄 종료/재오픈 · 수정 · 지원자 상세 · 날짜 일괄삭제)이

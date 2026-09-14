@@ -152,22 +152,28 @@ void main() {
 
   // ── §2 generic catch → rethrow ─────────────────────────────────
   group('GETSLOTS-02 조회 실패를 빈 목록으로 바꾸지 않는다', () {
+    // [POSTING-V2-03M.1 재작성] 쿼리와 실패 계약이 getSlotCandidates로
+    //   옮겨졌다. getSlots는 그것을 재사용하므로 계약은 한 벌 그대로다.
     test('02-a 마지막 catch가 rethrow로 끝난다', () {
-      final body = _flat(_codeOf(
-          _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_toPath), 'Future<SlotLoadResult> getSlotCandidates(')));
       expect(body.contains("debugPrint('❌ [TO] 슬롯 조회 실패: \$e'); rethrow;"), true,
           reason: 'ERROR != ZERO');
     });
 
     test('02-b 본문 어디에도 return [] 가 남아 있지 않다', () {
-      final body = _flat(_codeOf(
-          _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
-      expect(body.contains('return [];'), false);
+      for (final sig in [
+        'Future<List<SlotModel>> getSlots(',
+        'Future<SlotLoadResult> getSlotCandidates(',
+      ]) {
+        final body = _flat(_codeOf(_bodyOf(_src(_toPath), sig)));
+        expect(body.contains('return [];'), false, reason: sig);
+      }
     });
 
     test('02-c 03C overflow sentinel은 그대로다 (§2)', () {
-      final body = _flat(_codeOf(
-          _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_toPath), 'Future<SlotLoadResult> getSlotCandidates(')));
       expect(body.contains('.limit(_kFlexSlotProbeLimit)'), true);
       expect(
           body.contains('if (snap.docs.length > kMaxFlexSlotsPerTO) { '
@@ -203,8 +209,8 @@ void main() {
       final body = _flat(_codeOf(
           _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
       expect(
-          body.contains('if (requireComplete && slots.length != snap.docs.length) { '
-              'throw SlotDataException(toId, snap.docs.length, slots.length); }'),
+          body.contains('if (requireComplete && result.malformedIds.isNotEmpty) { '
+              'throw SlotDataException( toId, result.documentCount, result.slots.length); }'),
           true);
     });
 
@@ -212,19 +218,24 @@ void main() {
       final body = _codeOf(
           _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots('));
       final completeIdx = body.indexOf('throw SlotDataException(');
-      final visibleIdx = body.indexOf('if (!visibleOnly) return slots;');
+      final visibleIdx = body.indexOf('if (!visibleOnly) return result.slots;');
       expect(completeIdx, greaterThan(-1));
       expect(visibleIdx, greaterThan(completeIdx),
           reason: '필터가 먼저면 숨겨진 슬롯 때문에 불완전 판정이 난다');
     });
 
+    // [POSTING-V2-03M.1 재작성] 파싱은 getSlotCandidates가 한다. 완전성
+    //   판정은 그 결과(malformedIds)를 받아 하므로 여전히 파싱 뒤다.
     test('03-d 완전성 판정이 파싱 뒤다', () {
+      final candidates = _codeOf(
+          _bodyOf(_src(_toPath), 'Future<SlotLoadResult> getSlotCandidates('));
+      expect(candidates.contains('SlotModel.tryFromMap('), true);
       final body = _codeOf(
           _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots('));
-      final parseIdx = body.indexOf('SlotModel.tryFromMap(');
+      final loadIdx = body.indexOf('await getSlotCandidates(toId)');
       final completeIdx = body.indexOf('throw SlotDataException(');
-      expect(parseIdx, greaterThan(-1));
-      expect(completeIdx, greaterThan(parseIdx));
+      expect(loadIdx, greaterThan(-1));
+      expect(completeIdx, greaterThan(loadIdx));
     });
 
     // [TC2 재작성] 이전 판단("파싱 완화가 아니라 완전성 요구로 해결한다")이
@@ -345,7 +356,9 @@ void main() {
     test('06-b 실패 분기가 빈 목록 분기보다 먼저다', () {
       final body = _codeOf(_bodyOf(_src(_batchDialogPath), 'Widget _buildContent('));
       final errIdx = body.indexOf('if (_loadError) {');
-      final emptyIdx = body.indexOf('if (_slots.isEmpty) {');
+      // [POSTING-V2-03M.1] 해석 불가 항목만 있어도 빈 목록이 아니다
+      final emptyIdx =
+          body.indexOf('if (_slots.isEmpty && _malformedIds.isEmpty) {');
       expect(errIdx, greaterThan(-1));
       expect(emptyIdx, greaterThan(errIdx));
     });
@@ -372,7 +385,10 @@ void main() {
     test('06-e 성공 시 실패 상태가 해제된다', () {
       final body = _flat(
           _codeOf(_bodyOf(_src(_batchDialogPath), 'Future<void> _loadSlots(')));
-      expect(body.contains('_slots = filtered; _isLoading = false; _loadError = false;'),
+      expect(
+          body.contains('_slots = filtered; '
+              '_malformedIds = result.malformedIds; '
+              '_isLoading = false; _loadError = false;'),
           true);
     });
   });
@@ -663,10 +679,13 @@ void main() {
       expect(slot.visibleFrom, isNull);
     });
 
+    // [POSTING-V2-03M.1] 다이얼로그는 getSlotCandidates를 쓴다 — 같은 조회,
+    //   같은 파싱 집합이고 해석 실패 문서만 함께 받는다.
     test('04-d SlotBatchSelectDialog / EditTO도 같은 집합을 쓴다 (§7)', () {
       for (final p in [_batchDialogPath, _editToPath]) {
         final code = _codeOf(_src(p));
-        expect(code.contains('getSlots('), true, reason: p);
+        expect(code.contains(p == _batchDialogPath ? 'getSlotCandidates(' : 'getSlots('),
+            true, reason: p);
         expect(code.contains('requireComplete'), false, reason: p);
       }
     });

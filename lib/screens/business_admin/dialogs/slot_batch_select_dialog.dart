@@ -13,6 +13,29 @@ import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/slot_status_badge.dart';
 
+/// 다이얼로그가 돌려주는 선택 결과.
+///
+/// [POSTING-V2-03M.1] 해석하지 못한 슬롯은 [SlotModel]을 만들 수 없으므로
+/// 문서 id로만 돌아온다. 서버는 slotId만 있으면 지울 수 있다.
+class SlotBatchSelection {
+  final List<SlotModel> slots;
+
+  /// 선택된 '날짜 확인 불가' 항목의 문서 id.
+  final List<String> malformedSlotIds;
+
+  const SlotBatchSelection({
+    required this.slots,
+    this.malformedSlotIds = const [],
+  });
+
+  /// 서버에 보낼 canonical id 목록.
+  List<String> get slotIds =>
+      [...slots.map((s) => s.id), ...malformedSlotIds];
+
+  int get length => slots.length + malformedSlotIds.length;
+  bool get isEmpty => length == 0;
+}
+
 /// 배치 작업용 날짜(슬롯) 다중선택 다이얼로그
 class SlotBatchSelectDialog extends StatefulWidget {
   final TOModel to;
@@ -22,6 +45,13 @@ class SlotBatchSelectDialog extends StatefulWidget {
   final bool openOnly;            // true면 마감되지 않은 슬롯만 표시
   final bool closedAndReopenable; // true면 수동마감 + 날짜 미경과 슬롯만 표시
 
+  /// [POSTING-V2-03M.1] 해석하지 못한 슬롯을 복구 항목으로 노출할지.
+  ///
+  /// 삭제 경로에서만 켠다 — 날짜를 읽을 수 없는 슬롯은 종료·재오픈·수정의
+  /// 대상이 될 수 없고(무엇을 바꾸는지 보여줄 수 없다), 그 경로들이 막혀도
+  /// 공고가 정리 불가 상태가 되지는 않는다.
+  final bool includeMalformed;
+
   const SlotBatchSelectDialog({
     super.key,
     required this.to,
@@ -30,9 +60,10 @@ class SlotBatchSelectDialog extends StatefulWidget {
     required this.confirmLabel,
     this.openOnly = false,
     this.closedAndReopenable = false,
+    this.includeMalformed = false,
   });
 
-  static Future<List<SlotModel>?> show({
+  static Future<SlotBatchSelection?> show({
     required BuildContext context,
     required TOModel to,
     required FirestoreService firestoreService,
@@ -40,8 +71,9 @@ class SlotBatchSelectDialog extends StatefulWidget {
     required String confirmLabel,
     bool openOnly = false,
     bool closedAndReopenable = false,
+    bool includeMalformed = false,
   }) {
-    return showDialog<List<SlotModel>>(
+    return showDialog<SlotBatchSelection>(
       context: context,
       barrierDismissible: false,
       builder: (_) => SlotBatchSelectDialog(
@@ -51,6 +83,7 @@ class SlotBatchSelectDialog extends StatefulWidget {
         confirmLabel: confirmLabel,
         openOnly: openOnly,
         closedAndReopenable: closedAndReopenable,
+        includeMalformed: includeMalformed,
       ),
     );
   }
@@ -62,6 +95,9 @@ class SlotBatchSelectDialog extends StatefulWidget {
 class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
   bool _isLoading = true;
   List<SlotModel> _slots = [];
+
+  /// [POSTING-V2-03M.1] 해석하지 못한 슬롯 문서의 id.
+  List<String> _malformedIds = const [];
   final Set<String> _selectedIds = {};
 
   /// [POSTING-V2-03D.1] 조회 실패와 "선택할 날짜가 없음"은 다른 상태다.
@@ -77,8 +113,12 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
 
   Future<void> _loadSlots() async {
     try {
-      final slots = await widget.firestoreService.getSlots(widget.to.id);
-      slots.sort((a, b) => a.date.compareTo(b.date));
+      // [POSTING-V2-03M.1] 같은 조회 한 번에서 해석된 슬롯과 해석하지 못한
+      //   문서를 함께 받는다 — 추가 조회 없음.
+      final result =
+          await widget.firestoreService.getSlotCandidates(widget.to.id);
+      final slots = [...result.slots]
+        ..sort((a, b) => a.date.compareTo(b.date));
 
       final now = DateTime.now();
       final today = FormatHelper.toKstDate(now);
@@ -97,6 +137,9 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
 
       setState(() {
         _slots = filtered;
+        // 복구 항목을 노출하지 않는 경로에서도 **개수는 알린다** —
+        //   목록이 전부인 것처럼 보이게 두지 않는다.
+        _malformedIds = result.malformedIds;
         _isLoading = false;
         _loadError = false;
       });
@@ -105,6 +148,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       if (mounted) {
         setState(() {
           _slots = [];
+          _malformedIds = const [];
           _isLoading = false;
           _loadError = true;
         });
@@ -113,14 +157,21 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
     }
   }
 
-  bool get _allSelected => _slots.isNotEmpty && _selectedIds.length == _slots.length;
+  /// 선택 가능한 항목의 id — 복구 항목은 삭제 경로에서만 포함된다.
+  List<String> get _selectableIds => [
+        ..._slots.map((s) => s.id),
+        if (widget.includeMalformed) ..._malformedIds,
+      ];
+
+  bool get _allSelected =>
+      _selectableIds.isNotEmpty && _selectedIds.length == _selectableIds.length;
 
   void _toggleAll() {
     setState(() {
       if (_allSelected) {
         _selectedIds.clear();
       } else {
-        _selectedIds.addAll(_slots.map((s) => s.id));
+        _selectedIds.addAll(_selectableIds);
       }
     });
   }
@@ -146,7 +197,15 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                   final selected = _slots
                       .where((s) => _selectedIds.contains(s.id))
                       .toList();
-                  Navigator.pop(context, selected);
+                  Navigator.pop(
+                    context,
+                    SlotBatchSelection(
+                      slots: selected,
+                      malformedSlotIds: _malformedIds
+                          .where(_selectedIds.contains)
+                          .toList(),
+                    ),
+                  );
                 },
         ),
       ],
@@ -178,7 +237,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       );
     }
 
-    if (_slots.isEmpty) {
+    if (_slots.isEmpty && _malformedIds.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -236,7 +295,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
                     Text(
-                      '전체 선택 (${_slots.length}개)',
+                      '전체 선택 (${_selectableIds.length}개)',
                       style: ResponsiveHelper.bodyStyle(context).copyWith(
                         fontWeight: FontWeight.w600,
                         color: _allSelected
@@ -253,6 +312,115 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
 
           // 슬롯 목록
           ..._slots.map((slot) => _buildSlotTile(slot)),
+
+          // [POSTING-V2-03M.1] 해석하지 못한 슬롯 — 목록에서 지우지 않는다.
+          //   삭제 경로에서는 선택 가능한 복구 항목으로, 그 밖에서는
+          //   "여기 더 있다"는 사실만 알리는 안내로 보여준다.
+          if (widget.includeMalformed)
+            ...List.generate(
+              _malformedIds.length,
+              (i) => _buildMalformedTile(_malformedIds[i], i + 1),
+            )
+          else if (_malformedIds.isNotEmpty)
+            _buildMalformedNotice(),
+        ],
+      ),
+    );
+  }
+
+  /// 날짜를 읽을 수 없는 슬롯을 정상 날짜로 위장하지 않는다.
+  /// 문서 id나 내부 스키마 오류는 노출하지 않는다.
+  Widget _buildMalformedTile(String slotId, int ordinal) {
+    final isSelected = _selectedIds.contains(slotId);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            if (isSelected) {
+              _selectedIds.remove(slotId);
+            } else {
+              _selectedIds.add(slotId);
+            }
+          });
+        },
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          margin:
+              EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppColors.warning.withValues(alpha: 0.08)
+                : AppColors.grey50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? AppColors.warning : AppColors.border,
+            ),
+          ),
+          child: Row(
+            children: [
+              AppCheckbox(
+                value: isSelected,
+                size: ResponsiveHelper.iconSize(context, 20),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+              Icon(Icons.warning_amber_rounded,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: AppColors.warning),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '날짜 확인 불가 $ordinal',
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      '데이터 오류로 날짜를 표시할 수 없습니다.',
+                      style: ResponsiveHelper.captionStyle(context,
+                          color: AppColors.grey600),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 삭제 외 경로 — 선택은 못 하지만 존재는 알린다.
+  Widget _buildMalformedNotice() {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: AppColors.warning),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '날짜를 표시할 수 없는 항목이 ${_malformedIds.length}개 있습니다. '
+              '날짜 일괄삭제에서 정리할 수 있습니다.',
+              style: ResponsiveHelper.captionStyle(context,
+                  color: AppColors.grey700),
+            ),
+          ),
         ],
       ),
     );

@@ -767,7 +767,8 @@ void main() {
     test('P1-3 슬롯 삭제 정책은 이번에 수정하지 않았다', () {
       final flat = _flat(_codeOf(_src(_cardPath)));
       expect(
-        flat.contains("'선택한 \${deleteSlots.length}개 날짜를 삭제하시겠습니까?"),
+        // [POSTING-V2-03M.1] 변수명만 deleteSlotIds로 바뀌었다
+        flat.contains("'선택한 \${deleteSlotIds.length}개 날짜를 삭제하시겠습니까?'"),
         isTrue,
         reason: '슬롯 삭제 문구는 별도 Phase 범위다',
       );

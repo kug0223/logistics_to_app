@@ -179,6 +179,30 @@ class FlexSlotOverflowException implements Exception {
       'FlexSlotOverflowException(toId: $toId, 근무일이 $limit개를 넘어 전체를 불러올 수 없음)';
 }
 
+/// [POSTING-V2-03M.1] 슬롯 조회 결과 — 해석된 것과 해석하지 못한 것.
+///
+/// 파싱 실패 문서를 버리면 목록이 전부인 것처럼 보이고, 관리자는 그 날짜가
+/// 존재한다는 사실조차 알 수 없다. 서버는 slotId만 알면 지울 수 있으므로
+/// **문서 id는 남긴다** — 날짜를 복원할 수 없다고 해서 없는 것으로 만들지 않는다.
+///
+/// [malformedIds]에 담기는 것은 `date`가 없거나 Timestamp가 아닌 문서처럼
+/// canonical parser가 실제로 실패한 것뿐이다. `createdAt`이 없는 레거시 슬롯은
+/// 정상 파싱되어 [slots]에 들어간다 — LEGACY != MALFORMED.
+class SlotLoadResult {
+  final List<SlotModel> slots;
+
+  /// 해석하지 못한 문서의 id. 날짜조차 읽을 수 없으므로 id만 canonical하다.
+  /// 임의의 날짜로 채워 정상 슬롯처럼 위장하지 않는다.
+  final List<String> malformedIds;
+
+  const SlotLoadResult({required this.slots, required this.malformedIds});
+
+  /// 조회된 canonical 문서 수.
+  int get documentCount => slots.length + malformedIds.length;
+
+  bool get hasMalformed => malformedIds.isNotEmpty;
+}
+
 class FirestoreService {
   // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
   static final FirestoreService _instance = FirestoreService._internal();

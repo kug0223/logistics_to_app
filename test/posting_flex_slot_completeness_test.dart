@@ -123,9 +123,11 @@ void main() {
       expect(emptyIdx, greaterThan(overflowIdx));
     });
 
+    // [POSTING-V2-03M.1 재작성] 쿼리가 getSlotCandidates로 옮겨졌다 —
+    //   getSlots는 그것을 재사용하므로 probe/guard는 여전히 한 벌이다.
     test('02-d getSlots도 같은 probe/검사를 쓴다', () {
-      final body = _flat(_codeOf(
-          _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_toPath), 'Future<SlotLoadResult> getSlotCandidates(')));
       expect(body.contains('.limit(_kFlexSlotProbeLimit)'), true);
       expect(
           body.contains('if (snap.docs.length > kMaxFlexSlotsPerTO) { '
@@ -150,7 +152,8 @@ void main() {
           _bodyOf(_src(_svcPath), 'Future<FlexSlotLoad> loadFlexSlots('));
       expect(svc.contains('.take('), false);
       expect(svc.contains('sublist('), false);
-      final get = _codeOf(_bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots('));
+      final get = _codeOf(
+          _bodyOf(_src(_toPath), 'Future<SlotLoadResult> getSlotCandidates('));
       expect(get.contains('.take('), false);
       expect(get.contains('sublist('), false);
     });
@@ -159,8 +162,8 @@ void main() {
     // `return [];` 유지가 계약이었다. 03D에서 그 return이 "조회 실패를
     // 근무일 0개로 바꾸는" 경로임이 확인되어, 이제 두 실패 모두 전파된다.
     test('03-b getSlots가 초과도 일반 실패도 삼키지 않는다', () {
-      final body = _flat(_codeOf(
-          _bodyOf(_src(_toPath), 'Future<List<SlotModel>> getSlots(')));
+      final body = _flat(_codeOf(_bodyOf(
+          _src(_toPath), 'Future<SlotLoadResult> getSlotCandidates(')));
       expect(body.contains('} on FlexSlotOverflowException { rethrow; }'), true,
           reason: 'TRUNCATED != SUCCESS');
       expect(body.contains('} catch (e) { debugPrint('), true);
@@ -236,14 +239,17 @@ void main() {
     //   caller이고 실패를 토스트로 알린다.
     test('05-b 토스트로 실패를 알리는 caller들은 그대로 동작한다', () {
       // getSlots가 rethrow하면 각 caller의 기존 catch가 잡는다.
-      for (final p in [
-        'lib/screens/business_admin/dialogs/slot_batch_select_dialog.dart',
-        'lib/screens/business_admin/to_management/edit_to_screen.dart',
-      ]) {
-        final code = _codeOf(_src(p));
-        expect(code.contains('getSlots('), true, reason: p);
-        expect(code.contains('ToastHelper.showError'), true, reason: p);
-      }
+      // [POSTING-V2-03M.1] 다이얼로그는 같은 조회의 getSlotCandidates를 쓴다 —
+      //   실패·상한 계약은 동일하고, 해석 실패 문서만 함께 받는다.
+      final dialog = _codeOf(
+          _src('lib/screens/business_admin/dialogs/slot_batch_select_dialog.dart'));
+      expect(dialog.contains('getSlotCandidates('), true);
+      expect(dialog.contains('ToastHelper.showError'), true);
+
+      final edit = _codeOf(
+          _src('lib/screens/business_admin/to_management/edit_to_screen.dart'));
+      expect(edit.contains('getSlots('), true);
+      expect(edit.contains('ToastHelper.showError'), true);
       // 카드는 caller에서 빠졌다 — 읽지 않으므로 삼킬 실패도 없다
       final card = _codeOf(_src('lib/widgets/admin/cards/admin_to_group_card.dart'));
       expect(card.contains('getSlots('), false);
