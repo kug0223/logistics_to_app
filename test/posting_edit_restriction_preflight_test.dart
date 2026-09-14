@@ -19,6 +19,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:ALfit/screens/business_admin/to_management/edit_to_screen.dart';
+
 const _editPath = 'lib/screens/business_admin/to_management/edit_to_screen.dart';
 const _fnsPath = 'functions/src/index.ts';
 
@@ -88,6 +90,15 @@ class App {
   const App(this.status,
       {this.slotId, this.workDetailId, this.wdId, this.selectedWorkType});
 }
+
+// ── EditApplicationRelations 동작 테스트용 ──────────────────────
+Map<String, dynamic> _app(String status) => {'status': status};
+
+const _confirmedish = ['CONFIRMED', 'CONTRACT_PENDING'];
+
+/// WAGE-GUARD가 실제로 쓰는 판정 — 확정/서명대기 근무자가 있는가.
+bool _hasConfirmed(List<Map<String, dynamic>> apps) =>
+    apps.any((m) => _confirmedish.contains(m['status']));
 
 bool _matches(App a, Work w) {
   if (a.workDetailId == w.id) return true;
@@ -173,34 +184,131 @@ void main() {
       }
     });
 
-    test('01-d 세션 안에서 두 번 읽지 않는다 (repeat = +0, §6, §18)', () {
-      final body = _flat(_codeOf(
-          _bodyOf(_src(_editPath), 'Future<List<Map<String, dynamic>>?> _ensureApplicationSnapshot(')));
-      expect(body.contains('if (_applicationSnapshot != null) return _applicationSnapshot;'),
-          true);
-      expect(body.contains('if (_applicationSnapshotFailed) return null;'), true,
-          reason: '실패도 기억한다 — 필드마다 재시도하지 않는다');
-      // callable 호출 지점이 파일 전체에서 하나뿐이다
-      final code = _codeOf(_src(_editPath));
-      expect("httpsCallable('callableGetApplicationsByBiz'".allMatches(code).length, 1,
-          reason: 'WAGE-GUARD도 같은 스냅샷을 쓴다');
+    // [TC2 재작성] 캐시 정책이 State 메서드에서 EditApplicationRelations로
+    // 옮겨졌다. 안내용(advisory)은 세션 재사용, 임금 판단(fresh)은 매번 조회다.
+    test('01-d 안내용은 세션 안에서 두 번 읽지 않는다 (repeat = +0, §5)', () async {
+      var calls = 0;
+      final r = EditApplicationRelations(() async {
+        calls++;
+        return [_app('PENDING')];
+      });
+      await r.advisory();
+      await r.advisory();
+      await r.advisory();
+      expect(calls, 1, reason: '필드를 만질 때마다 재조회하지 않는다');
     });
 
     test('01-e 새 callable / 새 Firestore query를 만들지 않았다 (§6)', () {
       final body = _codeOf(_bodyOf(
-          _src(_editPath), 'Future<List<Map<String, dynamic>>?> _ensureApplicationSnapshot('));
+          _src(_editPath), 'Future<List<Map<String, dynamic>>> _fetchApplications('));
       expect(body.contains("'callableGetApplicationsByBiz'"), true);
       expect(body.contains('FirebaseFirestore.instance'), false);
       expect(body.contains('.collection('), false);
+      // 원본 조회 지점은 파일 전체에서 하나뿐 — 두 경로가 같은 fetch를 공유한다
+      final code = _codeOf(_src(_editPath));
+      expect("httpsCallable('callableGetApplicationsByBiz'".allMatches(code).length, 1);
     });
 
     test('01-f 화면을 닫으면 사라지는 세션 상태다 (§16)', () {
       final code = _codeOf(_src(_editPath));
-      expect(code.contains('List<Map<String, dynamic>>? _applicationSnapshot;'), true,
+      expect(
+          code.contains('late final EditApplicationRelations _applicationRelations ='),
+          true,
           reason: 'State 필드 — 전역 캐시로 승격하지 않는다');
-      expect(code.contains('static List<Map<String, dynamic>>? _applicationSnapshot'),
-          false);
+      expect(code.contains('static EditApplicationRelations'), false);
       expect(code.contains('FirestoreService().cacheApplications'), false);
+    });
+  });
+
+  // ── TC2 §1, §2, §7, §8 — advisory / wage 분리 ──────────────────
+  group('PREFLIGHT-08 안내용 캐시가 임금 판단을 대신하지 않는다', () {
+    test('08-a 임금 경로는 캐시가 있어도 다시 읽는다 (§2, §B)', () async {
+      var calls = 0;
+      final r = EditApplicationRelations(() async {
+        calls++;
+        return [_app('PENDING')];
+      });
+      await r.advisory();
+      expect(calls, 1);
+      await r.fresh();
+      expect(calls, 2, reason: '세션 캐시로 최종 방어선을 대체하면 경고가 무의미해진다');
+      await r.fresh();
+      expect(calls, 3, reason: '저장할 때마다 그 시점의 확정 관계를 본다');
+    });
+
+    test('08-b CASE A — 안내 이후 생긴 확정자를 임금 조회가 잡는다 (§7, §D)', () async {
+      var confirmedExists = false;
+      final r = EditApplicationRelations(() async =>
+          confirmedExists ? [_app('CONFIRMED')] : <Map<String, dynamic>>[]);
+
+      // 업무를 고치던 시점: 확정자 0
+      final advisory = await r.advisory();
+      expect(advisory, isEmpty);
+
+      // 그 사이 다른 관리자가 한 명을 확정했다
+      confirmedExists = true;
+
+      // 임금 저장 시점
+      final wage = await r.fresh();
+      expect(wage, isNotNull);
+      expect(_hasConfirmed(wage!), true,
+          reason: 'stale 캐시를 썼다면 확정자 없음으로 통과했을 것');
+    });
+
+    test('08-c 안내용 캐시는 fresh 결과로 갱신된다 (§6)', () async {
+      var confirmedExists = false;
+      final r = EditApplicationRelations(() async =>
+          confirmedExists ? [_app('CONFIRMED')] : <Map<String, dynamic>>[]);
+      await r.advisory();
+      confirmedExists = true;
+      await r.fresh();
+      final again = await r.advisory();
+      expect(_hasConfirmed(again!), true,
+          reason: '더 새 값을 얻었는데 낡은 안내를 계속 쓸 이유가 없다');
+    });
+
+    test('08-d 안내 실패는 기억하고, 임금 실패는 기억하지 않는다 (§4, §8)', () async {
+      var shouldFail = true;
+      var calls = 0;
+      final r = EditApplicationRelations(() async {
+        calls++;
+        if (shouldFail) throw StateError('network');
+        return [_app('CONFIRMED')];
+      });
+
+      // 안내: 실패 → 이후 재시도하지 않는다
+      expect(await r.advisory(), isNull);
+      expect(await r.advisory(), isNull);
+      expect(calls, 1, reason: '필드를 만질 때마다 실패한 조회를 반복하지 않는다');
+
+      // 임금: 안내가 실패했더라도 다시 시도한다
+      expect(await r.fresh(), isNull);
+      expect(calls, 2, reason: '안내 실패가 저장 시 조회까지 막으면 안 된다');
+
+      // 재저장: 또 시도한다 (permanent failure cache 금지)
+      expect(await r.fresh(), isNull);
+      expect(calls, 3);
+
+      // 복구되면 성공하고, 안내도 함께 되살아난다
+      shouldFail = false;
+      final recovered = await r.fresh();
+      expect(_hasConfirmed(recovered!), true);
+      expect(_hasConfirmed((await r.advisory())!), true,
+          reason: '한 번 실패했다고 세션 내내 안내를 포기하지 않는다');
+    });
+
+    test('08-e 임금 경로가 fresh를, 안내 경로가 advisory를 쓴다 (배선)', () {
+      final wage = _flat(
+          _codeOf(_bodyOf(_src(_editPath), 'Future<bool> _showWageGuardWarning(')));
+      expect(wage.contains('await _applicationRelations.fresh();'), true);
+      expect(wage.contains('advisory()'), false,
+          reason: '최종 방어선이 안내용 캐시를 쓰면 안 된다');
+
+      final preflight = _flat(
+          _codeOf(_bodyOf(_src(_editPath), 'Future<bool> _canApplyWorkChange(')));
+      expect(preflight.contains('await _applicationRelations.advisory();'), true);
+      expect(preflight.contains('fresh()'), false,
+          reason: '안내는 세션 캐시로 충분하다 — 서버가 최종 판정한다');
     });
   });
 
@@ -482,16 +590,22 @@ void main() {
           reason: "조회 실패를 '지원자가 있으므로 불가'로 오인하지 않는다");
     });
 
-    test('05-b 실패를 기록하되 차단 상태로 쓰지 않는다', () {
-      final body = _flat(_codeOf(_bodyOf(
-          _src(_editPath), 'Future<List<Map<String, dynamic>>?> _ensureApplicationSnapshot(')));
-      expect(body.contains('_applicationSnapshotFailed = true; return null;'), true);
+    // [TC2 재작성] 실패 기록은 advisory 전용이다 — fresh는 기억하지 않는다.
+    test('05-b 안내 실패를 기록하되 차단 상태로 쓰지 않는다', () {
+      final body = _flat(
+          _codeOf(_bodyOf(_src(_editPath), 'Future<List<Map<String, dynamic>>?> advisory(')));
+      expect(body.contains('_advisoryFailed = true; return null;'), true);
       expect(body.contains('rethrow'), false);
       expect(body.contains('ToastHelper'), false,
           reason: '조회 실패 자체는 사용자 행동을 요구하지 않는다');
+
+      final fresh = _flat(
+          _codeOf(_bodyOf(_src(_editPath), 'Future<List<Map<String, dynamic>>?> fresh(')));
+      expect(fresh.contains('_advisoryFailed = true'), false,
+          reason: '저장은 다시 눌러 볼 수 있어야 한다 (§4, §8)');
     });
 
-    test('05-c WAGE-GUARD의 FAIL CLOSE는 그대로다 (§13)', () {
+    test('05-c WAGE-GUARD의 FAIL CLOSE는 그대로다 (§13, TC2 §4)', () {
       final body = _flat(
           _codeOf(_bodyOf(_src(_editPath), 'Future<bool> _showWageGuardWarning(')));
       expect(body.contains('if (appsRaw == null) {'), true);
@@ -503,6 +617,15 @@ void main() {
       // 경고 문구·동작 자체는 재설계하지 않았다
       expect(body.contains("title: '급여 계산 조건 변경',"), true);
       expect(body.contains("text: '계속 저장',"), true);
+    });
+
+    test('05-d 조회 실패를 확정자 없음으로 간주하지 않는다 (TC2 §4)', () async {
+      final r = EditApplicationRelations(() async => throw StateError('network'));
+      final apps = await r.fresh();
+      expect(apps, isNull, reason: 'null과 빈 목록은 다르다');
+      expect(apps == null, isNot(false));
+      // 빈 목록이었다면 _hasConfirmed가 false를 돌려 저장이 통과했을 것이다
+      expect(_hasConfirmed(const []), false);
     });
   });
 

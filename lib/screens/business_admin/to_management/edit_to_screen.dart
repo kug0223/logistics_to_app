@@ -31,6 +31,63 @@ import '../../../widgets/common/app_page_scaffold.dart'; // PATCH-1 (ADMIN-DESIG
 import '../../common/notification_screen.dart';
 import '../../../widgets/common/notification_badge.dart';
 
+/// [POSTING-V2-03G.1 TC2] 편집 화면이 지원 관계를 읽는 두 가지 방식.
+///
+/// 둘은 목적이 다르고, 그래서 신선도 요구도 다르다. 한 캐시로 합치면
+/// 더 약한 쪽(안내)의 신선도가 더 강한 쪽(방어)에 그대로 적용된다.
+///
+/// · [advisory] — 업무를 바꾸려 할 때 미리 알려 주기 위한 조회.
+///   낡아도 된다. 저장 시 서버가 같은 것을 다시 검사해 최종 판정하므로,
+///   여기서 놓친 지원자는 서버가 잡는다. 세션 동안 재사용한다.
+///
+/// · [fresh] — 임금 경고처럼 **클라이언트가 마지막 방어선**인 판단.
+///   FLEX 슬롯 임금에는 서버 가드가 없어서, 몇 분 전 스냅샷으로 "확정자
+///   없음"이라고 판단하면 그 사이 확정된 근무자의 급여 조건이 경고 없이
+///   바뀐다. 캐시가 있어도 매번 다시 읽는다.
+@visibleForTesting
+class EditApplicationRelations {
+  EditApplicationRelations(this._fetch);
+
+  final Future<List<Map<String, dynamic>>> Function() _fetch;
+
+  List<Map<String, dynamic>>? _cached;
+
+  /// 안내용 조회가 실패했다. 필드를 만질 때마다 재시도하지 않는다.
+  /// [fresh]에는 적용되지 않는다 — 저장은 다시 눌러 볼 수 있어야 한다.
+  bool _advisoryFailed = false;
+
+  /// 세션 캐시를 쓰는 안내용 조회. 실패하면 null(= 안내 생략).
+  Future<List<Map<String, dynamic>>?> advisory() async {
+    final cached = _cached;
+    if (cached != null) return cached;
+    if (_advisoryFailed) return null;
+    try {
+      final apps = await _fetch();
+      _cached = apps;
+      return apps;
+    } catch (e) {
+      debugPrint('⚠️ 지원 현황 조회 실패 (사전 안내 생략): $e');
+      _advisoryFailed = true;
+      return null;
+    }
+  }
+
+  /// 캐시를 건너뛰는 조회. 실패해도 기억하지 않는다 —
+  /// 일시적 실패 뒤 사용자가 다시 저장을 누르면 다시 시도해야 한다.
+  Future<List<Map<String, dynamic>>?> fresh() async {
+    try {
+      final apps = await _fetch();
+      // 더 새 값이므로 안내용도 함께 갱신한다. 이전 실패도 해소된다.
+      _cached = apps;
+      _advisoryFailed = false;
+      return apps;
+    } catch (e) {
+      debugPrint('⚠️ 지원 현황 조회 실패: $e');
+      return null;
+    }
+  }
+}
+
 class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
   final SlotModel? slot;             // 단일 슬롯 수정
@@ -86,16 +143,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // 화면에 들어왔다는 이유만으로 지원 현황을 조회하지는 않는다 — 제목만
   // 고치고 나가는 경우가 많고, 그 경우 조회는 순수한 낭비다. 업무를 실제로
   // 바꾸려는 첫 순간에 한 번만 읽고, 이 편집 세션 동안 재사용한다.
-  //
-  // 이 스냅샷은 **안내용**이다. 조회 이후에 새 지원자가 들어올 수 있으므로
-  // 최종 판정은 언제나 서버다. 여기서 '가능'이라고 본 변경도 저장에서
-  // 거부될 수 있고, 그때는 기존 서버 메시지 경로가 그대로 쓰인다.
-  List<Map<String, dynamic>>? _applicationSnapshot;
-
-  /// 스냅샷 조회에 실패했다. 다시 시도하지 않고, 사전 안내를 포기한다.
-  /// **'지원자가 있다'로 해석하지 않는다** — 조회 실패로 허용된 수정까지
-  /// 막으면 서버 정책보다 강한 제약이 된다.
-  bool _applicationSnapshotFailed = false;
+  late final EditApplicationRelations _applicationRelations =
+      EditApplicationRelations(_fetchApplications);
 
   @override
   void initState() {
@@ -553,32 +602,23 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // [POSTING-V2-03G.1] 업무 변경 사전 확인
   // ============================================================
 
-  /// 이 편집 세션의 지원 현황을 한 번만 읽는다. 실패하면 null.
+  /// 이 공고의 지원 현황 원본 조회. 캐시 정책은 [EditApplicationRelations]가 정한다.
   ///
   /// 화면을 닫으면 함께 사라진다 — 전역 캐시로 승격하지 않는다.
-  Future<List<Map<String, dynamic>>?> _ensureApplicationSnapshot() async {
-    if (_applicationSnapshot != null) return _applicationSnapshot;
-    if (_applicationSnapshotFailed) return null;
-    try {
-      // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final result = await callable.call<Map<String, dynamic>>({
-        'businessId': widget.to.businessId,
-        'toId': widget.to.id,
-        'limit': 2000,
-      });
-      _applicationSnapshot = (result.data['applications'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .toList();
-      return _applicationSnapshot;
-    } catch (e) {
-      debugPrint('⚠️ 지원 현황 조회 실패 (사전 확인 생략): $e');
-      _applicationSnapshotFailed = true;
-      return null;
-    }
+  Future<List<Map<String, dynamic>>> _fetchApplications() async {
+    // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetApplicationsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+    final result = await callable.call<Map<String, dynamic>>({
+      'businessId': widget.to.businessId,
+      'toId': widget.to.id,
+      'limit': 2000,
+    });
+    return (result.data['applications'] as List? ?? [])
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
   }
 
   /// 서버가 지원서를 업무에 매칭하는 세 가지 방식을 그대로 따른다.
@@ -689,7 +729,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   ///
   /// **form에 반영하기 전에** 호출한다 — 다 고쳐 놓고 돌려받는 것이 원래 문제였다.
   Future<bool> _canApplyWorkChange(List<WorkDetailData> next) async {
-    final apps = await _ensureApplicationSnapshot();
+    // 안내용 — 세션 캐시를 쓴다. 낡아도 저장에서 서버가 최종 판정한다.
+    final apps = await _applicationRelations.advisory();
     if (!mounted) return false;
     if (apps == null) return true; // 사전 확인 불가 — 서버가 최종 판정한다
     final reason = _workChangeBlockReason(apps, next);
@@ -742,14 +783,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   }
 
   Future<bool> _showWageGuardWarning() async {
-    // [POSTING-V2-03G.1] 사전 확인과 같은 스냅샷을 쓴다 — 같은 세션에서
-    //   지원 현황을 두 번 읽지 않는다. 실패 시 동작은 그대로 유지한다:
-    //   여기는 FAIL CLOSE(저장 차단), 사전 확인은 FAIL OPEN(서버에 위임).
-    //   임금은 서버 가드가 없어 이 경고가 마지막 방어선이기 때문이다.
-    final appsRaw = await _ensureApplicationSnapshot();
+    // [POSTING-V2-03G.1 TC2] **매번 다시 읽는다.** 안내용 세션 캐시를 쓰지 않는다.
+    //   FLEX 슬롯 임금에는 서버 가드가 없어 이 경고가 마지막 방어선인데,
+    //   업무를 고치던 몇 분 전 스냅샷으로 '확정자 없음'이라 판단하면
+    //   그 사이 확정된 근무자의 급여 조건이 경고 없이 바뀐다.
+    //   읽기 한 번을 아끼는 것보다 확정 관계의 최신성이 우선이다.
+    final appsRaw = await _applicationRelations.fresh();
     if (!mounted) return false;
     if (appsRaw == null) {
       // [4H.0B-WAGE-01] FAIL CLOSE — 조회 실패 시 저장 차단 (SINGLE/BATCH 서버 가드 없으므로)
+      //   실패를 기억하지 않으므로 다시 저장을 누르면 다시 조회한다.
       debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (저장 차단)');
       ToastHelper.showError('지원자 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
       return false;
