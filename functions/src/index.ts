@@ -19252,7 +19252,6 @@ export const callableDeleteSlots = onCall(
     let deletedSlotCount = 0;
     let postingDeleted = false;
     let postingClosed = false;
-    let postingDeleteBlockedReason = "";
 
     await db.runTransaction(async (txDel) => {
       // 재시도마다 처음부터 다시 판정한다
@@ -19260,7 +19259,6 @@ export const callableDeleteSlots = onCall(
       deletedSlotCount = 0;
       postingDeleted = false;
       postingClosed = false;
-      postingDeleteBlockedReason = "";
 
       const freshToSnap = await txDel.get(toRefForDelete);
       if (!freshToSnap.exists) {
@@ -19290,24 +19288,31 @@ export const callableDeleteSlots = onCall(
       const alreadyDeleted = freshToData.isDeleted === true;
       if (remainingSlotCount === 0 && !alreadyDeleted) {
         if (freshStatus === "DRAFT") {
-          // 미공개 공고의 마지막 날짜까지 지웠다 — 공고 자체를 정리한다.
-          //   관계 guard는 우회하지 않는다. 선택 슬롯 관계는 위에서 이미
-          //   막았지만, slotId 없는 지원서나 다른 날짜 계약은 그 검사에
-          //   걸리지 않는다. 실패하면 공고만 남기고 날짜 삭제는 유지한다.
+          // [POSTING-V2-03L.1] 마지막 날짜를 지우는 요청은 사실상
+          //   "마지막 일정 삭제 + 미공개 공고 삭제" **하나의 action**이다.
+          //   그래서 공고 관계 guard가 막으면 날짜 삭제도 함께 되돌린다.
+          //   부분 성공을 허용하면 날짜가 0개인데 공고는 남는 상태 —
+          //   아무도 의도하지 않은 빈 공고 — 가 만들어진다.
+          //
+          //   선택 슬롯 관계는 위에서 이미 막았지만, slotId 없는 지원서나
+          //   이미 지운 과거 날짜의 계약은 그 검사에 걸리지 않는다.
+          //   이 throw는 아래 txDel.delete/update보다 앞이므로
+          //   트랜잭션에 쌓인 write가 하나도 커밋되지 않는다.
           const postingRelation =
             await assertNoPostingRelations(toId, toBusinessId);
           if (postingRelation.blocked) {
-            postingDeleteBlockedReason =
-              postingRelationBlockMessage(postingRelation.reason);
-          } else {
-            // callableDeleteTO와 같은 소프트 삭제 — 기록은 보존한다.
-            toUpdate.isDeleted = true;
-            toUpdate.deletedAt = now;
-            toUpdate.isPublished = false;
-            toUpdate.postingCapacityScopeKey =
-              admin.firestore.FieldValue.delete();
-            postingDeleted = true;
+            throw new HttpsError(
+              "failed-precondition",
+              postingRelationBlockMessage(postingRelation.reason)
+            );
           }
+          // callableDeleteTO와 같은 소프트 삭제 — 기록은 보존한다.
+          toUpdate.isDeleted = true;
+          toUpdate.deletedAt = now;
+          toUpdate.isPublished = false;
+          toUpdate.postingCapacityScopeKey =
+            admin.firestore.FieldValue.delete();
+          postingDeleted = true;
         } else if (closableStatuses.includes(freshStatus ?? "")) {
           // 공개된 공고는 이번에도 삭제하지 않는다 — 기존 CLOSED 전이 유지.
           toUpdate.status = "CLOSED";
@@ -19324,14 +19329,15 @@ export const callableDeleteSlots = onCall(
       txDel.update(toRefForDelete, toUpdate);
     });
 
+    // [POSTING-V2-03L.1] DRAFT에서 `remainingSlotCount === 0 &&
+    //   postingDeleted === false`는 성공 결과가 될 수 없다 — 그 조합은
+    //   위에서 throw로 걸러진다.
     return {
       success: true,
       deletedSlotCount,
       remainingSlotCount,
       postingDeleted,
       postingClosed,
-      ...(postingDeleteBlockedReason ?
-        {postingDeleteBlockedReason} : {}),
     };
   }
 );

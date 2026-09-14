@@ -1039,7 +1039,10 @@ extension TOFirestore on FirestoreService {
   ///   · `deletedSlotCount` / `remainingSlotCount`
   ///   · `postingDeleted`  — 미공개 공고까지 삭제됨
   ///   · `postingClosed`   — 공개 공고가 마감으로 전이됨
-  ///   · `postingDeleteBlockedReason` — 관계 때문에 공고는 남겨 둔 경우만
+  ///
+  /// 마지막 날짜 삭제는 공고 삭제와 한 덩어리다 — 공고 관계가 막으면
+  /// 날짜 삭제까지 되돌리고 예외를 던진다. 따라서 정상 반환에
+  /// `remainingSlotCount == 0 && postingDeleted == false`는 존재하지 않는다.
   Future<Map<String, dynamic>> batchDeleteSlots({
     required String toId,
     required String businessId,

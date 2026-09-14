@@ -278,8 +278,7 @@ void main() {
     test('04-d 서버 결과를 소비한다 — 추론하지 않는다', () {
       final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
       expect(block.contains("result['postingDeleted'] == true"), true);
-      expect(block.contains("result['postingDeleteBlockedReason'] as String?"),
-          true);
+      expect(block.contains("result['deletedSlotCount'] as num?"), true);
       expect(block.contains('showError(\$e'), false);
     });
 

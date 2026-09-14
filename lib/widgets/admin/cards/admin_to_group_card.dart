@@ -2053,11 +2053,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
           //   truth가 바뀌지 않는다. 종료·재오픈이 신호를 보내는 것은 그쪽이
           //   공개 공고를 다루기 때문이다 — 같은 이유로 여기서는 보내지 않는다.
           // 결과는 서버가 말해 준다 — 추론하지 않는다.
-          final blockedReason = result['postingDeleteBlockedReason'] as String?;
-          if (blockedReason != null && blockedReason.isNotEmpty) {
-            // 날짜는 지워졌지만 공고는 관계 때문에 남았다. 성공으로 알리지 않는다.
-            ToastHelper.showWarning(blockedReason);
-          } else if (result['postingDeleted'] == true) {
+          //
+          // [POSTING-V2-03L.1] 여기까지 왔다는 것은 mutation이 통째로
+          //   성공했다는 뜻이다. 마지막 날짜를 지우는 요청에서 공고 관계가
+          //   막으면 서버가 날짜 삭제까지 되돌리고 예외를 던지므로,
+          //   "날짜는 지워졌는데 공고는 남았다"는 중간 상태가 없다.
+          if (result['postingDeleted'] == true) {
             ToastHelper.showSuccess('공고가 삭제되었습니다');
           } else {
             final deleted =

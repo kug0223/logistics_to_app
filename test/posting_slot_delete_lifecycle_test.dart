@@ -61,27 +61,31 @@ const _closableStatuses = ['ACTIVE', 'FULL', 'EXPIRED', 'SCHEDULED'];
 const _relationMessage =
     '이 공고에는 지원·초대·근무 기록이 있어 삭제할 수 없습니다. 모집을 중단하려면 공고 종료를 이용해주세요.';
 
+/// mutation 전체가 거부됐다 — 트랜잭션이 롤백되어 아무것도 바뀌지 않는다.
+class DeleteRejected implements Exception {
+  final String message;
+  const DeleteRejected(this.message);
+}
+
 class DeleteOutcome {
-  /// 선택 슬롯에 관계가 있어 요청 전체가 거부됐다 — 아무것도 지워지지 않는다.
-  final bool requestBlocked;
   final int deletedSlotCount;
   final int remainingSlotCount;
   final bool postingDeleted;
   final bool postingClosed;
-  final String postingDeleteBlockedReason;
 
   const DeleteOutcome({
-    this.requestBlocked = false,
     this.deletedSlotCount = 0,
     this.remainingSlotCount = 0,
     this.postingDeleted = false,
     this.postingClosed = false,
-    this.postingDeleteBlockedReason = '',
   });
 }
 
 /// [canonicalSlotIds]는 **트랜잭션이 읽은 시점**의 실제 slot 문서다.
 /// 클라이언트가 무엇을 전부라고 믿었는지는 판정에 들어오지 않는다.
+///
+/// [POSTING-V2-03L.1] 마지막 날짜 삭제는 공고 삭제와 한 덩어리다.
+/// 공고 관계가 막으면 [DeleteRejected] — 날짜 삭제도 되돌아간다.
 DeleteOutcome deleteSlots({
   required List<String> requestedSlotIds,
   required List<String> canonicalSlotIds,
@@ -91,7 +95,9 @@ DeleteOutcome deleteSlots({
   bool postingRelationBlocked = false,
 }) {
   final unique = {...requestedSlotIds};
-  if (slotRelationBlocked) return const DeleteOutcome(requestBlocked: true);
+  if (slotRelationBlocked) {
+    throw const DeleteRejected('이 공고에는 지원·초대·근무 기록이 있어 삭제할 수 없습니다.');
+  }
 
   final remaining =
       canonicalSlotIds.where((id) => !unique.contains(id)).length;
@@ -99,14 +105,11 @@ DeleteOutcome deleteSlots({
 
   var postingDeleted = false;
   var postingClosed = false;
-  var blockedReason = '';
   if (remaining == 0 && !alreadyDeleted) {
     if (status == 'DRAFT') {
-      if (postingRelationBlocked) {
-        blockedReason = _relationMessage;
-      } else {
-        postingDeleted = true;
-      }
+      // predicate가 write보다 앞이다 — 여기서 던지면 삭제가 커밋되지 않는다.
+      if (postingRelationBlocked) throw const DeleteRejected(_relationMessage);
+      postingDeleted = true;
     } else if (_closableStatuses.contains(status)) {
       postingClosed = true;
     }
@@ -116,15 +119,11 @@ DeleteOutcome deleteSlots({
     remainingSlotCount: remaining,
     postingDeleted: postingDeleted,
     postingClosed: postingClosed,
-    postingDeleteBlockedReason: blockedReason,
   );
 }
 
-/// 카드가 서버 결과로 고르는 토스트.
+/// 카드가 서버 결과로 고르는 토스트. 예외는 기존 에러 경로가 처리한다.
 String toastFor(DeleteOutcome o) {
-  if (o.postingDeleteBlockedReason.isNotEmpty) {
-    return 'WARNING:${o.postingDeleteBlockedReason}';
-  }
   if (o.postingDeleted) return 'SUCCESS:공고가 삭제되었습니다';
   return 'SUCCESS:${o.deletedSlotCount}개 날짜가 삭제되었습니다';
 }
@@ -244,43 +243,70 @@ void main() {
     });
   });
 
-  // ── §24 relation ─────────────────────────────────────────────
+  // ── §12 relation — 마지막 날짜는 공고 삭제와 한 덩어리다 ─────────
   group('SLOTDEL-04 관계 guard 우회 없음', () {
-    test('04-a 선택 슬롯에 관계가 있으면 요청 전체가 막힌다 (§10)', () {
-      final r = deleteSlots(
-        requestedSlotIds: ['A'],
-        canonicalSlotIds: ['A', 'B'],
-        slotRelationBlocked: true,
-      );
-      expect(r.requestBlocked, true);
-      expect(r.deletedSlotCount, 0, reason: '부분 삭제 없음');
-      expect(r.postingDeleted, false);
+    test('04-a 선택 슬롯에 관계가 있으면 요청 전체가 막힌다 (§7)', () {
+      expect(
+          () => deleteSlots(
+                requestedSlotIds: ['A'],
+                canonicalSlotIds: ['A', 'B'],
+                slotRelationBlocked: true,
+              ),
+          throwsA(isA<DeleteRejected>()),
+          reason: '부분 삭제 없음');
     });
 
-    test('04-b 마지막 삭제여도 공고 관계가 있으면 공고는 남는다 (§9)', () {
-      final r = deleteSlots(
-        requestedSlotIds: ['A'],
-        canonicalSlotIds: ['A'],
-        postingRelationBlocked: true,
-      );
-      expect(r.remainingSlotCount, 0);
-      expect(r.postingDeleted, false);
-      expect(r.postingDeleteBlockedReason, _relationMessage);
+    test('04-b 마지막 날짜 + 공고 관계 → 전체 rollback (§1 CASE B)', () {
+      // 현재 슬롯은 B 하나. 과거 지운 A의 지원 이력이 남아 있어
+      // 공고 관계 guard가 막는다. B도 지워지면 안 된다.
+      expect(
+          () => deleteSlots(
+                requestedSlotIds: ['B'],
+                canonicalSlotIds: ['B'],
+                postingRelationBlocked: true,
+              ),
+          throwsA(isA<DeleteRejected>()));
     });
 
-    test('04-c 관계로 막혀도 날짜 삭제 자체는 유지된다', () {
+    test('04-c 거부 사유는 기존 canonical 문구다 (§2)', () {
+      try {
+        deleteSlots(
+          requestedSlotIds: ['B'],
+          canonicalSlotIds: ['B'],
+          postingRelationBlocked: true,
+        );
+        fail('rollback되지 않았다');
+      } on DeleteRejected catch (e) {
+        expect(e.message, _relationMessage,
+            reason: '새 error taxonomy를 만들지 않는다');
+      }
+    });
+
+    test('04-d 부분 삭제는 공고 관계에 영향받지 않는다 (§5)', () {
+      // A,B,C 중 A만 삭제 — 과거 슬롯에 historical relation이 있어도
+      // 공고 삭제 guard를 부분 수정에 확대 적용하지 않는다.
       final r = deleteSlots(
         requestedSlotIds: ['A'],
-        canonicalSlotIds: ['A'],
+        canonicalSlotIds: ['A', 'B', 'C'],
         postingRelationBlocked: true,
       );
       expect(r.deletedSlotCount, 1);
-      expect(r.requestBlocked, false);
+      expect(r.remainingSlotCount, 2);
+      expect(r.postingDeleted, false);
+    });
+
+    test('04-e 관계가 없으면 마지막 날짜와 공고가 함께 사라진다 (§8)', () {
+      final r = deleteSlots(
+        requestedSlotIds: ['A'],
+        canonicalSlotIds: ['A'],
+      );
+      expect(r.remainingSlotCount, 0);
+      expect(r.postingDeleted, true);
     });
   });
 
-  // ── §25 결과 UX ───────────────────────────────────────────────
-  group('SLOTDEL-05 결과 표시', () {
+  // ── §11 success invariant ────────────────────────────────────
+  group('SLOTDEL-05 결과 표시와 불변식', () {
     test('05-a 부분 삭제 → 날짜 삭제 성공만', () {
       final t = toastFor(deleteSlots(
         requestedSlotIds: ['A'],
@@ -297,15 +323,47 @@ void main() {
       expect(t, 'SUCCESS:공고가 삭제되었습니다');
     });
 
-    test('05-c 공고 삭제가 거부되면 성공 토스트가 없다 (§13, §14)', () {
-      final t = toastFor(deleteSlots(
+    test('05-c DRAFT 성공 결과에 slot 0 + 미삭제 공고가 없다 (§11)', () {
+      // 가능한 모든 조합을 돌려 불변식을 확인한다.
+      const universe = ['A', 'B', 'C'];
+      for (var mask = 1; mask < 8; mask++) {
+        for (var canonMask = 1; canonMask < 8; canonMask++) {
+          final requested = [
+            for (var i = 0; i < 3; i++)
+              if (mask & (1 << i) != 0) universe[i],
+          ];
+          final canonical = [
+            for (var i = 0; i < 3; i++)
+              if (canonMask & (1 << i) != 0) universe[i],
+          ];
+          for (final blocked in [false, true]) {
+            DeleteOutcome? r;
+            try {
+              r = deleteSlots(
+                requestedSlotIds: requested,
+                canonicalSlotIds: canonical,
+                postingRelationBlocked: blocked,
+              );
+            } on DeleteRejected {
+              continue; // rollback — 성공 결과가 아니다
+            }
+            expect(r.remainingSlotCount == 0 && !r.postingDeleted, false,
+                reason: 'requested=$requested canonical=$canonical '
+                    'blocked=$blocked → 빈 공고가 남는다');
+          }
+        }
+      }
+    });
+
+    test('05-d 이미 삭제된 공고는 예외 없이 넘어간다', () {
+      final r = deleteSlots(
         requestedSlotIds: ['A'],
         canonicalSlotIds: ['A'],
-        postingRelationBlocked: true,
-      ));
-      expect(t.startsWith('WARNING:'), true);
-      expect(t.contains('삭제되었습니다'), false,
-          reason: '거짓 성공 토스트가 서버 안내를 덮는다');
+        alreadyDeleted: true,
+      );
+      expect(r.postingDeleted, false);
+      expect(r.remainingSlotCount, 0,
+          reason: '이미 삭제된 공고는 05-c 불변식의 대상이 아니다');
     });
   });
 
@@ -341,8 +399,7 @@ void main() {
       final body = _flat(_codeOf(deleteSlotsFn));
       expect(
           body.contains('remainingSlotCount = 0; deletedSlotCount = 0; '
-              'postingDeleted = false; postingClosed = false; '
-              'postingDeleteBlockedReason = "";'),
+              'postingDeleted = false; postingClosed = false;'),
           true,
           reason: '이전 시도의 판정이 남으면 stale 결과로 커밋된다');
     });
@@ -356,18 +413,38 @@ void main() {
           reason: '동시 삭제에서 어긋나는 increment로 되돌아가면 안 된다');
     });
 
-    test('06-e 공고 관계 guard를 재사용한다 (§9)', () {
+    test('06-e 공고 관계 guard를 재사용하고, 막히면 throw한다 (§2, §3)', () {
       final body = _flat(_codeOf(deleteSlotsFn));
       expect(
           body.contains('const postingRelation = '
               'await assertNoPostingRelations(toId, toBusinessId);'),
           true);
-      expect(body.contains('postingRelationBlockMessage(postingRelation.reason)'),
+      expect(
+          body.contains('if (postingRelation.blocked) { '
+              'throw new HttpsError( "failed-precondition", '
+              'postingRelationBlockMessage(postingRelation.reason) ); }'),
           true,
-          reason: '기존 canonical 문구 재사용 (§13)');
+          reason: '기존 canonical error contract를 그대로 surface한다');
     });
 
-    test('06-f DRAFT만 삭제하고 나머지는 마감이다 (§8)', () {
+    test('06-f throw가 모든 write보다 앞이다 — rollback 보장 (§3, §4)', () {
+      final body = _flat(_codeOf(deleteSlotsFn));
+      final guardIdx = body.indexOf('await assertNoPostingRelations(toId, toBusinessId)');
+      final deleteIdx = body.indexOf('txDel.delete(slotsRefForDelete.doc(slotId))');
+      final updateIdx = body.indexOf('txDel.update(toRefForDelete, toUpdate)');
+      expect(guardIdx, greaterThan(-1));
+      expect(deleteIdx, greaterThan(guardIdx),
+          reason: '관계 실패 뒤에 slot delete가 커밋되는 경로가 있으면 안 된다');
+      expect(updateIdx, greaterThan(guardIdx));
+    });
+
+    test('06-g 성공 결과에 blocked 상태가 없다 (§2, §11)', () {
+      final body = _flat(_codeOf(deleteSlotsFn));
+      expect(body.contains('postingDeleteBlockedReason'), false,
+          reason: '완료되지 않은 action을 success로 반환하지 않는다');
+    });
+
+    test('06-h DRAFT만 삭제하고 나머지는 마감이다 (§8)', () {
       final body = _flat(_codeOf(deleteSlotsFn));
       expect(body.contains('if (freshStatus === "DRAFT") {'), true);
       expect(body.contains('toUpdate.isDeleted = true;'), true);
@@ -375,20 +452,19 @@ void main() {
       expect(body.contains('toUpdate.closedReason = "ALL_SLOTS_DELETED";'), true);
     });
 
-    test('06-g 결과 계약을 반환한다 (§3)', () {
+    test('06-i 결과 계약을 반환한다 (§11)', () {
       final body = _flat(_codeOf(deleteSlotsFn));
       for (final k in [
         'deletedSlotCount,',
         'remainingSlotCount,',
         'postingDeleted,',
         'postingClosed,',
-        'postingDeleteBlockedReason',
       ]) {
         expect(body.contains(k), true, reason: '$k 가 결과에 없다');
       }
     });
 
-    test('06-h 중복 slotId를 입구에서 제거한다 (§20)', () {
+    test('06-j 중복 slotId를 입구에서 제거한다', () {
       final body = _flat(_codeOf(deleteSlotsFn));
       expect(body.contains('const uniqueSlotIds = [...new Set(slotIds)];'), true);
       expect(body.contains('const uniqueSlotIdSet = new Set(uniqueSlotIds);'), true);
@@ -406,11 +482,21 @@ void main() {
       expect(cardBlock.contains('deleteTO('), false);
     });
 
-    test('07-b 서버 결과를 그대로 소비한다 (§13)', () {
+    test('07-b 서버 결과를 그대로 소비한다 (§11)', () {
       expect(cardBlock.contains("result['postingDeleted'] == true"), true);
       expect(cardBlock.contains("result['deletedSlotCount'] as num?"), true);
-      expect(cardBlock.contains("result['postingDeleteBlockedReason'] as String?"),
-          true);
+    });
+
+    // [POSTING-V2-03L.1] 관계 거부는 예외로 온다 — 기존 catch가 서버 문구를
+    //   그대로 띄우고 onChanged를 부르지 않는다. 성공 토스트는 없다.
+    test('07-f 관계 거부를 성공 분기에서 다루지 않는다 (§10)', () {
+      expect(cardBlock.contains('postingDeleteBlockedReason'), false);
+      expect(cardBlock.contains('showWarning'), false);
+      final catchIdx = cardBlock.indexOf('} catch (e) {');
+      expect(catchIdx, greaterThan(-1));
+      expect(cardBlock.substring(catchIdx).contains('_cfErrorMessage(e'), true,
+          reason: '서버 canonical 문구를 그대로 표면화한다');
+      expect(cardBlock.substring(catchIdx).contains('showSuccess'), false);
     });
 
     test('07-c 서비스가 결과를 돌려준다 (§3)', () {
