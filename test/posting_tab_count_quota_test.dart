@@ -530,8 +530,12 @@ void main() {
       final body = _codeOf(_bodyOf(ctrl, 'Future<void> load('));
       expect(body.contains('getMaxActiveTOLimit'), isFalse);
       expect(body.contains('limitFuture'), isFalse);
-      // 목록 조회는 그대로
-      expect(body.contains('_service.getTOGroupItemsLight('), isTrue);
+      // [POSTING-V2-03N.1] 목록 조회는 그대로다 — 호출이 recovery wrapper를
+      //   거칠 뿐, load()에 새 조회가 생기지 않았다.
+      expect(body.contains('_loadWithScopeRecovery('), isTrue);
+      final recovery =
+          _codeOf(_bodyOf(ctrl, 'Future<List<TOGroupItem>> _loadWithScopeRecovery('));
+      expect(recovery.contains('_service.getTOGroupItemsLight('), isTrue);
     });
 
     test('탭 count 계산이 새 조회를 하지 않는다', () {

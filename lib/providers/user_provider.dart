@@ -540,6 +540,55 @@ class UserProvider with ChangeNotifier {
 
   Future<void>? _accessRefreshInFlight;
 
+  /// [POSTING-V2-03N.1] 관리자 scope를 canonical 값으로 다시 맞춘다 — role 무관.
+  ///
+  /// Posting 목록은 SUB_ADMIN이면 `subAdminBusinessIds`, BUSINESS_ADMIN이면
+  /// `managedBusinessIds`를 scope로 보낸다. 둘 다 런타임에 줄어들 수 있다 —
+  /// 전자는 배정 회수, 후자는 사업장 삭제(CF가 `arrayRemove`)나
+  /// SUPER_ADMIN의 `adminIds` 변경으로.
+  ///
+  /// SUB_ADMIN은 기존 [refreshSubAdminAccessState]를 그대로 쓴다(권한 맵까지
+  /// 재조회). BUSINESS_ADMIN은 권한 맵이라는 개념이 없으므로 **users 문서 1건**만
+  /// 다시 읽는다 — 새 membership 아키텍처를 만들지 않는다.
+  /// 동시 호출은 같은 in-flight future로 합친다.
+  Future<void> refreshAdminScopeState() {
+    final user = _currentUser;
+    if (user == null) return Future.value();
+    if (user.isSubAdmin) return refreshSubAdminAccessState();
+    if (!user.isBusinessAdmin) return Future.value();
+
+    final inFlight = _accessRefreshInFlight;
+    if (inFlight != null) return inFlight;
+    final started = _reloadCurrentUserDoc();
+    _accessRefreshInFlight = started;
+    return started.whenComplete(() {
+      if (identical(_accessRefreshInFlight, started)) {
+        _accessRefreshInFlight = null;
+      }
+    });
+  }
+
+  /// users/{uid} 재조회만 한다. 실패하면 기존 상태를 유지한다 —
+  /// 못 읽었다는 이유로 범위를 추측해 줄이지 않는다.
+  Future<void> _reloadCurrentUserDoc() async {
+    final uid = _currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final doc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (_disposed) return;
+      // 계정 전환 후 stale 응답이 덮어쓰는 것 방지 (_loadUserData와 동일 방어)
+      if (_authService.currentUser?.uid != uid) return;
+      final data = doc.data();
+      if (doc.exists && data != null) {
+        _currentUser = UserModel.fromMap(data, doc.id);
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('⚠️ [03N.1] 관리 사업장 갱신 실패: $e');
+    }
+  }
+
   Future<void> _runSubAdminAccessRefresh() async {
     final current = _currentUser;
     if (current == null || !current.isSubAdmin) return;

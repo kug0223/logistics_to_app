@@ -660,8 +660,11 @@ void main() {
 
     test('12-i Posting scope가 canonical ids를 그대로 쓴다 (§6)', () {
       // client가 보내는 ids = subAdminBusinessIds. prune이 그것을 줄인다.
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
-      expect(body.contains('businessIds = user.subAdminBusinessIds;'), true);
+      // [POSTING-V2-03N.1] 결정 위치만 _scopeOf로 옮겨졌다.
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
+      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          true);
       // 서버 정책은 건드리지 않았다
       final fns = _src('functions/src/index.ts');
       expect(
@@ -814,8 +817,11 @@ void main() {
     });
 
     test('08-e read scope 계약 무변경', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
-      expect(body.contains('businessIds = user.subAdminBusinessIds;'), true);
+      // [POSTING-V2-03N.1] 결정 위치만 _scopeOf로 옮겨졌다.
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
+      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          true);
       expect(body.contains('canManageTo'), false,
           reason: 'READ scope를 manageable로 좁히면 안 된다');
     });

@@ -636,9 +636,12 @@ void main() {
     });
 
     test('12-c read scope 무변경 (§35)', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
-      expect(body.contains('businessIds = user.subAdminBusinessIds;'), true);
-      expect(body.contains('businessIds = user.managedBusinessIds;'), true);
+      // [POSTING-V2-03N.1] scope 결정은 _scopeOf로 옮겨졌다 — 내용은 그대로.
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
+      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          true);
+      expect(body.contains('return user.managedBusinessIds;'), true);
       expect(body.contains('canManageTo'), false,
           reason: '조회 범위를 manageable로 좁히면 안 된다');
     });

@@ -1,8 +1,10 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/ui/admin_to_list_ui_models.dart';
 import '../models/core/to_model.dart';
+import '../models/core/user_model.dart';
 import '../models/core/work_detail_data.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
@@ -186,6 +188,90 @@ class WorkforceController extends ChangeNotifier {
 
   // ── 초기 로드 / 재로드 ────────────────────────────────────
 
+  /// Posting 목록 READ scope — 02G canonical.
+  List<String>? _scopeOf(UserModel user) {
+    if (user.isSuperAdmin) return null; // 서버가 전체를 조회한다
+    if (user.isSubAdmin) return user.subAdminBusinessIds;
+    return user.managedBusinessIds;
+  }
+
+  /// [POSTING-V2-03N.1] 권한 회수로 stale해진 scope에서 빠져나온다.
+  ///
+  /// 서버는 요청한 businessId를 **전부** 검증하고 하나라도 어긋나면 요청 전체를
+  /// 거부한다(MODEL A). 그래서 배정이 회수된 사업장 하나가 목록에 남아 있으면
+  /// 멀쩡한 사업장 공고까지 갱신되지 않는다. 선택하지 않은 사업장에는 realtime
+  /// listener가 없어, 당겨서 새로고침이나 앱 복귀 전에는 그 사실을 알 수 없었다.
+  ///
+  /// 여기서 닫는다 — 모든 load 진입점이 이 한 곳을 지나므로 initState·FCM·
+  /// cross-tab revision 어디서 들어와도 같은 계약이 적용된다.
+  ///
+  /// **정상 경로 비용은 0이다.** 성공하면 아무것도 더 하지 않고, 아래 복구는
+  /// `permission-denied`에서만 돈다. 네트워크·타임아웃 등 일시적 실패는
+  /// 01B/03F의 기존 stale 계약 그대로 예외를 다시 던진다.
+  Future<List<TOGroupItem>> _loadWithScopeRecovery({
+    required UserProvider userProvider,
+    required List<String>? requestedScope,
+  }) async {
+    try {
+      return await _service.getTOGroupItemsLight(
+        activeOnly: false,
+        closedOnly: false,
+        businessIds: requestedScope,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code != 'permission-denied' || requestedScope == null) rethrow;
+
+      // canonical scope를 다시 읽는다. 실패하면 회수를 **확인하지 못한** 것이므로
+      //   기존 데이터를 임의로 지우지 않고 원래 실패로 끝낸다.
+      await userProvider.refreshAdminScopeState();
+      final refreshed = userProvider.currentUser;
+      if (refreshed == null) rethrow;
+      final newScope = _scopeOf(refreshed);
+      if (newScope == null) rethrow; // SUPER_ADMIN으로 바뀌는 경우는 없다
+
+      final revoked =
+          requestedScope.where((id) => !newScope.contains(id)).toSet();
+      if (revoked.isEmpty) {
+        // scope가 그대로다 — membership 회수라고 단정하지 않는다.
+        //   다른 이유(전파 지연 등)일 수 있으므로 캐시를 건드리지 않는다.
+        rethrow;
+      }
+
+      // 회수가 확인됐다. 재시도 성공 여부와 무관하게, 접근 권한이 사라진
+      //   사업장의 데이터는 더 보여주지 않는다 — 이것은 network stale이 아니다.
+      _pruneRevokedItems(revoked);
+
+      if (newScope.isEmpty) {
+        // 남은 scope가 없다 — 같은 실패를 다시 만들지 않는다.
+        return [];
+      }
+      // 새 scope로 **정확히 한 번** 재시도한다. 여기서 또 실패하면 그대로 던진다.
+      return _service.getTOGroupItemsLight(
+        activeOnly: false,
+        closedOnly: false,
+        businessIds: newScope,
+      );
+    }
+  }
+
+  /// 접근 권한이 사라진 사업장의 캐시를 즉시 비운다.
+  void _pruneRevokedItems(Set<String> revokedBusinessIds) {
+    if (revokedBusinessIds.isEmpty) return;
+    _items = _items
+        .where((g) => !revokedBusinessIds.contains(g.businessId))
+        .toList();
+    _knownBusinessNames = _items
+        .map((g) => g.businessName)
+        .where((n) => n.isNotEmpty)
+        .toSet()
+        .toList();
+    // 사라진 사업장을 가리키던 필터는 목록을 영원히 비워 둔다.
+    if (_selectedBusinessId != null &&
+        revokedBusinessIds.contains(_selectedBusinessId)) {
+      _selectedBusinessId = null;
+    }
+  }
+
   /// [context]는 첫 번째 await 이전에 uid/role 추출에만 사용됩니다.
   /// async gap 이후 context 재사용 없으므로 mounted 체크가 불필요합니다.
   Future<void> load(BuildContext context) async {
@@ -206,24 +292,17 @@ class WorkforceController extends ChangeNotifier {
       }
 
       // businessIds를 먼저 동기적으로 결정 (await 불필요)
-      final List<String>? businessIds;
-      if (user.isSuperAdmin) {
-        businessIds = null;
-      } else if (user.isSubAdmin) {
-        businessIds = user.subAdminBusinessIds;
-      } else {
-        businessIds = user.managedBusinessIds;
-      }
+      final List<String>? businessIds = _scopeOf(user);
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
 
       if (businessIds != null && businessIds.isEmpty) {
         _items = [];
         // early return 하지 않고 finally + 후처리(_preload 등)가 실행되도록 통과
       } else {
       // [POSTING-V2-02A.1] 한도 조회 제거 — 탭 표시 외에 소비자가 없었다
-      _items = await _service.getTOGroupItemsLight(
-        activeOnly: false,
-        closedOnly: false,
-        businessIds: businessIds,
+      _items = await _loadWithScopeRecovery(
+        userProvider: userProvider,
+        requestedScope: businessIds,
       );
       // [POSTING-V2-01B] items가 새 인스턴스로 교체되므로 이전 detail 실패도 무효.
       // 남겨두면 복구된 공고가 계속 error로 보인다.

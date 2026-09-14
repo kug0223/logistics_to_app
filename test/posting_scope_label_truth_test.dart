@@ -180,9 +180,12 @@ void main() {
       expect(superHome.contains('const NotificationScreen()'), true);
     });
 
+    // [POSTING-V2-03N.1] scope 결정이 load() 인라인에서 _scopeOf로 빠졌다.
+    //   판정 내용은 그대로다.
     test('00-i SUPER_ADMIN query scope는 그대로 전체다 (§10)', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
-      expect(body.contains('if (user.isSuperAdmin) { businessIds = null;'), true,
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
+      expect(body.contains('if (user.isSuperAdmin) return null;'), true,
           reason: 'display 수정이 query scope를 건드렸다');
     });
   });
@@ -485,10 +488,15 @@ void main() {
   // ── §17, §27 query scope 무변경 ─────────────────────────────────
   group('SCOPE-10 범위 밖 무변경', () {
     test('10-a load()의 query scope가 그대로다', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
-      expect(body.contains('businessIds = user.subAdminBusinessIds;'), true);
-      expect(body.contains('businessIds = user.managedBusinessIds;'), true);
-      expect(body.contains('if (user.isSuperAdmin) { businessIds = null;'), true);
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
+      expect(body.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          true);
+      expect(body.contains('return user.managedBusinessIds;'), true);
+      expect(body.contains('if (user.isSuperAdmin) return null;'), true);
+      // load()는 그 resolver 하나만 쓴다
+      final load = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      expect(load.contains('_scopeOf(user)'), true);
     });
 
     test('10-b CreateTO picker scope 무변경 (§16)', () {

@@ -623,8 +623,11 @@ void main() {
     });
 
     test('09-d read scope / empty state / scope label 무변경', () {
-      final ctrl = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
-      expect(ctrl.contains('businessIds = user.subAdminBusinessIds;'), true);
+      // [POSTING-V2-03N.1] scope 결정은 _scopeOf로 옮겨졌다 — 내용은 그대로.
+      final ctrl = _flat(_codeOf(
+          _bodyOf(_src(_ctrlPath), 'List<String>? _scopeOf(UserModel user)')));
+      expect(ctrl.contains('if (user.isSubAdmin) return user.subAdminBusinessIds;'),
+          true);
       final list = _codeOf(_src(_listPath));
       expect(list.contains('_PostingEmptyKind.root'), true);
       expect(list.contains("title = '등록된 공고가 없습니다';") ||
