@@ -791,6 +791,26 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     return false;
   }
 
+  /// [POSTING-V2-03I.4] 레거시 지원서가 스냅샷하지 못한 조건이 바뀌었는가.
+  ///
+  /// 금액·급여유형은 레거시 지원서도 지원 시점 값을 갖고 있으므로 여기 없다 —
+  /// 그 둘은 활성 레거시가 있어도 바꿀 수 있다.
+  bool _hasLegacyProtectedConditionChanged() {
+    for (final cur in _workDetails) {
+      final orig =
+          _originalWorkDetails.where((o) => o.id == cur.id).firstOrNull;
+      if (orig == null) continue;
+      if (cur.breakMinutes != orig.breakMinutes ||
+          cur.nightAllowanceApplied != orig.nightAllowanceApplied ||
+          cur.nightIncluded != orig.nightIncluded ||
+          cur.baseHourlyWage != orig.baseHourlyWage ||
+          cur.taxDeductionType != orig.taxDeductionType) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<bool> _showWageGuardWarning() async {
     // [POSTING-V2-03G.1 TC2] **매번 다시 읽는다.** 안내용 세션 캐시를 쓰지 않는다.
     //   FLEX 슬롯 임금에는 서버 가드가 없어 이 경고가 마지막 방어선인데,
@@ -821,6 +841,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     if (!hasCohort) return true; // 약속된 사람이 없다 — 경고할 것이 없다
     final hasConfirmed =
         appsRaw.any((m) => confirmedStatuses.contains(m['status']));
+
+    // [POSTING-V2-03I.4] 스냅샷 이전 지원서는 일부 조건을 지원 시점 값으로
+    //   갖고 있지 않다. 그 조건을 바꾸면 서버가 거부하므로, "기존 지원자의
+    //   조건은 유지됩니다"라고 안내한 뒤 저장을 시도하게 두면 모순이다.
+    //   같은 응답에서 판별한다 — 추가 조회 없음.
+    final hasActiveLegacy = appsRaw.any((m) =>
+        cohortStatuses.contains(m['status']) && m['nightAllowanceApplied'] == null);
+    if (hasActiveLegacy && _hasLegacyProtectedConditionChanged()) {
+      ToastHelper.showError(
+        '이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 변경할 수 없습니다. '
+        '해당 지원 관계가 종료된 후 변경해 주세요.',
+      );
+      return false;
+    }
 
     if (!mounted) return false;
     final result = await showDialog<bool>(

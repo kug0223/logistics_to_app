@@ -139,11 +139,11 @@ class ContractService {
     }
     final promisedType = application.wageType;
     if (!application.hasCompensationSnapshot) {
-      // legacy compatibility — 금액/급여유형만 약속 버전으로 맞춘다
-      if (promisedWage == workDetail.wage &&
-          (promisedType == null || promisedType == workDetail.wageType)) {
-        return workDetail;
-      }
+      // [POSTING-V2-03I.4] legacy compatibility — 지원서가 아는 것까지만
+      //   맞춘다: 금액과 급여유형. 휴게·야간·연장 단가·공제는 지원 시점
+      //   값을 알 수 없으므로 현재 정의를 그대로 둔다 —
+      //   현재 값을 과거 약속이라고 표시하지 않는다.
+      //   그 조건들은 활성 레거시가 있는 동안 서버가 변경을 막는다.
       return workDetail.copyWith(
         wage: promisedWage,
         wageType: promisedType ?? workDetail.wageType,
@@ -160,8 +160,8 @@ class ContractService {
       nightAllowanceApplied: application.nightAllowanceApplied,
       nightIncluded: application.nightIncluded,
       taxDeductionType: application.taxDeductionType,
-      startTime: application.startTime.isNotEmpty ? application.startTime : null,
-      endTime: application.endTime.isNotEmpty ? application.endTime : null,
+      // 근무시간은 임금 조건이 아니다 — 현재 정의를 따른다.
+      // 활성 지원자가 있는 동안의 시간 변경은 03G identity guard가 막는다.
     );
   }
 

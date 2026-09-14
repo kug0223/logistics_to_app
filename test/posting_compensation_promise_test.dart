@@ -169,8 +169,10 @@ void main() {
       expect(snap['nightAllowanceApplied'], false);
       expect(snap['nightIncluded'], true);
       expect(snap['taxDeductionType'], 'income_3_3');
-      expect(snap['startTime'], '09:00');
-      expect(snap['endTime'], '18:00');
+      // [POSTING-V2-03I.4] 근무시간은 임금 조건이 아니라 운영 일정이므로
+      //   스냅샷에 넣지 않는다 — effectiveStart/End가 현재 정의를 따른다.
+      expect(snap.containsKey('startTime'), false);
+      expect(snap.containsKey('endTime'), false);
     });
   });
 
@@ -266,19 +268,26 @@ void main() {
       expect(d!['shiftType'], 'day', reason: 'overlay는 조건만 덮는다');
     });
 
-    test('03-c 시간도 약속이 우선한다 (§11)', () {
+    // [POSTING-V2-03I.4 재작성] 03I.3에서 근무시간까지 약속으로 덮었는데,
+    // 그것은 이 앱의 기존 계약과 충돌했다: 관리자가 업무 시간을 바꾸면
+    // 지각·조퇴 판정 경계도 함께 움직여야 한다
+    // (admin_home_attendance_effective_time_test가 그것을 검증한다).
+    // 근무시간은 임금 조건이 아니라 운영 일정이므로 현재 정의를 따른다.
+    // 활성 지원자가 있는 동안의 시간 변경은 03G identity guard가 막는다.
+    test('03-c 근무시간은 현재 정의를 따른다 (기존 계약 유지)', () {
       final app = _app(
         wage: 100000,
         nightAllowanceApplied: true,
         startTime: '09:00',
         endTime: '18:00',
       );
-      // 공고 시간이 바뀌어도 (키는 약속 시간으로 매칭된다)
       final live = _liveMap(wage: 110000, startTime: '09:00', endTime: '18:00');
       live['피킹_09:00_18:00']!['startTime'] = '10:00';
       live['피킹_09:00_18:00']!['endTime'] = '19:00';
-      expect(WorkDetailHelper.effectiveStart(app, live), '09:00');
-      expect(WorkDetailHelper.effectiveEnd(app, live), '18:00');
+      expect(WorkDetailHelper.effectiveStart(app, live), '10:00');
+      expect(WorkDetailHelper.effectiveEnd(app, live), '19:00');
+      // 임금 조건은 그대로 약속이 이긴다
+      expect(WorkDetailHelper.wage(WorkDetailHelper.resolve(app, live)), 100000);
     });
 
     test('03-d 레거시는 현재 조건으로 계산한다 (§15 legacy compatibility)', () {
@@ -292,13 +301,18 @@ void main() {
       expect(code.contains('legacy compatibility'), true);
     });
 
-    test('03-e 신규 지원서는 legacy 경로를 타지 않는다 (§15)', () {
+    // [POSTING-V2-03I.4 재작성] 03I.3에서는 스냅샷이 없으면 현재 값으로
+    // 통째로 되돌렸다. 그러면 레거시가 자기도 갖고 있는 금액·급여유형까지
+    // 잃는다. 이제 지원서가 아는 것은 언제나 덮고, 모르는 것만 현재 값이 남는다.
+    test('03-e 약속이 현재 값을 덮는 방향이다 (§15)', () {
       final fresh = _app(wage: 100000, nightAllowanceApplied: true);
       final body = _flat(_codeOf(_bodyOf(_src(_helperPath),
           'static Map<String, dynamic>? resolve(')));
-      expect(body.contains('if (promised == null) return live;'), true);
+      expect(body.contains('final promised = app.promisedCompensation;'), true);
       expect(body.contains('return {...live, ...promised};'), true,
           reason: '약속이 현재 값을 덮는 방향이어야 한다');
+      expect(body.contains('if (promised == null) return live;'), false,
+          reason: '레거시를 통째로 현재 값으로 돌리지 않는다');
       expect(fresh.hasCompensationSnapshot, true);
     });
   });

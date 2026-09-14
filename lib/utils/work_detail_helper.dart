@@ -32,15 +32,20 @@ class WorkDetailHelper {
   /// 그래서 약속 스냅샷을 현재 값 **위에 덮는다**. 업무 아이콘·shiftType처럼
   /// 스냅샷에 없는 표시 정보는 현재 값이 그대로 남는다.
   ///
-  /// 스냅샷이 없는 레거시 지원서는 예전처럼 현재 값을 쓴다 —
-  /// **legacy compatibility 경로**이며, 신규 지원서는 여기에 오지 않는다.
+  /// [POSTING-V2-03I.4] 레거시 지원서도 **자기가 아는 것은 쓴다.**
+  /// 스냅샷 제도 이전에도 금액·급여유형·근무시간은 지원 시점 값으로
+  /// 저장돼 있었다. 완전한 스냅샷이 없다는 이유로 그 넷까지 현재 값으로
+  /// 되돌리면, 공고를 고칠 때마다 과거 약속이 함께 움직인다.
+  ///
+  /// 레거시에 없는 조건(휴게·야간·연장 단가·공제)만 현재 값이 남는다 —
+  /// **legacy compatibility 경로**다. 활성 레거시 관계가 있는 동안
+  /// 그 조건이 바뀌지 않도록 막는 것은 서버 guard의 몫이다.
   static Map<String, dynamic>? resolve(
     ApplicationModel app,
     Map<String, dynamic> timeMap,
   ) {
     final live = _resolveLive(app, timeMap);
-    final promised = app.compensationSnapshot;
-    if (promised == null) return live; // legacy compatibility
+    final promised = app.promisedCompensation;
     if (live == null) return promised;
     return {...live, ...promised};
   }

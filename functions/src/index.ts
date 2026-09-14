@@ -9956,6 +9956,73 @@ export const callableUpdateSlotWorkDetails = onCall(
       }
     };
 
+    // ── [POSTING-V2-03I.4] 레거시 지원자 급여 조건 보호 ──
+    //
+    // 03I.3 이후 지원서는 지원 시점 산정 조건을 스냅샷으로 갖는다. 그 이전
+    // 지원서에는 그 조건이 없어, 급여를 계산할 때 공고의 **현재** 값을 읽는다.
+    // 과거 값을 복원할 근거가 없으므로 backfill하지 않는다 — 대신 그 사람이
+    // 아직 관계를 갖고 있는 동안에는 그 조건을 바꾸지 못하게 막는다.
+    //
+    // 정상 정책이 아니라 legacy fallback이다. 스냅샷이 있는 지원자만 남으면
+    // 이 제한은 저절로 풀린다(§13 — 수동 해제 불필요).
+    //
+    // 이미 종료된 지원(REJECTED/CANCELED/AUTO_CANCELED/EXPIRED)은 대상이 아니다.
+    const LEGACY_PROTECTED_FIELDS = [
+      "baseHourlyWage", "breakMinutes",
+      "nightAllowanceApplied", "nightIncluded", "taxDeductionType",
+    ];
+    const compensationChanged = (
+      oldWD: Record<string, unknown>,
+      newWD: Record<string, unknown>
+    ): boolean =>
+      LEGACY_PROTECTED_FIELDS.some(
+        (f) => (oldWD[f] ?? null) !== (newWD[f] ?? null));
+
+    const assertNoLegacyCompensationLock = async (
+      checkToId: string,
+      checkSlotId: string,
+      oldWDs: Record<string, unknown>[],
+      newWDs: Record<string, unknown>[]
+    ) => {
+      // 보호 대상 필드가 하나도 안 바뀌었으면 조회하지 않는다 — 정상 경로 비용 0
+      const touched = newWDs.filter((nw) => {
+        const id = `${nw["workType"]}_${nw["startTime"]}_${nw["endTime"]}`;
+        const ow = oldWDs.find(
+          (o) => `${o["workType"]}_${o["startTime"]}_${o["endTime"]}` === id);
+        return ow !== undefined && compensationChanged(ow, nw);
+      });
+      if (touched.length === 0) return;
+
+      const legacySnap = await db.collection("applications")
+        .where("toId", "==", checkToId)
+        .where("slotId", "==", checkSlotId)
+        .where("status", "in", ACTIVE_STATUSES_WITH_CONFIRMED)
+        .limit(500)
+        .get();
+      if (legacySnap.empty) return;
+
+      for (const nw of touched) {
+        const compositeId =
+          `${nw["workType"]}_${nw["startTime"]}_${nw["endTime"]}`;
+        const wdId = nw["wdId"] as string | undefined;
+        const hasLegacy = legacySnap.docs.some((d) => {
+          const a = d.data();
+          // 스냅샷을 가진 지원서는 자기 조건으로 계산하므로 제한 대상이 아니다
+          if (typeof a.nightAllowanceApplied === "boolean") return false;
+          return a.workDetailId === compositeId ||
+            a.workDetailId === nw["workType"] ||
+            (wdId !== undefined && a.wdId === wdId);
+        });
+        if (hasLegacy) {
+          throw new HttpsError(
+            "failed-precondition",
+            "이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 " +
+            "변경할 수 없습니다. 해당 지원 관계가 종료된 후 변경해 주세요."
+          );
+        }
+      }
+    };
+
     // ── [4H.0D-RC] requiredCount 하한 검증 헬퍼 ──
     // newRequiredCount < occupiedCount(CONFIRMED+CONTRACT_PENDING) → failed-precondition
     // requiredCount=0(미설정)은 무제한이므로 체크 생략.
@@ -10012,6 +10079,9 @@ export const callableUpdateSlotWorkDetails = onCall(
       }
       const singleExpectedRevision = data.expectedEditRevision;
 
+      // [POSTING-V2-03I.4] non-null 단언을 반복하지 않도록 한 번만 고정한다
+      const singleSlotId = slotId as string;
+      const singleNewWDs = newWDs as Record<string, unknown>[];
       const newIds = checkDuplicateIds(newWDs!);
       const newIdSet = new Set(newIds);
 
@@ -10049,6 +10119,11 @@ export const callableUpdateSlotWorkDetails = onCall(
         capturedSingleDateMs = (slotData["date"] as admin.firestore.Timestamp | undefined)?.toMillis() ?? 0;
         capturedSingleWDC = (slotData["workDetailCounts"] as Record<string, {confirmedCount?: number}> | undefined) ?? {}; // [Phase 8.1E.2A]
         await checkActiveApplications(toId, slotId!, newIdSet, oldWDs);
+        // [POSTING-V2-03I.4] 재시도마다 다시 실행된다 —
+        //   checkActiveApplications와 같은 자리이고 slotRef 충돌이
+        //   재시도를 보장한다(03H).
+        await assertNoLegacyCompensationLock(
+          toId, singleSlotId, oldWDs, singleNewWDs);
 
         // [WORKTYPE-SCOPE] 신규 compositeId의 workType이 business active workType인지 검증 (SUPER_ADMIN 면제)
         // 기존 unchanged compositeId는 면제 — inactive된 historical workType regression 방지
@@ -10253,6 +10328,9 @@ export const callableUpdateSlotWorkDetails = onCall(
         capturedBatchDateMs = (slotData["date"] as admin.firestore.Timestamp | undefined)?.toMillis() ?? 0;
         capturedBatchWDC = (slotData["workDetailCounts"] as Record<string, {confirmedCount?: number}> | undefined) ?? {}; // [Phase 8.1E.2A]
         await checkActiveApplications(toId, update.slotId, newIdSet, oldWDs);
+        // [POSTING-V2-03I.4] SINGLE과 같은 판정 — 진입점이 달라도 결과는 같다
+        await assertNoLegacyCompensationLock(
+          toId, update.slotId, oldWDs, update.workDetails);
 
         // [WORKTYPE-SCOPE] 신규 compositeId의 workType이 business active workType인지 검증 (SUPER_ADMIN 면제)
         // 기존 unchanged compositeId는 면제 — inactive된 historical workType regression 방지

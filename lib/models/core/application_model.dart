@@ -58,24 +58,38 @@ class ApplicationModel {
   /// `WorkDetailHelper`에 legacy compatibility로 명시돼 있다.
   bool get hasCompensationSnapshot => nightAllowanceApplied != null;
 
-  /// 약속된 급여 산정 조건. 스냅샷이 없으면 null.
+  /// 이 지원서가 **실제로 알고 있는** 약속 조건. 항상 비어 있지 않다.
+  ///
+  /// [POSTING-V2-03I.4] 레거시 지원서라고 해서 전부 공고의 현재 값으로
+  /// 되돌리지 않는다. 스냅샷 제도가 생기기 전에도 금액·급여유형·근무시간은
+  /// 지원 시점 값으로 저장돼 있었다 — 그 넷은 레거시에서도 약속이다.
+  ///
+  /// 모르는 것(휴게·야간·연장 단가·공제)은 **넣지 않는다**. 공고의 현재
+  /// 값을 과거 약속이라고 지어내지 않기 위해서다. 그 빈자리는
+  /// 서버 guard가 "바뀌지 않게" 막는 방식으로 다룬다.
   ///
   /// 키 이름은 workDetail 문서와 같다 — 소비자가 두 형태를 구분하지
   /// 않고 같은 방식으로 읽을 수 있어야 한다.
-  Map<String, dynamic>? get compensationSnapshot {
-    if (!hasCompensationSnapshot) return null;
-    return {
-      'wage': wage,
-      if (wageType != null) 'wageType': wageType,
-      if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
-      if (breakMinutes != null) 'breakMinutes': breakMinutes,
-      'nightAllowanceApplied': nightAllowanceApplied,
-      if (nightIncluded != null) 'nightIncluded': nightIncluded,
-      if (taxDeductionType != null) 'taxDeductionType': taxDeductionType,
-      if (startTime.isNotEmpty) 'startTime': startTime,
-      if (endTime.isNotEmpty) 'endTime': endTime,
-    };
-  }
+  Map<String, dynamic> get promisedCompensation => {
+        'wage': wage,
+        if (wageType != null) 'wageType': wageType,
+        if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+        if (breakMinutes != null) 'breakMinutes': breakMinutes,
+        if (nightAllowanceApplied != null)
+          'nightAllowanceApplied': nightAllowanceApplied,
+        if (nightIncluded != null) 'nightIncluded': nightIncluded,
+        if (taxDeductionType != null) 'taxDeductionType': taxDeductionType,
+        // [POSTING-V2-03I.4] startTime/endTime은 넣지 않는다.
+        //   근무시간은 임금 조건이 아니라 **운영 일정**이고, 이 앱에는 그에 대한
+        //   별도 계약이 이미 있다: 관리자가 업무 시간을 바꾸면 지각·조퇴 판정
+        //   경계가 함께 움직여야 한다(admin_home_attendance_effective_time_test).
+        //   그래서 시각은 `effectiveStart/End`가 현재 정의를 우선한다.
+        //   활성 지원자가 있는 동안의 시간 변경은 03G identity guard가 이미 막는다.
+      };
+
+  /// 완전한 약속 조건. 스냅샷이 없는 레거시 지원서면 null.
+  Map<String, dynamic>? get compensationSnapshot =>
+      hasCompensationSnapshot ? promisedCompensation : null;
   final String? workTypeIcon;          // 업무 아이콘
   final String? workTypeColor;         // 업무 색상
   final String? workTypeBackgroundColor; // 업무 배경색
