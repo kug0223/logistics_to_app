@@ -550,8 +550,15 @@ void main() {
     });
 
     test('카드 전체에서 producer는 Home 영향 action에만 있다', () {
-      // _showSlotRoster · batchClose · batchReopen · repost = 4
-      expect('notifyDataChanged'.allMatches(cardCode).length, 4);
+      // _showSlotRoster · batchClose · batchReopen · repost
+      // [POSTING-V2-03R.1] + _openApplicants — collapsed `지원 현황` CTA의
+      //   CONTRACT 경로. 확정·거절이 Home 인력 현황을 바꾸는 것은
+      //   WorkDetailRow._showApplicantsDialog와 같은 이유다.
+      expect('notifyDataChanged'.allMatches(cardCode).length, 5);
+      // 새로 늘어난 자리가 실제로 지원자 처리 경로인지 확인한다.
+      final opened = _codeOf(_bodyOf(card, 'Future<void> _openApplicants('));
+      expect(opened.contains('WorkApplicantsDialog('), isTrue);
+      expect(opened.contains('notifyDataChanged'), isTrue);
     });
   });
 

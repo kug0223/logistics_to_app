@@ -40,6 +40,7 @@ import '../../../screens/business_admin/to_management/create_to_screen.dart'; //
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/day_applicants_dialog.dart';
+import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 import '../../../screens/business_admin/dialogs/slot_batch_select_dialog.dart';
 import '../../../screens/business_admin/dialogs/invite_worker_dialog.dart';
@@ -352,18 +353,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
               InkWell(
                 // multiSlot: 비활성(isDimmed)→활성화, 활성→날짜패널 접기
                 onTap: widget.onToggleExpand,
-                borderRadius: BorderRadius.only(
+                // [POSTING-V2-03R.1] 아래에 액션 바가 항상 붙으므로 헤더의
+                //   하단 모서리는 더 이상 카드의 모서리가 아니다.
+                borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
-                  bottomLeft: Radius.circular(widget.isExpanded ? 0 : 16),
-                  bottomRight: Radius.circular(widget.isExpanded ? 0 : 16),
                 ),
                 child: Padding(
                   padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ✨ 첫째 줄: 배지 + 사업장 + 등록시간 + 메뉴
+                      // [POSTING-V2-03R.1] 첫째 줄: 타입 + 사업장 + 메뉴
+                      //   `N시간 전`(createdAt)을 뺐다 — 더 이상 정렬 기준도
+                      //   운영 판단 정보도 아니고, 사업장명의 폭만 먹었다.
+                      //   슬롯 수 배지도 뺐다 — 아래 `남은 N일`과 같은 말을
+                      //   두 번 하는 데다, 그쪽은 끝난 날짜를 세지 않는다.
                       Row(
                         children: [
                           // 장기/단기 텍스트 배지 (맨 앞)
@@ -395,12 +400,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
                             ),
                           ),
                           
-                          // 플렉스 TO: 날짜 슬롯 수 뱃지 (리스트 모드만)
-                          if (!widget.groupItem.isLongTerm &&
-                              widget.displayMode == TOCardDisplayMode.list) ...[
-                            _buildSlotCountBadge(context, masterTO),
-                          ],
-
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
 
                           // 사업장명
@@ -414,103 +413,50 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          
-                          // 등록시간 (리스트 모드, 단건/고정만)
-                          if (widget.displayMode == TOCardDisplayMode.list && !isMultiSlot) ...[
-                            Text(
-                              _getCreatedAtText(widget.groupItem.createdAt, now),
-                              style: ResponsiveHelper.tinyStyle(
-                                context,
-                                color: AppColors.grey500,
-                              ),
-                            ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          ],
-                          
+
                           // 메뉴 버튼
                           _buildSingleTOMenu(context),
                         ],
                       ),
-                      
-                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
-                      // ✨ 둘째 줄: 제목 (크게 강조!)
-                      Text(
-                        widget.groupItem.groupName,
-                        style: ResponsiveHelper.titleStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                          height: 1.3,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+
+                      // [POSTING-V2-03R.1] 둘째 줄: 언제 — 목록 스캔의 1차 축.
+                      //   03Q.1이 목록을 근무 날짜순으로 바꾼 뒤, 관리자가 카드에서
+                      //   가장 먼저 찾아야 하는 값이 여기다. 관리용 제목에 있던
+                      //   시각적 1순위를 이 줄로 옮겼다.
+                      _buildWhenLine(
+                        context,
+                        masterTO: masterTO,
+                        allClosed: allClosed,
+                        targetTOs: targetTOs,
                       ),
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+
+                      // [POSTING-V2-03R.1] 셋째 줄: 어떤 일 / 얼마나 남았나
+                      _buildWorkLine(context, masterTO: masterTO, now: now),
+
+                      // [POSTING-V2-03R.1] 넷째 줄: 관리용 카드명 — 보조 정보.
+                      //   관리자가 붙이는 식별값이라 지우지 않지만, 실제 업무명보다
+                      //   앞선 공고 정체성으로 쓰지 않는다.
+                      ..._buildManagedTitleLine(context),
 
                       SizedBox(height: ResponsiveHelper.spacing(context, 6)),
 
-                      // ✨ 셋째 줄: 날짜 + 상태배지(multiSlot 인라인) / 인원현황(단건)
-                      Row(
-                        children: [
-                          // 날짜 정보
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.event,
-                                  size: ResponsiveHelper.iconSize(context, 14),
-                                  color: AppColors.grey500,
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                Expanded(
-                                  child: Text(
-                                    _getDateText(masterTO),
-                                    style: ResponsiveHelper.bodyStyle(
-                                      context,
-                                      color: AppColors.grey700,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          // multiSlot: 상태배지 인라인 / 단기 단건: 인원배지 / 고정: 도트 행에서 별도 표시
-                          if (isMultiSlot) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
-                          ] else if (!masterTO.isLongTerm) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            _buildPersonnelBadge(
-                              context,
-                              confirmed: totalConfirmed,
-                              required: totalRequired,
-                              pending: totalPending,
-                              isFull: isFull,
-                            ),
-                          ],
-                        ],
+                      // [POSTING-V2-03R.1] 다섯째 줄: 인원 — 세 variant 동일 언어.
+                      //   `필요 R`을 항상 숫자로 말한다. 이전에는 FLEX 다중과
+                      //   CONTRACT가 확정/대기/미충원 점 세 개만 보여줘서,
+                      //   정작 "몇 명 필요한가"에 직답이 없었다.
+                      _buildStaffingLine(
+                        context,
+                        confirmed: totalConfirmed,
+                        required: totalRequired,
+                        pending: totalPending,
+                        isFull: isFull,
                       ),
 
-                      // multiSlot: 확정/대기/미충원 도트 요약 (collapsed summary)
-                      if (isMultiSlot) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                        Row(
-                          children: [
-                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.success, '확정 $totalConfirmed')),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.warning, '대기 $totalPending')),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            Flexible(
-                              fit: FlexFit.loose,
-                              child: _buildDot(context, AppColors.grey400,
-                                  '미충원 ${(totalRequired - totalConfirmed - totalPending).clamp(0, totalRequired)}'),
-                            ),
-                          ],
-                        ),
-                      ],
-                      
-                      // 고정 공고: 계약기간 + 공고마감 한 줄
+                      // 고정 공고: 공고 마감일 (계약기간은 _buildWorkLine으로 이동)
                       if (masterTO.isLongTerm) ...[
                         _buildLongTermMeta(context, masterTO, allClosed),
                       ],
@@ -519,49 +465,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       if (!masterTO.isLongTerm && !allClosed) ...[
                         _buildDeadlineMeta(context, now),
                       ],
-                      
-                      // 고정: 확정/대기/미충원 도트 + 모집중 칩 한 줄
-                      if (masterTO.isLongTerm && !isMultiSlot) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                        Row(
-                          children: [
-                            // Flexible: 3자리 숫자 등 긴 라벨 시 Row overflow 방지
-                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.success, '확정 $totalConfirmed')),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.warning, '대기 $totalPending')),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            Flexible(
-                              fit: FlexFit.loose,
-                              child: _buildDot(context, AppColors.grey400,
-                                  '미충원 ${(totalRequired - totalConfirmed - totalPending).clamp(0, totalRequired)}'),
-                            ),
-                            const Spacer(),
-                            _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
-                          ],
-                        ),
-                      ],
-                      // 단기 단건: 기존 상태 칩 유지
-                      if (!masterTO.isLongTerm && !isMultiSlot) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
-                      ],
-
-                      // 펼침 힌트 — 모든 카드 타입 표시
-                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                      Center(
-                        child: Icon(
-                          widget.isExpanded
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: ResponsiveHelper.iconSize(context, 20),
-                          color: AppColors.grey400,
-                        ),
-                      ),
                     ],
                   ),
                 ),
               ),
-              
+
+              // [POSTING-V2-03R.1] 액션 바 — 헤더 InkWell **바깥**이다.
+              //   안에 두면 CTA 탭이 카드 펼침과 함께 걸린다(double trigger).
+              _buildActionBar(context),
+
               // 펼쳐진 영역 — 모든 카드 타입 통일 (multiSlot 포함)
               AnimatedSize(
                   duration: const Duration(milliseconds: 300),
@@ -1196,71 +1108,316 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // ✨ 새로운 간소화된 위젯들
+  // [POSTING-V2-03R.1] collapsed 정보 구조
+  //
+  // 카드가 답해야 하는 순서: 언제 → 어떤 일/어디 → 인원 → 모집 상태 → 다음 행동.
+  // 모든 요약은 **priority date의 실제 데이터**에서 나온다. 값을 하나로 확정할
+  // 수 없으면 대표값을 지어내지 않고 "N개"라고 말하거나 생략한다 —
+  // 첫 workDetail을 대표로 쓰면 나머지가 없는 것처럼 보인다.
   // ═══════════════════════════════════════════════════════════════
-  /// 등록일 텍스트
-  String _getCreatedAtText(DateTime created, DateTime now) {
-    final diff = now.difference(created);
-    if (diff.isNegative) return '방금 전';
-    if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}분 전';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours}시간 전';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays}일 전';
-    } else {
-      return '${created.month}/${created.day}';
+
+  /// 요약의 재료가 되는 workDetails. priority date 기준이다.
+  List<WorkDetailData> _collapsedWorkDetails(TOModel masterTO) {
+    final calSlot = widget.calendarSlot;
+    if (calSlot != null) {
+      final slotDetails = calSlot.slot?.workDetails ?? const <WorkDetailData>[];
+      if (slotDetails.isNotEmpty) return slotDetails;
+      return calSlot.workDetails.isNotEmpty
+          ? calSlot.workDetails
+          : masterTO.workDetails;
     }
+    if (masterTO.isLongTerm) return masterTO.workDetails;
+
+    // FLEX — priority date의 슬롯. 그 슬롯을 못 찾으면 다른 날짜의 업무를
+    //   이 날짜의 것처럼 보여주지 않는다.
+    final slot = widget.groupItem.operationalSlot;
+    if (slot == null) return const [];
+    final slotDetails = slot.slot?.workDetails ?? const <WorkDetailData>[];
+    return slotDetails.isNotEmpty ? slotDetails : slot.workDetails;
   }
 
-  /// 날짜 텍스트 생성
-  String _getDateText(TOModel masterTO) {
-    // 캘린더 슬롯 모드: 해당 슬롯 날짜만 표시
-    if (widget.calendarSlot != null) {
-      final date = widget.calendarSlot!.slot?.date ?? masterTO.rangeStart ?? DateTime.now();
-      return FormatHelper.formatDate(date);
+  /// collapsed 날짜 문구. 모르면 null.
+  String? _collapsedDateText(TOModel masterTO) {
+    // 캘린더 모드는 이미 날짜가 선택된 문맥이다.
+    final calSlot = widget.calendarSlot;
+    if (calSlot != null) {
+      final date = calSlot.slot?.date;
+      return date == null ? null : FormatHelper.formatDate(date);
     }
     if (masterTO.isLongTerm) {
+      final start = masterTO.rangeStart;
+      // rangeStart가 없으면 createdAt으로 대체하지 않는다 — 등록일은 근무일이 아니다.
+      if (start == null) return null;
       return FormatHelper.formatWorkPeriod(
-        startDate: masterTO.rangeStart ?? masterTO.createdAt,
-        endDate: masterTO.endDate,
+        startDate: start,
+        endDate: masterTO.rangeEnd,
         isLongTerm: true,
         workDays: masterTO.workDays.isEmpty ? null : masterTO.workDays,
       );
     }
-    // flex TO: 로드된 슬롯 수 우선, 없으면 totalSlots 사용
-    final int count = widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty
-        ? widget.groupItem.groupTOs.length
-        : masterTO.totalSlots;
-
-    // 슬롯 날짜 우선 사용 (rangeStart가 null인 기존 데이터 호환)
-    final DateTime dateToShow;
-    if (widget.groupItem.isGroupDetailLoaded && widget.groupItem.groupTOs.isNotEmpty) {
-      final firstSlot = widget.groupItem.groupTOs.first;
-      dateToShow = firstSlot.slot?.date ?? masterTO.rangeStart ?? masterTO.createdAt;
-    } else {
-      dateToShow = masterTO.rangeStart ?? masterTO.createdAt;
-    }
-
-    if (count <= 1) {
-      return FormatHelper.formatDate(dateToShow);
-    }
-    return '${FormatHelper.formatDate(dateToShow)} 외 ${count - 1}일';
+    // FLEX — controller가 정렬에 쓴 그 날짜를 그대로 쓴다.
+    final date = widget.groupItem.operationalDate;
+    return date == null ? null : FormatHelper.formatDate(date);
   }
-/// ✨ 인원 현황 배지 (핵심 정보)
-  Widget _buildPersonnelBadge(
+
+  /// collapsed 시간 문구. 하나로 확정되지 않으면 개수로 말한다.
+  String? _collapsedTimeText(TOModel masterTO) =>
+      collapsedTimeSummary(_collapsedWorkDetails(masterTO));
+
+  /// collapsed 업무 문구. 여러 업무를 하나로 대표하지 않는다.
+  String? _collapsedWorkText(TOModel masterTO) =>
+      collapsedWorkSummary(_collapsedWorkDetails(masterTO));
+
+  /// FLEX 남은 운영 날짜 수. 종료된 날짜는 세지 않는다.
+  String? _collapsedRemainingText(TOModel masterTO, DateTime now) {
+    if (masterTO.isLongTerm) {
+      final label = masterTO.contractPeriodLabel;
+      return label.isEmpty ? null : '계약 $label';
+    }
+    if (widget.calendarSlot != null) return null;
+    // 슬롯을 못 읽었으면 개수를 주장하지 않는다.
+    if (!widget.groupItem.isGroupDetailLoaded) return null;
+    final open = widget.groupItem.openSlotCount(now);
+    return open <= 0 ? null : '남은 $open일';
+  }
+
+  /// [4] 언제 — 날짜·시간 + 모집 상태.
+  ///
+  /// Wrap을 쓴다: 상태 배지가 길어도(`9/20 14:00 공개 예정`) 날짜를 0폭으로
+  /// 밀어내지 못하고 다음 줄로 내려간다.
+  Widget _buildWhenLine(
+    BuildContext context, {
+    required TOModel masterTO,
+    required bool allClosed,
+    required List<TOItem> targetTOs,
+  }) {
+    final date = _collapsedDateText(masterTO);
+    final time = _collapsedTimeText(masterTO);
+    final String label;
+    if (date == null) {
+      // ERROR != UNKNOWN — 조회 실패를 '미정'으로 덮지 않는다.
+      label = widget.hasGroupDetailError ? '근무일 확인 필요' : '근무일 미정';
+    } else {
+      label = time == null ? date : '$date · $time';
+    }
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: ResponsiveHelper.spacing(context, 8),
+      runSpacing: ResponsiveHelper.spacing(context, 4),
+      children: [
+        Text(
+          label,
+          style: ResponsiveHelper.subtitleStyle(
+            context,
+            color: date == null ? AppColors.grey500 : AppColors.textPrimary,
+          ).copyWith(height: 1.25),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        _buildStatusBadge(
+            context, allClosed: allClosed, targetTOs: targetTOs),
+      ],
+    );
+  }
+
+  /// [5] 어떤 일 · 얼마나 남았나.
+  Widget _buildWorkLine(
+    BuildContext context, {
+    required TOModel masterTO,
+    required DateTime now,
+  }) {
+    final parts = <String>[];
+    final work = _collapsedWorkText(masterTO);
+    if (work != null) parts.add(work);
+    final remaining = _collapsedRemainingText(masterTO, now);
+    if (remaining != null) parts.add(remaining);
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Text(
+      parts.join(' · '),
+      style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  /// [6] 관리용 카드명 — 보조 정보.
+  ///
+  /// 지우지 않는다(관리자가 붙인 식별값이다). 다만 실제 업무명과 같은 말이면
+  /// 한 줄을 낭비할 뿐이므로 생략한다.
+  List<Widget> _buildManagedTitleLine(BuildContext context) {
+    final name = widget.groupItem.groupName;
+    if (name.isEmpty) return const [];
+    if (name == _collapsedWorkText(widget.groupItem.masterTO)) return const [];
+    return [
+      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+      Text(
+        name,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    ];
+  }
+
+  /// [7] 인원 — 세 variant 공통 언어.
+  ///
+  /// `확정`과 `대기`를 합치지 않는다. 지원은 관심이고 확정은 약속이라,
+  /// 둘을 더한 숫자는 채워지지 않은 자리를 채워진 것처럼 보이게 한다.
+  /// `미충원`(required-confirmed-pending)은 여기서 쓰지 않는다 — 그 정의를
+  /// 이번 IA에서 확대하지 않기 위해 원천 상태 셋만 말한다.
+  Widget _buildStaffingLine(
     BuildContext context, {
     required int confirmed,
     required int required,
     required int pending,
     required bool isFull,
   }) {
-    return PersonnelBadge(
-      confirmed: confirmed,
-      required: required,
-      pending: pending,
-      isFull: isFull,
+    // CF syncTOStats 교정 전 낙관적 increment가 음수로 보이는 순간 방어
+    final safeConfirmed = confirmed < 0 ? 0 : confirmed;
+    final base = ResponsiveHelper.bodyStyle(context, color: AppColors.grey700);
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(style: base, children: [
+        TextSpan(
+          text: '확정 $safeConfirmed',
+          style: base.copyWith(
+            fontWeight: FontWeight.bold,
+            color: isFull ? AppColors.successDark : AppColors.textPrimary,
+          ),
+        ),
+        TextSpan(
+          text: required == 0 ? ' / 필요 미설정' : ' / 필요 $required',
+        ),
+        const TextSpan(text: '  ·  '),
+        TextSpan(
+          text: '대기 $pending',
+          style: base.copyWith(
+            color: pending > 0 ? AppColors.warningDark : AppColors.grey500,
+          ),
+        ),
+      ]),
     );
+  }
+
+  /// [8] 액션 바 — collapsed에서 발견 가능한 유일한 운영 CTA.
+  ///
+  /// 역할 분담: 카드 본체 tap = 더 보기 / `지원 현황` = 지원자 처리 / `⋮` = 관리.
+  /// 이 바는 헤더 InkWell 바깥에 있어 CTA가 펼침과 함께 걸리지 않는다.
+  Widget _buildActionBar(BuildContext context) {
+    final target = _applicantTarget();
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: AppColors.grey100)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              // target이 없으면 어디로 갈지 확정할 수 없다 — 임의의 업무/날짜로
+              //   들어가는 대신 기존 펼침 선택 흐름으로 넘긴다.
+              onTap: target == null
+                  ? widget.onToggleExpand
+                  : () => _openApplicants(context, target),
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(widget.isExpanded ? 0 : 16),
+              ),
+              child: Padding(
+                padding: ResponsiveHelper.symmetricPadding(context,
+                    horizontal: 12, vertical: 9),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.people_outline,
+                        size: ResponsiveHelper.iconSize(context, 15),
+                        color: Theme.of(context).primaryColor),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    Flexible(
+                      child: Text(
+                        '지원 현황',
+                        style: ResponsiveHelper.smallStyle(context,
+                                color: Theme.of(context).primaryColor)
+                            .copyWith(fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          InkWell(
+            onTap: widget.onToggleExpand,
+            borderRadius: BorderRadius.only(
+              bottomRight: Radius.circular(widget.isExpanded ? 0 : 16),
+            ),
+            child: Padding(
+              padding: ResponsiveHelper.symmetricPadding(context,
+                  horizontal: 14, vertical: 9),
+              child: Icon(
+                widget.isExpanded
+                    ? Icons.keyboard_arrow_up
+                    : Icons.keyboard_arrow_down,
+                size: ResponsiveHelper.iconSize(context, 20),
+                color: AppColors.grey400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// `지원 현황`이 열 대상. 하나로 확정할 수 없으면 null.
+  _ApplicantTarget? _applicantTarget() {
+    final calSlot = widget.calendarSlot;
+    if (calSlot != null) {
+      return calSlot.slot?.date == null ? null : _ApplicantTarget.slot(calSlot);
+    }
+
+    if (!widget.groupItem.masterTO.isLongTerm) {
+      // FLEX — 카드에 보이는 그 날짜의 명단으로 간다.
+      final slot = widget.groupItem.operationalSlot;
+      return slot == null ? null : _ApplicantTarget.slot(slot);
+    }
+
+    // CONTRACT — 날짜 명단이라는 개념이 없다. 업무가 하나뿐일 때만 확정된다.
+    final details = _collapsedWorkDetails(widget.groupItem.masterTO);
+    if (details.length != 1) return null;
+    return _ApplicantTarget.work(_getSingleTOItem(), details.first);
+  }
+
+  Future<void> _openApplicants(
+      BuildContext context, _ApplicantTarget target) async {
+    final slot = target.slot;
+    if (slot != null) {
+      // 기존 canonical 경로 — 날짜 명단(DayApplicantsDialog)
+      await _showSlotRoster(context, slot);
+      return;
+    }
+    final item = target.toItem!;
+    final work = target.work!;
+    final result = await showDialog<WorkApplicantsDialogResult>(
+      context: context,
+      builder: (_) => WorkApplicantsDialog(
+        toItem: item,
+        work: work,
+        onChanged: widget.onChanged,
+        // [POSTING-V2-02G.1] 권한은 이 공고가 속한 사업장 기준 — WorkDetailRow와 동일.
+        targetPermissions: context
+            .read<UserProvider>()
+            .permissionsForBusiness(item.to.businessId),
+      ),
+    );
+    if (result != null && result.hasChanges && mounted) {
+      setState(() {});
+      widget.onChanged();
+      WorkforceController.notifyDataChanged(origin: AdminMutationOrigin.jobs);
+      if (result.affectedTOIds.isNotEmpty) {
+        widget.onAffectedTOsChanged?.call(result.affectedTOIds);
+      }
+    }
   }
 
   /// 그룹 카드 상태 배지
@@ -1269,29 +1426,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
   ///   - 슬롯 미로드: groupItem.isClosed (TOGroupItem getter — isManualClosed 포함)
   ///   - 슬롯 로드됨: CloseStateUtils.isToItemClosed 전체 판단
   /// 상태 분류 자체는 SlotStatusUtil.groupStatus에 위임.
-  Widget _buildDot(BuildContext context, Color color, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        // Flexible: 외부에서 Flexible로 감싸면 bounded constraint 전달 → ellipsis 동작
-        Flexible(
-          child: Text(
-            label,
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildStatusBadge(BuildContext context, {
     required bool allClosed,
     required List<TOItem> targetTOs,
@@ -2339,75 +2473,29 @@ class _TOGroupCardState extends State<TOGroupCard> {
   // ─── [PERF-3] Builder → private helper 메서드 ────────────────────────────
 
   /// 플렉스 TO: 날짜 슬롯 수 뱃지 (리스트 모드만)
-  Widget _buildSlotCountBadge(BuildContext context, TOModel masterTO) {
-    final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
-            widget.groupItem.groupTOs.isNotEmpty
-        ? widget.groupItem.groupTOs.length
-        : masterTO.totalSlots;
-    if (effectiveCount < 1) return const SizedBox.shrink();
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 6),
-            vertical: ResponsiveHelper.spacing(context, 3),
-          ),
-          decoration: BoxDecoration(
-            color: AppColors.infoBg,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: AppColors.infoLight),
-          ),
-          child: Text(
-            '$effectiveCount일',
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: AppColors.infoDark,
-            ).copyWith(fontWeight: FontWeight.bold),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// 고정 공고: 계약기간 + 공고마감 한 줄
+  /// 고정 공고: 공고 마감일 한 줄
+  ///
+  /// [POSTING-V2-03R.1] 계약기간(`계약 3개월`)은 업무 줄로 옮겼다 — 타입별
+  ///   domain detail도 공통 축과 같은 위치에서 읽히는 편이 낫다.
+  ///   Row의 Text에 flex 보호가 없어 좁은 폭에서 overflow할 수 있었다.
   Widget _buildLongTermMeta(BuildContext context, TOModel masterTO, bool allClosed) {
-    final hasContract = masterTO.contractPeriodLabel.isNotEmpty;
     final expiry = !allClosed ? masterTO.formattedPostingExpiry : null;
-    final hasExpiry = expiry != null;
-    if (!hasContract && !hasExpiry) return const SizedBox.shrink();
+    if (expiry == null) return const SizedBox.shrink();
     final isPast = masterTO.isPostingExpired;
+    final color = isPast ? AppColors.grey500 : AppColors.warningDark;
     return Padding(
       padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
       child: Row(
         children: [
-          if (hasContract) ...[
-            Icon(Icons.assignment_outlined,
-                size: ResponsiveHelper.iconSize(context, 13),
-                color: AppColors.longTermDark),
-            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Text('계약 ${masterTO.contractPeriodLabel}',
-                style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.longTermDark)
-                    .copyWith(fontWeight: FontWeight.w600)),
-          ],
-          if (hasContract && hasExpiry) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text('·',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey400)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          ],
-          if (hasExpiry) ...[
-            Icon(Icons.calendar_month_outlined,
-                size: ResponsiveHelper.iconSize(context, 13),
-                color: isPast ? AppColors.grey500 : AppColors.warningDark),
-            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Text('지원 마감 $expiry',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: isPast ? AppColors.grey500 : AppColors.warningDark)),
-          ],
+          Icon(Icons.calendar_month_outlined,
+              size: ResponsiveHelper.iconSize(context, 13), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Flexible(
+            child: Text('지원 마감 $expiry',
+                style: ResponsiveHelper.smallStyle(context, color: color),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
         ],
       ),
     );
@@ -2425,6 +2513,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
         : isSoon
             ? '마감까지 ${_formatRemaining(remaining)}'
             : '지원마감 ${FormatHelper.formatTime(deadline)}';
+    // [POSTING-V2-03R.1] 마감 문구 + '마감임박' 배지가 좁은 폭에서 겹치지
+    //   않도록 Flexible로 감싼다. 배지는 짧으므로 문구 쪽이 줄어든다.
     return Padding(
       padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
       child: Row(
@@ -2435,11 +2525,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
             color: isPast ? AppColors.grey500 : AppColors.warningDark,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            label,
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: isPast ? AppColors.grey500 : AppColors.warningDark,
+          Flexible(
+            child: Text(
+              label,
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: isPast ? AppColors.grey500 : AppColors.warningDark,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           if (isSoon) ...[
@@ -2550,6 +2644,58 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
 // [DECOMMISSIONED] _ExtendDaysSheet 제거됨 — 게시기간 연장 기능 종료
 // 다시 모집하기 → AdminCreateTOScreen(initialTO) → NEW TO ID
+
+// ════════════════════════════════════════════════════════════════════════
+// [POSTING-V2-03R.1] collapsed 요약 — 순수 함수
+//
+// 규칙 하나다: **하나로 확정되지 않으면 대표값을 고르지 않는다.** 첫
+// workDetail을 대표로 쓰면 나머지 업무·시간대가 없는 것처럼 보이고, 관리자는
+// 카드만 보고 운영을 판단한다. 잘못된 하나보다 "N개"가, 알 수 없으면 생략이 낫다.
+// ════════════════════════════════════════════════════════════════════════
+
+/// 업무 요약. 업무가 없으면 null.
+@visibleForTesting
+String? collapsedWorkSummary(List<WorkDetailData> details) {
+  final types = <String>{};
+  for (final detail in details) {
+    if (detail.workType.isEmpty) continue;
+    types.add(detail.workType);
+  }
+  if (types.isEmpty) return null;
+  if (types.length == 1) return types.first;
+  return '업무 ${types.length}개';
+}
+
+/// 시간 요약. 시간대를 알 수 없으면 null.
+@visibleForTesting
+String? collapsedTimeSummary(List<WorkDetailData> details) {
+  final ranges = <String>{};
+  for (final detail in details) {
+    if (detail.startTime.isEmpty || detail.endTime.isEmpty) continue;
+    ranges.add('${detail.startTime}–${detail.endTime}');
+  }
+  if (ranges.isEmpty) return null;
+  if (ranges.length == 1) return ranges.first;
+  return '시간대 ${ranges.length}개';
+}
+
+/// [POSTING-V2-03R.1] `지원 현황` CTA가 열 대상.
+///
+/// 두 경우뿐이다: 날짜가 정해진 슬롯(FLEX·캘린더) 또는 업무가 하나뿐인
+/// 고정 공고. 어느 쪽으로도 확정되지 않으면 target 자체를 만들지 않는다 —
+/// 임의의 첫 업무·첫 날짜를 고르면 카드에 보이는 것과 다른 곳이 열린다.
+class _ApplicantTarget {
+  final TOItem? slot;
+  final TOItem? toItem;
+  final WorkDetailData? work;
+
+  const _ApplicantTarget.slot(TOItem this.slot)
+      : toItem = null,
+        work = null;
+
+  const _ApplicantTarget.work(TOItem this.toItem, WorkDetailData this.work)
+      : slot = null;
+}
 
 /// 인원 현황 배지 — 리스트/캘린더 뷰 공용
 class PersonnelBadge extends StatelessWidget {

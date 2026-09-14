@@ -140,6 +140,55 @@ class TOGroupItem {
 
   // ── 날짜 ─────────────────────────────────────────────
 
+  // [POSTING-V2-03R.1] 목록 정렬과 카드 표시가 같은 날짜를 말하게 하는 통로.
+  //
+  // 값은 WorkforceController가 slot preload 직후 priorityDateOf로 한 번 계산해
+  // 넣는다. 카드가 스스로 다시 계산하지 않는다 — 이전에는 카드가
+  // `groupTOs.first`(= 마감 여부를 보지 않는 가장 이른 슬롯)를 썼기 때문에,
+  // 정렬은 9/25인데 카드에는 9/10이 찍히는 모순이 있었다.
+  //
+  // null과 "아직 계산 안 됨"은 다르다 — 전자는 "날짜를 알 수 없다"는 확정이다.
+  DateTime? _operationalDate;
+  bool _operationalDateResolved = false;
+
+  /// 이 공고가 다음에 운영되는 날. 모르면 null.
+  DateTime? get operationalDate => _operationalDate;
+
+  /// canonical 계산이 끝났는가. false면 소비자는 날짜를 주장하면 안 된다.
+  bool get hasOperationalDate => _operationalDateResolved;
+
+  void setOperationalDate(DateTime? date) {
+    _operationalDate = date;
+    _operationalDateResolved = true;
+  }
+
+  /// [operationalDate]에 해당하는 슬롯. FLEX는 날짜당 슬롯이 하나다.
+  ///
+  /// fallback(rangeEnd 등)으로 날짜가 정해졌거나 슬롯이 없으면 null —
+  /// 그 경우 이 날짜에 대응하는 실제 운영 단위가 없다는 뜻이다.
+  TOItem? get operationalSlot {
+    final target = _operationalDate;
+    if (target == null) return null;
+    for (final item in groupTOs) {
+      final date = item.slot?.date;
+      if (date == null) continue;
+      if (FormatHelper.toKstDate(date) == target) return item;
+    }
+    return null;
+  }
+
+  /// 아직 열려 있는 슬롯 수. 종료된 날짜는 세지 않는다.
+  int openSlotCount(DateTime now) {
+    if (!singleTO.isFlexType) return 0;
+    var count = 0;
+    for (final item in groupTOs) {
+      if (item.slot == null) continue;
+      if (CloseStateUtils.isToItemClosed(item, singleTO, now)) continue;
+      count++;
+    }
+    return count;
+  }
+
   /// 시작일. flex: 첫 슬롯 날짜 또는 createdAt; contract: rangeStart
   DateTime get startDate =>
       singleTO.rangeStart ?? singleTO.createdAt;

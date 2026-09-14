@@ -107,7 +107,15 @@ class SlotStatusBadge extends StatelessWidget {
         children: [
           Icon(icon, size: iconSize, color: color),
           SizedBox(width: ResponsiveHelper.spacing(context, compact ? 3 : 4)),
-          Text(label, style: textStyle, overflow: TextOverflow.ellipsis, maxLines: 1),
+          // [POSTING-V2-03R.1] Flexible이 없으면 Text가 부모의 maxWidth 전체를
+          //   받아 ellipsis가 동작하지 않고, 배지가 같은 Row의 날짜를 0폭으로
+          //   밀어냈다. `9/20 14:00 공개 예정` 같은 긴 라벨에서 실제로 그렇다.
+          Flexible(
+            child: Text(label,
+                style: textStyle,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1),
+          ),
         ],
       ),
     );

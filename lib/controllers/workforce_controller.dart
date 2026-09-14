@@ -583,14 +583,14 @@ class WorkforceController extends ChangeNotifier {
     required Set<String> detailErrorIds,
     required DateTime now,
   }) {
-    if (items.length < 2) return items;
-    final keyed = items
-        .map((g) => (
-              group: g,
-              preOperational: isPreOperational(g),
-              date: priorityDateOf(g, now, detailErrorIds: detailErrorIds),
-            ))
-        .toList();
+    final keyed = items.map((g) {
+      final date = priorityDateOf(g, now, detailErrorIds: detailErrorIds);
+      // [POSTING-V2-03R.1] 정렬 키를 그대로 카드에 넘긴다 — 목록 순서와
+      //   카드가 말하는 날짜는 같은 계산에서 나와야 한다.
+      g.setOperationalDate(date);
+      return (group: g, preOperational: isPreOperational(g), date: date);
+    }).toList();
+    if (keyed.length < 2) return items;
 
     keyed.sort((a, b) {
       // 1. 공개 운영 중인 공고가 먼저
@@ -715,6 +715,10 @@ class WorkforceController extends ChangeNotifier {
           await _service.loadFlexSlots(group.id, masterTO: group.masterTO);
       group.setGroupTOs(loaded.groupTOs);
       group.setSlotDates(loaded.slotDates);
+      // [POSTING-V2-03R.1] 슬롯이 새로 들어왔으니 날짜도 다시 확정한다.
+      //   목록 순서는 다음 load에서 맞춰지지만, 카드는 지금 이 값을 보여준다.
+      group.setOperationalDate(priorityDateOf(group, DateTime.now(),
+          detailErrorIds: _groupDetailErrorIds));
     } catch (e) {
       debugPrint('❌ WorkforceController.loadGroupDetails 실패: $e');
       // [POSTING-V2-01B] 실패를 '슬롯 없음'으로 커밋하지 않는다.
