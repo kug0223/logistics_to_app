@@ -487,10 +487,13 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                 ),
               ),
               // 상태 배지
+              // [POSTING-V2-03S.1] 인원이 찬 날짜는 종료된 날짜와 다르게 보인다.
+              //   세 호출부가 같은 상태 언어를 쓴다.
               SlotStatusBadge(
                 status: SlotStatusUtil.slotStatus(slot, widget.to),
                 scheduledAt: SlotStatusUtil.slotScheduledAt(slot, widget.to),
                 compact: true,
+                recruitmentComplete: slot.isFull || widget.to.isFull,
               ),
             ],
           ),

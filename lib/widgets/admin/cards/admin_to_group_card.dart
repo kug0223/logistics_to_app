@@ -311,41 +311,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
             (toItem) => CloseStateUtils.isToItemClosed(toItem, masterTO, now),
           );
 
-    // ✨ 컬러바 색상 결정 (장기: 보라, 단기: 초록)
-    Color statusBarColor;
-    if (allClosed) {
-      statusBarColor = AppColors.grey400;
-    } else {
-      statusBarColor = widget.groupItem.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
-    }
-
-    // 이 카드가 활성 상태인지 — 단건 펼침 OR activeGroupKey가 이 카드를 가리킴
-    // _selectedChipDate 조건 제거: 접기를 해도 activeGroupKey가 유지되어야 함(버그 3 수정)
+    // [POSTING-V2-03S.1] 좌측 컬러바 제거.
+    //   한 요소가 타입(단기=info / 고정=teal)과 lifecycle(마감=grey)을 겸해,
+    //   같은 자리에서 말하는 축이 상태 전이 중에 바뀌었다. 타입은 1행의
+    //   `단기`/`고정` 텍스트 배지가, 상태는 SlotStatusBadge가 각각 맡는다.
+    //
+    //   shadow도 뺐다 — Home이 flat으로 간 이유(AH-V2-05C)와 같다.
+    //   반복 목록 카드이므로 경계는 border 하나로 충분하고, chrome이 세 겹일
+    //   이유가 없다. 카드 사이 간격은 목록이 소유한다(listPadding).
     final cardContent = Container(
-      margin: EdgeInsets.only(
-        bottom: ResponsiveHelper.spacing(context, 4),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.grey200,
+          width: 1,
+        ),
       ),
-      child: Stack(
-        children: [
-          // ✅ 메인 카드
-          Container(
-            margin: const EdgeInsets.only(left: 4),  // 좌측 컬러바 공간
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-              border: Border.all(
-                color: AppColors.grey200,
-                width: 1,
-              ),
-            ),
-            child: Material(
+      child: Material(
           color: Colors.transparent,
           child: Column(
             children: [
@@ -524,26 +507,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             ],
           ),
         ),
-          ),
-          // ✅ 좌측 컬러바 (Stack으로 위에 덮기)
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: statusBarColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  bottomLeft: Radius.circular(16),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-        );
+    );
     // [PERF-1] 항상 같은 위젯 타입 유지 — isAnyExpanded 전환 시 RenderObject 재생성 방지.
     // Dimming 제거: 모든 카드 정상 opacity 유지.
     // 이유: 관리자가 펼친 카드 외에도 다른 공고를 동시에 scan해야 함.
@@ -1252,7 +1216,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
       SizedBox(height: ResponsiveHelper.spacing(context, 2)),
       Text(
         name,
-        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        // [POSTING-V2-03S.1] grey500 → grey600. 위계는 그대로 secondary지만
+        //   흰 배경 위 13px grey500은 읽히지 않는 수준이었다. 크기·굵기는 유지.
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -1307,8 +1273,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
   Widget _buildActionBar(BuildContext context) {
     final target = _applicantTarget();
     return Container(
+      // [POSTING-V2-03S.1] 카드 안의 separator는 한 tone만 쓴다.
+      //   아래 expanded divider와 같은 grey200 — 이유 없이 두 회색이 섞여 있었다.
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.grey100)),
+        border: Border(top: BorderSide(color: AppColors.grey200)),
       ),
       child: Row(
         children: [
@@ -1446,11 +1414,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
     //   TIME_EXPIRED   → '지원 마감' (applicationDeadline/근무시간 경과)
     //   POSTING_EXPIRED→ '공고 만료' (게시기간 경과)
     //   기타(legacy)   → null → '마감' fallback
+    // [POSTING-V2-03S.1] FULL은 라벨뿐 아니라 색·아이콘도 달라야 하므로
+    //   recruitmentComplete로 함께 넘긴다.
+    final isRecruitmentComplete =
+        status == SlotDisplayStatus.closed && widget.groupItem.isFull;
     String? closedLabel;
     if (status == SlotDisplayStatus.closed) {
       final to = widget.groupItem.masterTO;
       if (widget.groupItem.isFull) {
-        closedLabel = '모집 완료';
+        closedLabel = SlotStatusBadge.recruitmentCompleteLabel;
       } else if (to.isManualClosed) {
         closedLabel = '종료';
       } else if (widget.groupItem.closedReasonCode == 'TIME_EXPIRED') {
@@ -1464,6 +1436,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
       status: status,
       scheduledAt: scheduledAt,
       closedLabel: closedLabel,
+      recruitmentComplete: isRecruitmentComplete,
     );
   }
 

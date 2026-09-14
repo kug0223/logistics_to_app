@@ -189,11 +189,17 @@ class AppColors {
   static const Color canceledDark = grey700;
   
   // --- 예약/스케줄 ---
-  
-  /// 예약 공개
-  static const Color scheduled = warning;
-  static const Color scheduledBg = warningBg;
-  static const Color scheduledDark = warningDark;
+
+  /// 예약 공개 / 공개 대기 — **정상적인 준비 상태**다.
+  ///
+  /// [POSTING-V2-03S.1] 이전에는 warning의 alias였다. 그래서 아직 공개되지
+  /// 않은 정상 공고가 '마감 임박'과 같은 주황으로 보였고, orange가 "주의"라는
+  /// 예측 가능한 의미를 잃었다. 예약은 경고가 아니므로 전용 값을 갖는다.
+  /// 호출부 API 이름(scheduled*)은 그대로 두고 값만 분리한다.
+  static const Color scheduled = Color(0xFF5C6BC0);       // indigo[400]
+  static const Color scheduledLight = Color(0xFFC5CAE9);  // indigo[100]
+  static const Color scheduledDark = Color(0xFF3949AB);   // indigo[600]
+  static const Color scheduledBg = Color(0xFFE8EAF6);     // indigo[50]
   
   // --- 출근 상태 ---
   

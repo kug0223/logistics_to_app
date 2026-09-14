@@ -695,15 +695,25 @@ void main() {
       ]) {
         expect(badge.contains(label), true, reason: label);
       }
-      expect(_codeOf(src).contains("closedLabel = '모집 완료'"), true);
+      // [POSTING-V2-03S.1] '모집 완료' 문자열이 상수로 옮겨졌다. copy는 그대로다.
+      expect(
+          badge.contains(
+              "static const String recruitmentCompleteLabel = '모집 완료';"),
+          true);
+      expect(
+          _codeOf(src).contains('SlotStatusBadge.recruitmentCompleteLabel'),
+          true);
       expect(_codeOf(src).contains("'종료됨'"), false,
           reason: 'FULL을 운영 종료로 바꾸지 않는다');
     });
 
-    test('09-b 좌측 컬러바 / radius / shadow 무변경 (§30)', () {
-      expect(src.contains('width: 4,'), true);
+    test('09-b 카드 shell radius와 expanded 구조 유지', () {
+      // [POSTING-V2-03S.1] shadow와 좌측 컬러바는 이 Phase에서 의도적으로
+      //   제거됐다 — 그 검증은 posting_visual_semantics_test가 소유한다.
+      //   여기서는 03R.1이 의존하는 것, 즉 카드 경계와 펼침 구조만 고정한다.
       expect(src.contains('BorderRadius.circular(16)'), true);
-      expect(src.contains('blurRadius: 8'), true);
+      expect(src.contains('AnimatedSize('), true);
+      expect(src.contains('_buildExpandedBodyContent('), true);
     });
 
     test('09-c expanded 구조 유지 (§20)', () {

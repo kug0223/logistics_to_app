@@ -512,10 +512,13 @@ class _TOItemCardState extends State<TOItemCard> {
         ? SlotStatusUtil.slotScheduledAt(slot, to)
         : to.publishAt;
     // [4I.1A] group card와 badge parity — closed 상태 contextual 레이블 동기화
+    // [POSTING-V2-03S.1] group card와 동일하게 인원 충족을 색·아이콘까지 분리한다.
+    final isRecruitmentComplete =
+        status == SlotDisplayStatus.closed && (to.isFull || slot?.isFull == true);
     String? closedLabel;
     if (status == SlotDisplayStatus.closed) {
       if (to.isFull) {
-        closedLabel = '모집 완료';
+        closedLabel = SlotStatusBadge.recruitmentCompleteLabel;
       } else if (slot?.isManualClosed == true || to.isManualClosed) {
         closedLabel = '종료';
       } else if (to.closedReasonCode == 'TIME_EXPIRED') {
@@ -529,6 +532,7 @@ class _TOItemCardState extends State<TOItemCard> {
       scheduledAt: scheduledAt,
       compact: true,
       closedLabel: closedLabel,
+      recruitmentComplete: isRecruitmentComplete,
     );
   }
 
