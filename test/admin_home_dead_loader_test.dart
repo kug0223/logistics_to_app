@@ -314,11 +314,12 @@ void main() {
       expect(toFs.contains("httpsCallable('callableGetTOsByBiz'"), isTrue);
     });
 
+    // [POSTING-V2-03O.1] 공고 목록 revision consumer는 JobsRoot 하나로 모였다.
+    //   Workforce는 공유 controller를 구독만 하므로 자체 listener가 없다.
     test('다른 화면의 revision listener는 그대로', () {
       expect(_src('lib/screens/business_admin/jobs_root_screen.dart')
           .contains('WorkforceController.dataRevision.addListener'), isTrue);
-      expect(_src(
-              'lib/screens/business_admin/workforce_management/workforce_root_screen.dart')
+      expect(_src('lib/screens/business_admin/business_admin_home_screen.dart')
           .contains('WorkforceController.dataRevision.addListener'), isTrue);
     });
   });

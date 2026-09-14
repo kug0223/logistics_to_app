@@ -1,4 +1,4 @@
-// [POSTING-V2-03C.1] flex 슬롯 완전성 — TRUNCATED != SUCCESS
+﻿// [POSTING-V2-03C.1] flex 슬롯 완전성 — TRUNCATED != SUCCESS
 //
 // 03C READ에서 확인된 것:
 //   · slot document = 날짜 1개 (workDetails는 문서 내 배열)
@@ -226,7 +226,7 @@ void main() {
   group('COMPLETE-05 caller가 초과를 empty로 오인하지 않는다', () {
     test('05-a Posting canonical — 기존 group detail error 경로 재사용', () {
       // loadFlexSlots가 rethrow → controller의 TO별 catch → _groupDetailErrorIds
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect(body.contains('_groupDetailErrorIds.add(group.id);'), true);
       final detail =
           _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> loadGroupDetails('));

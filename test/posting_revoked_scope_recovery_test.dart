@@ -493,7 +493,7 @@ void main() {
     late final String ctrl = _src(_ctrlPath);
 
     test('07-a recovery가 공통 load path에 있다 (§12)', () {
-      final load = _flat(_codeOf(_bodyOf(ctrl, 'Future<void> load(BuildContext context)')));
+      final load = _flat(_codeOf(_bodyOf(ctrl, 'Future<void> _runOneLoad(')));
       expect(load.contains('_loadWithScopeRecovery('), true);
       expect(load.contains('getTOGroupItemsLight('), false,
           reason: '진입점마다 다른 경로가 생기면 계약이 갈라진다');
@@ -516,7 +516,7 @@ void main() {
     });
 
     test('07-c 선제 refresh를 넣지 않았다 (§13)', () {
-      final load = _flat(_codeOf(_bodyOf(ctrl, 'Future<void> load(BuildContext context)')));
+      final load = _flat(_codeOf(_bodyOf(ctrl, 'Future<void> _runOneLoad(')));
       expect(load.contains('refreshAdminScopeState()'), false,
           reason: '정상 load 비용은 access read 0이어야 한다');
       final body = _flat(_codeOf(

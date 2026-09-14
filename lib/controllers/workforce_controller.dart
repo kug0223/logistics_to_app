@@ -288,10 +288,77 @@ class WorkforceController extends ChangeNotifier {
     }
   }
 
-  /// [context]는 첫 번째 await 이전에 uid/role 추출에만 사용됩니다.
-  /// async gap 이후 context 재사용 없으므로 mounted 체크가 불필요합니다.
-  Future<void> load(BuildContext context) async {
-    if (_isLoading) return;
+  // ── [POSTING-V2-03O.1] load coalescing ──────────────────────────────
+  //
+  // 이전에는 `if (_isLoading) return;`으로 두 번째 요청을 **버렸다**. 그래서
+  // 진행 중인 load가 mutation보다 앞선 데이터를 들고 있어도, 그 mutation이
+  // 유발한 reload가 사라지고 화면이 낡은 채로 고착될 수 있었다.
+  // (같은 origin이면 revision self-skip 때문에 재시도도 오지 않는다)
+  //
+  // 이제 요청은 버리지 않는다. 진행 중이면 pending으로 접고, 현재 사이클이
+  // 끝난 뒤 **한 번 더** 돈다. 여러 요청이 겹쳐도 follow-up은 하나로 합쳐진다.
+  // 불변식: 요청이 들어왔는데 아무 fetch도 예정되지 않은 상태는 없다.
+  Future<void>? _loadCycle;
+  bool _pendingLoad = false;
+
+  /// [context]는 동기적으로 UserProvider를 꺼내는 데만 쓴다.
+  /// pending follow-up은 async gap 뒤에 돌므로 context를 들고 가지 않는다.
+  Future<void> load(BuildContext context) {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    return _requestLoad(userProvider);
+  }
+
+  Future<void> _requestLoad(UserProvider userProvider) {
+    final cycle = _loadCycle;
+    if (cycle != null) {
+      // 버리지 않는다 — 현재 사이클이 끝나면 최신 상태로 한 번 더 돈다.
+      _pendingLoad = true;
+      // caller가 await하면 follow-up까지 끝난 뒤 완료된다.
+      return cycle;
+    }
+    final started = _runLoadCycle(userProvider);
+    _loadCycle = started;
+    return started;
+  }
+
+  /// pending이 남아 있는 한 순차로 반복한다.
+  /// 순차이므로 오래된 결과가 최신 결과를 덮을 수 없다.
+  Future<void> _runLoadCycle(UserProvider userProvider) async {
+    try {
+      do {
+        _pendingLoad = false;
+        // scope는 매 회차에 다시 계산된다 — pending 사이에 배정이 바뀌었어도
+        //   첫 요청의 낡은 scope를 재사용하지 않는다(03N).
+        await _runOneLoad(userProvider);
+      } while (_pendingLoad);
+    } finally {
+      _loadCycle = null;
+      // 회차가 예기치 않게 던져도 로딩 상태가 갇히지 않게 한다.
+      if (_isLoading) {
+        _isLoading = false;
+        if (!_disposed) notifyListeners();
+      }
+    }
+
+    // [POSTING-V2-01B] 실패한 로드의 stale items로 후처리를 돌리지 않는다.
+    // 특히 cascade close는 write이므로 신뢰할 수 없는 상태에서 실행하지 않는다.
+    if (_loadError != null) return;
+
+    // [POSTING-V2-02D.1] 모든 슬롯이 만료됐는데 TO가 ACTIVE면 Firestore cascade close.
+    //   write이므로 load 전체가 성공한 뒤에만 실행한다(01B: 신뢰할 수 없는
+    //   상태에서 write 금지). 슬롯 로드에 실패한 그룹은 isGroupDetailLoaded가
+    //   false로 남아 대상에서 빠진다 — '슬롯 없음'으로 오인해 마감하지 않는다.
+    for (final group in _items.where(
+        (g) => g.masterTO.isFlexType && g.isGroupDetailLoaded)) {
+      _maybeCascadeCloseExpiredTO(group, group.groupTOs);
+    }
+
+    // contract TO 게시 만료 자동 마감
+    _maybeCascadeCloseExpiredContractTOs();
+  }
+
+  /// 한 회차. 실패해도 던지지 않는다 — [_loadError]로 표현하고 pending을 살린다.
+  Future<void> _runOneLoad(UserProvider userProvider) async {
     _service.invalidateListCache();
     _isLoading = true;
     // [POSTING-V2-01B] 새 시도 시작 — 이전 실패 상태를 먼저 지운다.
@@ -300,8 +367,7 @@ class WorkforceController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // context는 첫 번째 await 이전에 추출 — async gap 이후 재사용 금지
-      final user = Provider.of<UserProvider>(context, listen: false).currentUser;
+      final user = userProvider.currentUser;
       if (user == null) {
         _items = [];
         return;
@@ -309,7 +375,6 @@ class WorkforceController extends ChangeNotifier {
 
       // businessIds를 먼저 동기적으로 결정 (await 불필요)
       final List<String>? businessIds = _scopeOf(user);
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
 
       if (businessIds != null && businessIds.isEmpty) {
         _items = [];
@@ -368,25 +433,11 @@ class WorkforceController extends ChangeNotifier {
       // refresh 실패에서는 멀쩡하던 목록까지 사라진다.
       _loadError = e;
     } finally {
-      _isLoading = false;
+      // pending follow-up이 남아 있으면 곧바로 다음 회차가 이어지므로
+      //   그 사이에 idle로 보이게 만들지 않는다.
+      if (!_pendingLoad) _isLoading = false;
       if (!_disposed) notifyListeners();
     }
-
-    // [POSTING-V2-01B] 실패한 로드의 stale items로 후처리를 돌리지 않는다.
-    // 특히 cascade close는 write이므로 신뢰할 수 없는 상태에서 실행하지 않는다.
-    if (_loadError != null) return;
-
-    // [POSTING-V2-02D.1] 모든 슬롯이 만료됐는데 TO가 ACTIVE면 Firestore cascade close.
-    //   write이므로 load 전체가 성공한 뒤에만 실행한다(01B: 신뢰할 수 없는
-    //   상태에서 write 금지). 슬롯 로드에 실패한 그룹은 isGroupDetailLoaded가
-    //   false로 남아 대상에서 빠진다 — '슬롯 없음'으로 오인해 마감하지 않는다.
-    for (final group in _items.where(
-        (g) => g.masterTO.isFlexType && g.isGroupDetailLoaded)) {
-      _maybeCascadeCloseExpiredTO(group, group.groupTOs);
-    }
-
-    // contract TO 게시 만료 자동 마감
-    _maybeCascadeCloseExpiredContractTOs();
   }
 
   /// 모든 슬롯이 시간만료 + TO가 ACTIVE 상태인 경우 자동 cascade close

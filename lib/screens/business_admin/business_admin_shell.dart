@@ -10,10 +10,16 @@
 //   3: 급여   (PayrollOverviewScreen)    — 사업장별 급여 관리
 //   4: 관리   (SettingsScreen)           — 사업장·계약·분석·계정 설정
 //
-// [Controller 분리]
-//   JobsRootScreen.WorkforceController ≠ WorkforceRootScreen.WorkforceController
-//   각 Root가 전용 controller 인스턴스 보유 — filter/tab/loading state 격리.
-//   IndexedStack으로 두 Root가 항상 alive → dispose는 로그아웃/Shell 제거 시.
+// [Controller 소유권] — [POSTING-V2-03O.1]
+//   WorkforceController는 **Shell이 하나만** 만들어 두 Root에 내려준다.
+//   이전에는 Root마다 전용 인스턴스를 만들었는데, IndexedStack이 두 Root를
+//   동시에 mount하므로 최초 진입·FCM·앱 복귀·Home mutation마다
+//   callableGetAdminTOs와 전 FLEX 슬롯 preload가 그대로 두 벌씩 돌았다.
+//   filter/tab 상태도 공유되지만, 실제 공고 목록 UI는 Jobs 탭 하나뿐이고
+//   Workforce 탭은 loading 상태와 사업장 이름만 읽는다.
+//
+//   lifecycle(초기 load·FCM·resume·revision) owner는 JobsRootScreen 하나다.
+//   dispose도 Shell이 한 번만 한다 — Root는 dispose하지 않는다.
 //
 // [FCM 딥링크]
 //   FCMService는 MaterialApp.navigatorKey (루트 Navigator) 로 push.
@@ -31,6 +37,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
 import '../../theme/app_colors.dart';
@@ -51,6 +58,10 @@ class BusinessAdminShell extends StatefulWidget {
 class _BusinessAdminShellState extends State<BusinessAdminShell> {
   int _currentIndex = 0;
 
+  /// [POSTING-V2-03O.1] 공고 목록 controller — 이 Shell이 유일한 소유자다.
+  /// 두 Root가 소비만 하고, dispose도 여기서 한 번만 한다.
+  final WorkforceController _postingController = WorkforceController();
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +78,8 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
   @override
   void dispose() {
     AdminTabSwitcher.instance.unregister();
+    // [POSTING-V2-03O.1] 소유자가 한 번만 정리한다 — Root는 dispose하지 않는다.
+    _postingController.dispose();
     super.dispose();
   }
 
@@ -219,8 +232,11 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
           index: _currentIndex,
           children: [
             _buildTabNavigator(0, const BusinessAdminHomeScreen()),
-            _buildTabNavigator(1, const JobsRootScreen()),
-            _buildTabNavigator(2, const WorkforceRootScreen()),
+            // [POSTING-V2-03O.1] 같은 controller 인스턴스를 두 Root가 공유한다.
+            _buildTabNavigator(
+                1, JobsRootScreen(postingController: _postingController)),
+            _buildTabNavigator(
+                2, WorkforceRootScreen(postingController: _postingController)),
             _buildTabNavigator(3, const PayrollOverviewScreen()),
             _buildTabNavigator(4, const SettingsScreen()),
           ],

@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -527,7 +527,7 @@ void main() {
   // ═════════════════════════════════════════════════════════════
   group('읽기 비용', () {
     test('load()에서 한도 조회가 제거됐다', () {
-      final body = _codeOf(_bodyOf(ctrl, 'Future<void> load('));
+      final body = _codeOf(_bodyOf(ctrl, 'Future<void> _runOneLoad('));
       expect(body.contains('getMaxActiveTOLimit'), isFalse);
       expect(body.contains('limitFuture'), isFalse);
       // [POSTING-V2-03N.1] 목록 조회는 그대로다 — 호출이 recovery wrapper를

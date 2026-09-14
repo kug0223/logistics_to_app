@@ -1,4 +1,4 @@
-// [POSTING-V2-02E.1] 공고 탭 성공 empty의 의미 분리
+﻿// [POSTING-V2-02E.1] 공고 탭 성공 empty의 의미 분리
 //
 // 02E READ에서 확인된 문제:
 //   성공 조회 후의 0건 네 가지가 전부 한 문구로 수렴했다.
@@ -483,7 +483,7 @@ void main() {
     });
 
     test('11-b group error는 root _loadError와 분리돼 있다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       final start = body.indexOf('flexGroups.map((group) async {');
       final end = body.indexOf('} // else 블록 닫힘');
       expect(start, greaterThan(-1));

@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -154,7 +154,7 @@ void main() {
     });
 
     test('load()는 revision을 올리지 않는다 — 루프 차단', () {
-      final body = _codeOf(_bodyOf(ctrl, 'Future<void> load('));
+      final body = _codeOf(_bodyOf(ctrl, 'Future<void> _runOneLoad('));
       expect(body.contains('dataRevision'), isFalse);
       expect(body.contains('notifyDataChanged'), isFalse);
     });
@@ -267,15 +267,23 @@ void main() {
           reason: 'consumer가 reload를 쓰면 외부 콜백까지 돈다');
     });
 
-    test('Workforce는 origin == workforce를 skip한다', () {
-      final body =
-          _codeOf(_bodyOf(_src(_wfRootPath), 'void _onDataRevisionChanged('));
+    // [POSTING-V2-03O.1 재작성] 공고 목록 revision consumer는 JobsRoot 하나다.
+    //   두 Root가 각각 controller를 들고 같은 revision에 반응하던 구조를
+    //   없앴다 — Workforce는 공유 controller를 구독만 한다.
+    //   origin self-skip 계약 자체는 Jobs·Home에 그대로 남아 있다.
+    test('Workforce는 공고 revision consumer가 아니다', () {
+      final wf = _codeOf(_src(_wfRootPath));
+      expect(wf.contains('_onDataRevisionChanged'), isFalse);
+      expect(wf.contains('dataRevision.addListener'), isFalse);
+      // Jobs가 workforce-origin mutation을 받는 쪽이다
+      final jobs = _flat(_codeOf(
+          _bodyOf(_src(_jobsRootPath), 'void _onDataRevisionChanged(')));
       expect(
-        _flat(body).contains('if (WorkforceController.lastMutationOrigin == '
-            'AdminMutationOrigin.workforce) { return; }'),
+        jobs.contains('if (WorkforceController.lastMutationOrigin == '
+            'AdminMutationOrigin.jobs) { return; }'),
         isTrue,
       );
-      expect(body.contains('_controller.load(context);'), isTrue);
+      expect(jobs.contains('_controller.load(context);'), isTrue);
     });
 
     test('Home consumer가 추가되고 origin == home을 skip한다', () {
@@ -327,25 +335,29 @@ void main() {
   // 비-mutation 경로에서 global bump 제거
   // ═════════════════════════════════════════════════════════════
   group('비-mutation 경로', () {
+    // [POSTING-V2-03O.1] 공고 목록 FCM·resume owner는 JobsRoot 하나다.
     test('FCM 콜백이 revision을 만들지 않는다', () {
-      for (final p in [_jobsRootPath, _wfRootPath]) {
-        final s = _codeOf(_src(p));
-        final idx = s.indexOf('_fcmRefreshCallback = () {');
-        expect(idx, isNot(-1));
-        final block = s.substring(idx, idx + 200);
-        expect(block.contains('notifyDataChanged'), isFalse,
-            reason: '$p FCM 콜백이 global invalidation을 낸다');
-      }
+      final s = _codeOf(_src(_jobsRootPath));
+      final idx = s.indexOf('_fcmRefreshCallback = () {');
+      expect(idx, isNot(-1));
+      final block = s.substring(idx, idx + 200);
+      expect(block.contains('notifyDataChanged'), isFalse,
+          reason: 'FCM 콜백이 global invalidation을 낸다');
+      // Workforce에는 공고 FCM listener 자체가 없다
+      expect(_codeOf(_src(_wfRootPath)).contains('addAdminRefreshListener'),
+          isFalse);
     });
 
     test('resume이 revision을 만들지 않는다', () {
-      for (final p in [_jobsRootPath, _wfRootPath]) {
-        final body = _codeOf(
-            _bodyOf(_src(p), 'void didChangeAppLifecycleState('));
-        expect(body.contains('notifyDataChanged'), isFalse);
-        expect(body.contains('_controller.reload(context)'), isTrue,
-            reason: 'local reload 자체는 유지돼야 한다');
-      }
+      final body = _codeOf(
+          _bodyOf(_src(_jobsRootPath), 'void didChangeAppLifecycleState('));
+      expect(body.contains('notifyDataChanged'), isFalse);
+      expect(body.contains('_controller.reload(context)'), isTrue,
+          reason: 'local reload 자체는 유지돼야 한다');
+      // Workforce에는 공고 resume 경로가 없다
+      expect(
+          _codeOf(_src(_wfRootPath)).contains('didChangeAppLifecycleState'),
+          isFalse);
     });
 
     test('공고 탭 pull-to-refresh가 revision을 만들지 않는다', () {

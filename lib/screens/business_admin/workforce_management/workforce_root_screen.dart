@@ -26,81 +26,55 @@ import 'package:provider/provider.dart';
 
 import '../../../controllers/workforce_controller.dart';
 import '../../../providers/user_provider.dart';
-import '../../../services/fcm_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/admin_business_scope_label.dart';
 import 'workforce_operational_view.dart';
 
 class WorkforceRootScreen extends StatefulWidget {
-  const WorkforceRootScreen({super.key});
+  /// [POSTING-V2-03O.1] Shell이 소유하는 공유 공고 controller.
+  ///
+  /// 이 화면은 **소비만** 한다 — 로딩 상태와 사업장 이름만 읽는다.
+  /// null이면 standalone 진입이라 자체 인스턴스를 만들고 직접 정리한다.
+  final WorkforceController? postingController;
+
+  const WorkforceRootScreen({super.key, this.postingController});
 
   @override
   State<WorkforceRootScreen> createState() => _WorkforceRootScreenState();
 }
 
-class _WorkforceRootScreenState extends State<WorkforceRootScreen>
-    with WidgetsBindingObserver {
-  /// 이 Root 전용 WorkforceController — JobsRootScreen과 공유하지 않음
-  final WorkforceController _controller = WorkforceController();
+class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
+  /// [POSTING-V2-03O.1] 공유 controller. Shell 경로에서는 주입된다.
+  late final WorkforceController _controller =
+      widget.postingController ?? WorkforceController();
 
-  DateTime? _lastResumedAt;
-  late final VoidCallback _fcmRefreshCallback;
+  bool get _ownsController => widget.postingController == null;
 
-  // Cross-tab invalidation
-  int _lastSeenRevision = 0;
+  // [POSTING-V2-03O.1] 공고 목록 lifecycle은 JobsRootScreen 하나가 맡는다.
+  //
+  //   이전에는 이 화면도 initState load · FCM listener · resume reload ·
+  //   dataRevision listener를 각각 갖고 있었다. Shell의 IndexedStack이 두
+  //   Root를 동시에 mount하므로, 같은 event 하나가 callableGetAdminTOs와
+  //   전 FLEX 슬롯 preload를 두 벌씩 돌렸다.
+  //
+  //   이 화면이 그 결과에서 실제로 쓰는 것은 controller의 로딩 상태와
+  //   사업장 이름뿐이다. 공유 controller를 구독만 하면 충분하고,
+  //   자기 운영 데이터(_reload 등)는 이 파일 밖의 기존 경로 그대로다.
+  @override
+  void dispose() {
+    if (_ownsController) _controller.dispose();
+    super.dispose();
+  }
 
+  /// standalone 진입에서만 자체 초기 로드가 필요하다.
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    if (!_ownsController) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.load(context);
     });
-    _fcmRefreshCallback = () {
-      if (mounted) _controller.reload(context);
-    };
-    FCMService().addAdminRefreshListener(_fcmRefreshCallback);
-
-    // Cross-tab invalidation: Jobs 탭에서 TO 변경 → 이 controller도 갱신
-    _lastSeenRevision = WorkforceController.dataRevision.value;
-    WorkforceController.dataRevision.addListener(_onDataRevisionChanged);
-  }
-
-  @override
-  void dispose() {
-    WorkforceController.dataRevision.removeListener(_onDataRevisionChanged);
-    FCMService().removeAdminRefreshListener(_fcmRefreshCallback);
-    WidgetsBinding.instance.removeObserver(this);
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onDataRevisionChanged() {
-    final rev = WorkforceController.dataRevision.value;
-    if (rev <= _lastSeenRevision) return;
-    _lastSeenRevision = rev;
-    // [POSTING-V2-02B.2] 이 탭에서 일어난 mutation은 이미 local refresh를 끝냈다
-    if (WorkforceController.lastMutationOrigin ==
-        AdminMutationOrigin.workforce) {
-      return;
-    }
-    if (!mounted || _controller.isLoading) return;
-    // load(): revision 재증가 없음 → 무한루프 차단
-    _controller.load(context);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      final now = DateTime.now();
-      final last = _lastResumedAt;
-      if (last != null && now.difference(last) < const Duration(minutes: 2)) {
-        return;
-      }
-      _lastResumedAt = now;
-      if (mounted) _controller.reload(context);
-    }
   }
 
   @override

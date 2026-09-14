@@ -1,4 +1,4 @@
-// [POSTING-V2-03F.1] 목록 최신화 실패 — STALE != FRESH
+﻿// [POSTING-V2-03F.1] 목록 최신화 실패 — STALE != FRESH
 //
 // 03F READ에서 확인된 것:
 //   · load()는 실패해도 _items를 보존한다(01B). 여기까지는 의도된 계약이다.
@@ -311,7 +311,7 @@ void main() {
     });
 
     test('05-b 실패는 모두 같은 _loadError 하나에 모인다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect(body.contains('_loadError = e;'), true);
       expect(body.contains('_items = [];\n      return;'), false,
           reason: '실패가 목록을 지우면 배너 조건(items.isNotEmpty)이 깨진다');
@@ -340,7 +340,7 @@ void main() {
   // ── §10 lifetime ───────────────────────────────────────────────
   group('STALE-06 실패 truth의 수명', () {
     test('06-a 다음 성공 load에서 사라진다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect(body.contains('_loadError = null;'), true,
           reason: '재시도 시작 시 초기화 → 성공하면 그대로 null');
       // 성공 경로에서 다시 채우지 않는다

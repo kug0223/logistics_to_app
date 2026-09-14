@@ -45,7 +45,17 @@ class JobsRootScreen extends StatefulWidget {
   /// Shell 탭 진입은 AdminTabSwitcher.switchToJobsWithTarget이 담당한다.
   final String? initialTargetToId;
 
-  const JobsRootScreen({super.key, this.initialTargetToId});
+  /// [POSTING-V2-03O.1] Shell이 소유하는 공유 controller.
+  ///
+  /// null이면 이 화면이 standalone(알림 fallback, SUPER_ADMIN 직접 진입)이라
+  /// 자기 인스턴스를 만들고 직접 정리한다. Shell 경로에서는 항상 주입된다.
+  final WorkforceController? postingController;
+
+  const JobsRootScreen({
+    super.key,
+    this.initialTargetToId,
+    this.postingController,
+  });
 
   @override
   State<JobsRootScreen> createState() => _JobsRootScreenState();
@@ -53,8 +63,13 @@ class JobsRootScreen extends StatefulWidget {
 
 class _JobsRootScreenState extends State<JobsRootScreen>
     with WidgetsBindingObserver {
-  /// 이 Root 전용 WorkforceController — WorkforceRootScreen과 공유하지 않음
-  final WorkforceController _controller = WorkforceController();
+  /// [POSTING-V2-03O.1] 공유 controller. Shell이 줬으면 그것을 쓰고,
+  ///   standalone 진입에서만 자체 인스턴스를 만든다.
+  late final WorkforceController _controller =
+      widget.postingController ?? WorkforceController();
+
+  /// 자체 생성한 경우에만 dispose한다 — 공유 인스턴스는 Shell이 정리한다.
+  bool get _ownsController => widget.postingController == null;
 
   DateTime? _lastResumedAt;
   late final VoidCallback _fcmRefreshCallback;
@@ -113,7 +128,10 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     if (WorkforceController.lastMutationOrigin == AdminMutationOrigin.jobs) {
       return;
     }
-    if (!mounted || _controller.isLoading) return;
+    // [POSTING-V2-03O.1] 로딩 중이라고 caller가 먼저 버리지 않는다.
+    //   진행 중인 load는 이 mutation보다 앞선 데이터를 들고 있을 수 있다.
+    //   controller가 pending으로 접어 현재 사이클 뒤에 한 번 더 돈다.
+    if (!mounted) return;
     // load(): revision 재증가 없음 → 무한루프 차단
     _controller.load(context);
   }
@@ -128,7 +146,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     WorkforceController.dataRevision.removeListener(_onDataRevisionChanged);
     FCMService().removeAdminRefreshListener(_fcmRefreshCallback);
     WidgetsBinding.instance.removeObserver(this);
-    _controller.dispose();
+    if (_ownsController) _controller.dispose();
     super.dispose();
   }
 

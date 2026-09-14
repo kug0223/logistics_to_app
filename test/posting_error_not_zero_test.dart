@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -220,7 +220,7 @@ void main() {
   // ═════════════════════════════════════════════════════════════
   group('ERROR-ZERO-01 root list 실패', () {
     test('controller가 실패를 loadError로 남기고 items를 지우지 않는다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       final catchIdx = body.indexOf('} catch (e) {');
       expect(catchIdx, isNot(-1));
       final catchBlock = body.substring(catchIdx);
@@ -585,7 +585,7 @@ void main() {
     });
 
     test('목록 재로드 시 stale group error가 정리된다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect(body.contains('_groupDetailErrorIds.clear();'), isTrue,
           reason: '복구된 공고가 계속 error로 보인다');
     });
@@ -694,8 +694,10 @@ void main() {
           reason: 'async gap 이후 mounted 체크가 없다');
     });
 
+    // [POSTING-V2-03O.1] 후처리는 사이클 끝(_runLoadCycle)으로 옮겼다 —
+    //   pending follow-up이 모두 끝난 뒤 한 번만 돈다.
     test('실패한 로드의 stale items로 후처리를 돌리지 않는다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runLoadCycle('));
       final flat = _flat(body);
       expect(flat.contains('if (_loadError != null) return;'), isTrue);
       final guardIdx = body.indexOf('if (_loadError != null) return;');
@@ -802,7 +804,7 @@ void main() {
     //   01B가 지켜야 하는 것은 "flex slot 조회 실패가 root error나 empty로
     //   둔갑하지 않는다"이지, 특정 helper의 존재가 아니다. 새 계약으로 옮긴다.
     test('flex slot 조회 실패는 group-detail error로만 남는다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       final start = body.indexOf('flexGroups.map((group) async {');
       final end = body.indexOf('} // else 블록 닫힘');
       expect(start, isNot(-1), reason: 'flex slot 로드 지점을 찾지 못함');

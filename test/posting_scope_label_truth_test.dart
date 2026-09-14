@@ -1,4 +1,4 @@
-// [POSTING-V2-02F.1] 관리자 탭 scope label이 실제 접근 범위를 말한다
+﻿// [POSTING-V2-02F.1] 관리자 탭 scope label이 실제 접근 범위를 말한다
 //
 // 02F READ에서 확인된 문제:
 //   query scope / filter scope / CreateTO picker scope는 모두 정확한데
@@ -495,7 +495,7 @@ void main() {
       expect(body.contains('return user.managedBusinessIds;'), true);
       expect(body.contains('if (user.isSuperAdmin) return null;'), true);
       // load()는 그 resolver 하나만 쓴다
-      final load = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      final load = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(')));
       expect(load.contains('_scopeOf(user)'), true);
     });
 
@@ -529,13 +529,16 @@ void main() {
       expect(label.contains('MemberPermissions'), false);
     });
 
+    // [POSTING-V2-03O.1 재작성] 근무 탭의 공고 목록 lifecycle은 JobsRoot로
+    //   옮겼다(중복 fetch 제거). 이 Phase가 고정하려던 것은 scope label 수정이
+    //   근무 탭 화면 구성을 건드리지 않았다는 점이므로, 그 부분만 남긴다.
     test('10-d 근무 탭의 다른 동작을 건드리지 않았다 (§11)', () {
       final wf = _codeOf(_src(_wfPath));
-      // query·permission·lifecycle 배선 그대로
-      expect(wf.contains('_controller.load(context);'), true);
-      expect(wf.contains('WorkforceController.dataRevision.addListener'), true);
       expect(wf.contains('child: WorkforceOperationalView(),'), true);
-      expect(wf.contains('FCMService().addAdminRefreshListener'), true);
+      expect(wf.contains('String _computeScopeLabel('), true);
+      // 공고 목록 lifecycle은 더 이상 여기 없다
+      expect(wf.contains('WorkforceController.dataRevision.addListener'), false);
+      expect(wf.contains('FCMService().addAdminRefreshListener'), false);
     });
 
     test('10-e resolver가 순수 계산이다 (§31)', () {

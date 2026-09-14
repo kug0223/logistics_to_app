@@ -1,4 +1,4 @@
-// [POSTING-V2-02D.1] flex 슬롯 single snapshot
+﻿// [POSTING-V2-02D.1] flex 슬롯 single snapshot
 //
 // 02D READ에서 확인된 문제:
 //   공고 탭 root load가 flex TO 하나당 tos/{toId}/slots 를 두 번 읽었다.
@@ -240,7 +240,7 @@ void main() {
     });
 
     test('01-b root load가 flex TO별로 loadFlexSlots를 정확히 한 번 부른다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect('_service.loadFlexSlots('.allMatches(body).length, 1);
     });
 
@@ -274,7 +274,7 @@ void main() {
     });
 
     test('06-c whereIn 30개 chunking 잔재가 제거됐다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect(body.contains('chunkSize'), false);
       expect(body.contains('chunks'), false);
       expect(body.contains('sublist('), false);
@@ -299,7 +299,7 @@ void main() {
   // ── §10 blocking contract ──────────────────────────────────────
   group('FLEX-SINGLE-READ-07 첫 렌더 전에 slot을 확보한다', () {
     test('07-a flex slot 로드가 await된다', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(')));
       expect(body.contains('await Future.wait(flexGroups.map((group) async {'),
           true);
     });
@@ -308,7 +308,7 @@ void main() {
       final code = _codeOf(_src(_ctrlPath));
       expect(code.contains('.then((toItems)'), false);
       // isLoading 해제(=첫 렌더) 이전에 끝나야 한다
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       final flexIdx = body.indexOf('_service.loadFlexSlots(');
       final doneIdx = body.indexOf('_isLoading = false;');
       expect(flexIdx, greaterThan(-1));
@@ -320,12 +320,12 @@ void main() {
   // ── §11, §12, §33, §36 TO별 error isolation ────────────────────
   group('FLEX-SINGLE-READ-03 TO 하나의 실패가 목록 전체를 죽이지 않는다', () {
     test('03-a TO별 try/catch가 group detail error로 연결된다', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(')));
       expect(body.contains('_groupDetailErrorIds.add(group.id);'), true);
     });
 
     test('03-b 실패가 root _loadError로 승격되지 않는다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       // catch 블록은 두 개: flex TO별 catch, root catch.
       // flex catch가 _loadError를 건드리면 01B 회귀다.
       final flexStart = body.indexOf('flexGroups.map((group) async {');
@@ -339,14 +339,14 @@ void main() {
     });
 
     test('03-c 성공한 그룹의 state는 실패한 그룹과 무관하게 채워진다', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(')));
       // 각 TO가 자기 try 안에서 자기 group만 갱신한다
       expect(body.contains('group.setGroupTOs(loaded.groupTOs);'), true);
       expect(body.contains('group.setSlotDates(loaded.slotDates);'), true);
     });
 
     test('03-d 새 시도마다 이전 detail 실패가 초기화된다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       final clearIdx = body.indexOf('_groupDetailErrorIds.clear();');
       final addIdx = body.indexOf('_groupDetailErrorIds.add(group.id);');
       expect(clearIdx, greaterThan(-1));
@@ -365,7 +365,7 @@ void main() {
   // ── §15, §16, §37 최종 slotDates 계약 ──────────────────────────
   group('FLEX-SINGLE-READ-08 최종 slotDates가 덮어써지지 않는다', () {
     test('08-a setSlotDates가 setGroupTOs 뒤에 온다', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       final g = body.indexOf('group.setGroupTOs(loaded.groupTOs);');
       final d = body.indexOf('group.setSlotDates(loaded.slotDates);');
       expect(g, greaterThan(-1));
@@ -437,8 +437,9 @@ void main() {
       expect(body.contains('.catchError('), true);
     });
 
+    // [POSTING-V2-03O.1] 후처리는 사이클 끝(_runLoadCycle)으로 옮겼다.
     test('10-b load 성공 후에만 실행된다 (신뢰할 수 없는 상태에서 write 금지)', () {
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runLoadCycle('));
       final guard = body.indexOf('if (_loadError != null) return;');
       final call = body.indexOf('_maybeCascadeCloseExpiredTO(group, group.groupTOs);');
       expect(guard, greaterThan(-1));
@@ -447,7 +448,7 @@ void main() {
     });
 
     test('10-c 슬롯 로드에 실패한 그룹은 마감 대상에서 빠진다', () {
-      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load(')));
+      final body = _flat(_codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runLoadCycle(')));
       expect(
           body.contains(
               '_items.where( (g) => g.masterTO.isFlexType && g.isGroupDetailLoaded)'),
@@ -484,7 +485,7 @@ void main() {
       final code = _codeOf(_src(_ctrlPath));
       expect(code.contains('_preloadFlexTOSlots'), false);
       // root load 경로는 _loadingGroupIds를 쓰지 않는다 — 조기 리턴 gap의 원인이었다
-      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> load('));
+      final body = _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad('));
       expect(body.contains('_loadingGroupIds'), false);
     });
   });
@@ -506,15 +507,24 @@ void main() {
       }
     });
 
-    test('12-c dual Root 구조를 건드리지 않았다 (§27)', () {
-      final jobs = _codeOf(
-          _src('lib/screens/business_admin/jobs_root_screen.dart'));
-      final wf = _codeOf(_src(
-          'lib/screens/business_admin/workforce_management/workforce_root_screen.dart'));
-      expect(jobs.contains('final WorkforceController _controller = WorkforceController();'),
-          true);
-      expect(wf.contains('final WorkforceController _controller = WorkforceController();'),
-          true);
+    // [POSTING-V2-03O.1 재작성] dual Root controller 구조는 의도적으로 없앴다.
+    //   고정하려던 것은 "이 Phase가 Root 배선을 건드리지 않았다"였는데,
+    //   03O.1이 바로 그 배선을 단일 소유로 바꾼 Phase다. 새 계약으로 옮긴다.
+    test('12-c Root는 공유 controller를 쓴다 (03O.1)', () {
+      final jobs = _flat(_codeOf(
+          _src('lib/screens/business_admin/jobs_root_screen.dart')));
+      final wf = _flat(_codeOf(_src(
+          'lib/screens/business_admin/workforce_management/workforce_root_screen.dart')));
+      for (final code in [jobs, wf]) {
+        expect(
+            code.contains('late final WorkforceController _controller = '
+                'widget.postingController ?? WorkforceController();'),
+            true);
+      }
+      // FLEX preload는 controller 하나에서만 돈다
+      final ctrl = _codeOf(_src(_ctrlPath));
+      expect('_service.loadFlexSlots('.allMatches(ctrl).length, 2,
+          reason: 'root load 1 + loadGroupDetails 1 — 그대로다');
     });
 
     test('12-d 필터는 여전히 client-side다 (§26)', () {
