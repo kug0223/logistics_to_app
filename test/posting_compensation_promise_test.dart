@@ -519,7 +519,8 @@ void main() {
       expect(
           fns.contains('if (!isSuperAdmin && touchesUnverifiedFields && freshConfirmed > 0) {'),
           true);
-      expect(fns.contains('identityWorkTypesToGuard.length > 0'), true);
+      // [POSTING-V2-03J.3] guard 이름이 workDetail 단위로 바뀌었다 — 위치는 그대로
+      expect(fns.contains('identityTargets.length > 0'), true);
     });
 
     test('07-d 03I.1 진입점 overlay 유지 (§21)', () {

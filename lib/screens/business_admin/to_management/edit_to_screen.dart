@@ -715,10 +715,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     //   클라이언트가 먼저 막으면 관리자는 이유를 알 수 없다.
 
     // 사라지거나 identity가 바뀐 업무 — 확정자도 보호 대상이다.
+    //
+    // [POSTING-V2-03J.3] 업무명이 아니라 **그 업무**에 걸린 지원서만 본다.
+    //   removed의 원소는 _originalWorkDetails에서 왔으므로 work.id는
+    //   변경 전 compositeId다 — 시간·업무명 변경도 옛 identity로 판정된다.
+    //   레거시(workDetailId == 업무명)는 _appMatchesWork가 보수적으로 잡는다.
     for (final work in removed) {
       final blocked = apps.any((app) =>
           _toIdentityStatuses.contains(app['status']) &&
-          app['selectedWorkType'] == work.workType);
+          _appMatchesWork(app, work));
       if (blocked) {
         return "'${work.workType}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. "
             '해당 지원을 먼저 처리해주세요.';
@@ -731,10 +736,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (orig == null) continue; // 새로 추가한 업무 — 기존 약속과 무관하다
 
       // wdId 교체는 기존 지원서와의 연결을 끊는다 — identity 파괴다.
+      //
+      // [POSTING-V2-03J.3] 판정 기준은 **교체 전** identity(orig)다. 서버와
+      //   마찬가지로 CONTRACT에서는 wdId 자체가 없어 사실상 도달하지 않는다.
       if (orig.wdId != null && work.wdId != orig.wdId) {
         final blocked = apps.any((app) =>
             _toIdentityStatuses.contains(app['status']) &&
-            app['selectedWorkType'] == work.workType);
+            _appMatchesWork(app, orig));
         if (blocked) {
           return "'${work.workType}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. "
               '해당 지원을 먼저 처리해주세요.';

@@ -227,20 +227,24 @@ void main() {
       expect(outside.contains('const hasActive'), false);
     });
 
+    // [POSTING-V2-03J.3 재작성] status별 4-query(limit 1)에서 status in
+    //   단일 query(limit 500)로 바뀌었다. 어느 시간대인지는 workDetailId로
+    //   코드에서 가르므로 존재 확인만으로는 부족하기 때문이다.
+    //   txEdit.get(query)를 쓴다는 §4의 요구는 그대로다.
     test('01-b identity query가 txEdit.get(query)를 쓴다 (§4)', () {
       final body = _flat(_codeOf(txEdit));
       expect(
           body.contains('txEdit.get( db.collection("applications") '
               '.where("toId", "==", toId) '
               '.where("selectedWorkType", "==", wt) '
-              '.where("status", "==", st) .limit(1) )'),
+              '.where("status", "in", ACTIVE_STATUSES) .limit(500) )'),
           true,
           reason: 'date guard와 같은 방식으로 정렬한다');
     });
 
     test('01-c identity guard가 txEdit.update보다 앞이다 (§5)', () {
       final body = _codeOf(txEdit);
-      final guard = body.indexOf('identityWorkTypesToGuard.length > 0');
+      final guard = body.indexOf('identityTargets.length > 0');
       final write = body.indexOf('txEdit.update(toRef,');
       expect(guard, greaterThan(-1));
       expect(write, greaterThan(guard), reason: 'read-before-write를 지킨다');
@@ -277,10 +281,13 @@ void main() {
     });
 
     test('01-g removedOrChanged 계산은 TX 밖에 남는다 (§2)', () {
-      final outside = _codeOf(updateTO.replaceFirst(txEdit, ''));
-      expect(outside.contains('identityWorkTypesToGuard.push('), true,
+      final outside = _flat(_codeOf(updateTO.replaceFirst(txEdit, '')));
+      expect(outside.contains('identityTargets.push('), true,
           reason: 'application read가 아닌 순수 비교다');
-      expect(outside.contains('const identityWorkTypesToGuard: string[] = [];'),
+      // [POSTING-V2-03J.3] 업무명이 아니라 변경 전 compositeId까지 들고 간다
+      expect(
+          outside.contains('const identityTargets: Array< '
+              '{workType: string; compositeId: string}> = [];'),
           true);
     });
 

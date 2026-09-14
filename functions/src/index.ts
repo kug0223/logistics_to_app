@@ -9418,10 +9418,13 @@ export const callableUpdateTO = onCall(
     //    그쪽 canonical 판정도 이미 txEdit 안에 있다.)
     const mutatesWorkDetails = "workDetails" in updates;
 
-    // [POSTING-V2-03H.1] identity guard가 조회할 업무명. 순수 비교 결과이므로
+    // [POSTING-V2-03H.1] identity guard가 볼 대상. 순수 비교 결과이므로
     //   트랜잭션 밖에서 계산해도 된다 — application 관계를 읽지 않는다.
     //   실제 지원자 조회는 txEdit 안에서 한다.
-    const identityWorkTypesToGuard: string[] = [];
+    //   [POSTING-V2-03J.3] 업무명만 들고 가면 같은 이름의 다른 시간대까지
+    //   함께 잠긴다. **변경 전** compositeId를 함께 싣는다.
+    const identityTargets: Array<
+      {workType: string; compositeId: string}> = [];
 
     // [POSTING-V2-03J.1] 확정자가 있어도 무엇을 허용할지 가르는 분류.
     //
@@ -9503,7 +9506,10 @@ export const callableUpdateTO = onCall(
         const oldId = `${oldWd["workType"]}_${oldWd["startTime"]}_${oldWd["endTime"]}`;
         const stillExists = newIdSet.has(oldId);
         if (!stillExists) {
-          identityWorkTypesToGuard.push(oldWd["workType"] as string);
+          // 삭제·시간 변경·업무명 변경이 모두 여기로 온다. 어느 쪽이든
+          //   보호 대상은 **변경 전** identity다(03J.3 §7).
+          identityTargets.push(
+            {workType: oldWd["workType"] as string, compositeId: oldId});
         }
       }
 
@@ -9521,11 +9527,16 @@ export const callableUpdateTO = onCall(
         // wdId 교체 — 같은 업무·같은 시간인데 식별자만 갈아끼우는 것은
         //   기존 지원서와의 연결을 끊는다. identity 파괴로 취급한다.
         //   (새 업무가 새 wdId를 갖는 것은 정상 — 여기 오지 않는다)
+        //   [POSTING-V2-03J.3] CONTRACT에서는 사실상 no-op이다. wdId는
+        //   generateWdId()로만 생기고 그 호출은 전부 슬롯 경로에 있다 —
+        //   callableCreateTO도 이 함수도 wdId를 만들지 않으므로 oldWdId가
+        //   비어 있다. 해롭지 않고 슬롯 payload가 섞여 들어올 때의 방어가
+        //   되므로 남겨 둔다(§15).
         const oldWdId = oldWd["wdId"];
         const newWdId = newWd["wdId"];
         if (typeof oldWdId === "string" && oldWdId.length > 0 &&
             newWdId !== oldWdId) {
-          identityWorkTypesToGuard.push(workType);
+          identityTargets.push({workType, compositeId: oldId});
         }
 
         if (LEGACY_UNKNOWN_FIELDS.some(
@@ -9858,28 +9869,47 @@ export const callableUpdateTO = onCall(
       }
       // [POSTING-V2-03H.1] identity guard — date guard와 같은 방식으로
       //   txEdit.get(query)를 쓴다. 재시도 때 다시 실행되는 것이 핵심이다.
-      if (identityWorkTypesToGuard.length > 0) {
-        // 인덱스: toId + selectedWorkType + status (기존 index 재사용, status 별도 equality)
+      if (identityTargets.length > 0) {
+        // 인덱스: toId + selectedWorkType + status (기존 index 재사용)
         // [POSTING-V2-03J.1] CONFIRMED 추가. blanket이 좁아지면서 이 guard가
         //   확정 근무자의 업무·시간 약속을 지키는 유일한 자리가 된다.
         //   FLEX의 ACTIVE_STATUSES_WITH_CONFIRMED와 같은 집합이 된다.
+        // [POSTING-V2-03J.3] 업무명이 아니라 **그 업무**에 걸린 지원서만 본다.
+        //   '포장 09-18'의 확정자가 관계 없는 '포장 18-22'의 삭제·시간 변경까지
+        //   막던 것을 없앤다. status 집합은 capacity guard와 다르다 —
+        //   여기는 PENDING·INVITED도 identity를 잠근다(§14).
         const ACTIVE_STATUSES =
           ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
+        // 같은 업무명이 여러 번 대상이 되어도 관계는 한 번만 읽는다.
+        const identityWTs = [
+          ...new Set(identityTargets.map((t) => t.workType)),
+        ];
         const identitySnapshots = await Promise.all(
-          identityWorkTypesToGuard.flatMap((wt) =>
-            ACTIVE_STATUSES.map((st) =>
-              txEdit.get(
-                db.collection("applications")
-                  .where("toId", "==", toId)
-                  .where("selectedWorkType", "==", wt)
-                  .where("status", "==", st)
-                  .limit(1)
-              )
+          identityWTs.map((wt) =>
+            txEdit.get(
+              db.collection("applications")
+                .where("toId", "==", toId)
+                .where("selectedWorkType", "==", wt)
+                .where("status", "in", ACTIVE_STATUSES)
+                .limit(500)
             )
           )
         );
-        if (identitySnapshots.some((s) => !s.empty)) {
-          const wtList = identityWorkTypesToGuard.join(", ");
+        const blocked = identityTargets.filter((t) => {
+          const snap = identitySnapshots[identityWTs.indexOf(t.workType)];
+          return snap.docs.some((d) => {
+            const wdi = d.data().workDetailId;
+            // 시간대를 특정한 신규 지원서 — 그 업무만 잠근다.
+            if (wdi === t.compositeId) return true;
+            // 업무명만 저장한 레거시 — 어느 시간대인지 복원할 근거가 없으므로
+            // 같은 업무명 전체를 보수적으로 잠근다(§2). backfill하지 않는다.
+            if (wdi === t.workType) return true;
+            return false;
+          });
+        });
+        if (blocked.length > 0) {
+          const wtList =
+            [...new Set(blocked.map((t) => t.workType))].join(", ");
           throw new HttpsError(
             "failed-precondition",
             `'${wtList}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요.`

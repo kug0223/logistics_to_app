@@ -67,7 +67,9 @@ String _bodyOf(String source, String signature) {
 // PREFLIGHT-02/03가 소스로 교차 검증한다.
 
 const _slotIdentity = ['PENDING', 'INVITED', 'CONTRACT_PENDING', 'CONFIRMED'];
-const _toIdentity = ['PENDING', 'INVITED', 'CONTRACT_PENDING'];
+// [POSTING-V2-03J.3] CONFIRMED 보강 — 실제 client _toIdentityStatuses는
+//   03J.1에서 이미 확정자를 포함했는데 이 replica만 03G.1 시점에 멈춰 있었다.
+const _toIdentity = ['PENDING', 'INVITED', 'CONTRACT_PENDING', 'CONFIRMED'];
 const _occupancy = ['CONFIRMED', 'CONTRACT_PENDING'];
 
 class Work {
@@ -107,6 +109,14 @@ bool _matches(App a, Work w) {
   return false;
 }
 
+/// [POSTING-V2-03J.3] 마스터 경로 identity 매칭 — workDetail 단위.
+///   workDetailId를 갖지 않는 fixture는 업무명만 아는 레거시로 보고
+///   같은 업무명 전체를 보수적으로 잠근다.
+bool _matchesTo(App a, Work w) {
+  if (a.workDetailId == null) return a.selectedWorkType == w.workType;
+  return _matches(a, w);
+}
+
 String? blockReason({
   required List<App> apps,
   required List<Work> original,
@@ -139,9 +149,10 @@ String? blockReason({
 
   // [POSTING-V2-03J.1] 마스터 경로도 필드별 판정이다. 확정자가 있다는 것만으로
   //   근무 조건 전체를 막지 않는다 — 기존 약속은 03I 스냅샷이 지킨다.
+  // [POSTING-V2-03J.3] 업무명이 아니라 그 workDetail에 걸린 관계만 본다.
   for (final work in removed) {
-    final blocked = apps.any((a) =>
-        _toIdentity.contains(a.status) && a.selectedWorkType == work.workType);
+    final blocked = apps
+        .any((a) => _toIdentity.contains(a.status) && _matchesTo(a, work));
     if (blocked) return 'IDENTITY_TO';
   }
   for (final work in next) {
@@ -384,7 +395,9 @@ void main() {
           reason: '새 업무 때문에 기존 확정자를 취소하게 만들지 않는다');
     });
 
-    test('02-d 확정자가 없으면 identity만 본다 — 업무명 기준 (§4)', () {
+    // [POSTING-V2-03J.3] workDetailId 없는 레거시 지원서라 업무명 단위로
+    //   보수적으로 판정된다 — 시간대를 특정한 경우는 02-h가 본다.
+    test('02-d 레거시 지원서는 업무명 단위로 보수적이다 (§4)', () {
       final apps = [const App('PENDING', selectedWorkType: '피킹')];
       final original = [
         const Work('피킹', '09:00', '13:00'),
@@ -408,13 +421,48 @@ void main() {
           'IDENTITY_TO');
     });
 
-    test('02-e 서버도 이 경로에서 selectedWorkType으로 본다', () {
+    // [POSTING-V2-03J.3 재작성] 마스터 경로도 workDetail 단위가 됐다.
+    //   쿼리는 여전히 selectedWorkType으로 좁히되, 어느 시간대인지는
+    //   workDetailId로 가른다 — 슬롯 경로와 같은 매칭이다.
+    test('02-e 서버·client 모두 workDetail 단위로 본다 (03J.3)', () {
       final fns = _src(_fnsPath);
       expect(fns.contains('.where("selectedWorkType", "==", wt)'), true,
-          reason: '슬롯 경로의 workDetailId 매칭과 다르다 — 복제 대상이 다름');
+          reason: '기존 인덱스로 좁히는 축은 그대로다');
+      expect(fns.contains('if (wdi === t.compositeId) return true;'), true,
+          reason: '시간대는 workDetailId로 가른다');
       final code = _flat(_codeOf(
           _bodyOf(_src(_editPath), 'String? _workChangeBlockReason(')));
-      expect(code.contains("app['selectedWorkType'] == work.workType"), true);
+      expect(
+          code.contains("_toIdentityStatuses.contains(app['status']) && "
+              '_appMatchesWork(app, work)'),
+          true);
+      expect(code.contains("app['selectedWorkType'] == work.workType"), false,
+          reason: '같은 업무명의 다른 시간대를 잠그면 서버보다 과잉 차단이다');
+    });
+
+    test('02-h 같은 업무명의 다른 시간대는 서로를 막지 않는다 (03J.3 §5)', () {
+      const early = Work('피킹', '09:00', '13:00');
+      const late = Work('피킹', '18:00', '22:00');
+      final apps = [
+        const App('CONFIRMED',
+            selectedWorkType: '피킹', workDetailId: '피킹_09:00_13:00'),
+      ];
+      expect(
+          blockReason(
+              apps: apps,
+              original: const [early, late],
+              next: const [early],
+              isSlotMode: false),
+          isNull,
+          reason: '관계 없는 late 삭제');
+      expect(
+          blockReason(
+              apps: apps,
+              original: const [early, late],
+              next: const [late],
+              isSlotMode: false),
+          'IDENTITY_TO',
+          reason: '관계가 걸린 early 삭제');
     });
 
     test('02-f INVITED가 빠지지 않았다 (§K)', () {

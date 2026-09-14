@@ -152,14 +152,18 @@ String? updateTOBlock({
   if (!sendsWorkDetails) return null; // 제목만 수정 — 키 자체가 실리지 않는다
 
   final newIds = newWDs.map(_id).toSet();
-  final identityWorkTypes = <String>[];
+  // [POSTING-V2-03J.3] 업무명이 아니라 **변경 전** compositeId를 들고 간다.
+  final identityTargets = <({String workType, String compositeId})>[];
   final legacyLockWorkTypes = <String>[];
   final capacityReductions =
       <({String workType, String compositeId, int next})>[];
   var touchesUnverified = false;
 
   for (final o in oldWDs) {
-    if (!newIds.contains(_id(o))) identityWorkTypes.add(o['workType'] as String);
+    if (!newIds.contains(_id(o))) {
+      identityTargets
+          .add((workType: o['workType'] as String, compositeId: _id(o)));
+    }
   }
   for (final o in oldWDs) {
     final n = newWDs.where((d) => _id(d) == _id(o)).firstOrNull;
@@ -167,7 +171,7 @@ String? updateTOBlock({
     final workType = o['workType'] as String;
 
     if (o['wdId'] != null && n['wdId'] != o['wdId']) {
-      identityWorkTypes.add(workType);
+      identityTargets.add((workType: workType, compositeId: _id(o)));
     }
     if (_legacyUnknown.any((f) => o[f] != n[f])) {
       legacyLockWorkTypes.add(workType);
@@ -208,10 +212,17 @@ String? updateTOBlock({
     if (c.next < occupied) return 'CAPACITY';
   }
 
-  if (identityWorkTypes.isNotEmpty) {
-    queries?.add(identityWorkTypes.length);
-    final blocked = identityWorkTypes.any((wt) => rels
-        .any((r) => _identityStatuses.contains(r.status) && r.workType == wt));
+  // [POSTING-V2-03J.3] identity도 workDetail 단위다. 같은 업무명이라는 이유로
+  //   관계 없는 시간대가 잠기지 않는다. status 집합은 capacity와 다르다(§14).
+  if (identityTargets.isNotEmpty) {
+    queries?.add(identityTargets.map((t) => t.workType).toSet().length);
+    final blocked = identityTargets.any((t) => rels.any((r) {
+          if (!_identityStatuses.contains(r.status)) return false;
+          if (r.workType != t.workType) return false;
+          final wdi = r.workDetailId;
+          if (wdi == null) return true; // 레거시 — 시간대를 알 수 없다
+          return wdi == t.compositeId || wdi == t.workType;
+        }));
     if (blocked) return 'IDENTITY';
   }
 
@@ -544,19 +555,17 @@ void main() {
           isNull);
     });
 
-    // [발견] identity guard는 여전히 **업무명 단위**다. 같은 '포장'의 다른
-    //   시간대를 지우면, 그 업무에 관계가 없어도 다른 시간대의 확정자 때문에
-    //   막힌다. 03J.2는 capacity 축만 다뤘고 identity 축은 그대로 두었다 —
-    //   완료 보고에 남긴다. 여기서는 현재 동작을 사실대로 고정한다.
-    test('09-i2 같은 workType의 다른 시간대 삭제는 identity가 막는다', () {
+    // [POSTING-V2-03J.3] 03J.2에서는 identity가 업무명 단위라 여기가 막혔다.
+    //   이제 관계가 걸린 workDetail만 잠근다.
+    test('09-i2 같은 workType의 다른 시간대 삭제는 허용된다', () {
       expect(
           updateTOBlock(
             oldWDs: [wdA(), wdB()],
             newWDs: [wdA()],
             rels: occupiedOnA,
           ),
-          'IDENTITY',
-          reason: 'identity guard granularity는 이번 범위 밖이다');
+          isNull,
+          reason: 'A의 확정자가 관계 없는 B를 잠그면 안 된다');
     });
 
     test('09-j race — occupied 증가 후 재시도에서 차단 (§13)', () {
@@ -626,6 +635,252 @@ void main() {
     });
   });
 
+  // ── 03J.3 §4~§7·§13 workDetail 단위 identity ──────────────────
+  group('CONTRACT-11 identity도 workDetail 단위다', () {
+    // A 포장 09-18 / B 포장 18-22 / C 포장 22-02
+    Map<String, dynamic> a() =>
+        wd(startTime: '09:00', endTime: '18:00', wdId: null);
+    Map<String, dynamic> b({String startTime = '18:00',
+            String endTime = '22:00', String workType = '포장'}) =>
+        wd(workType: workType, startTime: startTime, endTime: endTime,
+            wdId: null, order: 1);
+    Map<String, dynamic> c() =>
+        wd(startTime: '22:00', endTime: '02:00', wdId: null, order: 2);
+
+    const relA = Rel('CONFIRMED', '포장', workDetailId: '포장_09:00_18:00');
+    const relB = Rel('CONFIRMED', '포장', workDetailId: '포장_18:00_22:00');
+    const relC = Rel('PENDING', '포장', workDetailId: '포장_22:00_02:00');
+    const legacyPack = Rel('CONFIRMED', '포장'); // workDetailId 없음
+
+    test('11-a 관계 없는 같은 workType 삭제 → ALLOW (§5)', () {
+      expect(
+          updateTOBlock(oldWDs: [a(), b()], newWDs: [a()], rels: const [relA]),
+          isNull);
+    });
+
+    test('11-b 관계가 걸린 workDetail 삭제 → BLOCK (§5)', () {
+      expect(
+          updateTOBlock(oldWDs: [a(), b()], newWDs: [b()], rels: const [relA]),
+          'IDENTITY');
+    });
+
+    test('11-c 네 가지 active 상태 모두 exact로 잠근다 (§3)', () {
+      for (final st in ['PENDING', 'INVITED', 'CONTRACT_PENDING', 'CONFIRMED']) {
+        expect(
+            updateTOBlock(
+              oldWDs: [a(), b()],
+              newWDs: [a()],
+              rels: [Rel(st, '포장', workDetailId: '포장_18:00_22:00')],
+            ),
+            'IDENTITY',
+            reason: st);
+      }
+    });
+
+    test('11-d 종료 상태는 exact여도 잠그지 않는다 (§3)', () {
+      for (final st in ['REJECTED', 'CANCELED', 'AUTO_CANCELED', 'EXPIRED']) {
+        expect(
+            updateTOBlock(
+              oldWDs: [a(), b()],
+              newWDs: [a()],
+              rels: [Rel(st, '포장', workDetailId: '포장_18:00_22:00')],
+            ),
+            isNull,
+            reason: st);
+      }
+    });
+
+    test('11-e 시간 변경 — 그 업무에 관계가 있으면 BLOCK (§6)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [a(), b(startTime: '19:00', endTime: '23:00')],
+            rels: const [relB],
+          ),
+          'IDENTITY');
+    });
+
+    test('11-f 시간 변경 — 형제 시간대의 관계만 있으면 ALLOW (§6)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [a(), b(startTime: '19:00', endTime: '23:00')],
+            rels: const [relA],
+          ),
+          isNull,
+          reason: '같은 업무명이라는 이유만으로 다른 시간대가 막히면 안 된다');
+    });
+
+    test('11-g workType 변경 — 그 업무에 관계가 있으면 BLOCK (§7)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [a(), b(workType: '검수')],
+            rels: const [relB],
+          ),
+          'IDENTITY',
+          reason: '판정 기준은 변경 전 identity다');
+    });
+
+    test('11-h workType 변경 — 형제 관계만 있으면 ALLOW (§7)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [a(), b(workType: '검수')],
+            rels: const [relA],
+          ),
+          isNull);
+    });
+
+    test('11-i 레거시(workDetailId=업무명)는 보수적으로 전부 BLOCK (§2, §5)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()], newWDs: [a()], rels: const [legacyPack]),
+          'IDENTITY');
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()], newWDs: [b()], rels: const [legacyPack]),
+          'IDENTITY',
+          reason: '어느 시간대인지 복원할 근거가 없다 — backfill하지 않는다');
+    });
+
+    test('11-j 같은 workType 3개가 독립적으로 판정된다 (§13)', () {
+      const rels = [relA, relC];
+      expect(
+          updateTOBlock(
+              oldWDs: [a(), b(), c()], newWDs: [b(), c()], rels: rels),
+          'IDENTITY',
+          reason: 'A 삭제 — CONFIRMED');
+      expect(
+          updateTOBlock(
+              oldWDs: [a(), b(), c()], newWDs: [a(), c()], rels: rels),
+          isNull,
+          reason: 'B 삭제 — 관계 없음');
+      expect(
+          updateTOBlock(
+              oldWDs: [a(), b(), c()], newWDs: [a(), b()], rels: rels),
+          'IDENTITY',
+          reason: 'C 삭제 — PENDING');
+    });
+
+    test('11-k 레거시가 끼면 3개 모두 BLOCK (§13)', () {
+      const rels = [relA, relC, legacyPack];
+      for (final next in [
+        [b(), c()],
+        [a(), c()],
+        [a(), b()],
+      ]) {
+        expect(
+            updateTOBlock(oldWDs: [a(), b(), c()], newWDs: next, rels: rels),
+            'IDENTITY');
+      }
+    });
+
+    test('11-l race — B에 확정이 생기면 재시도에서 BLOCK (§11)', () {
+      expect(
+          updateTOBlock(oldWDs: [a(), b()], newWDs: [a()], rels: const [relA]),
+          isNull);
+      expect(
+          updateTOBlock(
+              oldWDs: [a(), b()], newWDs: [a()], rels: const [relA, relB]),
+          'IDENTITY');
+    });
+
+    test('11-m race — 형제 A에 확정이 늘어도 B 삭제는 ALLOW (§11)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [a()],
+            rels: const [relA, relA, relC],
+          ),
+          isNull,
+          reason: '다른 workDetail의 관계가 B를 잠그면 안 된다');
+    });
+
+    test('11-n compensation-only edit은 identity 조회 0 (§12)', () {
+      final q = <int>[];
+      updateTOBlock(
+        oldWDs: [a(), b()],
+        newWDs: [wd(startTime: '09:00', endTime: '18:00', wdId: null,
+            wage: 120000), b()],
+        rels: const [relA, relB],
+        queries: q,
+      );
+      expect(q, isEmpty);
+    });
+
+    test('11-o 새 업무 추가는 identity 조회 0 (§8, §12)', () {
+      final q = <int>[];
+      expect(
+          updateTOBlock(
+            oldWDs: [a()],
+            newWDs: [a(), b()],
+            rels: const [relA],
+            queries: q,
+          ),
+          isNull);
+      expect(q, isEmpty, reason: 'old identity가 없으므로 guard 대상이 아니다');
+    });
+
+    test('11-p 같은 업무명 여러 건이어도 관계 조회는 1회 (§12)', () {
+      final q = <int>[];
+      updateTOBlock(
+        oldWDs: [a(), b(), c()],
+        newWDs: [c()],
+        rels: const [relC],
+        queries: q,
+      );
+      expect(q, [1], reason: '업무명 단위로 중복 제거한 뒤 조회한다');
+    });
+
+    // ── 서버 배선 ──
+    test('11-q 서버가 workDetailId exact match를 한다 (§4)', () {
+      final body = _flat(_codeOf(updateTO));
+      expect(body.contains('if (wdi === t.compositeId) return true;'), true);
+      expect(body.contains('if (wdi === t.workType) return true;'), true);
+      expect(
+          body.contains('const blocked = identityTargets.filter((t) => {'), true);
+    });
+
+    test('11-r 업무명 중복 제거 후 조회한다 (§12)', () {
+      final body = _flat(_codeOf(updateTO));
+      expect(
+          body.contains('new Set(identityTargets.map((t) => t.workType))'), true);
+      expect(body.contains('.where("status", "in", ACTIVE_STATUSES)'), true);
+    });
+
+    test('11-s identity와 capacity의 status 집합이 다르다 (§14)', () {
+      final body = _flat(_codeOf(updateTO));
+      expect(
+          body.contains('const ACTIVE_STATUSES = '
+              '["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];'),
+          true);
+      expect(
+          body.contains('const OCCUPANCY_STATUSES_TO = '
+              '["CONFIRMED", "CONTRACT_PENDING"];'),
+          true);
+    });
+
+    test('11-t 기존 error copy를 그대로 쓴다 (§16)', () {
+      expect(
+          _src(_fnsPath).contains(
+              "업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요.`"),
+          true,
+          reason: '새 메시지 종류를 만들지 않는다');
+    });
+
+    test('11-u CONTRACT에는 wdId가 없어 wdId guard는 no-op이다 (§15)', () {
+      // 주석에는 근거로 적어 뒀으므로 코드만 본다
+      expect(_codeOf(updateTO).contains('generateWdId()'), false);
+      final createTO = _callableOf(_src(_fnsPath), 'callableCreateTO');
+      expect(createTO.contains('generateWdId()'), false);
+      // no-op이어도 제거하지 않는다 — 슬롯 payload 방어로 남긴다
+      expect(_flat(_codeOf(updateTO))
+          .contains('identityTargets.push({workType, compositeId: oldId});'),
+          true);
+    });
+  });
+
   // ── §7 관계 종료 ──────────────────────────────────────────────
   group('CONTRACT-03 관계가 끝나면 풀린다', () {
     test('03-a 종료 상태만 남으면 identity 변경 ALLOW', () {
@@ -667,7 +922,8 @@ void main() {
       final body = _flat(_codeOf(updateTO));
       expect(
           body.contains('if (typeof oldWdId === "string" && oldWdId.length > 0 && '
-              'newWdId !== oldWdId) { identityWorkTypesToGuard.push(workType); }'),
+              'newWdId !== oldWdId) { '
+              'identityTargets.push({workType, compositeId: oldId}); }'),
           true);
     });
 
@@ -725,7 +981,7 @@ void main() {
       for (final marker in [
         'touchesUnverifiedFields && freshConfirmed > 0',
         'capacityReductions.length > 0',
-        'identityWorkTypesToGuard.length > 0',
+        'identityTargets.length > 0',
         'legacyLockWorkTypes.length > 0',
       ]) {
         expect(tx.contains(marker), true, reason: '$marker 가 TX 밖에 있다');
@@ -837,6 +1093,36 @@ void main() {
       final body = _flat(_codeOf(
           _bodyOf(_src(_editPath), 'String? _workChangeBlockReason(')));
       expect(body.contains('if (orig == null) continue;'), true);
+    });
+
+    // [POSTING-V2-03J.3] identity preflight도 서버와 같은 매칭을 쓴다.
+    //   서버가 허용하는데 client가 같은 업무명이라는 이유로 먼저 막으면 안 된다.
+    test('06-g client identity가 workDetail 단위다 (03J.3 §9)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_editPath), 'String? _workChangeBlockReason(')));
+      expect(
+          body.contains("_toIdentityStatuses.contains(app['status']) && "
+              '_appMatchesWork(app, work)'),
+          true,
+          reason: 'removed는 변경 전 workDetail이다');
+      expect(
+          body.contains("_toIdentityStatuses.contains(app['status']) && "
+              '_appMatchesWork(app, orig)'),
+          true,
+          reason: 'wdId 교체는 교체 전 identity로 판정한다');
+      expect(
+          body.contains("_toIdentityStatuses.contains(app['status']) && "
+              "app['selectedWorkType'] == work.workType"),
+          false,
+          reason: 'workType 단위 판정이 남아 있으면 서버보다 과잉 차단한다');
+    });
+
+    test('06-h client가 서버와 같은 3가지 매칭을 쓴다 (03J.3 §4)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_editPath), 'bool _appMatchesWork(')));
+      expect(body.contains('if (workDetailId == work.id) return true;'), true);
+      expect(body.contains('if (workDetailId == work.workType) return true;'),
+          true);
     });
 
     test('06-f legacy 안내는 WAGE-GUARD가 담당한다 (03I.4 무회귀)', () {
