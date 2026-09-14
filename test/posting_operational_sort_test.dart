@@ -706,11 +706,21 @@ void main() {
       );
     });
 
-    test('08-e 서버 orderBy/limit은 무변경 (§15)', () {
+    test('08-e 서버는 표시 순서를 소유하지 않는다', () {
+      // [POSTING-V2-03T.1] 사업장별 단일 window(PER_BIZ_LIMIT)가 OPEN/CLOSED
+      //   두 모집단으로 갈렸다. 03Q.1이 의존하는 사실은 "서버 orderBy는 절단
+      //   기준일 뿐 UI ordering contract가 아니다"이고, 그것은 그대로다 —
+      //   OPEN은 아예 정렬 없이 전량, CLOSED만 createdAt DESC로 잘린다.
       final fn = _flat(_src(_fnPath));
-      expect(fn.contains('.orderBy("createdAt", "desc") .limit(PER_BIZ_LIMIT)'),
-          true);
-      expect(_src(_fnPath).contains('const PER_BIZ_LIMIT = 500;'), true);
+      expect(
+        fn.contains(
+            '.where("status", "in", closedStates) .orderBy("createdAt", "desc") .limit(CLOSED_HISTORY_LIMIT)'),
+        true,
+      );
+      expect(_src(_fnPath).contains('const CLOSED_HISTORY_LIMIT = 500;'), true);
+      // 최종 순서는 controller가 정한다
+      final ctrl = _src(_ctrlPath);
+      expect(ctrl.contains('_sortItemsForOperations();'), true);
     });
 
     test('08-f 정렬 때문에 추가 조회를 넣지 않았다 (§18)', () {

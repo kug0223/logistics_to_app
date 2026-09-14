@@ -22871,7 +22871,10 @@ export const callableGetAdminTOs = onCall(
       await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));
     }
 
-    const openStates   = ["ACTIVE", "FULL", "SCHEDULED"];
+    // [POSTING-V2-03T.1] DRAFT는 관리자 목록의 **운영 population**이다.
+    //   클라이언트 TOGroupItem.isClosed의 어떤 조건에도 걸리지 않아 진행중 탭에
+    //   렌더된다. openStates에서 빼면 미공개 공고가 통째로 사라진다.
+    const openStates   = ["ACTIVE", "FULL", "SCHEDULED", "DRAFT"];
     const closedStates = ["CLOSED", "EXPIRED"];
 
     // 슈퍼어드민 + businessId 미지정 → 전체 조회
@@ -22885,22 +22888,52 @@ export const callableGetAdminTOs = onCall(
     }
 
     // 사업장별 병렬 쿼리
-    // [M-12 수정 2026-07-15] per-businessId 쿼리 limit 추가 — 사업장당 TO가 무제한 증가 시 CF 타임아웃 방어
-    const PER_BIZ_LIMIT = 500;
+    //
+    // [POSTING-V2-03T.1] 운영 population과 마감 이력을 분리한다.
+    //
+    // 이전에는 사업장당 `orderBy(createdAt desc).limit(500)` 하나로 모든
+    // status를 가져왔다. 정렬 키가 생성 시각이라 운영상 유효성과 무관했고,
+    // ACTIVE·FULL·SCHEDULED·DRAFT·CLOSED·EXPIRED와 소프트삭제 문서가 한
+    // window를 경쟁했다. 그래서 최근 공고를 많이 만든 사업장에서는
+    // "1년 전에 만들었지만 지금도 근무가 진행 중인 CONTRACT"가 501번째로
+    // 밀려 목록에서 통째로 사라질 수 있었다. 카드가 사라지면 수정·마감·
+    // 지원자 관리·초대까지 전부 함께 끊긴다.
+    //
+    // 이제 두 모집단이 각자의 window를 갖는다:
+    //   OPEN   — 상한 없음. 아직 관리해야 하는 공고는 생성 시각 때문에
+    //            누락되지 않는다. (Home의 callableGetStaffingReadiness가
+    //            이미 같은 형태의 무제한 status 쿼리를 운영 중이다)
+    //   CLOSED — createdAt DESC 최신 500. 기존 최대 범위를 줄이지 않는다.
+    //
+    // 서버 status는 fetch 범위를 좁히는 용도일 뿐이다. 진행중/마감됨 최종
+    // 판정은 여전히 클라이언트의 TOGroupItem.isClosed·CloseStateUtils가
+    // 소유한다. cascade가 아직 안 돈 공고(master ACTIVE + 전 슬롯 종료)는
+    // OPEN으로 넘어와 클라이언트가 마감으로 분류한다 — over-fetch 방향이라
+    // 안전하다.
+    const CLOSED_HISTORY_LIMIT = 500;
     const snaps = await Promise.all(
-      ids.map(bizId => {
-        let q: admin.firestore.Query = db
-          .collection("tos")
-          .where("businessId", "==", bizId)
-          .orderBy("createdAt", "desc")
-          .limit(PER_BIZ_LIMIT);
-        if (activeOnly) q = q.where("status", "in", openStates);
-        else if (closedOnly) q = q.where("status", "in", closedStates);
-        return q.get();
+      ids.flatMap(bizId => {
+        const base = db.collection("tos").where("businessId", "==", bizId);
+        const queries: admin.firestore.Query[] = [];
+        if (!closedOnly) {
+          queries.push(base.where("status", "in", openStates));
+        }
+        if (!activeOnly) {
+          queries.push(
+            base
+              .where("status", "in", closedStates)
+              .orderBy("createdAt", "desc")
+              .limit(CLOSED_HISTORY_LIMIT)
+          );
+        }
+        return queries.map(q => q.get());
       })
     );
 
     // [BUG-FIX 2026-08-17] isDeleted !== true 필터 추가 — 소프트삭제 TO가 목록에 노출되던 버그 수정
+    // [POSTING-V2-03T.1] 쿼리 후 필터를 유지한다. isDeleted 필드가 없는 레거시
+    //   문서가 있어 where 절로는 표현할 수 없다(필드 부재는 쿼리 대상이 아니다).
+    //   두 모집단은 status가 배타적이라 중복 문서가 나오지 않는다.
     const items = snaps.flatMap(s =>
       s.docs.filter(d => d.data().isDeleted !== true).map(d => ({id: d.id, ...serializeFirestoreData(d.data())}))
     );
