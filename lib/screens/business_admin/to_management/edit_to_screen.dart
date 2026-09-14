@@ -742,11 +742,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
 
       // 필요 인원은 이미 자리를 차지한 인원 아래로 내릴 수 없다.
+      //
+      // [POSTING-V2-03J.2] 업무명이 아니라 **그 업무**에 걸린 사람만 센다.
+      //   같은 '포장'이어도 09-18과 18-22는 다른 자리다. 서버와 같은 매칭을
+      //   쓴다(_appMatchesWork: compositeId · 레거시 업무명 · wdId).
       if (work.requiredCount < orig.requiredCount) {
         final occupied = apps
             .where((app) =>
                 _occupancyStatuses.contains(app['status']) &&
-                app['selectedWorkType'] == work.workType)
+                _appMatchesWork(app, work))
             .length;
         if (work.requiredCount < occupied) {
           return "'${work.workType}' 업무의 필요 인원(${work.requiredCount})은 "

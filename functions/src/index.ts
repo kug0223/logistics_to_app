@@ -9447,8 +9447,10 @@ export const callableUpdateTO = onCall(
 
     /** 레거시 지원서가 모르는 조건이 바뀐 업무명. */
     const legacyLockWorkTypes: string[] = [];
-    /** 업무별 필요인원을 줄인 {workType, newCount}. */
-    const capacityReductions: Array<{workType: string; next: number}> = [];
+    /** 필요인원을 줄인 업무. compositeId까지 들고 있어야 같은 workType의
+     *  다른 시간대와 섞이지 않는다(03J.2). */
+    const capacityReductions: Array<
+      {workType: string; compositeId: string; next: number}> = [];
     /** 아직 정책을 검증하지 않은 필드가 바뀌었다 — 확정자가 있으면 막는다. */
     let touchesUnverifiedFields = false;
 
@@ -9534,7 +9536,8 @@ export const callableUpdateTO = onCall(
         const oldCount = (oldWd["requiredCount"] as number | undefined) ?? 0;
         const nextCount = (newWd["requiredCount"] as number | undefined) ?? 0;
         if (nextCount < oldCount) {
-          capacityReductions.push({workType, next: nextCount});
+          capacityReductions.push(
+            {workType, compositeId: oldId, next: nextCount});
         }
 
         // 위 어느 분류에도 속하지 않는 필드가 바뀌었는가.
@@ -9807,19 +9810,47 @@ export const callableUpdateTO = onCall(
           "확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."
         );
       }
-      // [POSTING-V2-03J.1] 업무별 필요인원은 이미 자리를 차지한 인원 아래로
-      //   내릴 수 없다. workTypeConfirmedCounts는 CONFIRMED+CONTRACT_PENDING을
-      //   세며(syncTOStats가 count()로 교정) 트랜잭션이 읽은 문서 안에 있다 —
-      //   추가 조회가 없다.
+      // [POSTING-V2-03J.2] 필요인원은 **그 업무에 실제로 자리를 잡은 사람**
+      //   아래로 내릴 수 없다.
+      //
+      //   03J.1은 freshData.workTypeConfirmedCounts를 썼는데, 그 카운터는
+      //   키가 selectedWorkType이라 같은 업무명의 다른 시간대가 합산된다.
+      //   "포장 09-18"의 확정자가 "포장 18-22"의 인원 조정까지 막았다.
+      //   TO 문서에는 workDetail 단위 카운터가 없다 —
+      //   workDetailCounts는 슬롯 전용이고, CONTRACT workDetails에는 wdId조차
+      //   생성되지 않는다(generateWdId는 슬롯 경로에서만 호출된다).
+      //   그래서 관계를 직접 본다. 인원을 **줄이는** 업무에 대해서만 돈다.
+      //
+      //   쿼리는 기존 인덱스(toId+selectedWorkType+status)로 좁히고,
+      //   어느 시간대인지는 workDetailId로 코드에서 가른다.
       if (!isSuperAdmin && capacityReductions.length > 0) {
-        const occupiedByType = (freshData.workTypeConfirmedCounts as
-          Record<string, number> | undefined) ?? {};
-        for (const {workType, next} of capacityReductions) {
-          const occupied = occupiedByType[workType] ?? 0;
-          if (next < occupied) {
+        const OCCUPANCY_STATUSES_TO = ["CONFIRMED", "CONTRACT_PENDING"];
+        const capacitySnaps = await Promise.all(
+          capacityReductions.map((c) =>
+            txEdit.get(
+              db.collection("applications")
+                .where("toId", "==", toId)
+                .where("selectedWorkType", "==", c.workType)
+                .where("status", "in", OCCUPANCY_STATUSES_TO)
+                .limit(500)
+            )
+          )
+        );
+        for (let i = 0; i < capacityReductions.length; i++) {
+          const c = capacityReductions[i];
+          const occupied = capacitySnaps[i].docs.filter((d) => {
+            const wdi = d.data().workDetailId;
+            // 시간대를 특정한 신규 지원서
+            if (wdi === c.compositeId) return true;
+            // 업무명만 저장한 레거시 지원서 — 어느 시간대인지 알 수 없으므로
+            // 보수적으로 센다(슬롯 경로의 레거시 매칭과 같은 판단).
+            if (wdi === c.workType) return true;
+            return false;
+          }).length;
+          if (c.next < occupied) {
             throw new HttpsError(
               "failed-precondition",
-              `'${workType}' 업무의 필요 인원(${next})은 ` +
+              `'${c.workType}' 업무의 필요 인원(${c.next})은 ` +
               `현재 확정 인원(${occupied})보다 작게 설정할 수 없습니다.`
             );
           }
