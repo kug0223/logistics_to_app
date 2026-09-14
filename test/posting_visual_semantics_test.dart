@@ -288,12 +288,18 @@ void main() {
   // §9 — RECRUITING
   // ══════════════════════════════════════════════════════════════
   group('04. 모집중', () {
-    testWidgets('04-a label · icon · family 무변경', (tester) async {
+    testWidgets('04-a label · icon · green family 유지', (tester) async {
       final l = await look(tester, status: SlotDisplayStatus.recruiting);
       expect(l.label, '모집중');
       expect(l.icon, Icons.campaign);
-      expect(l.textColor, AppColors.successDark);
       expect(l.bgColor, AppColors.successBg);
+    });
+
+    testWidgets('04-b 13px 라벨이 읽히도록 successDeep을 쓴다', (tester) async {
+      final l = await look(tester, status: SlotDisplayStatus.recruiting);
+      expect(l.textColor, AppColors.successDeep);
+      expect(l.iconColor, AppColors.successDeep);
+      expect(l.textColor, isNot(AppColors.successDark));
     });
   });
 
@@ -307,7 +313,8 @@ void main() {
           recruitmentComplete: true,
           closedLabel: '모집 완료');
       expect(l.icon, Icons.check_circle);
-      expect(l.textColor, AppColors.successDark);
+      expect(l.textColor, AppColors.successDeep);
+      expect(l.iconColor, AppColors.successDeep);
       expect(l.bgColor, AppColors.successBg);
       expect(l.label, '모집 완료');
     });
@@ -410,12 +417,32 @@ void main() {
       }
     });
 
+    testWidgets('07-c success 상태만 successDeep을 쓴다', (tester) async {
+      for (final l in [
+        await look(tester, status: SlotDisplayStatus.recruiting),
+        await look(tester,
+            status: SlotDisplayStatus.closed, recruitmentComplete: true),
+      ]) {
+        expect(l.textColor, AppColors.successDeep);
+      }
+      for (final l in [
+        await look(tester, status: SlotDisplayStatus.draft),
+        await look(tester, status: SlotDisplayStatus.closed),
+        await look(tester,
+            status: SlotDisplayStatus.scheduled,
+            scheduledAt: DateTime.now().add(const Duration(days: 3))),
+      ]) {
+        expect(l.textColor, isNot(AppColors.successDeep));
+      }
+    });
+
     testWidgets('07-b compact 모드도 같은 semantics를 쓴다', (tester) async {
       final full = await look(tester,
           status: SlotDisplayStatus.closed,
           recruitmentComplete: true,
           compact: true);
       expect(full.icon, Icons.check_circle);
+      expect(full.textColor, AppColors.successDeep);
       expect(full.bgColor, AppColors.successBg);
       final draft =
           await look(tester, status: SlotDisplayStatus.draft, compact: true);
@@ -612,9 +639,21 @@ void main() {
           ratio(AppColors.scheduledDark, AppColors.scheduledBg), greaterThan(4.5));
     });
 
-    test('11-c 유지한 success 조합이 UI 요소 기준(3.0)을 넘는다', () {
-      // §9/§17 — recruiting/full은 successDark/successBg 유지가 기본안이다
-      expect(ratio(AppColors.successDark, AppColors.successBg), greaterThan(3.0));
+    test('11-c 모집중 · 모집 완료 라벨이 본문 기준(4.5)을 넘는다', () {
+      // successDark/successBg는 약 3.87로 13px 라벨에 부족했다.
+      //   이미 존재하던 successDeep으로 올렸다 — 새 토큰 없음.
+      expect(ratio(AppColors.successDark, AppColors.successBg), lessThan(4.5),
+          reason: '이 값이 4.5를 넘게 되면 이 correction의 전제가 사라진다');
+      expect(ratio(AppColors.successDeep, AppColors.successBg),
+          greaterThan(4.5));
+    });
+
+    test('11-f successDark 토큰 자체는 그대로다 — 전역 blast radius 없음', () {
+      expect(AppColors.successDark, const Color(0xFF388E3C));
+      expect(AppColors.successDeep, const Color(0xFF1B5E20));
+      expect(AppColors.success, const Color(0xFF4CAF50));
+      expect(AppColors.confirmedDark, AppColors.successDark,
+          reason: '확정·체크인 등 다른 화면은 successDark를 계속 쓴다');
     });
 
     testWidgets('11-d 좁은 폭에서 overflow 없음 (§31)', (tester) async {

@@ -57,7 +57,9 @@ class SlotStatusBadge extends StatelessWidget {
             context,
             icon: Icons.check_circle,
             label: closedLabel ?? recruitmentCompleteLabel,
-            color: AppColors.successDark,
+            // successDark는 successBg 위에서 약 3.87 — 13px 라벨에는 부족하다.
+            //   이미 있는 successDeep으로 올린다(약 8.6). family는 그대로 green.
+            color: AppColors.successDeep,
             bgColor: AppColors.successBg,
           );
         }
@@ -94,7 +96,9 @@ class SlotStatusBadge extends StatelessWidget {
           context,
           icon: Icons.campaign,
           label: '모집중',
-          color: AppColors.successDark,
+          // 모집 완료와 같은 green family다 — 둘 다 "모집 흐름이 정상"이라는
+          //   상위 의미를 공유하고, 구분은 아이콘과 라벨이 맡는다.
+          color: AppColors.successDeep,
           bgColor: AppColors.successBg,
         );
     }
