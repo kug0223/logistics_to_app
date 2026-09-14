@@ -99,8 +99,12 @@ class Rel {
   final String workType;
   final bool hasSnapshot;
 
-  /// [POSTING-V2-03J.2] 지원서가 가리키는 업무. 신규는 compositeId,
-  /// 레거시는 업무명만 저장한다. null이면 업무명만 아는 레거시로 본다.
+  /// 지원서가 가리키는 업무. 실제로 세 가지 형태가 존재한다.
+  ///   · compositeId — 시간대까지 특정 (신규)
+  ///   · 업무명 단독 — 시간대 미상 (레거시)
+  ///   · **필드 자체가 없음** — 클라이언트가 안 보내면 저장되지 않는다
+  ///     (callableApplyToTO). Firestore는 "필드 없음"을 질의할 수 없다.
+  /// 뒤의 둘은 복원할 근거가 없어 보수적으로 본다 — 여기서는 null로 둔다.
   final String? workDetailId;
 
   const Rel(this.status, this.workType,
@@ -154,7 +158,8 @@ String? updateTOBlock({
   final newIds = newWDs.map(_id).toSet();
   // [POSTING-V2-03J.3] 업무명이 아니라 **변경 전** compositeId를 들고 간다.
   final identityTargets = <({String workType, String compositeId})>[];
-  final legacyLockWorkTypes = <String>[];
+  // [POSTING-V2-03J.4] legacy lock도 workDetail 단위다.
+  final legacyLockTargets = <({String workType, String compositeId})>[];
   final capacityReductions =
       <({String workType, String compositeId, int next})>[];
   var touchesUnverified = false;
@@ -174,7 +179,7 @@ String? updateTOBlock({
       identityTargets.add((workType: workType, compositeId: _id(o)));
     }
     if (_legacyUnknown.any((f) => o[f] != n[f])) {
-      legacyLockWorkTypes.add(workType);
+      legacyLockTargets.add((workType: workType, compositeId: _id(o)));
     }
     final oc = (o['requiredCount'] as int?) ?? 0;
     final nc = (n['requiredCount'] as int?) ?? 0;
@@ -198,41 +203,49 @@ String? updateTOBlock({
   // ── txEdit 판정 순서 ──
   if (touchesUnverified && confirmed > 0) return 'UNVERIFIED_FIELD';
 
-  // [POSTING-V2-03J.2] workDetail 단위로 센다 — 같은 업무명의 다른 시간대는
-  //   서로의 자리를 막지 않는다. 업무명만 아는 레거시는 보수적으로 포함한다.
+  // [POSTING-V2-03J.4] 세 guard가 볼 관계를 **한 번만, 자르지 않고** 읽는다.
+  //   limit으로 잘라 읽고 메모리에서 거르면 그 밖의 관계를 놓친다.
+  final relationWorkTypes = <String>{
+    ...capacityReductions.map((c) => c.workType),
+    ...identityTargets.map((t) => t.workType),
+    ...legacyLockTargets.map((t) => t.workType),
+  };
+  if (relationWorkTypes.isNotEmpty) queries?.add(relationWorkTypes.length);
+  // 완전 읽기 — truncation 없음. 활성 상태만 읽는다.
+  List<Rel> relationsFor(String wt) => rels
+      .where((r) =>
+          relationWorkTypes.contains(wt) &&
+          _identityStatuses.contains(r.status) &&
+          r.workType == wt)
+      .toList();
+  // compositeId면 그 업무 하나. 업무명만 있거나 아예 없으면 시간대를 복원할
+  //   근거가 없으므로 보수적으로 걸린 것으로 본다.
+  bool boundTo(Rel r, String workType, String compositeId) {
+    final wdi = r.workDetailId;
+    if (wdi == null || wdi.isEmpty) return true;
+    return wdi == compositeId || wdi == workType;
+  }
+
   for (final c in capacityReductions) {
-    queries?.add(1);
-    final occupied = rels.where((r) {
-      if (!_occupancy.contains(r.status)) return false;
-      if (r.workType != c.workType) return false;
-      final wdi = r.workDetailId;
-      if (wdi == null) return true; // 레거시 — 시간대를 알 수 없다
-      return wdi == c.compositeId || wdi == c.workType;
-    }).length;
+    final occupied = relationsFor(c.workType)
+        .where((r) =>
+            _occupancy.contains(r.status) &&
+            boundTo(r, c.workType, c.compositeId))
+        .length;
     if (c.next < occupied) return 'CAPACITY';
   }
 
   // [POSTING-V2-03J.3] identity도 workDetail 단위다. 같은 업무명이라는 이유로
   //   관계 없는 시간대가 잠기지 않는다. status 집합은 capacity와 다르다(§14).
-  if (identityTargets.isNotEmpty) {
-    queries?.add(identityTargets.map((t) => t.workType).toSet().length);
-    final blocked = identityTargets.any((t) => rels.any((r) {
-          if (!_identityStatuses.contains(r.status)) return false;
-          if (r.workType != t.workType) return false;
-          final wdi = r.workDetailId;
-          if (wdi == null) return true; // 레거시 — 시간대를 알 수 없다
-          return wdi == t.compositeId || wdi == t.workType;
-        }));
-    if (blocked) return 'IDENTITY';
+  if (identityTargets.any((t) => relationsFor(t.workType)
+      .any((r) => boundTo(r, t.workType, t.compositeId)))) {
+    return 'IDENTITY';
   }
 
-  if (legacyLockWorkTypes.isNotEmpty) {
-    queries?.add(legacyLockWorkTypes.length);
-    final blocked = legacyLockWorkTypes.any((wt) => rels.any((r) =>
-        _identityStatuses.contains(r.status) &&
-        r.workType == wt &&
-        !r.hasSnapshot));
-    if (blocked) return 'LEGACY';
+  // [POSTING-V2-03J.4] legacy 보상 잠금도 그 workDetail에 걸린 것만 본다.
+  if (legacyLockTargets.any((t) => relationsFor(t.workType).any(
+      (r) => !r.hasSnapshot && boundTo(r, t.workType, t.compositeId)))) {
+    return 'LEGACY';
   }
   return null;
 }
@@ -617,7 +630,8 @@ void main() {
       final body = _flat(_codeOf(updateTO));
       expect(body.contains('const OCCUPANCY_STATUSES_TO = ["CONFIRMED", "CONTRACT_PENDING"];'),
           true);
-      expect(body.contains('if (wdi === c.compositeId) return true;'), true);
+      // [POSTING-V2-03J.4] 매칭은 공용 boundTo로 옮겼다
+      expect(body.contains('boundTo(d, c)'), true);
       expect(body.contains('freshData.workTypeConfirmedCounts'), false,
           reason: '합산 카운터를 하한으로 쓰지 않는다');
     });
@@ -626,8 +640,8 @@ void main() {
       final body = _flat(_codeOf(updateTO));
       expect(
           body.contains('.where("toId", "==", toId) '
-              '.where("selectedWorkType", "==", c.workType) '
-              '.where("status", "in", OCCUPANCY_STATUSES_TO)'),
+              '.where("selectedWorkType", "==", wt) '
+              '.where("status", "in", ACTIVE_STATUSES)'),
           true,
           reason: 'toId+selectedWorkType+status 인덱스가 이미 있다');
       final idx = _src('firestore.indexes.json');
@@ -834,18 +848,22 @@ void main() {
     });
 
     // ── 서버 배선 ──
+    // [POSTING-V2-03J.4] 매칭 규칙은 공용 boundTo로 옮겼다 — 판정은 동일하다.
     test('11-q 서버가 workDetailId exact match를 한다 (§4)', () {
       final body = _flat(_codeOf(updateTO));
-      expect(body.contains('if (wdi === t.compositeId) return true;'), true);
-      expect(body.contains('if (wdi === t.workType) return true;'), true);
+      expect(body.contains('return wdi === t.compositeId || wdi === t.workType;'),
+          true);
       expect(
-          body.contains('const blocked = identityTargets.filter((t) => {'), true);
+          body.contains('const blocked = identityTargets.filter( '
+              '(t) => relationsFor(t.workType).some((d) => boundTo(d, t)));'),
+          true);
     });
 
     test('11-r 업무명 중복 제거 후 조회한다 (§12)', () {
       final body = _flat(_codeOf(updateTO));
       expect(
-          body.contains('new Set(identityTargets.map((t) => t.workType))'), true);
+          body.contains('...identityTargets.map((t) => t.workType)'), true);
+      expect(body.contains('const relationWorkTypes = [...new Set(['), true);
       expect(body.contains('.where("status", "in", ACTIVE_STATUSES)'), true);
     });
 
@@ -878,6 +896,191 @@ void main() {
       expect(_flat(_codeOf(updateTO))
           .contains('identityTargets.push({workType, compositeId: oldId});'),
           true);
+    });
+  });
+
+  // ── 03J.4 §2·§4·§6·§11 relation guard completeness ────────────
+  group('CONTRACT-12 판정이 500건에서 잘리지 않는다', () {
+    Map<String, dynamic> a({int requiredCount = 600}) =>
+        wd(startTime: '09:00', endTime: '18:00', wdId: null,
+            requiredCount: requiredCount);
+    Map<String, dynamic> b() =>
+        wd(startTime: '18:00', endTime: '22:00', wdId: null, order: 1);
+
+    /// 같은 workType에 [n]건의 관계를 만든다.
+    List<Rel> many(int n, String status, String? workDetailId) => List.generate(
+        n, (_) => Rel(status, '포장', workDetailId: workDetailId));
+
+    test('12-a identity — 보호 관계가 501번째에 있어도 BLOCK (§11)', () {
+      final rels = [
+        ...many(500, 'PENDING', '포장_09:00_18:00'), // 관계 없는 형제 500건
+        const Rel('CONFIRMED', '포장', workDetailId: '포장_18:00_22:00'),
+      ];
+      expect(
+          updateTOBlock(oldWDs: [a(), b()], newWDs: [a()], rels: rels),
+          'IDENTITY',
+          reason: '앞 500건에 가려 놓치면 안 된다');
+    });
+
+    test('12-b identity — 형제가 아무리 많아도 관계 없으면 ALLOW (§10)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [a()],
+            rels: many(700, 'CONFIRMED', '포장_09:00_18:00'),
+          ),
+          isNull,
+          reason: '700건이어도 B를 잘못 잠그지 않는다');
+    });
+
+    test('12-c capacity — occupied 501을 500으로 과소 계산하지 않는다 (§4)', () {
+      final rels = many(501, 'CONFIRMED', '포장_09:00_18:00');
+      expect(
+          updateTOBlock(
+            oldWDs: [a()],
+            newWDs: [a(requiredCount: 500)],
+            rels: rels,
+          ),
+          'CAPACITY',
+          reason: '500으로 잘렸다면 500 >= 500이라 통과했을 것이다');
+    });
+
+    test('12-d capacity — 정확한 occupied 경계 (§4)', () {
+      final rels = many(501, 'CONFIRMED', '포장_09:00_18:00');
+      expect(
+          updateTOBlock(
+              oldWDs: [a()], newWDs: [a(requiredCount: 501)], rels: rels),
+          isNull);
+      expect(
+          updateTOBlock(
+              oldWDs: [a()], newWDs: [a(requiredCount: 500)], rels: rels),
+          'CAPACITY');
+    });
+
+    test('12-e legacy 보상 — 보호 관계가 뒤쪽 페이지에 있어도 BLOCK (§6)', () {
+      final rels = [
+        ...many(600, 'CONFIRMED', '포장_09:00_18:00'), // 전부 스냅샷 보유
+        const Rel('CONFIRMED', '포장',
+            hasSnapshot: false, workDetailId: '포장_09:00_18:00'),
+      ];
+      expect(
+          updateTOBlock(
+            oldWDs: [wd(startTime: '09:00', endTime: '18:00', wdId: null,
+                breakMinutes: 60, requiredCount: 700)],
+            newWDs: [wd(startTime: '09:00', endTime: '18:00', wdId: null,
+                breakMinutes: 30, requiredCount: 700)],
+            rels: rels,
+          ),
+          'LEGACY');
+    });
+
+    test('12-f legacy 보상 — 다른 시간대의 레거시는 이 업무를 잠그지 않는다 (§6)', () {
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [
+              a(),
+              wd(startTime: '18:00', endTime: '22:00', wdId: null, order: 1,
+                  breakMinutes: 30),
+            ],
+            rels: const [
+              Rel('CONFIRMED', '포장',
+                  hasSnapshot: false, workDetailId: '포장_09:00_18:00'),
+            ],
+          ),
+          isNull,
+          reason: 'A에 걸린 레거시가 B의 산정 조건 변경을 막으면 안 된다');
+      // 같은 레거시가 A의 조건을 바꾸는 것은 여전히 막는다
+      expect(
+          updateTOBlock(
+            oldWDs: [a(), b()],
+            newWDs: [
+              wd(startTime: '09:00', endTime: '18:00', wdId: null,
+                  requiredCount: 600, breakMinutes: 30),
+              b(),
+            ],
+            rels: const [
+              Rel('CONFIRMED', '포장',
+                  hasSnapshot: false, workDetailId: '포장_09:00_18:00'),
+            ],
+          ),
+          'LEGACY');
+    });
+
+    test('12-g workDetailId가 아예 없는 지원서도 보수적으로 잡는다 (§2)', () {
+      // callableApplyToTO는 클라이언트가 안 보내면 필드를 저장하지 않는다.
+      // Firestore는 "필드 없음"을 질의할 수 없으므로 놓치면 fail-open이다.
+      const noKey = [Rel('CONFIRMED', '포장')]; // workDetailId 없음
+      expect(
+          updateTOBlock(oldWDs: [a(), b()], newWDs: [a()], rels: noKey),
+          'IDENTITY');
+      expect(
+          updateTOBlock(oldWDs: [a(), b()], newWDs: [b()], rels: noKey),
+          'IDENTITY');
+    });
+
+    test('12-h 세 guard가 workType당 한 번만 읽는다 (§13)', () {
+      final q = <int>[];
+      updateTOBlock(
+        // 같은 '포장'에서 삭제 + 인원 축소 + 레거시 조건 변경을 동시에
+        oldWDs: [
+          wd(startTime: '09:00', endTime: '18:00', wdId: null,
+              requiredCount: 5, breakMinutes: 60),
+          b(),
+        ],
+        newWDs: [
+          wd(startTime: '09:00', endTime: '18:00', wdId: null,
+              requiredCount: 1, breakMinutes: 30),
+        ],
+        rels: const [],
+        queries: q,
+      );
+      expect(q, [1], reason: 'guard마다 따로 읽지 않는다');
+    });
+
+    // ── 서버 배선 ──
+    test('12-i 서버 relation 조회에 limit이 없다 (§2, §4, §6)', () {
+      final body = _flat(_codeOf(updateTO));
+      expect(
+          body.contains('.where("toId", "==", toId) '
+              '.where("selectedWorkType", "==", wt) '
+              '.where("status", "in", ACTIVE_STATUSES) ) )'),
+          true,
+          reason: 'limit을 걸면 그 뒤 관계를 놓친다');
+      expect(body.contains('.limit(500)'), false,
+          reason: 'edit guard에 500 truncation이 남아 있으면 안 된다');
+    });
+
+    test('12-j 세 guard가 같은 완전 읽기를 공유한다 (§13)', () {
+      final body = _flat(_codeOf(updateTO));
+      expect(body.contains('const relationWorkTypes = [...new Set(['), true);
+      expect('relationsFor('.allMatches(body).length, 3,
+          reason: 'capacity · identity · legacy 세 guard가 같은 읽기를 쓴다');
+      expect(body.contains('relationDocs.set(wt, relationSnaps[i].docs)'), true);
+    });
+
+    test('12-k 식별 불가 지원서를 보수적으로 취급한다 (§12)', () {
+      final body = _flat(_codeOf(updateTO));
+      expect(
+          body.contains(
+              'if (typeof wdi !== "string" || wdi.length === 0) return true;'),
+          true,
+          reason: 'fail-open 금지 — 모르면 잠근다');
+    });
+
+    test('12-l aggregate count를 도입하지 않았다 (§5)', () {
+      expect(_codeOf(updateTO).contains('.count()'), false,
+          reason: 'txEdit.get(query) 기반 구조를 유지한다');
+    });
+
+    test('12-m 새 index 없이 기존 index로 돈다 (§14)', () {
+      final idx = _flat(_src('firestore.indexes.json'));
+      expect(
+          idx.contains('{ "fieldPath": "toId", "order": "ASCENDING" }, '
+              '{ "fieldPath": "selectedWorkType", "order": "ASCENDING" }, '
+              '{ "fieldPath": "status", "order": "ASCENDING" }'),
+          true,
+          reason: 'toId+selectedWorkType+status 복합 인덱스가 이미 있다');
     });
   });
 
@@ -932,7 +1135,7 @@ void main() {
     //   조회로 바꿨다. 판정이 txEdit 안이라는 점은 그대로다.
     test('04-c 업무별 capacity가 workDetail 단위 관계를 본다 (§8, §9)', () {
       final body = _flat(_codeOf(updateTO));
-      expect(body.contains('if (wdi === c.compositeId) return true;'), true);
+      expect(body.contains('boundTo(d, c)'), true);
       expect(body.contains('if (c.next < occupied) {'), true);
       expect(body.contains('freshData.workTypeConfirmedCounts'), false,
           reason: '합산 카운터를 하한으로 쓰지 않는다');
@@ -949,7 +1152,7 @@ void main() {
 
     test('04-e CONTRACT legacy lock이 존재한다 (§5)', () {
       final body = _flat(_codeOf(updateTO));
-      expect(body.contains('legacyLockWorkTypes.length > 0'), true);
+      expect(body.contains('legacyLockTargets.length > 0'), true);
       expect(
           body.contains('typeof d.data().nightAllowanceApplied !== "boolean"'),
           true,
@@ -982,7 +1185,7 @@ void main() {
         'touchesUnverifiedFields && freshConfirmed > 0',
         'capacityReductions.length > 0',
         'identityTargets.length > 0',
-        'legacyLockWorkTypes.length > 0',
+        'legacyLockTargets.length > 0',
       ]) {
         expect(tx.contains(marker), true, reason: '$marker 가 TX 밖에 있다');
       }
@@ -1000,7 +1203,10 @@ void main() {
       final txStart = updateTO.indexOf('db.runTransaction(async (txEdit) => {');
       final outside = updateTO.substring(0, txStart);
       // 순수 비교만 밖에 있다 — 관계 조회는 없다
-      expect(outside.contains('legacyLockWorkTypes.push(workType);'), true);
+      expect(
+          outside.contains(
+              'legacyLockTargets.push({workType, compositeId: oldId});'),
+          true);
       expect(outside.contains('capacityReductions.push('), true);
       expect(outside.contains('db.collection("applications")'), false,
           reason: 'TX 밖 관계 조회는 재시도 때 다시 실행되지 않는다');
@@ -1225,14 +1431,16 @@ void main() {
       expect(q.length, 1);
     });
 
+    // [POSTING-V2-03J.4 재작성] guard별 3개 조회가 공용 완전 읽기 1개로
+    //   합쳐졌다. 남은 applications 조회는 그 하나와 date guard뿐이다.
     test('08-d 전체 application full scan이 없다 (§21)', () {
       final body = _codeOf(updateTO);
-      // 모든 관계 조회는 selectedWorkType으로 좁힌다
       final relQueries = '.where("toId", "==", toId)'.allMatches(body).length;
-      expect(relQueries, 4, reason: 'identity · legacy · capacity · date guard');
-      // capacity도 selectedWorkType으로 좁힌 뒤 workDetailId는 코드에서 거른다
-      expect('.where("selectedWorkType", "=='.allMatches(body).length, 3);
-      expect(body.contains('.limit(500)'), true, reason: '무제한 스캔 없음');
+      expect(relQueries, 2, reason: '공용 relation 읽기 · date guard');
+      // 관계 조회는 selectedWorkType으로 좁힌다 — 전체 스캔이 아니다
+      expect('.where("selectedWorkType", "=='.allMatches(body).length, 1);
+      expect(body.contains('.limit(500)'), false,
+          reason: '잘라 읽으면 판정이 fail-open이 된다 (03J.4)');
     });
   });
 }

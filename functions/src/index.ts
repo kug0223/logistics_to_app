@@ -9448,8 +9448,11 @@ export const callableUpdateTO = onCall(
     // 순서는 업무를 더하거나 빼면 따라 움직이는 파생값이라 의도적 수정으로 보지 않는다.
     const NON_POLICY_FIELDS = ["order", "wdId"];
 
-    /** 레거시 지원서가 모르는 조건이 바뀐 업무명. */
-    const legacyLockWorkTypes: string[] = [];
+    /** 레거시 지원서가 모르는 조건이 바뀐 업무.
+     *  [POSTING-V2-03J.4] compositeId까지 들고 가야 같은 업무명의 다른
+     *  시간대에 걸린 레거시가 관계 없는 업무를 잠그지 않는다. */
+    const legacyLockTargets: Array<
+      {workType: string; compositeId: string}> = [];
     /** 필요인원을 줄인 업무. compositeId까지 들고 있어야 같은 workType의
      *  다른 시간대와 섞이지 않는다(03J.2). */
     const capacityReductions: Array<
@@ -9541,7 +9544,7 @@ export const callableUpdateTO = onCall(
 
         if (LEGACY_UNKNOWN_FIELDS.some(
           (f) => (oldWd[f] ?? null) !== (newWd[f] ?? null))) {
-          legacyLockWorkTypes.push(workType);
+          legacyLockTargets.push({workType, compositeId: oldId});
         }
 
         const oldCount = (oldWd["requiredCount"] as number | undefined) ?? 0;
@@ -9821,6 +9824,58 @@ export const callableUpdateTO = onCall(
           "확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."
         );
       }
+      // [POSTING-V2-03J.4] 세 guard(capacity·identity·legacy)가 보는 관계를
+      //   **한 번만, 자르지 않고** 읽는다.
+      //
+      //   이전에는 guard마다 limit(500)으로 읽고 메모리에서 걸렀다. 500을
+      //   넘으면 보호 대상 관계를 놓치거나 occupied를 과소 계산한다 —
+      //   수정을 허용해 버리는 fail-open이다. 잘라 읽은 결과는 완전한 결과가
+      //   아니므로 판정 근거로 쓰지 않는다.
+      //
+      //   키를 쿼리에 넣어(workDetailId ==) 좁히는 방법은 쓸 수 없다.
+      //   지원서의 workDetailId는 클라이언트가 보냈을 때만 저장되고
+      //   (callableApplyToTO — `if (workDetailId && ...) setData[...]`),
+      //   Firestore는 "필드가 없음"을 질의할 수 없다(== null은 명시적 null만
+      //   매칭). 그런 지원서를 놓치면 그것이 곧 fail-open이다.
+      //   selectedWorkType은 항상 저장되므로 그 축으로 완전히 읽고,
+      //   어느 시간대인지는 코드에서 가른다.
+      const ACTIVE_STATUSES =
+        ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
+      const OCCUPANCY_STATUSES_TO = ["CONFIRMED", "CONTRACT_PENDING"];
+      const relationWorkTypes = [...new Set([
+        ...capacityReductions.map((c) => c.workType),
+        ...identityTargets.map((t) => t.workType),
+        ...legacyLockTargets.map((t) => t.workType),
+      ])];
+      const relationDocs =
+        new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+      if (relationWorkTypes.length > 0) {
+        // 인덱스: toId + selectedWorkType + status (기존 index 재사용)
+        const relationSnaps = await Promise.all(
+          relationWorkTypes.map((wt) =>
+            txEdit.get(
+              db.collection("applications")
+                .where("toId", "==", toId)
+                .where("selectedWorkType", "==", wt)
+                .where("status", "in", ACTIVE_STATUSES)
+            )
+          )
+        );
+        relationWorkTypes.forEach(
+          (wt, i) => relationDocs.set(wt, relationSnaps[i].docs));
+      }
+      const relationsFor = (wt: string) => relationDocs.get(wt) ?? [];
+      // 이 지원서가 대상 workDetail에 걸려 있는가.
+      //   compositeId면 그 업무 하나. 업무명만 있거나 아예 없으면 어느
+      //   시간대인지 복원할 근거가 없으므로 보수적으로 걸린 것으로 본다.
+      const boundTo = (
+        d: FirebaseFirestore.QueryDocumentSnapshot,
+        t: {workType: string; compositeId: string}
+      ): boolean => {
+        const wdi = d.data().workDetailId;
+        if (typeof wdi !== "string" || wdi.length === 0) return true;
+        return wdi === t.compositeId || wdi === t.workType;
+      };
       // [POSTING-V2-03J.2] 필요인원은 **그 업무에 실제로 자리를 잡은 사람**
       //   아래로 내릴 수 없다.
       //
@@ -9831,33 +9886,13 @@ export const callableUpdateTO = onCall(
       //   workDetailCounts는 슬롯 전용이고, CONTRACT workDetails에는 wdId조차
       //   생성되지 않는다(generateWdId는 슬롯 경로에서만 호출된다).
       //   그래서 관계를 직접 본다. 인원을 **줄이는** 업무에 대해서만 돈다.
-      //
-      //   쿼리는 기존 인덱스(toId+selectedWorkType+status)로 좁히고,
-      //   어느 시간대인지는 workDetailId로 코드에서 가른다.
       if (!isSuperAdmin && capacityReductions.length > 0) {
-        const OCCUPANCY_STATUSES_TO = ["CONFIRMED", "CONTRACT_PENDING"];
-        const capacitySnaps = await Promise.all(
-          capacityReductions.map((c) =>
-            txEdit.get(
-              db.collection("applications")
-                .where("toId", "==", toId)
-                .where("selectedWorkType", "==", c.workType)
-                .where("status", "in", OCCUPANCY_STATUSES_TO)
-                .limit(500)
-            )
-          )
-        );
-        for (let i = 0; i < capacityReductions.length; i++) {
-          const c = capacityReductions[i];
-          const occupied = capacitySnaps[i].docs.filter((d) => {
-            const wdi = d.data().workDetailId;
-            // 시간대를 특정한 신규 지원서
-            if (wdi === c.compositeId) return true;
-            // 업무명만 저장한 레거시 지원서 — 어느 시간대인지 알 수 없으므로
-            // 보수적으로 센다(슬롯 경로의 레거시 매칭과 같은 판단).
-            if (wdi === c.workType) return true;
-            return false;
-          }).length;
+        for (const c of capacityReductions) {
+          const occupied = relationsFor(c.workType).filter(
+            (d) =>
+              OCCUPANCY_STATUSES_TO.includes(d.data().status as string) &&
+              boundTo(d, c)
+          ).length;
           if (c.next < occupied) {
             throw new HttpsError(
               "failed-precondition",
@@ -9869,44 +9904,16 @@ export const callableUpdateTO = onCall(
       }
       // [POSTING-V2-03H.1] identity guard — date guard와 같은 방식으로
       //   txEdit.get(query)를 쓴다. 재시도 때 다시 실행되는 것이 핵심이다.
+      // [POSTING-V2-03J.1] CONFIRMED 추가. blanket이 좁아지면서 이 guard가
+      //   확정 근무자의 업무·시간 약속을 지키는 유일한 자리가 된다.
+      //   FLEX의 ACTIVE_STATUSES_WITH_CONFIRMED와 같은 집합이 된다.
+      // [POSTING-V2-03J.3] 업무명이 아니라 **그 업무**에 걸린 지원서만 본다.
+      //   '포장 09-18'의 확정자가 관계 없는 '포장 18-22'의 삭제·시간 변경까지
+      //   막던 것을 없앤다. status 집합은 capacity guard와 다르다 —
+      //   여기는 PENDING·INVITED도 identity를 잠근다(§14).
       if (identityTargets.length > 0) {
-        // 인덱스: toId + selectedWorkType + status (기존 index 재사용)
-        // [POSTING-V2-03J.1] CONFIRMED 추가. blanket이 좁아지면서 이 guard가
-        //   확정 근무자의 업무·시간 약속을 지키는 유일한 자리가 된다.
-        //   FLEX의 ACTIVE_STATUSES_WITH_CONFIRMED와 같은 집합이 된다.
-        // [POSTING-V2-03J.3] 업무명이 아니라 **그 업무**에 걸린 지원서만 본다.
-        //   '포장 09-18'의 확정자가 관계 없는 '포장 18-22'의 삭제·시간 변경까지
-        //   막던 것을 없앤다. status 집합은 capacity guard와 다르다 —
-        //   여기는 PENDING·INVITED도 identity를 잠근다(§14).
-        const ACTIVE_STATUSES =
-          ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
-        // 같은 업무명이 여러 번 대상이 되어도 관계는 한 번만 읽는다.
-        const identityWTs = [
-          ...new Set(identityTargets.map((t) => t.workType)),
-        ];
-        const identitySnapshots = await Promise.all(
-          identityWTs.map((wt) =>
-            txEdit.get(
-              db.collection("applications")
-                .where("toId", "==", toId)
-                .where("selectedWorkType", "==", wt)
-                .where("status", "in", ACTIVE_STATUSES)
-                .limit(500)
-            )
-          )
-        );
-        const blocked = identityTargets.filter((t) => {
-          const snap = identitySnapshots[identityWTs.indexOf(t.workType)];
-          return snap.docs.some((d) => {
-            const wdi = d.data().workDetailId;
-            // 시간대를 특정한 신규 지원서 — 그 업무만 잠근다.
-            if (wdi === t.compositeId) return true;
-            // 업무명만 저장한 레거시 — 어느 시간대인지 복원할 근거가 없으므로
-            // 같은 업무명 전체를 보수적으로 잠근다(§2). backfill하지 않는다.
-            if (wdi === t.workType) return true;
-            return false;
-          });
-        });
+        const blocked = identityTargets.filter(
+          (t) => relationsFor(t.workType).some((d) => boundTo(d, t)));
         if (blocked.length > 0) {
           const wtList =
             [...new Set(blocked.map((t) => t.workType))].join(", ");
@@ -9921,22 +9928,16 @@ export const callableUpdateTO = onCall(
       //   현재 값으로 계산된다. 과거 값을 복원할 근거가 없으므로 backfill하지
       //   않고, 그 사람이 관계를 갖고 있는 동안 변경만 막는다.
       //   금액·급여유형은 레거시도 갖고 있으므로 여기서 막지 않는다(§6).
-      if (!isSuperAdmin && legacyLockWorkTypes.length > 0) {
-        const legacySnaps = await Promise.all(
-          legacyLockWorkTypes.map((wt) =>
-            txEdit.get(
-              db.collection("applications")
-                .where("toId", "==", toId)
-                .where("selectedWorkType", "==", wt)
-                .where("status", "in",
-                  ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"])
-                .limit(500)
-            )
-          )
-        );
-        const hasLegacy = legacySnaps.some((snap) =>
-          snap.docs.some(
-            (d) => typeof d.data().nightAllowanceApplied !== "boolean"));
+      //   [POSTING-V2-03J.4] 잠금도 그 workDetail 단위다. 다른 시간대에 걸린
+      //   스냅샷 없는 지원서 때문에 관계 없는 업무까지 잠그지 않는다.
+      //   스냅샷 유무는 필드 **존재** 여부라 Firestore 질의로 표현할 수 없어
+      //   완전히 읽은 결과에서 코드로 거른다(§7).
+      if (!isSuperAdmin && legacyLockTargets.length > 0) {
+        const hasLegacy = legacyLockTargets.some((t) =>
+          relationsFor(t.workType).some(
+            (d) =>
+              typeof d.data().nightAllowanceApplied !== "boolean" &&
+              boundTo(d, t)));
         if (hasLegacy) {
           throw new HttpsError(
             "failed-precondition",

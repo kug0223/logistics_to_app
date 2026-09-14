@@ -428,7 +428,9 @@ void main() {
       final fns = _src(_fnsPath);
       expect(fns.contains('.where("selectedWorkType", "==", wt)'), true,
           reason: '기존 인덱스로 좁히는 축은 그대로다');
-      expect(fns.contains('if (wdi === t.compositeId) return true;'), true,
+      expect(
+          fns.contains('return wdi === t.compositeId || wdi === t.workType;'),
+          true,
           reason: '시간대는 workDetailId로 가른다');
       final code = _flat(_codeOf(
           _bodyOf(_src(_editPath), 'String? _workChangeBlockReason(')));
@@ -730,7 +732,7 @@ void main() {
         // [POSTING-V2-03J.1] CONFIRMED 추가 — blanket이 좁아지면서 이 guard가
         //   확정 근무자의 업무·시간 약속을 지키는 자리가 됐다.
         'const ACTIVE_STATUSES =\n'
-            '          ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];',
+            '        ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];',
       ]) {
         expect(fns.contains(marker), true, reason: '$marker 가 사라졌다');
       }

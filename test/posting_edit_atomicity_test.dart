@@ -228,16 +228,18 @@ void main() {
     });
 
     // [POSTING-V2-03J.3 재작성] status별 4-query(limit 1)에서 status in
-    //   단일 query(limit 500)로 바뀌었다. 어느 시간대인지는 workDetailId로
-    //   코드에서 가르므로 존재 확인만으로는 부족하기 때문이다.
-    //   txEdit.get(query)를 쓴다는 §4의 요구는 그대로다.
+    //   단일 query로 바뀌었다. 어느 시간대인지는 workDetailId로 코드에서
+    //   가르므로 존재 확인만으로는 부족하기 때문이다.
+    // [POSTING-V2-03J.4] limit을 없앴다 — 잘라 읽은 결과로 판정하면
+    //   그 뒤의 보호 관계를 놓쳐 fail-open이 된다. 세 guard가 이 하나를
+    //   공유한다. txEdit.get(query)를 쓴다는 §4의 요구는 그대로다.
     test('01-b identity query가 txEdit.get(query)를 쓴다 (§4)', () {
       final body = _flat(_codeOf(txEdit));
       expect(
           body.contains('txEdit.get( db.collection("applications") '
               '.where("toId", "==", toId) '
               '.where("selectedWorkType", "==", wt) '
-              '.where("status", "in", ACTIVE_STATUSES) .limit(500) )'),
+              '.where("status", "in", ACTIVE_STATUSES) )'),
           true,
           reason: 'date guard와 같은 방식으로 정렬한다');
     });
@@ -303,7 +305,7 @@ void main() {
       //   메시지 자체는 그대로다.
       expect(
           body.contains('const ACTIVE_STATUSES =\n'
-              '          ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];'),
+              '        ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];'),
           true,
           reason: 'FLEX의 ACTIVE_STATUSES_WITH_CONFIRMED와 같은 집합');
     });
