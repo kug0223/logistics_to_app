@@ -68,16 +68,24 @@ String _bodyOf(String source, String signature) {
 enum Surface { loading, fullError, rootEmpty, filteredEmpty, tabEmpty, list }
 
 /// 본문 분기 replica — _buildTOList의 순서를 그대로 따른다.
+///
+/// [POSTING-V2-03P.1] isLoading이 더 이상 맨 앞이 아니다. 확정 여부
+///   (hasLoadedOnce / lastSuccessfulWasEmpty)가 empty 해석을 가른다.
 Surface bodyOf({
   required bool isLoading,
   required bool hasError,
   required int itemCount,
   required int filteredCount,
   required bool hasActiveFilters,
+  bool hasLoadedOnce = true,
+  bool lastSuccessfulWasEmpty = false,
 }) {
-  if (isLoading) return Surface.loading;
   if (hasError && itemCount == 0) return Surface.fullError;
-  if (itemCount == 0) return Surface.rootEmpty;
+  if (!hasLoadedOnce) return Surface.loading;
+  if (itemCount == 0) {
+    if (isLoading && !lastSuccessfulWasEmpty) return Surface.loading;
+    return Surface.rootEmpty;
+  }
   if (filteredCount == 0) {
     return hasActiveFilters ? Surface.filteredEmpty : Surface.tabEmpty;
   }
@@ -85,8 +93,16 @@ Surface bodyOf({
 }
 
 /// 배너 조건 replica — 본문과 독립된 freshness 차원.
-bool bannerOf({required bool hasError, required int itemCount}) =>
-    hasError && itemCount > 0;
+///
+/// [POSTING-V2-03P.1] 재시도 중에도 낡은 데이터가 화면에 남아 있으므로
+///   그 창에서도 배너를 유지한다.
+bool bannerOf({
+  required bool hasError,
+  required int itemCount,
+  bool isLoading = false,
+  bool lastLoadFailed = false,
+}) =>
+    (hasError || (isLoading && lastLoadFailed)) && itemCount > 0;
 
 void main() {
   // ── §1 새 state 없음 ───────────────────────────────────────────
@@ -102,13 +118,18 @@ void main() {
       expect(code.contains('List<TOGroupItem> get items => _items;'), true);
     });
 
-    test('01-b 배너가 그 두 값만 읽는다', () {
+    test('01-b 배너가 controller 소유 state만 읽는다', () {
       final body = _flat(_codeOf(_bodyOf(_src(_viewPath), 'Widget _buildStaleBanner(')));
+      // [POSTING-V2-03P.1] 재료가 loadError + items 두 개에서, 재시도 창을
+      //   덮기 위한 lastLoadFailed까지 세 개로 늘었다. 늘어난 것도 controller가
+      //   소유한 canonical state다 — view-local refreshing 플래그가 아니다.
+      expect(body.contains('controller.loadError != null'), true);
+      expect(body.contains('controller.items.isNotEmpty'), true);
       expect(
-          body.contains('final isStale = controller.loadError != null '
-              '&& controller.items.isNotEmpty;'),
+          body.contains('controller.isLoading && controller.lastLoadFailed'),
           true);
       expect(body.contains('if (!isStale) return const SizedBox.shrink();'), true);
+      expect(body.contains('_isRefreshing'), false);
     });
 
     test('01-c 01B의 소비자 계약이 그대로 살아 있다', () {
@@ -476,12 +497,20 @@ void main() {
     test('10-d refreshing state를 새로 만들지 않았다 (§11, §22)', () {
       final code = _codeOf(_src(_viewPath));
       expect(code.contains('_isRefreshing'), false);
-      // isLoading 중에는 본문이 LoadingWidget이라 old data를 fresh라고
-      // 주장하는 순간이 없다 — §11의 material gap 없음
-      final list = _codeOf(_bodyOf(_src(_viewPath), 'Widget _buildTOList('));
-      expect(list.contains("if (controller.isLoading) {"), true);
-      expect(list.contains("return const LoadingWidget(message: '공고 목록을 불러오는 중...');"),
-          true);
+      // [POSTING-V2-03P.1] 원래 이 자리는 "isLoading 중에는 본문이 통째로
+      //   LoadingWidget이라 old data를 fresh라고 주장하는 순간이 없다"를
+      //   고정했다. §6으로 새로고침 중에도 카드를 유지하게 되면서 그 근거가
+      //   사라졌으므로, 같은 보장을 배너 쪽에서 다시 만든다 — 실패로 낡은
+      //   데이터는 재시도가 끝날 때까지 계속 stale로 표시된다.
+      final banner =
+          _flat(_codeOf(_bodyOf(_src(_viewPath), 'Widget _buildStaleBanner(')));
+      expect(
+        banner.contains(
+            'controller.isLoading && controller.lastLoadFailed'),
+        true,
+        reason: '재시도 창 동안 배너가 사라지면 material gap이 다시 생긴다',
+      );
+      expect(banner.contains('controller.loadError != null'), true);
     });
   });
 }

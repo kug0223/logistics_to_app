@@ -266,9 +266,16 @@ class _JobsRootScreenState extends State<JobsRootScreen>
             ],
           ),
           // 사업장 scope chip — items 0건·로딩 완료 후에도 표시 (knownBusinessNames 캐시 사용)
+          //
+          // [POSTING-V2-03P.1] isLoading 가드를 두지 않는다. scope label은
+          //   knownBusinessNames 캐시에서 만들어지므로 refresh 중에도 이미 알고
+          //   있는 값이다. 가드가 있으면 새로고침할 때마다 헤더의 사업장 줄이
+          //   통째로 사라졌다가 되돌아오면서 아래 내용이 위아래로 흔들렸다.
+          //   아직 이름을 모르는 사업장은 label 자체가 id fallback으로 잠깐
+          //   달라질 수 있는데, 그 작은 text 변화를 없애려고 preload를 넣지는
+          //   않는다 — 추가 read를 만들 만한 문제가 아니다.
           Consumer<WorkforceController>(
             builder: (ctx, controller, _) {
-              if (controller.isLoading) return const SizedBox.shrink();
               final up = ctx.read<UserProvider>();
               final label = _computeScopeLabel(controller, up);
               if (label.isEmpty) return const SizedBox.shrink();

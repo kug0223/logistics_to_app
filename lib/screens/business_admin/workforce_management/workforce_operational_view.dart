@@ -527,9 +527,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   @override
   Widget build(BuildContext context) {
-    // WorkforceController 로딩 중이면 대기
+    // [POSTING-V2-03P.1] 첫 조회가 끝나기 전에만 대기한다.
+    //   Jobs와 controller를 공유하게 된 뒤로(03O.1) Jobs의 pull-to-refresh가
+    //   isLoading을 올리면 이 화면 전체가 스피너로 바뀌었다. 관리자가 건드리지도
+    //   않은 탭이 비는 셈이라, 이미 확보한 데이터가 있으면 그대로 둔다.
+    //   loadError가 있으면 gate하지 않는다 — 첫 조회가 실패했을 때 영구
+    //   스피너로 남으면 안 되고, 아래 화면이 자체 에러/빈 상태를 보여준다.
     final controller = context.watch<WorkforceController>();
-    if (controller.isLoading) {
+    if (!controller.hasLoadedOnce && controller.loadError == null) {
       return const LoadingWidget(message: '인력 정보를 불러오는 중...');
     }
 

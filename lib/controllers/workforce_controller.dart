@@ -45,6 +45,36 @@ class WorkforceController extends ChangeNotifier {
   /// 마지막 목록 조회 실패. 성공하면 반드시 null로 돌아간다.
   Object? get loadError => _loadError;
 
+  // ── [POSTING-V2-03P.1] NOT LOADED != TRUE EMPTY ─────────────────────
+  //
+  // 생성 직후 상태(items=[] · isLoading=false · loadError=null)는 "성공적으로
+  // 조회했는데 0건"과 글자 그대로 같았다. 그래서 첫 load가 시작되기 전 프레임이
+  // ROOT_EMPTY로 그려졌고, 소비자는 "아직 안 불러왔다"를 말할 방법이 없었다.
+  bool _hasLoadedOnce = false;
+  bool _lastSuccessfulWasEmpty = false;
+
+  /// canonical 공고 목록을 **한 번이라도 성공적으로** 받아본 적이 있는가.
+  /// 실패만 한 첫 시도는 여기 포함되지 않는다.
+  bool get hasLoadedOnce => _hasLoadedOnce;
+
+  /// 마지막 **성공** 스냅샷이 0건이었는가.
+  ///
+  /// 이것이 필요한 이유: items가 0이라는 사실만으로는 "서버가 확인해 준 0건"과
+  /// "회수 prune 직후 재조회 중이라 잠시 0"을 구분할 수 없다. 후자를
+  /// ROOT_EMPTY로 확정하면 관리자에게 "공고가 없습니다"를 잘못 말하게 된다.
+  bool get lastSuccessfulWasEmpty => _lastSuccessfulWasEmpty;
+
+  // [POSTING-V2-03P.1] _loadError는 재시도 시작 시 지워진다(01B). 이전에는 그
+  //   사이 본문이 통째로 LoadingWidget이었으므로 stale 데이터가 화면에 없었다.
+  //   이제 새로고침 중에도 기존 카드를 유지하므로, 그 창 동안 실패로 낡아 있던
+  //   데이터가 아무 표시 없이 최신인 것처럼 보인다. 재시도 결과가 나오기 전까지
+  //   "아직 최신이 아니다"는 여전히 참이므로 그 사실을 따로 들고 있는다.
+  bool _lastLoadFailed = false;
+
+  /// 마지막으로 **끝난** 조회가 실패했는가. 재시도가 시작돼도 내려가지 않고,
+  /// 다음 성공에서만 내려간다.
+  bool get lastLoadFailed => _lastLoadFailed;
+
   /// 특정 공고의 슬롯/상세 조회가 실패한 상태인지 여부.
   bool hasGroupDetailError(String groupId) =>
       _groupDetailErrorIds.contains(groupId);
@@ -370,6 +400,8 @@ class WorkforceController extends ChangeNotifier {
       final user = userProvider.currentUser;
       if (user == null) {
         _items = [];
+        // [POSTING-V2-03P.1] 사용자를 모르는 상태는 canonical 결과가 아니다 —
+        //   hasLoadedOnce를 세우지 않는다.
         return;
       }
 
@@ -426,12 +458,18 @@ class WorkforceController extends ChangeNotifier {
         }));
       }
       } // else 블록 닫힘
+      // [POSTING-V2-03P.1] 여기 도달 = canonical 결과를 확보했다.
+      //   (scope가 비어 0건인 경우도 "서버 기준 0건"이라는 확정된 답이다)
+      _hasLoadedOnce = true;
+      _lastSuccessfulWasEmpty = _items.isEmpty;
+      _lastLoadFailed = false;
     } catch (e) {
       debugPrint('❌ WorkforceController.load 실패: $e');
       // [POSTING-V2-01B] _items = [] 금지.
       // 실패를 빈 결과로 커밋하면 '공고 0건'과 구분할 수 없고,
       // refresh 실패에서는 멀쩡하던 목록까지 사라진다.
       _loadError = e;
+      _lastLoadFailed = true;
     } finally {
       // pending follow-up이 남아 있으면 곧바로 다음 회차가 이어지므로
       //   그 사이에 idle로 보이게 만들지 않는다.

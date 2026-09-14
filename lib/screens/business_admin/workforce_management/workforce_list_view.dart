@@ -606,10 +606,6 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // [POSTING-V2-03A.1] 알림 target 해석 — 로드가 끝난 뒤 1회만 실행된다.
     _resolveRevealTarget(controller);
 
-    if (controller.isLoading) {
-      return const LoadingWidget(message: '공고 목록을 불러오는 중...');
-    }
-
     // [POSTING-V2-01B] ERROR != EMPTY.
     // 조회 실패 + 보여줄 데이터 없음 → empty state가 아니라 error state.
     // 실패 상태에서 '새 공고를 등록하세요'를 권하면 장애 중에 잘못된 행동을 유도한다.
@@ -617,8 +613,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // 최신이 아니라는 사실은 위의 _buildStaleBanner가 계속 표시한다.
     // [POSTING-V2-03F.1] 이 분기가 먼저다: items가 비어 있으면 배너가 아니라
     //   본문 전체가 error다. ROOT_EMPTY는 성공 조회에서만 성립한다.
+    // [POSTING-V2-03P.1] 이제 loading보다도 앞이다 — 첫 시도가 실패했는데
+    //   "불러오는 중"을 계속 보여주면 무한 skeleton이 error를 가린다.
     if (controller.loadError != null && controller.items.isEmpty) {
       return _buildErrorState();
+    }
+
+    // [POSTING-V2-03P.1] 아직 한 번도 성공하지 못했다 — NOT LOADED != TRUE EMPTY.
+    //   이전에는 이 상태가 items.isEmpty 하나로 ROOT_EMPTY에 떨어져,
+    //   load가 시작되기 전 프레임에 '등록된 공고가 없습니다'가 그려졌다.
+    if (!controller.hasLoadedOnce) {
+      return const LoadingWidget(message: '공고 목록을 불러오는 중...');
     }
 
     // [POSTING-V2-02E.1] 성공 조회 후의 0건은 원인이 셋이고 다음 행동도 다르다.
@@ -629,9 +634,22 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     //   그 해석 자체는 stale 상태에서도 참이다. 그래서 문구를 바꾸지 않는다.
     //   최신 서버 기준이라고 오인하지 않게 하는 일은 배너가 맡는다 —
     //   empty taxonomy 위에 freshness 차원을 얹는 것이지, 겹쳐 쓰지 않는다.
+    //
+    // [POSTING-V2-03P.1] 단, 지금 0건인 것이 **확정된 0건**일 때만이다.
+    //   03N 회수 복구는 prune으로 items를 일시적으로 비운 뒤 새 scope로 다시
+    //   조회한다. 그 사이를 ROOT_EMPTY로 확정하면 관리자에게 없는 사실을 말한다.
+    //   마지막 성공이 0건이었다면 refresh 중에도 그 해석은 계속 참이다.
     if (controller.items.isEmpty) {
+      if (controller.isLoading && !controller.lastSuccessfulWasEmpty) {
+        return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+      }
       return _buildEmptyState(_PostingEmptyKind.root);
     }
+
+    // [POSTING-V2-03P.1] 여기부터는 보여줄 데이터가 있다 — refresh 중이어도
+    //   목록을 스피너로 갈아치우지 않는다. 이전에는 isLoading을 items보다 먼저
+    //   봐서 모든 새로고침이 카드를 지우고 가운데 스피너를 띄웠고, ListView가
+    //   tree에서 빠지면서 스크롤 위치까지 매번 최상단으로 돌아갔다.
 
     final allFilteredItems = _getFilteredItems(controller.items);
 
@@ -785,8 +803,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   /// `items.isEmpty`일 때는 나오지 않는다. 그 경우는 보여줄 데이터 자체가
   /// 없으므로 본문 전체가 error state다(01B).
   Widget _buildStaleBanner(WorkforceController controller) {
-    final isStale =
-        controller.loadError != null && controller.items.isNotEmpty;
+    // [POSTING-V2-03P.1] 재시도가 도는 동안에도 배너를 유지한다.
+    //   _loadError는 재시도 시작 시 지워지는데, 이제는 그 창 동안에도 기존
+    //   카드가 화면에 남아 있다. 배너까지 같이 사라지면 낡은 데이터가 잠깐
+    //   최신인 것처럼 보인다 — 재시도 결과가 나오기 전까지는 아직 아니다.
+    final stillUnrefreshed = controller.isLoading && controller.lastLoadFailed;
+    final isStale = (controller.loadError != null || stillUnrefreshed) &&
+        controller.items.isNotEmpty;
     if (!isStale) return const SizedBox.shrink();
 
     return Container(
