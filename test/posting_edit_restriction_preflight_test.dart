@@ -137,12 +137,24 @@ String? blockReason({
     return null;
   }
 
-  final confirmed = apps.where((a) => _occupancy.contains(a.status)).length;
-  if (confirmed > 0) return 'CONFIRMED_BLANKET';
+  // [POSTING-V2-03J.1] 마스터 경로도 필드별 판정이다. 확정자가 있다는 것만으로
+  //   근무 조건 전체를 막지 않는다 — 기존 약속은 03I 스냅샷이 지킨다.
   for (final work in removed) {
     final blocked = apps.any((a) =>
         _toIdentity.contains(a.status) && a.selectedWorkType == work.workType);
     if (blocked) return 'IDENTITY_TO';
+  }
+  for (final work in next) {
+    final orig = original.where((o) => o.id == work.id).firstOrNull;
+    if (orig == null) continue; // 새 업무는 기존 약속과 무관하다
+    if (work.requiredCount < orig.requiredCount) {
+      final occupied = apps
+          .where((a) =>
+              _occupancy.contains(a.status) &&
+              a.selectedWorkType == work.workType)
+          .length;
+      if (work.requiredCount < occupied) return 'REQUIRED_COUNT';
+    }
   }
   return null;
 }
@@ -314,34 +326,51 @@ void main() {
 
   // ── §4, §10 CONTRACT predicate ─────────────────────────────────
   group('PREFLIGHT-02 마스터 경로가 서버 blanket guard와 일치한다', () {
-    // [POSTING-V2-03H.1 재작성] 판정 위치가 트랜잭션 안으로 옮겨졌다
-    // (재시도마다 재검증되도록). 정책은 그대로 — 값 비교가 아니라 키 존재다.
-    test('02-a 서버가 키 존재만으로 막는다 (전제 확인)', () {
+    // [POSTING-V2-03J.1 재작성] blanket이 필드별 정책으로 좁혀졌다.
+    //   `mutatesWorkDetails`는 여전히 키 존재로 계산되고 03G.1 payload
+    //   조건화의 근거로 남지만, 확정자 차단 조건은 이제
+    //   `touchesUnverifiedFields`다 — 임금·인원·새 업무는 개별 guard가 본다.
+    test('02-a 서버가 키 존재로 변경 여부를 판단한다 (전제 확인)', () {
       final fns = _src(_fnsPath);
       expect(fns.contains('const mutatesWorkDetails = "workDetails" in updates;'),
           true,
           reason: '값 비교가 아니라 키 존재 검사다 — 이 사실이 03G.1 payload 조건화의 근거');
       expect(
-          fns.contains(
-              'if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {'),
+          fns.contains('if (!isSuperAdmin && touchesUnverifiedFields && '
+              'freshConfirmed > 0) {'),
           true,
-          reason: '정책은 그대로, 판정만 트랜잭션 안에서 신선한 값으로 한다');
+          reason: '확정자 차단은 미검증 필드에만 적용된다 (03J.1 §16)');
       expect(fns.contains('"확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."'), true);
     });
 
-    test('02-b 확정자가 있으면 업무 변경 전체가 막힌다 (§10)', () {
+    // [POSTING-V2-03J.1 재작성] 이 둘은 03G.1 시점의 blanket을 고정하고
+    //   있었다. 정책이 필드별로 바뀌었으므로 기대값도 뒤집힌다 —
+    //   확정자가 있어도 identity를 건드리지 않으면 허용된다.
+    test('02-b 확정자가 있어도 인원 증가는 허용된다 (§10)', () {
       final apps = [const App('CONFIRMED', selectedWorkType: '피킹')];
       final original = [const Work('피킹', '09:00', '13:00')];
-      // identity를 건드리지 않는 임금/인원 변경도 서버는 거부한다
       final next = [const Work('피킹', '09:00', '13:00', requiredCount: 9)];
       expect(
           blockReason(
               apps: apps, original: original, next: next, isSlotMode: false),
-          'CONFIRMED_BLANKET',
-          reason: '사라진 업무만 보는 판정으로는 서버 범위를 재현하지 못한다');
+          isNull,
+          reason: '기존 약속은 스냅샷이 지킨다 — 모집 조건은 바꿀 수 있다');
     });
 
-    test('02-c 업무 추가만 해도 막힌다', () {
+    test('02-b2 인원을 점유 인원 아래로 줄이면 막힌다', () {
+      final apps = [
+        const App('CONFIRMED', selectedWorkType: '피킹'),
+        const App('CONTRACT_PENDING', selectedWorkType: '피킹'),
+      ];
+      final original = [const Work('피킹', '09:00', '13:00', requiredCount: 5)];
+      final next = [const Work('피킹', '09:00', '13:00', requiredCount: 1)];
+      expect(
+          blockReason(
+              apps: apps, original: original, next: next, isSlotMode: false),
+          'REQUIRED_COUNT');
+    });
+
+    test('02-c 업무 추가는 허용된다', () {
       final apps = [const App('CONTRACT_PENDING', selectedWorkType: '피킹')];
       final original = [const Work('피킹', '09:00', '13:00')];
       final next = [
@@ -351,7 +380,8 @@ void main() {
       expect(
           blockReason(
               apps: apps, original: original, next: next, isSlotMode: false),
-          'CONFIRMED_BLANKET');
+          isNull,
+          reason: '새 업무 때문에 기존 확정자를 취소하게 만들지 않는다');
     });
 
     test('02-d 확정자가 없으면 identity만 본다 — 업무명 기준 (§4)', () {
@@ -649,7 +679,10 @@ void main() {
         '업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다',
         '"해당 업무 시간대에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요."',
         '활성 지원자가 있는 공고의 계약 기간을 변경할 수 없습니다',
-        'const ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING"];',
+        // [POSTING-V2-03J.1] CONFIRMED 추가 — blanket이 좁아지면서 이 guard가
+        //   확정 근무자의 업무·시간 약속을 지키는 자리가 됐다.
+        'const ACTIVE_STATUSES =\n'
+            '          ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];',
       ]) {
         expect(fns.contains(marker), true, reason: '$marker 가 사라졌다');
       }
@@ -717,8 +750,13 @@ void main() {
       final body = _codeOf(
           _bodyOf(_src(_editPath), 'String? _workChangeBlockReason('));
       expect(body.contains('활성 지원자가 있어 업무 구성을 변경할 수 없습니다'), true);
-      expect(body.contains('확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다.'), true);
       expect(body.contains('보다 작게 설정할 수 없습니다'), true);
+      // [POSTING-V2-03J.1 재작성] 마스터 경로의 blanket 문구는 client에서
+      //   사라졌다 — 서버가 미검증 필드에만 쓰므로 client가 선제로 말하면
+      //   서버는 허용하는데 화면이 먼저 막는 상태가 된다.
+      expect(body.contains('확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다.'), false);
+      expect(_src(_fnsPath).contains('"확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."'),
+          true, reason: '서버 canonical 문구는 그대로 남는다');
     });
   });
 }

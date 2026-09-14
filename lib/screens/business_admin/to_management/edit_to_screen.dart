@@ -645,11 +645,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     AppStatus.confirmed,
   ];
 
-  /// 마스터(TO) 경로 identity guard가 보는 상태. 확정은 아래 blanket guard가 따로 본다.
+  /// 마스터(TO) 경로 identity guard가 보는 상태.
+  ///
+  /// [POSTING-V2-03J.1] CONFIRMED 추가 — 서버 ACTIVE_STATUSES와 같은 집합이다.
+  /// 이전에는 확정자를 blanket이 따로 막았지만, blanket이 좁아지면서
+  /// 이 판정이 확정 근무자의 업무·시간 약속을 지키는 자리가 됐다.
   static const _toIdentityStatuses = [
     AppStatus.pending,
     AppStatus.invited,
     AppStatus.contractPending,
+    AppStatus.confirmed,
   ];
 
   /// 정원을 차지한 상태 — requiredCount 하한.
@@ -703,16 +708,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       return null;
     }
 
-    // 마스터(TO) 경로 — 서버는 확정자가 하나라도 있으면 workDetails 변경 전체를
-    // 거부한다. 사라진 업무만 보는 판정으로는 이 범위를 재현하지 못한다.
-    final confirmed =
-        apps.where((app) => _occupancyStatuses.contains(app['status'])).length;
-    if (confirmed > 0) {
-      return '확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다.';
-    }
+    // 마스터(TO) 경로.
+    //
+    // [POSTING-V2-03J.1] 서버가 "확정자가 있으면 근무 조건 전체 금지"에서
+    //   필드별 판정으로 바뀌었다. 여기서도 같은 기준을 쓴다 — 서버는 허용하는데
+    //   클라이언트가 먼저 막으면 관리자는 이유를 알 수 없다.
 
-    // 확정자가 없어도, 사라지는 업무에 진행 중인 지원이 걸려 있으면 막힌다.
-    // 서버는 이 경로에서 업무명(selectedWorkType)으로 본다.
+    // 사라지거나 identity가 바뀐 업무 — 확정자도 보호 대상이다.
     for (final work in removed) {
       final blocked = apps.any((app) =>
           _toIdentityStatuses.contains(app['status']) &&
@@ -720,6 +722,36 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (blocked) {
         return "'${work.workType}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. "
             '해당 지원을 먼저 처리해주세요.';
+      }
+    }
+
+    // 남아 있는 업무의 필드별 판정.
+    for (final work in next) {
+      final orig = _originalWorkDetails.where((o) => o.id == work.id).firstOrNull;
+      if (orig == null) continue; // 새로 추가한 업무 — 기존 약속과 무관하다
+
+      // wdId 교체는 기존 지원서와의 연결을 끊는다 — identity 파괴다.
+      if (orig.wdId != null && work.wdId != orig.wdId) {
+        final blocked = apps.any((app) =>
+            _toIdentityStatuses.contains(app['status']) &&
+            app['selectedWorkType'] == work.workType);
+        if (blocked) {
+          return "'${work.workType}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. "
+              '해당 지원을 먼저 처리해주세요.';
+        }
+      }
+
+      // 필요 인원은 이미 자리를 차지한 인원 아래로 내릴 수 없다.
+      if (work.requiredCount < orig.requiredCount) {
+        final occupied = apps
+            .where((app) =>
+                _occupancyStatuses.contains(app['status']) &&
+                app['selectedWorkType'] == work.workType)
+            .length;
+        if (work.requiredCount < occupied) {
+          return "'${work.workType}' 업무의 필요 인원(${work.requiredCount})은 "
+              '현재 확정 인원($occupied)보다 작게 설정할 수 없습니다.';
+        }
       }
     }
     return null;

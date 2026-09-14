@@ -9423,6 +9423,35 @@ export const callableUpdateTO = onCall(
     //   실제 지원자 조회는 txEdit 안에서 한다.
     const identityWorkTypesToGuard: string[] = [];
 
+    // [POSTING-V2-03J.1] 확정자가 있어도 무엇을 허용할지 가르는 분류.
+    //
+    // 이전에는 workDetails 키가 실렸다는 것만으로 전부 막았다. 그런데 기존
+    // 근무자의 약속은 03I 스냅샷이 이미 지키고 있으므로, 그 잠금은 약속 보호가
+    // 아니라 운영 차단이었다 — 확정자 한 명 때문에 앞으로 모집할 임금도 못 바꿨다.
+    //
+    // 여기서는 관계를 읽지 않는다. 클라이언트가 보낸 값과 기존 값을 비교해
+    // "무엇이 바뀌었는가"만 분류하고, 실제 판정은 txEdit 안에서 한다.
+    //
+    // 약속 조건 — 기존 지원서는 스냅샷으로 보호되므로 앞으로의 모집 조건은 바꿀 수 있다.
+    const COMPENSATION_FIELDS = [
+      "wage", "wageType", "baseHourlyWage", "breakMinutes",
+      "nightAllowanceApplied", "nightIncluded", "taxDeductionType",
+    ];
+    // 그중 03I.3 이전 지원서가 갖지 못한 것들 — 활성 레거시가 있으면 못 바꾼다.
+    const LEGACY_UNKNOWN_FIELDS = [
+      "baseHourlyWage", "breakMinutes",
+      "nightAllowanceApplied", "nightIncluded", "taxDeductionType",
+    ];
+    // 순서는 업무를 더하거나 빼면 따라 움직이는 파생값이라 의도적 수정으로 보지 않는다.
+    const NON_POLICY_FIELDS = ["order", "wdId"];
+
+    /** 레거시 지원서가 모르는 조건이 바뀐 업무명. */
+    const legacyLockWorkTypes: string[] = [];
+    /** 업무별 필요인원을 줄인 {workType, newCount}. */
+    const capacityReductions: Array<{workType: string; next: number}> = [];
+    /** 아직 정책을 검증하지 않은 필드가 바뀌었다 — 확정자가 있으면 막는다. */
+    let touchesUnverifiedFields = false;
+
     // [4H.0C-WORKDETAIL-VALIDATION] workDetails 변경 시 중복·identity·delete 통합 검증
     if (!isSuperAdmin && mutatesWorkDetails) {
       const oldWDs = (toData.workDetails as unknown[] | undefined) ?? [];
@@ -9473,6 +9502,54 @@ export const callableUpdateTO = onCall(
         const stillExists = newIdSet.has(oldId);
         if (!stillExists) {
           identityWorkTypesToGuard.push(oldWd["workType"] as string);
+        }
+      }
+
+      // [POSTING-V2-03J.1] 남아 있는 업무(= identity가 그대로인 것)를 필드별로 본다.
+      for (const oldWd of oldWDs as Record<string, unknown>[]) {
+        const oldId =
+          `${oldWd["workType"]}_${oldWd["startTime"]}_${oldWd["endTime"]}`;
+        const newWd = (newWDs as Record<string, unknown>[]).find(
+          (d) =>
+            `${d["workType"]}_${d["startTime"]}_${d["endTime"]}` === oldId);
+        // 사라진 업무는 위 identity guard가 본다
+        if (!newWd) continue;
+        const workType = oldWd["workType"] as string;
+
+        // wdId 교체 — 같은 업무·같은 시간인데 식별자만 갈아끼우는 것은
+        //   기존 지원서와의 연결을 끊는다. identity 파괴로 취급한다.
+        //   (새 업무가 새 wdId를 갖는 것은 정상 — 여기 오지 않는다)
+        const oldWdId = oldWd["wdId"];
+        const newWdId = newWd["wdId"];
+        if (typeof oldWdId === "string" && oldWdId.length > 0 &&
+            newWdId !== oldWdId) {
+          identityWorkTypesToGuard.push(workType);
+        }
+
+        if (LEGACY_UNKNOWN_FIELDS.some(
+          (f) => (oldWd[f] ?? null) !== (newWd[f] ?? null))) {
+          legacyLockWorkTypes.push(workType);
+        }
+
+        const oldCount = (oldWd["requiredCount"] as number | undefined) ?? 0;
+        const nextCount = (newWd["requiredCount"] as number | undefined) ?? 0;
+        if (nextCount < oldCount) {
+          capacityReductions.push({workType, next: nextCount});
+        }
+
+        // 위 어느 분류에도 속하지 않는 필드가 바뀌었는가.
+        //   metadata(설명·색상·지급일·마감시각 등)는 downstream 의미를 아직
+        //   검증하지 않았으므로, blanket을 좁힌다는 이유만으로 열지 않는다.
+        const keys = new Set([...Object.keys(oldWd), ...Object.keys(newWd)]);
+        for (const k of keys) {
+          if (COMPENSATION_FIELDS.includes(k)) continue;
+          if (NON_POLICY_FIELDS.includes(k)) continue;
+          if (k === "requiredCount") continue;
+          if (k === "workType" || k === "startTime") continue;
+          if (k === "endTime") continue;
+          if ((oldWd[k] ?? null) !== (newWd[k] ?? null)) {
+            touchesUnverifiedFields = true;
+          }
         }
       }
     }
@@ -9720,17 +9797,43 @@ export const callableUpdateTO = onCall(
       //   막을 뿐 지원 관계 변화는 잡지 못한다. 그 몫은 이 검사가 한다.
       //   apply·invite·confirm이 모두 toRef를 쓰므로, 이 트랜잭션이 읽은 toRef가
       //   충돌해 재시도되고, 재시도에서 freshData는 그 변화를 반영한다.
-      if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {
+      //   [POSTING-V2-03J.1] 범위를 좁혔다. 기존 근무자의 약속은 03I 스냅샷이
+      //   지키므로, 확정자가 있다는 것만으로 근무 조건 전체를 잠그지 않는다.
+      //   임금·산정 조건·필요인원·새 업무 추가는 아래 개별 guard가 판정하고,
+      //   여기서는 **아직 정책을 검증하지 않은 필드**만 막는다(§15).
+      if (!isSuperAdmin && touchesUnverifiedFields && freshConfirmed > 0) {
         throw new HttpsError(
           "failed-precondition",
           "확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."
         );
       }
+      // [POSTING-V2-03J.1] 업무별 필요인원은 이미 자리를 차지한 인원 아래로
+      //   내릴 수 없다. workTypeConfirmedCounts는 CONFIRMED+CONTRACT_PENDING을
+      //   세며(syncTOStats가 count()로 교정) 트랜잭션이 읽은 문서 안에 있다 —
+      //   추가 조회가 없다.
+      if (!isSuperAdmin && capacityReductions.length > 0) {
+        const occupiedByType = (freshData.workTypeConfirmedCounts as
+          Record<string, number> | undefined) ?? {};
+        for (const {workType, next} of capacityReductions) {
+          const occupied = occupiedByType[workType] ?? 0;
+          if (next < occupied) {
+            throw new HttpsError(
+              "failed-precondition",
+              `'${workType}' 업무의 필요 인원(${next})은 ` +
+              `현재 확정 인원(${occupied})보다 작게 설정할 수 없습니다.`
+            );
+          }
+        }
+      }
       // [POSTING-V2-03H.1] identity guard — date guard와 같은 방식으로
       //   txEdit.get(query)를 쓴다. 재시도 때 다시 실행되는 것이 핵심이다.
       if (identityWorkTypesToGuard.length > 0) {
         // 인덱스: toId + selectedWorkType + status (기존 index 재사용, status 별도 equality)
-        const ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING"];
+        // [POSTING-V2-03J.1] CONFIRMED 추가. blanket이 좁아지면서 이 guard가
+        //   확정 근무자의 업무·시간 약속을 지키는 유일한 자리가 된다.
+        //   FLEX의 ACTIVE_STATUSES_WITH_CONFIRMED와 같은 집합이 된다.
+        const ACTIVE_STATUSES =
+          ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
         const identitySnapshots = await Promise.all(
           identityWorkTypesToGuard.flatMap((wt) =>
             ACTIVE_STATUSES.map((st) =>
@@ -9749,6 +9852,35 @@ export const callableUpdateTO = onCall(
           throw new HttpsError(
             "failed-precondition",
             `'${wtList}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요.`
+          );
+        }
+      }
+      // [POSTING-V2-03J.1] 03I.4의 FLEX legacy lock을 CONTRACT에도 맞춘다.
+      //   스냅샷 이전 지원서는 휴게·야간·연장 단가·공제를 갖지 못해 공고의
+      //   현재 값으로 계산된다. 과거 값을 복원할 근거가 없으므로 backfill하지
+      //   않고, 그 사람이 관계를 갖고 있는 동안 변경만 막는다.
+      //   금액·급여유형은 레거시도 갖고 있으므로 여기서 막지 않는다(§6).
+      if (!isSuperAdmin && legacyLockWorkTypes.length > 0) {
+        const legacySnaps = await Promise.all(
+          legacyLockWorkTypes.map((wt) =>
+            txEdit.get(
+              db.collection("applications")
+                .where("toId", "==", toId)
+                .where("selectedWorkType", "==", wt)
+                .where("status", "in",
+                  ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"])
+                .limit(500)
+            )
+          )
+        );
+        const hasLegacy = legacySnaps.some((snap) =>
+          snap.docs.some(
+            (d) => typeof d.data().nightAllowanceApplied !== "boolean"));
+        if (hasLegacy) {
+          throw new HttpsError(
+            "failed-precondition",
+            "이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 " +
+            "변경할 수 없습니다. 해당 지원 관계가 종료된 후 변경해 주세요."
           );
         }
       }

@@ -261,8 +261,11 @@ void main() {
           body.contains('const freshConfirmed = '
               '(freshData.totalConfirmed as number | undefined) ?? 0;'),
           true);
+      // [POSTING-V2-03J.1 재작성] 조건이 `mutatesWorkDetails` →
+      //   `touchesUnverifiedFields`로 좁혀졌다(§16). 03H가 고정한 것은
+      //   "판정이 freshData 기준"이라는 점이고 그것은 그대로다.
       expect(
-          body.contains('if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {'),
+          body.contains('if (!isSuperAdmin && touchesUnverifiedFields && freshConfirmed > 0) {'),
           true);
     });
 
@@ -287,9 +290,15 @@ void main() {
       expect(
           body.contains("업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요."),
           true);
-      expect(body.contains('const ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING"];'),
+      // [POSTING-V2-03J.1 재작성] 03H 시점에는 확정자를 blanket이 따로 막고
+      //   있어 identity guard에 CONFIRMED가 없어도 됐다. blanket이 좁아지면서
+      //   이 guard가 확정 약속을 지키는 자리가 되어 CONFIRMED가 추가됐다.
+      //   메시지 자체는 그대로다.
+      expect(
+          body.contains('const ACTIVE_STATUSES =\n'
+              '          ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];'),
           true,
-          reason: 'status 집합 무변경 (§8)');
+          reason: 'FLEX의 ACTIVE_STATUSES_WITH_CONFIRMED와 같은 집합');
     });
   });
 

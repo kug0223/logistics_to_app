@@ -512,7 +512,12 @@ void main() {
 
     test('07-c 03H atomicity guard 유지 (§21)', () {
       final fns = _src(_fnsPath);
-      expect(fns.contains('if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {'),
+      // [POSTING-V2-03J.1 재작성] blanket이 `mutatesWorkDetails`에서
+      //   `touchesUnverifiedFields`로 좁혀졌다. 확정자가 있어도 임금·인원·
+      //   새 업무 추가는 개별 guard가 판정한다. 03H가 세운 것 — 두 판정 모두
+      //   freshData 기준이고 txEdit 안이라는 것 — 은 그대로다.
+      expect(
+          fns.contains('if (!isSuperAdmin && touchesUnverifiedFields && freshConfirmed > 0) {'),
           true);
       expect(fns.contains('identityWorkTypesToGuard.length > 0'), true);
     });

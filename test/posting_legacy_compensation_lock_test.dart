@@ -421,7 +421,10 @@ void main() {
       final fns = _src(_fnsPath);
       expect(fns.contains('const ACTIVE_STATUSES_WITH_CONFIRMED = '
           '["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];'), true);
-      expect(fns.contains('if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {'),
+      // [POSTING-V2-03J.1 재작성] blanket 조건이 좁혀졌다(§16). 확인하려는
+      //   것은 여전히 같다 — 확정자 판정이 freshData 기준으로 TX 안에 있다.
+      expect(
+          fns.contains('if (!isSuperAdmin && touchesUnverifiedFields && freshConfirmed > 0) {'),
           true);
     });
   });
