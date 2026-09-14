@@ -10179,33 +10179,53 @@ export const callableUpdateSlotWorkDetails = onCall(
       newWDs: Record<string, unknown>[]
     ) => {
       // 보호 대상 필드가 하나도 안 바뀌었으면 조회하지 않는다 — 정상 경로 비용 0
-      const touched = newWDs.filter((nw) => {
+      // [POSTING-V2-03K] 매칭 키는 **슬롯에 저장된** old WD에서 가져온다.
+      //   클라이언트 payload가 wdId를 되돌려주지 않으면 wdId로만 연결된
+      //   지원서를 놓쳤다 — 그것도 fail-open이다.
+      type TouchedWD = {
+        compositeId: string; workType: string; wdId: string | undefined;
+      };
+      const touched: TouchedWD[] = [];
+      for (const nw of newWDs) {
         const id = `${nw["workType"]}_${nw["startTime"]}_${nw["endTime"]}`;
         const ow = oldWDs.find(
           (o) => `${o["workType"]}_${o["startTime"]}_${o["endTime"]}` === id);
-        return ow !== undefined && compensationChanged(ow, nw);
-      });
+        if (ow === undefined || !compensationChanged(ow, nw)) continue;
+        touched.push({
+          compositeId: id,
+          workType: nw["workType"] as string,
+          wdId: (ow["wdId"] ?? nw["wdId"]) as string | undefined,
+        });
+      }
       if (touched.length === 0) return;
 
+      // [POSTING-V2-03K] limit 없이 **완전히** 읽는다.
+      //   이전에는 limit(500) 뒤에 메모리 필터를 걸었다. 501번째에 있는
+      //   보호 대상 레거시는 보이지 않았고, 그대로 수정이 통과했다 —
+      //   잘라 읽은 결과는 완전한 결과가 아니므로 판정 근거가 될 수 없다.
+      //   키를 쿼리에 넣어 좁히는 방법은 쓸 수 없다: workDetailId·wdId는
+      //   둘 다 있을 때만 저장되고(callableApplyToTO), Firestore는
+      //   "필드 없음"을 질의할 수 없다. 범위는 슬롯 하나(=하루)로 이미
+      //   좁아 있으므로 그 안에서 완전히 읽는다.
       const legacySnap = await db.collection("applications")
         .where("toId", "==", checkToId)
         .where("slotId", "==", checkSlotId)
         .where("status", "in", ACTIVE_STATUSES_WITH_CONFIRMED)
-        .limit(500)
         .get();
       if (legacySnap.empty) return;
 
-      for (const nw of touched) {
-        const compositeId =
-          `${nw["workType"]}_${nw["startTime"]}_${nw["endTime"]}`;
-        const wdId = nw["wdId"] as string | undefined;
+      for (const t of touched) {
         const hasLegacy = legacySnap.docs.some((d) => {
           const a = d.data();
           // 스냅샷을 가진 지원서는 자기 조건으로 계산하므로 제한 대상이 아니다
           if (typeof a.nightAllowanceApplied === "boolean") return false;
-          return a.workDetailId === compositeId ||
-            a.workDetailId === nw["workType"] ||
-            (wdId !== undefined && a.wdId === wdId);
+          // [POSTING-V2-03K] 어느 workDetail인지 특정할 근거가 아예 없는
+          //   지원서 — 보수적으로 잠근다. 무시하면 fail-open이다.
+          if (typeof a.workDetailId !== "string" &&
+              typeof a.wdId !== "string") return true;
+          return a.workDetailId === t.compositeId ||
+            a.workDetailId === t.workType ||
+            (t.wdId !== undefined && a.wdId === t.wdId);
         });
         if (hasLegacy) {
           throw new HttpsError(

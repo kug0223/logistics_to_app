@@ -135,9 +135,16 @@ const _activeStatuses = [
 
 class AppRow {
   final String status;
-  final String workDetailId;
+
+  /// 지원서가 가리키는 workDetail. **null이면 필드 자체가 없다** —
+  /// callableApplyToTO는 클라이언트가 보냈을 때만 저장한다.
+  final String? workDetailId;
+
+  /// [POSTING-V2-03K] 슬롯 경로의 canonical immutable key. 역시 조건부 저장.
+  final String? wdId;
   final bool hasSnapshot;
-  const AppRow(this.status, this.workDetailId, {this.hasSnapshot = false});
+  const AppRow(this.status, this.workDetailId,
+      {this.hasSnapshot = false, this.wdId});
 }
 
 bool _compChanged(Map<String, dynamic> oldWD, Map<String, dynamic> newWD) =>
@@ -152,12 +159,20 @@ bool legacyLocked({
   List<int>? queries,
 }) {
   if (!_compChanged(oldWD, newWD)) return false; // 조회하지 않는다
-  queries?.add(1);
+  queries?.add(1); // 슬롯당 1회 — limit 없이 완전히 읽는다 (03K)
   final id = '${newWD['workType']}_${newWD['startTime']}_${newWD['endTime']}';
-  return apps.any((a) =>
-      _activeStatuses.contains(a.status) &&
-      !a.hasSnapshot &&
-      (a.workDetailId == id || a.workDetailId == newWD['workType']));
+  // [POSTING-V2-03K] 매칭 키는 **슬롯에 저장된** old WD에서 가져온다.
+  //   클라이언트 payload가 wdId를 되돌려주지 않아도 놓치지 않는다.
+  final wdId = (oldWD['wdId'] ?? newWD['wdId']) as String?;
+  return apps.any((a) {
+    if (!_activeStatuses.contains(a.status)) return false;
+    if (a.hasSnapshot) return false;
+    // 어느 workDetail인지 특정할 근거가 아예 없으면 보수적으로 잠근다
+    if (a.workDetailId == null && a.wdId == null) return true;
+    return a.workDetailId == id ||
+        a.workDetailId == newWD['workType'] ||
+        (wdId != null && a.wdId == wdId);
+  });
 }
 
 Map<String, dynamic> _wd({
@@ -469,6 +484,207 @@ void main() {
       expect(body.contains('.where("status", "in", ACTIVE_STATUSES_WITH_CONFIRMED)'),
           true,
           reason: '4상태를 한 번에 — 상태별 query를 만들지 않는다');
+    });
+  });
+
+  // ── 03K FLEX guard completeness ───────────────────────────────
+  group('LEGACY-10 판정이 500건에서 잘리지 않는다', () {
+    /// 같은 슬롯 안의 두 업무. A만 조건을 바꾼다.
+    Map<String, dynamic> wdA({int breakMinutes = 60, String? wdId = 'wd_a'}) => {
+          'workType': '피킹',
+          'startTime': '09:00',
+          'endTime': '18:00',
+          if (wdId != null) 'wdId': wdId,
+          'wage': 100000,
+          'baseHourlyWage': null,
+          'breakMinutes': breakMinutes,
+          'nightAllowanceApplied': true,
+          'taxDeductionType': 'none',
+        };
+    Map<String, dynamic> wdB({int breakMinutes = 60}) => {
+          'workType': '검수',
+          'startTime': '18:00',
+          'endTime': '22:00',
+          'wdId': 'wd_b',
+          'wage': 100000,
+          'baseHourlyWage': null,
+          'breakMinutes': breakMinutes,
+          'nightAllowanceApplied': true,
+          'taxDeductionType': 'none',
+        };
+
+    List<AppRow> many(int n, {required bool hasSnapshot, String? workDetailId,
+            String? wdId}) =>
+        List.generate(
+            n,
+            (_) => AppRow('CONFIRMED', workDetailId,
+                hasSnapshot: hasSnapshot, wdId: wdId));
+
+    test('10-a 보호 관계가 501번째에 있어도 BLOCK (§12 case A)', () {
+      final apps = [
+        // 스냅샷을 가진 정상 cohort 600건이 앞에 있다
+        ...many(600, hasSnapshot: true, workDetailId: '피킹_09:00_18:00'),
+        const AppRow('CONFIRMED', '피킹_09:00_18:00'), // 레거시 — 마지막
+      ];
+      expect(
+          legacyLocked(
+              oldWD: wdA(), newWD: wdA(breakMinutes: 30), apps: apps),
+          true,
+          reason: '앞 500건에 가려 놓치면 안 된다');
+    });
+
+    test('10-b 다른 workDetail 관계 700건 — 대상 수정은 ALLOW (§12 case B)', () {
+      final apps = many(700, hasSnapshot: false, workDetailId: '검수_18:00_22:00',
+          wdId: 'wd_b');
+      expect(
+          legacyLocked(
+              oldWD: wdA(), newWD: wdA(breakMinutes: 30), apps: apps),
+          false,
+          reason: 'B의 레거시가 A의 산정 조건을 잠그면 안 된다');
+    });
+
+    test('10-c 같은 슬롯 sibling granularity (§6)', () {
+      // A에 레거시 관계, B에는 없음 → B의 조건 변경은 허용
+      const onA = [AppRow('CONFIRMED', '피킹_09:00_18:00', wdId: 'wd_a')];
+      expect(
+          legacyLocked(oldWD: wdB(), newWD: wdB(breakMinutes: 30), apps: onA),
+          false);
+      // 같은 관계가 A의 조건 변경은 막는다
+      expect(
+          legacyLocked(oldWD: wdA(), newWD: wdA(breakMinutes: 30), apps: onA),
+          true);
+    });
+
+    test('10-d identity 불명 legacy는 보수적 BLOCK (§12 case C)', () {
+      // workDetailId도 wdId도 없다 — 어느 업무인지 복원할 근거가 없다
+      const unknown = [AppRow('CONFIRMED', null)];
+      expect(
+          legacyLocked(oldWD: wdA(), newWD: wdA(breakMinutes: 30),
+              apps: unknown),
+          true);
+      expect(
+          legacyLocked(oldWD: wdB(), newWD: wdB(breakMinutes: 30),
+              apps: unknown),
+          true,
+          reason: '같은 슬롯의 어느 업무도 특정할 수 없다');
+    });
+
+    test('10-e workType만 아는 legacy도 보수적 BLOCK (§3)', () {
+      const byWorkType = [AppRow('CONFIRMED', '피킹')];
+      expect(
+          legacyLocked(oldWD: wdA(), newWD: wdA(breakMinutes: 30),
+              apps: byWorkType),
+          true);
+      expect(
+          legacyLocked(oldWD: wdB(), newWD: wdB(breakMinutes: 30),
+              apps: byWorkType),
+          false,
+          reason: '업무명이 다르면 이 업무의 관계가 아니다');
+    });
+
+    test('10-f wdId로만 연결된 legacy도 잡는다 (§2)', () {
+      // 클라이언트 payload에 wdId가 없어도 슬롯의 old WD에서 가져온다
+      const byWdId = [AppRow('CONFIRMED', null, wdId: 'wd_a')];
+      final newNoWdId = wdA(breakMinutes: 30, wdId: null);
+      expect(legacyLocked(oldWD: wdA(), newWD: newNoWdId, apps: byWdId), true);
+    });
+
+    test('10-g 정상 snapshot cohort만 있으면 ALLOW (§9)', () {
+      final apps = many(800, hasSnapshot: true, workDetailId: '피킹_09:00_18:00',
+          wdId: 'wd_a');
+      expect(
+          legacyLocked(oldWD: wdA(), newWD: wdA(breakMinutes: 30), apps: apps),
+          false,
+          reason: '기존 worker는 자기 스냅샷으로 계산된다');
+    });
+
+    test('10-h 4개 active 상태 모두 잠근다 / 종료 상태는 아니다 (§4)', () {
+      for (final st in ['PENDING', 'INVITED', 'CONTRACT_PENDING', 'CONFIRMED']) {
+        expect(
+            legacyLocked(
+                oldWD: wdA(),
+                newWD: wdA(breakMinutes: 30),
+                apps: [AppRow(st, '피킹_09:00_18:00')]),
+            true,
+            reason: st);
+      }
+      for (final st in ['REJECTED', 'CANCELED', 'AUTO_CANCELED', 'EXPIRED']) {
+        expect(
+            legacyLocked(
+                oldWD: wdA(),
+                newWD: wdA(breakMinutes: 30),
+                apps: [AppRow(st, '피킹_09:00_18:00')]),
+            false,
+            reason: st);
+      }
+    });
+
+    test('10-i 보호 필드 무변경이면 관계 조회 0 (§10)', () {
+      final q = <int>[];
+      legacyLocked(
+        oldWD: wdA(),
+        newWD: wdA(), // 아무것도 안 바뀜
+        apps: many(900, hasSnapshot: false, workDetailId: '피킹_09:00_18:00'),
+        queries: q,
+      );
+      expect(q, isEmpty);
+    });
+
+    // ── 서버 배선 ──
+    test('10-j 서버 조회에 limit이 없다 (§5)', () {
+      final body = _codeOf(
+          _bodyOf(_src(_fnsPath), 'const assertNoLegacyCompensationLock = async ('));
+      expect(body.contains('.limit('), false,
+          reason: '잘라 읽으면 그 뒤 레거시를 놓쳐 fail-open이 된다');
+      expect(body.contains('.where("slotId", "==", checkSlotId)'), true,
+          reason: '범위는 슬롯 하나로 이미 좁다');
+    });
+
+    test('10-k 식별 불가 지원서를 보수적으로 취급한다 (§3)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_fnsPath), 'const assertNoLegacyCompensationLock = async (')));
+      expect(
+          body.contains('if (typeof a.workDetailId !== "string" && '
+              'typeof a.wdId !== "string") return true;'),
+          true);
+    });
+
+    test('10-l 매칭 키를 슬롯의 old WD에서 가져온다 (§2)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(_fnsPath), 'const assertNoLegacyCompensationLock = async (')));
+      expect(body.contains('wdId: (ow["wdId"] ?? nw["wdId"]) as string | undefined,'),
+          true,
+          reason: '클라이언트 payload만 믿으면 wdId로만 연결된 관계를 놓친다');
+    });
+
+    test('10-m 기존 canonical message를 그대로 쓴다 (§13)', () {
+      final body = _bodyOf(
+          _src(_fnsPath), 'const assertNoLegacyCompensationLock = async (');
+      expect(
+          body.contains('"이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 " +'),
+          true);
+    });
+
+    test('10-n SINGLE/BATCH가 같은 헬퍼를 쓴다 (§7)', () {
+      final fns = _src(_fnsPath);
+      expect('await assertNoLegacyCompensationLock('.allMatches(fns).length, 2);
+      expect('const assertNoLegacyCompensationLock = async ('.allMatches(fns).length,
+          1, reason: '구현이 하나이므로 진입점이 달라도 결과가 같다');
+    });
+
+    test('10-o 다른 FLEX guard는 건드리지 않았다 (§11)', () {
+      final fns = _src(_fnsPath);
+      // identity guard — exact key + limit(1)
+      expect(fns.contains('.where("workDetailId", "==", compositeId)'), true);
+      // requiredCount guard — aggregate count
+      expect(fns.contains('.count()'), true);
+    });
+
+    test('10-p CONTRACT 경로 무회귀 (§16)', () {
+      final fns = _src(_fnsPath);
+      expect(fns.contains('const relationWorkTypes = [...new Set(['), true,
+          reason: '03J.4 CONTRACT 구조가 그대로다');
+      expect(fns.contains('legacyLockTargets.length > 0'), true);
     });
   });
 
