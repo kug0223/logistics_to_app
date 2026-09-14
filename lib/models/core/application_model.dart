@@ -29,6 +29,53 @@ class ApplicationModel {
   final int wage; // 지원 시점의 금액 (업무유형 변경 시 함께 업데이트)
   // 🔥 업무 상세 정보 (UI 표시용)
   final String? wageType;              // 급여 타입 (hourly, daily)
+
+  // ── [POSTING-V2-03I.3] 급여 산정 조건 스냅샷 ──────────────────────────
+  //
+  // 약속한 임금은 금액 하나가 아니다. 같은 100,000원이라도 휴게시간이
+  // 30분인지 60분인지, 야간수당을 주는지, 연장 단가가 얼마인지에 따라
+  // 실제로 받는 돈이 달라진다. 그래서 지원·초대 시점의 산정 조건까지
+  // 서버가 함께 복사해 둔다.
+  //
+  // 이전에는 금액만 스냅샷이었고 나머지는 급여 확정 시점에 공고에서 다시
+  // 읽었다. 그 사이 관리자가 공고의 휴게시간이나 야간 설정을 바꾸면,
+  // 이미 확정된 사람의 연장·야간 수당이 조용히 달라졌다.
+  //
+  // 모든 필드가 nullable이다 — 이 스냅샷이 생기기 전 지원서에는 없다.
+  // 그 구분은 [hasCompensationSnapshot]이 한다. 별도 version 필드는 두지
+  // 않는다: 신규 지원서는 아래 세 필드를 항상 쓰므로 존재 여부로 충분하다.
+  final int? baseHourlyWage;           // 일급일 때 연장·조기출근 단가
+  final int? breakMinutes;             // 소정 휴게시간
+  final bool? nightAllowanceApplied;   // 야간수당 지급 여부
+  final bool? nightIncluded;           // 야간 포함 근무
+  final String? taxDeductionType;      // 공제 방식
+
+  /// 이 지원서가 급여 산정 조건 스냅샷을 갖고 있는가.
+  ///
+  /// 신규 지원·초대는 [nightAllowanceApplied]를 항상 기록하므로,
+  /// 이 값의 존재만으로 신규/레거시가 갈린다. 레거시 지원서는 이 스냅샷이
+  /// 없어 공고의 현재 조건으로 계산할 수밖에 없다 — 그 경로는
+  /// `WorkDetailHelper`에 legacy compatibility로 명시돼 있다.
+  bool get hasCompensationSnapshot => nightAllowanceApplied != null;
+
+  /// 약속된 급여 산정 조건. 스냅샷이 없으면 null.
+  ///
+  /// 키 이름은 workDetail 문서와 같다 — 소비자가 두 형태를 구분하지
+  /// 않고 같은 방식으로 읽을 수 있어야 한다.
+  Map<String, dynamic>? get compensationSnapshot {
+    if (!hasCompensationSnapshot) return null;
+    return {
+      'wage': wage,
+      if (wageType != null) 'wageType': wageType,
+      if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+      if (breakMinutes != null) 'breakMinutes': breakMinutes,
+      'nightAllowanceApplied': nightAllowanceApplied,
+      if (nightIncluded != null) 'nightIncluded': nightIncluded,
+      if (taxDeductionType != null) 'taxDeductionType': taxDeductionType,
+      if (startTime.isNotEmpty) 'startTime': startTime,
+      if (endTime.isNotEmpty) 'endTime': endTime,
+    };
+  }
   final String? workTypeIcon;          // 업무 아이콘
   final String? workTypeColor;         // 업무 색상
   final String? workTypeBackgroundColor; // 업무 배경색
@@ -152,6 +199,11 @@ class ApplicationModel {
     required this.wage,
     // 🔥 업무 상세 정보
     this.wageType,
+    this.baseHourlyWage,
+    this.breakMinutes,
+    this.nightAllowanceApplied,
+    this.nightIncluded,
+    this.taxDeductionType,
     this.workTypeIcon,
     this.workTypeColor,
     this.workTypeBackgroundColor,
@@ -262,6 +314,12 @@ class ApplicationModel {
       wage: (data['wage'] as num?)?.toInt() ?? 0,
       // 🔥 업무 상세 정보
       wageType: data['wageType'],
+      // [POSTING-V2-03I.3] 없으면 null — 레거시 지원서와 구분된다
+      baseHourlyWage: (data['baseHourlyWage'] as num?)?.toInt(),
+      breakMinutes: (data['breakMinutes'] as num?)?.toInt(),
+      nightAllowanceApplied: data['nightAllowanceApplied'] as bool?,
+      nightIncluded: data['nightIncluded'] as bool?,
+      taxDeductionType: data['taxDeductionType'] as String?,
       workTypeIcon: data['workTypeIcon'],
       workTypeColor: data['workTypeColor'],
       workTypeBackgroundColor: data['workTypeBackgroundColor'],
@@ -394,6 +452,12 @@ class ApplicationModel {
       'wage': wage,
       // 🔥 업무 상세 정보
       'wageType': wageType,
+      if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+      if (breakMinutes != null) 'breakMinutes': breakMinutes,
+      if (nightAllowanceApplied != null)
+        'nightAllowanceApplied': nightAllowanceApplied,
+      if (nightIncluded != null) 'nightIncluded': nightIncluded,
+      if (taxDeductionType != null) 'taxDeductionType': taxDeductionType,
       'workTypeIcon': workTypeIcon,
       'workTypeColor': workTypeColor,
       'workTypeBackgroundColor': workTypeBackgroundColor,
@@ -514,6 +578,11 @@ class ApplicationModel {
     int? wage,
     // 🔥 업무 상세 정보
     String? wageType,
+    int? baseHourlyWage,
+    int? breakMinutes,
+    bool? nightAllowanceApplied,
+    bool? nightIncluded,
+    String? taxDeductionType,
     String? workTypeIcon,
     String? workTypeColor,
     String? workTypeBackgroundColor,
@@ -602,6 +671,12 @@ class ApplicationModel {
       wage: wage ?? this.wage,
       // 🔥 업무 상세 정보
       wageType: wageType ?? this.wageType,
+      baseHourlyWage: baseHourlyWage ?? this.baseHourlyWage,
+      breakMinutes: breakMinutes ?? this.breakMinutes,
+      nightAllowanceApplied:
+          nightAllowanceApplied ?? this.nightAllowanceApplied,
+      nightIncluded: nightIncluded ?? this.nightIncluded,
+      taxDeductionType: taxDeductionType ?? this.taxDeductionType,
       workTypeIcon: workTypeIcon ?? this.workTypeIcon,
       workTypeColor: workTypeColor ?? this.workTypeColor,
       workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,

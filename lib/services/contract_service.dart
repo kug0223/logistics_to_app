@@ -120,6 +120,12 @@ class ContractService {
   ///
   /// [application]에 약속 임금이 없으면(레거시 결측) **예외를 던진다.**
   /// 현재 모집 임금으로 과거 약속을 조용히 덮어쓰지 않는다.
+  /// [POSTING-V2-03I.3] 금액만이 아니라 **급여 산정 조건 전체**를 약속 버전으로
+  /// 맞춘다. 같은 100,000원이라도 휴게시간·야간수당·연장 단가가 다르면
+  /// 실제로 받는 돈이 달라지므로, 금액만 덮으면 계약서가 반쪽만 약속 버전인
+  /// mixed-version 문서가 된다.
+  ///
+  /// 스냅샷이 없는 레거시 지원서는 금액만 맞춘다 — 그 이상은 복원할 근거가 없다.
   WorkDetailData _withPromisedWage(
     ApplicationModel application,
     WorkDetailData workDetail,
@@ -132,13 +138,30 @@ class ContractService {
       );
     }
     final promisedType = application.wageType;
-    if (promisedWage == workDetail.wage &&
-        (promisedType == null || promisedType == workDetail.wageType)) {
-      return workDetail; // 모집 임금과 약속 임금이 같다 — 그대로 쓴다
+    if (!application.hasCompensationSnapshot) {
+      // legacy compatibility — 금액/급여유형만 약속 버전으로 맞춘다
+      if (promisedWage == workDetail.wage &&
+          (promisedType == null || promisedType == workDetail.wageType)) {
+        return workDetail;
+      }
+      return workDetail.copyWith(
+        wage: promisedWage,
+        wageType: promisedType ?? workDetail.wageType,
+      );
     }
+    // 지급일 설정(paySchedule*)은 임금 조건이 아니라 별도 변경 flow를 가지므로
+    // 현재 값을 그대로 둔다. 업무명·아이콘 등 표시 정보도 마찬가지다.
     return workDetail.copyWith(
       wage: promisedWage,
       wageType: promisedType ?? workDetail.wageType,
+      baseHourlyWage: application.baseHourlyWage,
+      clearBaseHourlyWage: application.baseHourlyWage == null,
+      breakMinutes: application.breakMinutes,
+      nightAllowanceApplied: application.nightAllowanceApplied,
+      nightIncluded: application.nightIncluded,
+      taxDeductionType: application.taxDeductionType,
+      startTime: application.startTime.isNotEmpty ? application.startTime : null,
+      endTime: application.endTime.isNotEmpty ? application.endTime : null,
     );
   }
 

@@ -761,21 +761,30 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   // [WAGE-GUARD] TO workDetails 변경 전 미확정 근무자 경고 다이얼로그
   // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
+  /// [POSTING-V2-03I.3] 급여 산정에 실제로 쓰이는 조건이 바뀌었는가.
+  ///
+  /// 이전에는 `requiredCount`와 업무 개수 변화까지 이 판정에 들어 있었다.
+  /// 필요 인원은 급여 계산식 어디에도 쓰이지 않는데, 인원만 고쳐도 임금 경고가
+  /// 떴다. 업무 추가·삭제도 마찬가지다 — 그쪽은 03G.1 preflight의 책임이고,
+  /// 남은 업무의 임금 조건이 그대로면 경고할 것이 없다.
+  ///
+  /// `startTime`/`endTime`도 뺀다. 시간 변경은 업무 identity 변경이라
+  /// 활성 지원자가 있으면 03G.1 preflight가 form 반영 전에 막고, 지원자가
+  /// 없으면 이 경고 자체가 뜨지 않는다 — 실질적으로 도달할 수 없는 중복이었다.
   bool _hasWageFieldsChanged() {
-    if (_workDetails.length != _originalWorkDetails.length) return true;
-    for (int i = 0; i < _workDetails.length; i++) {
-      final cur = _workDetails[i];
-      final orig = _originalWorkDetails[i];
+    // 업무 개수가 다르면 같은 업무끼리 비교할 수 없다. 남아 있는 업무 중
+    // identity가 같은 것만 짝지어 임금 조건 변화를 본다.
+    for (final cur in _workDetails) {
+      final orig =
+          _originalWorkDetails.where((o) => o.id == cur.id).firstOrNull;
+      if (orig == null) continue; // 새로 추가된 업무 — 기존 약속과 무관
       if (cur.wage != orig.wage ||
           cur.wageType != orig.wageType ||
           cur.breakMinutes != orig.breakMinutes ||
           cur.nightAllowanceApplied != orig.nightAllowanceApplied ||
           cur.nightIncluded != orig.nightIncluded ||
           cur.baseHourlyWage != orig.baseHourlyWage ||
-          cur.taxDeductionType != orig.taxDeductionType ||
-          cur.startTime != orig.startTime ||
-          cur.endTime != orig.endTime ||
-          cur.requiredCount != orig.requiredCount) {
+          cur.taxDeductionType != orig.taxDeductionType) {
         return true;
       }
     }
@@ -818,16 +827,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StyledDialog(
-        title: '모집 임금 변경',
+        title: '임금 및 급여 산정 조건 변경',
         subtitle: hasConfirmed ? '이 공고에 확정된 근무자가 있습니다' : '이 공고에 기존 지원자가 있습니다',
         icon: Icons.warning_amber_rounded,
         headerColor: AppColors.warning,
         content: Text(
-          // 이전 문구는 '미확정 급여 계산에 영향을 줄 수 있습니다'였는데 사실과 달랐다.
-          // 기존 지원자의 급여는 지원 시점 스냅샷으로 계산되므로 영향을 받지 않는다.
-          '임금을 변경하면 기존 지원자의 지원 당시 임금은 유지되고, '
-          '변경된 임금은 이후 새로 지원하는 사람부터 적용됩니다.'
-          '${hasConfirmed ? '\n이미 확정된 근무자의 약속 임금과 지급 기준은 변경되지 않습니다.' : ''}'
+          // [POSTING-V2-03I.3] 금액뿐 아니라 휴게시간·야간·연장 단가·공제까지
+          //   지원 시점 조건이 지원서에 저장되므로, 변경은 이후 지원자에게만 적용된다.
+          '임금이나 급여 산정 조건을 변경해도 기존 지원자의 지원 당시 조건은 유지됩니다. '
+          '변경된 조건은 이후 새로 지원하는 사람부터 적용됩니다.'
+          '${hasConfirmed ? '\n이미 확정된 근무자의 약속된 임금과 지급 기준도 변경되지 않습니다.' : ''}'
           '\n\n계속 저장하시겠습니까?',
           style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
         ),

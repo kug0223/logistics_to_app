@@ -8844,6 +8844,44 @@ function generateWdId(): string {
 //             silently 0으로 반환하면 "정원 여유 있음"으로 오판할 수 있으므로 throw.
 //             caller(callableApplyToTO)는 이를 failed-precondition으로 처리한다.
 //
+// [POSTING-V2-03I.3] 지원 시점 급여 산정 조건 스냅샷.
+//
+// 약속한 임금은 금액 하나가 아니다. 같은 100,000원이라도 휴게시간과
+// 야간수당 여부, 연장 단가에 따라 실제 지급액이 달라진다. 금액만 복사하고
+// 나머지를 급여 확정 때 공고에서 다시 읽으면, 그 사이 바뀐 조건이 이미
+// 확정된 사람에게 소급 적용된다.
+//
+// [SERVER-WAGE-FIX]와 같은 원칙 — 값은 서버가 matched workDetail에서
+// 결정하고 클라이언트 전달값을 신뢰하지 않는다.
+//
+// 기본값은 WorkDetailData.toMap()의 생략 규칙과 맞춘다:
+//   breakMinutes 생략=0 / nightAllowanceApplied 생략=true
+//   nightIncluded 생략=false
+// nightAllowanceApplied를 항상 기록하므로 이 필드의 존재가 곧
+// "조건 스냅샷이 있다"는 표시다(별도 version 필드 불필요).
+/**
+ * 지원/초대 시점의 급여 산정 조건을 application에 고정할 형태로 만든다.
+ * @param {Record<string, unknown>|undefined} wd 서버가 매칭한 workDetail
+ * @return {Record<string, unknown>} application에 병합할 조건 필드
+ */
+export function buildCompensationSnapshot(
+  wd: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!wd) return out;
+  const bhw = wd["baseHourlyWage"];
+  if (typeof bhw === "number" && bhw > 0) out.baseHourlyWage = bhw;
+  const brk = wd["breakMinutes"];
+  out.breakMinutes = typeof brk === "number" ? brk : 0;
+  const nAp = wd["nightAllowanceApplied"];
+  out.nightAllowanceApplied = typeof nAp === "boolean" ? nAp : true;
+  const nIn = wd["nightIncluded"];
+  out.nightIncluded = typeof nIn === "boolean" ? nIn : false;
+  const tdt = wd["taxDeductionType"];
+  if (typeof tdt === "string" && tdt.length > 0) out.taxDeductionType = tdt;
+  return out;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getWorkDetailCount(
   slotData: Record<string, unknown>,
@@ -20417,6 +20455,27 @@ export const callableChangeApplicationWorkType = onCall(
       throw new HttpsError("failed-precondition", "동일한 업무유형입니다.");
     }
 
+    // [POSTING-V2-03I.3] 업무를 옮기는 것은 명시적 약속 변경이다.
+    //   공고 수정과 달리 새 업무의 조건으로 다시 약속하는 것이 맞다.
+    //   금액만 바꾸고 휴게·야간·연장 단가를 이전 업무 것으로 남기면
+    //   어느 쪽 약속도 아닌 값이 된다. 조건은 서버가 결정한다.
+    let changedCompensation: Record<string, unknown> = {};
+    if (toId) {
+      const toRefForWD = db.collection("tos").doc(toId);
+      const wdSourceSnap = slotId ?
+        await toRefForWD.collection("slots").doc(slotId).get() :
+        await toRefForWD.get();
+      const wdList = (wdSourceSnap.data()?.workDetails as
+        Record<string, unknown>[] | undefined) ?? [];
+      const byId = newWorkDetailId ?
+        wdList.find((w) =>
+          `${w["workType"]}_${w["startTime"]}_${w["endTime"]}` ===
+            newWorkDetailId || w["wdId"] === newWorkDetailId) :
+        undefined;
+      const newWD = byId ?? wdList.find((w) => w["workType"] === newWorkType);
+      if (newWD) changedCompensation = buildCompensationSnapshot(newWD);
+    }
+
     // 2. attendance 쿼리 (calculated + confirmed 병렬)
     const [calcSnap, confSnap] = await Promise.all([
       db.collection("attendance")
@@ -20484,6 +20543,8 @@ export const callableChangeApplicationWorkType = onCall(
         originalWage: freshData.originalWage ?? currentWage,
         changedAt: admin.firestore.FieldValue.serverTimestamp(),
         changedBy: callerUid,
+        // [POSTING-V2-03I.3] 새 업무 조건으로 다시 약속
+        ...changedCompensation,
       };
       if (newWorkDetailId !== undefined) appUpdate.workDetailId = newWorkDetailId;
       if (newWageType !== undefined) appUpdate.wageType = newWageType;
@@ -24947,6 +25008,9 @@ export const callableApplyToTO = onCall(
 
     // ── 4. 슬롯 또는 TO 단위 정원 사전 체크 + 서버 임금 추출 ──
     // [V7-FIX] wage/wageType을 클라이언트 값 대신 서버 TO/슬롯 문서에서 추출 (임금 위조 차단)
+    // [POSTING-V2-03I.3] 조건 스냅샷의 출처가 되는 workDetail.
+    //   슬롯·계약 어느 경로든 서버가 매칭한 그 정의를 쓴다.
+    let promisedWD: Record<string, unknown> | undefined;
     let serverWage: number | undefined;
     let serverWageType: string | undefined;
     let resolvedWdId: string | undefined; // [Phase 8.1E.2] 매칭된 workDetail의 immutable wdId
@@ -24985,6 +25049,7 @@ export const callableApplyToTO = onCall(
           (d) => d["workType"] === selectedWorkType
         ) ?? {};
       }
+      promisedWD = wd;
       serverWage = wd["wage"] as number | undefined;
       serverWageType = wd["wageType"] as string | undefined;
       resolvedWdId = wd["wdId"] as string | undefined; // [Phase 8.1E.2]
@@ -25028,6 +25093,7 @@ export const callableApplyToTO = onCall(
         );
       }
       if (matchedWD) {
+        promisedWD = matchedWD;
         serverWage = matchedWD["wage"] as number | undefined;
         serverWageType = matchedWD["wageType"] as string | undefined;
         resolvedWdId = matchedWD["wdId"] as string | undefined; // [Phase 8.1E.2]
@@ -25042,6 +25108,8 @@ export const callableApplyToTO = onCall(
       throw new HttpsError("failed-precondition", "해당 업무 유형의 임금 정보를 서버에서 찾을 수 없습니다.");
     }
     const effectiveWage = serverWage;
+    // [POSTING-V2-03I.3] 금액과 함께 산정 조건도 지금 고정한다.
+    const compensationSnapshot = buildCompensationSnapshot(promisedWD);
     // [LOW-41-01] wageType 화이트리스트 — 레거시 TO 누락 시 클라이언트 값 무검증 저장 방지
     const VALID_WAGE_TYPES = ["hourly", "daily"];
     const effectiveWageType = (serverWageType && VALID_WAGE_TYPES.includes(serverWageType))
@@ -25308,6 +25376,8 @@ export const callableApplyToTO = onCall(
           workDate: effectiveContractWorkDate,
           // [V5-FIX] 재지원 시 임금·시간 갱신 — TO 임금 변경 후 재지원 시 구버전 잔류 방지
           wage: effectiveWage, wageType: effectiveWageType,
+          // [POSTING-V2-03I.3] 재지원도 그 시점 조건으로 약속
+          ...compensationSnapshot,
           startTime, endTime,
           statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
           canceledAt: null, cancelReason: null,
@@ -25358,6 +25428,8 @@ export const callableApplyToTO = onCall(
           selectedWorkType,
           // [V7-FIX] 서버 TO 문서 임금 사용 (클라이언트 제공값 폴백)
           wage: effectiveWage, wageType: effectiveWageType,
+          // [POSTING-V2-03I.3] 금액과 같은 정의의 산정 조건
+          ...compensationSnapshot,
           startTime, endTime,
           status: "PENDING",
           type: isContract ? "long_term" : "short",
@@ -26163,6 +26235,9 @@ export const callableInviteWorker = onCall(
     let derivedWageType: string | undefined;
 
     let inviteResolvedWdId: string | undefined; // [Phase 8.1E.2]
+    // [POSTING-V2-03I.3] 초대도 지원과 같은 약속을 만든다.
+    //   경로에 따라 조건 출처가 달라지면 안 된다.
+    let inviteMatchedWD: Record<string, unknown> | undefined;
     if (selectedWorkType) {
       const wds = slotWorkDetails.length > 0
         ? slotWorkDetails
@@ -26194,6 +26269,7 @@ export const callableInviteWorker = onCall(
         if (typeof matchedWD.wage === "number")    derivedWage     = matchedWD.wage as number;
         if (typeof matchedWD.wageType === "string") derivedWageType = matchedWD.wageType as string;
         inviteResolvedWdId = matchedWD.wdId as string | undefined; // [Phase 8.1E.2]
+        inviteMatchedWD = matchedWD;
         // [Phase 8.1B.4] matchedWD의 startTime/endTime으로 보정 — 슬롯 레벨 시간보다 정확
         if (typeof matchedWD.startTime === "string" && matchedWD.startTime) startTime = matchedWD.startTime as string;
         if (typeof matchedWD.endTime   === "string" && matchedWD.endTime)   endTime   = matchedWD.endTime   as string;
@@ -26315,6 +26391,8 @@ export const callableInviteWorker = onCall(
       // [6.1 INV-02] wage/wageType — TO/slot canonical 원본에서 파생 (snapshotWage 보장)
       ...(derivedWage !== undefined  && {wage: derivedWage}),
       ...(derivedWageType !== undefined && {wageType: derivedWageType}),
+      // [POSTING-V2-03I.3] 금액과 같은 정의의 산정 조건
+      ...buildCompensationSnapshot(inviteMatchedWD),
       // [Phase 8.1E.2] wdId — immutable workDetail canonical identity
       ...(inviteResolvedWdId && {wdId: inviteResolvedWdId}),
       invitedBy:       callerUid,

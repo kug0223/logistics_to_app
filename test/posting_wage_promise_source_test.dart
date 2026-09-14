@@ -154,17 +154,19 @@ void main() {
       expect(body.contains('wageType: promisedType ?? workDetail.wageType,'), true);
     });
 
-    test('02-b 임금 두 필드만 바꾼다 (§5)', () {
+    // [POSTING-V2-03I.3 재작성] 03I.1에서는 금액 두 필드만 덮었다. 03I.2가
+    // 그것만으로는 계약서가 mixed-version으로 남는다는 것을 확인해(휴게·야간·
+    // 연장 단가는 현재 값이었다), 약속 범위를 급여 산정 조건 전체로 넓혔다.
+    // 지키는 선은 그대로다 — 업무 정체성과 지급일 설정은 건드리지 않는다.
+    test('02-b 임금 조건만 바꾸고 업무 정체성은 두지 않는다 (§5)', () {
       final body = _codeOf(
           _bodyOf(_src(_contractSvc), 'WorkDetailData _withPromisedWage('));
-      expect(body.contains('workDetail.copyWith('), true,
-          reason: '업무명·시간 등은 현재 workDetail을 그대로 쓴다');
+      expect(body.contains('workDetail.copyWith('), true);
       for (final other in [
-        'startTime:',
-        'endTime:',
         'workType:',
         'requiredCount:',
-        'breakMinutes:',
+        'payScheduleType:',
+        'payScheduleDay:',
       ]) {
         expect(body.contains(other), false, reason: '$other 까지 건드리면 안 된다');
       }
@@ -353,14 +355,18 @@ void main() {
           reason: '기존 지원자의 급여는 스냅샷으로 유지된다 — 사실과 달랐다');
     });
 
+    // [POSTING-V2-03I.3 재작성] 03I.1 문구는 금액만 말했다. 약속 범위가
+    // 급여 산정 조건 전체로 확정되면서 문구도 그에 맞게 넓어졌다.
     test('06-d 실제 의미를 말한다 (§10)', () {
       final body = _codeOf(
           _bodyOf(_src(_editPath), 'Future<bool> _showWageGuardWarning('));
       expect(
-          body.contains('임금을 변경하면 기존 지원자의 지원 당시 임금은 유지되고, '),
+          body.contains('임금이나 급여 산정 조건을 변경해도 기존 지원자의 지원 당시 조건은 유지됩니다. '),
           true);
-      expect(body.contains('변경된 임금은 이후 새로 지원하는 사람부터 적용됩니다.'), true);
-      expect(body.contains('이미 확정된 근무자의 약속 임금과 지급 기준은 변경되지 않습니다.'), true);
+      expect(body.contains('변경된 조건은 이후 새로 지원하는 사람부터 적용됩니다.'), true);
+      expect(body.contains('이미 확정된 근무자의 약속된 임금과 지급 기준도 변경되지 않습니다.'), true);
+      // 금액만 말하던 옛 문구는 남아 있지 않다
+      expect(body.contains('임금을 변경하면 기존 지원자의 지원 당시 임금은 유지되고'), false);
     });
 
     test('06-e 확정자 유무로 안내가 갈린다', () {
