@@ -78,6 +78,25 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // 슬롯 모드에서 draft TO의 공개 설정을 실제로 변경했는지 추적
   bool _slotPublishChanged = false;
 
+  // ── [POSTING-V2-03G.1] 업무 변경 사전 확인 ───────────────────────────
+  //
+  // 서버는 지원자가 걸린 업무의 구성 변경을 거부한다. 그런데 그 거부는
+  // 관리자가 업무를 다 고치고 저장을 누른 뒤에야 나타났다.
+  //
+  // 화면에 들어왔다는 이유만으로 지원 현황을 조회하지는 않는다 — 제목만
+  // 고치고 나가는 경우가 많고, 그 경우 조회는 순수한 낭비다. 업무를 실제로
+  // 바꾸려는 첫 순간에 한 번만 읽고, 이 편집 세션 동안 재사용한다.
+  //
+  // 이 스냅샷은 **안내용**이다. 조회 이후에 새 지원자가 들어올 수 있으므로
+  // 최종 판정은 언제나 서버다. 여기서 '가능'이라고 본 변경도 저장에서
+  // 거부될 수 있고, 그때는 기존 서버 메시지 경로가 그대로 쓰인다.
+  List<Map<String, dynamic>>? _applicationSnapshot;
+
+  /// 스냅샷 조회에 실패했다. 다시 시도하지 않고, 사전 안내를 포기한다.
+  /// **'지원자가 있다'로 해석하지 않는다** — 조회 실패로 허용된 수정까지
+  /// 막으면 서버 정책보다 강한 제약이 된다.
+  bool _applicationSnapshotFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -334,11 +353,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // 슬롯의 wage 수정이 가능하다. CLAUDE.md "시급/일급 TO 레벨에서 고정" 원칙은
       // application 스냅샷(지원 시점 복사)으로 보호되나, 슬롯 기준 wage 재조회가 일어날 경우
       // 불일치 발생 가능. 확정 지원자가 있고 임금 필드가 실제 변경된 경우 WAGE-GUARD 경고 발동됨.
+      // [POSTING-V2-03G.1] 업무를 건드리지 않았으면 payload에서 뺀다.
+      //   서버의 확정자 guard는 값이 바뀌었는지가 아니라 `workDetails` 키가
+      //   실렸는지를 본다. 늘 함께 보내던 탓에, 확정 근무자가 있는 공고는
+      //   제목 한 글자만 고쳐도 '근무 조건은 수정할 수 없습니다'로 거부됐다.
+      //   서버 정책은 그대로다 — 정책이 허용하는 수정을 실제로 가능하게 할 뿐이다.
+      final workDetailsChanged = _hasWorkDetailsChanged();
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
-        'workDetails': WorkDetailData.listToFirestore(_workDetails),
-        'totalRequired': totalRequired,
+        if (workDetailsChanged) ...{
+          'workDetails': WorkDetailData.listToFirestore(_workDetails),
+          'totalRequired': totalRequired,
+        },
         'hoursBeforeStart': _hoursBeforeStart,
         'publishMode': _publishMode,
         // null → CF가 FieldValue.delete() 처리; ms epoch → CF가 Timestamp 변환
@@ -522,6 +549,175 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   }
 
 
+  // ============================================================
+  // [POSTING-V2-03G.1] 업무 변경 사전 확인
+  // ============================================================
+
+  /// 이 편집 세션의 지원 현황을 한 번만 읽는다. 실패하면 null.
+  ///
+  /// 화면을 닫으면 함께 사라진다 — 전역 캐시로 승격하지 않는다.
+  Future<List<Map<String, dynamic>>?> _ensureApplicationSnapshot() async {
+    if (_applicationSnapshot != null) return _applicationSnapshot;
+    if (_applicationSnapshotFailed) return null;
+    try {
+      // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': widget.to.businessId,
+        'toId': widget.to.id,
+        'limit': 2000,
+      });
+      _applicationSnapshot = (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      return _applicationSnapshot;
+    } catch (e) {
+      debugPrint('⚠️ 지원 현황 조회 실패 (사전 확인 생략): $e');
+      _applicationSnapshotFailed = true;
+      return null;
+    }
+  }
+
+  /// 서버가 지원서를 업무에 매칭하는 세 가지 방식을 그대로 따른다.
+  ///   · 신규: workDetailId == '업무_시작_종료'
+  ///   · 레거시: workDetailId == 업무명 (시간대 구분 없음 — 보수적으로 일치로 본다)
+  ///   · wdId 직접 매칭
+  bool _appMatchesWork(Map<String, dynamic> app, WorkDetailData work) {
+    final workDetailId = app['workDetailId'];
+    if (workDetailId == work.id) return true;
+    if (workDetailId == work.workType) return true;
+    final wdId = work.wdId;
+    if (wdId != null && app['wdId'] == wdId) return true;
+    return false;
+  }
+
+  bool _isForSlot(Map<String, dynamic> app, String slotId) =>
+      app['slotId'] == slotId;
+
+  /// 슬롯 경로 identity guard가 보는 상태 — 확정까지 포함한다.
+  static const _slotIdentityStatuses = [
+    AppStatus.pending,
+    AppStatus.invited,
+    AppStatus.contractPending,
+    AppStatus.confirmed,
+  ];
+
+  /// 마스터(TO) 경로 identity guard가 보는 상태. 확정은 아래 blanket guard가 따로 본다.
+  static const _toIdentityStatuses = [
+    AppStatus.pending,
+    AppStatus.invited,
+    AppStatus.contractPending,
+  ];
+
+  /// 정원을 차지한 상태 — requiredCount 하한.
+  static const _occupancyStatuses = [
+    AppStatus.confirmed,
+    AppStatus.contractPending,
+  ];
+
+  /// [next]로 바꾸려 할 때 서버가 거부할 이유. 막을 이유가 없으면 null.
+  ///
+  /// 스냅샷이 없으면(아직 못 읽었거나 실패) null을 돌려준다 — 사전 안내를
+  /// 포기하는 것이지 허가가 아니다. 서버가 최종 판정을 그대로 한다.
+  String? _workChangeBlockReason(
+    List<Map<String, dynamic>> apps,
+    List<WorkDetailData> next,
+  ) {
+    final nextIds = next.map((w) => w.id).toSet();
+    final removed =
+        _originalWorkDetails.where((w) => !nextIds.contains(w.id)).toList();
+
+    if (widget.isSlotMode) {
+      // 슬롯 경로 — 날짜별로 독립이다. 다른 날짜의 지원자는 이 날짜를 묶지 않는다.
+      final slotIds = widget.isBatchMode
+          ? widget.batchSlots!.map((s) => s.id).toList()
+          : [widget.slot!.id];
+
+      for (final work in removed) {
+        final blocked = apps.any((app) =>
+            _slotIdentityStatuses.contains(app['status']) &&
+            slotIds.any((id) => _isForSlot(app, id)) &&
+            _appMatchesWork(app, work));
+        if (blocked) {
+          return '해당 업무 시간대에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. '
+              '해당 지원을 먼저 처리해주세요.';
+        }
+      }
+
+      // 필요 인원은 "지원자 존재"가 아니라 **확정 인원 미만**일 때만 막힌다.
+      for (final work in next) {
+        final occupied = apps
+            .where((app) =>
+                _occupancyStatuses.contains(app['status']) &&
+                slotIds.any((id) => _isForSlot(app, id)) &&
+                _appMatchesWork(app, work))
+            .length;
+        if (occupied > 0 && work.requiredCount < occupied) {
+          return "'${work.workType}' 업무의 필요 인원(${work.requiredCount})은 "
+              '현재 확정 인원($occupied)보다 작게 설정할 수 없습니다.';
+        }
+      }
+      return null;
+    }
+
+    // 마스터(TO) 경로 — 서버는 확정자가 하나라도 있으면 workDetails 변경 전체를
+    // 거부한다. 사라진 업무만 보는 판정으로는 이 범위를 재현하지 못한다.
+    final confirmed =
+        apps.where((app) => _occupancyStatuses.contains(app['status'])).length;
+    if (confirmed > 0) {
+      return '확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다.';
+    }
+
+    // 확정자가 없어도, 사라지는 업무에 진행 중인 지원이 걸려 있으면 막힌다.
+    // 서버는 이 경로에서 업무명(selectedWorkType)으로 본다.
+    for (final work in removed) {
+      final blocked = apps.any((app) =>
+          _toIdentityStatuses.contains(app['status']) &&
+          app['selectedWorkType'] == work.workType);
+      if (blocked) {
+        return "'${work.workType}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. "
+            '해당 지원을 먼저 처리해주세요.';
+      }
+    }
+    return null;
+  }
+
+  /// 업무를 [next]로 바꾸는 것이 허용되는지 확인하고, 아니면 안내 후 false.
+  ///
+  /// **form에 반영하기 전에** 호출한다 — 다 고쳐 놓고 돌려받는 것이 원래 문제였다.
+  Future<bool> _canApplyWorkChange(List<WorkDetailData> next) async {
+    final apps = await _ensureApplicationSnapshot();
+    if (!mounted) return false;
+    if (apps == null) return true; // 사전 확인 불가 — 서버가 최종 판정한다
+    final reason = _workChangeBlockReason(apps, next);
+    if (reason == null) return true;
+    ToastHelper.showError(reason);
+    return false;
+  }
+
+  /// 저장 payload에 workDetails를 실을지 결정한다.
+  ///
+  /// 서버의 확정자 guard는 **값이 바뀌었는지가 아니라 키가 실렸는지**를 본다.
+  /// 그래서 제목만 고쳐도 workDetails를 늘 함께 보내면, 서버가 허용하는
+  /// 수정까지 '근무 조건 수정'으로 거부됐다.
+  bool _hasWorkDetailsChanged() {
+    final before = WorkDetailData.listToCFPayload(_originalWorkDetails);
+    final after = WorkDetailData.listToCFPayload(_workDetails);
+    if (before.length != after.length) return true;
+    for (var i = 0; i < before.length; i++) {
+      final a = before[i];
+      final b = after[i];
+      if (a.length != b.length) return true;
+      for (final entry in a.entries) {
+        if (!b.containsKey(entry.key) || b[entry.key] != entry.value) return true;
+      }
+    }
+    return false;
+  }
+
   // [WAGE-GUARD] TO workDetails 변경 전 미확정 근무자 경고 다이얼로그
   // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
   bool _hasWageFieldsChanged() {
@@ -546,31 +742,22 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   }
 
   Future<bool> _showWageGuardWarning() async {
-    try {
-      // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final result = await callable.call<Map<String, dynamic>>({
-        'businessId': widget.to.businessId,
-        'toId': widget.to.id,
-        'limit': 2000,
-      });
-      final appsRaw = (result.data['applications'] as List? ?? [])
-          .whereType<Map>()
-          .toList();
-      const confirmedStatuses = [AppStatus.confirmed, AppStatus.contractPending];
-      final hasConfirmed = appsRaw.any(
-          (m) => confirmedStatuses.contains(m['status']));
-      if (!hasConfirmed) return true; // 미확정 근무자 없음 — 경고 불필요
-    } catch (e) {
+    // [POSTING-V2-03G.1] 사전 확인과 같은 스냅샷을 쓴다 — 같은 세션에서
+    //   지원 현황을 두 번 읽지 않는다. 실패 시 동작은 그대로 유지한다:
+    //   여기는 FAIL CLOSE(저장 차단), 사전 확인은 FAIL OPEN(서버에 위임).
+    //   임금은 서버 가드가 없어 이 경고가 마지막 방어선이기 때문이다.
+    final appsRaw = await _ensureApplicationSnapshot();
+    if (!mounted) return false;
+    if (appsRaw == null) {
       // [4H.0B-WAGE-01] FAIL CLOSE — 조회 실패 시 저장 차단 (SINGLE/BATCH 서버 가드 없으므로)
-      debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (저장 차단): $e');
-      if (mounted) {
-        ToastHelper.showError('지원자 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
-      }
+      debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (저장 차단)');
+      ToastHelper.showError('지원자 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
       return false;
     }
+    const confirmedStatuses = [AppStatus.confirmed, AppStatus.contractPending];
+    final hasConfirmed =
+        appsRaw.any((m) => confirmedStatuses.contains(m['status']));
+    if (!hasConfirmed) return true; // 미확정 근무자 없음 — 경고 불필요
 
     if (!mounted) return false;
     final result = await showDialog<bool>(
@@ -719,29 +906,34 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         ToastHelper.showError('같은 업무와 근무 시간이 이미 있습니다.');
         return;
       }
+      // [POSTING-V2-03G.1] 업무를 더하는 것만으로도 막히는 경우가 있다 —
+      //   마스터 경로는 확정자가 있으면 근무 조건 변경 자체를 거부한다.
+      final candidate = WorkDetailData(
+        workType: result.workType!,
+        workTypeIcon: result.workTypeIcon,
+        workTypeColor: result.workTypeColor,
+        workTypeBackgroundColor: result.workTypeBackgroundColor ?? '#E3F2FD',
+        wage: result.wage!,
+        wageType: result.wageType,
+        requiredCount: result.requiredCount!,
+        startTime: result.startTime!,
+        endTime: result.endTime!,
+        shiftType: result.shiftType,
+        nightAllowanceApplied: result.nightAllowanceApplied,
+        nightIncluded: result.nightIncluded,
+        breakMinutes: result.breakMinutes,
+        baseHourlyWage: result.baseHourlyWage,
+        payScheduleType: result.payScheduleType,
+        payScheduleDay: result.payScheduleDay,
+        payScheduleTime: result.payScheduleTime,
+        taxDeductionType: result.taxDeductionType,
+        order: _workDetails.length,
+      );
+      if (!await _canApplyWorkChange([..._workDetails, candidate])) return;
+      if (!mounted) return;
       setState(() {
         _hasChanges = true; // [B-4] workDetails 변경 감지
-        _workDetails.add(WorkDetailData(
-          workType: result.workType!,
-          workTypeIcon: result.workTypeIcon,
-          workTypeColor: result.workTypeColor,
-          workTypeBackgroundColor: result.workTypeBackgroundColor ?? '#E3F2FD',
-          wage: result.wage!,
-          wageType: result.wageType,
-          requiredCount: result.requiredCount!,
-          startTime: result.startTime!,
-          endTime: result.endTime!,
-          shiftType: result.shiftType,
-          nightAllowanceApplied: result.nightAllowanceApplied,
-          nightIncluded: result.nightIncluded,
-          breakMinutes: result.breakMinutes,
-          baseHourlyWage: result.baseHourlyWage,
-          payScheduleType: result.payScheduleType,
-          payScheduleDay: result.payScheduleDay,
-          payScheduleTime: result.payScheduleTime,
-          taxDeductionType: result.taxDeductionType,
-          order: _workDetails.length,
-        ));
+        _workDetails.add(candidate);
       });
       ToastHelper.showInfo('업무가 추가되었습니다 (저장 버튼을 눌러주세요)');
     }
@@ -765,46 +957,56 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
       final index = _workDetails.indexOf(work);
       if (index != -1) {
+        final updated = _workDetails[index].copyWith(
+          workType: result['workType'],
+          workTypeIcon: result['workTypeIcon'],
+          workTypeColor: result['workTypeColor'],
+          workTypeBackgroundColor: result['workTypeBackgroundColor'],
+          wage: result['wage'],
+          wageType: result['wageType'],
+          requiredCount: result['requiredCount'],
+          startTime: result['startTime'],
+          endTime: result['endTime'],
+          shiftType: result['shiftType'],
+          nightAllowanceApplied: result['nightAllowanceApplied'] ?? true,
+          nightIncluded: result['nightIncluded'],
+          breakMinutes: result['breakMinutes'],
+          baseHourlyWage: result['baseHourlyWage'],
+          clearBaseHourlyWage: result['baseHourlyWage'] == null,
+          payScheduleType: result['payScheduleType'],
+          clearPayScheduleType: result['payScheduleType'] == null,
+          payScheduleDay: result['payScheduleDay'],
+          clearPayScheduleDay: result['payScheduleDay'] == null,
+          payScheduleTime: result['payScheduleTime'],
+          clearPayScheduleTime: result['payScheduleTime'] == null,
+          taxDeductionType: result['taxDeductionType'],
+          description: result['description'],
+          clearDescription: result['description'] == null,
+        );
+        // [POSTING-V2-03G.1] 고쳐 놓고 저장에서 되돌려받지 않는다.
+        final next = List<WorkDetailData>.from(_workDetails)..[index] = updated;
+        if (!await _canApplyWorkChange(next)) return;
+        if (!mounted) return;
         setState(() {
           _hasChanges = true; // [B-4] workDetails 변경 감지
-          _workDetails[index] = _workDetails[index].copyWith(
-            workType: result['workType'],
-            workTypeIcon: result['workTypeIcon'],
-            workTypeColor: result['workTypeColor'],
-            workTypeBackgroundColor: result['workTypeBackgroundColor'],
-            wage: result['wage'],
-            wageType: result['wageType'],
-            requiredCount: result['requiredCount'],
-            startTime: result['startTime'],
-            endTime: result['endTime'],
-            shiftType: result['shiftType'],
-            nightAllowanceApplied: result['nightAllowanceApplied'] ?? true,
-            nightIncluded: result['nightIncluded'],
-            breakMinutes: result['breakMinutes'],
-            baseHourlyWage: result['baseHourlyWage'],
-            clearBaseHourlyWage: result['baseHourlyWage'] == null,
-            payScheduleType: result['payScheduleType'],
-            clearPayScheduleType: result['payScheduleType'] == null,
-            payScheduleDay: result['payScheduleDay'],
-            clearPayScheduleDay: result['payScheduleDay'] == null,
-            payScheduleTime: result['payScheduleTime'],
-            clearPayScheduleTime: result['payScheduleTime'] == null,
-            taxDeductionType: result['taxDeductionType'],
-            description: result['description'],
-            clearDescription: result['description'] == null,
-          );
+          _workDetails[index] = updated;
         });
       }
+      if (!mounted) return;
       ToastHelper.showInfo('업무가 수정되었습니다 (저장 버튼을 눌러주세요)');
     }
   }
 
   Future<void> _deleteWork(WorkDetailData work) async {
     final confirmed = await _showDeleteConfirmDialog(work);
-    if (confirmed == true && mounted) {
-      setState(() { _hasChanges = true; _workDetails.remove(work); }); // [B-4] workDetails 변경 감지
-      ToastHelper.showInfo('업무가 삭제되었습니다 (저장 버튼을 눌러주세요)');
-    }
+    if (confirmed != true || !mounted) return;
+    // [POSTING-V2-03G.1] 지원자가 걸린 업무는 삭제가 거부된다 — 목록에서 지웠다가
+    //   저장에서 되살아나는 대신, 지우기 전에 알린다.
+    final next = _workDetails.where((w) => w != work).toList();
+    if (!await _canApplyWorkChange(next)) return;
+    if (!mounted) return;
+    setState(() { _hasChanges = true; _workDetails.remove(work); }); // [B-4] workDetails 변경 감지
+    ToastHelper.showInfo('업무가 삭제되었습니다 (저장 버튼을 눌러주세요)');
   }
 
   // ============================================================
