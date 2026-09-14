@@ -63,7 +63,13 @@ String _bodyOf(String source, String signature) {
 // ═══════════════════════════════════════════════════════════════
 
 /// 목록 호출 실패 종류.
-enum Fail { none, permissionDenied, network }
+///
+/// [POSTING-V2-03N.1] `not-found`도 후보다 — 사업장 문서가 삭제되면
+/// `assertBizAdmin`이 `permission-denied`가 아니라 이것을 던진다.
+enum Fail { none, permissionDenied, notFound, network }
+
+/// scope 축소로 이어질 수 있는 코드. 코드만으로 회수를 단정하지는 않는다.
+const _candidates = {Fail.permissionDenied, Fail.notFound};
 
 class Item {
   final String businessId;
@@ -92,12 +98,14 @@ class LoadOutcome {
 }
 
 /// [serverAuthorized]는 서버가 실제로 허용하는 사업장 — MODEL A이므로
-/// 요청 중 하나라도 여기 없으면 호출 전체가 permission-denied다.
+/// 요청 중 하나라도 여기 없으면 호출 전체가 거부된다.
+/// [deletedBusinesses]에 있으면 `permission-denied`가 아니라 `not-found`다.
 LoadOutcome loadWithRecovery({
   required List<String> requestedScope,
   required List<String> serverAuthorized,
   required List<String> canonicalScopeAfterRefresh,
   required List<Item> cachedItems,
+  List<String> deletedBusinesses = const [],
   bool accessRefreshFails = false,
   Fail retryFailure = Fail.none,
   Fail firstFailure = Fail.none,
@@ -115,9 +123,17 @@ LoadOutcome loadWithRecovery({
   listCalls++;
   final unauthorized =
       requestedScope.where((b) => !serverAuthorized.contains(b)).toList();
-  final firstResult = firstFailure != Fail.none
-      ? firstFailure
-      : (unauthorized.isEmpty ? Fail.none : Fail.permissionDenied);
+  // 서버는 businessId마다 assertBizAdmin을 부른다 — 문서가 없으면 not-found,
+  //   있는데 내 것이 아니면 permission-denied.
+  final Fail serverResult;
+  if (unauthorized.isEmpty) {
+    serverResult = Fail.none;
+  } else if (unauthorized.any(deletedBusinesses.contains)) {
+    serverResult = Fail.notFound;
+  } else {
+    serverResult = Fail.permissionDenied;
+  }
+  final firstResult = firstFailure != Fail.none ? firstFailure : serverResult;
 
   if (firstResult == Fail.none) {
     return LoadOutcome(
@@ -129,7 +145,7 @@ LoadOutcome loadWithRecovery({
     );
   }
   // network 등 일시적 실패 — 기존 stale 계약 그대로, 캐시를 건드리지 않는다.
-  if (firstResult != Fail.permissionDenied) {
+  if (!_candidates.contains(firstResult)) {
     return LoadOutcome(
       cached: cached,
       listCalls: listCalls,
@@ -138,7 +154,7 @@ LoadOutcome loadWithRecovery({
     );
   }
 
-  // ── permission-denied → canonical scope 재확인 ──
+  // ── candidate error → canonical scope 재확인 ──
   refreshes++;
   if (accessRefreshFails) {
     // 회수를 **확인하지 못했다** — 임의로 지우지 않는다.
@@ -271,6 +287,108 @@ void main() {
     });
   });
 
+  // ── §3, §8, §9 사업장 삭제(not-found) ─────────────────────────
+  group('SCOPE-10 삭제된 사업장도 같은 경로로 회복한다', () {
+    test('10-a BUSINESS_ADMIN [A,B] → B 삭제 → not-found → [A] (§3)', () {
+      final r = loadWithRecovery(
+        requestedScope: ['A', 'B'],
+        serverAuthorized: ['A'],
+        deletedBusinesses: ['B'], // 문서 자체가 없다 → not-found
+        canonicalScopeAfterRefresh: ['A'], // 트리거가 arrayRemove를 끝냈다
+        cachedItems: cachedAB,
+      );
+      expect(r.threw, false);
+      expect(r.accessRefreshes, 1);
+      expect(r.listCalls, 2);
+      expect(r.items!.every((i) => i.businessId == 'A'), true);
+      expect(r.cached.any((i) => i.businessId == 'B'), false);
+    });
+
+    test('10-b 삭제 + scope가 유일했으면 빈 목록 (§8)', () {
+      final r = loadWithRecovery(
+        requestedScope: ['B'],
+        serverAuthorized: const [],
+        deletedBusinesses: ['B'],
+        canonicalScopeAfterRefresh: const [],
+        cachedItems: const [Item('B'), Item('B')],
+      );
+      expect(r.threw, false);
+      expect(r.items, isEmpty);
+      expect(r.cached, isEmpty);
+      expect(r.listCalls, 1, reason: '빈 scope로 재요청하지 않는다');
+    });
+
+    // [POSTING-V2-03N.1] onBusinessDeleted는 문서 삭제 **뒤에** 실행되고,
+    //   managedBusinessIds/subAdminBusinessIds 정리는 cascade 뒷부분이다.
+    //   그 사이에는 "문서 없음 + scope에는 남음"이 실제로 가능하다.
+    test('10-c 삭제 직후 scope가 아직 안 줄었으면 지우지 않는다 (§4, §9)', () {
+      final r = loadWithRecovery(
+        requestedScope: ['A', 'B'],
+        serverAuthorized: ['A'],
+        deletedBusinesses: ['B'],
+        canonicalScopeAfterRefresh: ['A', 'B'], // 트리거가 아직 안 끝났다
+        cachedItems: cachedAB,
+      );
+      expect(r.threw, true);
+      expect(r.cached.length, 4, reason: '확인되지 않은 축소로 캐시를 건드리지 않는다');
+      expect(r.listCalls, 1, reason: '같은 scope로 재시도하지 않는다');
+    });
+
+    test('10-d 다음 load에서 정리가 끝나면 회복한다 (§4)', () {
+      // 10-c 직후 — 트리거가 완료된 뒤의 같은 load
+      final r = loadWithRecovery(
+        requestedScope: ['A', 'B'],
+        serverAuthorized: ['A'],
+        deletedBusinesses: ['B'],
+        canonicalScopeAfterRefresh: ['A'],
+        cachedItems: cachedAB,
+      );
+      expect(r.threw, false);
+      expect(r.cached.map((i) => i.businessId).toSet(), {'A'});
+    });
+
+    test('10-e not-found + refresh 실패 → 임의 삭제 없음 (§2)', () {
+      final r = loadWithRecovery(
+        requestedScope: ['A', 'B'],
+        serverAuthorized: ['A'],
+        deletedBusinesses: ['B'],
+        canonicalScopeAfterRefresh: ['A'],
+        cachedItems: cachedAB,
+        accessRefreshFails: true,
+      );
+      expect(r.threw, true);
+      expect(r.cached.length, 4);
+    });
+
+    test('10-f 재시도도 not-found면 종료한다 (§7)', () {
+      final r = loadWithRecovery(
+        requestedScope: ['A', 'B'],
+        serverAuthorized: const [],
+        deletedBusinesses: ['B'],
+        canonicalScopeAfterRefresh: ['A'],
+        cachedItems: cachedAB,
+        retryFailure: Fail.notFound,
+      );
+      expect(r.threw, true);
+      expect(r.listCalls, 2, reason: '무한 복구 금지');
+      expect(r.accessRefreshes, 1);
+    });
+
+    test('10-g 관계 없는 not-found는 캐시를 건드리지 않는다 (§2)', () {
+      // scope는 그대로인데 다른 이유로 not-found가 온 경우
+      final r = loadWithRecovery(
+        requestedScope: ['A'],
+        serverAuthorized: ['A'],
+        canonicalScopeAfterRefresh: ['A'],
+        cachedItems: const [Item('A'), Item('A')],
+        firstFailure: Fail.notFound,
+      );
+      expect(r.threw, true);
+      expect(r.cached.length, 2, reason: 'error code만으로 revoke를 추정하지 않는다');
+      expect(r.listCalls, 1);
+    });
+  });
+
   // ── §9 scope unchanged ────────────────────────────────────────
   group('SCOPE-03 회수를 확인하지 못하면 지우지 않는다', () {
     test('03-a scope가 그대로면 캐시를 건드리지 않는다 (§9)', () {
@@ -381,14 +499,20 @@ void main() {
           reason: '진입점마다 다른 경로가 생기면 계약이 갈라진다');
     });
 
-    test('07-b permission-denied만 잡는다 (§2)', () {
+    test('07-b 후보 코드 둘만 잡는다 (§1, §6)', () {
       final body = _flat(_codeOf(
           _bodyOf(ctrl, 'Future<List<TOGroupItem>> _loadWithScopeRecovery(')));
       expect(body.contains('} on FirebaseFunctionsException catch (e) {'), true);
       expect(
-          body.contains("if (e.code != 'permission-denied' "
-              '|| requestedScope == null) rethrow;'),
+          body.contains('if (!_scopeShrinkCandidates.contains(e.code) '
+              '|| requestedScope == null) { rethrow; }'),
           true);
+      final set = _flat(_codeOf(ctrl));
+      expect(
+          set.contains("static const _scopeShrinkCandidates = "
+              "{'permission-denied', 'not-found'};"),
+          true,
+          reason: 'network/unavailable/internal은 후보가 아니다');
     });
 
     test('07-c 선제 refresh를 넣지 않았다 (§13)', () {
@@ -500,6 +624,40 @@ void main() {
           fns.contains('const businessId = toData.businessId as string | undefined;'),
           true,
           reason: '목록에 보였다는 사실을 write 권한으로 쓰지 않는다');
+    });
+
+    // [POSTING-V2-03N.1 §4] 삭제 트리거의 실제 순서를 사실대로 고정한다.
+    //   onDocumentDeleted이므로 문서는 이미 없고, scope 정리는 cascade 뒤쪽이다.
+    //   그래서 "문서 없음 + scope에 남음" 창이 실재하고, 그때는 10-c대로
+    //   임의 prune하지 않는다.
+    test('09-d 사업장 삭제는 문서 삭제 뒤에 scope를 정리한다 (§4)', () {
+      final fns = _src(_fnsPath);
+      final start =
+          fns.indexOf('export const onBusinessDeleted = onDocumentDeleted(');
+      expect(start, greaterThan(-1));
+      final managed = fns.indexOf(
+          'managedBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)',
+          start);
+      expect(managed, greaterThan(-1), reason: 'BUSINESS_ADMIN scope 정리가 있다');
+      // cascade 정리(Promise.all)보다 뒤다 — 비원자 창이 존재한다
+      final cascade = fns.indexOf('deleteByBusinessId("review_requests")', start);
+      expect(cascade, greaterThan(-1));
+      expect(cascade, lessThan(managed));
+    });
+
+    test('09-e SUB_ADMIN scope도 같은 트리거가 정리한다 (§5)', () {
+      final fns = _src(_fnsPath);
+      final start =
+          fns.indexOf('export const onBusinessDeleted = onDocumentDeleted(');
+      final sub = fns.indexOf(
+          'subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)',
+          start);
+      expect(sub, greaterThan(-1),
+          reason: 'SUB_ADMIN에도 삭제된 사업장이 남을 수 있다');
+      // 같은 refreshAdminScopeState가 그 축소를 읽는다
+      final provider = _flat(_codeOf(
+          _bodyOf(_src(_providerPath), 'Future<void> refreshAdminScopeState()')));
+      expect(provider.contains('return refreshSubAdminAccessState();'), true);
     });
 
     test('09-c 기존 access → data 경로를 망가뜨리지 않았다 (§14)', () {

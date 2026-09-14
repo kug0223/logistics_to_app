@@ -188,6 +188,20 @@ class WorkforceController extends ChangeNotifier {
 
   // ── 초기 로드 / 재로드 ────────────────────────────────────
 
+  /// [POSTING-V2-03N.1] scope가 줄었을 때 서버가 돌려줄 수 있는 코드.
+  ///
+  /// 서버는 요청한 businessId마다 `assertBizAdmin`을 부르고, 두 가지로 거절한다.
+  ///   · `permission-denied` — 사업장은 있는데 더 이상 내 것이 아니다(배정 회수,
+  ///     SUPER_ADMIN의 adminIds 변경)
+  ///   · `not-found` — 사업장 문서 자체가 없다(사업장 삭제).
+  ///     `onBusinessDeleted` 트리거가 `managedBusinessIds`·`subAdminBusinessIds`
+  ///     에서 그 id를 빼지만, 문서 삭제가 먼저이고 정리는 뒤따르므로
+  ///     그 사이 stale scope가 삭제된 id를 계속 보낸다.
+  ///
+  /// **코드만으로 회수를 단정하지 않는다.** 아래 복구는 canonical scope를 다시
+  /// 읽어 실제로 줄어든 것이 확인됐을 때만 캐시를 건드린다.
+  static const _scopeShrinkCandidates = {'permission-denied', 'not-found'};
+
   /// Posting 목록 READ scope — 02G canonical.
   List<String>? _scopeOf(UserModel user) {
     if (user.isSuperAdmin) return null; // 서버가 전체를 조회한다
@@ -206,7 +220,7 @@ class WorkforceController extends ChangeNotifier {
   /// cross-tab revision 어디서 들어와도 같은 계약이 적용된다.
   ///
   /// **정상 경로 비용은 0이다.** 성공하면 아무것도 더 하지 않고, 아래 복구는
-  /// `permission-denied`에서만 돈다. 네트워크·타임아웃 등 일시적 실패는
+  /// [_scopeShrinkCandidates]에서만 돈다. 네트워크·타임아웃 등 일시적 실패는
   /// 01B/03F의 기존 stale 계약 그대로 예외를 다시 던진다.
   Future<List<TOGroupItem>> _loadWithScopeRecovery({
     required UserProvider userProvider,
@@ -219,7 +233,9 @@ class WorkforceController extends ChangeNotifier {
         businessIds: requestedScope,
       );
     } on FirebaseFunctionsException catch (e) {
-      if (e.code != 'permission-denied' || requestedScope == null) rethrow;
+      if (!_scopeShrinkCandidates.contains(e.code) || requestedScope == null) {
+        rethrow;
+      }
 
       // canonical scope를 다시 읽는다. 실패하면 회수를 **확인하지 못한** 것이므로
       //   기존 데이터를 임의로 지우지 않고 원래 실패로 끝낸다.
