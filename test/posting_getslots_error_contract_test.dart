@@ -246,55 +246,57 @@ void main() {
   });
 
   // ── §6 파괴적 호출부 ────────────────────────────────────────────
-  group('GETSLOTS-04 개수로 공고를 지우는 경로가 먼저 멈춘다', () {
-    test('04-a 유일하게 requireComplete를 쓰는 곳이 일괄삭제다', () {
+  //
+  // [POSTING-V2-03L.1 재작성] 03D.1은 "개수 판정의 **입력**을 완전하게 만든다"로
+  //   막았다. 03L.1은 그 판정 자체를 클라이언트에서 없앴다 — 공고를 지울지는
+  //   서버가 canonical slot 문서로 정한다. 그래서 이 그룹의 불변식이 뒤집힌다:
+  //   "먼저 멈춘다"가 아니라 "그 경로가 존재하지 않는다".
+  group('GETSLOTS-04 개수로 공고를 지우는 경로가 사라졌다', () {
+    test('04-a 카드가 전체 날짜 수를 읽지 않는다', () {
       final code = _codeOf(_src(_cardPath));
-      expect(code.contains('getSlots(masterTO.id, requireComplete: true)'), true);
-
-      // 다른 caller는 계속 기존(부분 파싱 허용) 계약을 쓴다
+      expect(code.contains('requireComplete'), false,
+          reason: '개수를 읽어 비교할 이유가 없어졌다');
+      // 다른 caller도 기존(부분 파싱 허용) 계약 그대로다
       for (final p in [_jobPostingPath, _batchDialogPath, _editToPath]) {
         expect(_codeOf(_src(p)).contains('requireComplete'), false, reason: p);
       }
     });
 
-    test('04-b deletesAll 계산에 도달하기 전에 중단한다', () {
-      final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
-      final guardIdx = block.indexOf('if (totalSlotCount == null) {');
-      final deletesAllIdx = block.indexOf('final deletesAll =');
-      expect(guardIdx, greaterThan(-1), reason: '실패 시 중단 분기가 없다');
-      expect(deletesAllIdx, greaterThan(guardIdx),
-          reason: '실패한 개수로 "전부 삭제"를 판정하면 공고까지 지운다');
-      expect(block.contains('return; }'), true);
+    test('04-b deletesAll 판정 자체가 없다', () {
+      final code = _codeOf(_src(_cardPath));
+      expect(code.contains('deletesAll'), false);
+      expect(code.contains('totalSlotCount'), false);
     });
 
-    test('04-c 실패는 삭제 자체를 수행하지 않는다', () {
+    test('04-c 카드가 공고 삭제를 직접 호출하지 않는다', () {
       final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
-      final guardIdx = block.indexOf('if (totalSlotCount == null) {');
-      final batchDeleteIdx = block.indexOf('batchDeleteSlots(');
-      final deleteTOIdx = block.indexOf('deleteTO(masterTO.id)');
-      expect(batchDeleteIdx, greaterThan(guardIdx));
-      expect(deleteTOIdx, greaterThan(guardIdx));
+      expect(block.contains('deleteTO('), false,
+          reason: '두 번째 mutation이 남아 있으면 다시 client가 authority가 된다');
+      expect(block.contains('batchDeleteSlots('), true);
     });
 
-    test('04-d 사용자에게 원시 예외를 보여주지 않는다 (§12)', () {
+    test('04-d 서버 결과를 소비한다 — 추론하지 않는다', () {
       final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
-      expect(block.contains("ToastHelper.showError('날짜 목록을 불러오는데 실패했습니다.')"),
-          true, reason: '기존 문구 재사용');
+      expect(block.contains("result['postingDeleted'] == true"), true);
+      expect(block.contains("result['postingDeleteBlockedReason'] as String?"),
+          true);
       expect(block.contains('showError(\$e'), false);
-      expect(block.contains('SlotDataException'), false,
-          reason: '예외 타입명이 UI 문구에 새지 않는다');
     });
 
-    test('04-e 개수 기반 추론이라는 한계를 backlog로 남겼다 (§6)', () {
+    test('04-e backlog가 해소됐음을 코드에 남겼다 (§6)', () {
       final raw = _src(_cardPath);
-      expect(raw.contains('[BACKLOG-BATCH-DELETE-DELETESALL-DERIVED-FROM-COUNT]'),
+      expect(
+          raw.contains(
+              '[BACKLOG-BATCH-DELETE-DELETESALL-DERIVED-FROM-COUNT] 해소'),
           true);
     });
 
-    test('04-f deletesAll 의미 자체는 바꾸지 않았다 (§15)', () {
-      final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
-      expect(block.contains('deleteSlots.length >= totalSlotCount'), true,
-          reason: '비교 대상만 완전성이 보장된 값으로 바뀌었을 뿐이다');
+    test('04-f 서버가 canonical slot 문서로 판정한다 (§4)', () {
+      final fns = _src('functions/src/index.ts');
+      expect(
+          fns.contains('allSlotSnap.docs.filter((d) => !uniqueSlotIdSet.has(d.id)).length'),
+          true,
+          reason: 'denormalized totalSlots로 lifecycle을 정하지 않는다');
     });
   });
 
@@ -593,39 +595,42 @@ void main() {
   });
 
   // ── §11 destructive count ──────────────────────────────────────
-  group('LEGACY-03 legacy 때문에 deletesAll이 뒤집히지 않는다', () {
+  //
+  // [POSTING-V2-03L.1 재작성] 파싱 결과가 공고 삭제 판정에 아예 관여하지
+  //   않게 됐다. 서버가 slot **문서 id**를 세기 때문에, legacy든 malformed든
+  //   "해석할 수 있는가"와 무관하게 남은 날짜로 정확히 계산된다.
+  //   03D.1은 파싱 실패가 개수를 왜곡하지 못하게 막았고, 여기서는
+  //   개수 판정 자체가 클라이언트에서 사라졌다.
+  group('LEGACY-03 파싱 결과가 공고 삭제 판정에 관여하지 않는다', () {
     final d = DateTime(2026, 9, 20);
 
-    List<SlotModel> tenWithTwoLegacy() => _parse([
-          for (var i = 0; i < 8; i++)
-            _rawSlot(d.add(Duration(days: i)), SlotShape.current),
-          _rawSlot(d.add(const Duration(days: 8)), SlotShape.legacy),
-          _rawSlot(d.add(const Duration(days: 9)), SlotShape.legacy),
-        ]);
-
-    test('03-a 10개 중 8개 선택 → deletesAll = false', () {
-      final all = tenWithTwoLegacy();
-      expect(all.length, 10, reason: 'legacy 2개가 빠지면 8 >= 8이 되어 공고가 삭제된다');
-      expect(8 >= all.length, false);
+    test('03-a legacy 슬롯도 파싱된다 — 03D.1 계약 유지', () {
+      final all = _parse([
+        for (var i = 0; i < 8; i++)
+          _rawSlot(d.add(Duration(days: i)), SlotShape.current),
+        _rawSlot(d.add(const Duration(days: 8)), SlotShape.legacy),
+        _rawSlot(d.add(const Duration(days: 9)), SlotShape.legacy),
+      ]);
+      expect(all.length, 10, reason: 'LEGACY != MALFORMED');
     });
 
-    test('03-b 10개 전부 선택 → deletesAll = true', () {
-      final all = tenWithTwoLegacy();
-      expect(10 >= all.length, true);
-    });
-
-    test('03-c malformed가 있으면 개수 판정 자체에 도달하지 않는다 (§9)', () {
+    test('03-b malformed는 여전히 불완전으로 잡힌다 — 03D.1 계약 유지', () {
       final raws = [
         for (var i = 0; i < 9; i++)
           _rawSlot(d.add(Duration(days: i)), SlotShape.current),
         _rawSlot(d.add(const Duration(days: 9)), SlotShape.malformed),
       ];
       expect(incomplete(docs: raws.length, parsed: _parse(raws).length), true);
-      // 배선: 일괄삭제만 requireComplete: true → totalSlotCount == null → return
-      final block = _flat(_codeOf(_caseBlock(_src(_cardPath), "case 'batchDelete':")));
-      expect(block.contains('requireComplete: true'), true);
-      expect(block.indexOf('if (totalSlotCount == null) {'),
-          lessThan(block.indexOf('final deletesAll =')));
+    });
+
+    test('03-c 서버는 파싱이 아니라 문서 id로 남은 날짜를 센다 (§18)', () {
+      final fns = _src('functions/src/index.ts');
+      expect(
+          fns.contains('allSlotSnap.docs.filter((d) => !uniqueSlotIdSet.has(d.id)).length'),
+          true,
+          reason: 'malformed 슬롯을 "없는 날짜"로 세면 공고가 지워진다');
+      expect(fns.contains('allSlotSnap.docs.filter((d) => d.data()'), false,
+          reason: '문서 내용을 해석하면 malformed가 판정에 끼어든다');
     });
   });
 

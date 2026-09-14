@@ -144,8 +144,12 @@ _Result slotGuard({
   return const _Result(false, '');
 }
 
-/// 전 슬롯 삭제 → TO 삭제 client chain 재현.
+/// 전 슬롯 삭제 → TO 삭제 chain 재현.
 /// 슬롯 단계에서 막히면 TO 단계에 도달하지 못한다.
+///
+/// [POSTING-V2-03L.1] 이 chain은 이제 **서버 안**에 있다 —
+/// callableDeleteSlots가 마지막 날짜를 지운 뒤 같은 mutation에서
+/// assertNoPostingRelations를 본다. 두 guard의 순서와 의미는 그대로다.
 ({bool slotBlocked, bool toReached, bool toBlocked}) deleteAllChain({
   required List<String> selectedSlotIds,
   required List<_Slot> slots,
@@ -161,7 +165,7 @@ _Result slotGuard({
   if (s.blocked) {
     return (slotBlocked: true, toReached: false, toBlocked: false);
   }
-  // 슬롯 삭제가 통과했다면 client가 이어서 deleteTO를 호출한다
+  // 슬롯 삭제가 통과하고 남은 날짜가 0이면 서버가 이어서 공고 관계를 본다
   final t = postingGuard(applications: applications, contracts: contracts);
   return (slotBlocked: false, toReached: true, toBlocked: t.blocked);
 }
@@ -301,8 +305,10 @@ void main() {
     test('deleteSlots가 새 relation guard를 쓴다 (이전엔 guard 자체가 없었다)', () {
       final body = _flat(_codeOf(_callableBody(fn, 'callableDeleteSlots')));
       expect(
+        // [POSTING-V2-03L.1] 중복 slotId가 카운터를 왜곡하지 않도록
+        //   unique 집합으로 넘긴다. guard 자체는 그대로다.
         body.contains('const slotRelation = await assertNoSlotRelations( '
-            'toId, toBusinessId, slotIds, slotSnaps ); '
+            'toId, toBusinessId, uniqueSlotIds, slotSnaps ); '
             'if (slotRelation.blocked) { throw new HttpsError( '
             '"failed-precondition", '
             'slotRelationBlockMessage(slotRelation.reason) ); }'),
@@ -554,11 +560,13 @@ void main() {
       );
     });
 
+    // [POSTING-V2-03L.1 재작성] 슬롯 물리 삭제는 그대로지만, 삭제·카운터·
+    //   lifecycle 판정이 한 트랜잭션 안으로 들어가 batch가 아니라 txDel을 쓴다.
     test('슬롯 물리 삭제 구현이 그대로다', () {
       final body = _flat(_codeOf(_callableBody(fn, 'callableDeleteSlots')));
       expect(
-        body.contains('deleteBatch.delete(db.collection("tos").doc(toId)'
-            '.collection("slots").doc(slotId));'),
+        body.contains('for (const slotId of uniqueSlotIds) { '
+            'txDel.delete(slotsRefForDelete.doc(slotId)); }'),
         isTrue,
       );
     });

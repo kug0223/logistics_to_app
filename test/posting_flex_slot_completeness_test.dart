@@ -230,17 +230,25 @@ void main() {
       expect(detail.contains('_groupDetailErrorIds.add(group.id);'), true);
     });
 
-    test('05-b 토스트로 실패를 알리는 caller 3곳은 그대로 동작한다', () {
+    // [POSTING-V2-03L.1 재작성] 그룹 카드는 더 이상 getSlots를 직접 부르지
+    //   않는다. 전체 날짜 수를 읽어 "전부 삭제인가"를 추론하던 유일한 이유가
+    //   없어졌고, 그 판정은 서버로 옮겼다. 날짜 선택 다이얼로그는 그대로
+    //   caller이고 실패를 토스트로 알린다.
+    test('05-b 토스트로 실패를 알리는 caller들은 그대로 동작한다', () {
       // getSlots가 rethrow하면 각 caller의 기존 catch가 잡는다.
       for (final p in [
         'lib/screens/business_admin/dialogs/slot_batch_select_dialog.dart',
         'lib/screens/business_admin/to_management/edit_to_screen.dart',
-        'lib/widgets/admin/cards/admin_to_group_card.dart',
       ]) {
         final code = _codeOf(_src(p));
         expect(code.contains('getSlots('), true, reason: p);
         expect(code.contains('ToastHelper.showError'), true, reason: p);
       }
+      // 카드는 caller에서 빠졌다 — 읽지 않으므로 삼킬 실패도 없다
+      final card = _codeOf(_src('lib/widgets/admin/cards/admin_to_group_card.dart'));
+      expect(card.contains('getSlots('), false);
+      expect(card.contains('ToastHelper.showError'), true,
+          reason: '서버 실패 문구는 계속 표면화한다');
     });
 
     // [POSTING-V2-03D.1 재작성] 03C에서는 generic 실패가 범위 밖이라

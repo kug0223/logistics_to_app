@@ -300,28 +300,19 @@ void main() {
           reason: 'success 블록 밖에서도 onChanged가 호출된다');
     });
 
-    // [POSTING-V2-03D.1 재작성] batchDelete case에 catch가 둘이 됐다.
-    //   (1) 전체 날짜 수 조회 실패 — 삭제를 시작조차 하지 않는다
-    //   (2) 삭제 실패 — 원래부터 검사하던 대상
-    // 첫 catch만 보면 (1) 뒤의 정상 경로 onChanged를 실패 경로로 오인한다.
+    // [POSTING-V2-03L.1 재작성] 전체 날짜 수 조회가 사라져 catch가 다시
+    //   하나다 — 삭제 실패 하나뿐이다.
     test('flex 날짜 삭제도 실패 시 onChanged를 부르지 않는다', () {
       final body = _flat(_codeOf(_caseOf(card, 'batchDelete')));
 
-      // (2) 삭제 실패 catch — batchDeleteSlots 뒤에 오는 catch
       final deleteIdx = body.indexOf('batchDeleteSlots(');
       expect(deleteIdx, isNot(-1));
       final deleteCatchIdx = body.indexOf('} catch (e) {', deleteIdx);
       expect(deleteCatchIdx, isNot(-1));
       expect(body.substring(deleteCatchIdx).contains('widget.onChanged()'), isFalse,
           reason: '삭제 실패 후에도 목록을 갱신한다');
-
-      // (1) 조회 실패 catch — 삭제 자체에 도달하지 않는다
-      final loadCatchIdx = body.indexOf('} catch (e) {');
-      expect(loadCatchIdx, lessThan(deleteIdx));
-      expect(
-          body.substring(loadCatchIdx, deleteIdx).contains('widget.onChanged()'),
-          isFalse,
-          reason: '날짜 수를 모르는 채 목록만 새로고침하면 아무 일도 없던 것처럼 보인다');
+      // 삭제 호출 앞에는 catch가 없다 — 실패 가능한 사전 조회 자체가 없다
+      expect(body.indexOf('} catch (e) {'), greaterThan(deleteIdx));
     });
   });
 
@@ -341,17 +332,22 @@ void main() {
       expect(body.contains("title: '날짜 삭제',"), isTrue);
       expect(
         body.contains("'삭제한 날짜는 복구할 수 없습니다.\\n' "
-            "'지원·초대·근무 기록이 있는 날짜는 삭제할 수 없습니다.'"),
+            "'지원·초대·근무 기록이 있는 날짜는 삭제할 수 없습니다.\\n\\n'"),
         isTrue,
       );
     });
 
-    test('전부 선택 시 공고까지 삭제된다는 사실을 알린다', () {
+    // [POSTING-V2-03L.1 재작성] 결과를 단정하던 문구를 조건부로 바꿨다.
+    //   클라이언트는 최종 상태를 알 수 없다 — 확인 직후 다른 관리자가 날짜를
+    //   더할 수 있으므로, "모든 날짜를 삭제하면"이라고 단정하면 거짓이 된다.
+    test('마지막 날짜면 공고까지 삭제됨을 조건부로 알린다', () {
       final body = _flat(_codeOf(_caseOf(card, 'batchDelete')));
       expect(
-        body.contains("\${deletesAll ? '\\n\\n모든 날짜를 삭제하면 미공개 공고도 함께 삭제됩니다.' : ''}"),
+        body.contains("'삭제 후 남은 날짜가 없으면 미공개 공고도 함께 삭제됩니다.',"),
         isTrue,
       );
+      expect(body.contains('deletesAll'), isFalse,
+          reason: '낡을 수 있는 판정에 문구를 걸지 않는다');
     });
 
     test('옛 자동취소 semantics 문구가 삭제 확인에서 사라졌다', () {
@@ -504,8 +500,9 @@ void main() {
           .join('\n');
       expect('batchDeleteSlots('.allMatches(all).length, 1,
           reason: '슬롯 삭제 호출 지점이 늘었다');
-      expect('.deleteTO('.allMatches(all).length, 2,
-          reason: 'TO 삭제 호출 지점이 늘었다 (카드 chain 1 + 다이얼로그 1)');
+      // [POSTING-V2-03L.1] 카드의 두 번째 mutation(chain)이 사라져 1곳만 남는다.
+      expect('.deleteTO('.allMatches(all).length, 1,
+          reason: 'TO 삭제 호출 지점은 미공개 공고 삭제 다이얼로그 하나뿐이다');
     });
 
     test('dead delete 코드는 그대로 둔다 (backlog)', () {

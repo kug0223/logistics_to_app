@@ -1030,24 +1030,34 @@ extension TOFirestore on FirestoreService {
   }
 
   /// 선택한 슬롯들 일괄 삭제 — CF callableDeleteSlots 위임 (Admin SDK로 보안 규칙 우회)
-  /// 활성 지원서 REJECTED·카운터 감소·알림 발송·TO 자동 CLOSED 처리는 CF에서 수행.
-  Future<void> batchDeleteSlots({
+  /// 활성 지원서 REJECTED·카운터 감소·알림 발송은 CF에서 수행.
+  ///
+  /// [POSTING-V2-03L.1] 마지막 날짜까지 지웠는지도 **서버가 판정한다.**
+  /// 이전에는 호출부가 "선택 개수 >= 전체 개수"로 추론한 뒤 따로 공고 삭제를
+  /// 불렀다. 그 판단은 낡을 수 있었고 서버는 남은 날짜를 확인하지 않았다.
+  /// 반환 계약:
+  ///   · `deletedSlotCount` / `remainingSlotCount`
+  ///   · `postingDeleted`  — 미공개 공고까지 삭제됨
+  ///   · `postingClosed`   — 공개 공고가 마감으로 전이됨
+  ///   · `postingDeleteBlockedReason` — 관계 때문에 공고는 남겨 둔 경우만
+  Future<Map<String, dynamic>> batchDeleteSlots({
     required String toId,
     required String businessId,
     required List<String> slotIds,
   }) async {
-    if (slotIds.isEmpty) return;
+    if (slotIds.isEmpty) return const {};
     GlobalLoadingController.show('슬롯 삭제 중...');
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableDeleteSlots');
     try {
-      await callable.call({
+      final result = await callable.call<Map<String, dynamic>>({
         'toId': toId,
         'slotIds': slotIds,
         'businessId': businessId,
       });
       clearCache(toId: toId);
       debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 삭제 완료 (CF)');
+      return Map<String, dynamic>.from(result.data);
     } finally {
       GlobalLoadingController.hide();
     }

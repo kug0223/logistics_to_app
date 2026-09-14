@@ -18965,6 +18965,11 @@ export const callableDeleteSlots = onCall(
     if (slotIds.length > 100) throw new HttpsError("invalid-argument", "slotIds는 최대 100개");
     if (!businessId) throw new HttpsError("invalid-argument", "businessId 필수");
 
+    // [POSTING-V2-03L.1] 같은 slotId가 두 번 실리면 카운터가 두 번 깎이고
+    //   삭제 개수·남은 개수도 왜곡된다. 이후 로직은 전부 이 집합만 쓴다.
+    const uniqueSlotIds = [...new Set(slotIds)];
+    const uniqueSlotIdSet = new Set(uniqueSlotIds);
+
     const {callerData: deleteSlotsCallerData} = await assertBizAdmin(callerUid, businessId);
     // [PERM-TO-05] 서브어드민 canManageTo 세부 권한 검증 — callablePublishTO와 대칭
     const deleteSlotsCallerRole = deleteSlotsCallerData?.role as string | undefined;
@@ -18993,7 +18998,7 @@ export const callableDeleteSlots = onCall(
 
     // 슬롯 카운터 직접 읽기
     const slotSnaps = await Promise.all(
-      slotIds.map((id) =>
+      uniqueSlotIds.map((id) =>
         db.collection("tos").doc(toId).collection("slots").doc(id).get()
       )
     );
@@ -19019,7 +19024,7 @@ export const callableDeleteSlots = onCall(
     // loadTOWorkDetails가 조회하므로, 지우면 급여 산정 근거가 사라진다.
     // 선택 슬롯 중 하나라도 관계가 있으면 요청 전체를 차단한다 — 부분 삭제 없음.
     const slotRelation = await assertNoSlotRelations(
-      toId, toBusinessId, slotIds, slotSnaps
+      toId, toBusinessId, uniqueSlotIds, slotSnaps
     );
     if (slotRelation.blocked) {
       throw new HttpsError(
@@ -19031,7 +19036,7 @@ export const callableDeleteSlots = onCall(
     // 활성 지원서 조회 (slotId별 병렬)
     const activeStatuses = new Set(["PENDING", "CONFIRMED", "CONTRACT_PENDING"]);
     const activeSnaps = await Promise.all(
-      slotIds.map((slotId) =>
+      uniqueSlotIds.map((slotId) =>
         db.collection("applications")
           .where("toId", "==", toId)
           .where("businessId", "==", toBusinessId)
@@ -19226,42 +19231,108 @@ export const callableDeleteSlots = onCall(
       }
     }
 
-    // 슬롯 삭제 + TO 카운터 업데이트 (배치)
-    let deleteBatch = db.batch();
-    let deleteCount = 0;
-    for (const slotId of slotIds) {
-      deleteBatch.delete(db.collection("tos").doc(toId).collection("slots").doc(slotId));
-      deleteCount++;
-      if (deleteCount >= 498) {
-        await deleteBatch.commit();
-        deleteBatch = db.batch();
-        deleteCount = 0;
-      }
-    }
-    const remainingSlots = (toData.totalSlots as number ?? 0) - slotIds.length;
-    const toUpdate: Record<string, unknown> = {
-      totalSlots: admin.firestore.FieldValue.increment(-slotIds.length),
-    };
-    if (removedRequired > 0)
-      toUpdate.totalRequired = admin.firestore.FieldValue.increment(-removedRequired);
-    if (removedConfirmed > 0)
-      toUpdate.totalConfirmed = admin.firestore.FieldValue.increment(-removedConfirmed);
-    if (removedPending > 0)
-      toUpdate.totalPending = admin.firestore.FieldValue.increment(-removedPending);
-    // 전체 슬롯 삭제 시 TO status 재계산 — ACTIVE·FULL·EXPIRED·SCHEDULED 모두 CLOSED 처리
-    // FULL: 슬롯 모두 찼지만 전부 삭제 → 마감. EXPIRED: 재만료 방지.
-    const currentStatus = toData.status as string | undefined;
+    // [POSTING-V2-03L.1] 슬롯 삭제와 공고 lifecycle 판정을 한 mutation 안에서 끝낸다.
+    //
+    //   이전에는 클라이언트가 "선택 개수 >= 전체 개수"로 전부 삭제를 추론해
+    //   이 호출 뒤에 따로 callableDeleteTO를 불렀다. 그 boolean은 확인
+    //   다이얼로그를 사이에 두고 낡을 수 있었고, callableDeleteTO는 남은
+    //   슬롯을 보지 않았다 — 그 사이 날짜가 추가돼도 공고가 지워졌다.
+    //
+    //   그리고 여기서 쓰던 `toData.totalSlots - slotIds.length`도 판정 근거가
+    //   될 수 없다. denormalized 카운터라 동시 삭제 두 건이 같은 값을 읽으면
+    //   둘 다 "아직 남았다"고 보고 슬롯 0개짜리 공고가 남는다.
+    //
+    //   그래서 슬롯 **문서**를 트랜잭션 안에서 직접 세고, 그 결과로 판정한다.
+    //   toRef도 함께 읽는다 — 날짜 생성(callableCreateFlexSlots)이 toRef의
+    //   totalSlots를 쓰므로, 동시에 추가되면 충돌해 재시도된다.
+    const toRefForDelete = db.collection("tos").doc(toId);
+    const slotsRefForDelete = toRefForDelete.collection("slots");
     const closableStatuses = ["ACTIVE", "FULL", "EXPIRED", "SCHEDULED"];
-    if (remainingSlots <= 0 && closableStatuses.includes(currentStatus ?? "")) {
-      toUpdate.status = "CLOSED";
-      toUpdate.closedAt = now;
-      toUpdate.closedReason = "ALL_SLOTS_DELETED";
-      toUpdate.statusUpdatedAt = now;
-    }
-    deleteBatch.update(db.collection("tos").doc(toId), toUpdate);
-    await deleteBatch.commit();
+    let remainingSlotCount = 0;
+    let deletedSlotCount = 0;
+    let postingDeleted = false;
+    let postingClosed = false;
+    let postingDeleteBlockedReason = "";
 
-    return {success: true};
+    await db.runTransaction(async (txDel) => {
+      // 재시도마다 처음부터 다시 판정한다
+      remainingSlotCount = 0;
+      deletedSlotCount = 0;
+      postingDeleted = false;
+      postingClosed = false;
+      postingDeleteBlockedReason = "";
+
+      const freshToSnap = await txDel.get(toRefForDelete);
+      if (!freshToSnap.exists) {
+        throw new HttpsError("not-found", "해당 TO를 찾을 수 없습니다.");
+      }
+      const freshToData = freshToSnap.data()!;
+      // canonical slot 집합 — 카운터가 아니라 문서다.
+      const allSlotSnap = await txDel.get(slotsRefForDelete);
+      remainingSlotCount =
+        allSlotSnap.docs.filter((d) => !uniqueSlotIdSet.has(d.id)).length;
+      // 이미 지워졌거나 존재하지 않는 slotId가 실려 와도 개수를 부풀리지 않는다.
+      deletedSlotCount =
+        allSlotSnap.docs.filter((d) => uniqueSlotIdSet.has(d.id)).length;
+
+      const toUpdate: Record<string, unknown> = {
+        // [POSTING-V2-03L.1] increment가 아니라 방금 센 값으로 맞춘다(§12).
+        totalSlots: remainingSlotCount,
+      };
+      if (removedRequired > 0)
+        toUpdate.totalRequired = admin.firestore.FieldValue.increment(-removedRequired);
+      if (removedConfirmed > 0)
+        toUpdate.totalConfirmed = admin.firestore.FieldValue.increment(-removedConfirmed);
+      if (removedPending > 0)
+        toUpdate.totalPending = admin.firestore.FieldValue.increment(-removedPending);
+
+      const freshStatus = freshToData.status as string | undefined;
+      const alreadyDeleted = freshToData.isDeleted === true;
+      if (remainingSlotCount === 0 && !alreadyDeleted) {
+        if (freshStatus === "DRAFT") {
+          // 미공개 공고의 마지막 날짜까지 지웠다 — 공고 자체를 정리한다.
+          //   관계 guard는 우회하지 않는다. 선택 슬롯 관계는 위에서 이미
+          //   막았지만, slotId 없는 지원서나 다른 날짜 계약은 그 검사에
+          //   걸리지 않는다. 실패하면 공고만 남기고 날짜 삭제는 유지한다.
+          const postingRelation =
+            await assertNoPostingRelations(toId, toBusinessId);
+          if (postingRelation.blocked) {
+            postingDeleteBlockedReason =
+              postingRelationBlockMessage(postingRelation.reason);
+          } else {
+            // callableDeleteTO와 같은 소프트 삭제 — 기록은 보존한다.
+            toUpdate.isDeleted = true;
+            toUpdate.deletedAt = now;
+            toUpdate.isPublished = false;
+            toUpdate.postingCapacityScopeKey =
+              admin.firestore.FieldValue.delete();
+            postingDeleted = true;
+          }
+        } else if (closableStatuses.includes(freshStatus ?? "")) {
+          // 공개된 공고는 이번에도 삭제하지 않는다 — 기존 CLOSED 전이 유지.
+          toUpdate.status = "CLOSED";
+          toUpdate.closedAt = now;
+          toUpdate.closedReason = "ALL_SLOTS_DELETED";
+          toUpdate.statusUpdatedAt = now;
+          postingClosed = true;
+        }
+      }
+
+      for (const slotId of uniqueSlotIds) {
+        txDel.delete(slotsRefForDelete.doc(slotId));
+      }
+      txDel.update(toRefForDelete, toUpdate);
+    });
+
+    return {
+      success: true,
+      deletedSlotCount,
+      remainingSlotCount,
+      postingDeleted,
+      postingClosed,
+      ...(postingDeleteBlockedReason ?
+        {postingDeleteBlockedReason} : {}),
+    };
   }
 );
 

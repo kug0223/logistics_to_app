@@ -2002,28 +2002,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
         );
         if (deleteSlots == null || deleteSlots.isEmpty || !mounted) return;
 
-        // 전체 슬롯 수 확인 — 마지막 날짜 삭제 시 공고 자체가 삭제됨을 안내
-        //
-        // [POSTING-V2-03D.1] 이 개수 하나로 "공고까지 지울지"가 갈린다.
-        //   조회가 실패했거나(ERROR != ZERO) 일부 문서만 해석됐다면 그 수는
-        //   전체가 아니므로, deletesAll 계산에 도달하기 전에 중단한다.
-        //   [BACKLOG-BATCH-DELETE-DELETESALL-DERIVED-FROM-COUNT]
-        //   개수 비교로 "전부 삭제"를 추론하는 구조 자체의 한계는 남아 있다.
-        int? totalSlotCount;
-        try {
-          final allSlots = await widget.firestoreService
-              .getSlots(masterTO.id, requireComplete: true);
-          totalSlotCount = allSlots.length;
-        } catch (e) {
-          debugPrint('❌ [TO] 일괄삭제 전체 날짜 확인 실패: $e');
-        }
-        if (!mounted) return;
-        if (totalSlotCount == null) {
-          ToastHelper.showError('날짜 목록을 불러오는데 실패했습니다.');
-          return;
-        }
-        final deletesAll = deleteSlots.length >= totalSlotCount;
-
+        // [POSTING-V2-03L.1] 여기서 "전부 삭제인가"를 계산하지 않는다.
+        //   이전에는 전체 날짜 수를 읽어 선택 수와 비교한 뒤, 그 boolean으로
+        //   공고 삭제까지 따로 호출했다. 확인 다이얼로그를 사이에 두고 그 값이
+        //   낡을 수 있었고 — 그 사이 다른 관리자가 날짜를 추가하면 남아 있는
+        //   날짜째로 공고가 지워졌다 — 서버는 남은 날짜를 확인하지 않았다.
+        //   이제 클라이언트가 보내는 의도는 "이 날짜들을 지워라" 하나뿐이고,
+        //   마지막 날짜였는지는 서버가 canonical slot 문서로 판정한다.
+        //   [BACKLOG-BATCH-DELETE-DELETESALL-DERIVED-FROM-COUNT] 해소.
         final deleteConfirmed = await showDialog<bool>(
           context: this.context,
           barrierDismissible: false,
@@ -2034,10 +2020,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
             headerColor: AppColors.error,
             // [POSTING-V2-01C.2] 서버 계약(relation-zero only)과 같은 말을 한다.
             // 옛 문구는 '자동 취소'를 전제했지만 이제 관계가 있으면 삭제 자체가 거부된다.
+            // [POSTING-V2-03L.1] 결과를 단정하지 않는 조건부 문구다 — 저장 직전
+            //   다른 관리자가 날짜를 더해도 거짓말이 되지 않는다.
             content: StyledDialogInfoCard.warning(
               '삭제한 날짜는 복구할 수 없습니다.\n'
-              '지원·초대·근무 기록이 있는 날짜는 삭제할 수 없습니다.'
-              '${deletesAll ? '\n\n모든 날짜를 삭제하면 미공개 공고도 함께 삭제됩니다.' : ''}',
+              '지원·초대·근무 기록이 있는 날짜는 삭제할 수 없습니다.\n\n'
+              '삭제 후 남은 날짜가 없으면 미공개 공고도 함께 삭제됩니다.',
             ),
             actions: [
               StyledDialogButton.cancel(
@@ -2052,25 +2040,29 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (deleteConfirmed != true || !mounted) return;
         setState(() => _isLifecycleActionRunning = true);
         try {
-          await widget.firestoreService.batchDeleteSlots(
+          final result = await widget.firestoreService.batchDeleteSlots(
             toId: masterTO.id,
             businessId: masterTO.businessId,
             slotIds: deleteSlots.map((s) => s.id).toList(),
           );
           if (!mounted) return;
-          if (deletesAll) {
-            // 슬롯을 모두 삭제했으니 TO 문서도 삭제 (지원서·알림 포함)
-            await widget.firestoreService.deleteTO(masterTO.id);
-            if (mounted) {
-              widget.onChanged();
-              ToastHelper.showSuccess('공고가 삭제되었습니다');
-            }
+          widget.firestoreService.clearCache(toId: masterTO.id);
+          widget.onChanged();
+          // [POSTING-V2-02B.2] Workforce 신호는 보내지 않는다. 이 경로는
+          //   DRAFT(미공개) 공고 전용이라 확정 근무자가 없고, Home 인력 현황의
+          //   truth가 바뀌지 않는다. 종료·재오픈이 신호를 보내는 것은 그쪽이
+          //   공개 공고를 다루기 때문이다 — 같은 이유로 여기서는 보내지 않는다.
+          // 결과는 서버가 말해 준다 — 추론하지 않는다.
+          final blockedReason = result['postingDeleteBlockedReason'] as String?;
+          if (blockedReason != null && blockedReason.isNotEmpty) {
+            // 날짜는 지워졌지만 공고는 관계 때문에 남았다. 성공으로 알리지 않는다.
+            ToastHelper.showWarning(blockedReason);
+          } else if (result['postingDeleted'] == true) {
+            ToastHelper.showSuccess('공고가 삭제되었습니다');
           } else {
-            widget.firestoreService.clearCache(toId: masterTO.id);
-            if (mounted) {
-              widget.onChanged();
-              ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
-            }
+            final deleted =
+                (result['deletedSlotCount'] as num?)?.toInt() ?? deleteSlots.length;
+            ToastHelper.showSuccess('$deleted개 날짜가 삭제되었습니다');
           }
         } catch (e) {
           if (mounted) {
