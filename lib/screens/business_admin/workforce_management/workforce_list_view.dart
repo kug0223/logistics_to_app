@@ -381,12 +381,17 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         .where((g) => g.id == reveal || _matchesFilters(g, controller));
 
     if (_selectedTab != TOStatus.closed) {
+      // [POSTING-V2-03Q.1] 진행중 탭은 여기서 정렬하지 않는다.
+      //   controller가 load 때 확정한 근무 날짜 순서를 그대로 보존한다 —
+      //   필터를 바꿔도 순서가 뜻밖에 달라지지 않는다.
       final list = filtered.toList();
       _liftRevealTarget(list);
       return list;
     }
 
     // 마감됨 탭: closedAt 기준 최신순 정렬
+    // [POSTING-V2-03Q.1] 여기는 날짜 ASC로 바꾸지 않는다. "최근 모집 종료된
+    //   공고부터 확인"이 이 탭의 목적이고, 진행중의 운영 순서와는 다른 질문이다.
     final sorted = filtered.toList()
       ..sort((a, b) {
         final aDate = a.masterTO.closedAt ??
@@ -395,7 +400,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         final bDate = b.masterTO.closedAt ??
             b.masterTO.statusUpdatedAt ??
             b.masterTO.date;
-        return bDate.compareTo(aDate);
+        final byDate = bDate.compareTo(aDate);
+        if (byDate != 0) return byDate;
+        // 동일 key에서 rebuild마다 순서가 흔들리지 않게 한다(unstable sort).
+        return a.id.compareTo(b.id);
       });
     _liftRevealTarget(sorted);
     return sorted;

@@ -553,6 +553,15 @@ class FirestoreService {
   /// TO 목록 조회 — callableGetAdminTOs CF를 경유하여 server-side 교차검증
   /// [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전 (businessId 교차검증 강화)
   /// [businessIds] null이면 슈퍼관리자 전체 조회, 빈 리스트이면 빈 결과 반환
+  ///
+  /// [POSTING-V2-03Q.1] 여기의 createdAt DESC는 **예비 정렬**이다. 화면 순서는
+  ///   WorkforceController가 slot preload 후 근무 날짜 기준으로 확정한다.
+  ///
+  /// [BACKLOG-POSTING-LIST-PER-BIZ-500-COMPLETENESS] 서버는 사업장당
+  ///   `orderBy(createdAt desc).limit(500)`으로 자른다. 한 사업장의 TO 문서가
+  ///   500건을 넘으면 오래 생성됐지만 아직 유효한 미래 공고가 절단에 걸려
+  ///   목록에서 아예 빠질 수 있다. 근무 날짜 정렬은 받아온 것만 줄 세우므로
+  ///   이 누락을 메우지 못한다. pagination/completeness는 별도 Phase.
   Future<List<TOGroupItem>> getTOGroupItemsLight({
     bool activeOnly = false,
     bool closedOnly = false,

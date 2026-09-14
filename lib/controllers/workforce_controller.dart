@@ -9,6 +9,7 @@ import '../models/core/work_detail_data.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../utils/close_state_utils.dart';
+import '../utils/format_helper.dart';
 
 /// [POSTING-V2-02B.2] mutation이 일어난 화면.
 ///
@@ -458,6 +459,9 @@ class WorkforceController extends ChangeNotifier {
         }));
       }
       } // else 블록 닫힘
+      // [POSTING-V2-03Q.1] slot preload가 끝난 지금이 정렬 가능한 유일한 시점이다.
+      //   회차당 한 번만 돈다 — build마다 FLEX 슬롯을 다시 훑지 않는다.
+      _sortItemsForOperations();
       // [POSTING-V2-03P.1] 여기 도달 = canonical 결과를 확보했다.
       //   (scope가 비어 0건인 경우도 "서버 기준 0건"이라는 확정된 답이다)
       _hasLoadedOnce = true;
@@ -476,6 +480,143 @@ class WorkforceController extends ChangeNotifier {
       if (!_pendingLoad) _isLoading = false;
       if (!_disposed) notifyListeners();
     }
+  }
+
+  // ── [POSTING-V2-03Q.1] 근무 날짜 중심 정렬 ────────────────────────────
+  //
+  // 이전 유일한 키는 createdAt DESC였다. 문서를 만든 시각은 일의 시각도
+  // 사람의 시각도 아니다 — FLEX에서는 근무일과 아무 상관관계가 없어서,
+  // 한 달 치를 미리 만든 공고와 전날 급히 만든 공고의 순서가 뒤집혔다.
+  // 관리자가 이 목록에서 묻는 것은 "무엇을 최근에 올렸나"가 아니라
+  // "어느 근무를 아직 못 채웠나"이고, 진행중 탭은 이미 isFull을 제외해
+  // 모집이 필요한 것만 담고 있으므로 남은 질문은 **언제**뿐이다.
+  //
+  // urgency bucket은 만들지 않는다. 오늘·D+1~D+7 부족 발견은 Home의 몫이고,
+  // 여기는 "실제 근무 날짜 순서로 예측 가능하게 찾는" 목록이다.
+  // shortage/pending/confirmed 수치도 정렬에 넣지 않는다 — 카드의 미충원과
+  // Home canonical shortage의 의미가 달라서, 어느 쪽을 쓰든 정렬이 아직
+  // 결정되지 않은 semantic을 확정해 버린다.
+
+  /// 아직 실제 모집 운영에 투입되지 않은 준비 상태인가.
+  ///
+  /// 숨기지 않는다 — 가까운 실제 근무 공고보다 앞을 차지하지 않을 뿐이다.
+  @visibleForTesting
+  static bool isPreOperational(TOGroupItem group) =>
+      group.masterTO.status == TOStatus.draft || group.isPendingPublish;
+
+  /// 이 공고가 **다음에 운영되는 날**. 모르면 null.
+  ///
+  /// FLEX의 canonical source는 preload된 slot 문서뿐이다. masterTO의
+  /// rangeStart/rangeEnd는 생성 시점 min/max로 한 번 기록된 뒤 슬롯 추가·삭제에서
+  /// 갱신되지 않으므로(= drift) 정상 경로로 쓰지 않는다.
+  ///
+  /// [detailErrorIds]는 slot 조회가 실패했거나 상한을 넘긴 공고들이다.
+  @visibleForTesting
+  static DateTime? priorityDateOf(
+    TOGroupItem group,
+    DateTime now, {
+    required Set<String> detailErrorIds,
+  }) {
+    final to = group.masterTO;
+    final today = FormatHelper.toKstDate(now);
+
+    if (to.isFlexType) {
+      // slot 정보를 신뢰할 수 없는 상태다. 오류를 정상 날짜로 위장하지 않는다.
+      if (detailErrorIds.contains(group.id)) return null;
+
+      // 1. 아직 열려 있는 슬롯의 가장 이른 날짜.
+      //    지난 슬롯과 미래 슬롯이 섞여 있어도 여기서 지난 쪽이 걸러진다.
+      DateTime? openMin;
+      for (final item in group.groupTOs) {
+        final date = item.slot?.date;
+        if (date == null) continue;
+        if (CloseStateUtils.isToItemClosed(item, to, now)) continue;
+        final day = FormatHelper.toKstDate(date);
+        if (openMin == null || day.isBefore(openMin)) openMin = day;
+      }
+      if (openMin != null) return openMin;
+
+      // 2. 모델 파싱에 실패한 슬롯도 날짜는 살아남는다(02D 계약).
+      //    오늘 이후만 본다 — 지난 날짜로 미래 공고를 앞지르게 하지 않는다.
+      DateTime? rawMin;
+      for (final date in group.slotDates) {
+        final day = FormatHelper.toKstDate(date);
+        if (day.isBefore(today)) continue;
+        if (rawMin == null || day.isBefore(rawMin)) rawMin = day;
+      }
+      if (rawMin != null) return rawMin;
+
+      // 3. 최후 fallback. drift 가능한 값이므로 여기까지 온 경우에만 쓴다.
+      //
+      // [BACKLOG-FLEX-RANGE-DRIFT] FLEX의 rangeStart/rangeEnd는 생성 시점에
+      //   min/max(dates)로 한 번 기록되고(to_firestore.createTO) 이후 슬롯
+      //   추가(totalSlots increment)·삭제(totalSlots 재계산) 어디에서도
+      //   갱신되지 않는다. 즉 이미 없는 날짜를 가리킬 수 있다. 이 Phase는
+      //   정렬만 다루므로 backfill/보정을 하지 않고 최후 fallback으로만 쓴다.
+      final fallback = to.rangeEnd ?? to.rangeStart;
+      return fallback == null ? null : FormatHelper.toKstDate(fallback);
+    }
+
+    // CONTRACT — 기간 자체가 canonical이다. lifecycle은 건드리지 않는다.
+    final start = to.rangeStart;
+    if (start == null) return null;
+    final startDay = FormatHelper.toKstDate(start);
+    if (!startDay.isBefore(today)) return startDay; // 아직 시작 전
+    // 이미 시작했다 — 진행중 탭에 남아 있다는 것은 아직 끝나지 않았다는 뜻이다.
+    //   지난 시작일로 목록 맨 앞에 고정되지 않도록 오늘로 올린다.
+    return today;
+  }
+
+  /// 회차당 1회. 키를 미리 뽑아 두므로 비교 중에 슬롯을 다시 훑지 않는다.
+  void _sortItemsForOperations() {
+    _items = sortForOperations(
+      _items,
+      detailErrorIds: _groupDetailErrorIds,
+      now: DateTime.now(),
+    );
+  }
+
+  /// 진행중 목록의 canonical 순서. 부수효과 없는 순수 함수다.
+  @visibleForTesting
+  static List<TOGroupItem> sortForOperations(
+    List<TOGroupItem> items, {
+    required Set<String> detailErrorIds,
+    required DateTime now,
+  }) {
+    if (items.length < 2) return items;
+    final keyed = items
+        .map((g) => (
+              group: g,
+              preOperational: isPreOperational(g),
+              date: priorityDateOf(g, now, detailErrorIds: detailErrorIds),
+            ))
+        .toList();
+
+    keyed.sort((a, b) {
+      // 1. 공개 운영 중인 공고가 먼저
+      if (a.preOperational != b.preOperational) {
+        return a.preOperational ? 1 : -1;
+      }
+      // 2. 날짜를 아는 공고가 먼저 — createdAt이 최근이라는 이유로
+      //    날짜 미상이 운영 공고를 앞지르지 않는다.
+      final ad = a.date;
+      final bd = b.date;
+      if (ad == null && bd != null) return 1;
+      if (ad != null && bd == null) return -1;
+      if (ad != null && bd != null) {
+        // 3. 가까운 근무일 먼저
+        final byDate = ad.compareTo(bd);
+        if (byDate != 0) return byDate;
+      }
+      // 4. 같은 날짜 안에서만 최근 생성순
+      final byCreated = b.group.createdAt.compareTo(a.group.createdAt);
+      if (byCreated != 0) return byCreated;
+      // 5. Dart의 List.sort는 stable하지 않다 — 동일 timestamp가 rebuild마다
+      //    뒤집히지 않도록 확정적인 최종 tie-break를 둔다.
+      return a.group.id.compareTo(b.group.id);
+    });
+
+    return keyed.map((e) => e.group).toList();
   }
 
   /// 모든 슬롯이 시간만료 + TO가 ACTIVE 상태인 경우 자동 cascade close
