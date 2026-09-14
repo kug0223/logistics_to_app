@@ -620,9 +620,12 @@ void main() {
               "잠시 후 다시 시도해주세요.'); return false;"),
           true,
           reason: '임금은 서버 가드가 없어 이 경고가 마지막 방어선이다');
-      // 경고 문구·동작 자체는 재설계하지 않았다
-      expect(body.contains("title: '급여 계산 조건 변경',"), true);
+      // [POSTING-V2-03I.1 재작성] 경고의 구조(확인 후 계속 저장)는 그대로다.
+      //   제목만 '급여 계산 조건 변경' → '모집 임금 변경'으로 바뀌었다 —
+      //   기존 지원자의 급여 계산은 스냅샷으로 유지되므로 그 제목이 틀렸다.
+      expect(body.contains("title: '모집 임금 변경',"), true);
       expect(body.contains("text: '계속 저장',"), true);
+      expect(body.contains("title: '급여 계산 조건 변경',"), false);
     });
 
     test('05-d 조회 실패를 확정자 없음으로 간주하지 않는다 (TC2 §4)', () async {

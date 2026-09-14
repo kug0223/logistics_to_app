@@ -48,6 +48,7 @@ class ContractService {
     List<ContractArticle> articles = const [],
     String? templateId,
   }) async {
+    workDetail = _withPromisedWage(application, workDetail);
     final isLong = application.isLongTermApplication;
     final toId = application.toId ?? '';
     final workDetailId = application.workDetailId ?? workDetail.id;
@@ -90,6 +91,7 @@ class ContractService {
     required WorkDetailData workDetail,
     List<ContractArticle> articles = const [],
   }) async {
+    workDetail = _withPromisedWage(application, workDetail);
     return _createNew(
       application: application,
       business: business,
@@ -98,6 +100,45 @@ class ContractService {
       toId: application.toId ?? '',
       workDetailId: application.workDetailId ?? workDetail.id,
       articles: articles,
+    );
+  }
+
+  /// [POSTING-V2-03I.1] 계약서 임금은 **그 사람에게 약속한 임금**이다.
+  ///
+  /// 공고의 현재 모집 임금이 아니다. 두 값은 정상적으로 다를 수 있다 —
+  /// 관리자가 모집 임금을 올리면 그 뒤 지원하는 사람에게만 적용되고,
+  /// 이미 지원·확정한 사람의 약속은 그대로다. 근태·급여는 이미 그렇게
+  /// 동작한다(attendance.snapshotWage ← application.wage).
+  ///
+  /// 계약서만 예외였다. 진입점에 따라 현재 슬롯 임금을 쓰거나
+  /// (`TOItem.workDetails`) 갱신되지 않는 마스터 TO 템플릿을 썼고
+  /// (`to.workDetails`), 둘 다 실제 지급액과 어긋날 수 있었다.
+  /// 같은 지원서면 어디서 만들어도 같은 임금이어야 한다.
+  ///
+  /// 업무명·시간 등 나머지 정보는 현재 workDetail을 그대로 쓴다 —
+  /// 바꾸는 것은 임금 두 필드뿐이다.
+  ///
+  /// [application]에 약속 임금이 없으면(레거시 결측) **예외를 던진다.**
+  /// 현재 모집 임금으로 과거 약속을 조용히 덮어쓰지 않는다.
+  WorkDetailData _withPromisedWage(
+    ApplicationModel application,
+    WorkDetailData workDetail,
+  ) {
+    final promisedWage = application.wage;
+    if (promisedWage <= 0) {
+      throw StateError(
+        '지원 시점 임금 정보가 없어 계약서를 만들 수 없습니다. '
+        '(applicationId: ${application.id})',
+      );
+    }
+    final promisedType = application.wageType;
+    if (promisedWage == workDetail.wage &&
+        (promisedType == null || promisedType == workDetail.wageType)) {
+      return workDetail; // 모집 임금과 약속 임금이 같다 — 그대로 쓴다
+    }
+    return workDetail.copyWith(
+      wage: promisedWage,
+      wageType: promisedType ?? workDetail.wageType,
     );
   }
 

@@ -797,22 +797,38 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ToastHelper.showError('지원자 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
       return false;
     }
+    // [POSTING-V2-03I.1] 경고 대상은 '확정자'가 아니라 **이미 임금을 약속받은 사람 전체**다.
+    //   지원·초대 시점에 서버가 application.wage로 스냅샷을 남기므로,
+    //   PENDING·INVITED도 이번 변경의 영향을 받지 않는다. 같은 안내가 필요하다.
+    //   같은 fresh 응답을 그대로 쓴다 — 추가 조회 없음.
+    const cohortStatuses = [
+      AppStatus.pending,
+      AppStatus.invited,
+      AppStatus.contractPending,
+      AppStatus.confirmed,
+    ];
     const confirmedStatuses = [AppStatus.confirmed, AppStatus.contractPending];
+    final hasCohort = appsRaw.any((m) => cohortStatuses.contains(m['status']));
+    if (!hasCohort) return true; // 약속된 사람이 없다 — 경고할 것이 없다
     final hasConfirmed =
         appsRaw.any((m) => confirmedStatuses.contains(m['status']));
-    if (!hasConfirmed) return true; // 미확정 근무자 없음 — 경고 불필요
 
     if (!mounted) return false;
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StyledDialog(
-        title: '급여 계산 조건 변경',
-        subtitle: '이 공고에 확정된 근무자가 있습니다',
+        title: '모집 임금 변경',
+        subtitle: hasConfirmed ? '이 공고에 확정된 근무자가 있습니다' : '이 공고에 기존 지원자가 있습니다',
         icon: Icons.warning_amber_rounded,
         headerColor: AppColors.warning,
         content: Text(
-          '급여 유형·휴게시간·야간 설정을 변경하면\n미확정 급여 계산에 영향을 줄 수 있습니다.\n\n계속 저장하시겠습니까?',
+          // 이전 문구는 '미확정 급여 계산에 영향을 줄 수 있습니다'였는데 사실과 달랐다.
+          // 기존 지원자의 급여는 지원 시점 스냅샷으로 계산되므로 영향을 받지 않는다.
+          '임금을 변경하면 기존 지원자의 지원 당시 임금은 유지되고, '
+          '변경된 임금은 이후 새로 지원하는 사람부터 적용됩니다.'
+          '${hasConfirmed ? '\n이미 확정된 근무자의 약속 임금과 지급 기준은 변경되지 않습니다.' : ''}'
+          '\n\n계속 저장하시겠습니까?',
           style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
         ),
         actions: [
