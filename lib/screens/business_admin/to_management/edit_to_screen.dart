@@ -835,11 +835,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     return false;
   }
 
-  /// [POSTING-V2-03I.4] 레거시 지원서가 스냅샷하지 못한 조건이 바뀌었는가.
+  /// [POSTING-V2-03I.4] 레거시 지원서가 스냅샷하지 못한 조건이 바뀐 업무.
   ///
   /// 금액·급여유형은 레거시 지원서도 지원 시점 값을 갖고 있으므로 여기 없다 —
   /// 그 둘은 활성 레거시가 있어도 바꿀 수 있다.
-  bool _hasLegacyProtectedConditionChanged() {
+  ///
+  /// [POSTING-V2-03K.1] "바뀌었는가"(bool)에서 "어느 업무가 바뀌었는가"로
+  /// 바꿨다. 서버는 03K에서 그 업무에 걸린 레거시만 보는데, 클라이언트가
+  /// 공고 전체를 하나로 보면 관계 없는 업무 수정까지 먼저 막는다.
+  ///
+  /// 매칭 기준은 **변경 전** 업무다 — 서버가 슬롯에 저장된 old WD에서
+  /// wdId를 가져오는 것과 같은 이유다.
+  List<WorkDetailData> _legacyProtectedChangedWorks() {
+    final changed = <WorkDetailData>[];
     for (final cur in _workDetails) {
       final orig =
           _originalWorkDetails.where((o) => o.id == cur.id).firstOrNull;
@@ -849,10 +857,25 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           cur.nightIncluded != orig.nightIncluded ||
           cur.baseHourlyWage != orig.baseHourlyWage ||
           cur.taxDeductionType != orig.taxDeductionType) {
-        return true;
+        changed.add(orig);
       }
     }
-    return false;
+    return changed;
+  }
+
+  /// [POSTING-V2-03K.1] 이 지원서가 [work]의 급여 조건에 묶여 있는가.
+  ///
+  /// 서버 03K와 같은 의미다. 식별 키(workDetailId·wdId)가 하나라도 있으면
+  /// 기존 [_appMatchesWork]가 그대로 판정한다. 둘 다 없으면 어느 업무인지
+  /// 복원할 근거가 없으므로 보수적으로 걸린 것으로 본다 —
+  /// 슬롯 경로는 슬롯 범위 전체, 마스터 경로는 서버 쿼리가 업무명으로
+  /// 좁혀지므로 업무명 범위까지다.
+  bool _appBoundToWork(Map<String, dynamic> app, WorkDetailData work) {
+    final hasKey = app['workDetailId'] is String || app['wdId'] is String;
+    if (!hasKey) {
+      return widget.isSlotMode || app['selectedWorkType'] == work.workType;
+    }
+    return _appMatchesWork(app, work);
   }
 
   Future<bool> _showWageGuardWarning() async {
@@ -890,14 +913,35 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     //   갖고 있지 않다. 그 조건을 바꾸면 서버가 거부하므로, "기존 지원자의
     //   조건은 유지됩니다"라고 안내한 뒤 저장을 시도하게 두면 모순이다.
     //   같은 응답에서 판별한다 — 추가 조회 없음.
-    final hasActiveLegacy = appsRaw.any((m) =>
-        cohortStatuses.contains(m['status']) && m['nightAllowanceApplied'] == null);
-    if (hasActiveLegacy && _hasLegacyProtectedConditionChanged()) {
-      ToastHelper.showError(
-        '이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 변경할 수 없습니다. '
-        '해당 지원 관계가 종료된 후 변경해 주세요.',
-      );
-      return false;
+    //
+    // [POSTING-V2-03K.1] **바뀐 업무에 실제로 걸린** 레거시만 본다.
+    //   이전에는 공고 어딘가에 레거시가 있고 어딘가의 조건이 바뀌었으면
+    //   막았다. 서버(03K)는 그 업무의 관계만 보므로, 관계 없는 다른 업무의
+    //   조건 변경을 클라이언트가 먼저 막는 일이 생겼다.
+    final legacyChangedWorks = _legacyProtectedChangedWorks();
+    if (legacyChangedWorks.isNotEmpty) {
+      // 슬롯 경로는 그 날짜의 지원서만 본다 — 서버도 slotId로 좁힌다.
+      final slotIds = widget.isSlotMode
+          ? (widget.isBatchMode
+              ? widget.batchSlots!.map((s) => s.id).toList()
+              : [widget.slot!.id])
+          : const <String>[];
+      final activeLegacy = appsRaw
+          .where((m) =>
+              cohortStatuses.contains(m['status']) &&
+              m['nightAllowanceApplied'] == null &&
+              (!widget.isSlotMode ||
+                  slotIds.any((id) => _isForSlot(m, id))))
+          .toList();
+      final blocked = legacyChangedWorks
+          .any((w) => activeLegacy.any((m) => _appBoundToWork(m, w)));
+      if (blocked) {
+        ToastHelper.showError(
+          '이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 변경할 수 없습니다. '
+          '해당 지원 관계가 종료된 후 변경해 주세요.',
+        );
+        return false;
+      }
     }
 
     if (!mounted) return false;

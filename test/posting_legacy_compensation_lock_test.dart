@@ -142,9 +142,12 @@ class AppRow {
 
   /// [POSTING-V2-03K] 슬롯 경로의 canonical immutable key. 역시 조건부 저장.
   final String? wdId;
+
+  /// [POSTING-V2-03K.1] 항상 저장된다 — 키가 없을 때 보수적 범위를 정한다.
+  final String? selectedWorkType;
   final bool hasSnapshot;
   const AppRow(this.status, this.workDetailId,
-      {this.hasSnapshot = false, this.wdId});
+      {this.hasSnapshot = false, this.wdId, this.selectedWorkType});
 }
 
 bool _compChanged(Map<String, dynamic> oldWD, Map<String, dynamic> newWD) =>
@@ -688,6 +691,234 @@ void main() {
     });
   });
 
+  // ── 03K.1 client granularity ──────────────────────────────────
+  group('LEGACY-11 client가 서버와 같은 단위로 본다', () {
+    const editPath =
+        'lib/screens/business_admin/to_management/edit_to_screen.dart';
+    const cohort = ['PENDING', 'INVITED', 'CONTRACT_PENDING', 'CONFIRMED'];
+
+    /// 편집 대상 업무 한 건.
+    ({String id, String workType, String? wdId}) work(
+            String workType, String start, String end, {String? wdId}) =>
+        (id: '${workType}_${start}_$end', workType: workType, wdId: wdId);
+
+    /// `_showWageGuardWarning`의 레거시 차단 판정 replica.
+    ///
+    /// [changed]는 보호 조건이 바뀐 **변경 전** 업무들이다.
+    bool clientLegacyBlock({
+      required List<({String id, String workType, String? wdId})> changed,
+      required List<AppRow> apps,
+      bool isSlotMode = false,
+    }) {
+      if (changed.isEmpty) return false;
+      final active =
+          apps.where((a) => cohort.contains(a.status) && !a.hasSnapshot);
+      bool boundTo(AppRow a, ({String id, String workType, String? wdId}) w) {
+        final hasKey = a.workDetailId != null || a.wdId != null;
+        if (!hasKey) return isSlotMode || a.selectedWorkType == w.workType;
+        // _appMatchesWork와 같은 세 가지 매칭
+        if (a.workDetailId == w.id) return true;
+        if (a.workDetailId == w.workType) return true;
+        if (w.wdId != null && a.wdId == w.wdId) return true;
+        return false;
+      }
+
+      return changed.any((w) => active.any((a) => boundTo(a, w)));
+    }
+
+    final wdA = work('피킹', '09:00', '18:00', wdId: 'wd_a');
+    final wdB = work('검수', '18:00', '22:00', wdId: 'wd_b');
+    // 같은 업무명 다른 시간대 (§7)
+    final packA = work('포장', '09:00', '18:00', wdId: 'wd_pa');
+    final packB = work('포장', '18:00', '22:00', wdId: 'wd_pb');
+
+    test('11-a A에 레거시, B 조건 변경 → ALLOW (§5)', () {
+      expect(
+          clientLegacyBlock(
+            changed: [wdB],
+            apps: const [
+              AppRow('CONFIRMED', '피킹_09:00_18:00', wdId: 'wd_a'),
+            ],
+          ),
+          false,
+          reason: '서버가 허용하는 것을 client가 먼저 막으면 안 된다');
+    });
+
+    test('11-b A에 레거시, A 조건 변경 → BLOCK (§6)', () {
+      expect(
+          clientLegacyBlock(
+            changed: [wdA],
+            apps: const [
+              AppRow('CONFIRMED', '피킹_09:00_18:00', wdId: 'wd_a'),
+            ],
+          ),
+          true);
+    });
+
+    test('11-c 같은 workType 다른 wdId — modern은 정확히 가른다 (§7)', () {
+      const onPackA = [
+        AppRow('CONFIRMED', '포장_09:00_18:00', wdId: 'wd_pa'),
+      ];
+      expect(clientLegacyBlock(changed: [packB], apps: onPackA), false);
+      expect(clientLegacyBlock(changed: [packA], apps: onPackA), true);
+    });
+
+    test('11-d workType만 아는 레거시 — 같은 이름은 전부 BLOCK (§7)', () {
+      const byWorkType = [AppRow('CONFIRMED', '포장')];
+      expect(clientLegacyBlock(changed: [packA], apps: byWorkType), true);
+      expect(clientLegacyBlock(changed: [packB], apps: byWorkType), true);
+      expect(clientLegacyBlock(changed: [wdB], apps: byWorkType), false,
+          reason: '업무명이 다르면 이 업무의 관계가 아니다');
+    });
+
+    test('11-e identity 키가 아예 없으면 보수적 BLOCK (§8)', () {
+      const noKey = [AppRow('CONFIRMED', null, selectedWorkType: '피킹')];
+      // 마스터 경로 — 서버 쿼리가 업무명으로 좁혀지므로 업무명 범위까지
+      expect(clientLegacyBlock(changed: [wdA], apps: noKey), true);
+      expect(clientLegacyBlock(changed: [wdB], apps: noKey), false);
+      // 슬롯 경로 — 서버가 slotId로만 좁히므로 슬롯 전체가 보수적 범위
+      expect(
+          clientLegacyBlock(changed: [wdB], apps: noKey, isSlotMode: true),
+          true);
+    });
+
+    test('11-f 스냅샷 cohort만 있으면 차단하지 않는다 (§10)', () {
+      final apps = List.generate(
+          50,
+          (_) => const AppRow('CONFIRMED', '피킹_09:00_18:00',
+              hasSnapshot: true, wdId: 'wd_a'));
+      expect(clientLegacyBlock(changed: [wdA], apps: apps), false,
+          reason: '경고는 띄우되 저장은 허용하는 경로다');
+    });
+
+    test('11-g 종료 상태 레거시는 차단하지 않는다 (§9)', () {
+      for (final st in ['REJECTED', 'CANCELED', 'AUTO_CANCELED', 'EXPIRED']) {
+        expect(
+            clientLegacyBlock(
+                changed: [wdA],
+                apps: [AppRow(st, '피킹_09:00_18:00', wdId: 'wd_a')]),
+            false,
+            reason: st);
+      }
+    });
+
+    test('11-h 4개 active 상태 모두 차단한다 (§9)', () {
+      for (final st in cohort) {
+        expect(
+            clientLegacyBlock(
+                changed: [wdA],
+                apps: [AppRow(st, '피킹_09:00_18:00', wdId: 'wd_a')]),
+            true,
+            reason: st);
+      }
+    });
+
+    test('11-i 보호 조건이 안 바뀌면 판정 자체가 없다 (§4)', () {
+      expect(
+          clientLegacyBlock(
+            changed: const [],
+            apps: const [AppRow('CONFIRMED', '피킹_09:00_18:00')],
+          ),
+          false,
+          reason: 'requiredCount만 고친 경우 등 — 레거시 차단 대상이 아니다');
+    });
+
+    test('11-j client가 server 03K와 같은 결과를 낸다 (§16)', () {
+      // 같은 관계 집합에 대해 두 replica가 같은 판정을 내는지 교차 확인
+      const rels = [
+        AppRow('CONFIRMED', '피킹_09:00_18:00', wdId: 'wd_a'),
+      ];
+      Map<String, dynamic> serverWD(String wt, String s, String e,
+              {required int breakMinutes, String? wdId}) =>
+          {
+            'workType': wt, 'startTime': s, 'endTime': e,
+            if (wdId != null) 'wdId': wdId,
+            'wage': 100000, 'baseHourlyWage': null,
+            'breakMinutes': breakMinutes,
+            'nightAllowanceApplied': true, 'taxDeductionType': 'none',
+          };
+      // A 변경 — 양쪽 BLOCK
+      expect(
+          legacyLocked(
+            oldWD: serverWD('피킹', '09:00', '18:00',
+                breakMinutes: 60, wdId: 'wd_a'),
+            newWD: serverWD('피킹', '09:00', '18:00',
+                breakMinutes: 30, wdId: 'wd_a'),
+            apps: rels,
+          ),
+          true);
+      expect(clientLegacyBlock(changed: [wdA], apps: rels), true);
+      // B 변경 — 양쪽 ALLOW
+      expect(
+          legacyLocked(
+            oldWD: serverWD('검수', '18:00', '22:00',
+                breakMinutes: 60, wdId: 'wd_b'),
+            newWD: serverWD('검수', '18:00', '22:00',
+                breakMinutes: 30, wdId: 'wd_b'),
+            apps: rels,
+          ),
+          false);
+      expect(clientLegacyBlock(changed: [wdB], apps: rels), false);
+    });
+
+    // ── 클라이언트 배선 ──
+    test('11-k 기존 매칭 helper를 재사용한다 (§3)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(editPath), 'bool _appBoundToWork(')));
+      expect(body.contains('return _appMatchesWork(app, work);'), true,
+          reason: '비슷한 매칭 로직을 복제하지 않는다');
+      expect(
+          body.contains("final hasKey = app['workDetailId'] is String "
+              "|| app['wdId'] is String;"),
+          true);
+      expect(
+          body.contains("return widget.isSlotMode "
+              "|| app['selectedWorkType'] == work.workType;"),
+          true,
+          reason: '슬롯/마스터의 보수적 범위가 서버와 같다');
+    });
+
+    test('11-l 슬롯 경로는 그 날짜의 지원서만 본다 (§14)', () {
+      final body = _flat(_codeOf(
+          _bodyOf(_src(editPath), 'Future<bool> _showWageGuardWarning(')));
+      expect(
+          body.contains('(!widget.isSlotMode || '
+              'slotIds.any((id) => _isForSlot(m, id)))'),
+          true);
+      expect(
+          body.contains('widget.isBatchMode '
+              '? widget.batchSlots!.map((s) => s.id).toList() '
+              ': [widget.slot!.id]'),
+          true,
+          reason: 'SINGLE/BATCH가 같은 매칭을 쓴다');
+    });
+
+    test('11-m 추가 조회를 만들지 않았다 (§12)', () {
+      final body = _codeOf(
+          _bodyOf(_src(editPath), 'Future<bool> _showWageGuardWarning('));
+      expect('_applicationRelations.fresh()'.allMatches(body).length, 1);
+      expect(body.contains('httpsCallable('), false,
+          reason: '같은 fresh 응답을 재사용한다 — 추가 callable 없음');
+    });
+
+    test('11-n canonical message를 그대로 쓴다 (§6)', () {
+      final body = _codeOf(
+          _bodyOf(_src(editPath), 'Future<bool> _showWageGuardWarning('));
+      expect(
+          body.contains('이 공고에는 이전 버전의 지원 기록이 있어 일부 급여 산정 조건을 변경할 수 없습니다. '),
+          true);
+    });
+
+    test('11-o 서버를 다시 고치지 않았다 (§15)', () {
+      final body = _codeOf(
+          _bodyOf(_src(_fnsPath), 'const assertNoLegacyCompensationLock = async ('));
+      expect(body.contains('.limit('), false, reason: '03K 상태 그대로');
+      expect(
+          body.contains('wdId: (ow["wdId"] ?? nw["wdId"]) as string | undefined,'),
+          true);
+    });
+  });
+
   // ── §11, §12 클라이언트 UX ────────────────────────────────────
   group('LEGACY-09 안내가 상황에 맞는다', () {
     const editPath =
@@ -696,7 +927,7 @@ void main() {
     test('09-a 레거시 케이스는 cohort 안내를 보여주지 않는다 (§11)', () {
       final body = _codeOf(
           _bodyOf(_src(editPath), 'Future<bool> _showWageGuardWarning('));
-      final legacyIdx = body.indexOf('if (hasActiveLegacy &&');
+      final legacyIdx = body.indexOf('if (legacyChangedWorks.isNotEmpty) {');
       final dialogIdx = body.indexOf('showDialog<bool>(');
       expect(legacyIdx, greaterThan(-1));
       expect(dialogIdx, greaterThan(legacyIdx),
@@ -715,7 +946,8 @@ void main() {
 
     test('09-c 보호 필드가 바뀔 때만 차단한다 (§7)', () {
       final body = _flat(_codeOf(
-          _bodyOf(_src(editPath), 'bool _hasLegacyProtectedConditionChanged(')));
+          _bodyOf(_src(editPath),
+              'List<WorkDetailData> _legacyProtectedChangedWorks(')));
       for (final f in [
         'cur.breakMinutes != orig.breakMinutes',
         'cur.nightAllowanceApplied != orig.nightAllowanceApplied',

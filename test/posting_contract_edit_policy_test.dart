@@ -1333,9 +1333,12 @@ void main() {
 
     test('06-f legacy 안내는 WAGE-GUARD가 담당한다 (03I.4 무회귀)', () {
       final code = _codeOf(_src(_editPath));
-      expect(code.contains('bool _hasLegacyProtectedConditionChanged()'), true);
-      expect(code.contains('if (hasActiveLegacy && _hasLegacyProtectedConditionChanged()) {'),
+      // [POSTING-V2-03K.1] bool에서 "어느 업무가 바뀌었는가"로 바뀌었다
+      expect(
+          code.contains(
+              'List<WorkDetailData> _legacyProtectedChangedWorks()'),
           true);
+      expect(code.contains('if (legacyChangedWorks.isNotEmpty) {'), true);
     });
   });
 
