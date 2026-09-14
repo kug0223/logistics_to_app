@@ -314,12 +314,18 @@ void main() {
 
   // ── §4, §10 CONTRACT predicate ─────────────────────────────────
   group('PREFLIGHT-02 마스터 경로가 서버 blanket guard와 일치한다', () {
+    // [POSTING-V2-03H.1 재작성] 판정 위치가 트랜잭션 안으로 옮겨졌다
+    // (재시도마다 재검증되도록). 정책은 그대로 — 값 비교가 아니라 키 존재다.
     test('02-a 서버가 키 존재만으로 막는다 (전제 확인)', () {
       final fns = _src(_fnsPath);
-      expect(
-          fns.contains('if (!isSuperAdmin && "workDetails" in updates && totalConfirmed > 0)'),
+      expect(fns.contains('const mutatesWorkDetails = "workDetails" in updates;'),
           true,
-          reason: '값 비교가 아니라 키 존재 검사다 — 이 사실이 이번 수정의 근거');
+          reason: '값 비교가 아니라 키 존재 검사다 — 이 사실이 03G.1 payload 조건화의 근거');
+      expect(
+          fns.contains(
+              'if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {'),
+          true,
+          reason: '정책은 그대로, 판정만 트랜잭션 안에서 신선한 값으로 한다');
       expect(fns.contains('"확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."'), true);
     });
 

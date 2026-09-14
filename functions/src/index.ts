@@ -9372,15 +9372,21 @@ export const callableUpdateTO = onCall(
     // workDetails 수정: totalConfirmed > 0 차단 (슈퍼어드민 예외) — assertBizAdmin 반환값 재사용
     const isSuperAdmin = (authCallerData?.role as string | undefined) === "SUPER_ADMIN";
     const totalConfirmed = (toData.totalConfirmed as number | undefined) ?? 0;
-    if (!isSuperAdmin && "workDetails" in updates && totalConfirmed > 0) {
-      throw new HttpsError(
-        "failed-precondition",
-        "확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."
-      );
-    }
+    // [POSTING-V2-03H.1] 이 판정의 canonical 위치는 아래 txEdit 안으로 옮겼다.
+    //   여기서 쓰는 toData는 트랜잭션 밖 스냅샷이라, 확인한 직후 확정이 일어나도
+    //   commit이 그대로 성공했다. 트랜잭션이 이미 읽는 freshData.totalConfirmed로
+    //   다시 판단한다 — 추가 read는 없다.
+    //   (toData.totalConfirmed는 아래 totalRequired 사전 검증에서 계속 쓴다.
+    //    그쪽 canonical 판정도 이미 txEdit 안에 있다.)
+    const mutatesWorkDetails = "workDetails" in updates;
+
+    // [POSTING-V2-03H.1] identity guard가 조회할 업무명. 순수 비교 결과이므로
+    //   트랜잭션 밖에서 계산해도 된다 — application 관계를 읽지 않는다.
+    //   실제 지원자 조회는 txEdit 안에서 한다.
+    const identityWorkTypesToGuard: string[] = [];
 
     // [4H.0C-WORKDETAIL-VALIDATION] workDetails 변경 시 중복·identity·delete 통합 검증
-    if (!isSuperAdmin && "workDetails" in updates) {
+    if (!isSuperAdmin && mutatesWorkDetails) {
       const oldWDs = (toData.workDetails as unknown[] | undefined) ?? [];
       const newWDs = (updates.workDetails as unknown[]) ?? [];
 
@@ -9419,36 +9425,16 @@ export const callableUpdateTO = onCall(
       // PENDING·INVITED·CONTRACT_PENDING 중 하나라도 참조 중이면 block
       // (totalConfirmed > 0 guard는 위에서 CONFIRMED+CONTRACT_PENDING를 막지만
       //  totalConfirmed=0인 경우에도 PENDING/INVITED를 여기서 추가 보호)
-      const removedOrChangedWorkTypes: string[] = [];
+      // [POSTING-V2-03H.1] 조회는 여기서 하지 않는다.
+      //   이전에는 이 자리에서 applications를 읽고 바로 판정했는데, 그 읽기는
+      //   트랜잭션 밖이었고 재시도해도 다시 실행되지 않았다. 그래서
+      //   "조회 → (지원 발생) → commit" 순서가 그대로 성립했다.
+      //   대상 업무명만 모아 두고, 실제 판정은 txEdit 안에서 한다.
       for (const oldWd of oldWDs as Record<string, unknown>[]) {
         const oldId = `${oldWd["workType"]}_${oldWd["startTime"]}_${oldWd["endTime"]}`;
         const stillExists = newIdSet.has(oldId);
         if (!stillExists) {
-          removedOrChangedWorkTypes.push(oldWd["workType"] as string);
-        }
-      }
-      if (removedOrChangedWorkTypes.length > 0) {
-        // 인덱스: toId + selectedWorkType + status (기존 index 재사용, status 별도 equality)
-        const ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING"];
-        const checks = await Promise.all(
-          removedOrChangedWorkTypes.flatMap((wt) =>
-            ACTIVE_STATUSES.map((st) =>
-              db.collection("applications")
-                .where("toId", "==", toId)
-                .where("selectedWorkType", "==", wt)
-                .where("status", "==", st)
-                .limit(1)
-                .get()
-            )
-          )
-        );
-        const hasActive = checks.some((s) => !s.empty);
-        if (hasActive) {
-          const wtList = removedOrChangedWorkTypes.join(", ");
-          throw new HttpsError(
-            "failed-precondition",
-            `'${wtList}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요.`
-          );
+          identityWorkTypesToGuard.push(oldWd["workType"] as string);
         }
       }
     }
@@ -9684,14 +9670,51 @@ export const callableUpdateTO = onCall(
       if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
       const freshData = freshSnap.data()!;
       const freshRevision = (freshData.editRevision as number | undefined) ?? 0;
+      const freshConfirmed = (freshData.totalConfirmed as number | undefined) ?? 0;
       if (expectedEditRevision !== freshRevision) {
         throw new HttpsError(
           "failed-precondition",
           "다른 관리자가 공고를 수정했습니다. 최신 내용을 다시 확인해 주세요."
         );
       }
+      // [POSTING-V2-03H.1] 확정자 guard — 트랜잭션이 읽은 신선한 값으로 판단한다.
+      //   editRevision은 지원·확정으로 올라가지 않으므로, 관리자 동시 편집만
+      //   막을 뿐 지원 관계 변화는 잡지 못한다. 그 몫은 이 검사가 한다.
+      //   apply·invite·confirm이 모두 toRef를 쓰므로, 이 트랜잭션이 읽은 toRef가
+      //   충돌해 재시도되고, 재시도에서 freshData는 그 변화를 반영한다.
+      if (!isSuperAdmin && mutatesWorkDetails && freshConfirmed > 0) {
+        throw new HttpsError(
+          "failed-precondition",
+          "확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."
+        );
+      }
+      // [POSTING-V2-03H.1] identity guard — date guard와 같은 방식으로
+      //   txEdit.get(query)를 쓴다. 재시도 때 다시 실행되는 것이 핵심이다.
+      if (identityWorkTypesToGuard.length > 0) {
+        // 인덱스: toId + selectedWorkType + status (기존 index 재사용, status 별도 equality)
+        const ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING"];
+        const identitySnapshots = await Promise.all(
+          identityWorkTypesToGuard.flatMap((wt) =>
+            ACTIVE_STATUSES.map((st) =>
+              txEdit.get(
+                db.collection("applications")
+                  .where("toId", "==", toId)
+                  .where("selectedWorkType", "==", wt)
+                  .where("status", "==", st)
+                  .limit(1)
+              )
+            )
+          )
+        );
+        if (identitySnapshots.some((s) => !s.empty)) {
+          const wtList = identityWorkTypesToGuard.join(", ");
+          throw new HttpsError(
+            "failed-precondition",
+            `'${wtList}' 업무에 활성 지원자가 있어 업무 구성을 변경할 수 없습니다. 해당 지원을 먼저 처리해주세요.`
+          );
+        }
+      }
       if (!isSuperAdmin && "totalRequired" in finalUpdates) {
-        const freshConfirmed = (freshData.totalConfirmed as number | undefined) ?? 0;
         const newReq = finalUpdates.totalRequired as number;
         if (newReq !== 0 && newReq < freshConfirmed) {
           throw new HttpsError(
