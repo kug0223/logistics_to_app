@@ -173,7 +173,7 @@ void main() {
 
     test('03-d 실제 grouped surface가 이것을 쓴다 (§9)', () {
       // [HOME-V2-08D.2] Hero shell + skeleton이 같은 토큰을 재사용해 11곳.
-      expect('decoration: _groupSurface,'.allMatches(code).length, 11);
+      expect('decoration: _groupSurface,'.allMatches(code).length, 10);
       expect(_codeOf(_bodyOf(home, 'Widget _heroShell(')).contains('_groupSurface'),
           true);
       expect(_codeOf(_bodyOf(home, 'Widget _heroSkeleton(')).contains('_groupSurface'),
@@ -242,7 +242,7 @@ void main() {
     });
 
     test('04-d section 이름 무변경 (§16)', () {
-      for (final t in ["'오늘 운영'", "'처리할 일'", "'다가오는 인력 부족'"]) {
+      for (final t in ["'오늘'", "'처리할 일'", "'다가오는 7일'"]) {
         expect(home.contains(t), true, reason: t);
       }
     });
@@ -281,9 +281,12 @@ void main() {
       // 주석에는 제거 이유로 남아 있으므로 코드만 본다
       expect(code.contains("'오늘 예정된 인력 운영이 없어요'"), false);
       expect(code.contains("'향후 7일 예정된 인력 운영이 없어요'"), false);
-      // 남는 것: task 0 한 줄 + 미래 전부 충원
+      // 남는 것: task 0 한 줄 + 영역별 error 문구
+      // [HOME-V2-08D.4] `향후 7일 인원이 모두 충원됐어요`도 사라졌다 —
+      //   충원 완료된 날짜가 목록에 행으로 들어오면서 대신할 필요가 없어졌다.
       expect(code.contains("'처리할 업무가 없어요'"), true);
-      expect(code.contains("'향후 7일 인원이 모두 충원됐어요'"), true);
+      expect(code.contains("'향후 인력 현황을 불러오지 못했습니다'"), true);
+      expect(code.contains("'향후 7일 인원이 모두 충원됐어요'"), false);
     });
 
     test('05-d 당일 명단 CTA가 Today header에 들어왔다 (08D.3)', () {
@@ -309,7 +312,7 @@ void main() {
     test('05-f upcoming interaction 무변경', () {
       final f = _codeOf(_bodyOf(home, 'Widget _buildFutureShortageRow('));
       expect(f.contains('_navigateToDayApplicantsForDate(context, day)'), true);
-      expect(f.contains('충원하기'), true);
+      expect(f.contains('Icons.chevron_right'), true);
     });
   });
 

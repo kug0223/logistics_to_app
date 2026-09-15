@@ -375,7 +375,7 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘 운영', '다가오는 인력 부족', '처리할 일'});
+      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
     });
 
     test('AH-V2-01의 ERROR≠ZERO 배선이 유지된다', () {

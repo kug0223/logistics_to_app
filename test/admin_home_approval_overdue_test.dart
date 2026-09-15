@@ -422,7 +422,7 @@ void main() {
       final home = _codeOf(
           _src('lib/screens/business_admin/business_admin_home_screen.dart'));
       expect(home.contains('_isMultiBusinessScope'), isTrue);
-      expect(home.contains('shortageScopeLabel()'), isTrue);
+      expect(home.contains('targetLocationLabel()'), isTrue);
     });
   });
 }

@@ -2049,7 +2049,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final canOpenRoster = canSeeAttendance;
 
     return Column(children: [
-      _sectionHeader(context, s, '오늘 운영',
+      // [HOME-V2-08D.4] `오늘 운영` → `오늘`. 옆에 `당일 명단`이 붙은 뒤로
+      //   `운영`은 헤더를 길게만 만들고 아무것도 구분해 주지 않는다.
+      _sectionHeader(context, s, '오늘',
           action: canOpenRoster ? '당일 명단' : null,
           onAction: canOpenRoster
               ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
@@ -2358,11 +2360,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
-  // ── [PHASE-2D] 다가오는 인력 부족 Block ─────────────────────────
+  // ── [PHASE-2D] 다가오는 7일 Block ───────────────────────────────
   // [SOURCE] _staffingReadiness.days[1..7] 재사용 — 추가 fetch 없음
-  // [RULE] SHOW_ONLY_SHORTAGE_DATES=YES · PENDING_ZERO_DISPLAY=HIDE
-  // [RULE] FUTURE_SHORTAGE_MAX_VISIBLE_ROWS=7 (CF: D+1~D+7)
-  // [RULE] FUTURE_STAFFING_ORDER=DATE_ASC (CF 이미 정렬, 재정렬 불필요)
+  //
+  // [HOME-V2-08D.4] 이 섹션은 shortage monitor가 아니다.
+  //   `앞으로 7일 중 어느 날에 근무가 있고, 그 준비가 얼마나 됐는가`를 본다.
+  //   부족한 날만 보여주면 전원 확정된 날의 약속이 화면에서 사라지고,
+  //   관리자는 "다음 근무가 언제인지"를 Home에서 알 수 없게 된다.
+  // [RULE] 표시 대상 = requiredCount > 0 (부족·전원확정 모두)
+  // [RULE] 정렬 = 부족 있는 날 먼저, 각 그룹 안에서 date ASC
   Widget _buildFutureStaffing(
       BuildContext context, double s, ThemeData theme, UserProvider up) {
     final isSub = up.currentUser?.isSubAdmin == true;
@@ -2374,7 +2380,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 로딩: Today Ops와 _staffingLoading 공유 (동일 fetch)
     if (_staffingLoading) {
       return Column(children: [
-        _sectionHeader(context, s, '다가오는 인력 부족'),
+        _sectionHeader(context, s, '다가오는 7일'),
         SizedBox(height: 8 * s),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
@@ -2394,7 +2400,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [AH-V2-03.1] partial(부분합)은 여기서 걸리지 않고 아래로 내려간다.
     if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return Column(children: [
-        _sectionHeader(context, s, '다가오는 인력 부족'),
+        _sectionHeader(context, s, '다가오는 7일'),
         SizedBox(height: 8 * s),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
@@ -2408,52 +2414,27 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       ]);
     }
 
-    // D+1~D+7: D0(첫 요소) skip → shortage > 0 필터 → DATE_ASC 유지
+    // D+1~D+7: D0(첫 요소) skip → 근무가 예정된 날 전부
     final futureDays = _staffingReadiness!.days
         .skip(1)
-        .where((d) => d.shortageCount > 0)
-        .toList();
+        .where((d) => d.requiredCount > 0)
+        .toList()
+      // [HOME-V2-08D.4] 부족한 날이 위로 온다 — 충원 가능한 시간은 날짜가
+      //   가까울수록 빨리 사라진다. 각 그룹 안에서는 날짜순이라 "다음 근무"를
+      //   찾는 읽기도 깨지지 않는다. date는 'YYYY-MM-DD'라 사전순 = 날짜순.
+      ..sort((a, b) {
+        final aRank = a.shortageCount > 0 ? 0 : 1;
+        final bRank = b.shortageCount > 0 ? 0 : 1;
+        if (aRank != bRank) return aRank - bRank;
+        return a.date.compareTo(b.date);
+      });
 
-    // 부족 없음 — 두 가지 의미를 구분한다 [AH-V2-03]
-    //   운영 대상 자체가 없음  vs  대상은 있고 전부 충원됨
-    if (futureDays.isEmpty) {
-      // [HOME-V2-08D.2] `향후 7일 예정된 인력 운영이 없어요`는 사라졌다.
-      //   대상이 없으면 이 섹션 자체가 gate에서 걸러지고, 그 상태는 Hero가
-      //   설명한다. 여기 남는 것은 "대상은 있고 전부 충원됨"뿐이다.
-      return Column(children: [
-        _sectionHeader(context, s, '다가오는 인력 부족'),
-        SizedBox(height: 8 * s),
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Container(
-            padding:
-                EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
-            decoration: _groupSurface,
-            child: Column(children: [
-              Row(children: [
-                Icon(Icons.check_circle_outline,
-                    size: 16 * s, color: AppColors.grey300),
-                SizedBox(width: 8 * s),
-                Expanded(
-                  child: Text(
-                    '향후 7일 인원이 모두 충원됐어요',
-                    style: TextStyle(fontSize: 13, color: AppColors.grey400),
-                  ),
-                ),
-              ]),
-              if (_staffingReadiness!.partial) ...[
-                SizedBox(height: 8 * s),
-                _partialStaffingNotice(s),
-              ],
-            ]),
-          ),
-        ),
-      ]);
-    }
+    // gate(_showUpcomingSection)가 같은 조건을 쓰므로 여기까지 오면 비지 않는다.
+    // 방어적으로만 둔다 — 빈 카드를 만들지 않는다.
+    if (futureDays.isEmpty) return const SizedBox.shrink();
 
-    // 부족 날짜 행 목록 (최대 7행)
     return Column(children: [
-      _sectionHeader(context, s, '다가오는 인력 부족'),
+      _sectionHeader(context, s, '다가오는 7일'),
       SizedBox(height: 8 * s),
       Padding(
         padding: EdgeInsets.symmetric(horizontal: 16 * s),
@@ -2465,7 +2446,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             children: [
               ...futureDays.asMap().entries.map((e) =>
                 _buildFutureShortageRow(
-                  context, s, theme, up, e.value,
+                  context, s, up, e.value,
                   isFirst: e.key == 0,
                   isLast: e.key == futureDays.length - 1,
                 ),
@@ -2479,11 +2460,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     ]);
   }
 
-  /// 부족 날짜 단일 행 — 날짜 레이블 + N명 부족 + 지원 대기 N명(옵션)
+  /// 다가오는 7일 단일 날짜 행.
+  ///
+  /// [HOME-V2-08D.4] 주어는 날짜다. 그 아래에 준비 상태가 오고, 문제가 있으면
+  /// 오른쪽에 부족 수가 붙는다. 부족 여부와 무관하게 **행 전체가 같은 곳으로
+  /// 간다** — `날짜를 누르면 그날 사람을 본다`는 규칙에 예외를 만들지 않는다.
+  ///
+  /// 전용 `충원하기` 버튼은 없앴다. 행 자체가 이미 그 경로이고, 부족한 날에만
+  /// 버튼이 생기면 전원 확정된 날은 눌러도 되는지 알 수 없는 죽은 행처럼 보인다.
   Widget _buildFutureShortageRow(
     BuildContext context,
     double s,
-    ThemeData theme,
     UserProvider up,
     StaffingDayData day, {
     required bool isFirst,
@@ -2491,19 +2478,34 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }) {
     final isSub = up.currentUser?.isSubAdmin == true;
     // OWNER 또는 SubAdmin canManageTo → 탭 가능
-    // SubAdmin canManageWorkers only → 표시는 되나 탭 불가, chevron 없음
+    // SubAdmin canManageWorkers only → 상태는 읽히되 탭 불가, chevron 없음
+    //   (누를 수 없는 chevron은 거짓 affordance다)
     final canNavigate = !isSub || up.can((p) => p.canManageTo);
 
-    final dateLabel  = _futureDateLabel(day.date);
-    final shortageStr = '${day.shortageCount}명 부족';
+    final dateLabel = _futureDateLabel(day.date);
+    final required  = day.requiredCount;
+    final confirmed = day.confirmedCount;
+    final shortage  = day.shortageCount;
+
+    // [HOME-V2-08D.4] 준비 상태는 숫자로 충분하다 — progress bar를 쓰지 않는다.
+    //   shortageCount는 per-wdId 합산이라 required - confirmed와 다를 수 있어
+    //   둘 다 만족할 때만 '전원 확정'이라고 말한다 (Today 요약과 같은 규칙).
+    final fullyStaffed = shortage == 0 && confirmed >= required;
+    final parts = <String>[
+      fullyStaffed ? '$required명 전원 확정' : '$required명 중 $confirmed명 확정',
+    ];
+
+    // [AH-V2-04B] 어느 사업장의 근무인지 — 다사업장일 때만.
+    //   단일 사업장은 header가 이미 사업장명을 말한다.
+    //   부족 사업장이 아니라 **근무가 예정된** 사업장이다 — 전원 확정된 날에도
+    //   어디의 근무인지는 말해야 한다.
+    final bizLine = _isMultiBusinessScope ? day.targetLocationLabel() : null;
+    if (bizLine != null) parts.add(bizLine);
 
     // PENDING_ZERO_DISPLAY=HIDE: null(실패)·0 → 숨김, >0 → '지원 대기 N명'
-    final pendingStr = (day.pendingCount != null && day.pendingCount! > 0)
-        ? '지원 대기 ${day.pendingCount}명'
-        : null;
-
-    // [AH-V2-04B] 부족 위치 — 다사업장일 때만
-    final bizLine = _isMultiBusinessScope ? day.shortageScopeLabel() : null;
+    if (day.pendingCount != null && day.pendingCount! > 0) {
+      parts.add('지원 대기 ${day.pendingCount}명');
+    }
 
     final radius = BorderRadius.only(
       topLeft:     Radius.circular(isFirst ? 16 : 0),
@@ -2515,73 +2517,41 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final rowContent = Padding(
       padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
       child: Row(children: [
-        SizedBox(
-          width: 66 * s,
-          child: Text(dateLabel,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary)),
-        ),
-        SizedBox(width: 8 * s),
         Expanded(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(shortageStr,
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.warning)),
-                  if (pendingStr != null) ...[
-                    Text(' · ',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.grey400)),
-                    Text(pendingStr,
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.grey500)),
-                  ],
-                ],
-              ),
-              // [AH-V2-04B] 어느 사업장이 부족한지 — 다사업장일 때만 compact subline.
-              //   날짜 row가 사업장 목록으로 커지지 않도록 2곳 + '외 N곳'으로 접는다.
-              if (bizLine != null) ...[
-                SizedBox(height: 2 * s),
-                Text(bizLine,
-                    style: TextStyle(
-                        fontSize: 12, color: AppColors.grey500),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-              ],
+              // 날짜가 행의 주어다 — grey metadata로 묻지 않는다.
+              Text(dateLabel,
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+              SizedBox(height: 3 * s),
+              Text(parts.join(' · '),
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
             ],
           ),
         ),
-        if (canNavigate) ...[
+        // [08C] surface는 neutral, 문제 의미에만 semantic color.
+        //   13px 본문 대비를 위해 error(#F44336)가 아닌 errorDark(#D32F2F)를 쓴다.
+        if (shortage > 0) ...[
           SizedBox(width: 8 * s),
-          OutlinedButton(
-            onPressed: () => unawaited(_safeNavigate(() =>
-                _requireApprovedBusiness(context,
-                    () => _navigateToDayApplicantsForDate(context, day)))),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: theme.primaryColor,
-              side: BorderSide(
-                  color: theme.primaryColor.withValues(alpha: 0.6)),
-              padding: EdgeInsets.symmetric(
-                  horizontal: 10 * s, vertical: 4 * s),
-              minimumSize: Size.zero,
-              // [R7.4-B] visual compact 유지 + touch target >= 48dp
-              tapTargetSize: MaterialTapTargetSize.padded,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-              textStyle: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-            child: const Text('충원하기'),
-          ),
+          Text('$shortage명 부족',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.errorDark)),
+        ],
+        if (canNavigate) ...[
+          SizedBox(width: 4 * s),
+          Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
         ],
       ]),
     );
@@ -2600,7 +2570,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (!isLast)
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Container(height: 1, color: AppColors.border),
+          child: Container(height: 1, color: AppColors.grey100),
         ),
     ]);
   }
@@ -3125,43 +3095,40 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
           child: Row(children: [
+            // [HOME-V2-08D.4] icon은 중립이다.
+            //   항목마다 빨강·주황·보라를 주면 "무슨 일인가"와 "얼마나 급한가"가
+            //   같은 채널에서 섞인다. 급여가 늘 빨간 것은 급한 뜻이 아니었다.
+            //   무엇을 먼저 볼지는 _makeActionRows의 순서가 이미 정한다.
             Container(
               width: 36 * s, height: 36 * s,
               decoration: BoxDecoration(
-                color: item.color.withValues(alpha: 0.10),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(item.icon, size: 18 * s, color: item.color),
+              child: Icon(item.icon, size: 18 * s, color: AppColors.grey600),
             ),
             SizedBox(width: 12 * s),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(item.label, style: TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                  fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+              // [PH1] 긴급도는 이 badge 한 채널에서만 말한다 — 실제 urgency
+              //   metadata가 있을 때만 생긴다('긴급 N건' · '연체 N건' 등).
               if (item.badge != null) ...[
                 SizedBox(height: 2 * s),
-                // [PH1] badge 텍스트에 item.color 적용 → 긴급 항목("연체 N건") 시각적 강조
-                Text(item.badge!, style: TextStyle(fontSize: 12, color: item.color.withValues(alpha: 0.85))),
+                Text(item.badge!, style: TextStyle(fontSize: 12, color: item.color)),
               ],
             ])),
             SizedBox(width: 8 * s),
             if (!item.available)
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 4 * s),
-                decoration: BoxDecoration(
-                  color: AppColors.grey100, borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text('조회 실패', style: TextStyle(fontSize: 12, color: AppColors.grey500)),
-              )
+              // ERROR ≠ ZERO — 조회 실패를 0건으로 바꾸지 않는다
+              Text('조회 실패',
+                  style: TextStyle(fontSize: 13, color: AppColors.grey500))
             else
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 5 * s),
-                decoration: BoxDecoration(
-                  color: item.color.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(item.countStr, style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w800, color: item.color)),
-              ),
+              // [HOME-V2-08D.4] count는 전부 같은 무게다. 항목에 따라 굵기나
+              //   색이 달라지면 숫자 크기가 아닌 종류가 급함을 주장하게 된다.
+              Text(item.countStr, style: TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary)),
             SizedBox(width: 4 * s),
             Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
           ]),
@@ -3170,7 +3137,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (!isLast)
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Divider(height: 1, color: AppColors.border),
+          child: Divider(height: 1, color: AppColors.grey100),
         ),
     ]);
   }

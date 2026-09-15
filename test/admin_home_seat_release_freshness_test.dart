@@ -240,7 +240,8 @@ void main() {
       //   그 전제는 **두 영역이 같은 그룹 안에 있다**는 것 — 그건 그대로다.
       //   KPI 셀이 요약 줄 + issue row로 바뀐 것은 07.1의 freshness와 무관하다.
       final ops = _codeOf(_bodyOf(home, 'Widget _buildTodayOps('));
-      expect(ops.contains("'오늘 운영'"), true);
+      // [HOME-V2-08D.4] 제목이 `오늘`로 줄었다 — 같은 섹션이다.
+      expect(ops.contains("_sectionHeader(context, s, '오늘',"), true);
       expect(ops.contains('_buildTodayStaffingSummary('), true);
       expect(ops.contains('_buildTodayAttendanceLine('), true);
       expect(ops.contains('_buildTodayIssueRows('), true);
@@ -260,7 +261,7 @@ void main() {
     });
 
     test('05-d section name 무변경', () {
-      for (final name in ["'오늘 운영'", "'처리할 일'", "'다가오는 인력 부족'"]) {
+      for (final name in ["'오늘'", "'처리할 일'", "'다가오는 7일'"]) {
         expect(home.contains(name), true, reason: name);
       }
     });

@@ -632,9 +632,11 @@ void main() {
       expect(flat.contains('Color(0xFF'), isFalse);
     });
 
-    test('05-j section title은 아직 `오늘 운영`', () {
-      expect(_codeOf(todayOps), contains("'오늘 운영'"));
-      expect(homeCode.contains("_sectionHeader(context, s, '오늘')"), isFalse);
+    test('05-j section title은 `오늘`', () {
+      // [HOME-V2-08D.4] rename이 08D.4에서 이뤄졌다. 08D.3이 지키려던 것은
+      //   "Today 재구성 Phase에서 rename까지 하지 않는다"였고, 지금은 그 rename Phase다.
+      expect(_codeOf(todayOps), contains("_sectionHeader(context, s, '오늘',"));
+      expect(homeCode.contains("'오늘 운영'"), isFalse);
     });
 
     test('05-k header action은 generic 문구가 아니다', () {
@@ -826,9 +828,13 @@ void main() {
       expect(RegExp(r'ctaLabel:').allMatches(_codeOf(hero)).length, 4);
     });
 
-    test('07-e upcoming 구조를 건드리지 않았다', () {
+    test('07-e upcoming gate를 건드리지 않았다', () {
+      // [HOME-V2-08D.4] upcoming 재구성은 08D.4의 범위였다.
+      //   08D.3이 지키려던 것 — Today Phase가 upcoming gate를 흔들지 않는다 — 는 그대로다.
       expect(home, contains('bool get _showUpcomingSection'));
-      expect(homeCode, contains("'다가오는 인력 부족'"));
+      expect(_codeOf(_bodyOf(home, 'bool get _showUpcomingSection')),
+          contains('d.requiredCount > 0'));
+      expect(homeCode, contains("'다가오는 7일'"));
     });
 
     test('07-f Today가 새 read/callable/listener를 만들지 않는다', () {

@@ -133,7 +133,7 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘 운영', '다가오는 인력 부족', '처리할 일'});
+      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
     });
 
     test('§3 처리할 일이 0건이어도 위치가 고정이다', () {
@@ -404,7 +404,7 @@ void main() {
 
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(home.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
+      expect(home.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
     });
 
     test('AH-V2-04 근태·scope 유지', () {
@@ -412,7 +412,7 @@ void main() {
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
       expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);
-      expect(home.contains('shortageScopeLabel()'), isTrue);
+      expect(home.contains('targetLocationLabel()'), isTrue);
     });
 
     // [AH-V2-06 갱신] 05B는 분모를 건드리지 않았고, 06에서 추가됐다.

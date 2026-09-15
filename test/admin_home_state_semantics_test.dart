@@ -123,8 +123,8 @@ void main() {
     });
 
     test('오늘 운영·향후 부족 양쪽에 고지가 붙는다', () {
-      expect('_partialStaffingNotice(s)'.allMatches(home).length, 3,
-          reason: '오늘 운영 1 + 향후 부족(있음/없음) 2');
+      expect('_partialStaffingNotice(s)'.allMatches(home).length, 2,
+          reason: '오늘 1 + 다가오는 7일 1');
     });
   });
 
@@ -202,10 +202,15 @@ void main() {
         isTrue,
       );
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
-
-      expect(f.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
+      // [HOME-V2-08D.4] '전부 충원'도 카드 문구가 아니라 날짜 행이 됐다.
+      //   AH-V2-03의 요지("대상 없음 ≠ 충원 완료")는 더 강해졌다 —
+      //   충원 완료는 실제 날짜와 인원으로 보이고, 대상 없음은 섹션이 없다.
+      expect(f.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
       expect(f.contains('향후 7일 인원 충원 완료'), isFalse,
           reason: '두 상태를 뭉뚱그리던 구 문구는 남으면 안 된다');
+      expect(f.contains('향후 7일 인원이 모두 충원됐어요'), isFalse,
+          reason: '충원 완료를 한 줄로 접지 않는다 — 날짜별로 보인다');
+      expect(f.contains('.where((d) => d.requiredCount > 0)'), isTrue);
     });
   });
 
@@ -224,7 +229,7 @@ void main() {
     test('shortage > 0 인 날만 행으로 남는다', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
       expect(f.contains('.skip(1)'), isTrue);
-      expect(f.contains('.where((d) => d.shortageCount > 0)'), isTrue);
+      expect(f.contains('.where((d) => d.requiredCount > 0)'), isTrue);
       expect(f.contains('_buildFutureShortageRow('), isTrue);
     });
 
@@ -406,7 +411,7 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘 운영', '다가오는 인력 부족', '처리할 일'});
+      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
       // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
       final b = _bodyOf(home, 'Widget build(') +
           _bodyOf(home, 'List<Widget> _buildSections(');

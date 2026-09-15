@@ -327,7 +327,7 @@ void main() {
     test('empty copy는 AH-V2-03 두 상태 계약을 따른다', () {
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(homeCode.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
+      expect(homeCode.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
       expect(homeCode.contains('처리할 업무가 없어요'), isTrue);
     });
 

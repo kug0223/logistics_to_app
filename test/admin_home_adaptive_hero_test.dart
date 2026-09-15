@@ -566,7 +566,6 @@ void main() {
         '_buildTodayIssueRows(',
         '_buildTodayAttendanceLine(',
         '_buildFutureShortageRow(',
-        '충원하기',
       ]) {
         expect(code.contains(t), true, reason: t);
       }
@@ -575,7 +574,7 @@ void main() {
     });
 
     test('06-l section rename을 하지 않았다 (§28)', () {
-      for (final t in ["'오늘 운영'", "'처리할 일'", "'다가오는 인력 부족'"]) {
+      for (final t in ["'오늘'", "'처리할 일'", "'다가오는 7일'"]) {
         expect(home.contains(t), true, reason: t);
       }
     });

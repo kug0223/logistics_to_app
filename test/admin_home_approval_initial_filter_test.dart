@@ -366,7 +366,7 @@ void main() {
 
     test('staffing · attendance 불변', () {
       expect(home.contains('_isMultiBusinessScope'), isTrue);
-      expect(home.contains('shortageScopeLabel()'), isTrue);
+      expect(home.contains('targetLocationLabel()'), isTrue);
       expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
     });

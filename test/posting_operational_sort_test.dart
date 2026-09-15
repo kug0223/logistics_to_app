@@ -822,7 +822,7 @@ void main() {
     test('09-f Home 정렬을 건드리지 않았다', () {
       final home =
           _src('lib/screens/business_admin/business_admin_home_screen.dart');
-      expect(home.contains('.where((d) => d.shortageCount > 0)'), true);
+      expect(home.contains('.where((d) => d.requiredCount > 0)'), true);
     });
   });
 }

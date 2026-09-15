@@ -125,6 +125,29 @@ class StaffingDayData {
     return rest > 0 ? '$name 외 $rest곳' : name;
   }
 
+  /// [HOME-V2-08D.4] 그날 **근무가 예정된** 사업장 위치 라벨. 없으면 null.
+  ///
+  /// `shortageLocationLabel`과 모집단이 다르다. 저쪽은 부족이 난 사업장이고,
+  /// 이쪽은 인원이 필요한 사업장 전부다 — 전원 충원된 날에도 어디의 근무인지는
+  /// 말해야 하므로 부족을 기준으로 삼을 수 없다.
+  ///
+  /// 예) 'A센터' / 'A센터 외 2곳'
+  ///
+  /// 순서는 사업장명 오름차순 — 매 조회마다 대표가 바뀌지 않게 한다.
+  /// 여러 곳이면 반드시 `외 N곳`을 붙인다. 한 곳만 남기면 단일 사업장의
+  /// 근무처럼 읽힌다.
+  String? targetLocationLabel() {
+    final list = byBusiness.where((b) => b.requiredCount > 0).toList()
+      ..sort((a, b) => a.businessName.compareTo(b.businessName));
+    if (list.isEmpty) return null;
+    final first = list.first;
+    final name =
+        first.businessName.isNotEmpty ? first.businessName : first.businessId;
+    if (name.isEmpty) return null;
+    final rest = list.length - 1;
+    return rest > 0 ? '$name 외 $rest곳' : name;
+  }
+
   factory StaffingDayData.fromMap(Map<Object?, Object?> map) {
     final rawBiz = map['byBusiness'] as List<Object?>? ?? const [];
     return StaffingDayData(

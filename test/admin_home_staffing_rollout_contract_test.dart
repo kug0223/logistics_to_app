@@ -350,8 +350,14 @@ void main() {
     test('향후 부족: ERROR → 목록/빈상태 → partial notice', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
       // [HOME-V2-08D.2] no-target 분기가 gate로 옮겨져 hasFutureTarget이 빠졌다.
+      // [HOME-V2-08D.4] 전부충원 분기도 행이 되면서 `_staffingReadiness!.partial`
+      //   조건 분기가 사라졌다 — partial 고지는 목록 아래에 무조건 붙는다
+      //   (_partialStaffingNotice가 자체적으로 partial 여부를 판단한다).
       expect(f.indexOf('hasUsableData'), lessThan(f.indexOf('futureDays.isEmpty')));
-      expect(f.contains('_staffingReadiness!.partial'), isTrue);
+      expect(f.indexOf('futureDays.isEmpty'),
+          lessThan(f.indexOf('_partialStaffingNotice(s)')));
+      expect(_bodyOf(home, 'Widget _partialStaffingNotice(').contains('sr.partial'),
+          isTrue);
     });
 
     test('오늘 지표 getter도 partial을 버리지 않는다', () {
@@ -378,7 +384,7 @@ void main() {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(f.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
+      expect(f.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
       final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 

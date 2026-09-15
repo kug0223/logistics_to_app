@@ -707,7 +707,7 @@ void main() {
       expect(taskGate.contains('publishedPostingCount'), false);
       expect(taskGate.contains('hasDraftPosting'), false);
       // 기존 섹션·문구 그대로
-      for (final s in ["'오늘 운영'", "'처리할 일'", "'다가오는 인력 부족'"]) {
+      for (final s in ["'오늘'", "'처리할 일'", "'다가오는 7일'"]) {
         expect(home.contains(s), true, reason: s);
       }
     });

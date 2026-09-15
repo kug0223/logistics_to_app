@@ -235,7 +235,7 @@ void main() {
       expect(m.contains('_isMultiBusinessScope ? day.shortageLocationLabel() : null'),
           isTrue);
       final r = _bodyOf(home, 'Widget _buildFutureShortageRow(');
-      expect(r.contains('_isMultiBusinessScope ? day.shortageScopeLabel() : null'),
+      expect(r.contains('_isMultiBusinessScope ? day.targetLocationLabel() : null'),
           isTrue);
     });
 
@@ -379,7 +379,7 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘 운영', '다가오는 인력 부족', '처리할 일'});
+      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
     });
 
     test('Home section 순서 유지', () {
@@ -448,7 +448,7 @@ void main() {
 
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
-      expect(home.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
+      expect(home.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
     });
 
     test('AH-V2-04A 근태 확인 유지', () {

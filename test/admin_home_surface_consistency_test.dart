@@ -96,7 +96,7 @@ void main() {
       expect(a.contains('boxShadow'), isFalse);
     });
 
-    test('다가오는 인력 부족 — 6개 상태 전부 평면', () {
+    test('다가오는 7일 — 남은 상태 전부 평면', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
       expect(f.contains('boxShadow'), isFalse);
       // 상태 분기가 모두 살아 있는지 확인 (없애지 않았다)
@@ -104,16 +104,17 @@ void main() {
         '향후 인력 현황을 불러오지 못했습니다', // error
         // [HOME-V2-08D.2] no-target 분기는 제거됐다 — gate가 섹션 자체를
         //   숨기고 그 상태는 Hero가 설명한다.
-        '향후 7일 인원이 모두 충원됐어요', // fully staffed
-        '_buildFutureShortageRow(', // shortage
+        // [HOME-V2-08D.4] 전부충원 분기도 사라졌다 — 그 날짜들이 이제
+        //   목록 안에 행으로 들어오기 때문이다.
+        '_buildFutureShortageRow(', // 날짜 목록 (부족 · 전원 확정 공통)
         '_partialStaffingNotice(s)', // partial
       ]) {
         expect(f.contains(marker), isTrue, reason: marker);
       }
       // [HOME-V2-08D.1] 컨테이너 decoration이 상태마다 동일 — 이제 같은
       //   토큰 하나를 공유하므로 "동일"이 값 비교가 아니라 참조로 보장된다.
-      expect('decoration: _groupSurface,'.allMatches(f).length, 4,
-          reason: '로딩 · 에러 · 전부충원 · 부족목록');
+      expect('decoration: _groupSurface,'.allMatches(f).length, 3,
+          reason: '로딩 · 에러 · 날짜목록');
     });
 
     test('처리할 일 — 로딩·빈 상태·행 목록 전부 평면', () {
@@ -153,7 +154,7 @@ void main() {
         isTrue,
       );
       // [HOME-V2-08D.2] Hero shell·skeleton이 같은 토큰을 재사용해 11곳.
-      expect('decoration: _groupSurface,'.allMatches(home).length, 11,
+      expect('decoration: _groupSurface,'.allMatches(home).length, 10,
           reason: 'Hero(2)·오늘·처리할 일(3)·다가오는(4)·공고 준비');
       // radius가 s에 곱해져 기기마다 달라지던 것이 사라졌다
       expect(home.contains('BorderRadius.circular(12 * s)'), isFalse);
@@ -170,7 +171,7 @@ void main() {
 
     test('§12 spacing 불변', () {
       // [HOME-V2-08D.2] Hero shell·skeleton·섹션 조립이 같은 gutter를 쓴다.
-      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 13);
+      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 12);
       // 섹션 사이 16은 이제 _buildSections 한 곳이 소유한다
       expect('SizedBox(height: 16 * s)'.allMatches(home).length, 1);
       expect('SizedBox(height: 20 * s)'.allMatches(home).length, 1);
@@ -180,9 +181,10 @@ void main() {
       // [HOME-V2-08D.3] 18px w800 KPI 5개가 사라졌다 — 화면 최대 텍스트는
       //   이제 Hero(17)이고, Today는 issue 15 > 보조 13 > scope 12로 읽힌다.
       expect(home.contains('fontSize: 18'), isFalse, reason: 'KPI 수치 폐기');
-      expect('fontSize: 15'.allMatches(home).length, 2, reason: 'Hero 이름 + issue row');
-      expect('fontSize: 13'.allMatches(home).length, 11);
-      expect('fontSize: 12'.allMatches(home).length, 22);
+      expect('fontSize: 15'.allMatches(home).length, 5,
+          reason: 'Hero 이름 · 오늘 issue · 다가오는 날짜 · task label · task count');
+      expect('fontSize: 13'.allMatches(home).length, 10);
+      expect('fontSize: 12'.allMatches(home).length, 17);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 
@@ -246,7 +248,7 @@ void main() {
     test('향후 부족 tap·충원하기 유지', () {
       final f = _bodyOf(home, 'Widget _buildFutureShortageRow(');
       expect(f.contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
-      expect(f.contains('충원하기'), isTrue);
+      expect(f.contains('Icons.chevron_right'), isTrue);
       expect(f.contains('InkWell('), isTrue);
     });
 
@@ -282,7 +284,7 @@ void main() {
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
-      expect(titles, {'오늘 운영', '다가오는 인력 부족', '처리할 일'});
+      expect(titles, {'오늘', '다가오는 7일', '처리할 일'});
     });
 
     test('§16 05B.3 연체 우선순위 유지', () {
@@ -339,7 +341,7 @@ void main() {
         '향후 인력 현황을 불러오지 못했습니다',
         '처리할 업무가 없어요',
         // [HOME-V2-08D.2] 두 no-target 문구는 Hero로 역할이 넘어갔다.
-        '향후 7일 인원이 모두 충원됐어요',
+        // [HOME-V2-08D.4] `모두 충원됐어요`도 사라졌다 — 그 날짜들이 행이 됐다.
         '나머지 사업장 기준으로 표시했어요',
       ]) {
         expect(home.contains(c), isTrue, reason: c);
