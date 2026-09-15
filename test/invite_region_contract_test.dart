@@ -109,6 +109,37 @@ void main() {
       expect(KoreanRegions.isValidPair('경기도', '강남구'), isFalse);
       expect(KoreanRegions.isValidPair('서울특별시', '강남구'), isTrue);
       expect(KoreanRegions.isValidPair('세종특별자치시', '세종특별자치시'), isTrue);
+      expect(regionKeyOf(province: '경기도', city: '강남구'), isNull);
+    });
+
+    test('01-h [CLOSURE §8] 구가 있는 시의 표기 차이가 매칭을 깨지 않는다', () {
+      // Daum sigungu는 "수원시 팔달구", parseAddressCity 폴백은 "수원시".
+      // 지원자 피커는 언제나 "수원시"다. 같은 생활권이면 같은 key여야 한다.
+      const want = '경기도|수원시';
+      expect(regionKeyOf(province: '경기도', city: '수원시 팔달구'), want);
+      expect(regionKeyOf(province: '경기도', city: '수원시'), want);
+      expect(regionKeyOf(city: '수원시 팔달구'), want, reason: 'province 없이도');
+
+      for (final c in const [
+        ['경기도', '용인시 기흥구', '경기도|용인시'],
+        ['경기도', '성남시 분당구', '경기도|성남시'],
+        ['경기도', '고양시 일산서구', '경기도|고양시'],
+        ['경기도', '안산시 단원구', '경기도|안산시'],
+        ['충청북도', '청주시 흥덕구', '충청북도|청주시'],
+        ['충청남도', '천안시 서북구', '충청남도|천안시'],
+        ['경상남도', '창원시 성산구', '경상남도|창원시'],
+        ['경상북도', '포항시 남구', '경상북도|포항시'],
+        ['전북특별자치도', '전주시 완산구', '전북특별자치도|전주시'],
+      ]) {
+        expect(regionKeyOf(province: c[0], city: c[1]), c[2], reason: '${c[1]}');
+      }
+    });
+
+    test('01-i 표에 없는 값은 추측해서 맞추지 않는다', () {
+      expect(normalizeCityName('경기도', '없는시 어떤구'), isNull);
+      expect(regionKeyOf(province: '경기도', city: '없는시'), isNull);
+      // 포항 남구는 경상북도 포항시다 — 부산 남구로 넘어가면 안 된다.
+      expect(regionKeyOf(province: '경상북도', city: '포항시 남구'), '경상북도|포항시');
     });
 
     test('01-f 서버 구현이 같은 규칙을 쓴다', () {
@@ -422,11 +453,19 @@ void main() {
     });
 
     test('07-e 근무 가능일 저장이 초대 설정을 지우지 않는다', () {
-      final svc = _codeOf(_src(_availSvcPath));
-      expect(svc.contains('SetOptions(merge: true)'), isTrue);
-      expect(svc.contains('callableSyncInviteKeys'), isTrue);
+      // [CLOSURE] 단일 writer가 merge로 쓰므로 초대 필드가 남는다.
+      final setAv = _tsSliceOf(cfRaw, 'export const callableSetAvailability',
+          'export const callableSyncInviteKeys');
+      expect(setAv.contains('{merge: true}'), isTrue);
+      final at = setAv.indexOf('const payload');
+      final payload = setAv.substring(at, setAv.indexOf('await avRef.set'));
+      for (final f in const ['inviteEnabled', 'inviteRegions', 'inviteRegionKeys']) {
+        expect(payload.contains('$f:'), isFalse, reason: '$f 를 덮어쓴다');
+      }
       // 문서 삭제는 초대 설정까지 지운다 — 날짜만 비운다
+      final svc = _codeOf(_src(_availSvcPath));
       expect(svc.contains('.delete()'), isFalse);
+      expect(svc.contains('_setDates(const [])'), isTrue);
     });
 
     test('07-f 가입 필수 단계를 추가하지 않았다 (§9)', () {
@@ -439,6 +478,152 @@ void main() {
             reason: '$p 가 초대 지역 설정을 가입 단계로 만들었다');
         expect(s.contains('inviteRegion'), isFalse);
       }
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 9. [CLOSURE] writer ownership + 부분 실패 (§1~§4)
+  //
+  //   `dates`(canonical)와 `inviteKeys`(파생)가 서로 다른 writer에 있으면
+  //   "저장하고 나서 동기화 호출"이라는 순차 두 단계가 생긴다. 그 사이의
+  //   실패는 조용한 정상 상태로 남는다 — availability != candidate projection.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.3-09 writer ownership', () {
+    final setAv = _tsSliceOf(cfRaw, 'export const callableSetAvailability',
+        'export const callableSyncInviteKeys');
+    final setRegions = _tsSliceOf(cfRaw,
+        'export const callableSetInviteRegions',
+        'export const callableSetAvailability');
+
+    test('09-a 클라이언트는 worker_availability를 직접 쓰지 않는다', () {
+      final rules = _src(_rulesPath);
+      final block = _after(rules, 'match /worker_availability/{uid}', 5000);
+      expect(block.contains('allow create, update, delete: if false;'), isTrue,
+          reason: '클라이언트 직접 write 경로가 남아 있다');
+      // 예전 허용 규칙이 되살아나지 않았는지
+      expect(block.contains('allow create, update: if isLoggedIn()'), isFalse);
+      final svc = _codeOf(_src(_availSvcPath));
+      expect(svc.contains('_col.doc(uid).set('), isFalse);
+      expect(svc.contains('callableSetAvailability'), isTrue);
+    });
+
+    test('09-b dates와 파생 inviteKeys가 한 번의 write로 저장된다', () {
+      // 두 번의 set/update로 나뉘면 부분 성공이 생긴다.
+      expect(setAv.contains('await avRef.set(payload, {merge: true});'), isTrue);
+      final writes = RegExp(r'await avRef\.(set|update)\(')
+          .allMatches(setAv)
+          .length;
+      expect(writes, 1, reason: 'availability 저장이 여러 write로 쪼개졌다');
+      // 같은 payload에 둘 다 들어간다
+      final at = setAv.indexOf('const payload');
+      final payload = setAv.substring(at, setAv.indexOf('await avRef.set'));
+      expect(payload.contains('dates,'), isTrue);
+      expect(payload.contains('inviteKeys,'), isTrue);
+    });
+
+    test('09-c 지역 저장도 같은 성질이다', () {
+      expect(setRegions.contains('await avRef.set(payload, {merge: true});'),
+          isTrue);
+      final writes = RegExp(r'await avRef\.(set|update)\(')
+          .allMatches(setRegions)
+          .length;
+      expect(writes, 1);
+      final at = setRegions.indexOf('const payload');
+      final payload =
+          setRegions.substring(at, setRegions.indexOf('await avRef.set'));
+      expect(payload.contains('inviteRegionKeys:'), isTrue);
+      expect(payload.contains('inviteKeys,'), isTrue);
+    });
+
+    test('09-d 클라이언트 순차 호출로 원자성을 주장하지 않는다', () {
+      final svc = _codeOf(_src(_availSvcPath));
+      // 저장 후 별도 동기화 호출이 남아 있으면 그 사이가 구멍이다.
+      expect(svc.contains('callableSyncInviteKeys'), isFalse,
+          reason: '정상 경로에 2단계 호출이 남아 있다');
+      // 실패를 삼키지 않는다 — 저장되지 않은 것을 저장됐다고 하지 않는다
+      expect(svc.contains('} catch'), isFalse);
+    });
+
+    test('09-e 서버가 날짜를 다시 검증한다', () {
+      expect(setAv.contains('MAX_AVAILABILITY_DATES'), isTrue);
+      expect(setAv.contains('d >= todayKey && d <= maxKey'), isTrue);
+      expect(setAv.contains('new Set('), isTrue, reason: '중복 제거');
+    });
+
+    test('09-f 복구 수단은 있고, 스케줄러는 만들지 않았다 (§7)', () {
+      expect(cf.contains('export const callableSyncInviteKeys'), isTrue);
+      final sync = _tsSliceOf(cfRaw, 'export const callableSyncInviteKeys',
+          '// ─── callableGetAvailableWorkers');
+      expect(sync.contains('const uid = request.auth.uid;'), isTrue);
+      // onSchedule / onDocumentWritten 트리거를 추가하지 않았다
+      expect(sync.contains('onSchedule'), isFalse);
+      expect(sync.contains('onDocumentWritten'), isFalse);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 10. [CLOSURE] stale projection을 truth로 믿지 않는다 (§3, §5)
+  // ═════════════════════════════════════════════════════════════
+  group('R2.3-10 stale projection 방어', () {
+    test('10-a 후보 reader가 canonical dates로 다시 판정한다', () {
+      // inviteKeys는 인덱스다. 뒤처져도 없는 자격이 생기면 안 된다.
+      expect(getWorkers.contains('const avDates = (avData["dates"]'), isTrue);
+      expect(getWorkers.contains('if (!avDates.includes(dateKey)) continue;'),
+          isTrue);
+    });
+
+    test('10-b invite writer가 그 날짜의 가능일을 fresh read로 확인한다 (§5)', () {
+      expect(inviteFn.contains('const invAvDates ='), isTrue);
+      expect(inviteFn.contains('if (!invAvDates.includes(invDateKey))'), isTrue);
+      expect(inviteFn.contains('해당 날짜의 근무 가능일을 등록하지 않았습니다.'), isTrue);
+    });
+
+    test('10-c writer는 파생 인덱스가 아니라 canonical을 본다', () {
+      // inviteKeys를 보고 판단하면 stale index를 truth로 믿는 것이다.
+      final at = inviteFn.indexOf('const invAvDates =');
+      final block = inviteFn.substring(at, at + 200);
+      expect(block.contains('"dates"'), isTrue);
+      expect(block.contains('inviteKeys'), isFalse);
+    });
+
+    test('10-d 그 검증도 Application/알림보다 앞에 있다 (§26)', () {
+      final at = inviteFn.indexOf('if (!invAvDates.includes(invDateKey))');
+      final tx = inviteFn.indexOf('await db.runTransaction');
+      final notif = inviteFn.indexOf('to_invite_');
+      expect(at, greaterThan(0));
+      expect(tx, greaterThan(at));
+      expect(notif, greaterThan(at));
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 11. [CLOSURE] cardinality (§9)
+  // ═════════════════════════════════════════════════════════════
+  group('R2.3-11 cardinality', () {
+    test('11-a 상한이 근거와 함께 상수로 있다', () {
+      expect(cf.contains('const MAX_INVITE_REGIONS = 20;'), isTrue);
+      expect(cf.contains('const MAX_AVAILABILITY_DATES = 60;'), isTrue);
+      // dates 상한은 기존 계약과 같은 값이어야 한다
+      expect(_src('lib/models/core/worker_availability_model.dart')
+          .contains('valid.length > 60'), isTrue);
+    });
+
+    test('11-b 최대 inviteKeys가 Firestore 한도 안이다', () {
+      const maxRegions = 20, maxDates = 60;
+      const maxKeys = maxRegions * maxDates; // 1,200
+      expect(maxKeys, 1200);
+      // 문서당 index entries 한도 40,000
+      expect(maxKeys < 40000, isTrue);
+      // key 길이 대략 "경기도|수원시#2026-09-22" ≈ 26 bytes → 약 31KB (1MB 한도)
+      expect(maxKeys * 30 < 1024 * 1024, isTrue);
+    });
+
+    test('11-c 중복 지역은 저장 전에 제거된다', () {
+      final setRegions = _tsSliceOf(cfRaw,
+          'export const callableSetInviteRegions',
+          'export const callableSetAvailability');
+      expect(setRegions.contains('if (seen.has(key)) continue;'), isTrue);
+      expect(setRegions.contains('.slice(0, MAX_INVITE_REGIONS)'), isTrue);
     });
   });
 

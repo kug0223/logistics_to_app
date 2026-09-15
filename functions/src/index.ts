@@ -27305,6 +27305,30 @@ export const callableInviteWorker = onCall(
         "이 근로자가 초대 받을 지역으로 선택하지 않은 근무입니다."
       );
     }
+    // [R2.3 CLOSURE §5] 그 날짜의 근무 가능 여부도 지금 다시 읽는다.
+    //
+    //   지역만 확인하면 다음이 통과한다:
+    //     관리자가 후보 목록을 연다 (A: 9/22 가능)
+    //     → A가 9/22 가능일을 제거
+    //     → 관리자가 화면에 남아 있던 행에서 초대
+    //   후보 목록은 스냅샷이고, 스냅샷을 authoritative하게 믿지 않는다.
+    //   canonical `dates`로 본다 — 파생 인덱스(inviteKeys)가 아니다.
+    if (slotId) {
+      const invKstDate =
+        new Date(new Date(workDate).getTime() + 9 * 3600 * 1000);
+      const invDateKey =
+        `${invKstDate.getUTCFullYear()}-` +
+        `${String(invKstDate.getUTCMonth() + 1).padStart(2, "0")}-` +
+        `${String(invKstDate.getUTCDate()).padStart(2, "0")}`;
+      const invAvDates =
+        (inviteAvData?.["dates"] as string[] | undefined) ?? [];
+      if (!invAvDates.includes(invDateKey)) {
+        throw new HttpsError(
+          "failed-precondition",
+          "이 근로자가 해당 날짜의 근무 가능일을 등록하지 않았습니다."
+        );
+      }
+    }
 
     // ── 6. 중복 초대 방지 + 동일 recruiting unit 거절/만료 재초대 차단 ─────────
     // INVITED/CONFIRMED/CONTRACT_PENDING: TO 레벨 중복 차단 (totalConfirmed 이중 증가 위험)
@@ -28315,6 +28339,22 @@ export const callableGetDayStaffingDetail = onCall(
 /** key 구분자 — 시/도·시군구 이름에 등장할 수 없는 문자. */
 const REGION_KEY_SEP = "|";
 
+/**
+ * [R2.3 CLOSURE §9] 초대 지역 선택 상한.
+ *
+ *   구속 조건은 Firestore가 아니라 제품이다:
+ *     · dates 상한 60 (기존 계약 — 60일 이상 사전예약 방지)
+ *     · inviteKeys = regions × dates → 20 × 60 = 1,200 index entries
+ *     · Firestore 한도는 문서당 40,000 index entries → 3%
+ *     · 문서 크기: 1,200 × 약 26 bytes ≈ 31KB (1MB 한도의 3%)
+ *   가장 많은 시/군/구를 가진 시/도가 경기도 31개이므로, 20개면 한 시/도의
+ *   대부분을 덮는다. 임의로 고른 숫자가 아니라 위 두 사실에서 나온 값이다.
+ */
+const MAX_INVITE_REGIONS = 20;
+
+/** 근무 가능일 상한 — WorkerAvailabilityModel.filterValidDates와 같은 계약. */
+const MAX_AVAILABILITY_DATES = 60;
+
 /** 축약형 시/도 → canonical. 모르면 입력 그대로. */
 const PROVINCE_ALIASES: Record<string, string> = {
   "서울": "서울특별시", "서울시": "서울특별시",
@@ -28436,6 +28476,36 @@ function srvProvinceOfCity(city: string): string | null {
 }
 
 /**
+ * [R2.3 CLOSURE §8] 사업장이 저장한 시/군/구 표기를 canonical 단위로 맞춘다.
+ *
+ *   Daum 주소검색의 `sigungu`는 구가 있는 시에서 `"수원시 팔달구"`를 돌려주고,
+ *   `parseAddressCity` 폴백은 `"수원시"`를 돌려준다. 같은 사업장이 저장 경로에
+ *   따라 다른 값을 갖는다는 뜻이고, 지원자 피커는 항상 `"수원시"`만 만든다.
+ *   정규화하지 않으면 `경기도|수원시 팔달구` 키가 만들어져 **영원히 매칭되지
+ *   않는다**.
+ *
+ *   문자열을 추측해서 자르지 않는다. canonical 표(KOREAN_CITIES_BY_PROVINCE)에
+ *   있는 값이 나올 때까지 뒤 토큰을 떼며, 끝내 없으면 null(UNKNOWN)이다.
+ *
+ * @param {string} province canonical 시/도
+ * @param {string} rawCity 저장된 시/군/구 표기
+ * @return {string | null} canonical 시/군/구, 특정 불가 시 null
+ */
+function srvNormalizeCity(province: string, rawCity: string): string | null {
+  const c = (rawCity ?? "").trim().replace(/\s+/g, " ");
+  if (c.length === 0) return null;
+  if (province === "세종특별자치시" && c === province) return c;
+  const cities = KOREAN_CITIES_BY_PROVINCE[province] ?? [];
+  if (cities.includes(c)) return c;
+  const tokens = c.split(" ");
+  for (let n = tokens.length - 1; n >= 1; n--) {
+    const cand = tokens.slice(0, n).join(" ");
+    if (cities.includes(cand)) return cand;
+  }
+  return null;
+}
+
+/**
  * canonical region key `"<시/도>|<시군구>"`.
  * 특정할 수 없으면 null — UNKNOWN은 매칭이 아니다.
  * @param {string | null} [province] 시/도 (없으면 city로 유추)
@@ -28445,32 +28515,24 @@ function srvProvinceOfCity(city: string): string | null {
 function srvRegionKeyOf(
   province?: string | null, city?: string | null
 ): string | null {
-  const c = (city ?? "").trim();
-  if (c.length === 0) return null;
-  let p = (province ?? "").trim();
+  const raw = (city ?? "").trim().replace(/\s+/g, " ");
+  if (raw.length === 0) return null;
+  const p = srvCanonicalProvince((province ?? "").trim());
   if (p.length > 0) {
-    p = srvCanonicalProvince(p);
-  } else {
-    const inferred = srvProvinceOfCity(c);
-    if (inferred === null) return null;
-    p = inferred;
+    const c = srvNormalizeCity(p, raw);
+    if (c === null) return null;
+    return `${p}${REGION_KEY_SEP}${c}`;
   }
-  if (p.length === 0) return null;
-  return `${p}${REGION_KEY_SEP}${c}`;
+  // province가 없으면 뒤 토큰을 떼며 유추한다 — 유일할 때만.
+  const tokens = raw.split(" ");
+  for (let n = tokens.length; n >= 1; n--) {
+    const cand = tokens.slice(0, n).join(" ");
+    const inferred = srvProvinceOfCity(cand);
+    if (inferred !== null) return `${inferred}${REGION_KEY_SEP}${cand}`;
+  }
+  return null;
 }
 
-/**
- * 이 시/도에 이 시/군/구가 실제로 존재하는가 — 저장 전 검증용.
- * @param {string} province 시/도
- * @param {string} city 시/군/구
- * @return {boolean} 실재하는 조합이면 true
- */
-function srvIsValidRegionPair(province: string, city: string): boolean {
-  const p = srvCanonicalProvince(province);
-  const c = (city ?? "").trim();
-  if (p === "세종특별자치시") return c === p;
-  return (KOREAN_CITIES_BY_PROVINCE[p] ?? []).includes(c);
-}
 
 /**
  * [R2.3 §4] 이 근무의 **실제 근무 장소** region key.
@@ -28539,20 +28601,26 @@ export const callableSetInviteRegions = onCall(
     // 지역 정규화 + 검증 — 클라이언트가 보낸 key를 믿지 않고 서버가 만든다.
     const cleaned: Array<{province: string; city: string; key: string}> = [];
     const seen = new Set<string>();
-    for (const r of (regions ?? []).slice(0, 20)) {
-      const city = (r?.city ?? "").trim();
+    // [R2.3 CLOSURE §9] 선택 상한 MAX_INVITE_REGIONS.
+    //   근거: 가장 많은 시/군/구를 가진 시/도가 경기도 31개다. 20개면 한 시/도의
+    //   대부분을 덮을 수 있고, 인덱스 비용은 20 × 60(dates 상한) = 1,200 entries로
+    //   Firestore 문서당 40,000 index entries 한도의 3% 수준이다.
+    for (const r of (regions ?? []).slice(0, MAX_INVITE_REGIONS)) {
+      const rawCity = (r?.city ?? "").trim();
       const rawProvince = (r?.province ?? "").trim();
-      if (city.length === 0) continue;
-      const province = rawProvince.length > 0 ?
-        srvCanonicalProvince(rawProvince) :
-        (srvProvinceOfCity(city) ?? "");
-      if (province.length === 0 || !srvIsValidRegionPair(province, city)) {
+      if (rawCity.length === 0) continue;
+      // 저장·검증·매칭이 **같은 함수**를 쓴다. 표기 정규화가 한 곳에만 있으면
+      // 저장된 key와 조회 key가 갈라질 수 없다.
+      const key = srvRegionKeyOf(rawProvince, rawCity);
+      if (!key) {
         throw new HttpsError(
-          "invalid-argument", `알 수 없는 지역입니다: ${rawProvince} ${city}`.trim());
+          "invalid-argument", `알 수 없는 지역입니다: ${rawProvince} ${rawCity}`.trim());
       }
-      const key = srvRegionKeyOf(province, city);
-      if (!key || seen.has(key)) continue;
+      if (seen.has(key)) continue;
       seen.add(key);
+      const sep = key.indexOf(REGION_KEY_SEP);
+      const province = key.substring(0, sep);
+      const city = key.substring(sep + 1);
       cleaned.push({province, city, key});
     }
 
@@ -28605,11 +28673,96 @@ export const callableSetInviteRegions = onCall(
 );
 
 /**
- * [R2.3] 근무 가능일이 바뀌면 지역×날짜 복합 키를 다시 만든다.
+ * [R2.3 CLOSURE §1~§4] 근무 가능일 — **단일 canonical writer**.
  *
- *   `dates`는 기존대로 근로자가 직접 쓴다(rules 검증). 그 쓰기는 복합 키를
- *   계산할 수 없으므로 저장 직후 이 callable이 서버에서 다시 만든다.
- *   초대 설정이 없으면 아무 것도 하지 않는다.
+ *   이전 구조:
+ *     client가 worker_availability.dates를 직접 쓰고
+ *     → 그 다음 callableSyncInviteKeys를 호출해 inviteKeys를 다시 만들었다.
+ *
+ *   그 사이에 실패하면 `dates`는 저장됐는데 `inviteKeys`는 옛 날짜 그대로다.
+ *   두 번의 네트워크 호출을 순서대로 부르는 것은 원자성이 아니다 — 앱 종료,
+ *   네트워크 끊김, CF 콜드스타트 타임아웃 모두 그 사이에 들어온다.
+ *   그러면 canonical availability와 candidate projection이 갈라진다.
+ *
+ *   이제 한 번의 문서 write가 `dates`와 파생값 `inviteKeys`를 함께 쓴다.
+ *   Firestore 단일 문서 write는 원자적이므로 부분 성공 상태가 생기지 않는다.
+ *
+ *   (그래도 stale projection을 truth로 믿지는 않는다 — 후보 reader와 invite
+ *    writer가 canonical `dates`로 다시 검증한다. 인덱스가 뒤처지면 후보가
+ *    적게 나올 뿐, 틀린 사람이 초대되지는 않는다.)
+ */
+export const callableSetAvailability = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {dates: rawDates} = (request.data ?? {}) as {dates?: unknown};
+    if (!Array.isArray(rawDates)) {
+      throw new HttpsError("invalid-argument", "dates가 필요합니다.");
+    }
+
+    // 날짜 검증 — 클라이언트 필터를 믿지 않고 서버가 다시 한다.
+    //   today ~ today+90 (KST), 중복 제거, 정렬, 상한 60.
+    const KST_MS = 9 * 60 * 60 * 1000;
+    const kstNow = new Date(Date.now() + KST_MS);
+    const kstKey = (d: Date) =>
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-` +
+      `${String(d.getUTCDate()).padStart(2, "0")}`;
+    const todayKey = kstKey(kstNow);
+    const maxKey = kstKey(new Date(kstNow.getTime() + 90 * 24 * 3600 * 1000));
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const dates = [...new Set(
+      rawDates
+        .filter((d): d is string => typeof d === "string" && dateRe.test(d))
+        .filter((d) => d >= todayKey && d <= maxKey)
+    )].sort().slice(-MAX_AVAILABILITY_DATES);
+
+    const avRef = db.collection("worker_availability").doc(uid);
+    const snap = await avRef.get();
+    const cur = snap.data() ?? {};
+
+    // 거주지 city는 기존 스키마 유지 — 사용자가 직접 보내지 않는다.
+    const uSnap = await db.collection("users").doc(uid).get();
+    const home =
+      uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
+    const homeCity = ((home?.["city"] as string | undefined) ?? "").trim();
+    if (homeCity.length === 0) {
+      throw new HttpsError(
+        "failed-precondition", "거주 지역을 먼저 설정해 주세요.");
+    }
+    const homeDistrict = (home?.["district"] as string | undefined) ?? null;
+
+    // 파생값을 같은 write에 담는다 — 이것이 원자성의 전부다.
+    const enabled = cur["inviteEnabled"] === true;
+    const regionKeys = ((cur["inviteRegionKeys"] as string[] | undefined) ?? [])
+      .filter((k) => typeof k === "string" && k.length > 0);
+    const inviteKeys = enabled ?
+      regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d))) :
+      [];
+
+    const payload: Record<string, unknown> = {
+      uid,
+      dates,
+      city: homeCity,
+      inviteKeys,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (homeDistrict && homeDistrict.length > 0) {
+      payload["district"] = homeDistrict;
+    }
+    await avRef.set(payload, {merge: true});
+
+    return {dates, dateCount: dates.length, inviteKeyCount: inviteKeys.length};
+  }
+);
+
+/**
+ * [R2.3 CLOSURE §7] projection 복구 도구.
+ *
+ *   정상 경로에는 더 이상 쓰이지 않는다 — callableSetAvailability와
+ *   callableSetInviteRegions가 각각 한 번의 write로 파생값까지 쓴다.
+ *   이 callable은 그 구조가 생기기 전에 만들어진 문서나, 외부에서 dates만
+ *   바뀐 문서를 본인이 직접 교정하는 수단이다. 스케줄러를 만들지 않는다.
  */
 export const callableSyncInviteKeys = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -28968,10 +29121,17 @@ export const callableGetAvailableWorkers = onCall(
       //   이제 자격은 **지원자가 직접 그 근무지역의 초대를 허용했는가**다.
       //   pool 쿼리(inviteKeys array-contains)가 이미 지역+날짜를 보장하지만,
       //   문서가 stale할 수 있으므로 여기서 canonical 필드로 재확인한다.
+      //
+      // [R2.3 CLOSURE §3] inviteKeys는 **인덱스**다. truth가 아니다.
+      //   pool 쿼리는 그 인덱스로 문서를 찾지만, 자격은 canonical 필드로 다시
+      //   판정한다. 인덱스가 뒤처져도 없는 자격이 생기지는 않는다 —
+      //   후보가 적게 나올 뿐이고, 그건 다음 저장에서 복구된다.
       const avData = avDocs[i].data();
       if (avData["inviteEnabled"] !== true) continue;
       const avRegionKeys = (avData["inviteRegionKeys"] as string[] | undefined) ?? [];
       if (!avRegionKeys.includes(workRegionKey)) continue;
+      const avDates = (avData["dates"] as string[] | undefined) ?? [];
+      if (!avDates.includes(dateKey)) continue;
       // [R2.3 §18/§19] 거주지역은 더 이상 관리자에게 보내지 않는다.
       //
       //   관리자가 알아야 할 사실은 하나다 — "이 사람이 이 근무지역의 초대를

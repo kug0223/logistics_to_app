@@ -2390,14 +2390,27 @@ service cloud.firestore {
       // list 쿼리: 전면 차단 (CF만 Admin SDK로 쿼리)
       allow list: if false;
 
-      // 생성/수정: 본인 + 필드 검증 + city canonical 검증
-      allow create, update: if isLoggedIn()
-        && isOwner(uid)
-        && isValidAvailabilityWrite()
-        && isAvailabilityCityCanonical();
-
-      // 삭제(전체 초기화): 본인만
-      allow delete: if isLoggedIn() && isOwner(uid);
+      // ═══════════════════════════════════════════════════════════
+      // [SYSTEM-INTEGRATION-R2.3 CLOSURE §1~§4] 쓰기는 CF 전용.
+      //
+      //   이 문서는 이제 두 가지를 함께 담는다:
+      //     dates       근무 가능일          (canonical)
+      //     inviteKeys  지역 × 날짜 복합 키   (dates에서 파생)
+      //
+      //   클라이언트가 dates를 직접 쓰면 파생값을 같은 write에 담을 수 없다.
+      //   "저장하고 나서 동기화 호출"은 원자적이지 않다 — 그 사이에 실패하면
+      //   canonical availability와 candidate projection이 갈라진다.
+      //
+      //   그래서 한 번의 문서 write로 둘 다 쓰는 callable만 허용한다:
+      //     callableSetAvailability   (dates + 파생 inviteKeys)
+      //     callableSetInviteRegions  (초대 지역 + 파생 inviteKeys)
+      //     callableSyncInviteKeys    (복구 전용)
+      //
+      //   Admin SDK는 rules를 통과하므로 별도 허용이 필요 없다.
+      //   위 isValidAvailabilityWrite / isAvailabilityCityCanonical /
+      //   isInviteFieldsUnchanged 는 그 계약을 문서로 남기기 위해 유지한다.
+      // ═══════════════════════════════════════════════════════════
+      allow create, update, delete: if false;
     }
 
     // ═══════════════════════════════════════════════════════════

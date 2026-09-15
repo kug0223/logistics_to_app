@@ -28,22 +28,47 @@ import '../models/core/user_region.dart';
 /// key 구분자. city/province 이름에 등장할 수 없는 문자를 쓴다.
 const String kRegionKeySeparator = '|';
 
+/// [R2.3 CLOSURE §8] 저장된 시/군/구 표기를 canonical 단위로 맞춘다.
+///
+///   Daum 주소검색의 `sigungu`는 구가 있는 시에서 `"수원시 팔달구"`를 주고,
+///   `parseAddressCity` 폴백은 `"수원시"`를 준다. 지원자 피커는 항상 `"수원시"`다.
+///   정규화하지 않으면 `경기도|수원시 팔달구` 키가 만들어져 영원히 매칭되지 않는다.
+///
+///   문자열을 추측해 자르지 않는다 — canonical 표에 있는 값이 나올 때까지만
+///   뒤 토큰을 떼고, 끝내 없으면 null(UNKNOWN)이다.
+String? normalizeCityName(String province, String rawCity) {
+  final c = rawCity.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (c.isEmpty) return null;
+  if (KoreanRegions.isSejong(province) && c == province) return c;
+  final cities = KoreanRegions.citiesOf(province);
+  if (cities.contains(c)) return c;
+  final tokens = c.split(' ');
+  for (var n = tokens.length - 1; n >= 1; n--) {
+    final cand = tokens.sublist(0, n).join(' ');
+    if (cities.contains(cand)) return cand;
+  }
+  return null;
+}
+
 /// canonical region key. 지역을 특정할 수 없으면 null (UNKNOWN).
 String? regionKeyOf({String? province, String? city}) {
-  final c = (city ?? '').trim();
-  if (c.isEmpty) return null;
+  final raw = (city ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (raw.isEmpty) return null;
 
-  var p = (province ?? '').trim();
+  final p = KoreanRegions.canonicalProvince((province ?? '').trim());
   if (p.isNotEmpty) {
-    p = KoreanRegions.canonicalProvince(p);
-  } else {
-    // province가 없으면 유추 — 단, 유일할 때만.
-    final inferred = KoreanRegions.provinceOfCity(c);
-    if (inferred == null) return null; // 동명 지역 — 특정 불가
-    p = inferred;
+    final c = normalizeCityName(p, raw);
+    if (c == null) return null;
+    return '$p$kRegionKeySeparator$c';
   }
-  if (p.isEmpty) return null;
-  return '$p$kRegionKeySeparator$c';
+  // province가 없으면 뒤 토큰을 떼며 유추 — 단, 유일할 때만.
+  final tokens = raw.split(' ');
+  for (var n = tokens.length; n >= 1; n--) {
+    final cand = tokens.sublist(0, n).join(' ');
+    final inferred = KoreanRegions.provinceOfCity(cand);
+    if (inferred != null) return '$inferred$kRegionKeySeparator$cand';
+  }
+  return null;
 }
 
 /// UserRegion → canonical key.
