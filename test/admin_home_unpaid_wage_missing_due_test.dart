@@ -344,11 +344,19 @@ void main() {
     });
 
     test('같은 판정을 쓰는 기존 트리거와 조건이 일치한다', () {
-      // review_request 트리거도 absent/NO_SHOW를 '실제 근무 없음'으로 제외한다
+      // review_request 트리거도 absent/NO_SHOW를 '실제 근무 없음'으로 제외한다.
+      // [SYSTEM-INTEGRATION-R0.2] 그 제외 목록이 trigger 안의 인라인 조건에서
+      //   canonical helper로 올라갔다 — scheduler가 같은 판정을 쓰게 하려면
+      //   두 곳에 복제하지 않고 한 곳에 두어야 했다. 판정 자체는 같다.
       expect(
-        cf.contains('if (docStatus === "absent" || docStatus === "NO_SHOW") return;'),
+        cf.contains(
+            'const ACTUAL_WORK_STATUSES = ["present", "late", "early_leave"]'),
         isTrue,
         reason: '새 정책이 아니라 기존 canonical 판정의 재사용',
+      );
+      expect(
+        cf.contains('srvIsActualFinalizedWork(after.status, after.wageStatus)'),
+        isTrue,
       );
     });
 

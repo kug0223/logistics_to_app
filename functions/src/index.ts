@@ -1594,6 +1594,89 @@ async function processAutoNoShow(now: Timestamp): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════
+// 📋 Review eligibility — canonical contract
+// ═══════════════════════════════════════════════════════════
+//
+// [SYSTEM-INTEGRATION-R0.2] 근무 리뷰와 출결(reliability)은 다른 것이다.
+//
+//   실제 근무 경험      → quality / work review
+//   NO_SHOW · 결근 · 취소 → attendance / reliability event
+//
+// 이전에는 emitter 둘이 서로 다른 정책을 실행했다. attendance trigger는
+// NO_SHOW/absent를 제외했지만, scheduler는 `application.status ∈
+// CONFIRMED_STATUSES + workDate 경과`만 보고 생성했다. NO_SHOW는 attendance
+// 문서에 기록되고 application.status는 CONFIRMED로 남으므로, 근무하지 않은
+// 사람에 대해 다음날 자정 scheduler가 사업자·지원자 양쪽에 `리뷰를
+// 남겨주세요`를 보냈다. trigger가 "만들지 않기로 한" 결정을 scheduler가
+// 사후에 덮어쓴 것이다.
+//
+// 이제 두 emitter가 같은 helper를 쓴다. scheduler는 두 번째 정책 엔진이
+// 아니라 **trigger 누락분 복구**만 담당한다.
+
+/** 실제로 근무가 일어난 attendance status (canonical). */
+const ACTUAL_WORK_STATUSES = ["present", "late", "early_leave"];
+
+/** 근태가 확정된 wageStatus (canonical — srvHomeUnclosed 마감 조건과 동일). */
+const FINALIZED_WAGE_STATUSES = ["confirmed", "transferred"];
+
+/**
+ * 해당 attendance 한 건이 **실제 근무 + 근태 확정**인가.
+ *
+ * NO_SHOW는 callableBatchSetNoShow가 wageStatus:"confirmed"를 함께 쓰므로
+ * wageStatus만 보면 "근무 완료"로 오해된다. status를 반드시 함께 본다.
+ *
+ * @param {unknown} status attendance.status
+ * @param {unknown} wageStatus attendance.wageStatus
+ * @return {boolean} 실제 근무이고 근태가 확정됐으면 true
+ */
+function srvIsActualFinalizedWork(
+  status: unknown,
+  wageStatus: unknown
+): boolean {
+  return (
+    ACTUAL_WORK_STATUSES.includes(String(status ?? "")) &&
+    FINALIZED_WAGE_STATUSES.includes(String(wageStatus ?? ""))
+  );
+}
+
+/**
+ * 월 단위 review eligibility.
+ *
+ * ALfit의 review key는 `businessId_workerId_year_month`라 shift 1건이 아니라
+ * **월 단위 상호 평가**다. 따라서 조건도 attendance 한 건이 아니라
+ * "그 달에 실제 근무가 하나라도 있었는가"다.
+ *
+ *   정상 3일 + NO_SHOW 1일 → eligible   (근무 경험이 실재한다)
+ *   NO_SHOW 1일 + 결근 1일  → 불가
+ *   근태 미확정            → 보류 (시간 경과만으로 생성하지 않는다)
+ *
+ * NO_SHOW 사건 자체는 리뷰에 포함되지 않고 reliability 쪽에 남는다.
+ *
+ * 인덱스: attendance (userId, businessId, yearMonth, wageStatus) — 기존 인덱스의
+ * prefix라 추가 인덱스가 필요 없다.
+ *
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {string} yearMonth "YYYY-MM"
+ * @return {Promise<boolean>} 실제 근무가 1건 이상 확정됐으면 true
+ */
+async function srvHasActualWorkInMonth(
+  businessId: string,
+  workerId: string,
+  yearMonth: string
+): Promise<boolean> {
+  const snap = await db.collection("attendance")
+    .where("userId", "==", workerId)
+    .where("businessId", "==", businessId)
+    .where("yearMonth", "==", yearMonth)
+    .select("status", "wageStatus")
+    .get();
+  return snap.docs.some((d) =>
+    srvIsActualFinalizedWork(d.get("status"), d.get("wageStatus"))
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // 📋 전날 완료된 단기 근무 → review_requests 자동 생성
 // ═══════════════════════════════════════════════════════════
 
@@ -1722,6 +1805,13 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           const requestKey = `${businessId}_${workerId}_${year}_${month}`;
           const requestRef = db.collection("review_requests").doc(requestKey);
 
+          // [SYSTEM-INTEGRATION-R0.2] 시간이 지났다는 것만으로 만들지 않는다.
+          //   scheduler는 복구 역할이므로 trigger와 **같은** eligibility를 쓴다.
+          const ymKey = `${year}-${String(month).padStart(2, "0")}`;
+          if (!(await srvHasActualWorkInMonth(businessId, workerId, ymKey))) {
+            return false;
+          }
+
           const deadline = new Date(workDate);
           deadline.setDate(deadline.getDate() + 14);
 
@@ -1798,6 +1888,12 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
 
           const requestKey = `${businessId}_${workerId}_${endYear}_${endMonth}`;
           const requestRef = db.collection("review_requests").doc(requestKey);
+
+          // [SYSTEM-INTEGRATION-R0.2] 단기와 같은 canonical eligibility.
+          const endYmKey = `${endYear}-${String(endMonth).padStart(2, "0")}`;
+          if (!(await srvHasActualWorkInMonth(businessId, workerId, endYmKey))) {
+            return false;
+          }
 
           const deadlineDate = new Date(endDate);
           deadlineDate.setDate(deadlineDate.getDate() + 14);
@@ -2145,9 +2241,12 @@ export const onWageConfirmed = onDocumentUpdated(
     ) return;
 
     // [M2-FIX] absent/NO_SHOW는 실제 근무 없음 — 리뷰 요청 생성 불필요
-    // processAutoAbsent, callableBatchSetNoShow 모두 wageStatus:"confirmed"를 함께 설정하므로 트리거됨
-    const docStatus = after.status as string | undefined;
-    if (docStatus === "absent" || docStatus === "NO_SHOW") return;
+    // processAutoAbsent·callableBatchSetNoShow 모두 wageStatus:"confirmed"를
+    // 함께 설정하므로 이 트리거가 발화한다
+    // [SYSTEM-INTEGRATION-R0.2] 제외 목록을 여기서 따로 세지 않는다 —
+    //   scheduler와 **같은** canonical 판정을 쓴다. 이 시점의 wageStatus는
+    //   위에서 confirmed로 확인됐으므로 status만 남는 변수다.
+    if (!srvIsActualFinalizedWork(after.status, after.wageStatus)) return;
 
     const applicationId = after.applicationId as string | undefined;
     if (!applicationId) return;
