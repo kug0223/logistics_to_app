@@ -102,6 +102,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   
   // 추가 데이터
   Map<String, dynamic>? _businessHistory;
+  // [R1.2] 추가 데이터 로드 실패 — '이력 없음'과 구분한다.
+  //   Future.wait가 하나라도 throw하면 _businessHistory/_recentReviews가 초기값으로
+  //   남는데, 그걸 그대로 그리면 조회 실패가 '근무한 적 없음'으로 둔갑한다.
+  bool _loadFailed = false;
   String? _workTime;  // 🔥 근무 시간 (장기용)
   List<MonthlyReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
@@ -208,7 +212,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     } catch (e) {
       debugPrint('❌ 추가 데이터 로드 실패: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading  = false;
+          _loadFailed = true;
+        });
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
     }
@@ -854,29 +861,55 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  /// [R1.2] 이력 섹션의 안내 행 — '없음'과 '확인하지 못함'이 같은 모양을 쓰되
+  /// 문구와 색으로 구분된다.
+  Widget _buildHistoryNotice(
+    BuildContext context, {
+    required IconData icon,
+    required Color color,
+    required String message,
+  }) {
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: ResponsiveHelper.iconSize(context, 16)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Flexible(
+            child: Text(
+              message,
+              style: ResponsiveHelper.smallStyle(context, color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 우리 사업장 이력
   Widget _buildBusinessHistory(BuildContext context) {
     return _buildSection(
       context,
       title: '우리 사업장 이력',
       icon: Icons.business,
-      child: _businessHistory == null || (_businessHistory!['workCount'] ?? 0) == 0
-          ? Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: AppColors.grey50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: AppColors.grey400, size: ResponsiveHelper.iconSize(context, 16)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    '이 사업장에서 근무한 이력이 없습니다',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                  ),
-                ],
-              ),
+      // [R1.2] 조회 실패는 '이력 없음'이 아니다 — 모른다고 말한다.
+      child: _loadFailed
+          ? _buildHistoryNotice(
+              context,
+              icon: Icons.error_outline,
+              color: AppColors.errorDark,
+              message: '근무 이력을 확인하지 못했어요',
+            )
+          : _businessHistory == null || (_businessHistory!['workCount'] ?? 0) == 0
+          ? _buildHistoryNotice(
+              context,
+              icon: Icons.info_outline,
+              color: AppColors.grey500,
+              message: '이 사업장에서 근무한 이력이 없습니다',
             )
           : Column(
               children: [
@@ -923,23 +956,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       context,
       title: '최근 리뷰',
       icon: Icons.rate_review,
-      child: _recentReviews.isEmpty
-          ? Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: AppColors.grey50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: AppColors.grey400, size: ResponsiveHelper.iconSize(context, 16)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    '아직 등록된 리뷰가 없습니다',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                  ),
-                ],
-              ),
+      // [R1.2] 조회 실패를 '리뷰 없음'으로 표시하지 않는다.
+      child: _loadFailed
+          ? _buildHistoryNotice(
+              context,
+              icon: Icons.error_outline,
+              color: AppColors.errorDark,
+              message: '리뷰를 확인하지 못했어요',
+            )
+          : _recentReviews.isEmpty
+          ? _buildHistoryNotice(
+              context,
+              icon: Icons.info_outline,
+              color: AppColors.grey500,
+              message: '아직 등록된 리뷰가 없습니다',
             )
           : Column(
               children: _recentReviews.map((review) => _buildReviewItem(context, review)).toList(),

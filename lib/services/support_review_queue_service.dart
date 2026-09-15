@@ -99,7 +99,12 @@ class SupportReviewQueueService {
   /// 지원서 목록에서 uid를 수집해 UserModel을 배치 로드한다.
   ///
   /// [primaryBizId]: getUsersBatch에 전달할 사업장 컨텍스트 (첫 번째 사업장).
-  Future<Map<String, UserModel>> loadUsers(
+  ///
+  /// [R1.2] 실패는 `null`로 돌려준다 — 빈 Map({})은 '지원자가 없다'는 뜻이고
+  /// 조회 실패는 '누구인지 모른다'는 뜻이라 같은 값으로 합치면 안 된다.
+  /// 화면은 null일 때 이름·판단 정보를 0건이 아니라 UNKNOWN으로 표시한다.
+  /// 지원서 목록 자체는 유효하므로 여기서 throw해 전체를 ERROR로 만들지 않는다.
+  Future<Map<String, UserModel>?> loadUsers(
     List<ApplicationModel> apps,
     String primaryBizId,
   ) async {
@@ -109,7 +114,7 @@ class SupportReviewQueueService {
       return await _svc.getUsersBatch(uids, businessId: primaryBizId);
     } catch (e) {
       debugPrint('[SupportReviewQueue] 사용자 배치 로드 실패: $e');
-      return {};
+      return null;
     }
   }
 }

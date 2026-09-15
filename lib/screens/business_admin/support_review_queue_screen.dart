@@ -14,7 +14,6 @@
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart';
 import '../../models/core/user_model.dart';
@@ -31,6 +30,7 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/notification_badge.dart';
+import '../../widgets/dialogs/worker_detail_dialog.dart';
 import '../common/notification_screen.dart';
 
 // ─── 우선순위 분류 ────────────────────────────────────────────────────────────
@@ -136,8 +136,11 @@ class _AppRow extends _ListItem {
 
 // ─── 포맷 헬퍼 ───────────────────────────────────────────────────────────────
 
-final _dateHeaderFmt = DateFormat('M월 d일 EEEE', 'ko_KR');
-final _dateLabelFmt  = DateFormat('M/d(E)', 'ko_KR');
+// [R1.2] workDate는 '사업장이 운영되는 날짜'(Asia/Seoul calendar date)다.
+//   Firestore Timestamp를 parseTimestamp가 .toLocal()로 풀기 때문에 DateTime의
+//   year/month/day는 기기 timezone을 따른다. intl DateFormat은 그 local 값을
+//   그대로 찍으므로 UTC 기기에서 KST 자정(= 전날 15:00 UTC)이 하루 전으로 보인다.
+//   날짜 표기·그룹 키는 전부 FormatHelper의 KST 변환을 거친다.
 
 String _fmtWorkTime(ApplicationModel app) {
   final start = app.startTime;
@@ -189,7 +192,9 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   final _svc       = FirestoreService();
 
   List<ApplicationModel> _apps  = [];
-  Map<String, UserModel> _users = {};
+  // [R1.2] null = 지원자 정보 조회 실패(UNKNOWN). 빈 Map = 조회 성공·대상 없음.
+  //   둘을 합치면 '누구인지 모른다'가 '이력이 없다'로 둔갑한다.
+  Map<String, UserModel>? _users = const {};
   late SupportReviewFilter _filter;
   bool _hasChanges              = false;
   bool _isActing                = false;  // 승인/거절 중 중복 방지
@@ -219,7 +224,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
         final apps = await _queueSvc.loadPendingApplications(widget.businessIds);
         final users = apps.isNotEmpty && widget.businessIds.isNotEmpty
             ? await _queueSvc.loadUsers(apps, widget.businessIds.first)
-            : <String, UserModel>{};
+            : const <String, UserModel>{};
 
         if (!mounted) return;
         setState(() {
@@ -235,7 +240,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
         setState(() {
           _hasLoadError = true;
           _apps         = [];
-          _users        = {};
+          _users        = const {};
         });
       }
     });
@@ -280,7 +285,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
       try { biz = widget.businesses.firstWhere((b) => b.id == app.businessId); } catch (_) {}
       return _QueueItem(
         app:      app,
-        user:     _users[app.uid],
+        user:     _users?[app.uid],
         business: biz,
         priority: _priorityOf(app),
       );
@@ -289,7 +294,8 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
     // 3. 날짜별 그룹화
     final groupMap = <String, List<_QueueItem>>{};
     for (final item in items) {
-      final key = DateFormat('yyyy-MM-dd').format(item.app.workDate);
+      // [R1.2] KST calendar date 키 — _priorityOf(toKstDate)와 같은 경계를 쓴다.
+      final key = FormatHelper.formatDateISO(item.app.workDate);
       groupMap.putIfAbsent(key, () => []).add(item);
     }
 
@@ -665,7 +671,7 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   // ─── 날짜 그룹 헤더 ────────────────────────────────────────────────────────
 
   Widget _buildDateGroupHeader(_DateGroup group) {
-    final dateLabel     = _dateHeaderFmt.format(group.date);
+    final dateLabel     = FormatHelper.formatDateKorean(group.date);
     final bizCount      = group.businessIds.length;
     final isExpanded    = _expandedKeys.contains(group.dateKey);
 
@@ -727,6 +733,9 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
     final userName = user?.displayName ?? user?.name ?? '지원자';
     final workTime = _fmtWorkTime(app);
     final isLong   = app.isLongTermApplication;
+    // [R1.2] 상세는 지원자 문서를 읽은 경우에만 연다. 조회 실패 상태에서
+    //   빈 프로필을 여는 것은 '이력 없음'을 보여주는 것과 같다.
+    final canOpenDetail = user != null;
 
     return Container(
       decoration: const BoxDecoration(
@@ -741,49 +750,59 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
           children: [
             // ─ 정보 영역 ──────────────────────────────────────────────────
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          userName,
-                          style: ResponsiveHelper.bodyStyle(
-                            context,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ).copyWith(fontSize: 14),
-                          overflow: TextOverflow.ellipsis,
+              child: InkWell(
+                onTap: canOpenDetail ? () => _openApplicantDetail(item) : null,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            userName,
+                            style: ResponsiveHelper.bodyStyle(
+                              context,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ).copyWith(fontSize: 14),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                      if (isLong) ...[
-                        const SizedBox(width: 6),
-                        _TypeBadge('장기', AppColors.infoMedium),
+                        if (isLong) ...[
+                          const SizedBox(width: 6),
+                          _TypeBadge('장기', AppColors.infoMedium),
+                        ],
+                        if (canOpenDetail) ...[
+                          const SizedBox(width: 2),
+                          const Icon(Icons.chevron_right,
+                              size: 16, color: AppColors.textTertiary),
+                        ],
                       ],
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _buildContextLine(app, biz, workTime),
-                    style: ResponsiveHelper.bodyStyle(
-                      context,
-                      color: AppColors.textSecondary,
-                    ).copyWith(fontSize: 12),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                  if (isLong && app.workEndDate != null) ...[
+                    ),
                     const SizedBox(height: 2),
                     Text(
-                      '${_dateLabelFmt.format(app.workDate)} ~ ${_dateLabelFmt.format(app.workEndDate!)}',
+                      _buildContextLine(app, biz, workTime),
                       style: ResponsiveHelper.bodyStyle(
                         context,
-                        color: AppColors.textTertiary,
+                        color: AppColors.textSecondary,
                       ).copyWith(fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
+                    if (isLong && app.workEndDate != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '${FormatHelper.formatDateCompact(app.workDate)} ~ ${FormatHelper.formatDateCompact(app.workEndDate!)}',
+                        style: ResponsiveHelper.bodyStyle(
+                          context,
+                          color: AppColors.textTertiary,
+                        ).copyWith(fontSize: 12),
+                      ),
+                    ],
+                    // [R1.2] 판단 근거 요약 — 이미 로드한 UserModel만 쓴다(추가 read 0).
+                    _buildApplicantSummary(user),
                   ],
-                ],
+                ),
               ),
             ),
             // ─ 액션 버튼 ──────────────────────────────────────────────────
@@ -795,6 +814,77 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
           ],
         ),
       ),
+    );
+  }
+
+  /// [R1.2] 지원자 판단 요약 한 줄.
+  ///
+  /// 규칙: **확인된 사실만 쓴다.**
+  ///   - 조회 실패(user == null) → '0건'이 아니라 조회 실패라고 말한다.
+  ///   - 노쇼·지각은 0일 때 행을 만들지 않는다. UserModel의 0은 '사건이 없다'와
+  ///     '필드가 아직 채워지지 않았다'를 구분하지 못하므로 `노쇼 0회`는 거짓 단언이다.
+  ///     양수만 표시하면 어느 쪽이든 거짓말이 되지 않는다.
+  Widget _buildApplicantSummary(UserModel? user) {
+    if (user == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: Text(
+          '지원자 정보를 불러오지 못했어요',
+          style: ResponsiveHelper.bodyStyle(
+            context,
+            color: AppColors.errorDark,
+          ).copyWith(fontSize: 12),
+        ),
+      );
+    }
+
+    final chips = <Widget>[];
+    if (user.isBlacklisted) {
+      chips.add(_SummaryChip('이용 제한', AppColors.error));
+    }
+    if (user.recentNoShowCount > 0) {
+      chips.add(_SummaryChip('노쇼 ${user.recentNoShowCount}회', AppColors.error));
+    }
+    if (user.recentLateCount > 0) {
+      chips.add(_SummaryChip('지각 ${user.recentLateCount}회', AppColors.warningDark));
+    }
+    if (user.totalWorkDays > 0) {
+      chips.add(_SummaryChip('근무 ${user.totalWorkDays}일', AppColors.textSecondary));
+    }
+    if (user.reviewCount > 0 && user.averageRating > 0) {
+      chips.add(_SummaryChip(
+          '평점 ${user.averageRating.toStringAsFixed(1)}', AppColors.textSecondary));
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(spacing: 6, runSpacing: 4, children: chips),
+    );
+  }
+
+  /// [R1.2] 지원자 상세 — 기존 WorkerDetailDialog 재사용.
+  ///
+  /// 이번 지원 context(application·businessId)를 그대로 넘겨 목록에서 보던
+  /// 근무를 상세에서도 유지한다.
+  ///
+  /// `showApprovalButtons: false` — 이 화면의 '승인'은 계약서 발송 대기
+  /// (contractPending)로 보내지만 WorkerDetailDialog의 '승인'은 곧바로
+  /// confirmed로 확정한다. 같은 화면에서 서로 다른 두 승인을 노출하지 않는다.
+  /// 확정 mutation 계약은 R2에서 정리한다.
+  ///
+  /// `isConfirmed: false` — 계좌·통장사본·신분증·계약 섹션은 확정자 전용이라
+  /// 검토 단계에서는 렌더되지 않는다.
+  Future<void> _openApplicantDetail(_QueueItem item) async {
+    final user = item.user;
+    if (user == null) return;
+    await WorkerDetailDialog.show(
+      context: context,
+      user: user,
+      application: item.app,
+      businessId: item.app.businessId,
+      isConfirmed: false,
+      showApprovalButtons: false,
     );
   }
 
@@ -869,6 +959,30 @@ class _StatBadge extends StatelessWidget {
           fontWeight: FontWeight.w600,
           color: color,
         ),
+      ),
+    );
+  }
+}
+
+/// [R1.2] 지원자 요약 칩 — 값이 있을 때만 만들어진다.
+class _SummaryChip extends StatelessWidget {
+  const _SummaryChip(this.label, this.color);
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        // 12px 하한 — 운영 정보라 더 작게 두지 않는다 (TYPO-50)
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
       ),
     );
   }

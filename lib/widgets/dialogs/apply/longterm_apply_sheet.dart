@@ -1,7 +1,6 @@
 // lib/widgets/dialogs/apply/longterm_apply_sheet.dart
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 
@@ -61,7 +60,6 @@ class LongTermApplySheet extends StatefulWidget {
 }
 
 class _LongTermApplySheetState extends State<LongTermApplySheet> {
-  static final _dateFmt = DateFormat('M월 d일(E)', 'ko_KR');
 
   late final FirestoreService _firestoreService;
   String? _currentUserId;
@@ -387,8 +385,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       );
     }
 
-    final startStr = _dateFmt.format(rangeStart);
-    final endStr = _dateFmt.format(rangeEnd);
+    final startStr = FormatHelper.formatDateKorean(rangeStart);
+    final endStr = FormatHelper.formatDateKorean(rangeEnd);
     final periodLabel = widget.to.contractPeriodLabel;
     final workDaysLabel = widget.to.workDaysLabel;
 
@@ -728,7 +726,7 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                       color: AppColors.infoDark),
                 ),
                 Text(
-                  _dateFmt.format(_desiredStartDate!),
+                  FormatHelper.formatDateKorean(_desiredStartDate!),
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
                     color: AppColors.infoDark,
                     fontWeight: FontWeight.bold,
@@ -764,8 +762,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
   Widget _buildPeriodCard(BuildContext context) {
     if (_desiredStartDate == null) return const SizedBox.shrink();
     final endDate = _effectiveEndDate;
-    final startStr = _dateFmt.format(_desiredStartDate!);
-    final endStr = _dateFmt.format(endDate);
+    final startStr = FormatHelper.formatDateKorean(_desiredStartDate!);
+    final endStr = FormatHelper.formatDateKorean(endDate);
     final periodLabel = widget.to.contractPeriodLabel;
     final workDaysLabel = widget.to.workDaysLabel;
 

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../utils/format_helper.dart';
 import 'application_model.dart';
 
 /// 알림 카테고리 — 수신 맥락 기반 (account role이 아닌 이벤트별 결정)
@@ -782,7 +783,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.applicationConfirmed,
       title: '지원 승인',
-      body: '$businessName의 $workType 지원이 승인되었습니다. 관리자가 곧 계약서를 발송할 예정입니다.\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$businessName의 $workType 지원이 승인되었습니다. 관리자가 곧 계약서를 발송할 예정입니다.\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -832,7 +833,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.applicationRejected,
       title: '지원 거절',
-      body: '$businessName의 $workType 지원이 거절되었습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$businessName의 $workType 지원이 거절되었습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -859,7 +860,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.newApplication,
       title: '새 지원서 접수',
-      body: '$applicantName님이 $workType에 지원했습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$applicantName님이 $workType에 지원했습니다.\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'toId': toId,
@@ -890,7 +891,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.applicationCanceled,
       title: '지원 취소',
-      body: '$applicantName님이 $workType 지원을 취소했습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$applicantName님이 $workType 지원을 취소했습니다.\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -921,7 +922,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.confirmationCanceled,
       title: '확정 취소',
-      body: '$workerName님이 $workType 확정 근무를 취소했습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$workerName님이 $workType 확정 근무를 취소했습니다.\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -951,7 +952,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.confirmationCanceled,
       title: '확정 취소',
-      body: '$businessName의 $workType 확정이 취소되었습니다.${cancelReason != null ? '\n사유: $cancelReason' : ''}\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$businessName의 $workType 확정이 취소되었습니다.${cancelReason != null ? '\n사유: $cancelReason' : ''}\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -1315,7 +1316,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.workCanceled,
       title: '공고 취소',
-      body: '$businessName의 "$toTitle" 공고가 취소되어 $statusText이(가) 무효화되었습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$businessName의 "$toTitle" 공고가 취소되어 $statusText이(가) 무효화되었습니다.\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'businessId': businessId,
         'action': 'toList',
@@ -1346,7 +1347,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.workTypeChanged,
       title: '파트 변경',
-      body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType ($formattedWage원)\n근무일: ${workDate.month}/${workDate.day}',
+      body: '$businessName에서 귀하의 파트가 변경되었습니다.\n$originalWorkType → $newWorkType ($formattedWage원)\n근무일: ${FormatHelper.formatDateShort(workDate)}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -1381,7 +1382,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.retroactiveDeductionAlert,
       title: '4대보험 소급 공제 안내',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무 포함 이번 달 근무 횟수가 8회를 넘어 '
+      body: '$businessName ${FormatHelper.formatDateShort(workDate)} 근무 포함 이번 달 근무 횟수가 8회를 넘어 '
           '4대보험이 첫 근무부터 적용됩니다. 이전 근무분 보험료 $retroFormatted원이 이번 급여에서 함께 공제됩니다.\n실수령액: $netFormatted원',
       data: {
         'attendanceId': attendanceId,
@@ -1556,7 +1557,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.wageConfirmed,
       title: '급여 정산 완료',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 정산되었습니다. 앱에서 확인하세요.',
+      body: '$businessName ${FormatHelper.formatDateShort(workDate)} 근무 급여가 정산되었습니다. 앱에서 확인하세요.',
       data: {
         'attendanceId': attendanceId,
         'businessId': businessId,
@@ -1655,7 +1656,7 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.wageCancelConfirmed,
       title: '급여 확정 취소',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여 확정이 취소되었습니다. 급여 조정 후 다시 안내드릴 예정입니다.',
+      body: '$businessName ${FormatHelper.formatDateShort(workDate)} 근무 급여 확정이 취소되었습니다. 급여 조정 후 다시 안내드릴 예정입니다.',
       data: {
         'attendanceId': attendanceId,
         'businessId': businessId,

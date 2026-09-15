@@ -1005,7 +1005,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── STATE A: 새 확정 미확인 (시안 .hA — 연초록 카드) ───────────
   Widget _buildHeroStateA(BuildContext context, double s, ApplicationModel app) {
-    final dateStr = '${app.workDate.month}월 ${app.workDate.day}일';
+    // [R1.2] workDate는 KST calendar date — 기기 timezone으로 읽으면 하루 밀린다.
+    final kstDate = FormatHelper.toKstDate(app.workDate);
+    final dateStr = '${kstDate.month}월 ${kstDate.day}일';
     final hasTime = app.startTime.isNotEmpty && app.endTime.isNotEmpty;
     final wageStr = FormatHelper.formatWage(app.wage);
 
@@ -1087,8 +1089,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   SizedBox(height: 4 * s),
                   Text(
                     hasTime
-                        ? '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})  ${app.startTime} – ${app.endTime}\n$wageStr'
-                        : '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})  $wageStr',
+                        ? '${FormatHelper.formatDateCompact(app.workDate)}  ${app.startTime} – ${app.endTime}\n$wageStr'
+                        : '${FormatHelper.formatDateCompact(app.workDate)}  $wageStr',
                     style: TextStyle(
                       fontSize: 13,
                       color: AppColors.textSecondary,
@@ -1629,8 +1631,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                             SizedBox(height: 1 * s),
                             Text(
                               hasTime
-                                  ? '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})  ${app.startTime} – ${app.endTime}'
-                                  : '${app.workDate.month}/${app.workDate.day}(${_dayLabel(app.workDate)})',
+                                  ? '${FormatHelper.formatDateCompact(app.workDate)}  ${app.startTime} – ${app.endTime}'
+                                  : FormatHelper.formatDateCompact(app.workDate),
                               style: TextStyle(
                                 fontSize: 12,
                                 color: AppColors.textHint,

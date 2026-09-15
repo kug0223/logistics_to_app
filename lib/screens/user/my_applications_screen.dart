@@ -91,9 +91,9 @@ class MyApplicationsScreen extends StatefulWidget {
 
 class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // ─── 포맷터 캐싱 ──────────────────────────────────────────────────────────
-  static final _mdFmt   = DateFormat('M월 d일');
+  // [R1.2] 근무 날짜(workDate)는 FormatHelper의 KST 변환을 쓴다 — 여기에
+  //   DateFormat을 다시 만들지 않는다. _mdhmFmt는 초대 만료 '시각'용이다.
   static final _mdhmFmt = DateFormat('MM.dd HH:mm');
-  static const _korWeekday = ['월', '화', '수', '목', '금', '토', '일'];
 
   // ─── 서비스 ───────────────────────────────────────────────────────────────
   final FirestoreService    _firestoreService = FirestoreService();
@@ -851,12 +851,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           ? '${FormatHelper.formatDateCompact(start)} ~ ${FormatHelper.formatDateCompact(end)}'
           : FormatHelper.formatDateLong(start);
     } else {
+      // [R1.2] workDate = 사업장 운영 날짜(KST calendar date).
+      //   _mdFmt/weekday는 기기 timezone을 따라 UTC 기기에서 하루 전으로 표시됐다.
       final dt  = app.workDate;
-      final day = _korWeekday[dt.weekday - 1];
       final time = (app.startTime.isNotEmpty && app.endTime.isNotEmpty)
           ? ' · ${app.startTime}~${app.endTime}'
           : '';
-      dateText = '${_mdFmt.format(dt)}($day)$time';
+      dateText = '${FormatHelper.formatDateKorean(dt)}$time';
     }
 
     // D-day 배지 (장기 공고 + 확정)
@@ -1085,8 +1086,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           final workDate = app.isLongTermApplication
               ? (app.desiredStartDate ?? app.workDate)
               : app.workDate;
-          final workDay  = _korWeekday[workDate.weekday - 1];
-          final dateStr  = '${_mdFmt.format(workDate)}($workDay)';
+          // [R1.2] KST calendar date — device timezone 무관
+          final dateStr  = FormatHelper.formatDateKorean(workDate);
           return Text(
             '$dateStr 출근 예정이에요',
             style: const TextStyle(
