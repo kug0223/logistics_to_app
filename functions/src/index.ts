@@ -8672,23 +8672,30 @@ export const callableCreateTO = onCall(
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
     finalData.totalConfirmed = 0;
     finalData.totalPending = 0;
-    // [SYSTEM-INTEGRATION-R1] FLEX의 totalRequired도 서버 전용 집계다.
+    // [SYSTEM-INTEGRATION-R1/R1.1] FLEX의 슬롯 파생 집계는 서버 전용이다.
     //
-    //   클라이언트는 `perSlotRequired * dates.length`를 계산해 보내고
-    //   (to_firestore.dart), 그 값이 여기 저장된 뒤
-    //   callableCreateFlexSlots가 같은 양을 다시 increment 한다.
-    //   → 정확히 2배. 필요 3명 × 2일 공고가 12로 저장됐다.
+    //   클라이언트가 두 값을 모두 계산해 보낸다 (to_firestore.dart):
+    //     totalSlots:    dates.length
+    //     totalRequired: perSlotRequired * dates.length
+    //   그 값이 여기 저장된 뒤 callableCreateFlexSlots가 **같은 양을 다시**
+    //   increment 한다 → 정확히 2배.
+    //
+    //   DEV 실측이 공식과 일치한다:
+    //     CW31vrJx  totalSlots 12 (슬롯 6)   9Ewc7PK5  10 (5)   UXEL6mLl  8 (4)
+    //     필요 3명 × 2일 공고의 totalRequired 12 (Σslot 6)
+    //   각 공고의 슬롯 createdAt이 모두 동일해 createFlexSlots는 1회만
+    //   실행됐다 — 재실행이 아니라 이중 전송이 원인이다.
     //
     //   totalRequired는 syncTOStats의 FULL 판정 기준이므로
     //   (totalRequired > 0 && confirmedCnt >= totalRequired), 부풀려진 값은
     //   자리를 다 채워도 FULL이 되지 않게 만든다.
     //
-    //   FLEX의 필요 인원은 슬롯이 소유한다 — 슬롯을 만들 때 증가하고,
-    //   슬롯을 고칠 때 delta로 조정된다. 그래서 생성 시점의 씨앗은 0이어야
-    //   한다. CONTRACT는 슬롯이 없고 workDetails 합이 곧 필요 인원이므로
-    //   클라이언트 값을 그대로 쓴다.
+    //   FLEX에서 이 둘의 canonical source는 slots 컬렉션이다. 슬롯을 만들 때
+    //   증가하고 고칠 때 delta로 조정되므로 생성 시점의 씨앗은 0이어야 한다.
+    //   CONTRACT는 슬롯이 없고 workDetails 합이 곧 필요 인원이므로 유지한다.
     if (finalData.type === "flex") {
       finalData.totalRequired = 0;
+      finalData.totalSlots = 0;
     }
     // [STALE-EDIT] 낙관적 동시성 버전 토큰 초기화
     finalData.editRevision = 0;
@@ -9178,10 +9185,34 @@ export const callableCreateFlexSlots = onCall(
     let totalNewSlots = 0;
     let totalNewRequired = 0;
 
+    // [SYSTEM-INTEGRATION-R1.1] 이미 있는 날짜는 다시 만들지 않는다.
+    //
+    //   슬롯 ref가 auto-id(`.doc()`)라 같은 payload로 다시 호출하면 같은 날짜에
+    //   슬롯 문서가 하나 더 생긴다. 네트워크 재시도나 중복 탭이면 그 날짜의
+    //   필요 인원이 두 배로 집계되고(staffing이 두 슬롯을 모두 더한다),
+    //   지원자에게도 같은 날이 두 번 보인다.
+    //
+    //   날짜가 이 컬렉션의 자연 키다 — 같은 TO의 같은 날짜에 슬롯은 하나다.
+    //   기존 날짜를 건너뛰면 재호출이 무해해지고(집계도 움직이지 않는다),
+    //   새 날짜만 추가하는 정상 경로는 그대로 동작한다.
+    const existingSlotsSnap =
+      await toRef.collection("slots").select("date").get();
+    const existingDateMs = new Set<number>(
+      existingSlotsSnap.docs
+        .map((s) => (s.get("date") as admin.firestore.Timestamp | undefined))
+        .filter((t): t is admin.firestore.Timestamp => !!t)
+        .map((t) => t.toMillis())
+    );
+    let skippedExisting = 0;
+
     for (const dateStr of uniqueDates) {
       const [y, mo, d] = dateStr.split("-").map(Number);
       // 날짜는 KST 자정 = UTC 전날 15:00
       const slotDate = admin.firestore.Timestamp.fromMillis(Date.UTC(y, mo - 1, d, -9, 0));
+      if (existingDateMs.has(slotDate.toMillis())) {
+        skippedExisting++;
+        continue;
+      }
       const slotRef = toRef.collection("slots").doc();
 
       // 업무별 마감 계산 (KST 기준 서버 계산)
@@ -9258,11 +9289,20 @@ export const callableCreateFlexSlots = onCall(
     }
 
     // TO 카운터 업데이트를 마지막 배치에 포함 (원자적 커밋)
+    // [SYSTEM-INTEGRATION-R1.1] 새로 만든 슬롯만큼만 더한다 — 건너뛴 날짜는
+    //   totalNewSlots/totalNewRequired에 들어가지 않으므로 재호출이 집계를
+    //   움직이지 않는다.
     batch.update(toRef, {
       totalSlots: admin.firestore.FieldValue.increment(totalNewSlots),
       totalRequired: admin.firestore.FieldValue.increment(totalNewRequired),
     });
     await batch.commit();
+    if (skippedExisting > 0) {
+      console.log(
+        `[createFlexSlots] ${toId}: 이미 있는 날짜 ${skippedExisting}건 건너뜀 ` +
+        `(새로 만든 슬롯 ${totalNewSlots}건)`
+      );
+    }
 
     // [Phase 8.1C] toMatch dispatch: ACTIVE TO에 슬롯 생성 시 matching 근로자에게 알림
     {

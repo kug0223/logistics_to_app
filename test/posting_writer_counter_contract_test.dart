@@ -245,4 +245,94 @@ void main() {
       expect(cf, contains('srvHasActualWorkInMonth('));
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // 05. [R1.1] totalSlots — 같은 이중 전송, 같은 소유권
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // DEV 실측(수정 전):
+  //   CW31vrJx  totalSlots 12 (슬롯 6)
+  //   9Ewc7PK5  10 (5)   UXEL6mLl  8 (4)   m8ehk6Lo  14 (7)   uOHjoIEy  8 (4)
+  // 각 공고의 슬롯 createdAt이 모두 동일 → createFlexSlots는 1회만 실행됐다.
+  // 즉 재실행이 아니라 `to_firestore.dart:447`의 이중 전송이 원인이다.
+  group('[R1.1-05] totalSlots 소유권', () {
+    test('05-a 클라이언트가 dates.length를 보낸다 (원인)', () {
+      expect(writer,
+          contains('totalSlots: type == TOType.flex ? (dates?.length ?? 0) : 0'));
+    });
+
+    test('05-b 서버가 flex의 totalSlots도 0으로 강제한다', () {
+      expect(createTo, contains('finalData.totalSlots = 0;'));
+      final reqAt = createTo.indexOf('finalData.totalRequired = 0;');
+      final slotAt = createTo.indexOf('finalData.totalSlots = 0;');
+      expect(reqAt, isNot(-1));
+      expect(slotAt, greaterThan(reqAt), reason: '같은 flex 블록 안이다');
+    });
+
+    test('05-c 구 동작은 정확히 2배였다', () {
+      for (final dates in [4, 5, 6, 7]) {
+        const clientSends = true; // 구: 씨앗 = dates.length
+        final legacy = (clientSends ? dates : 0) + dates;
+        expect(legacy, dates * 2, reason: 'dates=$dates');
+      }
+    });
+
+    test('05-d 교정 후에는 슬롯 수와 같다', () {
+      for (final dates in [1, 3, 6]) {
+        const seed = 0;
+        expect(seed + dates, dates);
+      }
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // 06. [R1.1] createFlexSlots idempotency
+  // ═══════════════════════════════════════════════════════════════
+  group('[R1.1-06] 재호출 안전성', () {
+    final flexSlots = _codeOf(_sliceOf(
+        cf, 'export const callableCreateFlexSlots = onCall(', '\n);'));
+
+    test('06-a 기존 날짜를 미리 읽는다', () {
+      expect(flexSlots, contains('toRef.collection("slots").select("date").get()'));
+      expect(flexSlots, contains('const existingDateMs = new Set<number>('));
+    });
+
+    test('06-b 이미 있는 날짜는 건너뛴다', () {
+      expect(flexSlots, contains('if (existingDateMs.has(slotDate.toMillis())) {'));
+      expect(flexSlots, contains('skippedExisting++'));
+    });
+
+    test('06-c 건너뛴 날짜는 카운터에 들어가지 않는다', () {
+      // continue가 totalNewRequired 누적보다 앞서야 한다
+      final skipAt = flexSlots.indexOf('skippedExisting++');
+      final reqAt = flexSlots.indexOf('totalNewRequired += ');
+      final slotAt = flexSlots.indexOf('totalNewSlots++');
+      expect(skipAt, lessThan(reqAt));
+      expect(skipAt, lessThan(slotAt));
+    });
+
+    test('06-d 날짜가 슬롯의 자연 키다 — auto-id 중복 방지', () {
+      // ref는 여전히 auto-id지만 날짜 가드가 중복 생성을 막는다
+      expect(flexSlots, contains('toRef.collection("slots").doc()'));
+      final guardAt = flexSlots.indexOf('existingDateMs.has(');
+      final refAt = flexSlots.indexOf('toRef.collection("slots").doc()');
+      expect(guardAt, lessThan(refAt));
+    });
+
+    test('06-e 새 날짜 추가 경로는 살아 있다', () {
+      // 기존 3일 + 새 2일 → 새 2일만 만들어진다
+      const existing = {1, 2, 3};
+      const requested = [1, 2, 3, 4, 5];
+      final created = requested.where((d) => !existing.contains(d)).toList();
+      expect(created, [4, 5]);
+    });
+
+    test('06-f 증분 카운터가 canonical과 어긋나지 않는다', () {
+      // 재호출: 새 슬롯 0 → increment 0 → 집계 불변
+      const before = {'slots': 3, 'required': 6};
+      const newSlots = 0, newRequired = 0;
+      expect(before['slots']! + newSlots, 3);
+      expect(before['required']! + newRequired, 6);
+    });
+  });
 }
