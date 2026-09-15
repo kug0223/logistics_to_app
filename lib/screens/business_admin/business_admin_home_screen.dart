@@ -3066,9 +3066,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           );
         })),
       );
+    }
+
     // 9. 계약 종료 예정 — canManageContract
     // [GAP-CONTRACT-EXPIRING-UI-01 FIX] ExpiringContractsScreen 진입점 추가
     // 홈 upcoming.expiringContract 데이터가 계산되지만 UI 진입 경로가 없었던 P2 갭 수정
+    //
+    // [HOME-V2-08D.5.1] 이 블록은 `이체 대기`(canManageWage)의 if 안에 중첩돼
+    //   있었다. 그래서 계약서 권한만 가진 SubAdmin은 실제 종료 예정 계약이
+    //   있어도 이 행을 볼 수 없었다 — 없는 업무를 보여주던 08D.5의 반대 방향
+    //   결함이다. canonical 권한은 server aggregation·행 onTap 가드·
+    //   contractExpiringReminder 알림 모두 canManageContract 단독이다.
     if (!isSub || up.can((p) => p.canManageContract)) {
       final expiring = cs?.upcoming.expiringContract;
       add(
@@ -3106,8 +3114,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           if (mounted) unawaited(_loadCanonicalSummary());
         })),
       );
-    }
-
     }
 
     return result;
