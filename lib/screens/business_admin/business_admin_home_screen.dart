@@ -2048,7 +2048,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   // ── [PHASE-R5.2] 오늘 확인 필요 → AttendanceStatusDialog ────────
   // 탭 조건: _todayNeedsAttention > 0 && canManageWorkers (buildAttendanceMetrics에서 보장)
-  // 반환값: hasChanges → _loadTodayAttendance() 재실행
+  // 반환값: hasChanges → 근태·인력 현황 재조회 + 다른 탭에 알림
   Future<void> _openTodayAttendanceDialog(BuildContext context) async {
     final businesses = await _getBusinesses();
     if (!context.mounted) return;
@@ -2064,6 +2064,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
     if ((changed ?? false) && mounted) {
       unawaited(_loadTodayAttendance());
+      // [HOME-V2-07.1] 이 다이얼로그 안에서 NO_SHOW 좌석 반납(대체 인력 충원)이
+      //   일어날 수 있다. 좌석이 반납되면 확정 인원이 줄어 같은 카드의 `부족`이
+      //   바뀌는데, 이전에는 근태 수치만 다시 읽어서 옆 숫자가 낡은 채로 남았다.
+      unawaited(_loadStaffingReadiness());
+      // [POSTING-V2-02B.2] 좌석 반납은 slot confirmed/pending을 움직이므로
+      //   공고·근무 탭도 stale해진다. Home 자신은 위 두 loader로 이미 갱신됐고,
+      //   origin self-skip 계약이 중복 full refresh를 막는다.
+      WorkforceController.notifyDataChanged(
+        origin: AdminMutationOrigin.home,
+      );
     }
   }
 

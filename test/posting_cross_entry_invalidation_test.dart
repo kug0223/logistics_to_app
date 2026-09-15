@@ -406,10 +406,29 @@ void main() {
       );
     });
 
-    test('Home 근태/마감/계약 경로에는 producer를 달지 않았다', () {
-      final att = _codeOf(_bodyOf(home, 'Future<void> _openTodayAttendanceDialog('));
-      expect(att.contains('notifyDataChanged'), isFalse,
-          reason: '근태는 공고 카운터에 영향이 없다');
+    test('Home 당일명단 경로는 좌석 반납 때문에 알린다', () {
+      // [HOME-V2-07.1] 이 자리는 원래 '근태는 공고 카운터에 영향이 없다'는
+      //   이유로 producer 부재를 고정했다. 순수 근태 편집에 대해서는 지금도
+      //   맞는 말이지만, 이 다이얼로그는 NO_SHOW 좌석 반납(대체 인력 충원)
+      //   경로를 함께 갖고 있다. 좌석 반납은 slot confirmed를 줄이므로
+      //   공고·근무 탭과 Home의 `부족`이 같이 움직인다 — 근태 mutation이
+      //   아니라 staffing mutation이다.
+      final att =
+          _flat(_codeOf(_bodyOf(home, 'Future<void> _openTodayAttendanceDialog(')));
+      expect(att.contains('unawaited(_loadTodayAttendance());'), isTrue);
+      expect(att.contains('unawaited(_loadStaffingReadiness());'), isTrue,
+          reason: '좌석 반납 후 옆 숫자(부족)가 낡은 채로 남는다');
+      expect(
+        att.contains('WorkforceController.notifyDataChanged( '
+            'origin: AdminMutationOrigin.home, );'),
+        isTrue,
+      );
+      // 성공 분기 안에만 — 단순 열기/닫기는 아무것도 하지 않는다
+      expect('notifyDataChanged'.allMatches(att).length, 1);
+      expect(att.contains('if ((changed ?? false) && mounted) {'), isTrue);
+    });
+
+    test('마감 큐 / 계약 경로에는 여전히 producer가 없다', () {
       // UnclosedActionQueue 분기는 canonical summary만 갱신한다
       final flat = _flat(_codeOf(home));
       expect(
@@ -421,8 +440,10 @@ void main() {
       );
     });
 
-    test('Home producer 총 2곳 — 무분별 배선 아님', () {
-      expect('notifyDataChanged'.allMatches(_codeOf(home)).length, 2);
+    test('Home producer 총 3곳 — 무분별 배선 아님', () {
+      // DayApplicantsDialog · SupportReviewQueue
+      // [HOME-V2-07.1] + 당일명단(좌석 반납) — 셋 다 실제 staffing을 바꾼다
+      expect('notifyDataChanged'.allMatches(_codeOf(home)).length, 3);
     });
 
     test('Workforce 지원명단 성공에서 알린다', () {
