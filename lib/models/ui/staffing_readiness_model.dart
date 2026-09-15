@@ -147,11 +147,32 @@ class StaffingReadinessModel {
   /// D0~D+7 날짜별 인력 현황 (8일)
   final List<StaffingDayData> days;
 
+  // ── [HOME-V2-08B.2] posting lifecycle signal ─────────────────────────
+  //
+  // 화면에 숫자로 띄우기 위한 KPI가 아니라, Home이 **어떤 상태를 보여줄지**
+  // 고르기 위한 신호다. days의 staffing 숫자와 모집단이 다르다 —
+  // staffing은 D0~D+7에 실제 근무가 걸린 것만 세지만, 이쪽은 근무 날짜와
+  // 무관하게 현재 살아있는 공고를 센다.
+  //
+  // 유효성은 별도 필드 없이 [hasUsableData]로 판단한다. partial이면 두 값은
+  // 성공한 사업장만의 부분합이므로 '공고 없음'을 확정하면 안 된다.
+
+  /// 살아있는 SCHEDULED + ACTIVE + FULL 공고 수 (authorized scope 합).
+  final int publishedPostingCount;
+
+  /// 살아있는 DRAFT가 하나라도 있는가.
+  ///
+  /// 개수가 아니라 존재 여부만 둔다 — Home은 "작성 중인 공고가 있어요"까지만
+  /// 말하고, 정확한 목록과 개수는 공고 탭의 미공개 필터가 보여준다.
+  final bool hasDraftPosting;
+
   const StaffingReadinessModel({
     required this.available,
     required this.days,
     this.partial = false,
     this.failedBusinessCount = 0,
+    this.publishedPostingCount = 0,
+    this.hasDraftPosting = false,
   });
 
   factory StaffingReadinessModel.empty() =>
@@ -196,6 +217,12 @@ class StaffingReadinessModel {
       partial: (map['partial'] as bool?) ?? false,
       failedBusinessCount: (map['failedBusinessCount'] as num?)?.toInt() ?? 0,
       days: days,
+      // [HOME-V2-08B.2] 구 서버 응답에는 없다 — 0 / false로 파싱된다.
+      //   그 조합은 hasUsableData와 함께 읽어야 의미가 생기므로,
+      //   소비자는 partial/available을 먼저 본다.
+      publishedPostingCount:
+          (map['publishedPostingCount'] as num?)?.toInt() ?? 0,
+      hasDraftPosting: (map['hasDraftPosting'] as bool?) ?? false,
     );
   }
 }

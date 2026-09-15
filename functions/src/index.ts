@@ -32920,6 +32920,11 @@ export const callableGetStaffingReadiness = onCall(
       success:          boolean; // false → 주요 staffing 쿼리 실패 → available:false
       pendingAvailable: boolean; // false → pending 쿼리 실패 → pendingCount:null (ERROR≠ZERO)
       days:             SrfDayAcc[];
+      // [HOME-V2-08B.2] Home lifecycle signal — 화면 분기용이지 KPI가 아니다.
+      // publishedCount: 살아있는 SCHEDULED+ACTIVE+FULL 수
+      // hasDraft: 살아있는 DRAFT가 하나라도 있는가
+      publishedCount: number;
+      hasDraft: boolean;
     }
 
     const bizResults = await Promise.allSettled(
@@ -32930,10 +32935,25 @@ export const callableGetStaffingReadiness = onCall(
         let success          = true;
         let pendingAvailable = true; // pending 쿼리 성공 여부 (secondary signal)
 
-        // ── 5a. TO 목록 조회 (ACTIVE | SCHEDULED, isDeleted != true) ─────
+        // ── 5a. TO 목록 조회 (ACTIVE | SCHEDULED | FULL, isDeleted != true) ─────
+        //
+        // [HOME-V2-08B.2] FULL을 population에 넣는다.
+        //
+        // syncTOStats(applications onDocumentWritten)가 인원이 차는 순간 TO를
+        // 자동으로 FULL로 바꾼다 — ACTIVE는 IMMUTABLE_TO_STATUSES에 없다.
+        // 즉 FULL은 예외가 아니라 "모집이 성공적으로 끝난" 일상적 상태다.
+        // 그런데 이 쿼리가 FULL을 빼고 있어서, 그 TO의 required와 confirmed가
+        // **둘 다** 집계에서 사라졌다. 오늘 근무가 전부 충원되면 required가 0이
+        // 되어 hasTodayTarget이 false가 되고, Home은 `오늘 예정된 인력 운영이
+        // 없어요`라고 말하면서 바로 아래에 `현재 출근 6/6`을 함께 보여줬다
+        // (출근 수치는 applications를 직접 읽어 TO status와 무관하다).
+        // 운영이 잘될수록 Home이 비어 보이는 구조였다.
+        //
+        // DRAFT는 넣지 않는다. 공개된 적 없는 공고에는 확정 지원서가 없으므로
+        // required만 더해지고 confirmed가 0이라 shortage 전량이 유령으로 잡힌다.
         const tosSnap = await db.collection("tos")
           .where("businessId", "==", bizId)
-          .where("status", "in", ["ACTIVE", "SCHEDULED"])
+          .where("status", "in", ["ACTIVE", "SCHEDULED", "FULL"])
           .get();
 
         type WdEntry = {id: string; required: number};
@@ -32949,10 +32969,15 @@ export const callableGetStaffingReadiness = onCall(
 
         const flexTOs:     FlexTO[]     = [];
         const contractTOs: ContractTO[] = [];
+        // [HOME-V2-08B.2] publishedPostingCount — 위 population을 그대로 센다.
+        //   FULL이 합류했으므로 이 집합이 곧 SCHEDULED+ACTIVE+FULL이다.
+        //   별도 조회 없이 같은 루프에서 얻으므로 추가 read가 0이다.
+        let publishedCount = 0;
 
         for (const toDoc of tosSnap.docs) {
           const d = toDoc.data();
           if (d["isDeleted"] === true) continue; // soft delete
+          publishedCount++;
           const toType = (d["type"] as string | undefined) ?? "";
           const rawWDs = (d["workDetails"] as unknown[] | undefined) ?? [];
           const wds: WdEntry[] = rawWDs
@@ -33125,7 +33150,53 @@ export const callableGetStaffingReadiness = onCall(
           pendingAvailable = false;
         }
 
-        return {bizId, success, pendingAvailable, days: dayAcc};
+        // ── 5e. [HOME-V2-08B.2] 살아있는 DRAFT 존재 여부 ────────────────
+        //
+        // `isDeleted == false` equality 한 방으로 끝낼 수 없다. 소프트 삭제는
+        // 2026-08-10에 도입됐고 backfill을 하지 않았다("마이그레이션 불필요",
+        // getEffectiveActivePostingCount 주석 참조). 그래서 그 이전에 만든
+        // 살아있는 DRAFT에는 필드가 아예 없고, equality 쿼리는 그것들을
+        // 조용히 빠뜨린다. 필드 부재는 쿼리로 표현할 수 없다.
+        //
+        // limit(N) 한 장만 보고 false로 확정하지도 않는다. 삭제된 DRAFT가 N개
+        // 쌓여 있고 N+1번째가 살아있으면, Home이 실제 초안을 못 보고
+        // `현재 등록된 공고가 없어요`를 띄운다.
+        //
+        // 그래서 cursor로 끝까지 훑되, **살아있는 문서를 만나는 즉시 멈춘다.**
+        // 정상 계정의 best case는 1 read다. worst case(삭제된 DRAFT만 잔뜩)만
+        // 전량을 보는데, 그때는 실제로 전량을 봐야 false를 말할 수 있다.
+        let hasDraft = false;
+        try {
+          const DRAFT_PAGE = 100;
+          let cursor: admin.firestore.QueryDocumentSnapshot | undefined;
+          for (;;) {
+            let q = db.collection("tos")
+              .where("businessId", "==", bizId)
+              .where("status", "==", "DRAFT")
+              .orderBy("createdAt", "desc")
+              .limit(DRAFT_PAGE);
+            if (cursor) q = q.startAfter(cursor);
+            const page = await q.get();
+            if (page.empty) break;
+            const live = page.docs.find(
+              (doc) => doc.data()["isDeleted"] !== true);
+            if (live) {
+              hasDraft = true;
+              break;
+            }
+            if (page.size < DRAFT_PAGE) break; // 컬렉션 소진 → false 확정
+            cursor = page.docs[page.size - 1];
+          }
+        } catch (e) {
+          // [ERROR ≠ ZERO] 조회 실패를 '초안 없음'으로 내리지 않는다.
+          //   이 사업장을 실패로 표시해 기존 partial 계약에 태운다 —
+          //   Home이 장애를 '공고 없음'으로 오인하면 안 된다.
+          console.error(`[staffingReadiness] ${bizId} DRAFT 존재 조회 실패:`, e);
+          success = false;
+        }
+
+        return {bizId, success, pendingAvailable, days: dayAcc,
+          publishedCount, hasDraft};
       })
     );
 
@@ -33168,6 +33239,11 @@ export const callableGetStaffingReadiness = onCall(
     let okBusinessCount     = 0;
     let failedBusinessCount = 0;
     let overallPendingAvailable = true;
+    // [HOME-V2-08B.2] lifecycle signal — 성공한 사업장만 합산한다.
+    //   실패한 사업장을 0으로 치면 장애가 '공고 없음'으로 둔갑한다.
+    //   부분합이라는 사실은 기존 partial/failedBusinessCount가 전달한다.
+    let publishedPostingCount = 0;
+    let hasDraftPosting = false;
 
     for (const r of bizResults) {
       if (r.status === "rejected") {
@@ -33186,6 +33262,9 @@ export const callableGetStaffingReadiness = onCall(
       }
       okBusinessCount++;
       if (!pendingAvailable) overallPendingAvailable = false;
+      // scope 전체 합산 — 한 사업장에만 공고가 있어도 운영 상태다.
+      publishedPostingCount += r.value.publishedCount;
+      if (r.value.hasDraft) hasDraftPosting = true;
 
       const bizName = bizNameMap[bizId] ?? bizId;
       for (let i = 0; i < N_DAYS; i++) {
@@ -33222,11 +33301,16 @@ export const callableGetStaffingReadiness = onCall(
     //   PARTIAL       available=false partial=true
     //   ALL_FAILED    available=false partial=false
     //   EMPTY_SCOPE   available=true  partial=false
+    // [HOME-V2-08B.2] lifecycle signal의 유효성은 별도 필드를 만들지 않고
+    //   기존 available/partial로 판단한다. partial이면 두 값은 부분합이므로
+    //   소비자는 '공고 없음'을 확정하면 안 된다.
     return {
       available: failedBusinessCount === 0,
       partial: okBusinessCount > 0 && failedBusinessCount > 0,
       failedBusinessCount,
       days: aggDays,
+      publishedPostingCount,
+      hasDraftPosting,
     };
   }
 );
