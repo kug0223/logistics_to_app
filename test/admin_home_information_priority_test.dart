@@ -149,7 +149,7 @@ void main() {
       for (final forbidden in ['count', 'overdue', 'sort', 'priority']) {
         expect(seg.contains(forbidden), isFalse, reason: forbidden);
       }
-      expect(seg.contains('_showTaskSection(hero, hasRows)'), isTrue,
+      expect(seg.contains('_showTaskSection(hero, hasRows, hasHealthNotice)'), isTrue,
           reason: '조건은 존재 여부 하나뿐이다');
       // 빈 상태 문구는 대시보드 내부에서 처리된다
       expect(home.contains('처리할 업무가 없어요'), isTrue);
@@ -278,7 +278,7 @@ void main() {
 
     test('ZERO_COUNT_ACTION_VISIBILITY 기존 정책 유지', () {
       // valid 0 → 숨김. 이건 숨김이지 재정렬이 아니다.
-      expect(rows.contains('if (available && count == 0) return;'), isTrue);
+      expect(rows.contains('if (!available || count == 0) return;'), isTrue);
     });
   });
 

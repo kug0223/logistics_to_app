@@ -125,10 +125,17 @@ void main() {
       expect(d.contains('_buildActionRowWidget('), isTrue);
     });
 
-    test('조회 실패 행도 같은 표면 안에 있다', () {
+    test('데이터 상태 notice도 같은 표면 안에 있다', () {
+      // [HOME-V2-08D.5] `조회 실패` 행이 사라지고 section notice가 그 자리를 받았다.
+      //   같은 카드 안에서, 같은 depth로 그려진다는 AH-V2-05C의 요지는 그대로다.
       final w = _bodyOf(home, 'Widget _buildActionRowWidget(');
-      expect(w.contains('조회 실패'), isTrue);
+      expect(w.contains('조회 실패'), isFalse);
       expect(w.contains('boxShadow'), isFalse);
+      final d = _bodyOf(home, 'Widget _buildActionDashboard(');
+      expect(d.contains('_taskHealthNotice(s, total: summaryFailed)'), isTrue);
+      expect(d.contains('boxShadow'), isFalse);
+      expect('decoration: _groupSurface,'.allMatches(d).length, 2,
+          reason: '로딩 1 + 본문 1 — 상태가 달라도 같은 토큰');
     });
   });
 
@@ -154,7 +161,7 @@ void main() {
         isTrue,
       );
       // [HOME-V2-08D.2] Hero shell·skeleton이 같은 토큰을 재사용해 11곳.
-      expect('decoration: _groupSurface,'.allMatches(home).length, 10,
+      expect('decoration: _groupSurface,'.allMatches(home).length, 9,
           reason: 'Hero(2)·오늘·처리할 일(3)·다가오는(4)·공고 준비');
       // radius가 s에 곱해져 기기마다 달라지던 것이 사라졌다
       expect(home.contains('BorderRadius.circular(12 * s)'), isFalse);
@@ -171,7 +178,7 @@ void main() {
 
     test('§12 spacing 불변', () {
       // [HOME-V2-08D.2] Hero shell·skeleton·섹션 조립이 같은 gutter를 쓴다.
-      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 12);
+      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 11);
       // 섹션 사이 16은 이제 _buildSections 한 곳이 소유한다
       expect('SizedBox(height: 16 * s)'.allMatches(home).length, 1);
       expect('SizedBox(height: 20 * s)'.allMatches(home).length, 1);
@@ -183,7 +190,7 @@ void main() {
       expect(home.contains('fontSize: 18'), isFalse, reason: 'KPI 수치 폐기');
       expect('fontSize: 15'.allMatches(home).length, 5,
           reason: 'Hero 이름 · 오늘 issue · 다가오는 날짜 · task label · task count');
-      expect('fontSize: 13'.allMatches(home).length, 10);
+      expect('fontSize: 13'.allMatches(home).length, 9);
       expect('fontSize: 12'.allMatches(home).length, 17);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });

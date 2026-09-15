@@ -100,7 +100,8 @@ List<String> _buildRows({
     if (!perms.contains(_rowPermission[label])) return;
     final available = !unavailable.contains(label);
     final count = counts[label] ?? 1;
-    if (available && count == 0) return; // ZERO_COUNT_ACTION_VISIBILITY = HIDE
+    // [HOME-V2-08D.5] UNKNOWN도 행이 되지 않는다 — 없는 업무를 만들지 않는다
+    if (!available || count == 0) return;
     if (atIndex != null) {
       result.insert(atIndex, label);
     } else {
@@ -120,8 +121,8 @@ List<String> _buildRows({
   final wageTotal = wage.count + wage.missingDueDateCount;
   final wageOverdue = wage.available && wage.overdueCount > 0;
   if (perms.contains('canManageWage')) {
-    final avail = wage.available;
-    if (!(avail && wageTotal == 0)) {
+    // [HOME-V2-08D.5] 확인하지 못한 값(available=false)도 행이 되지 않는다.
+    if (wage.available && wageTotal > 0) {
       if (wageOverdue) {
         result.insert(slot, '이체 대기');
       } else {
@@ -187,21 +188,30 @@ void main() {
   // §13 available == false
   // ───────────────────────────────────────────────────────────
   group('WAGE-PRIORITY-06 조회 실패 시 이동하지 않는다', () {
-    test('available=false면 overdueCount가 있어도 제자리', () {
+    test('available=false면 overdueCount가 있어도 승격되지 않는다', () {
+      // [HOME-V2-08D.5] 이제 행 자체가 생기지 않으므로 승격될 대상도 없다.
+      //   "불완전한 값으로 urgency를 판단하지 않는다"는 요지는 더 강해졌다 —
+      //   overdueCount 9를 믿고 자리를 옮기는 일이 구조적으로 불가능하다.
       final r = _buildRows(
         wage: const _Wage(available: false, count: 3, overdueCount: 9),
         unavailable: {'이체 대기'},
       );
-      expect(r, _normalOrder, reason: '불완전한 값으로 urgency를 판단하면 안 된다');
+      expect(r, _normalOrder.where((l) => l != '이체 대기').toList(),
+          reason: '불완전한 값으로 urgency를 판단하면 안 된다');
+      expect(r.contains('이체 대기'), isFalse);
     });
 
-    test('available=false여도 행 자체는 남는다 (조회 실패 표면)', () {
+    test('available=false면 행 자체가 생기지 않는다 (§08D.5)', () {
+      // [HOME-V2-08D.5] 이전에는 `조회 실패` 칩을 달고 제자리에 남았다.
+      //   그 행의 존재가 "처리할 이체가 있다"는 뜻이라 없는 업무를 만들어냈다.
+      //   확인하지 못했다는 사실은 이제 section notice가 말한다.
       final r = _buildRows(
         wage: const _Wage(available: false, count: 0, overdueCount: 0),
         unavailable: {'이체 대기'},
       );
-      expect(r.contains('이체 대기'), isTrue);
-      expect(r, _normalOrder);
+      expect(r.contains('이체 대기'), isFalse);
+      // 나머지 행의 상대 순서는 그대로다 — 연체 승격도 일어나지 않았다
+      expect(r, _normalOrder.where((l) => l != '이체 대기').toList());
     });
 
     test('소스 조건이 available을 함께 본다', () {
@@ -311,7 +321,7 @@ void main() {
           rows.indexOf('void add({'), rows.indexOf('final overdueWageSlot'));
       expect(addFn.contains('result.insert(atIndex, row);'), isTrue);
       expect(addFn.contains('result.add(row);'), isTrue);
-      expect(addFn.contains('if (available && count == 0) return;'), isTrue,
+      expect(addFn.contains('if (!available || count == 0) return;'), isTrue,
           reason: 'ZERO_COUNT_ACTION_VISIBILITY 유지');
     });
 
@@ -386,7 +396,8 @@ void main() {
           b.indexOf('_buildTodayOps('), b.indexOf('_buildFutureStaffing('));
       expect(seg.contains('overdue'), isFalse);
       expect(seg.contains('sort'), isFalse);
-      expect(seg.contains('_showTaskSection(hero, hasRows)'), isTrue);
+      expect(seg.contains('_showTaskSection(hero, hasRows, hasHealthNotice)'),
+          isTrue);
     });
 
     test('§9 다른 8행의 source·destination 불변', () {

@@ -173,7 +173,7 @@ void main() {
 
     test('03-d 실제 grouped surface가 이것을 쓴다 (§9)', () {
       // [HOME-V2-08D.2] Hero shell + skeleton이 같은 토큰을 재사용해 11곳.
-      expect('decoration: _groupSurface,'.allMatches(code).length, 10);
+      expect('decoration: _groupSurface,'.allMatches(code).length, 9);
       expect(_codeOf(_bodyOf(home, 'Widget _heroShell(')).contains('_groupSurface'),
           true);
       expect(_codeOf(_bodyOf(home, 'Widget _heroSkeleton(')).contains('_groupSurface'),
@@ -273,7 +273,7 @@ void main() {
     test('05-b section gate가 적용됐다', () {
       final sec = _codeOf(_bodyOf(home, 'List<Widget> _buildSections('));
       expect(sec.contains('if (_showTodaySection)'), true);
-      expect(sec.contains('if (_showTaskSection(hero, hasRows))'), true);
+      expect(sec.contains('if (_showTaskSection(hero, hasRows, hasHealthNotice))'), true);
       expect(sec.contains('if (_showUpcomingSection)'), true);
     });
 

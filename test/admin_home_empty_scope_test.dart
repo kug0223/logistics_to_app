@@ -185,12 +185,16 @@ void main() {
         _source('lib/screens/business_admin/business_admin_home_screen.dart');
 
     test('FP02-30 행 숨김 규칙이 그대로다', () {
-      expect(home.contains('if (available && count == 0) return;'), true);
+      expect(home.contains('if (!available || count == 0) return;'), true);
     });
 
-    test('FP02-31 조회 실패 표현이 제거되지 않았다', () {
+    test('FP02-31 조회 실패 사실이 사라지지 않았다', () {
       // backend 의미 오류를 UI에서 숨기는 방식으로 고치지 않았다.
-      expect(home.contains("'조회 실패'"), true);
+      // [HOME-V2-08D.5] 다만 표현 위치가 바뀌었다 — 행이 아니라 section notice다.
+      //   `퇴사 요청 조회 실패`라는 행은 "처리할 퇴사 요청이 있다"는 뜻이라
+      //   실패를 없는 업무로 둔갑시켰다. 실패는 데이터 상태로만 말한다.
+      expect(home.contains("'일부 업무 상태를 확인하지 못했어요'"), true);
+      expect(home.contains("'처리할 업무 상태를 확인하지 못했어요'"), true);
     });
 
     test('FP02-32 빈 scope 전용 client special-case를 넣지 않았다', () {

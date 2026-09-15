@@ -576,11 +576,15 @@ void main() {
     });
 
     test('08-i 조회 실패는 0건으로 둔갑하지 않는다 (ERROR≠ZERO)', () {
-      expect(taskRowCode, contains('if (!item.available)'));
-      expect(taskRowCode, contains("Text('조회 실패'"));
-      final failAt = taskRowCode.indexOf("'조회 실패'");
-      final countAt = taskRowCode.indexOf('item.countStr');
-      expect(failAt, lessThan(countAt), reason: '실패 분기가 먼저다');
+      // [HOME-V2-08D.5] 행 안의 `조회 실패` 칩이 사라졌다. ERROR≠ZERO는
+      //   더 강하게 지켜진다 — 확인하지 못한 항목은 0건으로도, 행으로도
+      //   표현되지 않고 section notice가 사실만 말한다.
+      expect(taskRowCode.contains('item.available'), isFalse);
+      expect(taskRowCode.contains('조회 실패'), isFalse);
+      final dashBody = _codeOf(_bodyOf(home, 'Widget _buildActionDashboard('));
+      expect(dashBody, contains('_unknownTaskCount(up, cs)'));
+      expect(dashBody,
+          contains('final showReassurance = rows.isEmpty && !showNotice;'));
     });
   });
 

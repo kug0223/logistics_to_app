@@ -112,7 +112,7 @@ void main() {
 
   group('AHV2-02A-02 0건 숨김', () {
     test('add() 공통 규칙이 유지된다', () {
-      expect(rows.contains('if (available && count == 0) return;'), isTrue,
+      expect(rows.contains('if (!available || count == 0) return;'), isTrue,
           reason: 'ZERO_COUNT_ACTION_VISIBILITY = HIDE');
     });
 

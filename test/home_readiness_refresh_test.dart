@@ -252,7 +252,8 @@ void main() {
     test('HRR-53 승인 복구·FP-02 무변경', () {
       final src = _source(_homePath);
       expect(src.contains('recheckApproval'), false);
-      expect(src.contains("'조회 실패'"), true);
+      // [HOME-V2-08D.5] FP-02 표면이 행 → section notice로 옮겨졌다
+      expect(src.contains("'일부 업무 상태를 확인하지 못했어요'"), true);
       final fns = _source('functions/src/index.ts');
       expect(
           fns.contains(

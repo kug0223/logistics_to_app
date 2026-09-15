@@ -1553,12 +1553,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   /// 처리할 일 — **posting lifecycle과 독립이다.**
   ///
-  /// 공고가 없어도 급여 미이체·계약 미발송은 남아 있다. rows가 비는 것은
-  /// summary를 정상 조회했는데 0건일 때뿐이고(조회 실패는 '조회 실패' 행으로
-  /// 렌더된다), 그때만 Hero 상태를 보고 한 줄 안내를 낼지 정한다.
-  bool _showTaskSection(_HeroState hero, bool hasRows) {
+  /// 공고가 없어도 급여 미이체·계약 미발송은 남아 있다.
+  ///
+  /// [HOME-V2-08D.5] rows가 비는 이유는 두 가지이고 서로 다르게 다뤄야 한다:
+  ///   · 정상 조회했는데 0건  → Hero 상태를 보고 한 줄 안내를 낼지 정한다
+  ///   · 확인하지 못했다       → 숨기지 않는다. 숨기면 "없다"는 뜻이 된다
+  bool _showTaskSection(_HeroState hero, bool hasRows, bool hasHealthNotice) {
     if (_canonicalSummaryLoading) return true;
     if (hasRows) return true;
+    // [HOME-V2-08D.5] 확인하지 못한 것이 있으면 lifecycle 상태에서도 숨기지
+    //   않는다. 섹션을 숨기는 것은 "처리할 일이 없다"는 주장인데, UNKNOWN에서는
+    //   그것을 알 수 없다. 조용히 사라지는 것과 0건은 사용자에게 같은 뜻이다.
+    if (hasHealthNotice) return true;
     // lifecycle 상태에서는 Hero가 이미 다음 행동을 말했다 — 반복하지 않는다.
     return !_isLifecycleHero(hero);
   }
@@ -1566,11 +1572,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   List<Widget> _buildSections(
       BuildContext context, double s, ThemeData theme, UserProvider up) {
     final hero = _heroStateOf(up);
-    final hasRows = _makeActionRows(context, s, up, _canonicalSummary).isNotEmpty;
+    final cs = _canonicalSummary;
+    final hasRows = _makeActionRows(context, s, up, cs).isNotEmpty;
+    // [HOME-V2-08D.5] 확인하지 못한 항목이 있다는 사실도 섹션의 존재 근거다.
+    final hasHealthNotice = cs == null || _unknownTaskCount(up, cs) > 0;
 
     final sections = <Widget>[
       if (_showTodaySection) _buildTodayOps(context, s, theme, up),
-      if (_showTaskSection(hero, hasRows))
+      if (_showTaskSection(hero, hasRows, hasHealthNotice))
         _buildActionDashboard(context, s, theme, up),
       if (_showUpcomingSection) _buildFutureStaffing(context, s, theme, up),
     ];
@@ -2695,46 +2704,58 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     final rows = _makeActionRows(context, s, up, cs);
 
+    // [HOME-V2-08D.5] 업무(task)와 데이터 상태(data health)는 다른 것이다.
+    //   rows      = 실제로 처리할 대상이 있는 항목만 (KNOWN_NONZERO)
+    //   notice    = 확인하지 못한 것이 있다는 사실 (UNKNOWN)
+    //   전체 실패(cs == null)는 `일부`가 아니라 섹션 전체의 상태다.
+    final summaryFailed = cs == null;
+    final unknownCount = _unknownTaskCount(up, cs);
+    final showNotice = summaryFailed || unknownCount > 0;
+
+    // 확인하지 못한 것이 있으면 `처리할 업무가 없어요`라고 확정하지 않는다 —
+    // 실제로 없는지 알 수 없기 때문이다. 안심 문구는 전부 성공했을 때만 나온다.
+    final showReassurance = rows.isEmpty && !showNotice;
+
     return Column(children: [
       _sectionHeader(context, s, '처리할 일'),
       SizedBox(height: 8 * s),
-      if (rows.isEmpty)
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
-            decoration: _groupSurface,
-            child: Row(children: [
-              Icon(Icons.check_circle_outline, size: 18 * s, color: AppColors.grey300),
-              SizedBox(width: 10 * s),
-              Text('처리할 업무가 없어요',
-                  style: TextStyle(fontSize: 13, color: AppColors.grey400)),
-            ]),
-          ),
-        )
-      else
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * s),
-          child: Container(
-            // [AH-V2-05C] flat surface — 할 일이 있을 때만 그림자가 생겨
-            //   로딩·빈 상태와 깊이가 달라지던 것을 없앤다.
-            decoration: _groupSurface,
-            child: Column(
-              children: rows.asMap().entries.map((e) =>
-                _buildActionRowWidget(context, s, e.value, isLast: e.key == rows.length - 1)
-              ).toList(),
-            ),
-          ),
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16 * s),
+        child: Container(
+          // [AH-V2-05C] flat surface — 할 일이 있을 때만 그림자가 생겨
+          //   로딩·빈 상태와 깊이가 달라지던 것을 없앤다.
+          decoration: _groupSurface,
+          child: Column(children: [
+            if (showReassurance)
+              Padding(
+                padding:
+                    EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
+                child: Row(children: [
+                  Icon(Icons.check_circle_outline,
+                      size: 18 * s, color: AppColors.grey300),
+                  SizedBox(width: 10 * s),
+                  Text('처리할 업무가 없어요',
+                      style: TextStyle(fontSize: 13, color: AppColors.grey400)),
+                ]),
+              ),
+            ...rows.asMap().entries.map((e) => _buildActionRowWidget(
+                  context, s, e.value,
+                  // notice가 뒤에 붙으면 마지막 행에도 divider가 필요하다
+                  isLast: e.key == rows.length - 1 && !showNotice,
+                )),
+            if (showNotice) _taskHealthNotice(s, total: summaryFailed),
+          ]),
         ),
+      ),
     ]);
   }
 
 
   List<({IconData icon, String label, String? badge, String countStr,
-      Color color, int count, bool available, VoidCallback onTap})>
+      Color color, int count, VoidCallback onTap})>
   _makeActionRows(BuildContext context, double s, UserProvider up, AdminHomeSummaryModel? cs) {
     final result = <({IconData icon, String label, String? badge, String countStr,
-        Color color, int count, bool available, VoidCallback onTap})>[];
+        Color color, int count, VoidCallback onTap})>[];
     // [PH1] SUB_ADMIN 권한 게이트: 권한 없는 항목은 목록에서 제외
     // CF aggSimple()이 permCount==0(권한없음)과 실제 쿼리 실패를 모두 available:false로
     // 반환하기 때문에 클라이언트에서 먼저 권한 기반 필터링을 적용한다.
@@ -2748,9 +2769,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       required VoidCallback onTap,
       int? atIndex,
     }) {
-      if (available && count == 0) return; // valid 0 → 숨김 (ZERO_COUNT_ACTION_VISIBILITY = HIDE)
+      // [HOME-V2-08D.5] 행은 **처리할 대상이 실제로 있을 때만** 만든다.
+      //
+      //   available && count == 0  → KNOWN_ZERO   → 행 없음 (기존 규칙)
+      //   available && count > 0   → KNOWN_NONZERO→ 행
+      //   !available               → UNKNOWN      → **행 없음** (이번 교정)
+      //
+      // 이전에는 !available이 행을 만들고 `조회 실패` 칩을 달았다. 그런데
+      // `퇴사 요청` 행이 존재한다는 것 자체가 "처리할 퇴사 요청이 있다"는 뜻이라,
+      // 퇴사 요청을 받은 적 없는 관리자에게 없는 업무를 만들어 보여줬다.
+      //
+      // 게다가 서버의 available은 `permCount > 0 && successCount === permCount`라
+      // **조회 실패와 권한 없음이 같은 false**로 내려온다(aggSimple). 그 값 하나로
+      // 사용자에게 오류를 주장할 수 없다. UNKNOWN은 section-level notice가 말한다.
+      if (!available || count == 0) return;
       final row = (icon: icon, label: label, badge: badge, countStr: countStr,
-          color: color, count: count, available: available, onTap: onTap);
+          color: color, count: count, onTap: onTap);
       if (atIndex != null) {
         result.insert(atIndex, row);
       } else {
@@ -3006,8 +3040,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   평상시에는 8순위 그대로 — 정기 이체 대기 물량이 많다는 것은 긴급이 아니다.
       //   조건은 canonical overdueCount 하나뿐이다. count·missingDueDateCount·
       //   배지 문자열은 이동 근거로 쓰지 않는다.
-      //   available=false면 숫자를 신뢰할 수 없으므로 옮기지 않는다 — 그때 행은
-      //   '조회 실패' 칩을 달고 제자리에 남는다.
+      //   available=false면 숫자를 신뢰할 수 없으므로 옮기지 않는다.
+      //   [HOME-V2-08D.5] 그때는 행 자체가 생기지 않고, 확인하지 못했다는
+      //   사실은 섹션 하단 notice가 말한다.
       final wageOverdue = wage?.available == true && (wage?.overdueCount ?? 0) > 0;
       add(
         icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
@@ -3078,10 +3113,63 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return result;
   }
 
+  /// [HOME-V2-08D.5] 확인하지 못한 task source의 수 — **행이 아니라 상태다.**
+  ///
+  /// `available == false`는 서버 `aggSimple`에서
+  /// `permCount > 0 && successCount === permCount`의 부정이므로 두 가지를 겸한다:
+  ///   · 권한 있는 사업장 중 하나라도 쿼리 실패
+  ///   · 그 task에 대한 권한이 **어느 사업장에도** 없음(permCount == 0)
+  ///
+  /// 그래서 **클라이언트 권한 게이트를 통과한 항목만** 센다. 권한이 없어 비어
+  /// 있는 것을 장애라고 말하면 보안·UX가 둘 다 틀린다(§15).
+  ///
+  /// 전체 실패(cs == null)는 여기서 세지 않는다 — 그건 `일부`가 아니라
+  /// 섹션 전체의 상태이고 다른 문구를 쓴다.
+  int _unknownTaskCount(UserProvider up, AdminHomeSummaryModel? cs) {
+    if (cs == null) return 0;
+    final isSub = up.currentUser?.isSubAdmin == true;
+    // _makeActionRows의 9종과 **같은** 권한 게이트를 쓴다.
+    final canWorkers  = !isSub || up.can((p) => p.canManageWorkers);
+    final canTo       = !isSub || up.can((p) => p.canManageTo);
+    final canContract = !isSub || up.can((p) => p.canManageContract);
+    final canWage     = !isSub || up.can((p) => p.canManageWage);
+
+    var n = 0;
+    void chk({required bool permitted, required bool available}) {
+      if (permitted && !available) n++;
+    }
+
+    final a = cs.actions;
+    chk(permitted: canWorkers,  available: a.resignRequest.available);
+    chk(permitted: canTo,       available: a.approval.available);
+    chk(permitted: canWorkers,  available: a.scheduleChangeRequest.available);
+    chk(permitted: canContract, available: a.unsentContract.available);
+    chk(permitted: canWage,     available: a.unclosed.available);
+    chk(permitted: canWage,     available: a.settlementRequest.available);
+    chk(permitted: canWage,     available: a.wageChangeRequest.available);
+    chk(permitted: canWage,     available: a.unpaidWage.available);
+    chk(permitted: canContract, available: cs.upcoming.expiringContract.available);
+    return n;
+  }
+
+  /// [HOME-V2-08D.5] 업무 상태를 확인하지 못했다는 **데이터 상태** 한 줄.
+  ///
+  /// 어떤 업무인지 말하지 않는다 — `퇴사 요청을 확인하지 못했어요`는 퇴사 요청이
+  /// 실재한다는 뜻으로 읽힌다(§9). 말하는 것은 "우리가 못 읽었다"까지다.
+  /// 재시도는 기존 canonical summary 로더를 그대로 쓴다.
+  Widget _taskHealthNotice(double s, {required bool total}) {
+    return _todayOpsErrorRow(s,
+      message: total
+          ? '처리할 업무 상태를 확인하지 못했어요'
+          : '일부 업무 상태를 확인하지 못했어요',
+      onRetry: () => unawaited(_loadCanonicalSummary()),
+    );
+  }
+
   Widget _buildActionRowWidget(
     BuildContext context, double s,
     ({IconData icon, String label, String? badge, String countStr,
-      Color color, int count, bool available, VoidCallback onTap}) item,
+      Color color, int count, VoidCallback onTap}) item,
     {required bool isLast}
   ) {
     return Column(children: [
@@ -3119,16 +3207,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               ],
             ])),
             SizedBox(width: 8 * s),
-            if (!item.available)
-              // ERROR ≠ ZERO — 조회 실패를 0건으로 바꾸지 않는다
-              Text('조회 실패',
-                  style: TextStyle(fontSize: 13, color: AppColors.grey500))
-            else
-              // [HOME-V2-08D.4] count는 전부 같은 무게다. 항목에 따라 굵기나
-              //   색이 달라지면 숫자 크기가 아닌 종류가 급함을 주장하게 된다.
-              Text(item.countStr, style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary)),
+            // [HOME-V2-08D.4] count는 전부 같은 무게다. 항목에 따라 굵기나
+            //   색이 달라지면 숫자 크기가 아닌 종류가 급함을 주장하게 된다.
+            // [HOME-V2-08D.5] `조회 실패` 분기는 사라졌다 — 확인하지 못한 항목은
+            //   애초에 행이 되지 않고, 그 사실은 section-level notice가 말한다.
+            Text(item.countStr, style: TextStyle(
+                fontSize: 15, fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary)),
             SizedBox(width: 4 * s),
             Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
           ]),

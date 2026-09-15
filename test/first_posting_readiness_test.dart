@@ -315,8 +315,9 @@ void main() {
       // backend state semantics 문제는 별도 Phase — 여기서 숨기면 원인이 가려진다.
       final home = _source(
           'lib/screens/business_admin/business_admin_home_screen.dart');
-      expect(home.contains("'조회 실패'"), true,
-          reason: 'FP-02를 이번 Phase에서 UI로 숨겼다');
+      // [HOME-V2-08D.5] 표현이 행 → section notice로 옮겨졌다. 숨긴 것이 아니다.
+      expect(home.contains("'일부 업무 상태를 확인하지 못했어요'"), true,
+          reason: 'FP-02를 UI에서 지워버렸다');
     });
 
     test('FPR-54 SUB_ADMIN 준비 카드 비노출 유지', () {
