@@ -121,26 +121,41 @@ void main() {
       for (final s in ['INVITE_FULL', 'FULL_INVITE', 'invitedFull']) {
         expect(model.contains(s), isFalse);
       }
-      // 상태는 INVITED 그대로, 사실만 덧붙인다
-      expect(model.contains('final bool workInstanceFull;'), isTrue);
+      // 상태는 INVITED 그대로, 사실만 덧붙인다.
+      // [R2.2.1] bool → 3-state. status enum은 여전히 만들지 않는다.
+      expect(
+          model.contains(
+              'final InviteCapacityState workInstanceCapacityState;'),
+          isTrue);
     });
 
     test('02-c Firestore 필드가 아니라 조회 시점 계산값이다', () {
       final model = _codeOf(_src(_appModelPath));
-      expect(model.contains("workInstanceFull: data['workInstanceFull'] == true"), isTrue);
+      expect(
+          model.contains(
+              "_parseCapacityState(data['workInstanceCapacityState'])"),
+          isTrue);
       // toMap에 실어 저장하면 stale 값이 문서에 굳는다
       final toMapAt = model.indexOf("'inviteExpiresAt': inviteExpiresAt");
       final toMap = model.substring(toMapAt, toMapAt + 400);
       expect(toMap.contains('workInstanceFull'), isFalse);
+      expect(toMap.contains('workInstanceCapacityState'), isFalse);
     });
 
     test('02-d 모집이 찬 초대에는 수락 CTA가 없다', () {
       final code = _codeOf(_src(_myAppsPath));
-      expect(code.contains('if (app.workInstanceFull) {'), isTrue);
+      const guard =
+          'if (app.workInstanceCapacityState == InviteCapacityState.full) {';
+      // [R2.2.1] full 다음에 unknown 분기가 생겼다 — 경계는 그 시작이다.
+      //   `return Column(`으로 자르면 분기 자신의 return에서 끊긴다.
+      const nextGuard =
+          'if (app.workInstanceCapacityState == InviteCapacityState.unknown) {';
+      expect(code.contains(guard), isTrue);
       expect(code.contains("'모집이 완료된 초대예요'"), isTrue);
-      // 그 분기 안에 수락 버튼이 없어야 한다 — 분기는 다음 return Column(에서 끝난다
-      final at = code.indexOf('if (app.workInstanceFull) {');
-      final branch = code.substring(at, code.indexOf('return Column(', at + 40));
+      final at = code.indexOf(guard);
+      final end = code.indexOf(nextGuard, at);
+      expect(end, greaterThan(at), reason: 'UNKNOWN 분기가 full 뒤에 없다');
+      final branch = code.substring(at, end);
       expect(branch.contains("label: '수락하기'"), isFalse);
       // 거절(정리)은 계속 가능해야 한다
       expect(branch.contains('_declineInvite(app.id)'), isTrue);

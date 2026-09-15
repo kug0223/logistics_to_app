@@ -2,6 +2,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/firestore_helper.dart';
+import '../ui/invite_capacity_state.dart';
+
+/// [R2.2.1 CORRECTION] 서버가 실어 준 capacity 상태를 읽는다.
+///
+/// **모르는 값은 전부 unknown이다.** 필드가 없거나(구버전 서버), 초대가 아닌
+/// 문서거나, 알 수 없는 문자열이면 `자리 있음`으로 기울지 않는다.
+InviteCapacityState _parseCapacityState(Object? raw) {
+  switch (raw) {
+    case 'available':
+      return InviteCapacityState.available;
+    case 'full':
+      return InviteCapacityState.full;
+    default:
+      return InviteCapacityState.unknown;
+  }
+}
 
 /// 지원서 모델 - 업무유형 선택 및 변경 이력 지원
 class ApplicationModel {
@@ -175,14 +191,31 @@ class ApplicationModel {
   final DateTime? invitedAt;       // 초대 발송 시각 (만료 계산 기준)
   final DateTime? inviteExpiresAt; // 초대 만료 시각 (CF에서 invitedAt + 24h 계산 저장)
 
-  /// [SYSTEM-INTEGRATION-R2.2] 이 초대의 모집 단위가 이미 찼는가.
+  /// [SYSTEM-INTEGRATION-R2.2 / R2.2.1] 이 초대의 모집 단위에 지금 자리가 있는가.
   ///
   /// Firestore 문서의 필드가 아니라 `callableGetMyApplications`가 조회 시점에
   /// slot.workDetailCounts[wdId]로 계산해 실어 주는 값이다. 상태(enum)를 바꾸지
-  /// 않고 사실만 덧붙이므로, 자리가 다시 열리면 다음 조회에서 false로 돌아온다.
+  /// 않고 사실만 덧붙이므로, 자리가 다시 열리면 다음 조회에서 되돌아온다.
   ///
-  /// true면 서버가 수락을 거부한다 — 화면은 수락 CTA를 내려야 한다.
-  final bool workInstanceFull;
+  /// **세 상태다.** 이전에는 `bool workInstanceFull`이었고, 서버가 판단하지
+  /// 못한 경우(slot 없음·읽기 실패·wdId 계약 손상)에도 필드가 없어 false —
+  /// 즉 `자리 있음`으로 읽혔다. 읽지 못한 것은 자리가 있다는 뜻이 아니다.
+  ///
+  ///   UNKNOWN != AVAILABLE      UNKNOWN != FULL
+  ///
+  /// 필드가 없으면(구버전 서버·초대가 아닌 문서) `unknown`이다 — 기본값이
+  /// `available`이 되지 않게 한다. 관리자 화면과 같은 어휘를 쓴다.
+  final InviteCapacityState workInstanceCapacityState;
+
+  /// 서버가 자리가 찼다고 **확인해 준** 경우에만 true.
+  /// UNKNOWN은 false다 — `!workInstanceFull`을 `수락 가능`으로 읽지 말 것.
+  bool get workInstanceFull =>
+      workInstanceCapacityState == InviteCapacityState.full;
+
+  /// 지금 수락할 수 있다고 서버가 **확인해 준** 경우에만 true.
+  /// UNKNOWN에서는 false — 수락 CTA를 띄우지 않는다.
+  bool get canAcceptInvite =>
+      workInstanceCapacityState == InviteCapacityState.available;
 
   // [ID-CONSENT] 신분증 열람 사전동의 — CF 서버 타임스탬프로 기록 (legacy, 하위 호환 유지)
   final bool idCardConsentGiven;       // 지원 시 동의 여부 (항상 true, 미동의 시 지원 불가)
@@ -288,7 +321,7 @@ class ApplicationModel {
     this.invitedBy,
     this.invitedAt,
     this.inviteExpiresAt,
-    this.workInstanceFull = false,
+    this.workInstanceCapacityState = InviteCapacityState.unknown,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     this.idCardConsentGiven = false,
     this.idCardConsentAt,
@@ -421,8 +454,11 @@ class ApplicationModel {
       invitedBy: data['invitedBy'] as String?,
       invitedAt: parseTimestampNullable(data['invitedAt']),
       inviteExpiresAt: parseTimestampNullable(data['inviteExpiresAt']),
-      // [R2.2] Firestore 필드가 아니라 조회 시점에 서버가 계산해 실어 준 값.
-      workInstanceFull: data['workInstanceFull'] == true,
+      // [R2.2 / R2.2.1] Firestore 필드가 아니라 조회 시점에 서버가 계산해 준 값.
+      //   **없으면 unknown이다.** 없음을 `자리 있음`으로 읽지 않는다 —
+      //   그것이 UNKNOWN을 AVAILABLE로 흘려보낸 원래 결함이었다.
+      workInstanceCapacityState:
+          _parseCapacityState(data['workInstanceCapacityState']),
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
       idCardConsentGiven: data['idCardConsentGiven'] as bool? ?? false,
       idCardConsentAt: parseTimestampNullable(data['idCardConsentAt']),
@@ -667,7 +703,7 @@ class ApplicationModel {
     String? invitedBy,
     DateTime? invitedAt,
     DateTime? inviteExpiresAt,
-    bool? workInstanceFull,
+    InviteCapacityState? workInstanceCapacityState,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     bool? idCardConsentGiven,
     DateTime? idCardConsentAt,
@@ -761,7 +797,8 @@ class ApplicationModel {
       invitedBy: invitedBy ?? this.invitedBy,
       invitedAt: invitedAt ?? this.invitedAt,
       inviteExpiresAt: inviteExpiresAt ?? this.inviteExpiresAt,
-      workInstanceFull: workInstanceFull ?? this.workInstanceFull,
+      workInstanceCapacityState:
+          workInstanceCapacityState ?? this.workInstanceCapacityState,
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
       idCardConsentGiven: idCardConsentGiven ?? this.idCardConsentGiven,
       idCardConsentAt: idCardConsentAt ?? this.idCardConsentAt,

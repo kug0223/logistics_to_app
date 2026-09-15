@@ -26647,10 +26647,23 @@ export const callableGetMyApplications = onCall(
     //   근로자 화면은 여전히 `수락하기`를 띄웠다 — 눌러야 실패를 아는 action이다.
     //
     //   상태를 바꾸지 않고 사실만 덧붙인다. 새 status enum을 만들지 않고,
-    //   자리가 다시 열리면 이 값도 자연히 false로 돌아온다.
+    //   자리가 다시 열리면 이 값도 자연히 돌아온다.
     //   INVITED 문서에 대해서만 계산하므로 일반 조회에는 추가 read가 없다.
+    //
+    // [SYSTEM-INTEGRATION-R2.2.1 CORRECTION] 세 상태로 내려보낸다.
+    //
+    //   이전에는 `full일 때만 workInstanceFull: true`를 실었다. 그래서 slot을
+    //   읽지 못했거나 wdId 계약이 깨진 경우 — 즉 **판단하지 못한 경우** — 에도
+    //   필드가 없었고, 클라이언트의 non-nullable bool이 그것을 false로 읽어
+    //   `수락하기`를 띄웠다. 읽지 못한 것은 자리가 있다는 뜻이 아니다.
+    //
+    //     UNKNOWN != AVAILABLE      UNKNOWN != FULL
+    //
+    //   관리자 화면(InviteCapacityState)과 같은 3-state 어휘를 쓴다. 판정식도
+    //   같다: `req > 0 && workDetailCounts[wdId].confirmedCount >= req`.
+    type WiCapState = "available" | "full" | "unknown";
     const invitedDocs = docs.filter((d) => d.data()["status"] === "INVITED");
-    const fullMap: Record<string, boolean> = {};
+    const capStateMap: Record<string, WiCapState> = {};
     if (invitedDocs.length > 0) {
       const slotKeys = new Map<string, {toId: string; slotId: string}>();
       for (const d of invitedDocs) {
@@ -26658,40 +26671,76 @@ export const callableGetMyApplications = onCall(
         const s = d.data()["slotId"] as string | undefined;
         if (t && s) slotKeys.set(`${t}/${s}`, {toId: t, slotId: s});
       }
-      const slotSnaps = await Promise.all(
+      // allSettled — slot 하나를 읽지 못했다고 근로자의 지원 목록 전체를
+      //   실패로 만들지 않는다. 그 초대만 UNKNOWN이 된다.
+      //   (callableGetDayStaffingDetail이 Promise.all인 것과 다르다. 거기서는
+      //    일부만 센 부족을 '전체 현황'으로 내려보내면 안 되기 때문이다.)
+      const slotResults = await Promise.allSettled(
         [...slotKeys.values()].map((k) =>
           db.collection("tos").doc(k.toId).collection("slots").doc(k.slotId).get()));
-      const byKey = new Map<string, FirebaseFirestore.DocumentSnapshot>();
-      [...slotKeys.keys()].forEach((k, i) => byKey.set(k, slotSnaps[i]));
+      const byKey = new Map<string, FirebaseFirestore.DocumentSnapshot | null>();
+      [...slotKeys.keys()].forEach((k, i) => {
+        const r = slotResults[i];
+        if (r.status === "fulfilled") {
+          byKey.set(k, r.value);
+        } else {
+          console.error(`[getMyApplications] slot read 실패 — ${k}:`, r.reason);
+          byKey.set(k, null); // 읽기 실패 → UNKNOWN
+        }
+      });
 
       for (const d of invitedDocs) {
         const t = d.data()["toId"] as string | undefined;
         const s = d.data()["slotId"] as string | undefined;
         const w = d.data()["wdId"] as string | undefined;
-        if (!t || !s || !w) continue;
+        // slotId/wdId 없음 — 이 초대의 모집 단위를 특정할 수 없다.
+        if (!t || !s || !w) {
+          capStateMap[d.id] = "unknown";
+          continue;
+        }
         const slotSnap = byKey.get(`${t}/${s}`);
-        if (!slotSnap?.exists) continue;
+        // slot read 실패 또는 slot 문서 없음.
+        if (!slotSnap || !slotSnap.exists) {
+          capStateMap[d.id] = "unknown";
+          continue;
+        }
         const sd = slotSnap.data()!;
+        // 마감은 읽어서 안 사실이다 — 수락할 수 없음이 확정이다.
         if (sd["isManualClosed"] === true || sd["status"] === "closed") {
-          fullMap[d.id] = true;
+          capStateMap[d.id] = "full";
           continue;
         }
         const wds = (sd["workDetails"] as Record<string, unknown>[] | undefined) ?? [];
         const wd = wds.find((x) => x["wdId"] === w);
-        if (!wd) continue;
+        // wdId가 slot에 없다 — DATA CONTRACT 손상. 빈 자리로 취급하지 않는다.
+        if (!wd) {
+          console.error(
+            `[getMyApplications] WORKDETAIL_CONTRACT_BROKEN — app=${d.id} ` +
+            `TO ${t} slot ${s} wdId "${w}"`);
+          capStateMap[d.id] = "unknown";
+          continue;
+        }
         const req = (wd["requiredCount"] as number | undefined) ?? 0;
         const {confirmedCount: conf} = getWorkDetailCount(sd, wd);
-        if (req > 0 && conf >= req) fullMap[d.id] = true;
+        capStateMap[d.id] = (req > 0 && conf >= req) ? "full" : "available";
       }
     }
 
     return {
-      applications: docs.map((d) => ({
-        id: d.id,
-        ...serializeFirestoreData(d.data()),
-        // 초대에만 실린다. 없으면 '모름'이 아니라 '해당 없음'이다.
-        ...(fullMap[d.id] ? {workInstanceFull: true} : {}),
-      })),
+      applications: docs.map((d) => {
+        const cap = capStateMap[d.id];
+        return {
+          id: d.id,
+          ...serializeFirestoreData(d.data()),
+          // 초대에만 실린다. 초대가 아니면 '해당 없음'이다.
+          // 초대인데 이 필드가 없다면(구버전 서버) 클라이언트는 UNKNOWN으로 읽는다
+          // — 없음을 available로 해석하지 않는다.
+          ...(cap ? {workInstanceCapacityState: cap} : {}),
+          // [구버전 클라이언트 호환] 이미 배포된 앱은 이 bool만 안다.
+          // 새 클라이언트는 위 3-state만 읽는다.
+          ...(cap === "full" ? {workInstanceFull: true} : {}),
+        };
+      }),
       hasMore,
       lastDocId: docs.length > 0 ? docs[docs.length - 1].id : null,
     };

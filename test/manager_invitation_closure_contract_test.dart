@@ -65,6 +65,32 @@ String _tsSliceOf(String source, String from, String to) {
 const _dayPath = 'lib/screens/business_admin/dialogs/day_applicants_dialog.dart';
 const _rowPath = 'lib/models/ui/day_staffing_row.dart';
 const _invSvcPath = 'lib/services/firestore/application_firestore.dart';
+const _myAppsPath = 'lib/screens/user/my_applications_screen.dart';
+const _appModelPath = 'lib/models/core/application_model.dart';
+
+const _guardFull =
+    'if (app.workInstanceCapacityState == InviteCapacityState.full) {';
+const _guardUnknown =
+    'if (app.workInstanceCapacityState == InviteCapacityState.unknown) {';
+
+/// INVITED 분기는 full → unknown → available(폴백) 순서다. 각 분기의 경계를
+/// 다음 분기의 시작으로 잡는다. `return Column(`으로 자르면 분기 자신의
+/// return에서 끊긴다.
+String _fullBranch(String code) {
+  final a = code.indexOf(_guardFull);
+  final b = code.indexOf(_guardUnknown);
+  expect(a, greaterThan(0), reason: 'full 분기를 찾지 못함');
+  expect(b, greaterThan(a), reason: 'unknown 분기가 full 뒤에 없다');
+  return code.substring(a, b);
+}
+
+String _unknownBranch(String code) {
+  final a = code.indexOf(_guardUnknown);
+  final b = code.indexOf('근무 초대가 도착했어요'); // available 분기의 첫 문구
+  expect(a, greaterThan(0), reason: 'unknown 분기를 찾지 못함');
+  expect(b, greaterThan(a), reason: 'available 분기가 unknown 뒤에 없다');
+  return code.substring(a, b);
+}
 const _cfPath = 'functions/src/index.ts';
 
 void main() {
@@ -95,10 +121,12 @@ void main() {
       expect(_src(_rowPath).contains('final int confirmedCount;'), isTrue);
     });
 
-    test('01-c 근로자 workInstanceFull도 같은 join을 쓴다', () {
+    test('01-c 근로자 capacity 판정도 같은 join을 쓴다', () {
       final mine = _tsSliceOf(cf, 'const invitedDocs = docs.filter', 'return {');
       expect(mine.contains('getWorkDetailCount(sd, wd)'), isTrue);
-      expect(mine.contains('if (req > 0 && conf >= req) fullMap[d.id] = true;'),
+      expect(
+          mine.contains(
+              'capStateMap[d.id] = (req > 0 && conf >= req) ? "full" : "available";'),
           isTrue);
     });
 
@@ -253,9 +281,144 @@ void main() {
     });
 
     test('02-e 근로자 화면이 말하는 것과 같은 의미다', () {
-      final mine = _codeOf(_src('lib/screens/user/my_applications_screen.dart'));
+      final mine = _codeOf(_src(_myAppsPath));
       expect(mine.contains('모집이 완료된 초대예요'), isTrue);
-      expect(mine.contains('app.workInstanceFull'), isTrue);
+      expect(mine.contains('app.workInstanceCapacityState'), isTrue);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 2b. [FINAL CORRECTION] 근로자 reader도 같은 3-state를 쓴다
+  //
+  //   관리자 쪽만 고치면 같은 초대가 두 화면에서 다른 말을 한다.
+  //   서버가 판단하지 못한 경우(slot 없음·읽기 실패·wdId 계약 손상)에
+  //   필드를 비워 두면 클라이언트 non-nullable bool이 false로 읽어
+  //   `수락하기`를 띄운다 — UNKNOWN이 AVAILABLE로 새는 같은 결함이다.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.2.1-02b worker 3-state', () {
+    final mine = _codeOf(_src(_myAppsPath));
+    final model = _codeOf(_src(_appModelPath));
+    final getMine = _tsSliceOf(cf, 'export const callableGetMyApplications',
+        'export const callableGetMyInvitations');
+
+    test('02b-a 서버가 세 상태를 명시적으로 내려보낸다', () {
+      expect(getMine.contains('type WiCapState = "available" | "full" | "unknown"'),
+          isTrue);
+      expect(getMine.contains('workInstanceCapacityState: cap'), isTrue);
+      expect(
+          getMine.contains(
+              'capStateMap[d.id] = (req > 0 && conf >= req) ? "full" : "available";'),
+          isTrue,
+          reason: '판정식이 관리자·서버와 같아야 한다');
+    });
+
+    test('02b-b 판단하지 못한 모든 경우가 unknown이다', () {
+      // §3 — slot 없음 / wdId 없음 / capacity row 없음 / slot read 실패
+      final unknowns = RegExp(r'capStateMap\[d\.id\] = "unknown";')
+          .allMatches(getMine)
+          .length;
+      expect(unknowns, greaterThanOrEqualTo(3),
+          reason: 'UNKNOWN 분기가 빠졌다 (slotId/wdId 없음, slot 없음·실패, wd 없음)');
+      // slot read 실패도 목록 전체를 죽이지 않고 그 초대만 unknown으로
+      expect(getMine.contains('Promise.allSettled'), isTrue);
+      expect(getMine.contains('byKey.set(k, null); // 읽기 실패 → UNKNOWN'), isTrue);
+      // wdId 계약 손상을 빈 자리로 취급하지 않는다
+      expect(getMine.contains('WORKDETAIL_CONTRACT_BROKEN'), isTrue);
+    });
+
+    test('02b-c 필드 없음이 available이 되지 않는다', () {
+      // 구버전 서버·초대 아닌 문서·알 수 없는 문자열 → 전부 unknown
+      expect(
+          model.contains('InviteCapacityState _parseCapacityState(Object? raw)'),
+          isTrue);
+      final p = _after(_src(_appModelPath),
+          'InviteCapacityState _parseCapacityState(Object? raw)', 400);
+      expect(p.contains('default:'), isTrue);
+      expect(p.contains('return InviteCapacityState.unknown;'), isTrue);
+      // 기본값도 unknown
+      expect(
+          model.contains(
+              'this.workInstanceCapacityState = InviteCapacityState.unknown,'),
+          isTrue);
+    });
+
+    test('02b-d workInstanceFull은 확인된 full일 때만 true다', () {
+      // `!workInstanceFull`을 `수락 가능`으로 읽는 경로가 생기지 않게
+      // canAcceptInvite를 따로 둔다.
+      final g = _after(_src(_appModelPath), 'bool get workInstanceFull', 200);
+      expect(g.contains('workInstanceCapacityState == InviteCapacityState.full'),
+          isTrue);
+      final a = _after(_src(_appModelPath), 'bool get canAcceptInvite', 200);
+      expect(
+          a.contains('workInstanceCapacityState == InviteCapacityState.available'),
+          isTrue);
+    });
+
+    test('02b-e UNKNOWN에서 수락 CTA가 없다', () {
+      final branch = _unknownBranch(mine);
+      expect(branch.contains("label: '수락하기'"), isFalse,
+          reason: 'UNKNOWN에서 수락 CTA가 남았다');
+      expect(branch.contains('_acceptInvite'), isFalse);
+      // 거절은 유지 — capacity와 무관한 본인 결정이다
+      expect(branch.contains('_declineInvite(app.id)'), isTrue);
+    });
+
+    test('02b-f UNKNOWN을 FULL로 표현하지 않는다', () {
+      final branch = _unknownBranch(mine);
+      expect(branch.contains('모집이 완료된 초대예요'), isFalse);
+      expect(branch.contains('인원이 모두 찼어요'), isFalse);
+      expect(branch.contains('근무 가능 여부를 확인하지 못했어요'), isTrue);
+      expect(branch.contains('새로고침 후 다시 확인해 주세요'), isTrue);
+      // 내부 오류 메시지를 그대로 노출하지 않는다 (§3)
+      for (final leak in const [
+        'WORKDETAIL_CONTRACT_BROKEN',
+        'wdId',
+        'slotId',
+        'Exception',
+      ]) {
+        expect(branch.contains(leak), isFalse, reason: '내부 오류 노출: $leak');
+      }
+    });
+
+    test('02b-g 서버 accept guard를 약화하지 않았다 (§4)', () {
+      final accept = _tsSliceOf(cf, 'export const callableAcceptTOInvitation',
+          'export const callableDeclineTOInvitation');
+      expect(accept.contains('db.runTransaction'), isTrue);
+      expect(accept.contains('getWorkDetailCount(freshSlotData'), isTrue);
+      expect(accept.contains('업무 정원이 초과되었습니다.'), isTrue);
+      // 클라이언트가 보낸 capacity 상태를 신뢰하지 않는다
+      expect(accept.contains('workInstanceCapacityState'), isFalse);
+      expect(accept.contains('workInstanceFull'), isFalse);
+    });
+
+    test('02b-h manager/worker symmetry — 같은 어휘, 같은 판정식', () {
+      // 같은 enum을 양쪽이 쓴다
+      expect(mine.contains("import '../../models/ui/invite_capacity_state.dart'"),
+          isTrue);
+      expect(day.contains("import '../../../models/ui/invite_capacity_state.dart'"),
+          isTrue);
+      // 서버 판정식 == 클라이언트 판정식
+      expect(
+          getMine.contains('(req > 0 && conf >= req) ? "full" : "available"'),
+          isTrue);
+      final f = _codeOf(_src('lib/models/ui/invite_capacity_state.dart'));
+      expect(
+          f.contains('if (requiredCount > 0 && canonicalConfirmed >= requiredCount)'),
+          isTrue);
+    });
+
+    test('02b-i 세 상태가 각각 다른 화면을 낳는다', () {
+      // available: 수락하기 / full: 모집 완료 / unknown: 확인 못 함
+      expect(mine.contains("label: '수락하기'"), isTrue);
+      expect(mine.contains('모집이 완료된 초대예요'), isTrue);
+      expect(mine.contains('근무 가능 여부를 확인하지 못했어요'), isTrue);
+      // 세 문구가 서로 다른 분기에 있다
+      final a = mine.indexOf('모집이 완료된 초대예요');
+      final b = mine.indexOf('근무 가능 여부를 확인하지 못했어요');
+      final c = mine.indexOf("label: '수락하기'");
+      expect(a, greaterThan(0));
+      expect(b, greaterThan(a));
+      expect(c, greaterThan(b), reason: 'available 분기가 마지막 폴백이어야 한다');
     });
   });
 

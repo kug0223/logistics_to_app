@@ -12,6 +12,7 @@ import '../../models/core/employment_contract_model.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
+import '../../models/ui/invite_capacity_state.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../screens/user/interim_settlement_request_screen.dart';
 import '../../widgets/dialogs/long_term_work_management_dialog.dart';
@@ -1141,7 +1142,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         //   그대로 띄워 눌러야 실패를 아는 action이었다.
         //   상태는 INVITED 그대로 두고 — 자리가 다시 열리면 되살아나야 한다 —
         //   지금 할 수 있는 것만 보여준다. 거절은 계속 가능하다.
-        if (app.workInstanceFull) {
+        //
+        // [SYSTEM-INTEGRATION-R2.2.1 CORRECTION] 세 갈래다.
+        //
+        //   `찼다`와 `모른다`는 다르다. 서버가 slot을 읽지 못했거나 wdId 계약이
+        //   깨졌을 때 이전에는 필드가 없었고, 그것이 false로 읽혀 `수락하기`가
+        //   떴다. 읽지 못한 것은 자리가 있다는 뜻이 아니다.
+        //   관리자 화면과 같은 어휘(InviteCapacityState)를 쓴다.
+        if (app.workInstanceCapacityState == InviteCapacityState.full) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1161,6 +1169,38 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               const SizedBox(height: 8),
               _inviteActionButton(
                 label: '초대 정리',
+                color: AppColors.grey600,
+                bgColor: AppColors.grey100,
+                loading: _decliningIds.contains(app.id),
+                onTap: () => _declineInvite(app.id),
+              ),
+            ],
+          );
+        }
+        if (app.workInstanceCapacityState == InviteCapacityState.unknown) {
+          // 찼다고도 비었다고도 말하지 않는다. 수락 CTA는 내리되 초대 자체는
+          // 그대로 둔다 — 다시 조회되면 available/full 어느 쪽으로든 돌아온다.
+          // 거절은 남긴다: 자리 상태와 무관하게 근로자가 언제나 할 수 있는
+          // 자기 결정이고, 서버도 capacity를 보지 않는다.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '근무 가능 여부를 확인하지 못했어요',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.grey600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                '새로고침 후 다시 확인해 주세요',
+                style: TextStyle(fontSize: 12, color: AppColors.grey500),
+              ),
+              const SizedBox(height: 8),
+              _inviteActionButton(
+                label: '거절',
                 color: AppColors.grey600,
                 bgColor: AppColors.grey100,
                 loading: _decliningIds.contains(app.id),
