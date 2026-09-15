@@ -316,6 +316,15 @@
         { "fieldPath": "resignRequestedAt", "order": "DESCENDING" }
       ]
     },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "resignStatus", "order": "ASCENDING" },
+        { "fieldPath": "resignRequestedAt", "order": "ASCENDING" }
+      ]
+    },
 
     {
       "collectionGroup": "applications",
