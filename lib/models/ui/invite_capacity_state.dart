@@ -15,10 +15,24 @@ enum InviteCapacityState {
   /// canonical capacity를 읽었고 자리가 남았다 — 초대가 수락될 수 있다.
   available,
 
-  /// canonical capacity를 읽었고 자리가 찼다 — 서버도 수락을 거부한다.
+  /// 자리가 **다 찼다**. 필요한 만큼 사람을 구했다는 뜻이다.
   full,
 
-  /// canonical capacity를 읽지 못했다 — 수락 가능한지도 찼는지도 말할 수 없다.
+  /// 모집이 **종료됐다**. 자리가 남아 있어도 더 이상 뽑지 않는다.
+  ///
+  /// [R2 FINAL SEMANTIC CORRECTION] full과 합치지 않는다.
+  ///
+  ///   `필요 5 · 확정 2 · 관리자가 마감`
+  ///     full이라고 부르면 → "이 근무는 인원이 모두 찼어요" (거짓)
+  ///     closed라고 부르면 → "모집이 종료됐어요"            (사실)
+  ///
+  ///   수락할 수 없다는 **결과**는 같지만 말해 주는 **이유**가 다르다.
+  ///   근로자는 왜 자기 초대가 무효가 됐는지 알 권리가 있고, 관리자는
+  ///   자기가 마감한 것과 사람이 다 찬 것을 구분할 수 있어야 한다.
+  closed,
+
+  /// canonical capacity를 읽지 못했다 — 수락 가능한지도, 찼는지도, 종료됐는지도
+  /// 말할 수 없다.
   unknown,
 }
 
@@ -31,12 +45,17 @@ enum InviteCapacityState {
 ///
 /// [canonicalConfirmed]는 slot이 준 값이어야 한다 — 지원서에서 세지 않는다.
 /// null이면 그 모집 단위의 canonical row가 없다는 뜻이고, 그때는 FULL로도
-/// 여유로도 단정하지 않는다.
+/// CLOSED로도 여유로도 단정하지 않는다.
+///
+/// [isClosed]는 읽어서 안 사실일 때만 true다. 정원보다 **먼저** 본다 —
+/// 종료된 모집은 자리가 남아 있어도 종료다.
 InviteCapacityState inviteCapacityStateOf({
   required int? canonicalConfirmed,
   required int requiredCount,
+  bool isClosed = false,
 }) {
   if (canonicalConfirmed == null) return InviteCapacityState.unknown;
+  if (isClosed) return InviteCapacityState.closed;
   if (requiredCount > 0 && canonicalConfirmed >= requiredCount) {
     return InviteCapacityState.full;
   }

@@ -26661,7 +26661,13 @@ export const callableGetMyApplications = onCall(
     //
     //   관리자 화면(InviteCapacityState)과 같은 3-state 어휘를 쓴다. 판정식도
     //   같다: `req > 0 && workDetailCounts[wdId].confirmedCount >= req`.
-    type WiCapState = "available" | "full" | "unknown";
+    // [R2 FINAL SEMANTIC CORRECTION] FULL != CLOSED.
+    //
+    //   `required 5 / confirmed 2 / isManualClosed`를 full이라고 부르면
+    //   `인원이 모두 찼어요`라고 말하게 된다. 사실이 아니다 — 사업장이 모집을
+    //   끝낸 것이고 자리는 세 개 비어 있다. 수락할 수 없다는 결과는 같아도
+    //   근로자에게 말해 주는 이유가 다르다.
+    type WiCapState = "available" | "full" | "closed" | "unknown";
     const invitedDocs = docs.filter((d) => d.data()["status"] === "INVITED");
     const capStateMap: Record<string, WiCapState> = {};
     if (invitedDocs.length > 0) {
@@ -26705,9 +26711,9 @@ export const callableGetMyApplications = onCall(
           continue;
         }
         const sd = slotSnap.data()!;
-        // 마감은 읽어서 안 사실이다 — 수락할 수 없음이 확정이다.
+        // 슬롯 전체 종료 — 읽어서 안 사실이다. 정원과 무관하다.
         if (sd["isManualClosed"] === true || sd["status"] === "closed") {
-          capStateMap[d.id] = "full";
+          capStateMap[d.id] = "closed";
           continue;
         }
         const wds = (sd["workDetails"] as Record<string, unknown>[] | undefined) ?? [];
@@ -26718,6 +26724,12 @@ export const callableGetMyApplications = onCall(
             `[getMyApplications] WORKDETAIL_CONTRACT_BROKEN — app=${d.id} ` +
             `TO ${t} slot ${s} wdId "${w}"`);
           capStateMap[d.id] = "unknown";
+          continue;
+        }
+        // 이 업무만 종료된 경우 (수동 마감 / 지원 마감시간 경과 / 상위 TO 종료).
+        //   WorkDetailData.isClosed와 같은 판정이다.
+        if (wd["isManualClosed"] === true || wd["closedAt"] != null) {
+          capStateMap[d.id] = "closed";
           continue;
         }
         const req = (wd["requiredCount"] as number | undefined) ?? 0;
@@ -26737,8 +26749,9 @@ export const callableGetMyApplications = onCall(
           // — 없음을 available로 해석하지 않는다.
           ...(cap ? {workInstanceCapacityState: cap} : {}),
           // [구버전 클라이언트 호환] 이미 배포된 앱은 이 bool만 안다.
-          // 새 클라이언트는 위 3-state만 읽는다.
-          ...(cap === "full" ? {workInstanceFull: true} : {}),
+          //   그 앱에게 이 값의 뜻은 `수락 CTA를 내려라`이므로 closed도 포함한다.
+          //   새 클라이언트는 위 4-state만 읽고 full과 closed를 구분해 말한다.
+          ...(cap === "full" || cap === "closed" ? {workInstanceFull: true} : {}),
         };
       }),
       hasMore,
@@ -27683,6 +27696,28 @@ export const callableAcceptTOInvitation = onCall(
           if (freshSlot.exists) {
             const freshSlotData = freshSlot.data()!;
             const rawWDs = (freshSlotData.workDetails as unknown[] | undefined) ?? [];
+            // [R2 FINAL SEMANTIC] 슬롯/업무 단위 **모집 종료** 재검증.
+            //
+            //   TO 레벨 마감(CLOSED)만 막고 있었다. 관리자가 특정 날짜 슬롯만
+            //   마감(callableCloseSlots)하거나 한 업무만 마감한 경우, 그 초대가
+            //   그대로 수락돼 종료된 모집 단위에 확정자가 생겼다.
+            //   DEV 실측으로 확인된 구멍이다 — 정원과 무관하므로 정원 guard가
+            //   잡지 못한다(필요 2 / 확정 0 / 마감이면 정원은 남아 있다).
+            if (freshSlotData.isManualClosed === true ||
+                freshSlotData.status === "closed") {
+              throw new HttpsError(
+                "failed-precondition", "모집이 종료된 근무는 수락할 수 없습니다.");
+            }
+            const acceptWdId = freshData.wdId as string | undefined;
+            if (acceptWdId) {
+              const acceptWd = (rawWDs as Record<string, unknown>[])
+                .find((w) => w["wdId"] === acceptWdId);
+              if (acceptWd && (acceptWd["isManualClosed"] === true ||
+                  acceptWd["closedAt"] != null)) {
+                throw new HttpsError(
+                  "failed-precondition", "모집이 종료된 근무는 수락할 수 없습니다.");
+              }
+            }
             const slotTotalReq = rawWDs.reduce((sum: number, wd: unknown) => {
               const wdMap = wd as Record<string, unknown>;
               return sum + ((wdMap.requiredCount as number | undefined) ?? 0);
@@ -28153,6 +28188,9 @@ export const callableGetDayStaffingDetail = onCall(
       toId: string; toTitle: string; slotId: string; wdId: string;
       workType: string; startTime: string; endTime: string;
       requiredCount: number; confirmedCount: number; pendingCount: number;
+      // [R2 FINAL] 이 모집 단위가 종료됐는가. 정원이 찬 것과 다르다 —
+      //   `필요 5 확정 2 종료`는 `모두 찼다`가 아니라 `더 이상 뽑지 않는다`다.
+      isClosed: boolean;
     };
     const rows: DsRow[] = [];
 
@@ -28167,7 +28205,14 @@ export const callableGetDayStaffingDetail = onCall(
 
       for (const slotDoc of slotsSnap.docs) {
         const sd = slotDoc.data();
-        if (sd["isClosed"] === true) continue;
+        // [R2 FINAL] `sd["isClosed"]`를 보던 자리다. 그런 필드는 슬롯 문서에
+        //   존재하지 않는다 — 마감은 `isManualClosed` + `status:"closed"`로
+        //   기록된다(callableCloseSlots). 즉 이 가드는 한 번도 동작한 적이 없고,
+        //   종료된 모집 단위가 계속 `N명 부족`으로 세어지며 `인력 초대` CTA까지
+        //   달고 있었다. canonical 신호로 바꾸되 건너뛰지는 않는다 —
+        //   건너뛰면 관리자는 그 초대가 왜 수락되지 않는지 알 수 없다(UNKNOWN).
+        const slotClosed =
+          sd["isManualClosed"] === true || sd["status"] === "closed";
         const wdc = (sd["workDetailCounts"] as Record<string, {
           confirmedCount?: number; pendingCount?: number;
         }> | undefined) ?? {};
@@ -28198,6 +28243,9 @@ export const callableGetDayStaffingDetail = onCall(
               0, (w["requiredCount"] as number | undefined) ?? 0),
             confirmedCount: Math.max(0, wdc[wdId]?.confirmedCount ?? 0),
             pendingCount: Math.max(0, wdc[wdId]?.pendingCount ?? 0),
+            // 슬롯 전체 종료 또는 이 업무만 종료 — WorkDetailData.isClosed와 같은 판정.
+            isClosed: slotClosed ||
+              w["isManualClosed"] === true || w["closedAt"] != null,
           });
         }
       }

@@ -1177,6 +1177,40 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             ],
           );
         }
+        if (app.workInstanceCapacityState == InviteCapacityState.closed) {
+          // [R2 FINAL] FULL != CLOSED. 자리가 남아 있어도 모집이 끝났을 수 있다.
+          //   `인원이 모두 찼어요`라고 말하면 사실이 아닌 것을 말하는 것이다.
+          //
+          //   종료 사유(수동 마감 / 지원 마감시간 경과 / 상위 공고 종료)는
+          //   구분해 말하지 않는다 — 근로자가 할 수 있는 일이 같고, 사유를
+          //   내세우면 `사업장이 종료했다`가 시간 만료에도 붙어 틀린 말이 된다.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '모집이 종료된 초대예요',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.grey600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                '이 근무는 더 이상 모집하지 않아요',
+                style: TextStyle(fontSize: 12, color: AppColors.grey500),
+              ),
+              const SizedBox(height: 8),
+              _inviteActionButton(
+                label: '초대 정리',
+                color: AppColors.grey600,
+                bgColor: AppColors.grey100,
+                loading: _decliningIds.contains(app.id),
+                onTap: () => _declineInvite(app.id),
+              ),
+            ],
+          );
+        }
         if (app.workInstanceCapacityState == InviteCapacityState.unknown) {
           // 찼다고도 비었다고도 말하지 않는다. 수락 CTA는 내리되 초대 자체는
           // 그대로 둔다 — 다시 조회되면 available/full 어느 쪽으로든 돌아온다.

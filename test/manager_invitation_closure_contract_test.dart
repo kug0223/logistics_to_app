@@ -68,29 +68,27 @@ const _invSvcPath = 'lib/services/firestore/application_firestore.dart';
 const _myAppsPath = 'lib/screens/user/my_applications_screen.dart';
 const _appModelPath = 'lib/models/core/application_model.dart';
 
-const _guardFull =
-    'if (app.workInstanceCapacityState == InviteCapacityState.full) {';
-const _guardUnknown =
-    'if (app.workInstanceCapacityState == InviteCapacityState.unknown) {';
+String _guard(String state) =>
+    'if (app.workInstanceCapacityState == InviteCapacityState.$state) {';
 
-/// INVITED 분기는 full → unknown → available(폴백) 순서다. 각 분기의 경계를
-/// 다음 분기의 시작으로 잡는다. `return Column(`으로 자르면 분기 자신의
-/// return에서 끊긴다.
-String _fullBranch(String code) {
-  final a = code.indexOf(_guardFull);
-  final b = code.indexOf(_guardUnknown);
-  expect(a, greaterThan(0), reason: 'full 분기를 찾지 못함');
-  expect(b, greaterThan(a), reason: 'unknown 분기가 full 뒤에 없다');
+/// INVITED 분기는 full → closed → unknown → available(폴백) 순서다.
+/// 각 분기의 경계를 다음 분기의 시작으로 잡는다 — `return Column(`으로
+/// 자르면 분기 자신의 return에서 끊긴다.
+String _branch(String code, String state) {
+  const order = ['full', 'closed', 'unknown'];
+  final i = order.indexOf(state);
+  final a = code.indexOf(_guard(state));
+  expect(a, greaterThan(0), reason: '$state 분기를 찾지 못함');
+  final b = i + 1 < order.length
+      ? code.indexOf(_guard(order[i + 1]))
+      : code.indexOf('근무 초대가 도착했어요'); // available 분기의 첫 문구
+  expect(b, greaterThan(a), reason: '$state 다음 분기가 뒤에 없다');
   return code.substring(a, b);
 }
 
-String _unknownBranch(String code) {
-  final a = code.indexOf(_guardUnknown);
-  final b = code.indexOf('근무 초대가 도착했어요'); // available 분기의 첫 문구
-  expect(a, greaterThan(0), reason: 'unknown 분기를 찾지 못함');
-  expect(b, greaterThan(a), reason: 'available 분기가 unknown 뒤에 없다');
-  return code.substring(a, b);
-}
+String _fullBranch(String code) => _branch(code, 'full');
+String _closedBranch(String code) => _branch(code, 'closed');
+String _unknownBranch(String code) => _branch(code, 'unknown');
 const _cfPath = 'functions/src/index.ts';
 
 void main() {
@@ -135,6 +133,22 @@ void main() {
       expect(
           inviteCapacityStateOf(canonicalConfirmed: 2, requiredCount: 3),
           InviteCapacityState.available);
+      // [R2 FINAL] 종료는 정원보다 먼저다 — 자리가 남아도 종료는 종료다.
+      expect(
+          inviteCapacityStateOf(
+              canonicalConfirmed: 2, requiredCount: 5, isClosed: true),
+          InviteCapacityState.closed,
+          reason: 'FULL != CLOSED — 자리가 3개 남았는데 정원 마감이라고 말하면 안 된다');
+      expect(
+          inviteCapacityStateOf(
+              canonicalConfirmed: 3, requiredCount: 3, isClosed: true),
+          InviteCapacityState.closed,
+          reason: '둘 다 해당하면 종료가 더 구체적인 사실이다');
+      // 읽지 못했으면 종료 여부도 모른다
+      expect(
+          inviteCapacityStateOf(
+              canonicalConfirmed: null, requiredCount: 5, isClosed: true),
+          InviteCapacityState.unknown);
       expect(
           inviteCapacityStateOf(canonicalConfirmed: 3, requiredCount: 3),
           InviteCapacityState.full);
@@ -184,29 +198,39 @@ void main() {
       expect(hits, isEmpty, reason: 'UNKNOWN을 뭉뚱그리는 부정 비교가 남았다: $hits');
     });
 
-    test('01b-c 세 갈래가 서로 배타적이고 빠짐없다', () {
+    test('01b-c 네 갈래가 서로 배타적이고 빠짐없다', () {
       for (final f in const [
-        [null, 3],
-        [0, 3],
-        [3, 3],
-        [1, 0],
-        [null, 0],
+        [null, 3, false],
+        [0, 3, false],
+        [3, 3, false],
+        [1, 0, false],
+        [null, 0, false],
+        [2, 5, true], // 자리 남았는데 종료
+        [3, 3, true], // 찼고 종료
+        [null, 3, true], // 읽지 못함
       ]) {
         final s = inviteCapacityStateOf(
-            canonicalConfirmed: f[0], requiredCount: f[1]!);
+          canonicalConfirmed: f[0] as int?,
+          requiredCount: f[1] as int,
+          isClosed: f[2] as bool,
+        );
         final flags = [
           s == InviteCapacityState.available,
           s == InviteCapacityState.full,
+          s == InviteCapacityState.closed,
           s == InviteCapacityState.unknown,
         ];
         expect(flags.where((x) => x).length, 1, reason: '$f → $s');
       }
+      // 모든 enum 값이 실제로 생성 가능하다 — 죽은 상태가 없다
+      expect(InviteCapacityState.values.length, 4);
     });
 
-    test('01b-d 세 fixture — active invite 집계', () {
-      // capacity false → 1 / true → 0 / null → 0 (세지 않는다)
+    test('01b-d 네 fixture — active invite 집계', () {
+      // available만 센다. full / closed / unknown은 세지 않는다.
       expect(_activeCount(capacity: InviteCapacityState.available, invited: 1), 1);
       expect(_activeCount(capacity: InviteCapacityState.full, invited: 1), 0);
+      expect(_activeCount(capacity: InviteCapacityState.closed, invited: 1), 0);
       expect(_activeCount(capacity: InviteCapacityState.unknown, invited: 1), 0);
     });
 
@@ -272,11 +296,12 @@ void main() {
     test('02-c FULL 초대의 라벨이 `초대 중`이 아니다', () {
       final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 900);
       expect(label.contains('case InviteCapacityState.full:'), isTrue);
-      expect(label.contains("return ('모집 완료 · 수락 불가'"), isTrue);
+      // [R2 FINAL] 정원 마감과 모집 종료를 구분한다 (02c 참조).
+      expect(label.contains("return ('모집 완료 · 정원 마감'"), isTrue);
     });
 
     test('02-d FULL 초대는 별도 섹션에 선다', () {
-      expect(day.contains(r"'모집 완료 · 수락 불가 (${stale.length}명)'"), isTrue);
+      expect(day.contains(r"'모집 완료 · 정원 마감 (${stale.length}명)'"), isTrue);
       expect(day.contains(r"'초대 중 (${outstanding.length}명)'"), isTrue);
     });
 
@@ -302,7 +327,9 @@ void main() {
         'export const callableGetMyInvitations');
 
     test('02b-a 서버가 세 상태를 명시적으로 내려보낸다', () {
-      expect(getMine.contains('type WiCapState = "available" | "full" | "unknown"'),
+      expect(
+          getMine.contains(
+              'type WiCapState = "available" | "full" | "closed" | "unknown"'),
           isTrue);
       expect(getMine.contains('workInstanceCapacityState: cap'), isTrue);
       expect(
@@ -386,6 +413,14 @@ void main() {
       expect(accept.contains('db.runTransaction'), isTrue);
       expect(accept.contains('getWorkDetailCount(freshSlotData'), isTrue);
       expect(accept.contains('업무 정원이 초과되었습니다.'), isTrue);
+      // [R2 FINAL] 오히려 구멍을 메웠다 — 슬롯/업무 단위 모집 종료는 막혀 있지
+      //   않았다. 정원과 무관한 사건이라 정원 guard가 잡지 못한다.
+      expect(
+          accept.contains(
+              'freshSlotData.isManualClosed === true ||'),
+          isTrue);
+      expect(accept.contains('모집이 종료된 근무는 수락할 수 없습니다.'), isTrue);
+      expect(accept.contains("acceptWd[\"closedAt\"] != null"), isTrue);
       // 클라이언트가 보낸 capacity 상태를 신뢰하지 않는다
       expect(accept.contains('workInstanceCapacityState'), isFalse);
       expect(accept.contains('workInstanceFull'), isFalse);
@@ -419,6 +454,140 @@ void main() {
       expect(a, greaterThan(0));
       expect(b, greaterThan(a));
       expect(c, greaterThan(b), reason: 'available 분기가 마지막 폴백이어야 한다');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 2c. [FINAL SEMANTIC] FULL != CLOSED
+  //
+  //   required 5 / confirmed 2 / isManualClosed 를 full이라고 부르면
+  //   `이 근무는 인원이 모두 찼어요`라고 말하게 된다. 자리는 셋 남아 있다.
+  //   수락할 수 없다는 결과는 같아도 말해 주는 이유가 다르다.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.2.1-02c FULL != CLOSED', () {
+    final mine = _codeOf(_src(_myAppsPath));
+    final getMine = _tsSliceOf(cf, 'export const callableGetMyApplications',
+        'export const callableGetMyInvitations');
+    final detail = _tsSliceOf(
+        cf, 'export const callableGetDayStaffingDetail', 'return {rows};');
+
+    test('02c-a 서버가 마감을 full이 아니라 closed로 말한다', () {
+      expect(getMine.contains('"available" | "full" | "closed" | "unknown"'),
+          isTrue);
+      // 슬롯 전체 종료
+      expect(
+          getMine.contains(
+              'if (sd["isManualClosed"] === true || sd["status"] === "closed") {'),
+          isTrue);
+      // 그 분기가 closed를 쓴다 — full이 아니다
+      final at = getMine.indexOf(
+          'if (sd["isManualClosed"] === true || sd["status"] === "closed") {');
+      final branch = getMine.substring(at, at + 200);
+      expect(branch.contains('capStateMap[d.id] = "closed";'), isTrue);
+      expect(branch.contains('= "full"'), isFalse,
+          reason: '마감을 정원 마감이라고 말하고 있다');
+    });
+
+    test('02c-b 업무 단위 종료도 closed다', () {
+      expect(
+          getMine.contains(
+              'if (wd["isManualClosed"] === true || wd["closedAt"] != null) {'),
+          isTrue);
+      final at = getMine.indexOf(
+          'if (wd["isManualClosed"] === true || wd["closedAt"] != null) {');
+      expect(getMine.substring(at, at + 200).contains('= "closed";'), isTrue);
+    });
+
+    test('02c-c 존재하지 않는 필드로 마감을 판정하지 않는다', () {
+      // `slot.isClosed`는 Firestore 문서에 없다 — SlotModel의 Dart getter다.
+      // callableCloseSlots는 isManualClosed + status:"closed"를 쓴다.
+      expect(detail.contains('sd["isClosed"] === true'), isFalse,
+          reason: '동작한 적 없는 가드가 되살아났다');
+      expect(
+          detail.contains(
+              'sd["isManualClosed"] === true || sd["status"] === "closed"'),
+          isTrue);
+      // 쓰는 쪽과 읽는 쪽이 같은 필드를 본다
+      final closeFn = _tsSliceOf(cf, 'isManualClosed: true, status: "closed"',
+          'count++;');
+      expect(closeFn.contains('closedAt'), isTrue);
+    });
+
+    test('02c-d 관리자도 종료를 알 수 있다 — row에 실린다', () {
+      expect(detail.contains('isClosed: boolean;'), isTrue);
+      expect(
+          detail.contains('isClosed: slotClosed ||'),
+          isTrue);
+      expect(_src(_rowPath).contains("isClosed: m['isClosed'] == true"), isTrue);
+      expect(day.contains('existing.canonicalClosed = row.isClosed;'), isTrue);
+    });
+
+    test('02c-e 종료된 모집 단위는 부족으로 세지 않는다', () {
+      // 채울 수 없는 자리를 `N명 부족`이라고 하면 관리자가 채우려 한다.
+      final row = _src(_rowPath);
+      expect(row.contains('int get shortage => isClosed'), isTrue);
+      // 종료된 row로 새 그룹을 세우지 않는다
+      expect(day.contains('if (row.isClosed) continue;'), isTrue);
+    });
+
+    test('02c-f 관리자 라벨이 두 이유를 구분한다', () {
+      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 1200);
+      expect(label.contains("return ('모집 완료 · 정원 마감'"), isTrue);
+      expect(label.contains("return ('모집 종료'"), isTrue);
+      expect(day.contains(r"'모집 완료 · 정원 마감 (${stale.length}명)'"), isTrue);
+      expect(day.contains(r"'모집 종료 (${unitClosed.length}명)'"), isTrue);
+    });
+
+    test('02c-g 근로자 closed 문구가 정원을 말하지 않는다', () {
+      final branch = _closedBranch(mine);
+      expect(branch.contains('모집이 종료된 초대예요'), isTrue);
+      expect(branch.contains('이 근무는 더 이상 모집하지 않아요'), isTrue);
+      // 핵심 — 자리가 남아 있을 수 있으므로 이 말을 하면 안 된다
+      expect(branch.contains('인원이 모두 찼어요'), isFalse,
+          reason: 'CLOSED에서 정원 마감을 주장하고 있다');
+      expect(branch.contains('모집이 완료된 초대예요'), isFalse);
+      // 수락 CTA 없음
+      expect(branch.contains("label: '수락하기'"), isFalse);
+      expect(branch.contains('_acceptInvite'), isFalse);
+      // 정리는 가능
+      expect(branch.contains('_declineInvite(app.id)'), isTrue);
+    });
+
+    test('02c-h full 문구는 정원 마감만 말한다', () {
+      final branch = _fullBranch(mine);
+      expect(branch.contains('이 근무는 인원이 모두 찼어요'), isTrue);
+      expect(branch.contains('더 이상 모집하지 않아요'), isFalse);
+    });
+
+    test('02c-i 내부 상태명을 노출하지 않는다', () {
+      for (final state in const ['full', 'closed', 'unknown', 'available']) {
+        final branch = state == 'available' ? '' : _branch(mine, state);
+        for (final leak in const [
+          'InviteCapacityState.',
+          'isManualClosed',
+          'closedAt',
+          'workDetailCounts',
+        ]) {
+          // 분기 **문구**에 내부 이름이 섞이면 안 된다.
+          final copy = RegExp(r"'(?:[^'\\\n]|\\.)*'")
+              .allMatches(branch)
+              .map((m) => m.group(0)!)
+              .join('\n');
+          expect(copy.contains(leak), isFalse, reason: '$state 분기에 $leak 노출');
+        }
+      }
+    });
+
+    test('02c-j 구버전 클라이언트는 closed도 수락 불가로 본다', () {
+      // 구버전 앱은 bool 하나만 안다. 그 앱에게 이 값의 뜻은 `수락 CTA 내려라`다.
+      expect(
+          getMine.contains(
+              '...(cap === "full" || cap === "closed" ? {workInstanceFull: true} : {}),'),
+          isTrue);
+      // 새 클라이언트의 getter는 full만 true — 두 이유를 구분해 말해야 하므로.
+      final g = _after(_src(_appModelPath), 'bool get workInstanceFull', 200);
+      expect(g.contains('== InviteCapacityState.full'), isTrue);
+      expect(g.contains('closed'), isFalse);
     });
   });
 

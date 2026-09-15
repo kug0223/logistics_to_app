@@ -16,6 +16,12 @@ class DayStaffingRow {
   final int confirmedCount;
   final int pendingCount;
 
+  /// [R2 FINAL] 이 모집 단위가 종료됐는가 — 정원이 찬 것과 다르다.
+  ///
+  ///   `필요 5 · 확정 2 · 관리자가 마감` 은 `모두 찼다`가 아니라
+  ///   `더 이상 뽑지 않는다`다. 충원 대상에서는 빠지지만, 이유는 다르게 말한다.
+  final bool isClosed;
+
   const DayStaffingRow({
     required this.toId,
     required this.toTitle,
@@ -27,12 +33,18 @@ class DayStaffingRow {
     required this.requiredCount,
     required this.confirmedCount,
     required this.pendingCount,
+    this.isClosed = false,
   });
 
   /// canonical shortage — 서버 staffing readiness와 같은 식.
   /// 초과 확정이 다른 모집 단위의 부족을 상쇄하지 않도록 음수는 0으로 막는다.
-  int get shortage =>
-      requiredCount - confirmedCount > 0 ? requiredCount - confirmedCount : 0;
+  ///
+  /// 종료된 모집 단위는 부족이 아니다 — 채울 대상이 아니기 때문이다.
+  int get shortage => isClosed
+      ? 0
+      : (requiredCount - confirmedCount > 0
+          ? requiredCount - confirmedCount
+          : 0);
 
   static DayStaffingRow? tryFromMap(Object? raw) {
     if (raw is! Map) return null;
@@ -55,6 +67,7 @@ class DayStaffingRow {
       requiredCount: n('requiredCount'),
       confirmedCount: n('confirmedCount'),
       pendingCount: n('pendingCount'),
+      isClosed: m['isClosed'] == true,
     );
   }
 }

@@ -86,6 +86,9 @@ class _GroupData {
   ///   세지 않는다. null = 이 모집 단위의 canonical row가 없다(UNKNOWN).
   int? canonicalConfirmed;
 
+  /// [R2 FINAL] slot이 말하는 **종료** 여부. 정원이 찬 것과 다른 사실이다.
+  bool canonicalClosed = false;
+
   _GroupData({
     required this.toId,
     required this.toTitle,
@@ -128,18 +131,26 @@ class _GroupData {
   InviteCapacityState get capacityState => inviteCapacityStateOf(
         canonicalConfirmed: canonicalConfirmed,
         requiredCount: requiredCount,
+        isClosed: canonicalClosed,
       );
 
   /// capacity를 알고 있고 자리가 남았다 — 이것만 `초대 중`이다.
   List<ApplicationModel> get activeInvites =>
       capacityState == InviteCapacityState.available ? invitedApps : const [];
 
-  /// capacity를 알고 있고 자리가 찼다.
+  /// 자리가 **다 찼다**.
   ///
   ///   상태는 INVITED 그대로 둔다. 자리가 다시 열리면 다시 수락 가능해지는
   ///   현재 정책을 보존해야 하므로, 표시 때문에 CANCELED로 바꾸지 않는다.
   List<ApplicationModel> get staleInvites =>
       capacityState == InviteCapacityState.full ? invitedApps : const [];
+
+  /// 모집이 **종료됐다**. 자리가 남아 있어도 더 이상 뽑지 않는다.
+  ///
+  ///   `closedInvites`(거절·철회·만료된 초대 기록)와 다른 개념이다.
+  ///   여기 있는 초대는 아직 INVITED이고, 끝난 것은 초대가 아니라 모집이다.
+  List<ApplicationModel> get unitClosedInvites =>
+      capacityState == InviteCapacityState.closed ? invitedApps : const [];
 
   /// capacity를 모른다 — 수락 가능한지도 찼는지도 말할 수 없다.
   List<ApplicationModel> get unknownInvites =>
@@ -677,8 +688,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // [R2.2.1] 확정 수도 slot이 진실이다 — 초대가 지금 수락될 수 있는지는
         //   근로자 화면과 같은 canonical 값으로 판정해야 한다.
         existing.canonicalConfirmed = row.confirmedCount;
+        existing.canonicalClosed = row.isClosed;
         continue;
       }
+      // [R2 FINAL] 종료된 모집 단위로는 **새 그룹을 세우지 않는다.**
+      //   이 루프의 목적은 `지원자 0명이어도 채울 수 있는 자리`를 보여주는
+      //   것이다. 종료된 단위는 채울 수 없으므로 보여 줄 이유가 없다.
+      //   이미 지원·초대가 있어 그룹이 선 경우에는 위에서 종료 사실을 실어
+      //   주므로, 그 초대가 왜 수락되지 않는지 관리자가 알 수 있다.
+      if (row.isClosed) continue;
       groups[key] = _GroupData(
         toId: row.toId,
         toTitle: row.toTitle,
@@ -2094,7 +2112,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           case InviteCapacityState.available:
             return ('초대 중', AppColors.infoDark);
           case InviteCapacityState.full:
-            return ('모집 완료 · 수락 불가', AppColors.grey600);
+            // 필요한 만큼 사람을 구했다.
+            return ('모집 완료 · 정원 마감', AppColors.grey600);
+          case InviteCapacityState.closed:
+            // 자리가 남았을 수도 있다 — 더 이상 뽑지 않을 뿐이다.
+            return ('모집 종료', AppColors.grey600);
           case InviteCapacityState.unknown:
             return ('상태 확인 불가', AppColors.grey500);
         }
@@ -2148,6 +2170,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     //   끝났다는 말이 된다. 둘 다 확인한 적 없는 주장이다.
     final outstanding = g.activeInvites;
     final stale = g.staleInvites;
+    final unitClosed = g.unitClosedInvites;
     final unknown = g.unknownInvites;
 
     // 끝난 초대는 최근 3건만 — 기록 전체를 운영 화면에 펼치지 않는다.
@@ -2156,8 +2179,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final closed = [...g.closedInvites, ...g.acceptedInvites]
       ..sort((a, b) => (b.invitedAt ?? b.appliedAt).compareTo(a.invitedAt ?? a.appliedAt));
     final recentClosed = closed.take(3).toList();
-    if (outstanding.isEmpty && stale.isEmpty && unknown.isEmpty &&
-        recentClosed.isEmpty) {
+    if (outstanding.isEmpty && stale.isEmpty && unitClosed.isEmpty &&
+        unknown.isEmpty && recentClosed.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -2171,9 +2194,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         ],
         if (stale.isNotEmpty) ...[
           _sectionDivider(
-              context, '모집 완료 · 수락 불가 (${stale.length}명)', AppColors.grey500),
+              context, '모집 완료 · 정원 마감 (${stale.length}명)', AppColors.grey500),
           ...stale.map((a) =>
               _buildInviteRow(context, a, capacity: InviteCapacityState.full)),
+        ],
+        if (unitClosed.isNotEmpty) ...[
+          _sectionDivider(
+              context, '모집 종료 (${unitClosed.length}명)', AppColors.grey500),
+          ...unitClosed.map((a) =>
+              _buildInviteRow(context, a, capacity: InviteCapacityState.closed)),
         ],
         if (unknown.isNotEmpty) ...[
           _sectionDivider(

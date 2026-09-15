@@ -14,6 +14,8 @@ InviteCapacityState _parseCapacityState(Object? raw) {
       return InviteCapacityState.available;
     case 'full':
       return InviteCapacityState.full;
+    case 'closed':
+      return InviteCapacityState.closed;
     default:
       return InviteCapacityState.unknown;
   }

@@ -297,7 +297,9 @@ void main() {
     });
 
     test('05-f 응답 대기 → 최근 응답 순서, 전체 기록을 펼치지 않는다', () {
-      final b = _after(dlg, 'Widget _buildInviteSection(BuildContext context, _GroupData g)', 2200);
+      // [R2.2.1 / R2 FINAL] 섹션이 늘었다 (모집 완료 · 모집 종료 · 상태 확인 불가).
+      final b = _after(dlg,
+          'Widget _buildInviteSection(BuildContext context, _GroupData g)', 3400);
       final out = b.indexOf('초대 중 (');
       // [R2.2.1] `최근 응답` → `최근 초대 응답`. 수락도 함께 서기 때문에
       //   무엇에 대한 응답인지 이름에 남긴다.
