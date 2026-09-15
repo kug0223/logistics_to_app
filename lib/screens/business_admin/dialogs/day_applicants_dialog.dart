@@ -30,6 +30,7 @@ import '../../../utils/id_card_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../models/ui/day_staffing_row.dart';
+import '../../../models/ui/invite_capacity_state.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
@@ -116,30 +117,37 @@ class _GroupData {
       ? workDetailId!
       : '${workType}_${startTime}_$endTime';
 
-  /// [R2.2.1] 이 모집 단위가 다 찼는가 — 근로자 화면과 **같은 식**.
+  /// [R2.2.1 CORRECTION] 이 모집 단위가 지금 초대를 받을 수 있는가 — 세 상태.
   ///
-  ///   서버 `callableGetMyApplications`의 workInstanceFull:
-  ///     `req > 0 && workDetailCounts[wdId].confirmedCount >= req`
-  ///   관리자도 같은 값을 써야 한쪽은 `수락 불가`, 다른 쪽은 `초대 중`이 되는
-  ///   모순이 생기지 않는다.
+  ///   `bool?`로 두었더니 호출부가 `!= true`라고 쓸 수 있었고, Dart에서
+  ///   `null != true`는 true라 UNKNOWN이 `자리 있음`으로 새어 들어갔다.
+  ///   enum은 세 갈래를 각각 쓰지 않고는 분기할 수 없게 만든다.
   ///
-  ///   null = canonical row가 없다. FULL로도 여유로도 단정하지 않는다.
-  bool? get isWorkInstanceFull {
-    final c = canonicalConfirmed;
-    if (c == null) return null;
-    return requiredCount > 0 && c >= requiredCount;
-  }
+  ///   근로자 화면의 `workInstanceFull`과 같은 식을 쓴다 — 관리자가 다른 식을
+  ///   쓰면 한쪽은 `수락 불가`, 다른 쪽은 `초대 중`이 되는 모순이 생긴다.
+  InviteCapacityState get capacityState => inviteCapacityStateOf(
+        canonicalConfirmed: canonicalConfirmed,
+        requiredCount: requiredCount,
+      );
 
-  /// 지금 수락될 수 있는 초대 — 이것만 `초대 중`이다.
+  /// capacity를 알고 있고 자리가 남았다 — 이것만 `초대 중`이다.
   List<ApplicationModel> get activeInvites =>
-      isWorkInstanceFull == true ? const [] : invitedApps;
+      capacityState == InviteCapacityState.available ? invitedApps : const [];
 
-  /// 자리가 차서 지금은 수락될 수 없는 초대.
+  /// capacity를 알고 있고 자리가 찼다.
   ///
   ///   상태는 INVITED 그대로 둔다. 자리가 다시 열리면 다시 수락 가능해지는
   ///   현재 정책을 보존해야 하므로, 표시 때문에 CANCELED로 바꾸지 않는다.
   List<ApplicationModel> get staleInvites =>
-      isWorkInstanceFull == true ? invitedApps : const [];
+      capacityState == InviteCapacityState.full ? invitedApps : const [];
+
+  /// capacity를 모른다 — 수락 가능한지도 찼는지도 말할 수 없다.
+  List<ApplicationModel> get unknownInvites =>
+      capacityState == InviteCapacityState.unknown ? invitedApps : const [];
+
+  /// 인력 현황을 읽지 못해 충원 판단을 할 수 없는 상태.
+  bool get isCapacityUnknown =>
+      capacityState == InviteCapacityState.unknown;
 }
 
 // ─── 다이얼로그 ────────────────────────────────────────────────────────────────
@@ -1174,11 +1182,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // ── [Phase 8.1B.3 / R4] 인력 초대 버튼 — pending 섹션 이후 표시 ──
         // pending 먼저 처리 후 여전히 부족할 때 outbound invite CTA 노출
         // [R5.1] 좌석 반납된 확정자는 정원 계산에서 제외
-        // [R2.2.1] canonical capacity가 찼다고 말하면 추가 초대 CTA를 내린다.
-        //   보내도 수락될 수 없는 초대를 운영 action으로 남겨 두지 않는다.
-        //   canonical row가 없으면(UNKNOWN) 기존 판정을 그대로 쓴다.
+        // [R2.2.1 CORRECTION] capacity를 **알고 있고 자리가 남은** 경우에만 띄운다.
+        //
+        //   `!= true`로 두면 UNKNOWN도 통과한다. 인력 현황을 읽지 못한 상태에서
+        //   `인력 초대 (N명 부족)`을 띄우는 것은 확인하지 못한 부족을 확인한 것처럼
+        //   말하는 것이고, 보내도 수락될 수 없는 초대를 낳을 수 있다.
+        //   UNKNOWN일 때는 CTA 대신 `_buildCapacityUnknownNotice`가 선다.
         if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
-            g.isWorkInstanceFull != true &&
+            g.capacityState == InviteCapacityState.available &&
             g.requiredCount > g.confirmedApps.where((a) => !a.isStaffingReleased).length)
           Builder(builder: (ctx) {
             // [R2] slotId는 그룹 자신이 안다. 이전에는 지원서에서 유도해
@@ -1191,6 +1202,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             }
             return _buildInviteButton(g, slotId);
           }),
+
+        // [R2.2.1 CORRECTION] capacity UNKNOWN — 없는 것처럼 지나가지 않는다.
+        //   충원 CTA를 내린 이유를 말해 준다. `부족 0`이라서가 아니라
+        //   **읽지 못해서**다 (ERROR != ZERO).
+        if (!g.isLongTerm && g.toId != null && g.slotId != null &&
+            g.isCapacityUnknown && _dayStaffingRows == null &&
+            _canForSelectedBiz((p) => p.canManageTo))
+          _buildCapacityUnknownNotice(context),
 
         // ── 확정 섹션 ──
         if (g.confirmedApps.isNotEmpty) ...[
@@ -2002,7 +2021,56 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 .copyWith(fontWeight: FontWeight.bold),
           ),
         ],
+        // [R2.2.1 CORRECTION] capacity를 모르는 초대를 요약에서 지우지 않는다.
+        //   숫자를 세지 않을 뿐, 초대가 떠 있다는 사실은 사실이다.
+        //   숫자로 세면 `초대 중`이라고 단정하는 것이 되므로 `?`로 둔다.
+        if (g.unknownInvites.isNotEmpty) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Icon(
+            Icons.help_outline,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.grey500,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text(
+            '초대 ?',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
       ],
+    );
+  }
+
+  /// [R2.2.1 CORRECTION] 인력 현황을 읽지 못했을 때 충원 CTA 자리에 서는 안내.
+  ///
+  ///   CTA가 사라진 이유가 `부족 0`이 아니라 `읽지 못함`임을 말한다.
+  Widget _buildCapacityUnknownNotice(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, size: 16, color: AppColors.grey600),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '인력 현황을 확인하지 못해 충원이 필요한지 알 수 없어요.\n새로고침 후 다시 확인해 주세요.',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2014,13 +2082,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   /// [R2.2.1] INVITED는 capacity를 함께 봐야 의미가 정해진다. 자리가 찼는데도
   /// `초대 중`이라고 하면 관리자는 오지 않을 응답을 기다린다 — 근로자 화면은
   /// 이미 `모집이 완료된 초대예요`라고 말하고 서버도 수락을 거부하는 상태다.
-  (String, Color) _inviteStateLabel(ApplicationModel app, {bool? isFull}) {
+  (String, Color) _inviteStateLabel(
+    ApplicationModel app, {
+    InviteCapacityState capacity = InviteCapacityState.unknown,
+  }) {
     switch (app.status) {
       case AppStatus.invited:
-        if (isFull == true) {
-          return ('모집 완료 · 수락 불가', AppColors.grey600);
+        // [R2.2.1 CORRECTION] 세 갈래를 각각 말한다. capacity를 모르면
+        //   `초대 중`도 `모집 완료`도 사실이 아니다 — 모르는 것이다.
+        switch (capacity) {
+          case InviteCapacityState.available:
+            return ('초대 중', AppColors.infoDark);
+          case InviteCapacityState.full:
+            return ('모집 완료 · 수락 불가', AppColors.grey600);
+          case InviteCapacityState.unknown:
+            return ('상태 확인 불가', AppColors.grey500);
         }
-        return ('초대 중', AppColors.infoDark);
       case AppStatus.confirmed:
       case AppStatus.contractPending:
         // invitedAt이 있어 이 목록에 들어왔다 — 관리자 초대를 근로자가 수락했다.
@@ -2066,8 +2143,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     // [R2.2.1] 아직 응답하지 않은 초대를 capacity로 가른다.
     //   상태(INVITED)는 그대로 두고 지금의 의미만 나눈다 — 자리가 다시 열리면
     //   같은 초대가 다시 `초대 중`으로 돌아온다.
+    //   [R2.2.1 CORRECTION] capacity를 모르는 초대는 어느 쪽에도 넣지 않는다.
+    //   `초대 중`에 넣으면 수락을 기다리라는 말이 되고, `모집 완료`에 넣으면
+    //   끝났다는 말이 된다. 둘 다 확인한 적 없는 주장이다.
     final outstanding = g.activeInvites;
     final stale = g.staleInvites;
+    final unknown = g.unknownInvites;
 
     // 끝난 초대는 최근 3건만 — 기록 전체를 운영 화면에 펼치지 않는다.
     //   수락도 초대의 결과다. 확정 명단에만 두면 그 확정이 초대에서 왔다는
@@ -2075,7 +2156,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final closed = [...g.closedInvites, ...g.acceptedInvites]
       ..sort((a, b) => (b.invitedAt ?? b.appliedAt).compareTo(a.invitedAt ?? a.appliedAt));
     final recentClosed = closed.take(3).toList();
-    if (outstanding.isEmpty && stale.isEmpty && recentClosed.isEmpty) {
+    if (outstanding.isEmpty && stale.isEmpty && unknown.isEmpty &&
+        recentClosed.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -2084,12 +2166,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       children: [
         if (outstanding.isNotEmpty) ...[
           _sectionDivider(context, '초대 중 (${outstanding.length}명)', AppColors.infoDark),
-          ...outstanding.map((a) => _buildInviteRow(context, a, isFull: false)),
+          ...outstanding.map((a) => _buildInviteRow(context, a,
+              capacity: InviteCapacityState.available)),
         ],
         if (stale.isNotEmpty) ...[
           _sectionDivider(
               context, '모집 완료 · 수락 불가 (${stale.length}명)', AppColors.grey500),
-          ...stale.map((a) => _buildInviteRow(context, a, isFull: true)),
+          ...stale.map((a) =>
+              _buildInviteRow(context, a, capacity: InviteCapacityState.full)),
+        ],
+        if (unknown.isNotEmpty) ...[
+          _sectionDivider(
+              context, '상태 확인 불가 (${unknown.length}명)', AppColors.grey500),
+          ...unknown.map((a) => _buildInviteRow(context, a,
+              capacity: InviteCapacityState.unknown)),
         ],
         if (recentClosed.isNotEmpty) ...[
           _sectionDivider(context, '최근 초대 응답', AppColors.grey500),
@@ -2099,9 +2189,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Widget _buildInviteRow(BuildContext context, ApplicationModel app,
-      {bool? isFull}) {
-    final (label, color) = _inviteStateLabel(app, isFull: isFull);
+  Widget _buildInviteRow(
+    BuildContext context,
+    ApplicationModel app, {
+    InviteCapacityState capacity = InviteCapacityState.unknown,
+  }) {
+    final (label, color) = _inviteStateLabel(app, capacity: capacity);
     final user = _userMap[app.uid];
     final name = user?.displayName ?? user?.name ?? app.applicantName ?? '근무자';
     final sentAt = app.invitedAt;

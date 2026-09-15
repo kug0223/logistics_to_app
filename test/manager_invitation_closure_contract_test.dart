@@ -32,6 +32,12 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:ALfit/models/ui/invite_capacity_state.dart';
+
+/// `_GroupData.activeInvites`와 같은 규칙 — capacity가 available일 때만 센다.
+int _activeCount({required InviteCapacityState capacity, required int invited}) =>
+    capacity == InviteCapacityState.available ? invited : 0;
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
@@ -97,15 +103,105 @@ void main() {
     });
 
     test('01-d 관리자 판정식이 서버 판정식과 같다 (req > 0 && conf >= req)', () {
-      final g = _after(dayRaw, 'bool? get isWorkInstanceFull', 400);
-      expect(g.contains('return requiredCount > 0 && c >= requiredCount;'),
-          isTrue);
+      // 순수 함수라 직접 검증한다.
+      expect(
+          inviteCapacityStateOf(canonicalConfirmed: 2, requiredCount: 3),
+          InviteCapacityState.available);
+      expect(
+          inviteCapacityStateOf(canonicalConfirmed: 3, requiredCount: 3),
+          InviteCapacityState.full);
+      expect(
+          inviteCapacityStateOf(canonicalConfirmed: 4, requiredCount: 3),
+          InviteCapacityState.full);
+      // req == 0 → 서버도 full로 보지 않는다 (`req > 0 &&`).
+      expect(
+          inviteCapacityStateOf(canonicalConfirmed: 0, requiredCount: 0),
+          InviteCapacityState.available);
     });
 
     test('01-e canonical row가 없으면 FULL로도 여유로도 단정하지 않는다', () {
       // UNKNOWN != FULL, UNKNOWN != AVAILABLE.
-      final g = _after(dayRaw, 'bool? get isWorkInstanceFull', 400);
-      expect(g.contains('if (c == null) return null;'), isTrue);
+      for (final req in const [0, 1, 3]) {
+        final s = inviteCapacityStateOf(
+            canonicalConfirmed: null, requiredCount: req);
+        expect(s, InviteCapacityState.unknown, reason: 'req=$req');
+        expect(s == InviteCapacityState.available, isFalse);
+        expect(s == InviteCapacityState.full, isFalse);
+      }
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 1b. [CORRECTION] UNKNOWN이 available로 새지 않는다
+  //
+  //   `bool?` + `!= true`가 원인이었다. Dart에서 `null != true`는 true라
+  //   인력 현황을 읽지 못한 상태가 `자리 있음`으로 흘러들었다.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.2.1-01b UNKNOWN != AVAILABLE', () {
+    test('01b-a 판정 타입이 nullable bool이 아니다', () {
+      // nullable bool이면 `!= true` 한 줄로 두 상태가 다시 뭉쳐질 수 있다.
+      expect(day.contains('bool? get isWorkInstanceFull'), isFalse,
+          reason: 'nullable bool 판정이 되살아났다');
+      expect(day.contains('InviteCapacityState get capacityState'), isTrue);
+    });
+
+    test('01b-b capacity를 읽는 predicate에 `!= true` / `!= false`가 없다', () {
+      // 세 갈래는 각각 `== available` / `== full` / `== unknown`으로만 쓴다.
+      final hits = day
+          .split('\n')
+          .where((l) =>
+              l.contains('capacityState') || l.contains('isWorkInstanceFull'))
+          .where((l) => l.contains('!=') || l.contains('!g.') || l.contains('!_'))
+          .toList();
+      expect(hits, isEmpty, reason: 'UNKNOWN을 뭉뚱그리는 부정 비교가 남았다: $hits');
+    });
+
+    test('01b-c 세 갈래가 서로 배타적이고 빠짐없다', () {
+      for (final f in const [
+        [null, 3],
+        [0, 3],
+        [3, 3],
+        [1, 0],
+        [null, 0],
+      ]) {
+        final s = inviteCapacityStateOf(
+            canonicalConfirmed: f[0], requiredCount: f[1]!);
+        final flags = [
+          s == InviteCapacityState.available,
+          s == InviteCapacityState.full,
+          s == InviteCapacityState.unknown,
+        ];
+        expect(flags.where((x) => x).length, 1, reason: '$f → $s');
+      }
+    });
+
+    test('01b-d 세 fixture — active invite 집계', () {
+      // capacity false → 1 / true → 0 / null → 0 (세지 않는다)
+      expect(_activeCount(capacity: InviteCapacityState.available, invited: 1), 1);
+      expect(_activeCount(capacity: InviteCapacityState.full, invited: 1), 0);
+      expect(_activeCount(capacity: InviteCapacityState.unknown, invited: 1), 0);
+    });
+
+    test('01b-e UNKNOWN은 초대를 세지 않되 지우지도 않는다', () {
+      // `초대 ?` — 초대가 떠 있다는 사실은 사실이다. 숫자만 주장하지 않는다.
+      expect(day.contains('if (g.unknownInvites.isNotEmpty)'), isTrue);
+      expect(day.contains(r"'초대 ?'"), isTrue);
+      expect(day.contains(r"'상태 확인 불가 (${unknown.length}명)'"), isTrue);
+    });
+
+    test('01b-f UNKNOWN에서는 충원 CTA가 서지 않고 이유를 말한다', () {
+      expect(day.contains('g.capacityState == InviteCapacityState.available &&'),
+          isTrue, reason: 'CTA가 available일 때만 서야 한다');
+      expect(day.contains('_buildCapacityUnknownNotice'), isTrue);
+      expect(day.contains('인력 현황을 확인하지 못해 충원이 필요한지 알 수 없어요'), isTrue);
+    });
+
+    test('01b-g UNKNOWN 초대 행은 `초대 중`도 `모집 완료`도 아니다', () {
+      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 900);
+      expect(label.contains('case InviteCapacityState.available:'), isTrue);
+      expect(label.contains('case InviteCapacityState.full:'), isTrue);
+      expect(label.contains('case InviteCapacityState.unknown:'), isTrue);
+      expect(label.contains("return ('상태 확인 불가'"), isTrue);
     });
   });
 
@@ -128,16 +224,26 @@ void main() {
 
     test('02-b FULL이면 activeInvites가 비고 staleInvites로 간다', () {
       final active = _after(dayRaw, 'List<ApplicationModel> get activeInvites', 200);
-      expect(active.contains('isWorkInstanceFull == true ? const [] : invitedApps'),
+      expect(
+          active.contains(
+              'capacityState == InviteCapacityState.available ? invitedApps : const []'),
           isTrue);
       final stale = _after(dayRaw, 'List<ApplicationModel> get staleInvites', 200);
-      expect(stale.contains('isWorkInstanceFull == true ? invitedApps : const []'),
+      expect(
+          stale.contains(
+              'capacityState == InviteCapacityState.full ? invitedApps : const []'),
+          isTrue);
+      final unknown =
+          _after(dayRaw, 'List<ApplicationModel> get unknownInvites', 200);
+      expect(
+          unknown.contains(
+              'capacityState == InviteCapacityState.unknown ? invitedApps : const []'),
           isTrue);
     });
 
     test('02-c FULL 초대의 라벨이 `초대 중`이 아니다', () {
-      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 600);
-      expect(label.contains("if (isFull == true) {"), isTrue);
+      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 900);
+      expect(label.contains('case InviteCapacityState.full:'), isTrue);
       expect(label.contains("return ('모집 완료 · 수락 불가'"), isTrue);
     });
 
@@ -181,7 +287,8 @@ void main() {
     });
 
     test('03-d FULL이면 추가 초대 CTA를 내린다', () {
-      expect(day.contains('g.isWorkInstanceFull != true &&'), isTrue);
+      expect(day.contains('g.capacityState == InviteCapacityState.available &&'),
+          isTrue);
       // 기존 CTA 문구·부족 계산은 그대로다.
       expect(dayRaw.contains(r"'인력 초대 ($shortage명 부족)'"), isTrue);
     });
@@ -201,7 +308,7 @@ void main() {
     });
 
     test('04-b 초대 수락은 `초대 수락 · 확정`으로 보인다', () {
-      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 700);
+      final label = _after(dayRaw, '(String, Color) _inviteStateLabel', 1200);
       expect(label.contains('case AppStatus.confirmed:'), isTrue);
       expect(label.contains('case AppStatus.contractPending:'), isTrue);
       expect(label.contains("return ('초대 수락 · 확정'"), isTrue);

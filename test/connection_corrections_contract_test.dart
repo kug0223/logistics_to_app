@@ -293,7 +293,7 @@ void main() {
     });
 
     test('05-g 누구에게 언제 보냈는지 보인다', () {
-      final b = _after(dlg, 'Widget _buildInviteRow(BuildContext context, ApplicationModel app', 2000);
+      final b = _after(dlg, 'Widget _buildInviteRow(', 2000);
       expect(b.contains('app.invitedAt'), isTrue);
       expect(b.contains('발송'), isTrue);
     });
