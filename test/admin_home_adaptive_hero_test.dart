@@ -149,8 +149,11 @@ bool isLifecycle(Hero h) =>
 bool showToday(HomeState s) {
   if (s.staffingLoading || s.attendanceLoading) return true;
   if (s.hasUsableData != true) return true;
-  if (s.todayNeedsAttention == null) return true; // 출근 조회 실패
-  return s.hasTodayTarget || (s.hasTodayRoster ?? false);
+  // [HOME-V2-08D.3.1] 출근 조회 실패는 더 이상 단독 존재 근거가 아니다.
+  //   오늘 운영 대상이 실재할 때만 섹션이 있고, 그때만 그 대상의 출근 실패가
+  //   의미를 갖는다.
+  if (s.hasTodayTarget) return true;
+  return s.hasTodayRoster == true;
 }
 
 bool showUpcoming(HomeState s) {
@@ -359,10 +362,16 @@ void main() {
       );
     });
 
-    test('04-c 오늘 — 로딩·실패에서는 숨기지 않는다', () {
+    test('04-c 오늘 — 로딩·staffing 실패에서는 숨기지 않는다', () {
       expect(showToday(const HomeState(staffingLoading: true, hasTodayTarget: false, hasTodayRoster: false)), true);
       expect(showToday(const HomeState(hasUsableData: false)), true);
-      expect(showToday(const HomeState(todayNeedsAttention: null, hasTodayTarget: false, hasTodayRoster: false)), true);
+      // [HOME-V2-08D.3.1] attendance 실패는 예외다 — staffing이 "오늘 대상 없음"을
+      //   정상적으로 알려준 상태에서 출근만 못 읽은 것은 섹션의 존재 근거가 아니다.
+      expect(
+        showToday(const HomeState(
+            todayNeedsAttention: null, hasTodayTarget: false, hasTodayRoster: false)),
+        false,
+      );
     });
 
     test('04-d 다가오는 — 미래 target 없으면 숨긴다', () {

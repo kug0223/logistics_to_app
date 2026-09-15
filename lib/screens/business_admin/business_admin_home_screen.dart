@@ -1525,8 +1525,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (_staffingLoading || _attendanceLoading) return true;
     final sr = _staffingReadiness;
     if (sr == null || !sr.hasUsableData) return true; // 에러 행 유지
-    if (_todayCheckedIn == null) return true; // 출근 조회 실패 행 유지
-    return sr.hasTodayTarget || (_hasTodayRoster ?? false);
+    // [HOME-V2-08D.3.1] 여기에 `_todayCheckedIn == null → true`가 있었다.
+    //   출근 조회가 실패했다는 사실 자체가 섹션의 존재 이유가 되면서,
+    //   공고가 하나도 없는 관리자 화면에 이런 조합이 나왔다:
+    //
+    //     Hero  현재 등록된 공고가 없어요
+    //     오늘 운영  출근 현황을 불러오지 못했습니다  재시도
+    //
+    //   있지도 않은 오늘 운영의 출근을 못 읽었다고 말한 셈이다.
+    //
+    //   섹션의 존재 근거는 **오늘 운영 대상이 실재하는가** 하나뿐이다.
+    //   대상이 있다고 확인된 뒤에야 그 대상의 출근 실패가 사용자에게 의미를 갖는다
+    //   (그 에러 행은 _buildTodayAttendanceLine이 그대로 낸다 — ERROR≠ZERO 유지).
+    //   조회 실패로 _hasTodayRoster가 null이면 '로스터가 없다'가 아니라
+    //   '모른다'이므로, 모르는 것을 근거로 섹션을 만들지 않는다.
+    if (sr.hasTodayTarget) return true;
+    return _hasTodayRoster == true;
   }
 
   /// 다가오는 7일 — D+1~D+7에 대상이 있을 때만 렌더.

@@ -96,6 +96,25 @@ String attendanceText({
   return due == 0 ? '출근 예정 전' : '출근 $checkedIn/$due';
 }
 
+/// [HOME-V2-08D.3.1] `_showTodaySection`의 판정 규칙.
+///
+/// 섹션의 존재 근거는 **오늘 운영 대상이 실재하는가** 하나뿐이다.
+/// attendance 실패는 그 자체로 존재 근거가 아니다.
+bool showToday({
+  bool staffingLoading = false,
+  bool attendanceLoading = false,
+  bool hasUsableData = true,
+  bool hasTodayTarget = false,
+  bool? hasTodayRoster,
+  bool attendanceFailed = false,
+}) {
+  if (staffingLoading || attendanceLoading) return true;
+  if (!hasUsableData) return true;
+  if (hasTodayTarget) return true;
+  // 조회 실패면 로스터는 null — '없다'가 아니라 '모른다'
+  return (attendanceFailed ? null : hasTodayRoster) == true;
+}
+
 class _IssueRow {
   final String label;
   final String kind; // 'shortage' | 'attendance'
@@ -678,6 +697,106 @@ void main() {
       expect(_codeOf(attendanceBody), contains('_todayDueNow'));
       final loader = _codeOf(_bodyOf(home, 'Future<void> _loadTodayAttendance('));
       expect(loader, contains('_todayDueNow'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // 08. [08D.3.1] Today 존재 근거 — empty vs attendance error
+  //
+  //   실기기 regression:
+  //     Hero       현재 등록된 공고가 없어요
+  //     오늘 운영   출근 현황을 불러오지 못했습니다  재시도
+  //
+  //   출근 조회 실패가 섹션의 존재 이유가 되면서, 있지도 않은 오늘 운영의
+  //   출근을 못 읽었다고 말하고 있었다.
+  // ═══════════════════════════════════════════════════════════════
+  group('[08D.3.1-08] Today 존재 근거', () {
+    test('08-a noPosting + attendance 실패 → Today 숨김 (실기기 regression)', () {
+      expect(
+        showToday(hasTodayTarget: false, hasTodayRoster: null, attendanceFailed: true),
+        isFalse,
+      );
+    });
+
+    test('08-b draftOnly + attendance 실패 → Today 숨김', () {
+      // attendance error가 lifecycle 상태를 오염시키지 않는다
+      expect(
+        showToday(hasTodayTarget: false, hasTodayRoster: null, attendanceFailed: true),
+        isFalse,
+      );
+    });
+
+    test('08-c future-only + attendance 실패 → Today 숨김', () {
+      // 오늘 대상은 없고 D+1~D+7에만 있는 상태
+      expect(
+        showToday(hasTodayTarget: false, hasTodayRoster: null, attendanceFailed: true),
+        isFalse,
+      );
+    });
+
+    test('08-d 오늘 target 있음 + attendance 실패 → Today 표시', () {
+      expect(
+        showToday(hasTodayTarget: true, hasTodayRoster: null, attendanceFailed: true),
+        isTrue,
+        reason: '대상이 실재하면 그 대상의 출근 실패는 사용자에게 관련 있는 오류다',
+      );
+      // 그리고 그 실패는 `출근 0/0`이 아니라 에러 행으로 표현된다
+      expect(attendanceText(loading: false, checkedIn: null, dueNow: null), '__error__');
+    });
+
+    test('08-e roster true + target false → Today 표시 (cross-source 안전망)', () {
+      expect(
+        showToday(hasTodayTarget: false, hasTodayRoster: true),
+        isTrue,
+        reason: 'FULL 교정 지연 등으로 두 값이 어긋나도 근무자는 실재한다',
+      );
+    });
+
+    test('08-f target false + roster false → Today 숨김', () {
+      expect(showToday(hasTodayTarget: false, hasTodayRoster: false), isFalse);
+    });
+
+    test('08-g target false + roster null(조회 실패) → Today 숨김', () {
+      // null은 '로스터가 없다'가 아니라 '모른다'다.
+      // 모르는 것을 근거로 존재하지 않는 operational surface를 만들지 않는다.
+      expect(
+        showToday(hasTodayTarget: false, hasTodayRoster: null, attendanceFailed: true),
+        isFalse,
+      );
+    });
+
+    test('08-h staffing 실패는 여전히 Today를 남긴다', () {
+      expect(showToday(hasUsableData: false, hasTodayTarget: false), isTrue);
+      expect(showToday(staffingLoading: true, hasTodayTarget: false), isTrue);
+      expect(showToday(attendanceLoading: true, hasTodayTarget: false), isTrue);
+    });
+
+    test('08-i attendance 실패를 0으로 해석하지 않는다 (ERROR≠ZERO 불변)', () {
+      final gate = _codeOf(_bodyOf(home, 'bool get _showTodaySection'));
+      // 실패를 0/false로 바꿔치기하는 코드가 없다
+      expect(gate.contains('?? 0'), isFalse);
+      expect(gate.contains('?? false'), isFalse);
+      // 렌더 쪽은 여전히 에러 행을 낸다
+      expect(_codeOf(attendanceBody), contains("'출근 현황을 불러오지 못했습니다'"));
+    });
+
+    test('08-j _todayCheckedIn이 단독 존재 근거로 쓰이지 않는다', () {
+      final gate = _codeOf(_bodyOf(home, 'bool get _showTodaySection'));
+      expect(gate.contains('_todayCheckedIn'), isFalse);
+      expect(gate, contains('sr.hasTodayTarget'));
+      expect(gate, contains('_hasTodayRoster == true'));
+    });
+
+    test('08-k 공고 없음 + historical task → Hero + Task, Today 없음', () {
+      // task truth는 posting lifecycle과도, attendance 실패와도 무관하다
+      expect(
+        showToday(hasTodayTarget: false, hasTodayRoster: null, attendanceFailed: true),
+        isFalse,
+      );
+      final taskGate = _codeOf(_bodyOf(home, 'bool _showTaskSection('));
+      expect(taskGate.contains('_todayCheckedIn'), isFalse);
+      expect(taskGate.contains('hasTodayTarget'), isFalse);
+      expect(taskGate, contains('if (hasRows) return true;'));
     });
   });
 
