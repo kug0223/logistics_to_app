@@ -129,7 +129,7 @@ void main() {
     });
 
     test('섹션 집합이 그대로 (추가·제거 없음)', () {
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
@@ -408,7 +408,7 @@ void main() {
     });
 
     test('AH-V2-04 근태·scope 유지', () {
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
       expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);
@@ -417,10 +417,12 @@ void main() {
 
     // [AH-V2-06 갱신] 05B는 분모를 건드리지 않았고, 06에서 추가됐다.
     test('§17 check-in 지표는 AH-V2-06 계약을 따른다', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect(m.contains("label: '현재 출근'"), isTrue);
-      expect(m.contains(r"'${_todayCheckedIn!} / $dueNow'"), isTrue);
-      expect(m.contains("dueNow == 0 ? '예정 전'"), isTrue);
+      // [HOME-V2-08D.3] 표현만 compact해졌다 — 분자/분모와 before-start 처리는 같다.
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
+      expect(m.contains('출근'), isTrue);
+      expect(m.contains(r"'출근 ${_todayCheckedIn!}/$dueNow'"), isTrue);
+      expect(m.contains('dueNow == 0'), isTrue);
+      expect(m.contains("'출근 예정 전'"), isTrue);
     });
   });
 }

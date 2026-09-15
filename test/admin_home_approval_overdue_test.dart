@@ -413,7 +413,7 @@ void main() {
       expect(cf.contains('available: failedBusinessCount === 0,'), isTrue);
       final home = _codeOf(
           _src('lib/screens/business_admin/business_admin_home_screen.dart'));
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
       expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
     });

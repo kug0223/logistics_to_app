@@ -231,7 +231,7 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('PERF-05 화면 계약 불변', () {
     test('§13 Home section 집합·순서 그대로', () {
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
@@ -284,7 +284,7 @@ void main() {
     });
 
     test('AH-V2-04A/B/C 계약 유지', () {
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
       expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);

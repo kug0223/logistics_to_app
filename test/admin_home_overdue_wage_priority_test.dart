@@ -433,7 +433,7 @@ void main() {
 
     test('AH-V2-03/04 계약 유지', () {
       expect(home.contains('hasUsableData'), isTrue);
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);
     });

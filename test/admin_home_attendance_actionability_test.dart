@@ -436,7 +436,7 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('AH-V2-04A 범위 제한', () {
     test('카피만 정렬됐다', () {
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains("label: '확인 필요'"), isFalse);
     });
 
@@ -444,10 +444,12 @@ void main() {
     // attendance 문서 → 오늘 확정 로스터로 교정되고 라벨이 '현재 출근'이 됐다.
     // 04A가 만든 '근태 확인'과 같은 모집단을 쓰게 된 것이 핵심이다.
     test('필요·확정·부족은 그대로, 출근은 같은 로스터를 쓴다', () {
-      expect(home.contains("label: '필요'"), isTrue);
-      expect(home.contains("label: '확정'"), isTrue);
-      expect(home.contains("label: '부족'"), isTrue);
-      expect(home.contains("label: '현재 출근'"), isTrue);
+      // [HOME-V2-08D.3] KPI 라벨이 문장·issue row로 바뀌었다.
+      //   이 테스트의 요지는 표현이 아니라 **어떤 수치를 세는가**다.
+      expect(home.contains('명 필요 · '), isTrue);
+      expect(home.contains('명 확정'), isTrue);
+      expect(home.contains('명 부족'), isTrue);
+      expect(home.contains(r"'출근 ${_todayCheckedIn!}/$dueNow'"), isTrue);
       final l = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(l.contains('allAttendance.where((a) => a.hasCheckedIn).length'),
           isFalse, reason: '로스터 밖 문서까지 세던 경로');
@@ -459,25 +461,36 @@ void main() {
     });
 
     test('상태별 Home row를 추가하지 않았다', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect("_opsMetric(".allMatches(m).length, 2, reason: '출근 + 근태 확인 2개만');
+      // [HOME-V2-08D.3] attendance가 Today에 만드는 표면은 여전히 둘뿐이다:
+      //   보조 줄 `출근 X/Y` 하나, issue row `근태 확인 N건` 하나.
+      //   지각/미출근/미퇴근 breakdown은 여전히 dialog의 몫이다.
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
+      expect("Text(text".allMatches(m).length, 1, reason: '출근 보조 줄 하나');
+      final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect("'근태 확인 ".allMatches(i).length, 1);
+      for (final t in ['지각', '미출근', '미퇴근']) {
+        expect(i.contains(t), isFalse, reason: '$t breakdown은 dialog의 역할');
+      }
     });
 
     test('permission 게이트 유지', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect(m.contains('canManageWorkers'), isTrue);
+      // [HOME-V2-08D.3] 근태 tap이 issue row로 옮겨졌다 — 게이트는 같다.
+      final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(i.contains('canManageWorkers'), isTrue);
+      final ops = _bodyOf(home, 'Widget _buildTodayOps(');
+      expect(ops.contains('canManageWorkers'), isTrue);
     });
 
     test('ERROR != ZERO 유지', () {
       final l = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(l.contains('_todayCheckedIn      = null'), isTrue);
       expect(l.contains('_todayNeedsAttention = null'), isTrue);
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
       expect(m.contains('출근 현황을 불러오지 못했습니다'), isTrue);
     });
 
     test('empty 표현을 바꾸지 않았다 (별도 카드 없음)', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
       expect(m.contains('근태 확인이 필요 없어요'), isFalse);
     });
 

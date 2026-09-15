@@ -286,19 +286,24 @@ void main() {
       expect(code.contains("'향후 7일 인원이 모두 충원됐어요'"), true);
     });
 
-    test('05-d 당일 명단 CTA는 아직 없다 (08D.3)', () {
-      expect(home.contains('당일 명단'), false);
+    test('05-d 당일 명단 CTA가 Today header에 들어왔다 (08D.3)', () {
+      // [HOME-V2-08D.3] 08D.1/08D.2에서 "아직 없다"로 고정하던 자리.
+      //   generic 문구가 아닌 canonical 이름으로 들어왔는지까지 같이 본다.
+      final ops = _codeOf(_bodyOf(home, 'Widget _buildTodayOps('));
+      expect(ops.contains("'당일 명단'"), true);
+      expect(ops.contains("'상세보기'"), false);
+      expect(ops.contains("'전체보기'"), false);
     });
 
-    test('05-e Today KPI 구조 무변경', () {
-      final ops = _codeOf(_bodyOf(home, 'Widget _buildStaffingMetrics('));
-      for (final t in ["label: '필요'", "label: '확정'", "label: '부족'"]) {
-        expect(ops.contains(t), true, reason: t);
-      }
-      final att = _codeOf(_bodyOf(home, 'Widget _buildAttendanceMetrics('));
-      expect(att.contains("label: '현재 출근'"), true);
-      expect(att.contains("label: '근태 확인'"), true);
-      expect(code.contains('Widget _opsMetric('), true);
+    test('05-e Today는 KPI가 아니라 operational group이다', () {
+      // [HOME-V2-08D.3] 3-column KPI는 폐기됐다. 08D.1이 지키려던 것은
+      //   "shell Phase에서 Today를 재구성하지 않는다"였고, 재구성은 이제 08D.3의 범위다.
+      expect(code.contains('Widget _opsMetric('), false);
+      expect(code.contains('Widget _opsMetricDivider('), false);
+      final st = _codeOf(_bodyOf(home, 'Widget? _buildTodayStaffingSummary('));
+      expect(st.contains('명 필요 · '), true);
+      final issues = _codeOf(_bodyOf(home, 'List<Widget> _buildTodayIssueRows('));
+      expect(issues.contains('_todayIssueRow(s,'), true);
     });
 
     test('05-f upcoming interaction 무변경', () {
@@ -328,7 +333,7 @@ void main() {
     });
 
     test('06-b navigation / destination 무변경 (§22)', () {
-      expect(home.contains('_navigateToDayApplicantsForDate(context, onShortageDay)'),
+      expect(home.contains('_navigateToDayApplicantsForDate(context, day)'),
           true);
       expect(home.contains('_openTodayAttendanceDialog(context)'), true);
       expect('_safeNavigate('.allMatches(code).length >= 8, true);

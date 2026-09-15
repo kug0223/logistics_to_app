@@ -401,7 +401,7 @@ void main() {
     });
 
     test('Home 섹션 구성이 그대로다', () {
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();

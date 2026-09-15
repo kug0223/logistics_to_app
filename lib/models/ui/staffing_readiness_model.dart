@@ -104,6 +104,27 @@ class StaffingDayData {
     return shown.join(' · ');
   }
 
+  /// [HOME-V2-08D.3] 부족이 **어디서** 났는지만 말하는 짧은 라벨. 부족이 없으면 null.
+  ///
+  /// `shortageScopeLabel`과 목적이 다르다. 저쪽은 사업장별 부족 수를 나열하는
+  /// 요약이고(`A센터 4명 · B센터 2명`), 이쪽은 이미 총 부족 수를 말한 issue row
+  /// 뒤에 붙는 위치 표기다 — 같은 숫자를 두 번 말하지 않는다.
+  ///
+  /// 예) 'A센터' / 'A센터 외 2곳'
+  ///
+  /// 부족 사업장이 여러 곳일 때 가장 큰 곳 하나만 남기고 나머지를 지우면
+  /// 단일 사업장 문제처럼 읽힌다. 그래서 반드시 `외 N곳`을 함께 붙인다.
+  String? shortageLocationLabel() {
+    final list = shortageBusinesses;
+    if (list.isEmpty) return null;
+    final first = list.first;
+    final name =
+        first.businessName.isNotEmpty ? first.businessName : first.businessId;
+    if (name.isEmpty) return null;
+    final rest = list.length - 1;
+    return rest > 0 ? '$name 외 $rest곳' : name;
+  }
+
   factory StaffingDayData.fromMap(Map<Object?, Object?> map) {
     final rawBiz = map['byBusiness'] as List<Object?>? ?? const [];
     return StaffingDayData(

@@ -85,12 +85,13 @@ void main() {
       final t = _bodyOf(home, 'Widget _buildTodayOps(');
       expect(t.contains('boxShadow'), isFalse);
       // 세 상태가 모두 같은 컨테이너 안에서 그려진다
-      expect(t.contains('_buildStaffingMetrics(s, theme, up)'), isTrue);
-      expect(t.contains('_buildAttendanceMetrics(s, theme, up)'), isTrue);
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      expect(t.contains('_buildTodayStaffingSummary(s, theme)'), isTrue);
+      expect(t.contains('_buildTodayAttendanceLine(s, theme)'), isTrue);
+      expect(t.contains('_buildTodayIssueRows(context, s, up,'), isTrue);
+      final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       expect(m.contains('인력 정보를 불러오지 못했습니다'), isTrue);
       expect(m.contains('boxShadow'), isFalse);
-      final a = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
+      final a = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
       expect(a.contains('출근 현황을 불러오지 못했습니다'), isTrue);
       expect(a.contains('boxShadow'), isFalse);
     });
@@ -176,21 +177,29 @@ void main() {
     });
 
     test('§13 typography', () {
-      expect('fontSize: 18'.allMatches(home).length, 1);
-      expect('fontSize: 13'.allMatches(home).length, 9);
-      // [HOME-V2-08D.1] `안녕하세요,`(12px) 한 줄이 사라져 25 → 24.
-      expect('fontSize: 12'.allMatches(home).length, 24);
+      // [HOME-V2-08D.3] 18px w800 KPI 5개가 사라졌다 — 화면 최대 텍스트는
+      //   이제 Hero(17)이고, Today는 issue 15 > 보조 13 > scope 12로 읽힌다.
+      expect(home.contains('fontSize: 18'), isFalse, reason: 'KPI 수치 폐기');
+      expect('fontSize: 15'.allMatches(home).length, 2, reason: 'Hero 이름 + issue row');
+      expect('fontSize: 13'.allMatches(home).length, 11);
+      expect('fontSize: 12'.allMatches(home).length, 22);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 
     test('§14 상태 색·아이콘 불변', () {
       for (final t in [
         'AppColors.error', 'AppColors.warning', 'AppColors.grey400',
-        'Icons.place_outlined', 'Icons.event_available_outlined',
+        'Icons.event_available_outlined',
         'Icons.account_balance_wallet_outlined',
       ]) {
         expect(home.contains(t), isTrue, reason: t);
       }
+      // [HOME-V2-08D.3] 부족 위치 전용 `Icons.place_outlined` 행은 사라지고
+      //   위치가 issue row 문장 안으로 들어갔다. 대신 두 issue의 semantic icon이 있다.
+      expect(home.contains('Icons.place_outlined'), isFalse);
+      final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(i.contains('Icons.error_outline'), isTrue);
+      expect(i.contains('Icons.schedule_outlined'), isTrue);
     });
 
     test('§19 헤더·배너·공고준비는 원래 평면이었고 그대로다', () {
@@ -228,9 +237,10 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('SURFACE-30 상호작용 불변', () {
     test('오늘 부족·근태 tap 유지', () {
-      expect(home.contains('_navigateToDayApplicantsForDate(context, onShortageDay)'),
-          isTrue);
-      expect(home.contains('_openTodayAttendanceDialog(context)'), isTrue);
+      // [HOME-V2-08D.3] 두 tap 모두 issue row로 옮겨졌다 — destination은 그대로.
+      final issues = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(issues.contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
+      expect(issues.contains('_openTodayAttendanceDialog(context)'), isTrue);
     });
 
     test('향후 부족 tap·충원하기 유지', () {
@@ -268,7 +278,7 @@ void main() {
     });
 
     test('섹션 집합 그대로', () {
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
@@ -338,7 +348,7 @@ void main() {
 
     test('AH-V2-03/04 계약 유지', () {
       expect(home.contains('hasUsableData'), isTrue);
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
       expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);

@@ -453,7 +453,7 @@ void main() {
     });
 
     test('AH-V2-04A 계약이 유지된다', () {
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('reviewAppIds'), isTrue);
       final t = _bodyOf(dialog, 'List<ApplicationModel> _workersByTab(');
       expect(t.contains('case 0: return needsReview;'), isTrue);

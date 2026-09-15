@@ -337,10 +337,10 @@ void main() {
     });
 
     test('오늘 운영: ERROR → 대상없음 → 수치 → partial notice', () {
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       final err = t.indexOf('hasUsableData');
       final noTarget = t.indexOf('hasTodayTarget');
-      final metric = t.indexOf("label: '필요'");
+      final metric = t.indexOf('명 필요 · ');
       final notice = t.indexOf('_partialStaffingNotice(s)');
       expect(err, lessThan(noTarget));
       expect(noTarget, lessThan(metric));
@@ -379,7 +379,7 @@ void main() {
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
       expect(f.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
     });
@@ -405,8 +405,9 @@ void main() {
       expect(t.contains('canManageTo'), isTrue);
       expect(t.contains('canManageWorkers'), isTrue);
       expect(home.contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
-      expect(home.contains('_navigateToDayApplicantsForDate(context, onShortageDay)'),
-          isTrue);
+      // [HOME-V2-08D.3] 오늘 부족 destination은 issue row로 옮겨졌다 — 대상은 같다
+      expect(_bodyOf(home, 'List<Widget> _buildTodayIssueRows(')
+          .contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
     });
 
     test('capacity 계산 정책 미변경', () {

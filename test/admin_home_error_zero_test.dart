@@ -138,7 +138,7 @@ void main() {
     });
 
     test('UI가 null을 에러 표면으로 그린다', () {
-      final body = _bodyOf(homeCode, 'Widget _buildAttendanceMetrics(');
+      final body = _bodyOf(homeCode, 'Widget? _buildTodayAttendanceLine(');
       expect(body.contains('if (_todayCheckedIn == null)'), isTrue);
       expect(body.contains('출근 현황을 불러오지 못했습니다'), isTrue);
     });
@@ -159,14 +159,20 @@ void main() {
     });
 
     test('권한 게이트는 변경되지 않았다', () {
-      final body = _bodyOf(homeCode, 'Widget _buildAttendanceMetrics(');
-      expect(body.contains('canManageWorkers'), isTrue);
+      // [HOME-V2-08D.3] 출근 보조 줄은 tap이 없어 권한 분기가 필요 없어졌다.
+      //   게이트는 그룹 전체(_buildTodayOps)와 tap이 있는 issue row에 그대로 있다.
+      expect(_bodyOf(homeCode, 'Widget _buildTodayOps(').contains('canManageWorkers'),
+          isTrue);
+      expect(
+          _bodyOf(homeCode, 'List<Widget> _buildTodayIssueRows(')
+              .contains('canManageWorkers'),
+          isTrue);
     });
   });
 
   group('AHV2-01-05 재시도 복구', () {
     test('에러 표면의 재시도가 출근 로더를 다시 부른다', () {
-      final body = _bodyOf(homeCode, 'Widget _buildAttendanceMetrics(');
+      final body = _bodyOf(homeCode, 'Widget? _buildTodayAttendanceLine(');
       expect(body.contains('onRetry: () => unawaited(_loadTodayAttendance())'),
           isTrue);
     });
@@ -284,7 +290,7 @@ void main() {
   group('AH-V2-01 범위 제한', () {
     test('다른 Home 섹션을 건드리지 않았다', () {
       for (final marker in [
-        'Widget _buildStaffingMetrics(',
+        'Widget? _buildTodayStaffingSummary(',
         'Widget _buildFutureStaffing(',
         'Widget _buildActionDashboard(',
         'Widget _buildPostingSetupCard(',

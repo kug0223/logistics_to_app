@@ -1978,10 +1978,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
 
   // ── [PHASE-2C/R6.1] 오늘 운영 Block ────────────────────────────
-  // Staffing D0(필요·확정·부족) + 출근 현황(출근·확인 필요)
+  // [HOME-V2-08D.3] 3-column KPI(필요·확정·부족 / 현재 출근·근태 확인)를 폐기하고
+  //   operational group으로 바꾼다:
+  //
+  //     8명 필요 · 5명 확정      ← 요약(context, tap 없음)
+  //     ⚠ 3명 부족 · 평택센터 ›   ← 실제 문제(actionable)
+  //     ⏱ 근태 확인 2건 ›
+  //     출근 4/5                ← 보조 정보
+  //
+  //   KPI 5개를 같은 크기로 늘어놓으면 `부족 0`과 `부족 3`이 같은 무게로 읽힌다.
+  //   문제는 있을 때만 행으로 나타나고, 없으면 자리 자체가 사라진다.
   // 부족: canManageTo → DayApplicantsDialog(오늘) [R6.1]
-  // 확인 필요: canManageWorkers → AttendanceStatusDialog(오늘) [R5.2]
-  // ERROR≠ZERO: 쿼리 실패 시 null 유지 (재시도 UI 표시)
+  // 근태 확인 / 당일 명단: canManageWorkers → AttendanceStatusDialog(오늘) [R5.2]
+  // ERROR≠ZERO: 쿼리 실패 시 null 유지 (영역별 재시도 행 유지)
   Widget _buildTodayOps(BuildContext context, double s, ThemeData theme, UserProvider up) {
     final isSub = up.currentUser?.isSubAdmin == true;
     final canSeeStaffing = !isSub
@@ -1991,8 +2000,47 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     if (!canSeeStaffing && !canSeeAttendance) return const SizedBox.shrink();
 
+    // [HOME-V2-08D.3] 그룹은 세 덩어리로 읽힌다: 요약 → 문제 → 출근.
+    //   비어 있는 덩어리는 divider까지 함께 빠진다. 문제가 하나뿐이어도
+    //   빈 issue slot이나 남는 divider가 생기지 않는다.
+    final blocks = <Widget>[];
+
+    final summary = canSeeStaffing ? _buildTodayStaffingSummary(s, theme) : null;
+    if (summary != null) blocks.add(summary);
+
+    final issues = _buildTodayIssueRows(context, s, up,
+        canSeeStaffing: canSeeStaffing, canSeeAttendance: canSeeAttendance);
+    if (issues.isNotEmpty) blocks.add(Column(children: issues));
+
+    final attendance =
+        canSeeAttendance ? _buildTodayAttendanceLine(s, theme) : null;
+    if (attendance != null) blocks.add(attendance);
+
+    if (blocks.isEmpty) return const SizedBox.shrink();
+
+    final children = <Widget>[];
+    for (var i = 0; i < blocks.length; i++) {
+      if (i > 0) {
+        children.add(Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12 * s),
+          child: Divider(height: 1, color: AppColors.border),
+        ));
+      }
+      children.add(blocks[i]);
+    }
+
+    // [HOME-V2-08D.3] `당일 명단` — 오늘 전체 로스터·근태 상태·NO_SHOW 복구까지
+    //   이미 한 화면에서 제공하는 기존 dialog로 보낸다. 새 화면을 만들지 않는다.
+    //   권한이 없으면 disabled teaser를 두지 않고 CTA 자체를 감춘다.
+    final canOpenRoster = canSeeAttendance;
+
     return Column(children: [
-      _sectionHeader(context, s, '오늘 운영'),
+      _sectionHeader(context, s, '오늘 운영',
+          action: canOpenRoster ? '당일 명단' : null,
+          onAction: canOpenRoster
+              ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
+                  context, () => _openTodayAttendanceDialog(context))))
+              : null),
       SizedBox(height: 8 * s),
       Padding(
         padding: EdgeInsets.symmetric(horizontal: 16 * s),
@@ -2002,23 +2050,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           // [HOME-V2-08D.1] 경계를 border로 준다 — flat인 채로 카드 범위가
           //   보여야 grey50 배경 위에서 그룹이 읽힌다.
           decoration: _groupSurface,
-          child: Column(children: [
-            if (canSeeStaffing) _buildStaffingMetrics(s, theme, up),
-            if (canSeeStaffing && canSeeAttendance)
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 12 * s),
-                child: Divider(height: 1, color: AppColors.border),
-              ),
-            if (canSeeAttendance) _buildAttendanceMetrics(s, theme, up),
-          ]),
+          child: Column(children: children),
         ),
       ),
     ]);
   }
 
-  // Staffing 영역: 필요 / 확정 / 부족
-  // [R6.1] 부족 tap: canManageTo → DayApplicantsDialog(오늘)
-  Widget _buildStaffingMetrics(double s, ThemeData theme, UserProvider up) {
+  /// [HOME-V2-08D.3] Staffing 요약 한 줄 — `8명 필요 · 5명 확정`.
+  ///
+  /// 이 줄은 action이 아니라 context다. tap도 chevron도 없다.
+  /// 보여줄 것이 없으면 null을 돌려준다 (divider까지 함께 빠진다).
+  Widget? _buildTodayStaffingSummary(double s, ThemeData theme) {
     if (_staffingLoading) {
       return Padding(
         padding: EdgeInsets.symmetric(vertical: 18 * s),
@@ -2029,6 +2071,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     // 쿼리 실패 — null 또는 쓸 수 있는 데이터 없음
     // [AH-V2-03.1] partial(부분합)은 여기서 걸리지 않고 아래로 내려간다.
+    // [HOME-V2-08D.3] 실패를 `0명 필요 · 0명 확정`으로 요약하지 않는다. ERROR≠ZERO.
     if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return _todayOpsErrorRow(s,
         message: '인력 정보를 불러오지 못했습니다',
@@ -2043,7 +2086,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   그때 `오늘 예정된 인력 운영이 없어요`를 출근 수치 옆에 두면 같은 카드가
     //   서로 모순된다 — 아무 말도 하지 않고 출근 행에 자리를 넘긴다.
     if (!_staffingReadiness!.hasTodayTarget) {
-      return const SizedBox.shrink();
+      return null;
     }
 
     final day = _todayStaffingDay;
@@ -2051,16 +2094,20 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final confirmed = day?.confirmedCount ?? 0;
     final shortage  = day?.shortageCount  ?? 0;
 
-    // [R6.1] 부족 탭 — canManageTo + shortage > 0 + day 존재 시 DayApplicantsDialog(오늘)
-    final isSub = up.currentUser?.isSubAdmin == true;
-    final canManageTo = !isSub || up.can((p) => p.canManageTo);
-    final onShortageDay = (shortage > 0 && canManageTo) ? day : null;
+    // [HOME-V2-08D.3] 전원 확정은 `8명 필요 · 8명 확정`보다 `8명 전원 확정`이
+    //   한 번에 읽힌다. 단 required == 0에서는 쓰지 않는다 —
+    //   `0명 전원 확정`은 운영이 있는 것처럼 들린다.
+    //   shortageCount는 per-wdId 합산이라 required - confirmed와 다를 수 있으므로
+    //   둘 다 만족할 때만 '전원 확정'이라고 말한다.
+    final allStaffed = required > 0 && shortage == 0 && confirmed >= required;
+    final summaryText = allStaffed
+        ? '$required명 전원 확정'
+        : '$required명 필요 · $confirmed명 확정';
 
-    // [AH-V2-04B] 다사업장에서 이 숫자가 어느 범위의 합계인지 / 어디가 부족한지.
+    // [AH-V2-04B] 다사업장에서 이 숫자가 어느 범위의 합계인지.
     //   scope label은 partial일 때 숨긴다 — 성공 사업장 수를 클라이언트가
     //   안전하게 알 수 없고, partial notice가 이미 범위를 말해주기 때문이다.
     final scopeLabel = _staffingScopeLabel();
-    final shortageBy = shortage > 0 ? day?.shortageScopeLabel() : null;
 
     return Column(children: [
       if (scopeLabel != null)
@@ -2073,38 +2120,112 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           ),
         ),
       Padding(
-        padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
-        child: Row(children: [
-          _opsMetric(s, label: '필요',  value: required,  unit: '명'),
-          _opsMetricDivider(s),
-          _opsMetric(s, label: '확정',  value: confirmed, unit: '명'),
-          _opsMetricDivider(s),
-          _opsMetric(s, label: '부족',  value: shortage,  unit: '명',
-            valueColor: shortage > 0 ? AppColors.error : null,
-            onTap: onShortageDay != null
-                ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
-                      context, () => _navigateToDayApplicantsForDate(context, onShortageDay))))
-                : null),
-        ]),
-      ),
-      // [AH-V2-04B] 부족 위치 — 부족이 있을 때만, 다사업장일 때만.
-      if (shortageBy != null && _isMultiBusinessScope)
-        Padding(
-          padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
-          child: Row(children: [
-            Icon(Icons.place_outlined, size: 13 * s, color: AppColors.grey400),
-            SizedBox(width: 5 * s),
-            Expanded(
-              child: Text(shortageBy,
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ),
-          ]),
+        padding: EdgeInsets.fromLTRB(16 * s, 12 * s, 16 * s, 12 * s),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(summaryText,
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
         ),
+      ),
       // [AH-V2-03] 부분합 고지 — 숫자를 전체 합계로 오해하지 않도록
       _partialStaffingNotice(s),
     ]);
+  }
+
+  /// [HOME-V2-08D.3] 오늘의 실제 문제 행들. 없으면 빈 목록.
+  ///
+  /// 순서는 `부족` → `근태 확인` — Hero priority와 같다.
+  /// 당일 부족은 충원 가능한 시간이 지나면 복구 기회 자체가 사라진다.
+  ///
+  /// `부족 0` / `근태 확인 0`은 행을 만들지 않는다. 0을 지면에 남기면
+  /// 문제가 없는 날에도 문제 영역을 읽게 된다.
+  List<Widget> _buildTodayIssueRows(
+    BuildContext context,
+    double s,
+    UserProvider up, {
+    required bool canSeeStaffing,
+    required bool canSeeAttendance,
+  }) {
+    final rows = <Widget>[];
+    final isSub = up.currentUser?.isSubAdmin == true;
+
+    // 부족 — 로딩 중이거나 조회 실패면 숫자를 주장하지 않는다.
+    if (canSeeStaffing && !_staffingLoading) {
+      final day = _todayStaffingDay;
+      final shortage = day?.shortageCount ?? 0;
+      if (day != null && shortage > 0) {
+        // [R6.1] canManageTo일 때만 DayApplicantsDialog로 갈 수 있다.
+        //   권한이 없어도 상태는 보여준다 — chevron과 tap만 없앤다.
+        final canManageTo = !isSub || up.can((p) => p.canManageTo);
+        // [HOME-V2-08D.3] 부족 위치는 shortageBusinesses에서만 온다.
+        //   _todayWorkSummary는 오늘 전체 근무 context라 부족 위치와 다를 수 있다.
+        //   [AH-V2-04B] 단일 사업장은 header가 이미 사업장명을 말한다.
+        final where = _isMultiBusinessScope ? day.shortageLocationLabel() : null;
+        rows.add(_todayIssueRow(s,
+          icon: Icons.error_outline,
+          label: where == null ? '$shortage명 부족' : '$shortage명 부족 · $where',
+          color: AppColors.error,
+          onTap: canManageTo
+              ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
+                  context, () => _navigateToDayApplicantsForDate(context, day))))
+              : null,
+        ));
+      }
+    }
+
+    // 근태 확인 — _todayCheckedIn == null은 조회 실패다. 건수를 주장하지 않는다.
+    if (canSeeAttendance && !_attendanceLoading && _todayCheckedIn != null) {
+      final needsAttention = _todayNeedsAttention ?? 0;
+      if (needsAttention > 0) {
+        final canManageWorkers = !isSub || up.can((p) => p.canManageWorkers);
+        // [HOME-V2-08D.3] 지각/미출근/미퇴근 breakdown은 여기서 펼치지 않는다.
+        //   그것은 AttendanceStatusDialog의 역할이다.
+        rows.add(_todayIssueRow(s,
+          icon: Icons.schedule_outlined,
+          label: '근태 확인 $needsAttention건',
+          color: AppColors.warning,
+          onTap: canManageWorkers
+              ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
+                  context, () => _openTodayAttendanceDialog(context))))
+              : null,
+        ));
+      }
+    }
+
+    return rows;
+  }
+
+  /// [HOME-V2-08D.3] 문제 행. icon / label / semantic color / optional tap 뿐이다.
+  ///
+  /// 두 issue는 같은 높이·같은 typography·같은 chevron 계약을 쓰고
+  /// semantic color만 다르다 — Home은 둘을 동등한 actionable issue로 보여준다.
+  /// 우선순위를 말하는 것은 Hero의 역할이다.
+  Widget _todayIssueRow(double s, {
+    required IconData icon,
+    required String label,
+    required Color color,
+    VoidCallback? onTap,
+  }) {
+    final row = Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+      child: Row(children: [
+        Icon(icon, size: 17 * s, color: color),
+        SizedBox(width: 8 * s),
+        Expanded(
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis),
+        ),
+        // chevron은 실제로 갈 곳이 있을 때만 — 권한이 없으면 상태만 남는다.
+        if (onTap != null)
+          Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
+      ]),
+    );
+    return onTap == null ? row : InkWell(onTap: onTap, child: row);
   }
 
   /// [AH-V2-04B] 관리 사업장이 2곳 이상인지 — staffing 집계 범위 기준.
@@ -2160,9 +2281,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
-  // 출근 현황 영역: 출근 / 확인 필요
-  // [PHASE-R5.2] 확인 필요 N명 > → AttendanceStatusDialog (canManageWorkers 필수)
-  Widget _buildAttendanceMetrics(double s, ThemeData theme, UserProvider up) {
+  /// [HOME-V2-08D.3] 출근 보조 한 줄 — `출근 4/5`.
+  ///
+  /// 근태 확인 건수는 여기 없다. 그것은 문제이므로 issue row로 올라갔다.
+  /// 이 줄은 tap하지 않는다 — 로스터로 가는 길은 header의 `당일 명단`이다.
+  /// 보여줄 것이 없으면 null (divider까지 함께 빠진다).
+  Widget? _buildTodayAttendanceLine(double s, ThemeData theme) {
     if (_attendanceLoading) {
       return Padding(
         padding: EdgeInsets.symmetric(vertical: 18 * s),
@@ -2171,7 +2295,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 쿼리 실패 — _todayCheckedIn == null
+    // 쿼리 실패 — _todayCheckedIn == null. `출근 0/0`으로 쓰지 않는다. ERROR≠ZERO.
     if (_todayCheckedIn == null) {
       return _todayOpsErrorRow(s,
         message: '출근 현황을 불러오지 못했습니다',
@@ -2179,73 +2303,23 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    final needsAttention = _todayNeedsAttention ?? 0;
-    final isSub = up.currentUser?.isSubAdmin == true;
-    final canManageWorkers = !isSub || up.can((p) => p.canManageWorkers);
-    // 탭 조건: 확인 필요 > 0 + canManageWorkers
-    final onAttentionTap = (needsAttention > 0 && canManageWorkers)
-        ? () => unawaited(_safeNavigate(
-              () => _requireApprovedBusiness(
-                  context, () => _openTodayAttendanceDialog(context))))
-        : null;
-
     // [AH-V2-06] 분모 0 = 오늘 근무는 있지만 아직 첫 시작 시각 전.
-    //   '0 / 0'은 운영이 없는 것처럼 읽히므로 상태로 말한다.
-    //   오늘 로스터 자체가 없는 경우는 staffing의 hasTodayTarget 분기가 위에서
-    //   이미 '오늘 예정된 인력 운영이 없어요'로 처리한다.
+    //   '0/0'은 운영이 없는 것처럼 읽히므로 상태로 말한다.
+    //   [HOME-V2-08D.3] 분모 semantics(현재까지 출근 대상)는 그대로다.
     final dueNow = _todayDueNow ?? 0;
-    final checkedInText =
-        dueNow == 0 ? '예정 전' : '${_todayCheckedIn!} / $dueNow';
+    final text = dueNow == 0
+        ? '출근 예정 전'
+        : '출근 ${_todayCheckedIn!}/$dueNow';
 
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
-      child: Row(children: [
-        _opsMetric(s, label: '현재 출근', value: _todayCheckedIn!, unit: '명',
-          valueText: checkedInText),
-        _opsMetricDivider(s),
-        _opsMetric(s, label: '근태 확인', value: needsAttention, unit: '명',
-          valueColor: needsAttention > 0 ? AppColors.warning : null,
-          onTap: onAttentionTap),
-      ]),
+      padding: EdgeInsets.fromLTRB(16 * s, 12 * s, 16 * s, 12 * s),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(text,
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+      ),
     );
   }
-
-  /// 오늘 운영 수치 셀 (Expanded — Row 내 균등 분배)
-  /// [PHASE-R5.2] onTap 옵션: 수치 > 0 + 권한 있을 때 탭 가능, subtle chevron 표시
-  /// [AH-V2-06] valueText를 주면 그것을 그대로 쓴다 ('12 / 15', '예정 전').
-  ///   주지 않으면 기존대로 '$value$unit'.
-  Widget _opsMetric(double s, {
-    required String label,
-    required int value,
-    required String unit,
-    String? valueText,
-    Color? valueColor,
-    VoidCallback? onTap,
-  }) {
-    final col = Column(mainAxisSize: MainAxisSize.min, children: [
-      Text(label, style: TextStyle(fontSize: 12, color: AppColors.grey500)),
-      SizedBox(height: 4 * s),
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(valueText ?? '$value$unit', style: TextStyle(
-          fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: -0.3,
-          color: valueColor ?? AppColors.textPrimary,
-        )),
-        if (onTap != null) ...[
-          SizedBox(width: 1 * s),
-          Icon(Icons.chevron_right, size: 14 * s,
-              color: valueColor ?? AppColors.grey400),
-        ],
-      ]),
-    ]);
-    return Expanded(
-      child: onTap != null
-          ? GestureDetector(onTap: onTap, child: col)
-          : col,
-    );
-  }
-
-  Widget _opsMetricDivider(double s) =>
-      Container(width: 1, height: 32 * s, color: AppColors.border);
 
   /// 오늘 운영 영역별 에러 행 — 재시도 버튼 포함
   Widget _todayOpsErrorRow(double s, {

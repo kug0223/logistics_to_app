@@ -235,24 +235,28 @@ void main() {
       expect(body.contains('if ((changed ?? false) && mounted) {'), true);
     });
 
-    test('05-b Today UI를 건드리지 않았다 (§5)', () {
+    test('05-b Today는 여전히 staffing과 attendance를 한 그룹에서 말한다 (§5)', () {
+      // [HOME-V2-08D.3] 07.1이 고치려던 것은 "좌석이 반납됐는데 옆 숫자가 낡는" 일이다.
+      //   그 전제는 **두 영역이 같은 그룹 안에 있다**는 것 — 그건 그대로다.
+      //   KPI 셀이 요약 줄 + issue row로 바뀐 것은 07.1의 freshness와 무관하다.
       final ops = _codeOf(_bodyOf(home, 'Widget _buildTodayOps('));
       expect(ops.contains("'오늘 운영'"), true);
-      expect(ops.contains('_buildStaffingMetrics('), true);
-      expect(ops.contains('_buildAttendanceMetrics('), true);
-      // 당일 명단 CTA·Hero를 추가하지 않았다
-      expect(ops.contains('당일 명단'), false);
-      expect(ops.contains('action:'), false);
+      expect(ops.contains('_buildTodayStaffingSummary('), true);
+      expect(ops.contains('_buildTodayAttendanceLine('), true);
+      expect(ops.contains('_buildTodayIssueRows('), true);
     });
 
-    test('05-c 수치 셀 구성 무변경', () {
-      final att = _codeOf(_bodyOf(home, 'Widget _buildAttendanceMetrics('));
-      expect(att.contains("label: '현재 출근'"), true);
-      expect(att.contains("label: '근태 확인'"), true);
-      final st = _codeOf(_bodyOf(home, 'Widget _buildStaffingMetrics('));
-      for (final label in ["label: '필요'", "label: '확정'", "label: '부족'"]) {
-        expect(st.contains(label), true, reason: label);
-      }
+    test('05-c 좌석 반납이 움직이는 두 수치가 같은 그룹에서 읽힌다', () {
+      // 부족(staffing)과 근태 확인(attendance)이 여전히 같은 카드에서 함께 보인다.
+      // 하나만 갱신되면 사용자가 바로 모순을 보게 되는 구조 — 그래서 07.1이 필요했다.
+      final att = _codeOf(_bodyOf(home, 'Widget? _buildTodayAttendanceLine('));
+      expect(att.contains('출근'), true);
+      final issues = _codeOf(_bodyOf(home, 'List<Widget> _buildTodayIssueRows('));
+      expect(issues.contains('명 부족'), true);
+      expect(issues.contains('근태 확인 '), true);
+      final st = _codeOf(_bodyOf(home, 'Widget? _buildTodayStaffingSummary('));
+      expect(st.contains('명 필요 · '), true);
+      expect(st.contains('명 확정'), true);
     });
 
     test('05-d section name 무변경', () {

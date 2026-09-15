@@ -547,15 +547,22 @@ void main() {
     });
 
     test('06-k 오늘/다가오는 구조를 바꾸지 않았다 (§29, §30)', () {
+      // [HOME-V2-08D.3] Today의 3-column KPI는 이 Phase에서 재구성됐다.
+      //   §29가 지키려던 것은 "08D.2에서 Today를 건드리지 않는다"였고,
+      //   재구성은 08D.3의 명시적 범위다. 남는 주장은 두 가지다:
+      //   Today가 여전히 staffing·attendance·issue를 한 그룹에서 말하고,
+      //   다가오는 7일은 **아직** 손대지 않았다(08D.4).
       for (final t in [
-        "label: '필요'", "label: '확정'", "label: '부족'",
-        "label: '현재 출근'", "label: '근태 확인'",
-        'Widget _opsMetric(',
+        '_buildTodayStaffingSummary(',
+        '_buildTodayIssueRows(',
+        '_buildTodayAttendanceLine(',
         '_buildFutureShortageRow(',
         '충원하기',
       ]) {
         expect(code.contains(t), true, reason: t);
       }
+      final f = _codeOf(_bodyOf(home, 'Widget _buildFutureShortageRow('));
+      expect(f.contains('_navigateToDayApplicantsForDate(context, day)'), true);
     });
 
     test('06-l section rename을 하지 않았다 (§28)', () {
@@ -607,7 +614,7 @@ void main() {
     });
 
     test('07-d destination 무회귀 (§35)', () {
-      expect(code.contains('_navigateToDayApplicantsForDate(context, onShortageDay)'),
+      expect(code.contains('_navigateToDayApplicantsForDate(context, day)'),
           true);
       expect(code.contains('_openTodayAttendanceDialog(context)'), true);
       expect(code.contains('_makeActionRows(context, s, up, cs)'), true);

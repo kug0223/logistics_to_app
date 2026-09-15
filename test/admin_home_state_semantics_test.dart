@@ -146,7 +146,7 @@ void main() {
     });
 
     test('UI가 에러 표면을 유지한다', () {
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       expect(t.contains('인력 정보를 불러오지 못했습니다'), isTrue);
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
       expect(f.contains('향후 인력 현황을 불러오지 못했습니다'), isTrue);
@@ -230,8 +230,10 @@ void main() {
 
     test('CTA destination을 바꾸지 않았다', () {
       expect(home.contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
+      // [HOME-V2-08D.3] 오늘 부족은 KPI 셀에서 issue row로 옮겨졌고 목적지는 같다
       expect(
-        home.contains('_navigateToDayApplicantsForDate(context, onShortageDay)'),
+        _bodyOf(home, 'List<Widget> _buildTodayIssueRows(')
+            .contains('_navigateToDayApplicantsForDate(context, day)'),
         isTrue,
       );
     });
@@ -249,18 +251,18 @@ void main() {
     });
 
     test('UI가 0/0/0 대신 상태 문구를 쓴다', () {
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       expect(t.contains('hasTodayTarget'), isTrue);
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
       final noTargetAt = t.indexOf('hasTodayTarget');
-      final metricAt = t.indexOf("label: '필요'");
+      final metricAt = t.indexOf('명 필요 · ');
       expect(noTargetAt, lessThan(metricAt),
           reason: '대상 없음 분기가 수치 표시보다 먼저 와야 한다');
     });
 
     test('대상 없음은 에러가 아니다', () {
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       final noTargetAt = t.indexOf('hasTodayTarget');
       final errAt = t.indexOf('인력 정보를 불러오지 못했습니다');
       expect(errAt, lessThan(noTargetAt),
@@ -400,7 +402,7 @@ void main() {
     });
 
     test('Home 섹션 구성·순서가 그대로다', () {
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
@@ -433,7 +435,7 @@ void main() {
     test('다사업장 scope 표시·destination은 건드리지 않았다 (AH-V2-04)', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
       expect(f.contains('businessName'), isFalse);
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       expect(t.contains('businessName'), isFalse);
     });
   });

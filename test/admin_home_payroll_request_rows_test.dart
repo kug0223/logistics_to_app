@@ -345,7 +345,7 @@ void main() {
         expect(at, greaterThan(prev), reason: '$m 순서가 바뀌었다');
         prev = at;
       }
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();

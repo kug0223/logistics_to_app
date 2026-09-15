@@ -197,15 +197,25 @@ void main() {
     });
 
     test('UI가 부족이 있을 때만 요약을 만든다', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      expect(m.contains('shortage > 0 ? day?.shortageScopeLabel() : null'), isTrue);
+      // [HOME-V2-08D.3] 부족 위치는 KPI 옆 보조줄에서 issue row로 옮겨졌다.
+      //   `부족이 있을 때만 만든다`는 조건은 그대로 남아 있다.
+      final m = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(m.contains('if (day != null && shortage > 0) {'), isTrue);
+      expect(m.contains('day.shortageLocationLabel()'), isTrue);
     });
 
     test('에러 분기가 요약보다 먼저 — ERROR면 요약 없음', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      expect(m.indexOf('hasUsableData'), lessThan(m.indexOf('shortageScopeLabel')));
-      expect(m.indexOf('hasTodayTarget'), lessThan(m.indexOf('shortageScopeLabel')),
-          reason: '대상 없음 상태에도 scope를 억지로 붙이지 않는다');
+      // [HOME-V2-08D.3] 요약 줄과 issue row는 서로 다른 builder가 됐지만
+      //   ERROR/대상없음에서 아무 수치도 주장하지 않는 순서는 같다.
+      final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
+      expect(m.indexOf('hasUsableData'), lessThan(m.indexOf('명 필요 · ')));
+      expect(m.indexOf('hasTodayTarget'), lessThan(m.indexOf('명 필요 · ')),
+          reason: '대상 없음 상태에도 수치를 억지로 붙이지 않는다');
+      // issue row도 staffing이 로딩/실패면 숫자를 말하지 않는다
+      final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(i.indexOf('!_staffingLoading'), lessThan(i.indexOf('명 부족')));
+      expect(i.contains('_todayStaffingDay'), isTrue,
+          reason: 'hasUsableData가 false면 null을 돌려주는 getter');
     });
   });
 
@@ -219,8 +229,11 @@ void main() {
     });
 
     test('부족 위치 요약도 다사업장일 때만', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      expect(m.contains('shortageBy != null && _isMultiBusinessScope'), isTrue);
+      // [HOME-V2-08D.3] 위치가 issue row로 옮겨졌다 — 단일 사업장에서는
+      //   header가 이미 사업장명을 말하므로 붙이지 않는다는 규칙은 그대로다.
+      final m = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(m.contains('_isMultiBusinessScope ? day.shortageLocationLabel() : null'),
+          isTrue);
       final r = _bodyOf(home, 'Widget _buildFutureShortageRow(');
       expect(r.contains('_isMultiBusinessScope ? day.shortageScopeLabel() : null'),
           isTrue);
@@ -243,10 +256,13 @@ void main() {
     });
 
     test('필요·확정·부족 지표는 그대로', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      expect(m.contains("label: '필요'"), isTrue);
-      expect(m.contains("label: '확정'"), isTrue);
-      expect(m.contains("label: '부족'"), isTrue);
+      // [HOME-V2-08D.3] 세 수치는 KPI 셀에서 문장·issue row로 표현만 바뀌었다.
+      //   어떤 수치를 말하는가는 그대로다.
+      final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
+      expect(m.contains('명 필요 · '), isTrue);
+      expect(m.contains('명 확정'), isTrue);
+      final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(i.contains('명 부족'), isTrue);
     });
   });
 
@@ -261,7 +277,7 @@ void main() {
     });
 
     test('partial notice는 유지된다', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       expect(m.contains('_partialStaffingNotice(s)'), isTrue);
       final w = _bodyOf(home, 'Widget _partialStaffingNotice(');
       expect(w.contains('나머지 사업장 기준으로 표시했어요'), isTrue);
@@ -277,12 +293,11 @@ void main() {
     });
 
     test('partial에서도 부족 위치는 계속 보인다 (숨기지 않음)', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      // 요약 조건에 partial 가드가 없어야 한다
-      final at = m.indexOf('shortageBy != null && _isMultiBusinessScope');
-      expect(at, isNot(-1));
-      final seg = m.substring(at, at + 120);
-      expect(seg.contains('partial'), isFalse);
+      // [HOME-V2-08D.3] issue row 전체에 partial 가드가 없어야 한다.
+      //   partial은 "합계가 일부"라는 뜻이지 "부족이 없다"는 뜻이 아니다.
+      final m = _codeOf(_bodyOf(home, 'List<Widget> _buildTodayIssueRows('));
+      expect(m.contains('partial'), isFalse);
+      expect(m.contains('shortageLocationLabel'), isTrue);
     });
   });
 
@@ -299,9 +314,9 @@ void main() {
 
     test('오늘·향후 모두 같은 함수를 쓴다', () {
       expect(home.contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
-      expect(
-          home.contains('_navigateToDayApplicantsForDate(context, onShortageDay)'),
-          isTrue);
+      // [HOME-V2-08D.3] 오늘 issue row도 같은 helper를 같은 인자 형태로 쓴다
+      expect(_bodyOf(home, 'List<Widget> _buildTodayIssueRows(')
+          .contains('_navigateToDayApplicantsForDate(context, day)'), isTrue);
     });
 
     test('전달 순서가 Home 표시 순서와 같다 (부족 큰 순)', () {
@@ -346,7 +361,7 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('AH-V2-04B 범위 제한', () {
     test('업무유형을 Home에 표시하지 않는다', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       final r = _bodyOf(home, 'Widget _buildFutureShortageRow(');
       for (final t in ['wdId', 'workDetail', 'workType']) {
         expect(m.contains(t), isFalse, reason: 'today: $t');
@@ -360,7 +375,7 @@ void main() {
     });
 
     test('새 카드·섹션을 만들지 않았다', () {
-      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'\)")
+      final titles = RegExp(r"_sectionHeader\(context, s, '([^']+)'")
           .allMatches(home)
           .map((m) => m.group(1))
           .toSet();
@@ -388,19 +403,20 @@ void main() {
     });
 
     test('secondary hierarchy — 부족 수치보다 약하게', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      // 12px 가독성 하한(TYPO-50)을 지켜야 하므로 크기가 아니라 색·굵기로 위계를 준다.
-      // 부족 값 18 w800 > 부족 위치 12 textSecondary > scope 12 grey400
+      // [HOME-V2-08D.3] 위계의 값은 바뀌었지만 방향은 같다:
+      //   부족 issue 15 w600 > 요약/출근 13 textSecondary > scope 12 grey400.
+      //   12px 가독성 하한(TYPO-50)은 그대로다.
+      final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       expect(m.contains('fontSize: 12, color: AppColors.grey400'), isTrue);
-      expect(m.contains('fontSize: 12, color: AppColors.textSecondary'), isTrue);
-      // 수치 셀(_opsMetric)은 그대로 가장 강하다
-      final metric = _bodyOf(home, 'Widget _opsMetric(');
-      expect(metric.contains('fontSize: 18, fontWeight: FontWeight.w800'), isTrue);
+      expect(m.contains('fontSize: 13, color: AppColors.textSecondary'), isTrue);
+      final row = _bodyOf(home, 'Widget _todayIssueRow(')
+          .replaceAll(RegExp(r'\s+'), ' ');
+      expect(row.contains('fontSize: 15, fontWeight: FontWeight.w600'), isTrue);
     });
 
     test('12px 가독성 하한을 지킨다 (TYPO-50)', () {
       final added = [
-        _bodyOf(home, 'Widget _buildStaffingMetrics('),
+        _bodyOf(home, 'Widget? _buildTodayStaffingSummary('),
         _bodyOf(home, 'Widget _buildFutureShortageRow('),
       ].join('\n');
       expect(RegExp(r'fontSize: (8|9|10|11)(\.\d+)?[,)\s]').hasMatch(added),
@@ -408,7 +424,8 @@ void main() {
     });
 
     test('긴 사업장명 overflow 대응 (폰트 축소 아님)', () {
-      final m = _bodyOf(home, 'Widget _buildStaffingMetrics(');
+      // [HOME-V2-08D.3] 사업장명이 들어가는 곳은 이제 issue row다.
+      final m = _bodyOf(home, 'Widget _todayIssueRow(');
       expect(m.contains('overflow: TextOverflow.ellipsis'), isTrue);
       expect(m.contains('maxLines: 2'), isTrue);
       expect(m.contains('Expanded('), isTrue, reason: '고정 width 금지');
@@ -435,7 +452,7 @@ void main() {
     });
 
     test('AH-V2-04A 근태 확인 유지', () {
-      expect(home.contains("label: '근태 확인'"), isTrue);
+      expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
     });
 

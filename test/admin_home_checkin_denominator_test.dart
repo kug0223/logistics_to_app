@@ -330,7 +330,7 @@ void main() {
       expect(loader.contains('_todayDueNow         = null;'), isTrue);
       expect(loader.contains('_todayNeedsAttention = null;'), isTrue);
       // 렌더는 하나의 게이트
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
       expect(m.contains('if (_todayCheckedIn == null) {'), isTrue);
       expect(m.contains('출근 현황을 불러오지 못했습니다'), isTrue);
     });
@@ -353,33 +353,43 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('§19~21 표시 계약', () {
     test('§19 value 문자열이 x / y 형태', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect(m.contains(r"'${_todayCheckedIn!} / $dueNow'"), isTrue);
+      // [HOME-V2-08D.3] KPI 셀이 compact 한 줄이 되면서 공백만 줄었다.
+      //   분자/분모 관계를 그대로 쓴다는 §19의 요지는 같다.
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
+      expect(m.contains(r"'출근 ${_todayCheckedIn!}/$dueNow'"), isTrue);
     });
 
-    test('§20 라벨이 현재 출근', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect(m.contains("label: '현재 출근'"), isTrue);
-      expect(m.contains("label: '출근'"), isFalse);
-      expect(m.contains("label: '근태 확인'"), isTrue);
+    test('§20 출근 수치는 근태 확인과 섞이지 않는다', () {
+      // [HOME-V2-08D.3] `현재 출근` KPI 라벨은 사라졌다. §20이 지키려던 것은
+      //   라벨 문자열이 아니라 **두 수치가 서로 다른 것을 센다**는 사실이다.
+      //   이제 출근은 보조 줄, 근태 확인은 issue row로 아예 분리돼 있다.
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
+      expect(m.contains('출근'), isTrue);
+      expect(m.contains('근태 확인'), isFalse, reason: '근태 확인은 issue row의 것이다');
+      final issues = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
+      expect(issues.contains(r"'근태 확인 $needsAttention건'"), isTrue);
     });
 
     test('§21 분모 0 → 예정 전', () {
-      final m = _bodyOf(home, 'Widget _buildAttendanceMetrics(');
-      expect(m.contains("dueNow == 0 ? '예정 전'"), isTrue);
+      final m = _bodyOf(home, 'Widget? _buildTodayAttendanceLine(');
+      expect(m.contains("dueNow == 0"), isTrue);
+      expect(m.contains("'출근 예정 전'"), isTrue);
       expect(m.contains("'0 / 0'"), isFalse);
+      expect(m.contains("'출근 0/0'"), isFalse);
       expect(m.contains('아직 출근 시간이 아니에요'), isFalse,
-          reason: '좁은 metric 셀에 문장을 넣지 않는다');
+          reason: '보조 줄에 문장을 넣지 않는다');
     });
 
-    test('_opsMetric의 기존 호출부는 영향받지 않는다', () {
-      final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      for (final l in ['필요', '확정', '부족']) {
-        expect(t.contains("label: '$l'"), isTrue);
-      }
-      expect(t.contains('valueText:'), isFalse, reason: 'staffing은 기존 경로');
-      final metric = _bodyOf(home, 'Widget _opsMetric(');
-      expect(metric.contains(r"Text(valueText ?? '$value$unit'"), isTrue);
+    test('staffing 표시 경로는 attendance 표현에 영향받지 않는다', () {
+      // [HOME-V2-08D.3] _opsMetric(valueText 분기)이 사라지면서 두 영역이
+      //   helper를 공유하던 구조 자체가 없어졌다. 원래 이 테스트가 지키던
+      //   "attendance 전용 표현이 staffing 수치로 새지 않는다"는 더 강하게 성립한다.
+      expect(home.contains('Widget _opsMetric('), isFalse);
+      final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
+      expect(t.contains('명 필요 · '), isTrue);
+      expect(t.contains('명 확정'), isTrue);
+      expect(t.contains('_todayCheckedIn'), isFalse, reason: 'staffing은 출근을 세지 않는다');
+      expect(t.contains('valueText'), isFalse);
     });
 
     test('§22 staffing copy를 건드리지 않았다', () {
