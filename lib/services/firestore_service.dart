@@ -8,6 +8,7 @@ import '../models/core/slot_model.dart';
 import '../models/core/work_detail_data.dart';
 import '../models/core/application_model.dart';
 import '../models/ui/admin_to_list_ui_models.dart';
+import '../models/ui/day_staffing_row.dart';
 import '../models/core/business_model.dart';
 import '../models/core/work_type_model.dart';
 import '../utils/toast_helper.dart';

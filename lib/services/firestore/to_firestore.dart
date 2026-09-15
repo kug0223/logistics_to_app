@@ -715,6 +715,34 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// [SYSTEM-INTEGRATION-R2] 하루치 FLEX 모집 단위(wdId) 전체 — 지원서와 무관.
+  ///
+  /// 지원자가 한 명도 없는 모집 단위도 부족으로 존재한다. 지원서에서 그룹을
+  /// 만들면 그 부족이 화면에서 사라지고 충원 수단도 함께 사라진다.
+  /// 서버가 slot.workDetails ↔ slot.workDetailCounts를 canonical join해 준다 —
+  /// Home의 `N명 부족`과 같은 계산이다.
+  ///
+  /// [dayStartMs] 그 영업일의 KST 자정 instant
+  ///   (`FormatHelper.kstDayRange(date).$1.millisecondsSinceEpoch`)
+  ///
+  /// ERROR != ZERO: 실패는 throw. 빈 목록은 '그 날 FLEX 모집 단위 없음'이다.
+  Future<List<DayStaffingRow>> getDayStaffingDetail({
+    required String businessId,
+    required int dayStartMs,
+  }) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetDayStaffingDetail',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final result = await callable.call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'dateMs': dayStartMs,
+    });
+    return (result.data['rows'] as List? ?? [])
+        .map(DayStaffingRow.tryFromMap)
+        .whereType<DayStaffingRow>()
+        .toList();
+  }
+
   /// 슬롯 문서의 workDetails별 requiredCount 맵 반환
   /// key: workDetail.id (없으면 '${workType}_${startTime}_${endTime}')
   Future<Map<String, int>> getSlotWorkDetailCapacities(String toId, String slotId) async {

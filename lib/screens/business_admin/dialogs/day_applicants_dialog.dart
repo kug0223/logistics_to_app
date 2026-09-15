@@ -29,6 +29,7 @@ import '../../../utils/id_card_helper.dart';
 // trust_score_helper: 신뢰도 점수 시스템 제거 (5A.2A)
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
+import '../../../models/ui/day_staffing_row.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
@@ -57,6 +58,9 @@ class _GroupData {
   final String? wdId;
   final String? workDetailId;   // composite WorkDetail ID (레거시/capacityKey 용)
   int requiredCount;             // 나중에 채움
+  /// [R2] slot canonical id. 지원자가 0명인 모집 단위에서도 초대 CTA가 서려면
+  /// slotId를 지원서에서 유도하면 안 된다 — slot 자신이 알려줘야 한다.
+  String? slotId;
   final List<ApplicationModel> pendingApps = [];
   final List<ApplicationModel> confirmedApps = [];
 
@@ -70,6 +74,7 @@ class _GroupData {
     this.wdId,
     this.workDetailId,
     this.requiredCount = 0,
+    this.slotId,
   });
 
   // 공고 고유 키 (공고 헤더 그룹핑용)
@@ -141,6 +146,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Map<String, String?> _contractStatusMap = {};
   Map<String, int> _weeklyWorkCountMap = {};
   Map<String, int> _workDetailCapacityMap = {};
+
+  // [SYSTEM-INTEGRATION-R2] 이 날짜의 FLEX 모집 단위 전체 (slot canonical).
+  //
+  //   그룹을 지원서에서만 만들면 지원자가 0명인 모집 단위는 그룹 자체가 생기지
+  //   않는다. Home이 `3명 부족 ›`이라고 보내 놓고 다이얼로그는 비어 있고,
+  //   부족을 해결할 `인력 초대` 버튼도 함께 사라진다 — 부족이 가장 심한 상태에서
+  //   해결 수단이 없어진다. 부족은 지원서가 아니라 slot capacity에 속한다.
+  //
+  //   null = 조회 실패(UNKNOWN). 빈 목록(성공)과 구분한다 —
+  //   실패를 빈 목록으로 바꾸면 `충원할 것이 없다`는 거짓 주장이 된다.
+  List<DayStaffingRow>? _dayStaffingRows = const [];
 
   final Set<String> _selectedIds = {};
   final Set<String> _starredIds = {};
@@ -226,6 +242,26 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ]);
       var pending = phase1[0] as List<ApplicationModel>;
       var confirmed = phase1[1] as List<ApplicationModel>;
+
+      // [R2] 이 날짜의 FLEX 모집 단위 — 지원서와 별개로 slot에서 읽는다.
+      //   실패해도 지원자 명단은 유효하므로 전체를 ERROR로 만들지 않고,
+      //   충원 영역만 UNKNOWN으로 내린다 (ERROR != ZERO).
+      List<DayStaffingRow>? staffingRows;
+      try {
+        final (dayStart, _) = FormatHelper.kstDayRange(widget.date);
+        staffingRows = await _svc.getDayStaffingDetail(
+          businessId: bizId,
+          dayStartMs: dayStart.millisecondsSinceEpoch,
+        );
+        if (widget.filterToId != null) {
+          staffingRows = staffingRows
+              .where((r) => r.toId == widget.filterToId)
+              .toList();
+        }
+      } catch (e) {
+        debugPrint('⚠️ [DayApplicants] 인력 현황 조회 실패: $e');
+        staffingRows = null;
+      }
 
       // 특정 공고 필터 (TOGroupCard 명단 보기)
       if (widget.filterToId != null) {
@@ -316,6 +352,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _contractStatusMap = contractMap;
           _weeklyWorkCountMap = weeklyMap;
           _workDetailCapacityMap = workDetailCapacityMap;
+          _dayStaffingRows = staffingRows;
           _idCardStatusMap = idCardMap;
           _reviewWrittenMap.addAll(reviewMap);
           _starredIds.addAll(starredFromFirestore);
@@ -334,6 +371,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _userMap = userMap;
         _contractStatusMap = contractMap;
         _weeklyWorkCountMap = weeklyMap;
+        _dayStaffingRows = staffingRows;
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 확정자 없으면 초기화
         _noShowApplicationIds = {}; // [R5.1]
         _isLoading = false;
@@ -351,6 +389,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _contractStatusMap = {};
         _idCardStatusMap = {};
         _workDetailCapacityMap = {};
+        _dayStaffingRows = null; // 전체 로드 실패 — 충원 영역도 UNKNOWN
         _weeklyWorkCountMap = {};
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 실패 시도 초기화
         _noShowApplicationIds = {}; // [R5.1]
@@ -469,6 +508,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           requiredCount: _workDetailCapacityMap[compositeKey] ?? 0,
         ),
       );
+      groups[key]!.slotId ??= app.slotId;
       if (isPending) {
         groups[key]!.pendingApps.add(app);
       } else {
@@ -481,6 +521,35 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
     for (final app in _confirmedApps) {
       addApp(app, false);
+    }
+
+    // [SYSTEM-INTEGRATION-R2] slot canonical 모집 단위로 그룹을 보강한다.
+    //
+    //   위 루프는 지원서만 본다. 그래서 `필요 3 · 지원 0 · 확정 0`인 모집 단위는
+    //   그룹이 생기지 않고, Home이 `3명 부족 ›`으로 보낸 화면이 비어 버린다.
+    //   부족은 slot capacity에 속한 사실이므로 여기서 slot row를 그대로 세운다.
+    //
+    //   이미 지원서로 만들어진 그룹에는 requiredCount·slotId만 canonical 값으로
+    //   덮는다 — 사람 목록은 지원서가 진실이고 정원은 slot이 진실이다.
+    for (final row in _dayStaffingRows ?? const <DayStaffingRow>[]) {
+      final key = '${row.toId}_${row.wdId}';
+      final existing = groups[key];
+      if (existing != null) {
+        existing.requiredCount = row.requiredCount;
+        existing.slotId ??= row.slotId;
+        continue;
+      }
+      groups[key] = _GroupData(
+        toId: row.toId,
+        toTitle: row.toTitle,
+        workType: row.workType,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        isLongTerm: false,
+        wdId: row.wdId,
+        requiredCount: row.requiredCount,
+        slotId: row.slotId,
+      );
     }
 
     int timeToMinutes(String t) {
@@ -689,15 +758,42 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Body ───────────────────────────────────────────────────────────────────
 
   Widget _buildBody(BuildContext context) {
-    if (_pendingApps.isEmpty && _confirmedApps.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(32),
-        child: AppEmptyState(
-          icon: Icons.people_outline,
-          title: '지원자 없음',
-          subtitle: '이 날짜에 지원하거나 확정된 근무자가 없습니다.',
-        ),
-      );
+    final rows = _dayStaffingRows;
+    final hasApps = _pendingApps.isNotEmpty || _confirmedApps.isNotEmpty;
+
+    // [SYSTEM-INTEGRATION-R2] 지원자가 없다고 해서 '할 일이 없다'가 아니다.
+    //
+    //   Home이 `3명 부족 ›`으로 보낸 화면이 여기서 `지원자 없음`으로 끝나면
+    //   관리자는 부족을 보고 들어와 아무것도 하지 못한 채 되돌아간다.
+    //   지원서가 0건이어도 모집 단위가 있으면 부족과 `인력 초대`를 보여준다.
+    if (!hasApps) {
+      if (rows == null) {
+        // 조회 실패 — '충원할 것이 없다'로 바꾸지 않는다 (ERROR != ZERO).
+        return Padding(
+          padding: const EdgeInsets.all(32),
+          child: AppEmptyState(
+            icon: Icons.error_outline,
+            iconColor: AppColors.error,
+            title: '인력 현황을 불러오지 못했어요',
+            subtitle: '지원자와 부족 인원을 확인할 수 없습니다.',
+            action: TextButton(
+              onPressed: _load,
+              child: const Text('다시 시도'),
+            ),
+          ),
+        );
+      }
+      if (rows.isEmpty) {
+        return const Padding(
+          padding: EdgeInsets.all(32),
+          child: AppEmptyState(
+            icon: Icons.people_outline,
+            title: '지원자 없음',
+            subtitle: '이 날짜에 지원하거나 확정된 근무자가 없습니다.',
+          ),
+        );
+      }
+      // 모집 단위는 있는데 지원자가 없다 — 부족과 충원 CTA를 보여주는 경로.
     }
     return _buildListBody(context);
   }
@@ -942,11 +1038,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
             g.requiredCount > g.confirmedApps.where((a) => !a.isStaffingReleased).length)
           Builder(builder: (ctx) {
-            final slotId = g.confirmedApps.isNotEmpty
-                ? g.confirmedApps.first.slotId
-                : (g.pendingApps.isNotEmpty
-                    ? g.pendingApps.first.slotId
-                    : null);
+            // [R2] slotId는 그룹 자신이 안다. 이전에는 지원서에서 유도해
+            //   지원자가 0명인 모집 단위에서 null이 되고 CTA가 사라졌다 —
+            //   충원이 가장 필요한 상태에서 충원 수단이 없어지는 경로였다.
+            final slotId = g.slotId;
             if (slotId == null) return const SizedBox.shrink();
             if (!_canForSelectedBiz((p) => p.canManageTo)) {
               return const SizedBox.shrink();

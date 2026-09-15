@@ -11920,7 +11920,8 @@ export const callableGetAdminAttendances = onCall(
       paymentDueDateLteMs?: number;
     };
 
-    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+    if (!businessId || typeof businessId !== "string" ||
+        businessId.trim().length === 0) {
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
@@ -27090,12 +27091,44 @@ export const callableInviteWorker = onCall(
       }],
     };
 
-    const newAppRef = db.collection("applications").doc();
+    // [SYSTEM-INTEGRATION-R2] 초대 Application의 식별자 = 자연키.
+    //
+    //   이전에는 auto-id였다. 그래서 위 6번의 중복 검사(비-트랜잭션 read)와
+    //   여기의 batch 사이에 두 번째 호출이 끼어들면 둘 다 검사를 통과하고
+    //   Application 2건 · pendingCount +2 · 알림 2건이 만들어졌다.
+    //   버튼 중복 탭, 네트워크 재시도, 두 관리자의 동시 초대가 모두 그 경로다.
+    //
+    //   callableApplyToTO는 같은 근무 단위에 대해 이미
+    //   `toId_slotId_{wdId|workType}_uid` 결정적 id를 쓴다. 초대도 같은 키를
+    //   쓰면 (a) 한 근무 단위에 한 사람당 Application 하나라는 불변식이
+    //   지원·초대 양쪽에 똑같이 서고, (b) 동시 호출은 트랜잭션 경합으로
+    //   한쪽만 성공한다.
+    const inviteDiscriminator =
+      (inviteResolvedWdId && inviteResolvedWdId.length > 0) ?
+        inviteResolvedWdId :
+        (selectedWorkType ?? "unknown");
+    const inviteComplexId = slotId
+      ? `${toId}_${slotId}_${inviteDiscriminator}_${targetUid}`
+      : `${toId}_${inviteDiscriminator}_${targetUid}`;
+    const newAppRef = db.collection("applications").doc(inviteComplexId);
 
     // [Phase 8.1E.2A] INVITED는 pendingCount에 포함 — Application 생성과 카운터를 atomic하게 커밋
-    {
-      const inviteBatch = db.batch();
-      inviteBatch.set(newAppRef, appData);
+    // [R2] batch → transaction: 같은 문서를 동시에 만들려는 두 호출 중 하나만 통과한다.
+    await db.runTransaction(async (invTx) => {
+      const existing = await invTx.get(newAppRef);
+      if (existing.exists) {
+        // 6번 검사가 INVITED/CONFIRMED/CONTRACT_PENDING/EXPIRED/초대거절을 이미
+        // 막았으므로, 여기까지 온 기존 문서는 관리자 거절(PENDING→REJECTED)이나
+        // 취소처럼 재초대가 허용된 상태뿐이다. 그 외는 경합으로 생긴 것이다.
+        const exStatus = (existing.data()?.status as string | undefined) ?? "";
+        const REINVITABLE = ["REJECTED", "CANCELED", "AUTO_CANCELED"];
+        if (!REINVITABLE.includes(exStatus)) {
+          throw new HttpsError(
+            "already-exists", "이미 이 근무에 초대·지원 기록이 있는 근로자입니다.");
+        }
+        // 재초대 — 그 시점 조건으로 다시 약속한다(기존 snapshot을 이어쓰지 않는다).
+      }
+      invTx.set(newAppRef, appData);
       if (slotId && toId) {
         const inviteSlotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
         const inviteSlotUpdate: Record<string, unknown> = {
@@ -27106,25 +27139,39 @@ export const callableInviteWorker = onCall(
           inviteSlotUpdate[`workDetailCounts.${inviteResolvedWdId}.pendingCount`] =
             admin.firestore.FieldValue.increment(1);
         }
-        inviteBatch.update(inviteSlotRef, inviteSlotUpdate);
-        inviteBatch.update(toRef, {totalPending: admin.firestore.FieldValue.increment(1)});
+        invTx.update(inviteSlotRef, inviteSlotUpdate);
+        invTx.update(toRef,
+          {totalPending: admin.firestore.FieldValue.increment(1)});
       }
-      await inviteBatch.commit();
-    }
+    });
 
     // ── 8. FCM 알림 발송 (근로자에게) ───────────────────────────────────────
+    // [R2] 결정적 문서 id + create() — 같은 초대에 알림이 두 번 생기지 않는다.
+    //   id에 invitedAt을 넣는 이유: 관리자 거절 후 재초대는 같은 Application id를
+    //   다시 쓰므로, appId만으로는 두 번째 초대의 알림이 영원히 막힌다.
+    //   invitedAt은 성공한 초대마다 달라지고 재시도는 위 트랜잭션에서 이미 걸린다.
+    //   callableApproveApplicationForReview의 [RELIABILITY-01] 패턴과 같은 계열.
     const bizName = (invBizData?.name as string | undefined) ?? "";
     const toTitle = (toData.title     as string | undefined) ?? "업무";
-    db.collection("users").doc(targetUid).collection("notifications").add({
-      userId:    targetUid,
-      type:      "toInvite",
-      title:     "업무 초대가 도착했어요! 🎉",
-      body:      `${bizName}에서 '${toTitle}' 근무에 초대했습니다. 24시간 내 수락해주세요.`,
-      data:      {applicationId: newAppRef.id, businessId, action: "inviteDetail"},
-      isRead:    false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      readAt:    null,
-    }).catch((err) => console.error("[callableInviteWorker] 알림 실패:", err));
+    db.collection("users").doc(targetUid).collection("notifications")
+      .doc(`to_invite_${newAppRef.id}_${inviteTime.toMillis()}`)
+      .create({
+        userId:    targetUid,
+        type:      "toInvite",
+        title:     "업무 초대가 도착했어요! 🎉",
+        body:      `${bizName}에서 '${toTitle}' 근무에 초대했습니다. 24시간 내 수락해주세요.`,
+        data:      {applicationId: newAppRef.id, businessId,
+          action: "inviteDetail"},
+        isRead:    false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        readAt:    null,
+      })
+      .catch((err: unknown) => {
+        // ALREADY_EXISTS(6) — 같은 초대에 대한 알림이 이미 있다. 정상.
+        if ((err as {code?: number})?.code !== 6) {
+          console.error("[callableInviteWorker] 알림 실패:", err);
+        }
+      });
 
     return {success: true, applicationId: newAppRef.id};
   }
@@ -27714,6 +27761,149 @@ function _rankCandidates(
     return a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0;
   });
 }
+
+// ─── callableGetDayStaffingDetail ────────────────────────────────────────────
+/**
+ * [SYSTEM-INTEGRATION-R2] 하루치 FLEX 인력 현황 — wdId 단위 canonical rows.
+ *
+ * 왜 필요한가:
+ *   Home의 `3명 부족 ›`은 DayApplicantsDialog로 들어간다. 그 다이얼로그는
+ *   지원서에서 그룹을 만든다(_buildGroups). 그래서 **지원자가 한 명도 없는**
+ *   모집 단위는 그룹 자체가 생기지 않고, 부족이 화면에서 사라지며 `인력 초대`
+ *   버튼도 함께 사라진다. 부족이 가장 심한 상태에서 해결 수단이 없어진다.
+ *
+ *   부족은 지원서가 아니라 slot capacity에 속한 개념이므로, 지원서와 무관하게
+ *   slot에서 직접 읽어야 한다.
+ *
+ * canonical join:
+ *   slot.workDetails[].wdId ↔ slot.workDetailCounts[wdId]
+ *   callableGetStaffingReadiness와 **같은 join**이다. Home의 `3명 부족`과
+ *   다이얼로그의 `인력 초대 (3명 부족)`이 서로 다른 계산을 하지 않게 하려면
+ *   한 곳에서만 세야 한다.
+ *
+ * scope: FLEX(slot) 전용. CONTRACT/장기는 슬롯이 없고 기존 지원서 기반 그룹이
+ *   이미 그 경로를 덮는다. 여기서 임의로 날짜 전개를 새로 만들지 않는다.
+ *
+ * ERROR != ZERO: 실패는 throw. 빈 rows는 "그 날 FLEX 모집 단위가 없다"는 뜻이지
+ *   "조회하지 못했다"가 아니다.
+ *
+ * Input : { businessId: string, dateMs: number }  // dateMs = KST 자정 instant
+ * Output: { rows: Array<{toId, toTitle, slotId, wdId, workType, startTime,
+ *           endTime, requiredCount, confirmedCount, pendingCount}> }
+ * Auth  : assertBizAdmin + SUB_ADMIN canManageTo (충원은 TO 관리 권한)
+ */
+export const callableGetDayStaffingDetail = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId, dateMs} = (request.data ?? {}) as {
+      businessId?: string; dateMs?: number;
+    };
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (typeof dateMs !== "number" || !Number.isFinite(dateMs)) {
+      throw new HttpsError("invalid-argument", "dateMs가 필요합니다.");
+    }
+
+    // [R2 §30] 충원은 TO 관리 권한 — 지원 검토·승인·초대와 같은 capability.
+    const {callerData: dsCaller, bizData: dsBiz} =
+      await assertBizAdmin(callerUid, businessId);
+    const dsAdminIds = (dsBiz?.adminIds as string[] | undefined) ?? [];
+    const dsIsFullAccess =
+      (dsCaller?.role as string | undefined) === "SUPER_ADMIN" ||
+      dsAdminIds.includes(callerUid) ||
+      (dsBiz?.ownerId as string | undefined) === callerUid;
+    if (!dsIsFullAccess) {
+      const dsMember = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const dsPerms =
+        dsMember.data()?.permissions as Record<string, boolean> | undefined;
+      if (dsPerms?.canManageTo !== true) {
+        throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+      }
+    }
+
+    const dayStart = admin.firestore.Timestamp.fromMillis(dateMs);
+    const dayEnd =
+      admin.firestore.Timestamp.fromMillis(dateMs + 24 * 3600 * 1000);
+
+    // 공개된 적 있는 공고만 — DRAFT는 확정 지원서가 존재할 수 없어
+    // required만 더해지고 부족이 통째로 유령이 된다.
+    // (callableGetStaffingReadiness와 같은 population)
+    const tosSnap = await db.collection("tos")
+      .where("businessId", "==", businessId)
+      .where("status", "in", ["ACTIVE", "SCHEDULED", "FULL"])
+      .get();
+
+    const flexTOs: Array<{toId: string; title: string}> = [];
+    for (const toDoc of tosSnap.docs) {
+      const d = toDoc.data();
+      if (d["isDeleted"] === true) continue;
+      if (((d["type"] as string | undefined) ?? "") !== "flex") continue;
+      flexTOs.push({toId: toDoc.id,
+        title: (d["title"] as string | undefined) ?? ""});
+    }
+
+    type DsRow = {
+      toId: string; toTitle: string; slotId: string; wdId: string;
+      workType: string; startTime: string; endTime: string;
+      requiredCount: number; confirmedCount: number; pendingCount: number;
+    };
+    const rows: DsRow[] = [];
+
+    // Promise.all — 한 TO라도 실패하면 전체 throw.
+    // 일부만 센 부족을 '전체 현황'으로 내려보내지 않는다.
+    await Promise.all(flexTOs.map(async (to) => {
+      const slotsSnap = await db
+        .collection("tos").doc(to.toId).collection("slots")
+        .where("date", ">=", dayStart)
+        .where("date", "<", dayEnd)
+        .get();
+
+      for (const slotDoc of slotsSnap.docs) {
+        const sd = slotDoc.data();
+        if (sd["isClosed"] === true) continue;
+        const wdc = (sd["workDetailCounts"] as Record<string, {
+          confirmedCount?: number; pendingCount?: number;
+        }> | undefined) ?? {};
+        const rawWDs = (sd["workDetails"] as unknown[] | undefined) ?? [];
+
+        for (const raw of rawWDs) {
+          if (typeof raw !== "object" || raw === null) continue;
+          const w = raw as Record<string, unknown>;
+          const wdId = ((w["wdId"] as string | undefined) ?? "").trim();
+          if (wdId.length === 0 || !(wdId in wdc)) {
+            // [R0 계약] DATA CONTRACT ERROR != ZERO — 조용히 건너뛰면
+            // 그 모집 단위의 부족이 사라져 '충원할 것이 없다'가 된다.
+            throw new HttpsError(
+              "failed-precondition",
+              "[dayStaffingDetail] WORKDETAIL_CONTRACT_BROKEN: " +
+              `TO ${to.toId} slot ${slotDoc.id} wdId "${wdId}"`
+            );
+          }
+          rows.push({
+            toId: to.toId,
+            toTitle: to.title,
+            slotId: slotDoc.id,
+            wdId,
+            workType: (w["workType"] as string | undefined) ?? "",
+            startTime: (w["startTime"] as string | undefined) ?? "",
+            endTime: (w["endTime"] as string | undefined) ?? "",
+            requiredCount: Math.max(
+              0, (w["requiredCount"] as number | undefined) ?? 0),
+            confirmedCount: Math.max(0, wdc[wdId]?.confirmedCount ?? 0),
+            pendingCount: Math.max(0, wdc[wdId]?.pendingCount ?? 0),
+          });
+        }
+      }
+    }));
+
+    return {rows};
+  }
+);
 
 // ─── callableGetAvailableWorkers ─────────────────────────────────────────────
 // 특정 TO/슬롯에 근무 가능일을 등록한 인력 후보 조회 (Phase 8.1B)
@@ -31274,14 +31464,50 @@ export const callableCancelTOInvitation = onCall(
     }
 
     // ── 3. INVITED/EXPIRED → CANCELED ────────────────────────────────────────
+    // [SYSTEM-INTEGRATION-R2] workDetailCounts 반환.
+    //
+    //   callableInviteWorker는 INVITED를 만들 때 세 자리를 +1 한다:
+    //     slot.pendingCount · TO.totalPending · workDetailCounts[wdId].pendingCount
+    //   앞의 둘은 syncTOStats(applications onDocumentWritten)가 count()로 절대값을
+    //   다시 써 주므로 여기서 건드리면 이중 감소로 음수가 스쳐 지나간다.
+    //   **workDetailCounts는 syncTOStats의 대상이 아니다** — 증감만으로 유지되는
+    //   canonical per-wdId counter다. 철회가 이 자리를 되돌리지 않으면
+    //   `지원 대기`가 영구히 부풀어 있고, 그 값은 부족 화면의 CTA 강도와
+    //   Home의 지원 대기 신호에 그대로 쓰인다.
+    //   거절(callableDeclineTOInvitation)은 이미 같은 자리를 -1 한다 —
+    //   철회만 빠져 있었다.
+    //
+    //   EXPIRED는 INVITED를 거쳐서만 도달하므로 같은 카운터를 들고 있다.
+    //   상태 전이와 카운터를 한 트랜잭션에 묶어 부분 성공을 막는다.
     const canceledAt = admin.firestore.Timestamp.now();
-    await appRef.update({
-      status:     "CANCELED",
-      canceledAt,
-      canceledBy: callerUid,
-      statusHistory: admin.firestore.FieldValue.arrayUnion({
-        status: "CANCELED", at: canceledAt, by: callerUid, action: "INVITE_CANCELED",
-      }),
+    const cancelToId = appData.toId as string | undefined;
+    const cancelSlotId = appData.slotId as string | undefined;
+    const cancelWdId = appData.wdId as string | undefined;
+    await db.runTransaction(async (cTx) => {
+      const fresh = await cTx.get(appRef);
+      const freshStatus = fresh.data()?.status as string | undefined;
+      // 그 사이 수락·거절됐다면 카운터는 그 경로가 이미 정리했다.
+      if (freshStatus !== "INVITED" && freshStatus !== "EXPIRED") return;
+
+      cTx.update(appRef, {
+        status: "CANCELED",
+        canceledAt,
+        canceledBy: callerUid,
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "CANCELED", at: canceledAt,
+          by: callerUid, action: "INVITE_CANCELED",
+        }),
+      });
+
+      if (cancelToId && cancelSlotId && cancelWdId) {
+        cTx.update(
+          db.collection("tos").doc(cancelToId)
+            .collection("slots").doc(cancelSlotId),
+          {
+            [`workDetailCounts.${cancelWdId}.pendingCount`]:
+              admin.firestore.FieldValue.increment(-1),
+          });
+      }
     });
 
     // ── 4. 근로자에게 취소 알림 ─────────────────────────────────────────────
