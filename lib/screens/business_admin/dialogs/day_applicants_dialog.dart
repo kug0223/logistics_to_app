@@ -64,6 +64,13 @@ class _GroupData {
   final List<ApplicationModel> pendingApps = [];
   final List<ApplicationModel> confirmedApps = [];
 
+  /// [R2.2] 아직 응답하지 않은 초대. pendingApps와 합치지 않는다 —
+  /// 지원은 지원자가 표시한 관심이고 초대는 관리자가 먼저 보낸 제안이다.
+  final List<ApplicationModel> invitedApps = [];
+
+  /// [R2.2] 응답·종료된 초대 (거절·철회·만료·자동종료). 최근 것만 보여준다.
+  final List<ApplicationModel> closedInvites = [];
+
   _GroupData({
     required this.toId,
     required this.toTitle,
@@ -157,6 +164,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   //   null = 조회 실패(UNKNOWN). 빈 목록(성공)과 구분한다 —
   //   실패를 빈 목록으로 바꾸면 `충원할 것이 없다`는 거짓 주장이 된다.
   List<DayStaffingRow>? _dayStaffingRows = const [];
+
+  /// [SYSTEM-INTEGRATION-R2.2] 이 날짜의 초대 현황.
+  ///
+  ///   초대를 보낸 뒤 관리자가 그 결과를 볼 곳이 없었다. INVITED Application은
+  ///   만들어지고 자리의 pendingCount도 올라가는데, 관리자 화면 어디에도
+  ///   `INVITED`를 읽는 곳이 없었다 — 누구에게 보냈는지, 몇 건이 응답을
+  ///   기다리는지, 누가 거절했는지를 알 수 없었다.
+  ///
+  ///   null = 조회 실패(UNKNOWN). `초대 중 0명`으로 바꾸지 않는다.
+  List<ApplicationModel>? _dayInvitations = const [];
 
   final Set<String> _selectedIds = {};
   final Set<String> _starredIds = {};
@@ -263,6 +280,29 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         staffingRows = null;
       }
 
+      // [R2.2] 초대 현황 — 지원자 목록과 별개로 읽는다.
+      //   실패해도 지원자 명단은 유효하므로 초대 영역만 UNKNOWN으로 내린다.
+      //
+      //   canManageTo가 없으면 아예 조회하지 않는다. 그 권한이 없는 관리자는
+      //   초대를 보낼 수도 없고(CTA도 같은 권한으로 막혀 있다), 서버도 거부한다.
+      //   권한 없음을 `확인하지 못했어요`(ERROR)로 표시하지 않기 위해
+      //   빈 목록으로 둔다 — NO_PERMISSION != ERROR.
+      List<ApplicationModel>? invitations = const [];
+      final canSeeInvites = _canForSelectedBiz((p) => p.canManageTo);
+      if (canSeeInvites) {
+      try {
+        invitations = await _svc.getDayInvitationsByDateAndBusiness(
+            date: widget.date, businessId: bizId);
+        if (widget.filterToId != null) {
+          invitations =
+              invitations.where((a) => a.toId == widget.filterToId).toList();
+        }
+      } catch (e) {
+        debugPrint('⚠️ [DayApplicants] 초대 현황 조회 실패: $e');
+        invitations = null;
+      }
+      }
+
       // 특정 공고 필터 (TOGroupCard 명단 보기)
       if (widget.filterToId != null) {
         pending = pending.where((a) => a.toId == widget.filterToId).toList();
@@ -278,7 +318,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       Map<String, int> weeklyMap = {};
 
       if (allApps.isNotEmpty) {
-        final allUids = allApps.map((a) => a.uid).toSet().toList();
+        // [R2.2] 초대받은 사람의 이름도 필요하다 — 초대 현황이 uid만 보여주면
+        //   `누구에게 보냈는가`를 답하지 못한다. 계약서·주간 횟수는 지원/확정자
+        //   대상이므로 그쪽 목록은 늘리지 않는다.
+        final allUids = {
+          ...allApps.map((a) => a.uid),
+          ...(invitations ?? const <ApplicationModel>[]).map((a) => a.uid),
+        }.toList();
         final allAppIds = allApps.map((a) => a.id).toList();
 
         // Phase 3 입력값은 Phase 1 결과만 필요 → Phase 2와 병렬로 선제 시작
@@ -353,6 +399,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _weeklyWorkCountMap = weeklyMap;
           _workDetailCapacityMap = workDetailCapacityMap;
           _dayStaffingRows = staffingRows;
+          _dayInvitations = invitations;
           _idCardStatusMap = idCardMap;
           _reviewWrittenMap.addAll(reviewMap);
           _starredIds.addAll(starredFromFirestore);
@@ -372,6 +419,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _contractStatusMap = contractMap;
         _weeklyWorkCountMap = weeklyMap;
         _dayStaffingRows = staffingRows;
+        _dayInvitations = invitations;
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 확정자 없으면 초기화
         _noShowApplicationIds = {}; // [R5.1]
         _isLoading = false;
@@ -390,6 +438,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _idCardStatusMap = {};
         _workDetailCapacityMap = {};
         _dayStaffingRows = null; // 전체 로드 실패 — 충원 영역도 UNKNOWN
+        _dayInvitations = null;
         _weeklyWorkCountMap = {};
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 실패 시도 초기화
         _noShowApplicationIds = {}; // [R5.1]
@@ -521,6 +570,44 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
     for (final app in _confirmedApps) {
       addApp(app, false);
+    }
+
+    // [SYSTEM-INTEGRATION-R2.2] 초대를 같은 모집 단위(work instance)에 붙인다.
+    //
+    //   사람 단위로 합치지 않는다. 같은 근로자가 9/21과 9/22에 각각 초대받을 수
+    //   있고, 한쪽을 거절했다고 다른 쪽까지 거절로 보이면 안 된다.
+    //   묶는 단위는 지원서와 같은 `toId + wdId`다.
+    void addInvite(ApplicationModel app) {
+      final wKey = app.wdId?.isNotEmpty == true
+          ? app.wdId!
+          : (app.workDetailId?.isNotEmpty == true
+              ? app.workDetailId!
+              : '${app.selectedWorkType}_${app.startTime}_${app.endTime}');
+      final key = '${app.toId ?? app.toTitle}_$wKey';
+      final g = groups.putIfAbsent(
+        key,
+        () => _GroupData(
+          toId: app.toId,
+          toTitle: app.toTitle,
+          workType: app.selectedWorkType,
+          startTime: app.startTime,
+          endTime: app.endTime,
+          isLongTerm: app.isLongTermApplication,
+          wdId: app.wdId,
+          workDetailId: app.workDetailId,
+          slotId: app.slotId,
+        ),
+      );
+      g.slotId ??= app.slotId;
+      if (app.status == AppStatus.invited) {
+        g.invitedApps.add(app);
+      } else {
+        g.closedInvites.add(app);
+      }
+    }
+
+    for (final app in _dayInvitations ?? const <ApplicationModel>[]) {
+      addInvite(app);
     }
 
     // [SYSTEM-INTEGRATION-R2] slot canonical 모집 단위로 그룹을 보강한다.
@@ -759,7 +846,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Widget _buildBody(BuildContext context) {
     final rows = _dayStaffingRows;
-    final hasApps = _pendingApps.isNotEmpty || _confirmedApps.isNotEmpty;
+    // [R2.2] 초대만 있는 날도 보여줄 것이 있다 — 관리자가 보낸 초대의 결과다.
+    final hasApps = _pendingApps.isNotEmpty ||
+        _confirmedApps.isNotEmpty ||
+        (_dayInvitations?.isNotEmpty ?? false);
 
     // [SYSTEM-INTEGRATION-R2] 지원자가 없다고 해서 '할 일이 없다'가 아니다.
     //
@@ -1031,6 +1121,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ),
           ),
         ],
+
+        // ── [SYSTEM-INTEGRATION-R2.2] 초대 현황 — 지원 섹션 다음, 초대 CTA 앞 ──
+        //   보낸 초대가 어떻게 됐는지 먼저 보이고, 그래도 부족하면 더 보낸다.
+        _buildInviteSection(context, g),
 
         // ── [Phase 8.1B.3 / R4] 인력 초대 버튼 — pending 섹션 이후 표시 ──
         // pending 먼저 처리 후 여전히 부족할 때 outbound invite CTA 노출
@@ -1824,6 +1918,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           style: ResponsiveHelper.smallStyle(context, color: statusColor)
               .copyWith(fontWeight: FontWeight.bold),
         ),
+        // [SYSTEM-INTEGRATION-R2.2] 지원 대기와 초대 중을 합치지 않는다.
+        //   `대기 N명` 하나로 보여주면 관리자는 그중 몇이 자기가 보낸 초대이고
+        //   몇이 들어온 지원인지 모른다 — 더 초대해야 하는지 판단할 수 없다.
         if (pending > 0) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Icon(
@@ -1833,12 +1930,144 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 2)),
           Text(
-            '+$pending',
+            '지원 $pending',
             style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
                 .copyWith(fontWeight: FontWeight.bold),
           ),
         ],
+        if (g.invitedApps.isNotEmpty) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Icon(
+            Icons.send_outlined,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.infoDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text(
+            '초대 ${g.invitedApps.length}',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
       ],
+    );
+  }
+
+  // ── [SYSTEM-INTEGRATION-R2.2] 초대 현황 ────────────────────────────────────
+
+  /// 초대의 현재 의미 — canonical status + 기존 signal에서 읽는다.
+  /// 새 enum을 만들지 않는다.
+  (String, Color) _inviteStateLabel(ApplicationModel app) {
+    switch (app.status) {
+      case AppStatus.invited:
+        return ('초대 중', AppColors.infoDark);
+      case AppStatus.rejected:
+        // invitedAt이 있으므로 근로자가 스스로 거절한 초대다.
+        return ('초대 거절', AppColors.grey600);
+      case AppStatus.canceled:
+        return ('초대 철회', AppColors.grey600);
+      case AppStatus.expired:
+        return ('응답 만료', AppColors.grey600);
+      case AppStatus.autoCanceled:
+        return (
+          app.cancelReason == 'SCHEDULE_CONFLICT' ? '일정 겹침 종료' : '자동 종료',
+          AppColors.grey600,
+        );
+      default:
+        return (app.status, AppColors.grey600);
+    }
+  }
+
+  Widget _buildInviteSection(BuildContext context, _GroupData g) {
+    // 조회 실패를 '초대 중 0명'으로 바꾸지 않는다 (ERROR != ZERO).
+    if (_dayInvitations == null) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 6),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, size: 14, color: AppColors.errorDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              '초대 현황을 확인하지 못했어요',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.errorDark),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final outstanding = g.invitedApps;
+    // 종료된 초대는 최근 3건만 — 기록 전체를 운영 화면에 펼치지 않는다.
+    final closed = [...g.closedInvites]
+      ..sort((a, b) => (b.invitedAt ?? b.appliedAt).compareTo(a.invitedAt ?? a.appliedAt));
+    final recentClosed = closed.take(3).toList();
+    if (outstanding.isEmpty && recentClosed.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (outstanding.isNotEmpty) ...[
+          _sectionDivider(context, '초대 중 (${outstanding.length}명)', AppColors.infoDark),
+          ...outstanding.map((a) => _buildInviteRow(context, a)),
+        ],
+        if (recentClosed.isNotEmpty) ...[
+          _sectionDivider(context, '최근 응답', AppColors.grey500),
+          ...recentClosed.map((a) => _buildInviteRow(context, a)),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildInviteRow(BuildContext context, ApplicationModel app) {
+    final (label, color) = _inviteStateLabel(app);
+    final user = _userMap[app.uid];
+    final name = user?.displayName ?? user?.name ?? app.applicantName ?? '근무자';
+    final sentAt = app.invitedAt;
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 20),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  name,
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (sentAt != null)
+                  Text(
+                    '${FormatHelper.formatDateTime(sentAt)} 발송',
+                    style: ResponsiveHelper.smallStyle(
+                        context, color: AppColors.grey500),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppColors.grey100,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context, color: color)
+                  .copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

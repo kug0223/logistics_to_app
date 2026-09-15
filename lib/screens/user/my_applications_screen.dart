@@ -695,7 +695,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     final contract   = _contractMap[app.id];
-    final statusInfo = _statusInfo(app.status);
+    final statusInfo = _statusInfo(app.status, app: app);
     final now        = DateTime.now();
 
     return Padding(
@@ -803,7 +803,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   Widget _buildDeletedCard(ApplicationModel app, TOModel? to) {
     final isDeleted = to == null;
-    final statusInfo = _statusInfo(app.status);
+    final statusInfo = _statusInfo(app.status, app: app);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1100,6 +1100,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
       // ── 거절 ─────────────────────────────────────────────────────────────────
       case AppStatus.rejected:
+        // [SYSTEM-INTEGRATION-R2.2] REJECTED에는 서로 다른 두 사건이 들어 있다.
+        //
+        //   관리자가 지원을 거절한 경우와, 근로자가 받은 초대를 스스로 거절한
+        //   경우다. 같은 값이라서 둘 다 `거절 / 이번 지원은 확정되지 않았어요`로
+        //   보였고, 자기가 거절한 초대가 거절당한 것처럼 읽혔다.
+        //
+        //   새 status를 만들지 않는다. `invitedAt`은 초대로 생긴 지원서에만
+        //   있고(callableInviteWorker가 기록, callableApplyToTO는 쓰지 않는다)
+        //   후보 자격 검사도 이미 같은 신호로 둘을 구분하고 있다.
+        if (app.invitedAt != null) {
+          return const Text(
+            '초대를 거절했어요',
+            style: TextStyle(fontSize: 13, color: AppColors.grey500),
+          );
+        }
         return Text(
           app.rejectMessage?.isNotEmpty == true
               ? app.rejectMessage!
@@ -1119,6 +1134,41 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
       // ── 초대받음 ─────────────────────────────────────────────────────────────
       case AppStatus.invited:
+        // [SYSTEM-INTEGRATION-R2.2] 이미 인원이 찬 초대에는 수락 버튼을 두지 않는다.
+        //
+        //   남은 자리 1에 두 명을 초대하면 한 명이 수락한 순간 나머지는 수락할 수
+        //   없다. 서버는 정확히 막지만(`정원이 초과되어…`), 화면은 `수락하기`를
+        //   그대로 띄워 눌러야 실패를 아는 action이었다.
+        //   상태는 INVITED 그대로 두고 — 자리가 다시 열리면 되살아나야 한다 —
+        //   지금 할 수 있는 것만 보여준다. 거절은 계속 가능하다.
+        if (app.workInstanceFull) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '모집이 완료된 초대예요',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.grey600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                '이 근무는 인원이 모두 찼어요',
+                style: TextStyle(fontSize: 12, color: AppColors.grey500),
+              ),
+              const SizedBox(height: 8),
+              _inviteActionButton(
+                label: '초대 정리',
+                color: AppColors.grey600,
+                bgColor: AppColors.grey100,
+                loading: _decliningIds.contains(app.id),
+                onTap: () => _declineInvite(app.id),
+              ),
+            ],
+          );
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1249,7 +1299,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   // ─── 상태 정보 헬퍼 ──────────────────────────────────────────────────────────
 
-  _StatusInfo _statusInfo(String status) {
+  /// [SYSTEM-INTEGRATION-R2.2] [app]을 함께 받는다 — REJECTED 하나에 관리자 거절과
+  /// 근로자의 초대 거절이 같이 들어 있어 상태 값만으로는 라벨을 정할 수 없다.
+  _StatusInfo _statusInfo(String status, {ApplicationModel? app}) {
     switch (status) {
       case AppStatus.pending:
         return const _StatusInfo(
@@ -1270,6 +1322,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           bgColor: AppColors.successBg,
         );
       case AppStatus.rejected:
+        // 내가 거절한 초대를 '거절당함'으로 읽히게 두지 않는다.
+        if (app?.invitedAt != null) {
+          return const _StatusInfo(
+            label: '초대 거절',
+            color: AppColors.grey600,
+            bgColor: AppColors.grey100,
+          );
+        }
         return const _StatusInfo(
           label: '거절',
           color: AppColors.errorDark,

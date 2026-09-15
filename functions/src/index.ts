@@ -13881,25 +13881,7 @@ export const callableGetUsersBatch = onCall(
     //   급여 계좌·통장사본·신분증·주민/외국인등록번호·PASS 상세·서명/인감은
     //   호출자가 canManageWage를 가졌더라도 이 목적에서는 나가지 않는다.
     //   정확한 주거 주소 대신 homeRegion(시/군/구)만 나간다.
-    const APPLICANT_REVIEW_ALLOWED = new Set([
-      // 신원 표시 — 누구인지
-      "name", "username", "koreanName", "legalName", "profileImageUrl",
-      "gender", "birthDate", "bio",
-      "phone", "contactPhone", "authPhone",
-      "role", "accountStatus",
-      // 신뢰도 — 주의할 사건이 있는지
-      "isBlacklisted", "blacklistReason", "restrictedUntil", "trustScore",
-      "noShowCount", "lateCount", "recentNoShowCount", "recentLateCount",
-      "totalPenaltyDays", "consecutiveDays",
-      // 업무 경험 — 이번 근무에 맞는지
-      "totalWorkDays", "totalWorkHours", "workTypeStats",
-      "preferredWorkTypes", "skills", "badges",
-      "isAvailable", "availableFrom", "unavailableReason",
-      // 품질
-      "averageRating", "reviewCount", "rehireRate",
-      // 통근 — 시/군/구 수준
-      "homeRegion", "preferredJobRegions",
-    ]);
+    // allowlist는 모듈 레벨 APPLICANT_REVIEW_ALLOWED 한 벌을 쓴다.
 
     const users: Record<string, Record<string, unknown>> = {};
     for (const snap of snaps) {
@@ -15433,6 +15415,29 @@ function _isConflictLongTerm(
 //   · AUTO_CANCELED는 reliability 패널티 대상이 아니다 — 근로자의 선택이 아니다.
 //   · 시간 겹침 판정은 _isConflictShortTerm / _isConflictLongTerm 하나만 쓴다
 //     (callableApplyToTO의 지원 시점 차단과 같은 규칙).
+
+// [SYSTEM-INTEGRATION-R2.2] 지원 검토·초대 후보가 함께 쓰는 job-relevant allowlist.
+//   두 목적 모두 "이 사람을 이번 근무에 쓸지" 판단이고 capability도 canManageTo로
+//   같다. 목록이 두 벌이면 한쪽만 늘어나 민감 필드가 새어 나간다.
+const APPLICANT_REVIEW_ALLOWED = new Set([
+  // 신원 표시 — 누구인지
+  "name", "username", "koreanName", "legalName", "profileImageUrl",
+  "gender", "birthDate", "bio",
+  "phone", "contactPhone", "authPhone",
+  "role", "accountStatus",
+  // 신뢰도 — 주의할 사건이 있는지
+  "isBlacklisted", "blacklistReason", "restrictedUntil", "trustScore",
+  "noShowCount", "lateCount", "recentNoShowCount", "recentLateCount",
+  "totalPenaltyDays", "consecutiveDays",
+  // 업무 경험 — 이번 근무에 맞는지
+  "totalWorkDays", "totalWorkHours", "workTypeStats",
+  "preferredWorkTypes", "skills", "badges",
+  "isAvailable", "availableFrom", "unavailableReason",
+  // 품질
+  "averageRating", "reviewCount", "rehireRate",
+  // 통근 — 시/군/구 수준
+  "homeRegion", "preferredJobRegions",
+]);
 
 /** [R2.1] Seat Commit 겹침 계약 — 수집 결과. */
 type SeatCommitOverlapPlan = {
@@ -25830,10 +25835,31 @@ export const callableApplyToTO = onCall(
     if (!toData["isPublished"]) {
       throw new HttpsError("permission-denied", "아직 공개되지 않은 공고입니다.");
     }
+    // [SYSTEM-INTEGRATION-R2.2] FULL은 **모집 단위**의 상태다.
+    //
+    //   FLEX 공고는 날짜마다 슬롯이 따로 있고 자리도 날짜마다 따로 센다.
+    //   그런데 syncTOStats는 공고 전체 합계(totalConfirmed >= totalRequired)로
+    //   TO.status를 FULL로 올린다. 그 값을 지원 관문으로 쓰면
+    //
+    //     9/21 필요3 확정3   → 마감
+    //     9/22 필요3 확정1   → 아직 2명 필요
+    //
+    //   인 공고에서 **9/22 지원까지 `마감된 공고입니다`로 막힌다.**
+    //   공고 목록에는 계속 보이는데(callableGetPublishedTOs는 FULL도 노출)
+    //   들어가서 지원하면 거부되는, 사용자가 이유를 알 수 없는 상태였다.
+    //
+    //   슬롯 지원은 아래 4절이 슬롯 마감·해당 wdId 정원을 직접 본다 —
+    //   그쪽이 정확한 단위다. 그래서 슬롯 지원에서는 공고 전체 FULL을
+    //   관문으로 쓰지 않는다. 슬롯이 없는 CONTRACT 공고는 공고 자체가
+    //   모집 단위이므로 기존대로 막는다.
+    //
+    //   isManualClosed / CLOSED / SCHEDULED는 날짜와 무관하게 공고 전체를
+    //   닫는 사건이므로 그대로 둔다.
+    const applyIsSlotBased = typeof slotId === "string" && slotId.length > 0;
     if (
       toData["isManualClosed"] === true ||
       toData["status"] === "CLOSED" ||
-      toData["status"] === "FULL" ||
+      (toData["status"] === "FULL" && !applyIsSlotBased) ||
       toData["status"] === "SCHEDULED"  // [APPLY-A-01] 미게시 예약 공고 지원 차단
     ) {
       throw new HttpsError("permission-denied", "마감된 공고입니다.");
@@ -26613,8 +26639,59 @@ export const callableGetMyApplications = onCall(
     const snap = await q.get();
     const hasMore = snap.docs.length > cap;
     const docs = hasMore ? snap.docs.slice(0, cap) : snap.docs;
+
+    // [SYSTEM-INTEGRATION-R2.2] INVITED 초대의 모집 단위가 이미 찼는지.
+    //
+    //   남은 자리 1에 두 명을 초대하면 한 명이 수락한 순간 나머지 초대는
+    //   수락할 수 없게 된다. 서버는 정확히 막지만(정원이 초과되어…),
+    //   근로자 화면은 여전히 `수락하기`를 띄웠다 — 눌러야 실패를 아는 action이다.
+    //
+    //   상태를 바꾸지 않고 사실만 덧붙인다. 새 status enum을 만들지 않고,
+    //   자리가 다시 열리면 이 값도 자연히 false로 돌아온다.
+    //   INVITED 문서에 대해서만 계산하므로 일반 조회에는 추가 read가 없다.
+    const invitedDocs = docs.filter((d) => d.data()["status"] === "INVITED");
+    const fullMap: Record<string, boolean> = {};
+    if (invitedDocs.length > 0) {
+      const slotKeys = new Map<string, {toId: string; slotId: string}>();
+      for (const d of invitedDocs) {
+        const t = d.data()["toId"] as string | undefined;
+        const s = d.data()["slotId"] as string | undefined;
+        if (t && s) slotKeys.set(`${t}/${s}`, {toId: t, slotId: s});
+      }
+      const slotSnaps = await Promise.all(
+        [...slotKeys.values()].map((k) =>
+          db.collection("tos").doc(k.toId).collection("slots").doc(k.slotId).get()));
+      const byKey = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+      [...slotKeys.keys()].forEach((k, i) => byKey.set(k, slotSnaps[i]));
+
+      for (const d of invitedDocs) {
+        const t = d.data()["toId"] as string | undefined;
+        const s = d.data()["slotId"] as string | undefined;
+        const w = d.data()["wdId"] as string | undefined;
+        if (!t || !s || !w) continue;
+        const slotSnap = byKey.get(`${t}/${s}`);
+        if (!slotSnap?.exists) continue;
+        const sd = slotSnap.data()!;
+        if (sd["isManualClosed"] === true || sd["status"] === "closed") {
+          fullMap[d.id] = true;
+          continue;
+        }
+        const wds = (sd["workDetails"] as Record<string, unknown>[] | undefined) ?? [];
+        const wd = wds.find((x) => x["wdId"] === w);
+        if (!wd) continue;
+        const req = (wd["requiredCount"] as number | undefined) ?? 0;
+        const {confirmedCount: conf} = getWorkDetailCount(sd, wd);
+        if (req > 0 && conf >= req) fullMap[d.id] = true;
+      }
+    }
+
     return {
-      applications: docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      applications: docs.map((d) => ({
+        id: d.id,
+        ...serializeFirestoreData(d.data()),
+        // 초대에만 실린다. 없으면 '모름'이 아니라 '해당 없음'이다.
+        ...(fullMap[d.id] ? {workInstanceFull: true} : {}),
+      })),
       hasMore,
       lastDocId: docs.length > 0 ? docs[docs.length - 1].id : null,
     };
@@ -28120,7 +28197,29 @@ export const callableGetAvailableWorkers = onCall(
     if (!businessId) throw new HttpsError("failed-precondition", "공고에 사업장 정보가 없습니다.");
 
     // ── 2. 관리자 권한 검증 ───────────────────────────────────────────────────
-    await assertBizAdmin(callerUid, businessId);
+    // [SYSTEM-INTEGRATION-R2.2] 충원의 canonical capability는 canManageTo다.
+    //
+    //   지금까지 이 endpoint는 membership만 봤다. 그래서 canManageTo가 없는
+    //   SubAdmin이 초대 후보 명단을 받을 수 있었다 — 정작 초대
+    //   (callableInviteWorker)는 canManageTo를 요구하므로, 보낼 수 없는 사람
+    //   목록만 열려 있는 상태였다. 이번에 그 응답에 판단용 profile까지 실리므로
+    //   관문을 실제 action과 맞춘다.
+    const {callerData: awCaller, bizData: awBiz} =
+      await assertBizAdmin(callerUid, businessId);
+    const awAdminIds = (awBiz?.adminIds as string[] | undefined) ?? [];
+    const awIsFullAccess =
+      (awCaller?.role as string | undefined) === "SUPER_ADMIN" ||
+      awAdminIds.includes(callerUid) ||
+      (awBiz?.ownerId as string | undefined) === callerUid;
+    if (!awIsFullAccess) {
+      const awMember = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const awPerms =
+        awMember.data()?.permissions as Record<string, boolean> | undefined;
+      if (awPerms?.canManageTo !== true) {
+        throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+      }
+    }
 
     // ── 3. 사업장 city 조회 ──────────────────────────────────────────────────
     const bizSnap = await db.collection("businesses").doc(businessId).get();
@@ -28467,7 +28566,37 @@ export const callableGetAvailableWorkers = onCall(
         : 0;
       // [R7.2A] 이번 주 이 사업장 실제 근무 횟수 (TARGET_BUSINESS_ONLY)
       const weeklyBusinessCount: number = weeklyCountMap.get(uid) ?? 0;
-      return {uid, maskedName, city, district, workTypeCount, totalWorkDays, weeklyBusinessCount};
+      // [SYSTEM-INTEGRATION-R2.2] 판단에 쓸 수 있는 profile을 함께 내려준다.
+      //
+      //   관리자가 후보를 고를 때 가진 정보가 가려진 이름·지역·주간 횟수뿐이라
+      //   "왜 이 사람인가"를 판단할 수 없었다. 지원 검토에서 쓰는 것과
+      //   **같은 allowlist**를 그대로 쓴다 — 두 목적 모두 이번 근무에 이 사람을
+      //   쓸지 판단하는 것이고 권한도 canManageTo로 같다.
+      //
+      //   callableGetUsersBatch(purpose=applicantReview)를 재사용하지 않은 이유:
+      //   그 경로는 요청 uid가 이 사업장과 application 관계를 가질 것을 요구한다
+      //   ([P1-UB-01] cross-business 차단). 초대 후보는 아직 지원한 적이 없어
+      //   그 관문을 통과할 수 없다. 관계 검증을 느슨하게 만드는 대신, 이미
+      //   후보 자격(근무 가능일 등록·지역·블랙리스트·제재)을 통과한 이 자리에서
+      //   같은 allowlist로 투영한다.
+      const profile: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(_uData)) {
+        if (APPLICANT_REVIEW_ALLOWED.has(k)) profile[k] = v;
+      }
+      // 이름은 후보 목록 정책대로 마스킹된 값만 내보낸다.
+      delete profile["name"];
+      delete profile["username"];
+      delete profile["koreanName"];
+      delete profile["legalName"];
+      delete profile["phone"];
+      delete profile["contactPhone"];
+      delete profile["authPhone"];
+      profile["name"] = maskedName;
+
+      // profile에는 Timestamp(birthDate·restrictedUntil 등)가 섞여 있다.
+      // callable 응답은 순수 JSON이어야 하므로 다른 reader와 같은 직렬화를 거친다.
+      return {uid, maskedName, city, district, workTypeCount, totalWorkDays,
+        weeklyBusinessCount, profile: serializeFirestoreData(profile)};
     });
 
     // [R3-A1/R3-A2/R3-B] Structured observability log — PII 없음

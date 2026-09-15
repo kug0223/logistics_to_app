@@ -35,6 +35,13 @@ class AvailableWorkerModel {
   /// TARGET_BUSINESS_ONLY = YES. 서버 구버전 응답 시 0 default.
   final int weeklyBusinessCount;
 
+  /// [SYSTEM-INTEGRATION-R2.2] 판단용 profile — 지원 검토와 같은 allowlist.
+  ///
+  /// 이름은 마스킹된 값으로 덮여 오고, 계좌·신분증·정확한 주소·연락처는
+  /// 서버 allowlist에 없어 애초에 실리지 않는다.
+  /// null = 서버 구버전 응답 (상세를 열지 않는다).
+  final Map<String, dynamic>? profile;
+
   const AvailableWorkerModel({
     required this.uid,
     required this.maskedName,
@@ -43,6 +50,7 @@ class AvailableWorkerModel {
     this.workTypeCount = 0,
     this.totalWorkDays = 0,
     this.weeklyBusinessCount = 0,
+    this.profile,
   });
 
   /// [R3-C] 신규 근로자 여부 — totalWorkDays == 0 으로 derive (별도 필드 불필요)
@@ -67,6 +75,10 @@ class AvailableWorkerModel {
         totalWorkDays: (m['totalWorkDays'] as num?)?.toInt() ?? 0,
         // [R7.2A] backward-compatible: 구버전 서버 응답에 필드 없으면 0 default
         weeklyBusinessCount: (m['weeklyBusinessCount'] as num?)?.toInt() ?? 0,
+        // [R2.2] 구버전 서버 응답이면 null — 상세를 열지 않는다.
+        profile: m['profile'] is Map
+            ? Map<String, dynamic>.from(m['profile'] as Map)
+            : null,
       );
     } catch (_) {
       return null;

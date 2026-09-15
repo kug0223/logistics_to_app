@@ -135,13 +135,32 @@ void main() {
       expect(AppStatus.invited == AppStatus.pending, false);
     });
 
-    test('AHV-21 두 dialog 모두 INVITED를 참조하지 않는다', () {
-      // 관리자 목록은 PENDING/CONFIRMED 두 갈래뿐이다.
-      // 따라서 pendingApps를 '지원'으로 부르는 것이 정확하다.
-      for (final p in const [_day, _work]) {
-        expect(_source(p).contains('AppStatus.invited'), false,
-            reason: '$p 가 INVITED를 다루기 시작했다 — 라벨 재검토 필요');
-      }
+    // [SYSTEM-INTEGRATION-R2.2] 이 계약의 트리거 조건이 실제로 발생했다.
+    //
+    //   원래 이 테스트는 "INVITED를 다루기 시작했다 — 라벨 재검토 필요"라는
+    //   가드였다. INVITED를 영원히 숨기라는 뜻이 아니라, 숨어 있는 동안에는
+    //   pendingApps를 '지원'이라고 불러도 정확하다는 조건부 계약이었다.
+    //
+    //   R2.2에서 DayApplicantsDialog가 초대 현황을 보여주기 시작했다 —
+    //   초대를 보낸 관리자가 그 결과를 볼 곳이 어디에도 없었기 때문이다.
+    //   그래서 요구받은 대로 라벨을 재검토했고, 둘을 합치지 않았다:
+    //     지원 N   = 지원자가 표시한 관심 (PENDING)
+    //     초대 N   = 관리자가 먼저 보낸 제안 (INVITED)
+    //
+    //   WorkApplicantsDialog는 아직 초대를 다루지 않으므로 그대로 둔다.
+    test('AHV-21 INVITED를 다루는 화면은 지원과 라벨을 분리한다', () {
+      // 초대를 다루지 않는 화면은 여전히 PENDING/CONFIRMED 두 갈래다.
+      expect(_source(_work).contains('AppStatus.invited'), false,
+          reason: '$_work 가 INVITED를 다루기 시작했다 — 라벨 재검토 필요');
+
+      final day = _source(_day);
+      if (!day.contains('AppStatus.invited')) return; // 아직 안 다루면 계약 없음
+      final copy = _copyOf(_day);
+      expect(copy.contains(r"'초대 중 (${outstanding.length}명)'"), true,
+          reason: '초대를 다루면서 그것을 초대라고 부르지 않았다');
+      expect(copy.contains(r"'초대 ${g.invitedApps.length}'"), true);
+      expect(copy.contains(r"'지원 $pending'"), true,
+          reason: '지원과 초대가 한 숫자로 합쳐지면 더 초대해야 하는지 알 수 없다');
     });
 
     test('AHV-22 pending 목록은 PENDING만 담는다', () {

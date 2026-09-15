@@ -5,6 +5,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/core/available_worker_model.dart';
+import '../../../models/core/user_model.dart';
+import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../services/available_workers_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
@@ -754,6 +756,33 @@ class _AvailableWorkersBottomSheetState
     );
   }
 
+  /// [SYSTEM-INTEGRATION-R2.2] 후보 상세 — 기존 WorkerDetailDialog 재사용.
+  ///
+  /// 새 프로필 화면을 만들지 않는다. 지원 검토에서 쓰는 그 다이얼로그를
+  /// 읽기 전용(`showApprovalButtons: false`, `isConfirmed: false`)으로 연다.
+  /// 그 모드에서는 계좌·통장사본·신분증·계약 섹션이 렌더되지 않고,
+  /// 근무 통계·우리 사업장 이력·신뢰도·리뷰만 보인다.
+  ///
+  /// `worker.profile`은 서버가 지원 검토와 **같은 allowlist**로 투영한 값이라
+  /// 이름은 마스킹돼 있고 연락처·계좌·신분증·정확한 주소는 애초에 없다.
+  Future<void> _openCandidateDetail(AvailableWorkerModel worker) async {
+    final profile = worker.profile;
+    if (profile == null) return;
+    final user = UserModel.tryFromMap(profile, worker.uid);
+    if (user == null) {
+      ToastHelper.showError('근무자 정보를 불러오지 못했습니다.');
+      return;
+    }
+    if (!mounted) return;
+    await WorkerDetailDialog.show(
+      context: context,
+      user: user,
+      businessId: widget.businessId,
+      isConfirmed: false,
+      showApprovalButtons: false,
+    );
+  }
+
   Widget _buildCandidateRow(AvailableWorkerModel worker) {
     final isInviting = _invitingUids[worker.uid] == true;
     final isInvited = _invitedUids.contains(worker.uid);
@@ -780,15 +809,33 @@ class _AvailableWorkersBottomSheetState
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // ── 이름 + 지역 + 통합 메타데이터 ──────────────────────────────
+          // [SYSTEM-INTEGRATION-R2.2] 정보 영역만 tap 대상이다.
+          //   초대 버튼과 분리해 두어야 상세를 보려다 초대가 나가지 않는다.
           Expanded(
-            child: Column(
+            child: InkWell(
+              onTap: worker.profile == null
+                  ? null
+                  : () => _openCandidateDetail(worker),
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  worker.maskedName,
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.w600),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        worker.maskedName,
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (worker.profile != null) ...[
+                      const SizedBox(width: 2),
+                      const Icon(Icons.chevron_right,
+                          size: 16, color: AppColors.grey500),
+                    ],
+                  ],
                 ),
                 if (worker.locationLabel.isNotEmpty)
                   Text(
@@ -810,6 +857,7 @@ class _AvailableWorkersBottomSheetState
                     ),
                   ),
               ],
+              ),
             ),
           ),
           const SizedBox(width: 8),

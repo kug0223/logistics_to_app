@@ -297,7 +297,7 @@ void main() {
   group('R1.2.1-06 purpose projection', () {
     final cf = _src(_cfPath);
     final proj = _tsSliceOf(cf, 'const APPLICANT_REVIEW_ALLOWED = new Set([',
-        'const users: Record<string, Record<string, unknown>> = {};');
+        '/** [R2.1] Seat Commit 겹침 계약 — 수집 결과. */');
 
     test('06-a denylist가 아니라 allowlist다', () {
       expect(cf.contains('APPLICANT_REVIEW_ALLOWED'), isTrue);

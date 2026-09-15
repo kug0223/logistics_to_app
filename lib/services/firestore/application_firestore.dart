@@ -1187,6 +1187,56 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
+  /// [SYSTEM-INTEGRATION-R2.2] 그 영업일의 **초대 현황** — 지원과 섞지 않는다.
+  ///
+  /// `PENDING`은 지원자가 관심을 표시한 것이고 `INVITED`는 관리자가 먼저 제안한
+  /// 것이다. 사람 수를 합쳐 `대기 N명`으로 보여주면 관리자는 자기가 보낸 초대가
+  /// 몇 건 떠 있는지, 더 보내야 하는지를 알 수 없다.
+  ///
+  /// 반환 대상:
+  ///   · `INVITED`            아직 응답하지 않은 초대
+  ///   · 초대에서 갈라진 종료 상태 (`REJECTED`/`CANCELED`/`AUTO_CANCELED`/`EXPIRED`)
+  ///     — `invitedAt`이 있는 문서만. 초대로 시작하지 않은 거절·취소는 제외한다.
+  ///
+  /// 확정(`CONFIRMED`/`CONTRACT_PENDING`)은 이미 확정 명단이 담당하므로
+  /// 여기서 중복해 싣지 않는다.
+  ///
+  /// ERROR != ZERO: 실패는 throw. 호출부가 `초대 현황을 확인하지 못했어요`를
+  /// 그린다 — 조회 실패를 `초대 중 0명`으로 바꾸지 않는다.
+  Future<List<ApplicationModel>> getDayInvitationsByDateAndBusiness({
+    required DateTime date,
+    required String businessId,
+  }) async {
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetApplicationsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final result = await callable.call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'workDateGteMs': dateStart.millisecondsSinceEpoch,
+      'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+      'limit': 2000,
+      'purpose': 'applicantReview',
+    });
+    return (result.data['applications'] as List? ?? [])
+        .whereType<Map>()
+        .map((m) {
+          final raw = _cfHydrate(Map<String, dynamic>.from(m));
+          final id = raw.remove('id') as String? ?? '';
+          return ApplicationModel.tryFromMap(raw, id);
+        })
+        .whereType<ApplicationModel>()
+        // 초대로 시작한 문서만 — invitedAt은 callableInviteWorker만 기록한다.
+        .where((a) => a.invitedAt != null)
+        .where((a) =>
+            a.status == AppStatus.invited ||
+            a.status == AppStatus.expired ||
+            a.status == AppStatus.rejected ||
+            a.status == AppStatus.canceled ||
+            a.status == AppStatus.autoCanceled)
+        .toList();
+  }
+
   /// 계약 종료 예정 장기 근무자 조회 (fromDate 이후 종료, 확정 상태)
   Future<List<ApplicationModel>> getExpiringLongTermApplications({
     required String businessId,

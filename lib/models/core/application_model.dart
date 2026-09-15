@@ -175,6 +175,15 @@ class ApplicationModel {
   final DateTime? invitedAt;       // 초대 발송 시각 (만료 계산 기준)
   final DateTime? inviteExpiresAt; // 초대 만료 시각 (CF에서 invitedAt + 24h 계산 저장)
 
+  /// [SYSTEM-INTEGRATION-R2.2] 이 초대의 모집 단위가 이미 찼는가.
+  ///
+  /// Firestore 문서의 필드가 아니라 `callableGetMyApplications`가 조회 시점에
+  /// slot.workDetailCounts[wdId]로 계산해 실어 주는 값이다. 상태(enum)를 바꾸지
+  /// 않고 사실만 덧붙이므로, 자리가 다시 열리면 다음 조회에서 false로 돌아온다.
+  ///
+  /// true면 서버가 수락을 거부한다 — 화면은 수락 CTA를 내려야 한다.
+  final bool workInstanceFull;
+
   // [ID-CONSENT] 신분증 열람 사전동의 — CF 서버 타임스탬프로 기록 (legacy, 하위 호환 유지)
   final bool idCardConsentGiven;       // 지원 시 동의 여부 (항상 true, 미동의 시 지원 불가)
   final DateTime? idCardConsentAt;     // 동의 시각 (serverTimestamp)
@@ -279,6 +288,7 @@ class ApplicationModel {
     this.invitedBy,
     this.invitedAt,
     this.inviteExpiresAt,
+    this.workInstanceFull = false,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     this.idCardConsentGiven = false,
     this.idCardConsentAt,
@@ -411,6 +421,8 @@ class ApplicationModel {
       invitedBy: data['invitedBy'] as String?,
       invitedAt: parseTimestampNullable(data['invitedAt']),
       inviteExpiresAt: parseTimestampNullable(data['inviteExpiresAt']),
+      // [R2.2] Firestore 필드가 아니라 조회 시점에 서버가 계산해 실어 준 값.
+      workInstanceFull: data['workInstanceFull'] == true,
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
       idCardConsentGiven: data['idCardConsentGiven'] as bool? ?? false,
       idCardConsentAt: parseTimestampNullable(data['idCardConsentAt']),
@@ -655,6 +667,7 @@ class ApplicationModel {
     String? invitedBy,
     DateTime? invitedAt,
     DateTime? inviteExpiresAt,
+    bool? workInstanceFull,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     bool? idCardConsentGiven,
     DateTime? idCardConsentAt,
@@ -748,6 +761,7 @@ class ApplicationModel {
       invitedBy: invitedBy ?? this.invitedBy,
       invitedAt: invitedAt ?? this.invitedAt,
       inviteExpiresAt: inviteExpiresAt ?? this.inviteExpiresAt,
+      workInstanceFull: workInstanceFull ?? this.workInstanceFull,
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
       idCardConsentGiven: idCardConsentGiven ?? this.idCardConsentGiven,
       idCardConsentAt: idCardConsentAt ?? this.idCardConsentAt,
