@@ -108,8 +108,10 @@ void main() {
       ]) {
         expect(f.contains(marker), isTrue, reason: marker);
       }
-      // 컨테이너 decoration이 상태마다 동일 (색 + radius만)
-      expect('BorderRadius.circular(16)'.allMatches(f).length >= 3, isTrue);
+      // [HOME-V2-08D.1] 컨테이너 decoration이 상태마다 동일 — 이제 같은
+      //   토큰 하나를 공유하므로 "동일"이 값 비교가 아니라 참조로 보장된다.
+      expect('decoration: _groupSurface,'.allMatches(f).length, 4,
+          reason: '로딩 · 에러 · 부족없음 · 부족목록');
     });
 
     test('처리할 일 — 로딩·빈 상태·행 목록 전부 평면', () {
@@ -131,21 +133,36 @@ void main() {
   // SURFACE-05 다른 토큰 불변
   // ───────────────────────────────────────────────────────────
   group('SURFACE-05 시각 토큰 불변', () {
-    test('§10 배경을 바꾸지 않았다', () {
-      expect('color: Colors.white'.allMatches(home).length, 10);
-      expect(home.contains('AppColors.surface'), isFalse,
-          reason: 'jobs_root_screen도 Colors.white라 Home만 바꾸면 새 불일치가 된다');
+    // [HOME-V2-08D.1] 아래 셋은 원래 AH-V2-05C의 **범위 밖 표시**였다.
+    //   "이번엔 배경·radius·border를 건드리지 않았다"는 scope guard였고,
+    //   08D.1이 바로 그것들을 admin card 언어로 정렬하는 Phase다.
+    //   AH-V2-05C가 지키려던 것 — 상태가 달라도 같은 depth, shadow 없음 —
+    //   은 그대로 살아 있으므로 그쪽으로 다시 겨눈다.
+    test('§10 surface가 토큰을 쓴다', () {
+      expect(home.contains('color: AppColors.surface'), isTrue);
+      // 남은 Colors.white는 surface가 아니라 전경(버튼 글자·선택된 토글 글자)이다
+      expect('color: Colors.white'.allMatches(home).length, 0);
+      expect('foregroundColor: Colors.white'.allMatches(home).length, 1);
     });
 
-    test('§9 radius 불변', () {
-      expect('BorderRadius.circular(16)'.allMatches(home).length, 9);
+    test('§9 grouped surface가 단일 데코레이션을 공유한다', () {
+      expect(
+        home.contains('static final BoxDecoration _groupSurface = BoxDecoration('),
+        isTrue,
+      );
+      expect('decoration: _groupSurface,'.allMatches(home).length, 9,
+          reason: '오늘·처리할 일(3)·다가오는(4)·공고 준비');
+      // radius가 s에 곱해져 기기마다 달라지던 것이 사라졌다
+      expect(home.contains('BorderRadius.circular(12 * s)'), isFalse);
     });
 
-    test('§11 border를 새로 넣지 않았다', () {
-      final before = _shadowedSections(home);
-      for (final b in before) {
-        expect(b.contains('border: Border.all('), isFalse);
-      }
+    test('§11 flat은 유지하되 경계는 border로 준다', () {
+      // shadow는 여전히 0 — 이것이 AH-V2-05C의 본래 의도다
+      expect('boxShadow'.allMatches(home).length, 0);
+      final deco = _bodyOf(home, 'static final BoxDecoration _groupSurface');
+      expect(deco.contains('border: Border.all(color: AppColors.grey200, width: 1)'),
+          isTrue);
+      expect(deco.contains('boxShadow'), isFalse);
     });
 
     test('§12 spacing 불변', () {
@@ -153,10 +170,11 @@ void main() {
       expect('SizedBox(height: 16 * s)'.allMatches(home).length, 2);
     });
 
-    test('§13 typography 불변', () {
+    test('§13 typography', () {
       expect('fontSize: 18'.allMatches(home).length, 1);
       expect('fontSize: 13'.allMatches(home).length, 9);
-      expect('fontSize: 12'.allMatches(home).length, 25);
+      // [HOME-V2-08D.1] `안녕하세요,`(12px) 한 줄이 사라져 25 → 24.
+      expect('fontSize: 12'.allMatches(home).length, 24);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 
@@ -178,11 +196,12 @@ void main() {
       ]) {
         expect(_bodyOf(home, sig).contains('boxShadow'), isFalse, reason: sig);
       }
-      // 공고 준비 카드는 이번 Phase 이전부터 border를 갖고 있었다 — 그대로 둔다.
+      // [HOME-V2-08D.1] 공고 준비 카드는 원래도 border를 가졌지만 값이 혼자
+      //   달랐다(radius 12*s · border 0.8px). 이제 다른 섹션과 같은 것을 쓴다.
       final setup = _bodyOf(home, 'Widget _buildPostingSetupCard(');
-      expect(setup.contains('border: Border.all(color: AppColors.border, width: 0.8)'),
-          isTrue);
-      expect(setup.contains('BorderRadius.circular(12 * s)'), isTrue);
+      expect(setup.contains('decoration: _groupSurface,'), isTrue);
+      expect(setup.contains('AppColors.border'), isFalse);
+      expect(setup.contains('BorderRadius.circular(12 * s)'), isFalse);
     });
 
     test('§22 새 카드 컴포넌트를 만들지 않았다', () {

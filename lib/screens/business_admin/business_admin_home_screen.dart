@@ -1,4 +1,4 @@
-﻿import 'dart:async' show unawaited;
+import 'dart:async' show unawaited;
 
 import '../../services/fcm_service.dart';
 
@@ -972,7 +972,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final theme = Theme.of(context);
     final isSub = up.currentUser?.isSubAdmin == true;
     return Container(
-      color: Colors.white,
+      // [HOME-V2-08D.1] page header bar — grouped surface가 아니므로
+      //   border/radius 없이 surface 토큰만 쓴다.
+      color: AppColors.surface,
       padding: EdgeInsets.fromLTRB(20 * s, 8 * s, 16 * s, 12 * s),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1011,21 +1013,23 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 })),
           ]),
           SizedBox(height: 10 * s),
-          // 인사말 + 배지 + [PH1] 사업장/권한 컨텍스트
+          // [HOME-V2-08D.1] 이름 + 배지 + [PH1] 사업장/권한 컨텍스트
+          //
+          // `안녕하세요,`를 빼고 이름을 22px bold → 15px w700로 내렸다.
+          // Header는 이 화면에서 **정체성**을 말하는 자리이지 주인공이 아니다.
+          // 22px는 화면 전체 최대 텍스트라, 앞으로 들어올 Adaptive Hero(17px)가
+          // 그보다 작아져 위계가 뒤집히는 구조였다. greeting 줄과 그 아래
+          // 2px spacer도 함께 걷어내 header 높이가 실제로 줄어든다.
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('안녕하세요,',
-                style: TextStyle(
-                    fontSize: 12, color: AppColors.grey500)),
-            SizedBox(height: 2 * s),
             Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
               Flexible(
                 child: Text('$name님',
                     style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        height: 1.1,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        height: 1.2,
                         color: AppColors.textPrimary,
-                        letterSpacing: -0.5),
+                        letterSpacing: -0.2),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
               ),
@@ -1082,6 +1086,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       overflow: TextOverflow.ellipsis,
     );
   }
+
+  /// [HOME-V2-08D.1] Home grouped surface 공통 데코레이션.
+  ///
+  /// surface · radius 16 · grey200 1px · shadow 없음 — 공고 카드(03S.1)와 같은
+  /// admin card 언어다. 이전에는 섹션마다 `Colors.white`와 radius를 따로 적어
+  /// 같은 값이 여러 벌 존재했고, 그중 하나(공고 등록 준비)만 radius가 `12 * s`,
+  /// border가 0.8px로 달랐다. 한 곳에 두어 다시 갈라지지 않게 한다.
+  static final BoxDecoration _groupSurface = BoxDecoration(
+    color: AppColors.surface,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: AppColors.grey200, width: 1),
+  );
 
   Widget _headerBtn(BuildContext context, double s, IconData icon,
       {required VoidCallback onTap}) {
@@ -1264,11 +1280,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return Padding(
       padding: EdgeInsets.fromLTRB(20 * s, 0, 20 * s, 16 * s),
       child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12 * s),
-          border: Border.all(color: AppColors.border, width: 0.8),
-        ),
+        // [HOME-V2-08D.1] 이전에는 radius가 `12 * s`라 기기 폭에 따라 모서리가
+        //   달라졌고 border도 혼자 0.8px였다. 다른 섹션과 같은 값을 쓴다.
+        decoration: _groupSurface,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1493,10 +1507,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         child: Container(
           // [AH-V2-05C] flat surface — 다른 관리자 화면과 같은 depth.
           //   상태(정상/에러)에 따라 카드 깊이가 달라지던 것도 함께 사라진다.
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
+          // [HOME-V2-08D.1] 경계를 border로 준다 — flat인 채로 카드 범위가
+          //   보여야 grey50 배경 위에서 그룹이 읽힌다.
+          decoration: _groupSurface,
           child: Column(children: [
             if (canSeeStaffing) _buildStaffingMetrics(s, theme, up),
             if (canSeeStaffing && canSeeAttendance)
@@ -1793,8 +1806,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
           child: Container(
             height: 50 * s,
-            decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            decoration: _groupSurface,
             child: Center(
               child: SizedBox(width: 16 * s, height: 16 * s,
                 child: CircularProgressIndicator(
@@ -1813,8 +1825,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
           child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            decoration: _groupSurface,
             child: _todayOpsErrorRow(s,
               message: '향후 인력 현황을 불러오지 못했습니다',
               onRetry: () => unawaited(_loadStaffingReadiness())),
@@ -1841,8 +1852,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           child: Container(
             padding:
                 EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
-            decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            decoration: _groupSurface,
             child: Column(children: [
               Row(children: [
                 Icon(
@@ -1879,10 +1889,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         child: Container(
           // [AH-V2-05C] flat surface — 부족 목록이 있을 때만 그림자가 생겨
           //   같은 섹션이 상태에 따라 다른 깊이로 보이던 것을 없앤다.
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
+          decoration: _groupSurface,
           child: Column(
             children: [
               ...futureDays.asMap().entries.map((e) =>
@@ -2137,9 +2144,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
           child: Container(
             height: 56 * s,
-            decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(16),
-            ),
+            decoration: _groupSurface,
             child: Center(child: SizedBox(width: 18 * s, height: 18 * s,
               child: CircularProgressIndicator(strokeWidth: 2, color: theme.primaryColor))),
           ),
@@ -2157,9 +2162,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           padding: EdgeInsets.symmetric(horizontal: 16 * s),
           child: Container(
             padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
-            decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(16),
-            ),
+            decoration: _groupSurface,
             child: Row(children: [
               Icon(Icons.check_circle_outline, size: 18 * s, color: AppColors.grey300),
               SizedBox(width: 10 * s),
@@ -2174,10 +2177,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           child: Container(
             // [AH-V2-05C] flat surface — 할 일이 있을 때만 그림자가 생겨
             //   로딩·빈 상태와 깊이가 달라지던 것을 없앤다.
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
+            decoration: _groupSurface,
             child: Column(
               children: rows.asMap().entries.map((e) =>
                 _buildActionRowWidget(context, s, e.value, isLast: e.key == rows.length - 1)
