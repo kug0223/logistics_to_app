@@ -2350,6 +2350,26 @@ service cloud.firestore {
       }
 
       // write 필드 검증: 필수 필드 존재 + 타입 + 크기 + 키 whitelist
+      //
+      // [SYSTEM-INTEGRATION-R2.3] 초대 지역 필드는 **CF 전용**이다.
+      //   inviteEnabled / inviteRegions / inviteRegionKeys / inviteKeys /
+      //   inviteUpdatedAt 는 callableSetInviteRegions·callableSyncInviteKeys가
+      //   canonical 규칙(시/도 검증, 지역×날짜 복합 키)으로 만든다.
+      //   클라이언트가 직접 쓰면 아무 지역이나 자기 문서에 넣고 그 지역
+      //   사업장의 후보 목록에 등장할 수 있다.
+      //
+      //   whitelist에는 포함시키되(merge write에서 기존 값이 request.resource에
+      //   실려 오므로) **값이 변하지 않을 때만** 허용한다.
+      function isInviteFieldsUnchanged() {
+        let d = request.resource.data;
+        let p = resource == null ? {} : resource.data;
+        return d.get('inviteEnabled', null) == p.get('inviteEnabled', null)
+          && d.get('inviteRegions', null) == p.get('inviteRegions', null)
+          && d.get('inviteRegionKeys', null) == p.get('inviteRegionKeys', null)
+          && d.get('inviteKeys', null) == p.get('inviteKeys', null)
+          && d.get('inviteUpdatedAt', null) == p.get('inviteUpdatedAt', null);
+      }
+
       function isValidAvailabilityWrite() {
         let d = request.resource.data;
         return d.uid == uid
@@ -2358,7 +2378,10 @@ service cloud.firestore {
           && d.dates.size() <= 60
           && d.city is string
           && d.city.size() > 0
-          && d.keys().hasOnly(['uid', 'dates', 'city', 'district', 'updatedAt']);
+          && d.keys().hasOnly(['uid', 'dates', 'city', 'district', 'updatedAt',
+               'inviteEnabled', 'inviteRegions', 'inviteRegionKeys',
+               'inviteKeys', 'inviteUpdatedAt'])
+          && isInviteFieldsUnchanged();
       }
 
       // 단건 read: 본인 또는 SUPER_ADMIN만

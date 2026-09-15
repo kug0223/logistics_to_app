@@ -93,7 +93,14 @@ class AvailableWorkerModel {
         .toList();
   }
 
-  /// 지역 표시 — "서울 강남구" or "서울"
-  String get locationLabel =>
-      district != null && district!.isNotEmpty ? '$city $district' : city;
+  /// [SYSTEM-INTEGRATION-R2.3 §19] 지역 표시 — **거주지가 아니라 초대 동의**다.
+  ///
+  ///   `수원시`라고만 쓰면 관리자는 "수원에 사는 사람"으로 읽는다. 이제 후보
+  ///   자격은 거주지가 아니라 "이 근무지역의 초대를 허용했다"는 사실이고,
+  ///   [city]에 실려 오는 값도 근로자의 거주지가 아니라 **이 근무의 지역**이다.
+  ///   두 개념이 섞이지 않게 문장으로 말한다.
+  ///
+  ///   [district](거주 동/읍/면)는 서버가 더 이상 보내지 않는다 —
+  ///   초대 판단에 필요 없는 거주지 정밀도였다.
+  String get locationLabel => city.isEmpty ? '' : '$city 근무 가능';
 }

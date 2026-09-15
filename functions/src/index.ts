@@ -27263,6 +27263,49 @@ export const callableInviteWorker = onCall(
       }
     }
 
+    // ── 5-R2.3. 초대 지역 동의 재검증 (mutation-time) ─────────────────────────
+    //
+    // [SYSTEM-INTEGRATION-R2.3 §15] BLOCKER 조건.
+    //
+    //   후보 reader에서만 확인하면 다음이 통과한다:
+    //     관리자가 후보 목록을 연다
+    //     → 근로자가 `초대 받기 OFF` 또는 그 지역을 제거
+    //     → 관리자가 화면에 남아 있던 오래된 행에서 초대를 보낸다
+    //   목록은 스냅샷이고 초대는 지금 일어나는 사건이다.
+    //
+    // [§16] 근무 지역도 지금 다시 읽는다. 클라이언트가 보낸 지역 값은 쓰지
+    //   않는다 — 애초에 받지도 않는다.
+    //
+    //   실패하면 여기서 끝난다: Application도, 카운터도, 알림도 만들지 않는다(§26).
+    const inviteBizSnap =
+      await db.collection("businesses").doc(businessId).get();
+    if (!inviteBizSnap.exists) {
+      throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+    }
+    const inviteWorkRegionKey =
+      srvWorkRegionKeyOfBusiness(inviteBizSnap.data() ?? {});
+    if (!inviteWorkRegionKey) {
+      throw new HttpsError(
+        "failed-precondition",
+        "[R2.3] WORK_REGION_UNRESOLVED: 근무 지역을 특정하지 못해 초대할 수 없습니다."
+      );
+    }
+    const inviteAvSnap = await db.collection("worker_availability")
+      .doc(targetUid).get();
+    const inviteAvData = inviteAvSnap.data();
+    if (!inviteAvSnap.exists || inviteAvData?.["inviteEnabled"] !== true) {
+      throw new HttpsError(
+        "failed-precondition", "이 근로자는 현재 근무 초대를 받지 않습니다.");
+    }
+    const inviteAllowedKeys =
+      (inviteAvData?.["inviteRegionKeys"] as string[] | undefined) ?? [];
+    if (!inviteAllowedKeys.includes(inviteWorkRegionKey)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "이 근로자가 초대 받을 지역으로 선택하지 않은 근무입니다."
+      );
+    }
+
     // ── 6. 중복 초대 방지 + 동일 recruiting unit 거절/만료 재초대 차단 ─────────
     // INVITED/CONFIRMED/CONTRACT_PENDING: TO 레벨 중복 차단 (totalConfirmed 이중 증가 위험)
     // [R1.1-PATCH-2] REJECTED/EXPIRED: wdId 레벨 precision — 다른 wdId는 별도 unit, 통과
@@ -28255,10 +28298,351 @@ export const callableGetDayStaffingDetail = onCall(
   }
 );
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [SYSTEM-INTEGRATION-R2.3] 초대 받을 지역 — canonical region identity
+//
+//   lib/utils/region_key.dart와 **같은 규칙**을 구현한다.
+//   region_key_contract_test.dart가 두 구현을 대조해 고정한다.
+//
+//   왜 city 문자열 비교를 쓰지 않는가:
+//     lib/data/korean_regions.dart 상단이 이미 경고한다 —
+//       중구 : 서울·부산·대구·인천·대전·울산 (6개)
+//       동구 : 부산·대구·인천·전남광주·대전·울산 (6개)
+//     기존 후보 조회는 `worker_availability.city == businesses.city`였으므로
+//     서울 중구 사람이 부산 중구 근무의 후보가 됐다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** key 구분자 — 시/도·시군구 이름에 등장할 수 없는 문자. */
+const REGION_KEY_SEP = "|";
+
+/** 축약형 시/도 → canonical. 모르면 입력 그대로. */
+const PROVINCE_ALIASES: Record<string, string> = {
+  "서울": "서울특별시", "서울시": "서울특별시",
+  "부산": "부산광역시", "부산시": "부산광역시",
+  "대구": "대구광역시", "대구시": "대구광역시",
+  "인천": "인천광역시", "인천시": "인천광역시",
+  "대전": "대전광역시", "대전시": "대전광역시",
+  "울산": "울산광역시", "울산시": "울산광역시",
+  "세종": "세종특별자치시", "세종시": "세종특별자치시",
+  "경기": "경기도",
+  "강원": "강원특별자치도", "강원도": "강원특별자치도",
+  "충북": "충청북도", "충남": "충청남도",
+  "전북": "전북특별자치도", "전라북도": "전북특별자치도",
+  "경북": "경상북도", "경남": "경상남도",
+  "제주": "제주특별자치도", "제주도": "제주특별자치도",
+  "광주": "전남광주통합특별시", "광주광역시": "전남광주통합특별시",
+  "전남": "전남광주통합특별시", "전라남도": "전남광주통합특별시",
+};
+
+/**
+ * 시/도 → 시/군/구. lib/data/korean_regions.dart와 같은 데이터다.
+ * (2026.7.1 전남광주통합특별시 반영 — 16개 시/도, 229개 시/군/구)
+ */
+const KOREAN_CITIES_BY_PROVINCE: Record<string, string[]> = {
+  "서울특별시": [
+    "강남구", "강동구", "강북구", "강서구", "관악구", "광진구", "구로구", "금천구", "노원구", "도봉구",
+    "동대문구", "동작구", "마포구", "서대문구", "서초구", "성동구", "성북구", "송파구", "양천구", "영등포구",
+    "용산구", "은평구", "종로구", "중구", "중랑구",
+  ],
+  "부산광역시": [
+    "강서구", "금정구", "기장군", "남구", "동구", "동래구", "부산진구", "북구", "사상구", "사하구", "서구",
+    "수영구", "연제구", "영도구", "중구", "해운대구",
+  ],
+  "대구광역시": [
+    "군위군", "남구", "달서구", "달성군", "동구", "북구", "서구", "수성구", "중구",
+  ],
+  "인천광역시": [
+    "강화군", "계양구", "남동구", "동구", "미추홀구", "부평구", "서구", "연수구", "옹진군", "중구",
+  ],
+  "전남광주통합특별시": [
+    "강진군", "고흥군", "곡성군", "광산구", "광양시", "구례군", "나주시", "남구", "담양군", "동구", "목포시",
+    "무안군", "보성군", "북구", "서구", "순천시", "신안군", "여수시", "영광군", "영암군", "완도군", "장성군",
+    "장흥군", "진도군", "함평군", "해남군", "화순군",
+  ],
+  "대전광역시": [
+    "대덕구", "동구", "서구", "유성구", "중구",
+  ],
+  "울산광역시": [
+    "남구", "동구", "북구", "울주군", "중구",
+  ],
+  "세종특별자치시": [
+    "세종특별자치시",
+  ],
+  "경기도": [
+    "가평군", "고양시", "과천시", "광명시", "광주시", "구리시", "군포시", "김포시", "남양주시", "동두천시",
+    "부천시", "성남시", "수원시", "시흥시", "안산시", "안성시", "안양시", "양주시", "양평군", "여주시",
+    "연천군", "오산시", "용인시", "의왕시", "의정부시", "이천시", "파주시", "평택시", "포천시", "하남시",
+    "화성시",
+  ],
+  "강원특별자치도": [
+    "강릉시", "고성군", "동해시", "삼척시", "속초시", "양구군", "양양군", "영월군", "원주시", "인제군",
+    "정선군", "철원군", "춘천시", "태백시", "평창군", "홍천군", "화천군", "횡성군",
+  ],
+  "충청북도": [
+    "괴산군", "단양군", "보은군", "영동군", "옥천군", "음성군", "제천시", "증평군", "진천군", "청주시",
+    "충주시",
+  ],
+  "충청남도": [
+    "계룡시", "공주시", "금산군", "논산시", "당진시", "보령시", "부여군", "서산시", "서천군", "아산시",
+    "예산군", "천안시", "청양군", "태안군", "홍성군",
+  ],
+  "전북특별자치도": [
+    "고창군", "군산시", "김제시", "남원시", "무주군", "부안군", "순창군", "완주군", "익산시", "임실군",
+    "장수군", "전주시", "정읍시", "진안군",
+  ],
+  "경상북도": [
+    "경산시", "경주시", "고령군", "구미시", "김천시", "문경시", "봉화군", "상주시", "성주군", "안동시",
+    "영덕군", "영양군", "영주시", "영천시", "예천군", "울릉군", "울진군", "의성군", "청도군", "청송군",
+    "칠곡군", "포항시",
+  ],
+  "경상남도": [
+    "거제시", "거창군", "고성군", "김해시", "남해군", "밀양시", "사천시", "산청군", "양산시", "의령군",
+    "진주시", "창녕군", "창원시", "통영시", "하동군", "함안군", "함양군", "합천군",
+  ],
+  "제주특별자치도": [
+    "서귀포시", "제주시",
+  ],
+};
+
+/**
+ * 축약형 시/도 표기를 canonical 이름으로 편다. 모르면 입력 그대로.
+ * @param {string} raw 사용자/주소에서 온 시/도 표기
+ * @return {string} canonical 시/도 이름
+ */
+function srvCanonicalProvince(raw: string): string {
+  const t = (raw ?? "").trim();
+  if (t.length === 0) return t;
+  if (t in KOREAN_CITIES_BY_PROVINCE) return t;
+  return PROVINCE_ALIASES[t] ?? t;
+}
+
+/**
+ * 이 시/군/구가 속한 시/도 — **유일할 때만** 반환한다.
+ * 중구·동구처럼 여러 시/도에 같은 이름이 있으면 null (특정 불가).
+ * @param {string} city 시/군/구 이름
+ * @return {string | null} 유일한 시/도, 없거나 모호하면 null
+ */
+function srvProvinceOfCity(city: string): string | null {
+  const t = (city ?? "").trim();
+  if (t.length === 0) return null;
+  let found: string | null = null;
+  for (const [p, cities] of Object.entries(KOREAN_CITIES_BY_PROVINCE)) {
+    if (!cities.includes(t)) continue;
+    if (found !== null) return null; // 동명 — 추측하지 않는다
+    found = p;
+  }
+  if (found === null && t in KOREAN_CITIES_BY_PROVINCE) return t; // 세종
+  return found;
+}
+
+/**
+ * canonical region key `"<시/도>|<시군구>"`.
+ * 특정할 수 없으면 null — UNKNOWN은 매칭이 아니다.
+ * @param {string | null} [province] 시/도 (없으면 city로 유추)
+ * @param {string | null} [city] 시/군/구
+ * @return {string | null} region key, 특정 불가 시 null
+ */
+function srvRegionKeyOf(
+  province?: string | null, city?: string | null
+): string | null {
+  const c = (city ?? "").trim();
+  if (c.length === 0) return null;
+  let p = (province ?? "").trim();
+  if (p.length > 0) {
+    p = srvCanonicalProvince(p);
+  } else {
+    const inferred = srvProvinceOfCity(c);
+    if (inferred === null) return null;
+    p = inferred;
+  }
+  if (p.length === 0) return null;
+  return `${p}${REGION_KEY_SEP}${c}`;
+}
+
+/**
+ * 이 시/도에 이 시/군/구가 실제로 존재하는가 — 저장 전 검증용.
+ * @param {string} province 시/도
+ * @param {string} city 시/군/구
+ * @return {boolean} 실재하는 조합이면 true
+ */
+function srvIsValidRegionPair(province: string, city: string): boolean {
+  const p = srvCanonicalProvince(province);
+  const c = (city ?? "").trim();
+  if (p === "세종특별자치시") return c === p;
+  return (KOREAN_CITIES_BY_PROVINCE[p] ?? []).includes(c);
+}
+
+/**
+ * [R2.3 §4] 이 근무의 **실제 근무 장소** region key.
+ *
+ *   §4가 요구한 대로 먼저 확인했다: TO / slot / workDetail 어디에도 근무 장소
+ *   필드가 없다. 공고가 사업장과 다른 주소를 가질 수 있는 구조 자체가 없으므로,
+ *   근무 장소의 source of truth는 `businesses/{id}`다.
+ *   posting-level work location이 생기면 이 함수 한 곳만 바꾸면 된다.
+ *
+ *   `businesses`는 city/district만 저장하고 province는 저장하지 않으므로
+ *   address 문자열에서 시/도를 읽고, 없으면 city로 유추한다(유일할 때만).
+ *
+ * @param {Record<string, unknown>} bizData businesses 문서 데이터
+ * @return {string | null} 근무 지역 key, 특정 불가 시 null
+ */
+function srvWorkRegionKeyOfBusiness(
+  bizData: Record<string, unknown>
+): string | null {
+  const city = (bizData["city"] as string | undefined)?.trim() ?? "";
+  if (city.length === 0) return null;
+  const address = (bizData["address"] as string | undefined) ?? "";
+  // 주소 첫 토큰이 시/도면 그것을 쓴다 — 유추보다 정확하다.
+  const head = address.trim().split(/\s+/)[0] ?? "";
+  const fromAddress = head.length > 0 ? srvCanonicalProvince(head) : "";
+  const province =
+    (fromAddress in KOREAN_CITIES_BY_PROVINCE) ? fromAddress : "";
+  return srvRegionKeyOf(province, city);
+}
+
+/**
+ * 지역과 날짜를 한 쿼리로 좁히기 위한 복합 키 `"<regionKey>#<YYYY-MM-DD>"`.
+ * @param {string} regionKey canonical region key
+ * @param {string} dateKey KST "YYYY-MM-DD"
+ * @return {string} 복합 키
+ */
+function srvInviteKey(regionKey: string, dateKey: string): string {
+  return `${regionKey}#${dateKey}`;
+}
+
+/**
+ * [R2.3] 초대 받을 지역 설정 — 지원자 본인만.
+ *
+ *   §21: 관리자/SUB_ADMIN이 근로자의 preference를 바꿀 수 없다.
+ *        이 callable은 request.auth.uid 문서만 건드린다 — 대상 uid를 받지 않는다.
+ *   §8 : UNSET != OFF. 문서에 inviteEnabled가 아예 없으면 UNSET이다.
+ *        `ON인데 지역 0개`는 저장하지 않는다(서버 검증).
+ *   §10: homeRegion을 자동으로 초대 지역으로 넣지 않는다 — 여기 기본값이 없다.
+ *
+ *   쓰는 필드는 CF 전용이다(rules에서 클라이언트 write 차단).
+ *   `inviteKeys`는 지역×날짜 복합 키로, 후보 조회가 **두 조건을 모두 서버에서**
+ *   좁힐 수 있게 한다(§17 — 전국 스캔 금지).
+ */
+export const callableSetInviteRegions = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {enabled, regions} = (request.data ?? {}) as {
+      enabled?: boolean;
+      regions?: Array<{province?: string; city?: string}>;
+    };
+    if (typeof enabled !== "boolean") {
+      throw new HttpsError("invalid-argument", "enabled가 필요합니다.");
+    }
+
+    // 지역 정규화 + 검증 — 클라이언트가 보낸 key를 믿지 않고 서버가 만든다.
+    const cleaned: Array<{province: string; city: string; key: string}> = [];
+    const seen = new Set<string>();
+    for (const r of (regions ?? []).slice(0, 20)) {
+      const city = (r?.city ?? "").trim();
+      const rawProvince = (r?.province ?? "").trim();
+      if (city.length === 0) continue;
+      const province = rawProvince.length > 0 ?
+        srvCanonicalProvince(rawProvince) :
+        (srvProvinceOfCity(city) ?? "");
+      if (province.length === 0 || !srvIsValidRegionPair(province, city)) {
+        throw new HttpsError(
+          "invalid-argument", `알 수 없는 지역입니다: ${rawProvince} ${city}`.trim());
+      }
+      const key = srvRegionKeyOf(province, city);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      cleaned.push({province, city, key});
+    }
+
+    // §8 모순 상태 차단 — ON인데 지역 0개는 저장하지 않는다.
+    if (enabled && cleaned.length === 0) {
+      throw new HttpsError(
+        "failed-precondition", "초대 받을 지역을 한 곳 이상 선택해 주세요.");
+    }
+
+    const avRef = db.collection("worker_availability").doc(uid);
+    const avSnap = await avRef.get();
+    // 근무 가능일은 근로자가 직접 쓰는 기존 필드다 — 여기서 만들지 않고 읽기만 한다.
+    const dates = ((avSnap.data()?.["dates"] as string[] | undefined) ?? [])
+      .filter((d) => typeof d === "string" && d.length > 0);
+
+    const regionKeys = cleaned.map((c) => c.key);
+    // OFF면 어떤 초대 지역에도 걸리지 않는다. 선택 목록(inviteRegions)은
+    // 남겨 둔다 — 다시 켤 때 처음부터 고르게 하지 않기 위해서다(§11).
+    const inviteKeys = enabled ?
+      regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d))) :
+      [];
+
+    const payload: Record<string, unknown> = {
+      uid,
+      inviteEnabled: enabled,
+      inviteRegions: cleaned.map((c) => ({province: c.province, city: c.city})),
+      inviteRegionKeys: enabled ? regionKeys : [],
+      inviteKeys,
+      inviteUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    // 문서가 없으면 city canonical 필드가 없어 rules가 막는 형태가 되므로,
+    // CF가 만들 때는 homeRegion.city를 함께 채운다(기존 스키마 유지 목적).
+    if (!avSnap.exists) {
+      const uSnap = await db.collection("users").doc(uid).get();
+      const home =
+        uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
+      const homeCity = (home?.["city"] as string | undefined) ?? "";
+      if (homeCity.length > 0) payload["city"] = homeCity;
+      payload["dates"] = [];
+    }
+    await avRef.set(payload, {merge: true});
+
+    return {
+      enabled,
+      regions: cleaned.map((c) => ({province: c.province, city: c.city})),
+      regionKeys,
+      dateCount: dates.length,
+    };
+  }
+);
+
+/**
+ * [R2.3] 근무 가능일이 바뀌면 지역×날짜 복합 키를 다시 만든다.
+ *
+ *   `dates`는 기존대로 근로자가 직접 쓴다(rules 검증). 그 쓰기는 복합 키를
+ *   계산할 수 없으므로 저장 직후 이 callable이 서버에서 다시 만든다.
+ *   초대 설정이 없으면 아무 것도 하지 않는다.
+ */
+export const callableSyncInviteKeys = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const avRef = db.collection("worker_availability").doc(uid);
+    const snap = await avRef.get();
+    if (!snap.exists) return {synced: false, reason: "NO_AVAILABILITY"};
+    const d = snap.data() ?? {};
+    if (d["inviteEnabled"] !== true) {
+      // OFF/UNSET이면 복합 키가 남아 있으면 안 된다.
+      if (((d["inviteKeys"] as unknown[] | undefined) ?? []).length > 0) {
+        await avRef.update({inviteKeys: []});
+      }
+      return {synced: true, inviteKeyCount: 0};
+    }
+    const regionKeys = ((d["inviteRegionKeys"] as string[] | undefined) ?? [])
+      .filter((k) => typeof k === "string" && k.length > 0);
+    const dates = ((d["dates"] as string[] | undefined) ?? [])
+      .filter((x) => typeof x === "string" && x.length > 0);
+    const inviteKeys =
+      regionKeys.flatMap((k) => dates.map((x) => srvInviteKey(k, x)));
+    await avRef.update({inviteKeys});
+    return {synced: true, inviteKeyCount: inviteKeys.length};
+  }
+);
+
 // ─── callableGetAvailableWorkers ─────────────────────────────────────────────
 // 특정 TO/슬롯에 근무 가능일을 등록한 인력 후보 조회 (Phase 8.1B)
 // Input : { toId, slotId, workDetailId?, pageSize?, cursor? }
-// Output: { candidates: [{uid, maskedName, city, district?}], hasMore, nextCursor, totalFound }
+// Output: { candidates: [{uid, maskedName, city}], hasMore, nextCursor,
+//           totalFound }   ← [R2.3] district(거주 동) 제거
 // 보안: BUSINESS_ADMIN/SubAdmin 권한 검증, 개인정보 마스킹 후 반환
 export const callableGetAvailableWorkers = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -28318,13 +28702,26 @@ export const callableGetAvailableWorkers = onCall(
       }
     }
 
-    // ── 3. 사업장 city 조회 ──────────────────────────────────────────────────
+    // ── 3. 근무 지역 조회 ────────────────────────────────────────────────────
+    // [SYSTEM-INTEGRATION-R2.3 §4] 후보 matching의 기준은 **실제 근무 장소**다.
+    //   TO/slot/workDetail 어디에도 근무 장소 필드가 없으므로(전수 확인함)
+    //   근무 장소의 source of truth는 businesses다. posting-level override가
+    //   생기면 srvWorkRegionKeyOfBusiness 한 곳만 바꾸면 된다.
     const bizSnap = await db.collection("businesses").doc(businessId).get();
     if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
     const bizData = bizSnap.data()!;
     const businessCity = (bizData.city as string | undefined) ?? "";
     if (!businessCity) {
       throw new HttpsError("failed-precondition", "사업장 도시 정보가 설정되지 않았습니다.");
+    }
+    // [R2.3 §5/§20] 지역을 특정하지 못하면 UNKNOWN이다 — 후보 0명이 아니다.
+    //   동명 시/군/구(중구·동구 등)를 아무 시/도로나 추측해 매칭하지 않는다.
+    const workRegionKey = srvWorkRegionKeyOfBusiness(bizData);
+    if (!workRegionKey) {
+      throw new HttpsError(
+        "failed-precondition",
+        "[R2.3] WORK_REGION_UNRESOLVED: 사업장 주소에서 근무 지역을 특정하지 못했습니다."
+      );
     }
 
     // ── 4. 슬롯 → date, workDetails ───────────────────────────────────────────
@@ -28339,14 +28736,24 @@ export const callableGetAvailableWorkers = onCall(
     const kstDate = new Date(slotDateJST.getTime() + 9 * 60 * 60 * 1000);
     const dateKey = `${kstDate.getUTCFullYear()}-${String(kstDate.getUTCMonth() + 1).padStart(2, "0")}-${String(kstDate.getUTCDate()).padStart(2, "0")}`;
 
+    // [SYSTEM-INTEGRATION-R2.3 §17] 지역과 날짜를 **한 쿼리로** 좁힌다.
+    //
+    //   Firestore는 array-contains를 쿼리당 하나만 허용한다. 지역만 서버에서
+    //   좁히고 날짜를 메모리에서 거르면 페이지가 엉뚱하게 비고, 날짜만 좁히면
+    //   전국 스캔이 된다. 그래서 지역×날짜 복합 키를 미리 만들어 둔다.
+    //   (callableSetInviteRegions / callableSyncInviteKeys가 서버에서 생성)
+    //
+    //   기존 `city == businessCity` 는 **거주지역 hard gate**였다 — 폐기.
+    //   이제 pool은 "이 근무지역의 초대를 받겠다고 직접 설정한 사람"이다.
+    const inviteKey = srvInviteKey(workRegionKey, dateKey);
+
     // ── [R3-A1] Pool observability: count preflight ────────────────────────────
     // 동일 availability 조건으로 eligibility 이전 pool 크기를 관측
     // count() 실패 시 candidate 조회에 영향 없음 (observability failure ≠ matching failure)
     let poolCount = -1; // -1 = count 미획득(오류 또는 미실행)
     try {
       const countSnap = await db.collection("worker_availability")
-        .where("city", "==", businessCity)
-        .where("dates", "array-contains", dateKey)
+        .where("inviteKeys", "array-contains", inviteKey)
         .count()
         .get();
       poolCount = countSnap.data().count;
@@ -28414,8 +28821,7 @@ export const callableGetAvailableWorkers = onCall(
     if (useFullPool) {
       // FULL_POOL: race safety를 위해 MAX_PAGE_SIZE + 1 fetch
       const fullSnap = await db.collection("worker_availability")
-        .where("city", "==", businessCity)
-        .where("dates", "array-contains", dateKey)
+        .where("inviteKeys", "array-contains", inviteKey)
         .limit(MAX_PAGE_SIZE + 1)
         .get();
 
@@ -28439,8 +28845,7 @@ export const callableGetAvailableWorkers = onCall(
     } else {
       // LEGACY_PAGED: 기존 cursor-based pagination 그대로
       let legacyQuery = db.collection("worker_availability")
-        .where("city", "==", businessCity)
-        .where("dates", "array-contains", dateKey)
+        .where("inviteKeys", "array-contains", inviteKey)
         .limit(pageSize + 1);
       if (cursor) {
         const cursorDoc = await db.collection("worker_availability").doc(cursor).get();
@@ -28553,11 +28958,27 @@ export const callableGetAvailableWorkers = onCall(
       // 이미 지원/초대/확정된 근로자 제외 + [R1.1-PATCH-2] 동일 wdId 근로자-거절/만료자 제외
       if (existingUids.has(uid) || rejExpUids.has(uid)) continue;
 
-      // city canonical 재검증 (homeRegion 기준)
-      const homeRegion = uData.homeRegion as Record<string, unknown> | undefined;
-      const userCity = (homeRegion?.city as string | undefined) ?? "";
-      if (userCity !== businessCity) continue;
-      const userDistrict = homeRegion?.district as string | undefined;
+      // [SYSTEM-INTEGRATION-R2.3 §1/§13] 거주지역 hard gate 제거.
+      //
+      //   이전 코드: `if (userCity !== businessCity) continue;`
+      //   거주지가 곧 초대 동의라고 본 것이다. 실제 근로자는 본업 근처, 이동
+      //   중, 생활권 인접지역에서 일한다. 그리고 city 문자열 비교는 서울 중구와
+      //   부산 중구를 같은 지역으로 봤다.
+      //
+      //   이제 자격은 **지원자가 직접 그 근무지역의 초대를 허용했는가**다.
+      //   pool 쿼리(inviteKeys array-contains)가 이미 지역+날짜를 보장하지만,
+      //   문서가 stale할 수 있으므로 여기서 canonical 필드로 재확인한다.
+      const avData = avDocs[i].data();
+      if (avData["inviteEnabled"] !== true) continue;
+      const avRegionKeys = (avData["inviteRegionKeys"] as string[] | undefined) ?? [];
+      if (!avRegionKeys.includes(workRegionKey)) continue;
+      // [R2.3 §18/§19] 거주지역은 더 이상 관리자에게 보내지 않는다.
+      //
+      //   관리자가 알아야 할 사실은 하나다 — "이 사람이 이 근무지역의 초대를
+      //   허용했다". 그가 어디 사는지, 어느 동인지는 초대 판단에 필요 없고,
+      //   후보 행에 `수원시`가 뜨면 거주지로 오해된다. 지원자가 설정한 초대
+      //   지역 **목록 전체**도 보내지 않는다(§18).
+      const userDistrict: string | undefined = undefined;
 
       // [Phase 8.1B.1] 시간 겹침 체크 — USER-SCOPED (전체 사업장)
       // _hasTimeOverlap: 야간 교대 포함 분 단위 비교 (정책 통일)

@@ -20,6 +20,9 @@ import '../../screens/payroll/payslip_pdf_builder.dart';
 import 'package:printing/printing.dart';
 import '../../widgets/common/app_empty_state.dart';
 import 'user_tab_scope.dart';
+import '../../models/core/invite_region_preference.dart';
+import '../../services/invite_region_service.dart';
+import 'invite_region_settings_screen.dart';
 
 class MyScheduleScreen extends StatefulWidget {
   const MyScheduleScreen({super.key});
@@ -32,6 +35,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   static final _fmt = NumberFormat('#,###');
   final FirestoreService _firestoreService = FirestoreService();
   final AvailabilityService _availabilityService = AvailabilityService();
+  // [R2.3] 초대 받을 지역 — null = 아직 안 읽음(로딩). UNKNOWN과 구분한다.
+  final InviteRegionService _inviteRegionService = InviteRegionService();
+  InviteRegionPreference? _invitePref;
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
@@ -112,7 +118,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
     // 근무 가능일 백그라운드 로드 (캘린더 로드를 블로킹하지 않음)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadAvailability();
+      if (!mounted) return;
+      _loadAvailability();
+      _loadInvitePref(); // [R2.3] 같은 문서라 추가 왕복이 사실상 없다
     });
   }
 
@@ -543,6 +551,11 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           // 근무 가능일 배너 (에디트 모드가 아닐 때만 표시)
           if (!_isEditMode) _buildAvailabilityBanner(),
 
+          // [SYSTEM-INTEGRATION-R2.3] 초대 받을 지역 — 근무 제안의 나머지 절반.
+          //   가능일(언제)과 초대 지역(어디서)은 같은 질문의 두 축이라
+          //   같은 자리에 둔다. 가입 필수 단계로 만들지 않는다(§9).
+          if (!_isEditMode) _buildInviteRegionRow(),
+
           // 에디트 모드 안내 문구
           if (_isEditMode) _buildEditModeHint(),
 
@@ -557,6 +570,83 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         ],
       ),
     );
+  }
+
+  /// [SYSTEM-INTEGRATION-R2.3] 초대 받을 지역 진입점.
+  ///
+  ///   상태를 그대로 말한다:
+  ///     UNSET   설정하지 않음  — 안내 (§28 — 여기서만, 반복 압박 없음)
+  ///     OFF     받지 않음
+  ///     ON      선택한 지역 요약
+  ///     UNKNOWN 확인하지 못함  — OFF로 표시하지 않는다
+  Widget _buildInviteRegionRow() {
+    final pref = _invitePref;
+    final (label, color) = switch (pref?.state) {
+      null => ('불러오는 중…', AppColors.grey500),
+      InvitePreferenceState.unknown => ('확인하지 못함', AppColors.grey500),
+      InvitePreferenceState.unset => ('설정하기', AppColors.infoDark),
+      InvitePreferenceState.off => ('받지 않음', AppColors.grey600),
+      InvitePreferenceState.on => (
+          pref!.regions.length <= 2
+              ? pref.regions.map((r) => r.city).join(' · ')
+              : '${pref.regions.first.city} 외 ${pref.regions.length - 1}곳',
+          AppColors.infoDark,
+        ),
+    };
+
+    return InkWell(
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => const InviteRegionSettingsScreen()),
+        );
+        if (mounted) _loadInvitePref();
+      },
+      child: Container(
+        margin: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 2),
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 10),
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.place_outlined, size: 16, color: AppColors.grey600),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Text(
+                '초대 받을 지역',
+                style: ResponsiveHelper.smallStyle(context)
+                    .copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context, color: color)
+                  .copyWith(fontWeight: FontWeight.w600),
+            ),
+            const Icon(Icons.chevron_right, size: 16, color: AppColors.grey400),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadInvitePref() async {
+    final uid =
+        Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (uid == null) return;
+    final pref = await _inviteRegionService.loadMine(uid);
+    if (!mounted) return;
+    setState(() => _invitePref = pref);
   }
 
   /// 근무 가능일 배너 — 평상시에 가능일 현황 표시

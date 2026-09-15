@@ -493,10 +493,21 @@ class _AvailableWorkersBottomSheetState
     }
   }
 
+  /// [SYSTEM-INTEGRATION-R2.3 §20] 네 가지는 서로 다르다.
+  ///
+  ///   SUCCESS_ZERO  이 근무지역의 초대를 허용한 후보가 없다
+  ///   ERROR         후보를 불러오지 못했다        ← 0명으로 표시하지 않는다
+  ///   NO_PERMISSION TO 관리 권한이 없다
+  ///   UNKNOWN       근무 지역을 판단하지 못했다    ← 0명도 ERROR도 아니다
   String _parseError(Object e) {
     final s = e.toString().toLowerCase();
     if (s.contains('not-found')) return '공고 또는 슬롯 정보를 찾을 수 없습니다.';
-    if (s.contains('permission-denied')) return '조회 권한이 없습니다.';
+    if (s.contains('permission-denied')) return 'TO 관리 권한이 없습니다.';
+    if (s.contains('work_region_unresolved')) {
+      // UNKNOWN — 후보가 없는 것이 아니라 어디인지 몰라 찾지 못한 것이다.
+      return '사업장 주소에서 근무 지역을 확인하지 못했어요.\n'
+          '사업장 설정에서 주소를 다시 저장해 주세요.';
+    }
     if (s.contains('failed-precondition')) {
       return '사업장 위치 정보가 설정되지 않았습니다.\n사업장 설정에서 도시를 입력해주세요.';
     }
@@ -691,8 +702,10 @@ class _AvailableWorkersBottomSheetState
             const Icon(Icons.person_search_outlined,
                 size: 48, color: AppColors.grey400),
             const SizedBox(height: 12),
+            // [R2.3 §20] SUCCESS_ZERO — 조회는 됐고, 해당하는 사람이 없다.
+            //   자격이 거주지가 아니라 **초대 동의**로 바뀌었으므로 이유도 그렇게 말한다.
             Text(
-              '현재 초대 가능한 인력이 없습니다.',
+              '이 지역의 근무 초대를 받도록\n설정한 인력이 아직 없어요.',
               style: ResponsiveHelper.bodyStyle(
                   context, color: AppColors.grey500),
               textAlign: TextAlign.center,

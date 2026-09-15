@@ -118,4 +118,66 @@ class KoreanRegions {
   /// 세종특별자치시 여부
   /// 해당 시/도는 시/군/구 없이 시 자체가 선택 단위 → 피커에서 즉시 완료 처리
   static bool isSejong(String province) => province == '세종특별자치시';
+
+  // ── [SYSTEM-INTEGRATION-R2.3] 지역 식별 ─────────────────────────────────
+  //
+  //   이 파일 상단이 이미 경고하고 있다: 중구는 6곳, 동구도 6곳, 서구도 6곳.
+  //   `city`만으로는 지역을 특정할 수 없다. 초대 허용 지역을 city 문자열로만
+  //   비교하면 서울 중구에 사는 사람이 부산 중구 근무의 후보가 된다.
+  //   그래서 canonical key는 반드시 province를 포함한다.
+
+  /// 축약형 시/도 표기를 canonical 이름으로. 모르면 입력 그대로 돌려준다.
+  ///
+  ///   `경기` → `경기도`, `서울` → `서울특별시`, `강원도` → `강원특별자치도`
+  static String canonicalProvince(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return t;
+    if (citiesByProvince.containsKey(t)) return t;
+    return _provinceAliases[t] ?? t;
+  }
+
+  static const Map<String, String> _provinceAliases = {
+    '서울': '서울특별시', '서울시': '서울특별시',
+    '부산': '부산광역시', '부산시': '부산광역시',
+    '대구': '대구광역시', '대구시': '대구광역시',
+    '인천': '인천광역시', '인천시': '인천광역시',
+    '대전': '대전광역시', '대전시': '대전광역시',
+    '울산': '울산광역시', '울산시': '울산광역시',
+    '세종': '세종특별자치시', '세종시': '세종특별자치시',
+    '경기': '경기도',
+    '강원': '강원특별자치도', '강원도': '강원특별자치도',
+    '충북': '충청북도', '충남': '충청남도',
+    '전북': '전북특별자치도', '전라북도': '전북특별자치도',
+    '경북': '경상북도', '경남': '경상남도',
+    '제주': '제주특별자치도', '제주도': '제주특별자치도',
+    // 2026.7.1 통합 — 구 표기가 주소 문자열에 남아 있을 수 있다
+    '광주': '전남광주통합특별시', '광주광역시': '전남광주통합특별시',
+    '전남': '전남광주통합특별시', '전라남도': '전남광주통합특별시',
+  };
+
+  /// 이 시/군/구가 속한 시/도. **유일할 때만** 반환한다.
+  ///
+  ///   중구·동구처럼 여러 시/도에 같은 이름이 있으면 null이다 —
+  ///   추측해서 고르면 다른 지역 사람을 후보로 만든다.
+  ///   UNKNOWN은 매칭 실패로 다뤄야지 아무 province나 붙이면 안 된다.
+  static String? provinceOfCity(String city) {
+    final t = city.trim();
+    if (t.isEmpty) return null;
+    String? found;
+    for (final e in citiesByProvince.entries) {
+      if (!e.value.contains(t)) continue;
+      if (found != null) return null; // 동명 — 특정 불가
+      found = e.key;
+    }
+    // 세종처럼 시/도 이름 자체가 선택 단위인 경우
+    if (found == null && citiesByProvince.containsKey(t)) return t;
+    return found;
+  }
+
+  /// 이 시/도에 이 시/군/구가 실제로 존재하는가.
+  static bool isValidPair(String province, String city) {
+    final p = canonicalProvince(province);
+    if (isSejong(p)) return city.trim() == p;
+    return citiesOf(p).contains(city.trim());
+  }
 }
