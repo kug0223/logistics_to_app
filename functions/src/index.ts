@@ -15401,6 +15401,195 @@ function _isConflictLongTerm(
 }
 
 // ═══════════════════════════════════════════════════════════
+// 🪑 CANONICAL SEAT COMMIT — 겹침 계약
+// ═══════════════════════════════════════════════════════════
+//
+// [SYSTEM-INTEGRATION-R2.1]
+//
+// 한 사람의 자리를 확보하는 사건(Seat Commit)은 세 곳에서 일어난다.
+//
+//   callableApproveApplicationForReview   PENDING → CONTRACT_PENDING
+//   callableConfirmApplication            PENDING → CONTRACT_PENDING
+//   callableAcceptTOInvitation            INVITED → CONFIRMED
+//
+// 진입 화면이 다를 뿐 같은 사건이므로 계약이 갈리면 안 된다. 실제로는
+// callableConfirmApplication에만 겹침 계약이 있었고 나머지 둘에는 없었다.
+// 그래서 지원 검토에서 승인하거나 초대를 수락하면 그 근로자의 **겹치는 다른
+// 관심 상태가 그대로 살아남아** 같은 시간에 두 곳과 약속이 성립할 수 있었다.
+//
+// 이 파일에서 그 계약을 한 벌로 만든다. 아래 두 함수는 항상 짝으로,
+// **호출자의 트랜잭션 안에서** 쓴다 — Firestore는 모든 읽기가 모든 쓰기보다
+// 앞서야 하므로 수집(읽기)과 적용(쓰기)이 분리돼 있다.
+//
+//   const plan = await srvCollectSeatCommitOverlap(tx, {...});  // 읽기 구간
+//   ...다른 읽기·검증...
+//   srvApplySeatCommitOverlap(tx, plan, {...});                 // 쓰기 구간
+//
+// 정책:
+//   · 겹치는 CONFIRMED / CONTRACT_PENDING → **차단**. 이미 약속이 있다.
+//   · 겹치는 PENDING / INVITED → **AUTO_CANCELED**. 지원·초대는 관심이지
+//     약속이 아니므로, 약속 하나가 서면 같은 시간의 다른 관심은 접는다.
+//   · 자기 자신은 제외한다 (identity = 문서 id = toId_slotId_wdId_uid).
+//   · AUTO_CANCELED는 reliability 패널티 대상이 아니다 — 근로자의 선택이 아니다.
+//   · 시간 겹침 판정은 _isConflictShortTerm / _isConflictLongTerm 하나만 쓴다
+//     (callableApplyToTO의 지원 시점 차단과 같은 규칙).
+
+/** [R2.1] Seat Commit 겹침 계약 — 수집 결과. */
+type SeatCommitOverlapPlan = {
+  /** AUTO_CANCELED 대상 (겹치는 PENDING/INVITED) */
+  toCancel: FirebaseFirestore.QueryDocumentSnapshot[];
+  /** 자리를 확보하는 쪽의 시간·사업장 — 취소 문서에 남길 맥락 */
+  startTime: string;
+  endTime: string;
+  businessName: string;
+};
+
+/**
+ * [R2.1] Seat Commit 겹침 계약 — **읽기 단계**.
+ *
+ * 겹치는 CONFIRMED/CONTRACT_PENDING이 있으면 여기서 throw한다.
+ * 겹치는 PENDING/INVITED는 모아서 돌려준다.
+ *
+ * `tx.get(query)`로 읽으므로 이 문서들이 트랜잭션 읽기 집합에 들어간다 —
+ * 읽은 뒤 누군가 커밋하면 이 트랜잭션은 재시도되고 최신 상태로 다시 판정한다.
+ *
+ * [DESIGN-LIMIT] limit(200)/limit(100) — callableConfirmApplication이 쓰던
+ * 값을 그대로 유지한다. 한 사람이 동시에 들고 있는 활성 관계가 그 수를 넘는
+ * 일은 실제로 없고, 트랜잭션 쓰기 한도(500)를 고려한 값이다.
+ */
+async function srvCollectSeatCommitOverlap(
+  tx: FirebaseFirestore.Transaction,
+  args: {
+    applicantUid: string;
+    applicationId: string;
+    fd: FirebaseFirestore.DocumentData;
+  },
+): Promise<SeatCommitOverlapPlan> {
+  const {applicantUid, applicationId, fd} = args;
+
+  const startTime = (fd.startTime as string | undefined) ?? "";
+  const endTime = (fd.endTime as string | undefined) ?? "";
+  const businessName = (fd.businessName as string | undefined) ?? "";
+  const empty: SeatCommitOverlapPlan = {
+    toCancel: [], startTime, endTime, businessName,
+  };
+
+  // R1. 이미 성립한 약속 (차단 대상)
+  const committedSnap = await tx.get(
+    db.collection("applications")
+      .where("uid", "==", applicantUid)
+      .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+      .limit(200)
+  );
+
+  // R2. 아직 약속이 아닌 관계 (정리 대상)
+  //   INVITED를 포함하는 이유: 약속이 선 뒤에도 겹치는 초대가 살아 있으면
+  //   근로자에게 수락할 수 없는 action이 계속 보이고, 그 자리의 pending
+  //   카운터도 남는다.
+  const tentativeSnap = await tx.get(
+    db.collection("applications")
+      .where("uid", "==", applicantUid)
+      .where("status", "in", ["PENDING", "INVITED"])
+      .limit(100)
+  );
+
+  if (!startTime || !endTime) return empty;
+
+  const isLongTerm = fd.applicationType === "longTerm" ||
+    (Array.isArray(fd.workDays) && (fd.workDays as string[]).length > 0);
+  const workDateMs =
+    (fd.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis();
+  const startDateMs =
+    (fd.desiredStartDate as FirebaseFirestore.Timestamp | undefined)?.toMillis() ??
+    workDateMs;
+  const workEndDateMs =
+    (fd.workEndDate as FirebaseFirestore.Timestamp | undefined)?.toMillis();
+  const workDays = (fd.workDays as string[] | undefined) ?? [];
+
+  const conflictsWith = (other: FirebaseFirestore.DocumentData): boolean => {
+    if (isLongTerm && startDateMs !== undefined) {
+      return _isConflictLongTerm(
+        other, startDateMs, workEndDateMs ?? -1, workDays, startTime, endTime);
+    }
+    if (workDateMs !== undefined) {
+      return _isConflictShortTerm(other, workDateMs, startTime, endTime);
+    }
+    return false;
+  };
+
+  // V1. 겹치는 약속이 있으면 자리를 만들지 않는다.
+  for (const existing of committedSnap.docs) {
+    if (existing.id === applicationId) continue;
+    if (!conflictsWith(existing.data())) continue;
+    const eStart = (existing.data().startTime as string | undefined) ?? "";
+    const eEnd = (existing.data().endTime as string | undefined) ?? "";
+    throw new HttpsError(
+      "failed-precondition",
+      "해당 근로자는 같은 시간대에 이미 확정된 근무가 있습니다." +
+      (eStart && eEnd ? ` (${eStart}~${eEnd})` : ""),
+    );
+  }
+
+  // V2. 겹치는 관심 상태 수집
+  const toCancel: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  for (const tentative of tentativeSnap.docs) {
+    if (tentative.id === applicationId) continue;
+    if (conflictsWith(tentative.data())) toCancel.push(tentative);
+  }
+
+  return {toCancel, startTime, endTime, businessName};
+}
+
+/**
+ * [R2.1] Seat Commit 겹침 계약 — **쓰기 단계**.
+ *
+ * 겹치는 관심 상태를 AUTO_CANCELED로 접고 그 자리의 pending 카운터를 돌려준다.
+ *
+ * `workDetailCounts[wdId].pendingCount`만 직접 줄인다.
+ * slot.pendingCount / TO.totalPending은 syncTOStats가 count()로 절대값을 다시
+ * 쓰므로 여기서 또 줄이면 이중 감소로 음수가 스친다.
+ * workDetailCounts는 어디서도 재계산되지 않는 canonical counter라
+ * 여기서 돌려주지 않으면 그 오차가 영구히 남는다.
+ */
+function srvApplySeatCommitOverlap(
+  tx: FirebaseFirestore.Transaction,
+  plan: SeatCommitOverlapPlan,
+  args: {applicationId: string; nowTs: FirebaseFirestore.Timestamp},
+): void {
+  const {applicationId, nowTs} = args;
+  for (const doc of plan.toCancel) {
+    const d = doc.data();
+    tx.update(doc.ref, {
+      status: "AUTO_CANCELED",
+      canceledAt: nowTs,
+      cancelReason: "SCHEDULE_CONFLICT",
+      conflictingAppId: applicationId,
+      conflictingBusiness: plan.businessName,
+      conflictingTime: `${plan.startTime}~${plan.endTime}`,
+      statusHistory: admin.firestore.FieldValue.arrayUnion({
+        status: "AUTO_CANCELED",
+        at: nowTs,
+        by: "SYSTEM",
+        action: "AUTO_CANCEL",
+        reason: "SCHEDULE_CONFLICT",
+      }),
+    });
+
+    const cToId = d.toId as string | undefined;
+    const cSlotId = d.slotId as string | undefined;
+    const cWdId = d.wdId as string | undefined;
+    if (cToId && cSlotId && cWdId) {
+      tx.update(
+        db.collection("tos").doc(cToId).collection("slots").doc(cSlotId),
+        {
+          [`workDetailCounts.${cWdId}.pendingCount`]:
+            admin.firestore.FieldValue.increment(-1),
+        });
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 // ⏰ 지각 처리 — 관리자/하위관리자 출근 처리 시 호출
 // [5A.2B] trustScore 시스템 제거 — lateCount/lateDates/recentLateCount 갱신만 수행
 //
@@ -17058,6 +17247,21 @@ export const callableApproveApplicationForReview = onCall(
         );
       }
 
+      // R1.5: [SYSTEM-INTEGRATION-R2.1] Seat Commit 겹침 계약.
+      //
+      //   이 경로에는 겹침 계약이 아예 없었다. 지원 검토에서 승인하면 그
+      //   근로자의 같은 시간대 다른 지원·초대가 그대로 살아남아, 다른 사업장이
+      //   같은 경로로 승인하면 한 사람이 두 곳과 약속하게 됐다.
+      //   callableConfirmApplication이 쓰는 것과 **같은 helper**를 쓴다 —
+      //   같은 사건에 규칙이 두 벌이면 언젠가 다시 갈라진다.
+      const approveOverlapPlan = approveApplicantUid
+        ? await srvCollectSeatCommitOverlap(tx, {
+          applicantUid: approveApplicantUid,
+          applicationId,
+          fd: freshData,
+        })
+        : null;
+
       // R2: Slot/TO fresh read — CAPACITY-GUARD (callableConfirmApplication R5 동일 패턴)
       let approveSlotRef: admin.firestore.DocumentReference | null = null;
       let approveSlotFresh: admin.firestore.DocumentSnapshot | null = null;
@@ -17118,6 +17322,14 @@ export const callableApproveApplicationForReview = onCall(
       }
 
       // ── PHASE 3: 쓰기 (읽기 완료 후) ──
+
+      // W0: [R2.1] 겹치는 관심 상태 정리 — AUTO_CANCELED + pending counter 반환.
+      if (approveOverlapPlan) {
+        srvApplySeatCommitOverlap(tx, approveOverlapPlan, {
+          applicationId,
+          nowTs: admin.firestore.Timestamp.now(),
+        });
+      }
 
       // W1: Application → CONTRACT_PENDING
       tx.update(appRef, {
@@ -20024,8 +20236,26 @@ export const callableExpireApplications = onCall(
         cancelReason: "AUTO_EXPIRED",
       });
       count++;
+      // [SYSTEM-INTEGRATION-R2.1] workDetailCounts 반환.
+      //   지원·초대가 만들어질 때 그 자리의 pendingCount가 +1 됐다.
+      //   slot.pendingCount / TO.totalPending은 syncTOStats가 절대값으로 다시
+      //   쓰지만 workDetailCounts는 어디서도 재계산되지 않는다 — 여기서
+      //   돌려주지 않으면 지난 날짜의 '지원 대기'가 영구히 남는다.
+      const exData = doc.data();
+      const exToId = exData.toId as string | undefined;
+      const exSlotId = exData.slotId as string | undefined;
+      const exWdId = exData.wdId as string | undefined;
+      if (exToId && exSlotId && exWdId) {
+        batch.update(
+          db.collection("tos").doc(exToId).collection("slots").doc(exSlotId),
+          {
+            [`workDetailCounts.${exWdId}.pendingCount`]:
+              admin.firestore.FieldValue.increment(-1),
+          });
+        count++;
+      }
       total++;
-      if (count >= 499) {
+      if (count >= 498) {
         await batch.commit();
         batch = db.batch();
         count = 0;
@@ -21957,26 +22187,14 @@ export const callableConfirmApplication = onCall(
       const lockRef = db.collection("confirmation_locks").doc(applicantUid);
       await tx.get(lockRef);
 
-      // R3. 기존 CONFIRMED/CONTRACT_PENDING 전체 조회 (schedule conflict 체크)
-      const confirmedSnap = await tx.get(
-        db.collection("applications")
-          .where("uid", "==", applicantUid)
-          .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-          .limit(200)
-      );
-
-      // R4. 기존 PENDING 전체 조회 (충돌 시 AUTO_CANCELED 대상)
-      // [DESIGN-LIMIT] limit(100) — 사용자당 PENDING이 100건을 초과하면
-      //   오래된 PENDING auto-cancel이 일부 누락될 수 있음.
-      //   실제 서비스에서 100건 초과는 극히 드물어 실질 위험은 낮다.
-      //   Firestore 트랜잭션 write 한도(500건)를 고려한 설계이며,
-      //   syncTOStats CF(onDocumentWritten)가 카운터 정합성을 보장한다.
-      const pendingSnap = await tx.get(
-        db.collection("applications")
-          .where("uid", "==", applicantUid)
-          .where("status", "==", "PENDING")
-          .limit(100)
-      );
+      // R3+R4. [R2.1] Seat Commit 겹침 계약 — 세 writer가 공유하는 한 벌.
+      //   겹치는 CONFIRMED/CONTRACT_PENDING이 있으면 여기서 throw하고,
+      //   겹치는 PENDING/INVITED를 모아 둔다. 쓰기는 W2에서 한다.
+      const overlapPlan = await srvCollectSeatCommitOverlap(tx, {
+        applicantUid,
+        applicationId,
+        fd,
+      });
 
       // R5. TO/Slot 읽기 — CAPACITY-GUARD
       const toIdFresh = fd.toId as string | undefined;
@@ -21998,61 +22216,8 @@ export const callableConfirmApplication = onCall(
 
       // ── PHASE 2: 검증 및 자동취소 대상 수집 ──
 
-      // V1. 확정 대상 Application의 스케줄 정보 추출
-      const appIsLongTerm = fd.applicationType === "longTerm" ||
-        (Array.isArray(fd.workDays) && (fd.workDays as string[]).length > 0);
-      const appStartTime = (fd.startTime as string | undefined) ?? "";
-      const appEndTime = (fd.endTime as string | undefined) ?? "";
-      const appWorkDateMs = (fd.workDate as admin.firestore.Timestamp | undefined)?.toMillis();
-      const appStartDateMs =
-        (fd.desiredStartDate as admin.firestore.Timestamp | undefined)?.toMillis() ?? appWorkDateMs;
-      const appWorkEndDateMs = (fd.workEndDate as admin.firestore.Timestamp | undefined)?.toMillis();
-      const appWorkDays = (fd.workDays as string[] | undefined) ?? [];
-
-      // V2. [SCHEDULE-CONFLICT-GUARD] 기존 CONFIRMED/CONTRACT_PENDING 시간 겹침 차단
-      //     callableApplyToTO의 "지원 시점" 차단과 동일한 _hasTimeOverlap 함수 사용 (정책 통일)
-      //     → 정책: 09:00~18:00 + 18:00~22:00 = 겹침 아님 (strict <)
-      //              09:00~18:00 + 17:59~22:00 = 겹침 (차단)
-      if (appStartTime && appEndTime) {
-        for (const existing of confirmedSnap.docs) {
-          if (existing.id === applicationId) continue;
-          const eData = existing.data();
-          let hasConflict = false;
-          if (appIsLongTerm && appStartDateMs !== undefined) {
-            hasConflict = _isConflictLongTerm(
-              eData, appStartDateMs, appWorkEndDateMs ?? -1, appWorkDays, appStartTime, appEndTime,
-            );
-          } else if (appWorkDateMs !== undefined) {
-            hasConflict = _isConflictShortTerm(eData, appWorkDateMs, appStartTime, appEndTime);
-          }
-          if (hasConflict) {
-            const eStart = (eData.startTime as string | undefined) ?? "";
-            const eEnd = (eData.endTime as string | undefined) ?? "";
-            throw new HttpsError(
-              "failed-precondition",
-              `해당 근로자는 같은 시간대에 이미 확정된 근무가 있습니다.${eStart && eEnd ? ` (${eStart}~${eEnd})` : ""}`,
-            );
-          }
-        }
-      }
-
-      // V3. 겹치는 PENDING 수집 (트랜잭션 내에서 원자적 AUTO_CANCELED 예정)
-      const pendingToCancel: admin.firestore.QueryDocumentSnapshot[] = [];
-      if (appStartTime && appEndTime) {
-        for (const pending of pendingSnap.docs) {
-          if (pending.id === applicationId) continue;
-          const pData = pending.data();
-          let hasConflict = false;
-          if (appIsLongTerm && appStartDateMs !== undefined) {
-            hasConflict = _isConflictLongTerm(
-              pData, appStartDateMs, appWorkEndDateMs ?? -1, appWorkDays, appStartTime, appEndTime,
-            );
-          } else if (appWorkDateMs !== undefined) {
-            hasConflict = _isConflictShortTerm(pData, appWorkDateMs, appStartTime, appEndTime);
-          }
-          if (hasConflict) pendingToCancel.push(pending);
-        }
-      }
+      // V1~V3. [R2.1] 겹침 판정·수집은 srvCollectSeatCommitOverlap이 이미 했다.
+      //   여기서 다시 계산하지 않는다 — 규칙이 두 벌이 되면 다시 갈라진다.
 
       // [4J.0B] V3.5. [TO-STATUS-GATE] 수동마감 외 CLOSED/EXPIRED TO 확정 불가
       // - isManualClosed=true: 허용 (4I 설계 — 수동마감 후에도 기존 PENDING 관리 가능)
@@ -22113,27 +22278,9 @@ export const callableConfirmApplication = onCall(
       // W1. Lock 문서 갱신 — 다음 동시 확정 트랜잭션의 재시도 트리거
       tx.set(lockRef, {lastConfirmedAt: nowTs}, {merge: true});
 
-      // W2. 겹치는 PENDING → AUTO_CANCELED (트랜잭션 내 원자 처리)
-      // conflictingBusiness: 확정된 지원서의 사업장명 — ApplicationModel.conflictingBusiness 필드에 매핑
-      //   → 근로자 앱 "충돌 정보 박스" (functional_test L-093) 표시에 사용
-      const confirmingBusinessName = (fd.businessName as string | undefined) ?? "";
-      for (const pending of pendingToCancel) {
-        tx.update(pending.ref, {
-          status: "AUTO_CANCELED",
-          canceledAt: nowTs,
-          cancelReason: "SCHEDULE_CONFLICT",
-          conflictingAppId: applicationId,
-          conflictingBusiness: confirmingBusinessName,
-          conflictingTime: `${appStartTime}~${appEndTime}`,
-          statusHistory: admin.firestore.FieldValue.arrayUnion({
-            status: "AUTO_CANCELED",
-            at: nowTs,
-            by: "SYSTEM",
-            action: "AUTO_CANCEL",
-            reason: "SCHEDULE_CONFLICT",
-          }),
-        });
-      }
+      // W2. [R2.1] 겹치는 관심 상태 정리 — 세 writer 공통 계약.
+      //   AUTO_CANCELED + 그 자리의 workDetailCounts pendingCount 반환까지 포함한다.
+      srvApplySeatCommitOverlap(tx, overlapPlan, {applicationId, nowTs});
 
       // W3. CAPACITY-GUARD 카운터 증가 + pending 감소 — atomic (낙관적 잠금 + drift 방지)
       // [Phase 8.1E.2B] pending -1 + confirmed +1 + slot aggregate + TO aggregate 전부 W3 통합
@@ -22176,7 +22323,7 @@ export const callableConfirmApplication = onCall(
       });
 
       // 응답용 자동취소 정보 수집 (클라이언트 FCM 알림 발송에 사용)
-      txAutoCanceledDetails = pendingToCancel.map((d) => {
+      txAutoCanceledDetails = overlapPlan.toCancel.map((d) => {
         const data = d.data();
         return {
           id: d.id,
@@ -22461,24 +22608,34 @@ export const callableConfirmApplication = onCall(
     }
 
     // ── 7. 확정 알림 발송 (근무자) ──
+    // [SYSTEM-INTEGRATION-R2.1] 결정적 문서 id + create().
+    //   mutation 자체는 멱등(alreadyConfirmed / isContractPendingRetry)인데
+    //   알림만 .add()라서, batch2 실패 후 재호출하면 확정은 한 번인데 알림이
+    //   두 번 갔다. event의 side effect까지 멱등이어야 한다.
+    //   callableApproveApplicationForReview의 [RELIABILITY-01]과 같은 패턴 —
+    //   ALREADY_EXISTS(6)는 정상, 그 외만 기록한다.
     try {
       const workDateTs = appDataPre.workDate as admin.firestore.Timestamp | undefined;
-      await db.collection("users").doc(uid).collection("notifications").add({
-        userId: uid,
-        type: "applicationConfirmed",
-        title: "지원 확정",
-        body: `[${businessName}] ${selectedWorkType ?? ""} 지원이 확정되었습니다.`,
-        data: {
-          applicationId,
-          businessId,
-          screen: "applicationDetail",
-          ...(workDateTs ? {workDateMs: workDateTs.toMillis()} : {}),
-        },
-        isRead: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      await db.collection("users").doc(uid).collection("notifications")
+        .doc(`application_confirmed_${applicationId}`)
+        .create({
+          userId: uid,
+          type: "applicationConfirmed",
+          title: "지원 확정",
+          body: `[${businessName}] ${selectedWorkType ?? ""} 지원이 확정되었습니다.`,
+          data: {
+            applicationId,
+            businessId,
+            screen: "applicationDetail",
+            ...(workDateTs ? {workDateMs: workDateTs.toMillis()} : {}),
+          },
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
     } catch (e) {
-      console.warn("[confirmApplication] 확정 알림 발송 실패 (확정은 완료됨):", e);
+      if ((e as {code?: number})?.code !== 6) {
+        console.warn("[confirmApplication] 확정 알림 발송 실패 (확정은 완료됨):", e);
+      }
     }
 
     // ── 8. [ID-CONSENT / DOCUMENT-CONSENT] 사전동의 Auto-Grant 생성 ──
@@ -27360,6 +27517,19 @@ export const callableAcceptTOInvitation = onCall(
       // [6.1 INV-03] 트랜잭션 fresh read에서 selectedWorkType 추출 — 카운터 업데이트용
       const freshSelectedWorkType = freshData.selectedWorkType as string | undefined;
 
+      // [SYSTEM-INTEGRATION-R2.1] Seat Commit 겹침 계약.
+      //
+      //   이 경로에는 겹치는 CONFIRMED 차단만 있었고(아래 별도 루프),
+      //   겹치는 PENDING/INVITED를 접는 정리가 없었다. 지원 경로에서는
+      //   자동취소되는 관계가 초대 경로에서는 그대로 살아남아, 근로자에게
+      //   수락할 수 없는 초대가 계속 보이고 그 자리의 pending 카운터도 남았다.
+      //   지원 승인·확정과 **같은 helper**를 쓴다.
+      const acceptOverlapPlan = await srvCollectSeatCommitOverlap(tx, {
+        applicantUid: callerUid,
+        applicationId,
+        fd: freshData,
+      });
+
       // [BUG-10 수정] 수락 시점에 TO 상태 재검증 — 초대 발송 후 TO가 삭제/마감된 경우 차단
       // [BUG-11 수정] FULL 상태도 차단 — callableInviteWorker(BUG-09)와 동일 정책 적용
       if (toId) {
@@ -27466,6 +27636,12 @@ export const callableAcceptTOInvitation = onCall(
           );
         }
       }
+
+      // [R2.1] 겹치는 관심 상태 정리 — 지원 경로와 같은 계약.
+      srvApplySeatCommitOverlap(tx, acceptOverlapPlan, {
+        applicationId,
+        nowTs: confirmedAt,
+      });
 
       tx.update(appRef, {
         status:      "CONFIRMED",

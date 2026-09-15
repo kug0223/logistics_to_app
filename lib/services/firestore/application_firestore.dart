@@ -1463,10 +1463,18 @@ extension ApplicationFirestore on FirestoreService {
     final data = result.data;
     if (data['alreadyConfirmed'] == true) return [];
 
+    // [SYSTEM-INTEGRATION-R2.1] 이 신호는 '초과 확정'이 아니다.
+    //
+    //   서버는 트랜잭션 안에서 confirmedCount >= requiredCount이면 확정 자체를
+    //   막는다(정원이 초과되었습니다). capacityWarning은 그 검증을 **통과한 뒤**
+    //   증가한 결과를 다시 읽어 conf >= req가 된 경우 — 즉 이 확정으로 마지막
+    //   자리가 찼다는 뜻이다. 그런데 문구는 '초과 확정됩니다'라고 말해서,
+    //   관리자가 정원을 넘겨 확정했다고 믿게 만들었다. 오버부킹 기능은 제품에
+    //   존재하지 않는다.
     final capacityWarning = data['capacityWarning'] as Map<String, dynamic>?;
     if (capacityWarning != null) {
-      ToastHelper.showWarning(
-        '[${capacityWarning['workType']}] 모집인원(${capacityWarning['required']}명)이 이미 찼습니다. 초과 확정됩니다.');
+      ToastHelper.showSuccess(
+        '[${capacityWarning['workType']}] 모집인원 ${capacityWarning['required']}명이 모두 찼습니다.');
     }
 
     final appInfo = (data['appInfo'] as Map?)?.cast<String, dynamic>() ?? {};
