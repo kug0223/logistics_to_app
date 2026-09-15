@@ -71,6 +71,20 @@ class _GroupData {
   /// [R2.2] 응답·종료된 초대 (거절·철회·만료·자동종료). 최근 것만 보여준다.
   final List<ApplicationModel> closedInvites = [];
 
+  /// [R2.2.1] 수락되어 자리를 가져간 초대 (CONFIRMED/CONTRACT_PENDING + invitedAt).
+  ///
+  ///   확정자 명단에만 있으면 그 사람이 스스로 지원해 승인된 것인지 관리자가
+  ///   초대해 수락한 것인지 구분할 수 없다. 초대를 보낸 쪽은 그 초대가 어떻게
+  ///   끝났는지 알아야 한다. 새 status enum 없이 invitedAt으로 구분한다 —
+  ///   invitedAt은 callableInviteWorker만 쓰고 수락 시에도 지워지지 않는다.
+  final List<ApplicationModel> acceptedInvites = [];
+
+  /// [R2.2.1] slot이 말하는 확정 수 — `workDetailCounts[wdId].confirmedCount`.
+  ///
+  ///   근로자 화면의 `workInstanceFull`이 쓰는 **바로 그 값**이다. 지원서에서
+  ///   세지 않는다. null = 이 모집 단위의 canonical row가 없다(UNKNOWN).
+  int? canonicalConfirmed;
+
   _GroupData({
     required this.toId,
     required this.toTitle,
@@ -101,6 +115,31 @@ class _GroupData {
   String get capacityKey => workDetailId?.isNotEmpty == true
       ? workDetailId!
       : '${workType}_${startTime}_$endTime';
+
+  /// [R2.2.1] 이 모집 단위가 다 찼는가 — 근로자 화면과 **같은 식**.
+  ///
+  ///   서버 `callableGetMyApplications`의 workInstanceFull:
+  ///     `req > 0 && workDetailCounts[wdId].confirmedCount >= req`
+  ///   관리자도 같은 값을 써야 한쪽은 `수락 불가`, 다른 쪽은 `초대 중`이 되는
+  ///   모순이 생기지 않는다.
+  ///
+  ///   null = canonical row가 없다. FULL로도 여유로도 단정하지 않는다.
+  bool? get isWorkInstanceFull {
+    final c = canonicalConfirmed;
+    if (c == null) return null;
+    return requiredCount > 0 && c >= requiredCount;
+  }
+
+  /// 지금 수락될 수 있는 초대 — 이것만 `초대 중`이다.
+  List<ApplicationModel> get activeInvites =>
+      isWorkInstanceFull == true ? const [] : invitedApps;
+
+  /// 자리가 차서 지금은 수락될 수 없는 초대.
+  ///
+  ///   상태는 INVITED 그대로 둔다. 자리가 다시 열리면 다시 수락 가능해지는
+  ///   현재 정책을 보존해야 하므로, 표시 때문에 CANCELED로 바꾸지 않는다.
+  List<ApplicationModel> get staleInvites =>
+      isWorkInstanceFull == true ? invitedApps : const [];
 }
 
 // ─── 다이얼로그 ────────────────────────────────────────────────────────────────
@@ -562,6 +601,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         groups[key]!.pendingApps.add(app);
       } else {
         groups[key]!.confirmedApps.add(app);
+        // [R2.2.1] 이 확정이 초대에서 왔다면 초대 현황에도 결과로 남는다.
+        //   추가 조회 없음 — 확정 명단이 이미 invitedAt을 싣고 온다.
+        if (app.invitedAt != null) groups[key]!.acceptedInvites.add(app);
       }
     }
 
@@ -624,6 +666,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (existing != null) {
         existing.requiredCount = row.requiredCount;
         existing.slotId ??= row.slotId;
+        // [R2.2.1] 확정 수도 slot이 진실이다 — 초대가 지금 수락될 수 있는지는
+        //   근로자 화면과 같은 canonical 값으로 판정해야 한다.
+        existing.canonicalConfirmed = row.confirmedCount;
         continue;
       }
       groups[key] = _GroupData(
@@ -636,7 +681,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         wdId: row.wdId,
         requiredCount: row.requiredCount,
         slotId: row.slotId,
-      );
+      )..canonicalConfirmed = row.confirmedCount;
     }
 
     int timeToMinutes(String t) {
@@ -1129,7 +1174,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // ── [Phase 8.1B.3 / R4] 인력 초대 버튼 — pending 섹션 이후 표시 ──
         // pending 먼저 처리 후 여전히 부족할 때 outbound invite CTA 노출
         // [R5.1] 좌석 반납된 확정자는 정원 계산에서 제외
+        // [R2.2.1] canonical capacity가 찼다고 말하면 추가 초대 CTA를 내린다.
+        //   보내도 수락될 수 없는 초대를 운영 action으로 남겨 두지 않는다.
+        //   canonical row가 없으면(UNKNOWN) 기존 판정을 그대로 쓴다.
         if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
+            g.isWorkInstanceFull != true &&
             g.requiredCount > g.confirmedApps.where((a) => !a.isStaffingReleased).length)
           Builder(builder: (ctx) {
             // [R2] slotId는 그룹 자신이 안다. 이전에는 지원서에서 유도해
@@ -1935,7 +1984,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 .copyWith(fontWeight: FontWeight.bold),
           ),
         ],
-        if (g.invitedApps.isNotEmpty) ...[
+        // [SYSTEM-INTEGRATION-R2.2.1] `초대 N` = INVITED **이면서 지금 수락될 수
+        //   있는** 초대. 자리가 이미 찬 초대를 여기 세면 관리자는 아직 응답을
+        //   기다리는 중이라고 읽고, 오지 않을 수락을 기다린다.
+        //   별도 inviteCount 필드를 만들지 않는다 — Application + 현재 capacity로 센다.
+        if (g.activeInvites.isNotEmpty) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Icon(
             Icons.send_outlined,
@@ -1944,7 +1997,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 2)),
           Text(
-            '초대 ${g.invitedApps.length}',
+            '초대 ${g.activeInvites.length}',
             style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
                 .copyWith(fontWeight: FontWeight.bold),
           ),
@@ -1957,10 +2010,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   /// 초대의 현재 의미 — canonical status + 기존 signal에서 읽는다.
   /// 새 enum을 만들지 않는다.
-  (String, Color) _inviteStateLabel(ApplicationModel app) {
+  ///
+  /// [R2.2.1] INVITED는 capacity를 함께 봐야 의미가 정해진다. 자리가 찼는데도
+  /// `초대 중`이라고 하면 관리자는 오지 않을 응답을 기다린다 — 근로자 화면은
+  /// 이미 `모집이 완료된 초대예요`라고 말하고 서버도 수락을 거부하는 상태다.
+  (String, Color) _inviteStateLabel(ApplicationModel app, {bool? isFull}) {
     switch (app.status) {
       case AppStatus.invited:
+        if (isFull == true) {
+          return ('모집 완료 · 수락 불가', AppColors.grey600);
+        }
         return ('초대 중', AppColors.infoDark);
+      case AppStatus.confirmed:
+      case AppStatus.contractPending:
+        // invitedAt이 있어 이 목록에 들어왔다 — 관리자 초대를 근로자가 수락했다.
+        return ('초대 수락 · 확정', AppColors.successDark);
       case AppStatus.rejected:
         // invitedAt이 있으므로 근로자가 스스로 거절한 초대다.
         return ('초대 거절', AppColors.grey600);
@@ -1999,30 +2063,45 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       );
     }
 
-    final outstanding = g.invitedApps;
-    // 종료된 초대는 최근 3건만 — 기록 전체를 운영 화면에 펼치지 않는다.
-    final closed = [...g.closedInvites]
+    // [R2.2.1] 아직 응답하지 않은 초대를 capacity로 가른다.
+    //   상태(INVITED)는 그대로 두고 지금의 의미만 나눈다 — 자리가 다시 열리면
+    //   같은 초대가 다시 `초대 중`으로 돌아온다.
+    final outstanding = g.activeInvites;
+    final stale = g.staleInvites;
+
+    // 끝난 초대는 최근 3건만 — 기록 전체를 운영 화면에 펼치지 않는다.
+    //   수락도 초대의 결과다. 확정 명단에만 두면 그 확정이 초대에서 왔다는
+    //   사실이 사라진다(§5 provenance).
+    final closed = [...g.closedInvites, ...g.acceptedInvites]
       ..sort((a, b) => (b.invitedAt ?? b.appliedAt).compareTo(a.invitedAt ?? a.appliedAt));
     final recentClosed = closed.take(3).toList();
-    if (outstanding.isEmpty && recentClosed.isEmpty) return const SizedBox.shrink();
+    if (outstanding.isEmpty && stale.isEmpty && recentClosed.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (outstanding.isNotEmpty) ...[
           _sectionDivider(context, '초대 중 (${outstanding.length}명)', AppColors.infoDark),
-          ...outstanding.map((a) => _buildInviteRow(context, a)),
+          ...outstanding.map((a) => _buildInviteRow(context, a, isFull: false)),
+        ],
+        if (stale.isNotEmpty) ...[
+          _sectionDivider(
+              context, '모집 완료 · 수락 불가 (${stale.length}명)', AppColors.grey500),
+          ...stale.map((a) => _buildInviteRow(context, a, isFull: true)),
         ],
         if (recentClosed.isNotEmpty) ...[
-          _sectionDivider(context, '최근 응답', AppColors.grey500),
+          _sectionDivider(context, '최근 초대 응답', AppColors.grey500),
           ...recentClosed.map((a) => _buildInviteRow(context, a)),
         ],
       ],
     );
   }
 
-  Widget _buildInviteRow(BuildContext context, ApplicationModel app) {
-    final (label, color) = _inviteStateLabel(app);
+  Widget _buildInviteRow(BuildContext context, ApplicationModel app,
+      {bool? isFull}) {
+    final (label, color) = _inviteStateLabel(app, isFull: isFull);
     final user = _userMap[app.uid];
     final name = user?.displayName ?? user?.name ?? app.applicantName ?? '근무자';
     final sentAt = app.invitedAt;

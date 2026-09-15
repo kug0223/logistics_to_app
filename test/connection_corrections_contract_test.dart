@@ -257,7 +257,9 @@ void main() {
     test('05-c 지원 대기와 초대 중을 합치지 않는다', () {
       final b = _after(dlg, 'Widget _buildGroupStats(BuildContext context, _GroupData g)', 2200);
       expect(b.contains(r"'지원 $pending'"), isTrue);
-      expect(b.contains(r"'초대 ${g.invitedApps.length}'"), isTrue);
+      // [R2.2.1] 세는 대상이 좁아졌다 — 자리가 차서 지금은 수락될 수 없는 초대는
+      //   active count에서 빠진다. 지원/초대를 분리한다는 계약은 그대로다.
+      expect(b.contains(r"'초대 ${g.activeInvites.length}'"), isTrue);
       // 합쳐진 표기가 남아 있으면 안 된다
       expect(b.contains(r"'+$pending'"), isFalse);
     });
@@ -271,7 +273,8 @@ void main() {
     });
 
     test('05-e 상태는 canonical status에서 읽는다 — 새 enum 없음', () {
-      final b = _after(dlg, '(String, Color) _inviteStateLabel(ApplicationModel app)', 1400);
+      // [R2.2.1] capacity를 함께 본다 — 시그니처에 isFull이 붙었다.
+      final b = _after(dlg, '(String, Color) _inviteStateLabel(', 1400);
       for (final s in ['초대 중', '초대 거절', '초대 철회', '응답 만료']) {
         expect(b.contains(s), isTrue, reason: s);
       }
@@ -281,14 +284,16 @@ void main() {
     test('05-f 응답 대기 → 최근 응답 순서, 전체 기록을 펼치지 않는다', () {
       final b = _after(dlg, 'Widget _buildInviteSection(BuildContext context, _GroupData g)', 2200);
       final out = b.indexOf('초대 중 (');
-      final recent = b.indexOf('최근 응답');
+      // [R2.2.1] `최근 응답` → `최근 초대 응답`. 수락도 함께 서기 때문에
+      //   무엇에 대한 응답인지 이름에 남긴다.
+      final recent = b.indexOf('최근 초대 응답');
       expect(out, greaterThan(0));
       expect(recent, greaterThan(out));
       expect(b.contains('closed.take(3)'), isTrue);
     });
 
     test('05-g 누구에게 언제 보냈는지 보인다', () {
-      final b = _after(dlg, 'Widget _buildInviteRow(BuildContext context, ApplicationModel app)', 2000);
+      final b = _after(dlg, 'Widget _buildInviteRow(BuildContext context, ApplicationModel app', 2000);
       expect(b.contains('app.invitedAt'), isTrue);
       expect(b.contains('발송'), isTrue);
     });

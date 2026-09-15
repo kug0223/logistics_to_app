@@ -158,7 +158,9 @@ void main() {
       final copy = _copyOf(_day);
       expect(copy.contains(r"'초대 중 (${outstanding.length}명)'"), true,
           reason: '초대를 다루면서 그것을 초대라고 부르지 않았다');
-      expect(copy.contains(r"'초대 ${g.invitedApps.length}'"), true);
+      // [R2.2.1] 세는 대상은 INVITED 전체가 아니라 **지금 수락될 수 있는** 초대다.
+      //   자리가 찬 초대까지 세면 관리자는 오지 않을 응답을 기다린다.
+      expect(copy.contains(r"'초대 ${g.activeInvites.length}'"), true);
       expect(copy.contains(r"'지원 $pending'"), true,
           reason: '지원과 초대가 한 숫자로 합쳐지면 더 초대해야 하는지 알 수 없다');
     });
