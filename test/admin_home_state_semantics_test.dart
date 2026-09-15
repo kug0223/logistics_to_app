@@ -191,10 +191,18 @@ void main() {
       expect(_model(available: true).hasFutureTarget, isFalse);
     });
 
-    test('UI가 두 문구를 구분한다', () {
+    test('UI가 두 상태를 구분한다', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
-      expect(f.contains('hasFutureTarget'), isTrue);
-      expect(f.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 섹션 자체가 렌더되지 않고 Hero가 말한다.
+      //   두 상태를 뭉뚱그리지 않는다는 AH-V2-03 의도는 그대로다.
+      expect(home.contains('bool get _showUpcomingSection'), isTrue);
+      expect(
+        _bodyOf(home, 'bool get _showUpcomingSection')
+            .contains('d.requiredCount > 0'),
+        isTrue,
+      );
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       expect(f.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
       expect(f.contains('향후 7일 인원 충원 완료'), isFalse,
           reason: '두 상태를 뭉뚱그리던 구 문구는 남으면 안 된다');
@@ -243,7 +251,8 @@ void main() {
     test('UI가 0/0/0 대신 상태 문구를 쓴다', () {
       final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
       expect(t.contains('hasTodayTarget'), isTrue);
-      expect(t.contains('오늘 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       final noTargetAt = t.indexOf('hasTodayTarget');
       final metricAt = t.indexOf("label: '필요'");
       expect(noTargetAt, lessThan(metricAt),
@@ -396,10 +405,12 @@ void main() {
           .map((m) => m.group(1))
           .toSet();
       expect(titles, {'오늘 운영', '다가오는 인력 부족', '처리할 일'});
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       var prev = -1;
       for (final m in [
-        '_buildHeader(', '_buildStateBanner(', '_buildPostingSetupCard(',
+        '_buildHeader(', '_buildStateBanner(', '_buildAdaptiveHero(',
         // [AH-V2-05B] TODAY → TASK → NEXT
         '_buildTodayOps(', '_buildActionDashboard(', '_buildFutureStaffing(',
       ]) {

@@ -101,7 +101,8 @@ void main() {
       // 상태 분기가 모두 살아 있는지 확인 (없애지 않았다)
       for (final marker in [
         '향후 인력 현황을 불러오지 못했습니다', // error
-        '향후 7일 예정된 인력 운영이 없어요', // no target
+        // [HOME-V2-08D.2] no-target 분기는 제거됐다 — gate가 섹션 자체를
+        //   숨기고 그 상태는 Hero가 설명한다.
         '향후 7일 인원이 모두 충원됐어요', // fully staffed
         '_buildFutureShortageRow(', // shortage
         '_partialStaffingNotice(s)', // partial
@@ -111,7 +112,7 @@ void main() {
       // [HOME-V2-08D.1] 컨테이너 decoration이 상태마다 동일 — 이제 같은
       //   토큰 하나를 공유하므로 "동일"이 값 비교가 아니라 참조로 보장된다.
       expect('decoration: _groupSurface,'.allMatches(f).length, 4,
-          reason: '로딩 · 에러 · 부족없음 · 부족목록');
+          reason: '로딩 · 에러 · 전부충원 · 부족목록');
     });
 
     test('처리할 일 — 로딩·빈 상태·행 목록 전부 평면', () {
@@ -150,8 +151,9 @@ void main() {
         home.contains('static final BoxDecoration _groupSurface = BoxDecoration('),
         isTrue,
       );
-      expect('decoration: _groupSurface,'.allMatches(home).length, 9,
-          reason: '오늘·처리할 일(3)·다가오는(4)·공고 준비');
+      // [HOME-V2-08D.2] Hero shell·skeleton이 같은 토큰을 재사용해 11곳.
+      expect('decoration: _groupSurface,'.allMatches(home).length, 11,
+          reason: 'Hero(2)·오늘·처리할 일(3)·다가오는(4)·공고 준비');
       // radius가 s에 곱해져 기기마다 달라지던 것이 사라졌다
       expect(home.contains('BorderRadius.circular(12 * s)'), isFalse);
     });
@@ -166,8 +168,11 @@ void main() {
     });
 
     test('§12 spacing 불변', () {
-      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 10);
-      expect('SizedBox(height: 16 * s)'.allMatches(home).length, 2);
+      // [HOME-V2-08D.2] Hero shell·skeleton·섹션 조립이 같은 gutter를 쓴다.
+      expect('EdgeInsets.symmetric(horizontal: 16 * s)'.allMatches(home).length, 13);
+      // 섹션 사이 16은 이제 _buildSections 한 곳이 소유한다
+      expect('SizedBox(height: 16 * s)'.allMatches(home).length, 1);
+      expect('SizedBox(height: 20 * s)'.allMatches(home).length, 1);
     });
 
     test('§13 typography', () {
@@ -254,7 +259,8 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('SURFACE-31/32 이전 Phase 회귀', () {
     test('§15 TODAY → TASK → NEXT', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'List<Widget> _buildSections(');
       expect(b.indexOf('_buildTodayOps('),
           lessThan(b.indexOf('_buildActionDashboard(')));
       expect(b.indexOf('_buildActionDashboard('),
@@ -322,8 +328,7 @@ void main() {
         '출근 현황을 불러오지 못했습니다',
         '향후 인력 현황을 불러오지 못했습니다',
         '처리할 업무가 없어요',
-        '오늘 예정된 인력 운영이 없어요',
-        '향후 7일 예정된 인력 운영이 없어요',
+        // [HOME-V2-08D.2] 두 no-target 문구는 Hero로 역할이 넘어갔다.
         '향후 7일 인원이 모두 충원됐어요',
         '나머지 사업장 기준으로 표시했어요',
       ]) {

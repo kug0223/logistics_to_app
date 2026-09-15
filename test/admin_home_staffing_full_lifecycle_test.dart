@@ -33,6 +33,33 @@ String _codeOf(String b) =>
 
 String _flat(String b) => b.replaceAll(RegExp(r'\s+'), ' ');
 
+String _bodyOf(String source, String signature) {
+  final start = source.indexOf(signature);
+  if (start == -1) throw StateError('$signature 를 찾지 못함');
+  var paren = 0;
+  var afterParams = start;
+  for (var i = source.indexOf('(', start); i < source.length; i++) {
+    if (source[i] == '(') paren++;
+    if (source[i] == ')') {
+      paren--;
+      if (paren == 0) {
+        afterParams = i;
+        break;
+      }
+    }
+  }
+  final open = source.indexOf('{', afterParams);
+  var depth = 0;
+  for (var i = open; i < source.length; i++) {
+    if (source[i] == '{') depth++;
+    if (source[i] == '}') {
+      depth--;
+      if (depth == 0) return source.substring(start, i + 1);
+    }
+  }
+  throw StateError('$signature 본문의 끝을 찾지 못함');
+}
+
 /// `export const <name> = ...` 부터 다음 top-level export 직전까지.
 String _callableOf(String source, String name) {
   final start = source.indexOf('export const $name');
@@ -663,10 +690,22 @@ void main() {
       expect(m.hasFutureTarget, false);
     });
 
-    test('10-d UI를 아직 건드리지 않았다 (§18)', () {
+    test('10-d signal이 Hero 분기에만 쓰인다', () {
+      // [HOME-V2-08D.2] 08B.2에서는 "아직 UI에 쓰지 않았다"를 고정했다.
+      //   이제 Adaptive Hero가 쓴다. 다만 쓰이는 곳은 상태 판정 한 곳뿐이고,
+      //   task gate에는 절대 들어가지 않는다(공고 없음 ≠ 처리할 업무 없음).
       final home = _codeOf(_src(_homePath));
-      expect(home.contains('publishedPostingCount'), false);
-      expect(home.contains('hasDraftPosting'), false);
+      final derive = _bodyOf(home, '_HeroState _heroStateOf(');
+      expect(derive.contains('sr.publishedPostingCount == 0'), true);
+      expect(derive.contains('sr.hasDraftPosting'), true);
+      expect(
+        RegExp(r'publishedPostingCount').allMatches(home).length,
+        1,
+        reason: 'Hero 상태 판정 외에는 쓰이지 않는다',
+      );
+      final taskGate = _bodyOf(home, 'bool _showTaskSection(');
+      expect(taskGate.contains('publishedPostingCount'), false);
+      expect(taskGate.contains('hasDraftPosting'), false);
       // 기존 섹션·문구 그대로
       for (final s in ["'오늘 운영'", "'처리할 일'", "'다가오는 인력 부족'"]) {
         expect(home.contains(s), true, reason: s);

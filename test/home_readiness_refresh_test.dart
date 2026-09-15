@@ -228,7 +228,8 @@ void main() {
 
     test('HRR-51 카드 UI 계약 무변경', () {
       final src = _source(_homePath);
-      expect(src.contains("'공고 등록 준비'"), true);
+      // [HOME-V2-08D.2] 제목이 Hero 문장으로 바뀌었다 — 카드 구성은 그대로다.
+      expect(src.contains(r'공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요'), true);
       expect(src.contains('/ \${FirstPostingReadiness.totalTasks} 완료'), true);
       expect(src.contains('SettingsTarget.seal'), true);
       expect(src.contains('if (r == null || r.allReady) return const SizedBox.shrink();'),

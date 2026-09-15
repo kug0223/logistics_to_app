@@ -327,11 +327,13 @@ void main() {
     });
 
     test('새 카드·섹션을 만들지 않았다', () {
-      final body = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final body = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       final order = [
         '_buildHeader(',
         '_buildStateBanner(',
-        '_buildPostingSetupCard(',
+        '_buildAdaptiveHero(',
         // [AH-V2-05B] TODAY → TASK → NEXT
         '_buildTodayOps(',
         '_buildActionDashboard(',
@@ -354,7 +356,8 @@ void main() {
     // [AH-V2-03 갱신] 향후 7일 empty copy는 두 상태로 분리됐다.
     // AH-V2-02A가 staffing을 건드리지 않았다는 사실은 유효하다.
     test('staffing·empty copy는 AH-V2-03 계약을 따른다', () {
-      expect(home.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       expect(home.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
       expect(home.contains('처리할 업무가 없어요'), isTrue);
       expect(home.contains('인력 정보를 불러오지 못했습니다'), isTrue);

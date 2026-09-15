@@ -329,7 +329,9 @@ void main() {
     });
 
     test('에러 분기 3곳이 모두 hasUsableData를 쓴다', () {
-      expect('hasUsableData'.allMatches(home).length, 3);
+      // [HOME-V2-08D.2] Hero 분기와 section gate가 같은 판정을 쓰면서 늘었다.
+      //   요지는 개수가 아니라 available 직접 판정이 없다는 것이다.
+      expect('hasUsableData'.allMatches(home).length, 8);
       expect(home.contains('!_staffingReadiness!.available'), isFalse,
           reason: 'available 직접 판정이 남으면 partial이 ERROR로 삼켜진다');
     });
@@ -347,7 +349,8 @@ void main() {
 
     test('향후 부족: ERROR → 목록/빈상태 → partial notice', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
-      expect(f.indexOf('hasUsableData'), lessThan(f.indexOf('hasFutureTarget')));
+      // [HOME-V2-08D.2] no-target 분기가 gate로 옮겨져 hasFutureTarget이 빠졌다.
+      expect(f.indexOf('hasUsableData'), lessThan(f.indexOf('futureDays.isEmpty')));
       expect(f.contains('_staffingReadiness!.partial'), isTrue);
     });
 
@@ -373,10 +376,12 @@ void main() {
   group('AH-V2-03 계약 유지', () {
     test('공고 없음 != 충원 완료', () {
       final f = _bodyOf(home, 'Widget _buildFutureStaffing(');
-      expect(f.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       expect(f.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
       final t = _bodyOf(home, 'Widget _buildStaffingMetrics(');
-      expect(t.contains('오늘 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
     });
 
     test('partial notice 카피·재시도 유지', () {

@@ -368,10 +368,12 @@ void main() {
     });
 
     test('Home section 순서 유지', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       var prev = -1;
       for (final m in [
-        '_buildHeader(', '_buildStateBanner(', '_buildPostingSetupCard(',
+        '_buildHeader(', '_buildStateBanner(', '_buildAdaptiveHero(',
         // [AH-V2-05B] TODAY → TASK → NEXT
         '_buildTodayOps(', '_buildActionDashboard(', '_buildFutureStaffing(',
       ]) {
@@ -425,8 +427,10 @@ void main() {
 
     test('AH-V2-03 상태 의미 유지', () {
       expect(home.contains('hasUsableData'), isTrue);
-      expect(home.contains('오늘 예정된 인력 운영이 없어요'), isTrue);
-      expect(home.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       expect(home.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
     });
 

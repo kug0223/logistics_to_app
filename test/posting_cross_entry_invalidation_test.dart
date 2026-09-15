@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -440,10 +440,11 @@ void main() {
       );
     });
 
-    test('Home producer 총 3곳 — 무분별 배선 아님', () {
+    test('Home producer 총 4곳 — 무분별 배선 아님', () {
       // DayApplicantsDialog · SupportReviewQueue
       // [HOME-V2-07.1] + 당일명단(좌석 반납) — 셋 다 실제 staffing을 바꾼다
-      expect('notifyDataChanged'.allMatches(_codeOf(home)).length, 3);
+      // [HOME-V2-08D.2] + Hero의 공고 등록 성공 — 새 공고는 staffing을 바꾼다
+      expect('notifyDataChanged'.allMatches(_codeOf(home)).length, 4);
     });
 
     test('Workforce 지원명단 성공에서 알린다', () {
@@ -626,14 +627,21 @@ void main() {
   // ═════════════════════════════════════════════════════════════
   group('success-after-write invariant', () {
     test('모든 producer가 성공 신호 분기 안에 있다', () {
-      // Home 2곳: changed == true / (changed ?? false)
+      // Home: changed == true / (changed ?? false)
+      // [HOME-V2-08D.2] + onChanged 콜백 — NavigationHelper.push는 result==true
+      //   일 때만 이것을 호출한다(navigation_helper.dart: if (onChanged != null
+      //   && result == true)). 같은 성공 계약의 다른 표현이다.
       final homeCode = _codeOf(home);
       for (final m in 'notifyDataChanged'.allMatches(homeCode)) {
         final before = homeCode.substring(0, m.start);
-        final lastIf = before.lastIndexOf('if (');
-        expect(lastIf, isNot(-1));
-        final cond = before.substring(lastIf);
-        expect(cond.contains('changed'), isTrue,
+        // 가장 가까운 성공 앵커를 찾는다: `if (…changed…)` 또는 onChanged 콜백
+        var guard = -1;
+        for (final ifM in RegExp(r'if \([^)]*changed[^)]*\)').allMatches(before)) {
+          if (ifM.start > guard) guard = ifM.start;
+        }
+        final cb = before.lastIndexOf('onChanged: () {');
+        if (cb > guard) guard = cb;
+        expect(guard, isNot(-1),
             reason: 'Home producer가 성공 조건 밖에 있다');
       }
     });

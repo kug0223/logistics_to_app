@@ -410,7 +410,8 @@ void main() {
 
     // [AH-V2-03 갱신] 향후 7일 empty copy는 두 상태로 분리됐다.
     test('staffing·empty copy는 AH-V2-03 계약을 따른다', () {
-      expect(home.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       expect(home.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
       expect(home.contains('처리할 업무가 없어요'), isTrue);
     });

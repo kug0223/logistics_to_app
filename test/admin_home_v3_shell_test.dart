@@ -171,8 +171,13 @@ void main() {
       expect(deco.contains('withValues'), false);
     });
 
-    test('03-d 실제 grouped surface 9곳이 이것을 쓴다 (§9)', () {
-      expect('decoration: _groupSurface,'.allMatches(code).length, 9);
+    test('03-d 실제 grouped surface가 이것을 쓴다 (§9)', () {
+      // [HOME-V2-08D.2] Hero shell + skeleton이 같은 토큰을 재사용해 11곳.
+      expect('decoration: _groupSurface,'.allMatches(code).length, 11);
+      expect(_codeOf(_bodyOf(home, 'Widget _heroShell(')).contains('_groupSurface'),
+          true);
+      expect(_codeOf(_bodyOf(home, 'Widget _heroSkeleton(')).contains('_groupSurface'),
+          true);
     });
 
     test('03-e 섹션별로 흩어져 있던 값이 사라졌다', () {
@@ -211,24 +216,29 @@ void main() {
       expect(code.contains('backgroundColor: AppColors.grey50'), true);
     });
 
-    test('04-b 섹션 간 spacing 무변경 (§15)', () {
-      // Hero-specific spacing(20)은 08D.2에서 추가한다
-      final build = _codeOf(_bodyOf(home, 'Widget build(BuildContext context)'));
-      expect('SizedBox(height: 16 * s)'.allMatches(build).length, 2);
-      expect(build.contains('SizedBox(height: 20 * s)'), false);
+    test('04-b spacing — Hero 아래 20, 섹션 사이 16 (§27)', () {
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다.
+      final sec = _codeOf(_bodyOf(home, 'List<Widget> _buildSections('));
+      expect(sec.contains('SizedBox(height: 20 * s)'), true);
+      expect(sec.contains('SizedBox(height: 16 * s)'), true);
+      // Hero 밑에 아무 섹션도 없으면 여백을 만들지 않는다
+      expect(sec.contains('if (sections.isEmpty) return const [];'), true);
     });
 
     test('04-c section 순서 무변경', () {
-      final build = _codeOf(_bodyOf(home, 'Widget build(BuildContext context)'));
-      final banner = build.indexOf('_buildStateBanner(');
-      final setup = build.indexOf('_buildPostingSetupCard(');
-      final today = build.indexOf('_buildTodayOps(');
-      final task = build.indexOf('_buildActionDashboard(');
-      final future = build.indexOf('_buildFutureStaffing(');
-      expect(banner, lessThan(setup));
-      expect(setup, lessThan(today));
+      final sec = _codeOf(_bodyOf(home, 'List<Widget> _buildSections('));
+      final today = sec.indexOf('_buildTodayOps(');
+      final task = sec.indexOf('_buildActionDashboard(');
+      final future = sec.indexOf('_buildFutureStaffing(');
+      expect(today, greaterThan(-1));
       expect(today, lessThan(task));
       expect(task, lessThan(future));
+      // Hero는 섹션들보다 앞에 있다
+      final build = _codeOf(_bodyOf(home, 'Widget build(BuildContext context)'));
+      expect(build.indexOf('_buildStateBanner('),
+          lessThan(build.indexOf('_buildAdaptiveHero(')));
+      expect(build.indexOf('_buildAdaptiveHero('),
+          lessThan(build.indexOf('_buildSections(')));
     });
 
     test('04-d section 이름 무변경 (§16)', () {
@@ -249,38 +259,34 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   // §17 §19 — 이번 Phase에서 구현하지 않은 것
   // ══════════════════════════════════════════════════════════════
-  group('05. 미구현 확인', () {
-    test('05-a Adaptive Hero 없음 (§19)', () {
-      expect(code.contains('_buildAdaptiveHero'), false);
-      expect(code.contains('_heroSkeleton'), false);
+  group('05. 08D.2 이후 상태', () {
+    // [HOME-V2-08D.2] 이 group은 08D.1에서 "아직 안 했다"를 고정하던 자리다.
+    //   Hero와 gate가 들어왔으므로 같은 항목을 반대 방향으로 고정한다.
+    //   08D.3/08D.4 범위(Today 재구성 · rename · 당일 명단)는 여전히 미구현이다.
+
+    test('05-a Adaptive Hero가 들어왔다', () {
+      expect(code.contains('Widget _buildAdaptiveHero('), true);
+      expect(code.contains('Widget _heroSkeleton('), true);
+      expect(code.contains('_HeroState _heroStateOf('), true);
     });
 
-    test('05-b section gate를 적용하지 않았다 (§17)', () {
-      final build = _codeOf(_bodyOf(home, 'Widget build(BuildContext context)'));
-      // 세 섹션이 조건 없이 그대로 호출된다
-      for (final call in [
-        '_buildTodayOps(context, s, theme, up)',
-        '_buildActionDashboard(context, s, theme, up)',
-        '_buildFutureStaffing(context, s, theme, up)',
-      ]) {
-        expect(build.contains(call), true, reason: call);
-      }
-      expect(build.contains('publishedPostingCount'), false);
-      expect(build.contains('hasDraftPosting'), false);
+    test('05-b section gate가 적용됐다', () {
+      final sec = _codeOf(_bodyOf(home, 'List<Widget> _buildSections('));
+      expect(sec.contains('if (_showTodaySection)'), true);
+      expect(sec.contains('if (_showTaskSection(hero, hasRows))'), true);
+      expect(sec.contains('if (_showUpcomingSection)'), true);
     });
 
-    test('05-c 기존 empty 문구가 살아 있다 (§2)', () {
-      for (final t in [
-        '오늘 예정된 인력 운영이 없어요',
-        '처리할 업무가 없어요',
-        '향후 7일 예정된 인력 운영이 없어요',
-        '향후 7일 인원이 모두 충원됐어요',
-      ]) {
-        expect(home.contains(t), true, reason: t);
-      }
+    test('05-c 대체된 empty 문구가 제거됐다 (§18, §19)', () {
+      // 주석에는 제거 이유로 남아 있으므로 코드만 본다
+      expect(code.contains("'오늘 예정된 인력 운영이 없어요'"), false);
+      expect(code.contains("'향후 7일 예정된 인력 운영이 없어요'"), false);
+      // 남는 것: task 0 한 줄 + 미래 전부 충원
+      expect(code.contains("'처리할 업무가 없어요'"), true);
+      expect(code.contains("'향후 7일 인원이 모두 충원됐어요'"), true);
     });
 
-    test('05-d 당일 명단 CTA를 추가하지 않았다', () {
+    test('05-d 당일 명단 CTA는 아직 없다 (08D.3)', () {
       expect(home.contains('당일 명단'), false);
     });
 
@@ -334,7 +340,11 @@ void main() {
           _codeOf(_bodyOf(home, 'Future<void> _openTodayAttendanceDialog(')));
       expect(att.contains('unawaited(_loadTodayAttendance());'), true);
       expect(att.contains('unawaited(_loadStaffingReadiness());'), true);
-      expect('notifyDataChanged'.allMatches(code).length, 3);
+      // [HOME-V2-08D.2] +1 — Hero의 `공고 등록` 성공도 staffing을 바꾼다.
+      expect('notifyDataChanged'.allMatches(code).length, 4);
+      final create = _flat(_codeOf(_bodyOf(home, 'void _openCreatePosting(')));
+      expect(create.contains('WorkforceController.notifyDataChanged( origin: AdminMutationOrigin.home, )'),
+          true);
     });
 
     test('06-d self-origin skip 무변경 (§22)', () {
@@ -387,20 +397,43 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   // §18 — 08D.2 준비 상태 READ (state 추가 없음)
   // ══════════════════════════════════════════════════════════════
-  group('07. 08D.2 gate 준비 상태', () {
-    test('07-a todayRoster 판정용 state가 아직 없다 — 이번엔 추가하지 않았다', () {
-      expect(code.contains('_todayRosterCount'), false);
-      expect(code.contains('_hasTodayRoster'), false);
+  group('07. 로스터 파생 state — 추가 read 0', () {
+    final loader = _codeOf(_bodyOf(home, 'Future<void> _loadTodayAttendance('));
+
+    test('07-a 이미 읽은 로스터에서만 파생한다', () {
+      expect(loader.contains('getConfirmedWorkersByDateAndBusinessOrThrow'), true);
+      // 조회는 기존 두 개뿐 — 새 쿼리를 넣지 않았다
+      expect('await _firestoreService.'.allMatches(loader).length, 0);
+      expect('_firestoreService.getAttendanceByDate'.allMatches(loader).length, 1);
+      expect(
+        '_firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow'
+            .allMatches(loader)
+            .length,
+        1,
+      );
     });
 
-    test('07-b 로스터는 loader가 이미 읽고 count만 남긴다', () {
-      final loader = _codeOf(_bodyOf(home, 'Future<void> _loadTodayAttendance('));
-      expect(loader.contains('getConfirmedWorkersByDateAndBusinessOrThrow'), true);
-      expect(loader.contains('allConfirmed'), true);
-      // 남기는 것은 세 숫자뿐 — 08D.2에서 bool/count 하나만 더 보존하면 된다
-      expect(loader.contains('_todayCheckedIn      = checkedIn;'), true);
-      expect(loader.contains('_todayDueNow         = dueNow;'), true);
-      expect(loader.contains('_todayNeedsAttention = needsAttention;'), true);
+    test('07-b 세 파생값을 보존한다', () {
+      expect(loader.contains('_hasTodayRoster      = allConfirmed.isNotEmpty;'),
+          true);
+      expect(loader.contains('_todayFirstStart     = firstStart;'), true);
+      expect(loader.contains('_todayWorkSummary    = _summarizeWork('), true);
+    });
+
+    test('07-c 실패 시 파생값도 null — ERROR ≠ ZERO', () {
+      final catchAt = loader.lastIndexOf('} catch (e) {');
+      final body = loader.substring(catchAt);
+      expect(body.contains('_hasTodayRoster      = null;'), true);
+      expect(body.contains('_todayFirstStart     = null;'), true);
+      expect(body.contains('_todayWorkSummary    = null;'), true);
+    });
+
+    test('07-d 요약은 대표값을 지어내지 않는다', () {
+      final sum = _codeOf(_bodyOf(home, 'static String? _summarizeWork('));
+      expect(sum.contains("'업무 \${workTypes.length}개'"), true);
+      expect(sum.contains("'시간대 \${ranges.length}개'"), true);
+      expect(sum.contains("외 \${bizNames.length - 1}곳"), true);
+      expect(sum.contains('return parts.isEmpty ? null : parts.join'), true);
     });
   });
 }

@@ -487,7 +487,8 @@ void main() {
 
     test('10-e 카드 UI 계약 무변경 (§33)', () {
       final code = _codeOf(_homePath);
-      expect(code.contains("'공고 등록 준비'"), true);
+      // [HOME-V2-08D.2] 제목이 Hero 문장으로 바뀌었다 — 카드 구성은 그대로다.
+      expect(code.contains(r'공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요'), true);
       expect(code.contains('/ \${FirstPostingReadiness.totalTasks} 완료'), true);
       expect(code.contains("'사업장 등록'"), true);
       expect(code.contains("'업무 등록'"), true);

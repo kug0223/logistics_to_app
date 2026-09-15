@@ -383,8 +383,10 @@ void main() {
     });
 
     test('§22 staffing copy를 건드리지 않았다', () {
-      expect(home.contains('오늘 예정된 인력 운영이 없어요'), isTrue);
-      expect(home.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
     });
   });
 
@@ -439,7 +441,9 @@ void main() {
     });
 
     test('§41 IA·visual 불변', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       expect(b.indexOf('_buildTodayOps('),
           lessThan(b.indexOf('_buildActionDashboard(')));
       expect(b.indexOf('_buildActionDashboard('),

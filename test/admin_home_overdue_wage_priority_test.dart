@@ -366,7 +366,9 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('이전 Phase 회귀', () {
     test('§15 TODAY → TASK → NEXT 유지', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       final today = b.indexOf('_buildTodayOps(');
       final task = b.indexOf('_buildActionDashboard(');
       final next = b.indexOf('_buildFutureStaffing(');
@@ -375,12 +377,16 @@ void main() {
     });
 
     test('§16 처리할 일 섹션 위치는 연체와 무관하게 고정', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
+      // [HOME-V2-08D.2] 섹션에 렌더 조건이 붙었지만 그것은 보이는지 여부이고,
+      //   위치는 여전히 정적이다. 연체가 배치에 영향을 주지 않는 것이 요지다.
       final seg = b.substring(
           b.indexOf('_buildTodayOps('), b.indexOf('_buildFutureStaffing('));
-      expect(seg.contains('if ('), isFalse,
-          reason: '섹션 배치에 조건 분기가 없다');
       expect(seg.contains('overdue'), isFalse);
+      expect(seg.contains('sort'), isFalse);
+      expect(seg.contains('_showTaskSection(hero, hasRows)'), isTrue);
     });
 
     test('§9 다른 8행의 source·destination 불변', () {

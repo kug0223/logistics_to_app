@@ -46,6 +46,8 @@ import 'widgets/business_action_drill_down_sheet.dart';
 import '../../widgets/common/business_selector_sheet.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/admin_tab_switcher.dart';
+import '../../utils/navigation_helper.dart';
+import 'to_management/create_to_screen.dart';
 import '../../services/staffing_readiness_service.dart';
 import '../../models/ui/staffing_readiness_model.dart';
 import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
@@ -55,6 +57,24 @@ import 'dialogs/resign_request_management_dialog.dart'; // [AH-V2-02B] 퇴사 �
 import 'dialogs/schedule_request_management_dialog.dart'; // [AH-V2-02C] 스케줄 변경 요청 → 기존 처리 UI
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
+/// [HOME-V2-08D.2] Adaptive Hero가 선택할 수 있는 상태.
+///
+/// 위에서 처음 참인 것 하나만 쓴다. lifecycle(setup/noPosting/draftOnly)에서만
+/// Hero가 CTA를 갖는다 — 운영 상태에서는 행동 경로가 이미 각 섹션에 있다.
+enum _HeroState {
+  loading,
+  error,
+  partialInfo,
+  setup,
+  draftOnly,
+  noPosting,
+  shortage,
+  attention,
+  noToday,
+  beforeStart,
+  normalToday,
+}
+
 typedef _AdminHomeData = ({
   String userName,
 });
@@ -110,6 +130,23 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   int? _todayDueNow;
   int? _todayNeedsAttention;
   bool _attendanceLoading = true;
+
+  // ── [HOME-V2-08D.2] 오늘 로스터에서 파생한 최소 state ──────────────
+  //
+  // _loadTodayAttendance()가 이미 확정 로스터 전량(allConfirmed)과 실제 근무
+  // 시각(WorkDetailTimeService)을 읽고도 숫자 셋만 남기고 버렸다. Hero와
+  // Today gate에 필요한 만큼만 함께 보존한다 — **추가 조회 0**이다.
+  //
+  // null = 조회 실패. false/빈 문자열과 구분한다 (ERROR ≠ ZERO).
+
+  /// 오늘 확정 로스터가 비어 있지 않은가. Today section gate가 쓴다.
+  bool? _hasTodayRoster;
+
+  /// 오늘 가장 이른 실제 근무 시작 시각 ("HH:mm"). 모르면 null.
+  String? _todayFirstStart;
+
+  /// 오늘 근무의 사업장·업무·시간 요약. 하나로 확정되지 않으면 개수로 말한다.
+  String? _todayWorkSummary;
 
   // 새로고침 동시 실행 방어 + 자동 쿨다운
   bool _isRefreshing = false;
@@ -585,11 +622,32 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       }
       final needsAttention = reviewAppIds.length;
 
+      // [HOME-V2-08D.2] 이미 읽은 로스터에서 Hero·gate가 쓸 값만 뽑는다.
+      //   추가 조회 없음 — 위 루프가 돌던 같은 allConfirmed/timeMap이다.
+      String? firstStart;
+      final bizNames = <String>{};
+      final workTypes = <String>{};
+      final ranges = <String>{};
+      for (final app in allConfirmed) {
+        final start = WorkDetailHelper.effectiveStart(app, timeMap);
+        final end = WorkDetailHelper.effectiveEnd(app, timeMap);
+        // "HH:mm"은 사전순 비교가 곧 시각 비교다
+        if (start.isNotEmpty && (firstStart == null || start.compareTo(firstStart) < 0)) {
+          firstStart = start;
+        }
+        if (app.businessName.isNotEmpty) bizNames.add(app.businessName);
+        if (app.selectedWorkType.isNotEmpty) workTypes.add(app.selectedWorkType);
+        if (start.isNotEmpty && end.isNotEmpty) ranges.add('$start–$end');
+      }
+
       if (!mounted) return;
       setState(() {
         _todayCheckedIn      = checkedIn;
         _todayDueNow         = dueNow;
         _todayNeedsAttention = needsAttention;
+        _hasTodayRoster      = allConfirmed.isNotEmpty;
+        _todayFirstStart     = firstStart;
+        _todayWorkSummary    = _summarizeWork(bizNames, workTypes, ranges);
         _attendanceLoading   = false;
       });
     } catch (e) {
@@ -599,9 +657,39 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _todayCheckedIn      = null; // 에러 상태 — 0 표시 금지 (ERROR≠ZERO)
         _todayDueNow         = null;
         _todayNeedsAttention = null;
+        // [HOME-V2-08D.2] 파생 state도 함께 null — 실패를 '로스터 없음'으로
+        //   커밋하면 Today section이 통째로 사라진다.
+        _hasTodayRoster      = null;
+        _todayFirstStart     = null;
+        _todayWorkSummary    = null;
         _attendanceLoading   = false;
       });
     }
+  }
+
+  /// [HOME-V2-08D.2] 사업장·업무·시간 요약 — 03R.1의 카드 요약과 같은 규칙.
+  ///
+  /// 하나로 확정되면 실제 값을, 여럿이면 개수를 말한다. 첫 값을 대표로 세우면
+  /// 나머지가 없는 것처럼 보인다. 아무것도 모르면 null.
+  static String? _summarizeWork(
+      Set<String> bizNames, Set<String> workTypes, Set<String> ranges) {
+    final parts = <String>[];
+    if (bizNames.length == 1) {
+      parts.add(bizNames.first);
+    } else if (bizNames.length > 1) {
+      parts.add('${bizNames.first} 외 ${bizNames.length - 1}곳');
+    }
+    if (workTypes.length == 1) {
+      parts.add(workTypes.first);
+    } else if (workTypes.length > 1) {
+      parts.add('업무 ${workTypes.length}개');
+    }
+    if (ranges.length == 1) {
+      parts.add(ranges.first);
+    } else if (ranges.length > 1) {
+      parts.add('시간대 ${ranges.length}개');
+    }
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   /// D0 인력 현황 — _staffingReadiness.days[0] (오늘 날짜, CF가 D0부터 반환)
@@ -942,18 +1030,20 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     _buildHeader(context, s, data.userName, up),
                     SizedBox(height: 12 * s),
                     _buildStateBanner(context, s, theme, up),
-                    // [PH1] 준비 미완료 시 운영 섹션보다 먼저 인지되어야 함 (완료 시 자동 숨김)
-                    _buildPostingSetupCard(context, s, theme),
+                    // [HOME-V2-08D.2] Adaptive Hero — 지금 가장 먼저 알아야
+                    //   하는 상태 하나를 해석한다. 준비 미완료 카드도 여기로
+                    //   들어왔다(state = setup).
+                    _buildAdaptiveHero(context, s, theme, up),
                     // [AH-V2-05B] TODAY → TASK → NEXT.
                     //   오늘 상황을 본 다음 바로 지금 처리할 일이 오고,
                     //   다음 운영 준비(향후 인력 부족)가 마지막이다.
                     //   처리할 일이 0건이어도 이 순서는 고정한다 — Home 위치가
                     //   매번 달라지면 관리자가 화면을 학습할 수 없다.
-                    _buildTodayOps(context, s, theme, up),
-                    SizedBox(height: 16 * s),
-                    _buildActionDashboard(context, s, theme, up),
-                    SizedBox(height: 16 * s),
-                    _buildFutureStaffing(context, s, theme, up), // [PHASE-2D]
+                    //
+                    // [HOME-V2-08D.2] 각 섹션은 자기 truth로 렌더 여부를
+                    //   정한다. "없다"는 말은 Hero가 한 번만 하고, 섹션은
+                    //   보여줄 것이 있을 때만 나온다. 순서는 그대로다.
+                    ..._buildSections(context, s, theme, up),
                     SizedBox(height: 32 * s), // Bottom Nav가 gesture bar padding 내부 처리
                   ],
                 ),
@@ -1070,6 +1160,284 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
+  // ── [HOME-V2-08D.2] Hero 렌더 ──────────────────────────────────────
+
+  /// Hero 공통 껍데기. 섹션 카드와 같은 surface를 쓴다 — 08D.1의 `_groupSurface`.
+  Widget _heroShell(
+    double s, {
+    required IconData icon,
+    required Color color,
+    required String message,
+    String? supporting,
+    String? ctaLabel,
+    VoidCallback? onCta,
+    Widget? body,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s),
+      child: Container(
+        decoration: _groupSurface,
+        padding: EdgeInsets.fromLTRB(16 * s, 14 * s, 16 * s, 14 * s),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // 상태색이 칠해지는 유일한 면적 — 나머지는 중립이다.
+            Container(
+              width: 22 * s,
+              height: 22 * s,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 14 * s, color: color),
+            ),
+            SizedBox(width: 10 * s),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  height: 1.35,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ),
+          ]),
+          if (supporting != null) ...[
+            SizedBox(height: 6 * s),
+            Padding(
+              padding: EdgeInsets.only(left: 32 * s),
+              child: Text(supporting,
+                  style: TextStyle(
+                      fontSize: 13, height: 1.4, color: AppColors.grey600)),
+            ),
+          ],
+          if (body != null) ...[
+            SizedBox(height: 12 * s),
+            body,
+          ],
+          // CTA는 lifecycle/error 상태에만 온다. 운영 상태에서 행동 경로는
+          //   이미 아래 섹션에 있으므로 Hero가 그것을 가리키지 않는다.
+          if (ctaLabel != null && onCta != null) ...[
+            SizedBox(height: 10 * s),
+            Padding(
+              padding: EdgeInsets.only(left: 32 * s),
+              child: InkWell(
+                onTap: onCta,
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(ctaLabel,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).primaryColor)),
+                  Icon(Icons.chevron_right,
+                      size: 16 * s, color: Theme.of(context).primaryColor),
+                ]),
+              ),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  /// 로딩 — 같은 껍데기에 정적 회색 바. shimmer는 쓰지 않는다.
+  Widget _heroSkeleton(double s) {
+    Widget bar(double w, double h) => Container(
+          width: w,
+          height: h,
+          decoration: BoxDecoration(
+            color: AppColors.grey100,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        );
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s),
+      child: Container(
+        decoration: _groupSurface,
+        padding: EdgeInsets.fromLTRB(16 * s, 14 * s, 16 * s, 14 * s),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 22 * s,
+              height: 22 * s,
+              decoration: const BoxDecoration(
+                  color: AppColors.grey100, shape: BoxShape.circle),
+            ),
+            SizedBox(width: 10 * s),
+            Expanded(child: bar(double.infinity, 17 * s)),
+          ]),
+          SizedBox(height: 10 * s),
+          Padding(
+            padding: EdgeInsets.only(left: 32 * s),
+            child: bar(160 * s, 13 * s),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildAdaptiveHero(
+      BuildContext context, double s, ThemeData theme, UserProvider up) {
+    final state = _heroStateOf(up);
+    switch (state) {
+      case _HeroState.loading:
+        return _heroSkeleton(s);
+
+      case _HeroState.error:
+        return _heroShell(s,
+            icon: Icons.cloud_off_outlined,
+            color: AppColors.warningDark,
+            message: '오늘 상황을 확인하지 못했어요',
+            supporting: '인력 정보를 불러오지 못했습니다.',
+            ctaLabel: '다시 시도',
+            onCta: () => unawaited(_loadStaffingReadiness()));
+
+      case _HeroState.partialInfo:
+        return _heroShell(s,
+            icon: Icons.cloud_off_outlined,
+            color: AppColors.warningDark,
+            message: '오늘 상황을 일부만 확인했어요',
+            supporting: '일부 사업장 정보를 불러오지 못했습니다.',
+            ctaLabel: '다시 시도',
+            onCta: () => unawaited(_loadStaffingReadiness()));
+
+      case _HeroState.setup:
+        return _buildPostingSetupCard(context, s, theme);
+
+      case _HeroState.noPosting:
+        return _heroShell(s,
+            icon: Icons.post_add_outlined,
+            color: AppColors.grey600,
+            message: '현재 등록된 공고가 없어요',
+            supporting: '사람이 필요한 날짜와 업무를 등록하면\n지원자를 받을 수 있어요.',
+            // [§31] 권한이 없으면 CTA를 숨긴다 — disabled teaser를 만들지 않는다.
+            ctaLabel: _canCreatePosting(up) ? '공고 등록' : null,
+            onCta: _canCreatePosting(up) ? () => _openCreatePosting(context) : null);
+
+      case _HeroState.draftOnly:
+        return _heroShell(s,
+            icon: Icons.edit_note,
+            color: AppColors.grey700,
+            message: '작성 중인 공고가 있어요',
+            supporting: '공개하면 지원자가 지원할 수 있어요.',
+            ctaLabel: _canCreatePosting(up) ? '작성 계속하기' : null,
+            onCta: _canCreatePosting(up) ? () => _openDraftPostings(context) : null);
+
+      case _HeroState.shortage:
+        final n = _todayStaffingDay?.shortageCount ?? 0;
+        return _heroShell(s,
+            icon: Icons.warning_amber_rounded,
+            color: AppColors.error,
+            message: '오늘 $n명이 더 필요해요',
+            supporting: _todayWorkSummary);
+
+      case _HeroState.attention:
+        final n = _todayNeedsAttention ?? 0;
+        return _heroShell(s,
+            icon: Icons.pending_actions_outlined,
+            color: AppColors.warningDark,
+            message: '오늘 확인할 근태가 $n건 있어요',
+            supporting: '미출근·지각·미퇴근 등 확인이 필요한 근무자가 있습니다.');
+
+      case _HeroState.noToday:
+        return _heroShell(s,
+            icon: Icons.event_available_outlined,
+            color: _upcomingAllStaffed
+                ? AppColors.successDeep
+                : AppColors.grey600,
+            message: _upcomingAllStaffed
+                ? '오늘 근무는 없고,\n다가오는 근무는 인원이 모두 확보됐어요'
+                : '오늘 예정된 근무는 없어요',
+            supporting: _upcomingAllStaffed ? null : _nextWorkdaySupporting());
+
+      case _HeroState.beforeStart:
+        final t = _todayFirstStart;
+        return _heroShell(s,
+            icon: Icons.schedule,
+            color: AppColors.scheduledDark,
+            message: t == null
+                ? '오늘 근무가 예정되어 있어요'
+                : '오늘 첫 근무는 $t에 시작해요',
+            supporting: _todayWorkSummary);
+
+      case _HeroState.normalToday:
+        // 출근 정보를 모르면 '문제없이 진행 중'이라고 단정하지 않는다.
+        final attendanceKnown = _todayCheckedIn != null;
+        return _heroShell(s,
+            icon: Icons.check_circle_outline,
+            color: AppColors.successDeep,
+            message: attendanceKnown
+                ? '오늘 근무는 문제없이 진행 중이에요'
+                : '오늘 근무가 예정되어 있어요',
+            supporting: _todayWorkSummary);
+    }
+  }
+
+  /// D+1~D+7에 대상이 있고 부족이 하나도 없는가.
+  bool get _upcomingAllStaffed {
+    final sr = _staffingReadiness;
+    if (sr == null || !sr.hasUsableData || !sr.hasFutureTarget) return false;
+    return sr.days.skip(1).every((d) => d.shortageCount == 0);
+  }
+
+  /// 다음 근무일 안내 — `days[1..7]`로 알 수 있는 범위만 말한다.
+  String? _nextWorkdaySupporting() {
+    final sr = _staffingReadiness;
+    if (sr == null || !sr.hasUsableData) return null;
+    for (final d in sr.days.skip(1)) {
+      if (d.requiredCount <= 0) continue;
+      final label = _futureDateLabel(d.date);
+      final biz = d.byBusiness.isNotEmpty ? d.byBusiness.first.businessName : null;
+      final staffing = '${d.requiredCount}명 중 ${d.confirmedCount}명 확정';
+      return biz == null
+          ? '다음 근무는 $label이에요\n$staffing'
+          : '다음 근무는 $label이에요\n$biz · $staffing';
+    }
+    // [§15] D+8 이후에만 근무가 있을 수 있다 — 아는 범위까지만 말한다.
+    return '앞으로 7일 안에도 예정된 근무가 없어요';
+  }
+
+  /// 공고 생성/편집 권한 — 기존 permission 계약 그대로.
+  /// (서버 게이트 callableCreateTO canManageTo 검증과 같은 기준)
+  bool _canCreatePosting(UserProvider up) =>
+      up.currentUser?.isSubAdmin != true || up.can((p) => p.canManageTo);
+
+  /// [HOME-V2-08D.2] 공고 등록 — Jobs 탭의 생성 버튼과 같은 경로다.
+  void _openCreatePosting(BuildContext context) {
+    unawaited(_safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!mounted) return;
+          final up = context.read<UserProvider>();
+          final initBizId = up.isSubAdmin ? up.effectiveBusinessId : null;
+          await NavigationHelper.push<bool>(
+            context,
+            destination: AdminCreateTOScreen(initialBusinessId: initBizId),
+            useRootNavigator: true,
+            onChanged: () {
+              if (!mounted) return;
+              // 새 공고는 Home의 lifecycle signal과 인력 현황을 모두 바꾼다.
+              unawaited(_loadStaffingReadiness());
+              unawaited(_reloadReadiness());
+              WorkforceController.notifyDataChanged(
+                origin: AdminMutationOrigin.home,
+              );
+            },
+          );
+        })));
+  }
+
+  /// [HOME-V2-08D.2] 작성 중인 공고 보기 — 공고 탭으로 전환한다.
+  ///
+  /// 미공개 공고는 공고 목록 안에서 하단으로 정렬되고(03Q.1) outline 배지로
+  /// 구분된다(03S.1). 탭 전환은 canonical `AdminTabSwitcher`를 쓴다 —
+  /// 목록의 publish 필터를 외부에서 미리 선택하는 API는 아직 없다.
+  void _openDraftPostings(BuildContext context) {
+    unawaited(_safeNavigate(() => _requireApprovedBusiness(context, () async {
+          AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab);
+        })));
+  }
+
   /// [PH1] SUB_ADMIN 권한 요약 한 줄 (compact)
   Widget _buildPermissionSummaryLine(double s, UserProvider up) {
     final perms = <String>[];
@@ -1085,6 +1453,123 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [HOME-V2-08D.2] Adaptive Hero
+  //
+  // Hero는 **지금 가장 먼저 알아야 하는 한 가지 상태**를 해석한다.
+  // 운영 action list가 아니다 — 행동은 각 섹션이 맡는다.
+  //
+  // 상태는 여기 한 곳에서만 derive한다. 렌더 곳곳에서 같은 조건을 다시
+  // 계산하면 Hero와 섹션이 서로 다른 판단을 하게 된다.
+  // ══════════════════════════════════════════════════════════════════
+
+  /// Hero가 선택할 수 있는 상태. 위에서 처음 참인 것 하나만 쓴다.
+  _HeroState _heroStateOf(UserProvider up) {
+    final sr = _staffingReadiness;
+    final isSub = up.currentUser?.isSubAdmin == true;
+
+    // 로딩 — 판단에 필요한 데이터가 아직 없다. empty를 섣불리 말하지 않는다.
+    if (_staffingLoading || _attendanceLoading || !_readinessLoaded) {
+      return _HeroState.loading;
+    }
+
+    // 0. 전체 조회 실패 — 아무것도 모른다. ERROR ≠ ZERO.
+    if (sr == null || !sr.hasUsableData) return _HeroState.error;
+
+    // 1. 준비 미완료. readiness는 staffing과 다른 데이터라 partial과 무관하다.
+    //    SubAdmin은 사업장 소유 설정을 할 수 없어 이 분기를 타지 않는다(기존 정책).
+    final r = _firstPosting;
+    if (!isSub && r != null && !r.allReady) return _HeroState.setup;
+
+    // 2·3. lifecycle — **partial이면 건너뛴다.**
+    //    부분합의 0은 "없다"가 아니라 "일부만 셌다"이다. 실패한 사업장에
+    //    공고가 있을 수 있으므로 `공고 없음`을 확정하면 안 된다(§25).
+    if (!sr.partial && sr.publishedPostingCount == 0) {
+      return sr.hasDraftPosting ? _HeroState.draftOnly : _HeroState.noPosting;
+    }
+
+    // 4·5. 오늘의 문제 — 긍정 주장이라 부분합에서도 참이다.
+    final shortage = _todayStaffingDay?.shortageCount ?? 0;
+    if (shortage > 0) return _HeroState.shortage;
+    if ((_todayNeedsAttention ?? 0) > 0) return _HeroState.attention;
+
+    // 6. 여기부터는 전부 "없다"는 주장이다. 부분합으로는 말할 수 없다.
+    if (sr.partial) return _HeroState.partialInfo;
+
+    // 7. 오늘 근무 없음. 로스터가 있으면 staffing이 뭐라 하든 오늘은 있다.
+    if (!sr.hasTodayTarget && _hasTodayRoster != true) return _HeroState.noToday;
+
+    // 8. 아직 첫 근무 시작 전
+    if (_todayDueNow == 0) return _HeroState.beforeStart;
+
+    // 9. 정상
+    return _HeroState.normalToday;
+  }
+
+  /// lifecycle 상태인가 — 이 상태에서는 운영 섹션이 없고 Hero가 CTA를 갖는다.
+  static bool _isLifecycleHero(_HeroState s) =>
+      s == _HeroState.setup ||
+      s == _HeroState.noPosting ||
+      s == _HeroState.draftOnly;
+
+  // ── [HOME-V2-08D.2] section gate ───────────────────────────────────
+  //
+  // 공통 원칙: **모르는 동안에는 숨기지 않는다.** 로딩·실패는 각 섹션이 이미
+  // 자기 자리에서 스피너와 재시도 행으로 말하고 있고, 그것이 canonical이다
+  // (ERROR ≠ ZERO). gate는 "확실히 보여줄 것이 없을 때"만 섹션을 없앤다.
+
+  /// 오늘 — staffing 대상이 있거나 확정 로스터가 있으면 렌더.
+  bool get _showTodaySection {
+    if (_staffingLoading || _attendanceLoading) return true;
+    final sr = _staffingReadiness;
+    if (sr == null || !sr.hasUsableData) return true; // 에러 행 유지
+    if (_todayCheckedIn == null) return true; // 출근 조회 실패 행 유지
+    return sr.hasTodayTarget || (_hasTodayRoster ?? false);
+  }
+
+  /// 다가오는 7일 — D+1~D+7에 대상이 있을 때만 렌더.
+  bool get _showUpcomingSection {
+    if (_staffingLoading) return true;
+    final sr = _staffingReadiness;
+    if (sr == null || !sr.hasUsableData) return true; // 에러 행 유지
+    return sr.days.skip(1).any((d) => d.requiredCount > 0);
+  }
+
+  /// 처리할 일 — **posting lifecycle과 독립이다.**
+  ///
+  /// 공고가 없어도 급여 미이체·계약 미발송은 남아 있다. rows가 비는 것은
+  /// summary를 정상 조회했는데 0건일 때뿐이고(조회 실패는 '조회 실패' 행으로
+  /// 렌더된다), 그때만 Hero 상태를 보고 한 줄 안내를 낼지 정한다.
+  bool _showTaskSection(_HeroState hero, bool hasRows) {
+    if (_canonicalSummaryLoading) return true;
+    if (hasRows) return true;
+    // lifecycle 상태에서는 Hero가 이미 다음 행동을 말했다 — 반복하지 않는다.
+    return !_isLifecycleHero(hero);
+  }
+
+  List<Widget> _buildSections(
+      BuildContext context, double s, ThemeData theme, UserProvider up) {
+    final hero = _heroStateOf(up);
+    final hasRows = _makeActionRows(context, s, up, _canonicalSummary).isNotEmpty;
+
+    final sections = <Widget>[
+      if (_showTodaySection) _buildTodayOps(context, s, theme, up),
+      if (_showTaskSection(hero, hasRows))
+        _buildActionDashboard(context, s, theme, up),
+      if (_showUpcomingSection) _buildFutureStaffing(context, s, theme, up),
+    ];
+    if (sections.isEmpty) return const [];
+
+    // [§27] Hero 아래 첫 섹션까지 20, 그 뒤 섹션 사이 16.
+    //   Hero 밑에 아무것도 없으면 여백을 만들지 않는다.
+    final out = <Widget>[SizedBox(height: 20 * s)];
+    for (var i = 0; i < sections.length; i++) {
+      if (i > 0) out.add(SizedBox(height: 16 * s));
+      out.add(sections[i]);
+    }
+    return out;
   }
 
   /// [HOME-V2-08D.1] Home grouped surface 공통 데코레이션.
@@ -1278,7 +1763,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final tplTarget = _templateCtaBusiness;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(20 * s, 0, 20 * s, 16 * s),
+      // [HOME-V2-08D.2] Hero 자리로 옮겼다 — 다른 Hero variant와 같은 gutter를
+      //   쓰고, 아래 여백은 _buildSections가 소유한다(섹션이 없으면 여백도 없다).
+      padding: EdgeInsets.symmetric(horizontal: 16 * s),
       child: Container(
         // [HOME-V2-08D.1] 이전에는 radius가 `12 * s`라 기기 폭에 따라 모서리가
         //   달라졌고 border도 혼자 0.8px였다. 다른 섹션과 같은 값을 쓴다.
@@ -1300,17 +1787,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     child: Icon(Icons.checklist_rounded,
                         size: 14 * s, color: theme.primaryColor),
                   ),
-                  SizedBox(width: 8 * s),
-                  Text(
-                    '공고 등록 준비',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.2,
+                  SizedBox(width: 10 * s),
+                  // [HOME-V2-08D.2] Hero 문장 위계(17 bold)로 올린다 —
+                  //   이 상태에서 화면이 말해야 하는 한 문장이다.
+                  Expanded(
+                    child: Text(
+                      '공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        height: 1.35,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  SizedBox(width: 8 * s),
                   // 완료/전체 — 남은 개수가 아니라 진척을 보여준다
                   Text(
                     '$done / ${FirstPostingReadiness.totalTasks} 완료',
@@ -1546,18 +2038,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     // [AH-V2-03] 오늘 인력 운영 대상 자체가 없는 경우 —
     //   0/0/0 수치만 보여주면 "운영 중인데 필요 인원이 0"처럼 읽힌다.
-    //   대상 없음은 수치가 아니라 상태로 말한다.
+    // [HOME-V2-08D.2] 그 말을 이제 Hero가 한다. 섹션 자체가 gate에서 걸러지고,
+    //   여기 남는 경우는 **로스터는 있는데 staffing 대상이 0인** 상태뿐이다.
+    //   그때 `오늘 예정된 인력 운영이 없어요`를 출근 수치 옆에 두면 같은 카드가
+    //   서로 모순된다 — 아무 말도 하지 않고 출근 행에 자리를 넘긴다.
     if (!_staffingReadiness!.hasTodayTarget) {
-      return Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 16 * s),
-        child: Row(children: [
-          Icon(Icons.event_available_outlined,
-              size: 16 * s, color: AppColors.grey300),
-          SizedBox(width: 8 * s),
-          Text('오늘 예정된 인력 운영이 없어요',
-              style: TextStyle(fontSize: 13, color: AppColors.grey400)),
-        ]),
-      );
+      return const SizedBox.shrink();
     }
 
     final day = _todayStaffingDay;
@@ -1843,7 +2329,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // 부족 없음 — 두 가지 의미를 구분한다 [AH-V2-03]
     //   운영 대상 자체가 없음  vs  대상은 있고 전부 충원됨
     if (futureDays.isEmpty) {
-      final hasTarget = _staffingReadiness!.hasFutureTarget;
+      // [HOME-V2-08D.2] `향후 7일 예정된 인력 운영이 없어요`는 사라졌다.
+      //   대상이 없으면 이 섹션 자체가 gate에서 걸러지고, 그 상태는 Hero가
+      //   설명한다. 여기 남는 것은 "대상은 있고 전부 충원됨"뿐이다.
       return Column(children: [
         _sectionHeader(context, s, '다가오는 인력 부족'),
         SizedBox(height: 8 * s),
@@ -1855,17 +2343,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             decoration: _groupSurface,
             child: Column(children: [
               Row(children: [
-                Icon(
-                    hasTarget
-                        ? Icons.check_circle_outline
-                        : Icons.event_available_outlined,
+                Icon(Icons.check_circle_outline,
                     size: 16 * s, color: AppColors.grey300),
                 SizedBox(width: 8 * s),
                 Expanded(
                   child: Text(
-                    hasTarget
-                        ? '향후 7일 인원이 모두 충원됐어요'
-                        : '향후 7일 예정된 인력 운영이 없어요',
+                    '향후 7일 인원이 모두 충원됐어요',
                     style: TextStyle(fontSize: 13, color: AppColors.grey400),
                   ),
                 ),

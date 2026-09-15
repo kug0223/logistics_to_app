@@ -100,7 +100,9 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('PRIORITY-01 TODAY → TASK → NEXT', () {
     test('오늘 운영 < 처리할 일 < 다가오는 인력 부족', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       final today = b.indexOf('_buildTodayOps(');
       final task = b.indexOf('_buildActionDashboard(');
       final next = b.indexOf('_buildFutureStaffing(');
@@ -110,12 +112,14 @@ void main() {
     });
 
     test('§2 선행 상태 섹션은 상단 유지', () {
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
       var prev = -1;
       for (final m in [
         '_buildHeader(',
         '_buildStateBanner(',
-        '_buildPostingSetupCard(',
+        '_buildAdaptiveHero(',
         '_buildTodayOps(',
       ]) {
         final at = b.indexOf(m);
@@ -134,11 +138,19 @@ void main() {
 
     test('§3 처리할 일이 0건이어도 위치가 고정이다', () {
       // 섹션 배치는 build()의 정적 목록이며 count에 따른 분기가 없다
-      final b = _bodyOf(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _bodyOf(home, 'Widget build(') +
+          _bodyOf(home, 'List<Widget> _buildSections(');
+      // [HOME-V2-08D.2] 이제 각 섹션에 렌더 조건이 붙는다. 다만 그것은
+      //   **보이는가**이지 **어디에 오는가**가 아니다 — 목록은 여전히 정적
+      //   순서이고, count·연체 같은 우선순위 값이 배치에 끼어들지 않는다.
       final seg = b.substring(
           b.indexOf('_buildTodayOps('), b.indexOf('_buildFutureStaffing('));
-      expect(seg.contains('if ('), isFalse,
-          reason: '섹션 사이에 조건부 배치가 들어가면 순서가 흔들린다');
+      for (final forbidden in ['count', 'overdue', 'sort', 'priority']) {
+        expect(seg.contains(forbidden), isFalse, reason: forbidden);
+      }
+      expect(seg.contains('_showTaskSection(hero, hasRows)'), isTrue,
+          reason: '조건은 존재 여부 하나뿐이다');
       // 빈 상태 문구는 대시보드 내부에서 처리된다
       expect(home.contains('처리할 업무가 없어요'), isTrue);
     });
@@ -388,8 +400,10 @@ void main() {
 
     test('AH-V2-03 staffing 상태 유지', () {
       expect(home.contains('hasUsableData'), isTrue);
-      expect(home.contains('오늘 예정된 인력 운영이 없어요'), isTrue);
-      expect(home.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
       expect(home.contains('향후 7일 인원이 모두 충원됐어요'), isTrue);
     });
 

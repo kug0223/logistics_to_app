@@ -483,7 +483,8 @@ void main() {
 
     test('AH-V2-03 staffing 계약 유지', () {
       expect(home.contains('hasUsableData'), isTrue);
-      expect(home.contains('향후 7일 예정된 인력 운영이 없어요'), isTrue);
+      // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
+
     });
 
     test('write 정책을 바꾸지 않았다', () {

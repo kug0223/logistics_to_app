@@ -382,10 +382,12 @@ void main() {
     });
 
     test('Home section 순서 유지', () {
-      final b = _dartBody(home, 'Widget build(');
+      // [HOME-V2-08D.2] 섹션 조립이 _buildSections로 옮겨졌다 — 순서는 그대로.
+      final b = _dartBody(home, 'Widget build(') +
+          _dartBody(home, 'List<Widget> _buildSections(');
       var prev = -1;
       for (final m in [
-        '_buildHeader(', '_buildStateBanner(', '_buildPostingSetupCard(',
+        '_buildHeader(', '_buildStateBanner(', '_buildAdaptiveHero(',
         // [AH-V2-05B] TODAY → TASK → NEXT
         '_buildTodayOps(', '_buildActionDashboard(', '_buildFutureStaffing(',
       ]) {
