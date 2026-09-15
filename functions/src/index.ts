@@ -13741,6 +13741,18 @@ export const callableGetUsersBatch = onCall(
 
     const uids = request.data.uids as string[] | undefined;
     const businessId = request.data.businessId as string | undefined;
+    // [R1.2.1] purpose-scoped projection.
+    //   "applicantReview" = 지원 검토 단계에서 지원자를 판단하기 위한 조회.
+    //   permission(누가 볼 수 있는가)과 purpose limitation(무엇을 위해 보는가)은
+    //   다른 문제다. 급여 담당 권한을 가진 BUSINESS_ADMIN이라도 아직 확정되지
+    //   않은 지원자의 계좌를 '지원 검토' 목적으로 받을 이유는 없다.
+    //   purpose 미지정 = 기존 semantics 그대로 — 확정명단·급여 화면 영향 없음.
+    const purpose = request.data.purpose as string | undefined;
+    const isApplicantReview = purpose === "applicantReview";
+    if (purpose !== undefined && !isApplicantReview) {
+      throw new HttpsError(
+        "invalid-argument", `허용되지 않는 purpose 값: ${purpose}`);
+    }
 
     if (!uids || !Array.isArray(uids) || uids.length === 0) return {users: {}};
     if (uids.length > 30) {
@@ -13783,6 +13795,21 @@ export const callableGetUsersBatch = onCall(
 
     if (!isSuperAdmin && !isAdmin && !isSubAdmin) {
       throw new HttpsError("permission-denied", "해당 사업장 조회 권한이 없습니다.");
+    }
+
+    // [R1.2.1] 지원 검토의 canonical capability는 canManageTo다.
+    //   목록(callableGetPendingApplicationsForReview)과 승인/거절이 이미 이것으로
+    //   막혀 있는데 상세 reader만 membership으로 열려 있으면 capability drift다.
+    //   UI에서 못 들어간다는 이유로 넘어가지 않는다 — 여기서 서버가 막는다.
+    if (isApplicantReview && !isSuperAdmin && !isAdmin) {
+      const reviewMemberSnap = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const reviewPerms =
+        reviewMemberSnap.data()?.permissions as
+          Record<string, boolean> | undefined;
+      if (reviewPerms?.canManageTo !== true) {
+        throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+      }
     }
 
     // [SEC-BANK-FILTER] SubAdmin은 canManageWage 권한에 따라 계좌정보 필드 필터링
@@ -13842,6 +13869,37 @@ export const callableGetUsersBatch = onCall(
     // SubAdmin canManageWage=false 시 추가 필터링 대상 — 급여 운영 전용 필드
     const BANK_ONLY_FIELDS = new Set(["accountNumber", "bankName", "accountHolder", "bankVerificationStatus"]);
 
+    // [R1.2.1] 지원 검토 목적의 **allowlist**.
+    //
+    //   denylist가 아니라 allowlist다. users 문서에 필드가 새로 생길 때
+    //   denylist는 그 필드를 조용히 통과시키지만 allowlist는 막는다.
+    //   "이 목적에 필요한 것"을 적는 편이 "이 목적에 위험한 것"을 빠짐없이
+    //   적는 것보다 안전하다.
+    //
+    //   기준: 관리자가 '이 지원자를 이번 근무에 쓸지' 판단하는 데 쓰는 정보.
+    //   급여 계좌·통장사본·신분증·주민/외국인등록번호·PASS 상세·서명/인감은
+    //   호출자가 canManageWage를 가졌더라도 이 목적에서는 나가지 않는다.
+    //   정확한 주거 주소 대신 homeRegion(시/군/구)만 나간다.
+    const APPLICANT_REVIEW_ALLOWED = new Set([
+      // 신원 표시 — 누구인지
+      "name", "username", "koreanName", "legalName", "profileImageUrl",
+      "gender", "birthDate", "bio",
+      "phone", "contactPhone", "authPhone",
+      "role", "accountStatus",
+      // 신뢰도 — 주의할 사건이 있는지
+      "isBlacklisted", "blacklistReason", "restrictedUntil", "trustScore",
+      "noShowCount", "lateCount", "recentNoShowCount", "recentLateCount",
+      "totalPenaltyDays", "consecutiveDays",
+      // 업무 경험 — 이번 근무에 맞는지
+      "totalWorkDays", "totalWorkHours", "workTypeStats",
+      "preferredWorkTypes", "skills", "badges",
+      "isAvailable", "availableFrom", "unavailableReason",
+      // 품질
+      "averageRating", "reviewCount", "rehireRate",
+      // 통근 — 시/군/구 수준
+      "homeRegion", "preferredJobRegions",
+    ]);
+
     const users: Record<string, Record<string, unknown>> = {};
     for (const snap of snaps) {
       if (!snap.exists) continue;
@@ -13856,6 +13914,8 @@ export const callableGetUsersBatch = onCall(
         if (SENSITIVE_FIELDS.has(key)) continue;
         // [SEC-BANK-FILTER] canManageWage=false SubAdmin은 계좌정보 제외 (data minimization)
         if (!callerCanManageWage && BANK_ONLY_FIELDS.has(key)) continue;
+        // [R1.2.1] purpose limitation — 역할과 무관하게 적용된다.
+        if (isApplicantReview && !APPLICANT_REVIEW_ALLOWED.has(key)) continue;
         safeData[key] = value;
       }
       users[snap.id] = safeData;
@@ -16379,6 +16439,7 @@ export const callableGetApplicationsByBiz = onCall(
       workEndDateGteMs, workEndDateLtMs,
       orderByAppliedAtDesc,
       limit: rawLimit,
+      purpose,
     } = (request.data ?? {}) as {
       businessId?: string; toId?: string; slotId?: string;
       status?: string; type?: string; uid?: string;
@@ -16387,6 +16448,7 @@ export const callableGetApplicationsByBiz = onCall(
       workEndDateGteMs?: number; workEndDateLtMs?: number;
       orderByAppliedAtDesc?: boolean;
       limit?: number;
+      purpose?: string;
     };
 
     if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
@@ -16405,8 +16467,58 @@ export const callableGetApplicationsByBiz = onCall(
     if (resignStatus !== undefined && !VALID_RESIGN_STATUSES.has(resignStatus)) {
       throw new HttpsError("invalid-argument", `허용되지 않는 resignStatus 값입니다: ${resignStatus}`);
     }
+    // [R1.2.1] purpose-scoped 호출 — callableGetUsersBatch와 같은 계약.
+    const isApplicantReview = purpose === "applicantReview";
+    if (purpose !== undefined && !isApplicantReview) {
+      throw new HttpsError(
+        "invalid-argument", `허용되지 않는 purpose 값: ${purpose}`);
+    }
 
-    await assertBizAdmin(callerUid, businessId);
+    const {callerData: appsCallerData, bizData: appsBizData} =
+      await assertBizAdmin(callerUid, businessId);
+
+    // [R1.2.1] SubAdmin 권한 검증.
+    //
+    //   이 endpoint는 지금까지 membership만 봤다. 그래서 businessId만 알면
+    //   아무 permission이 없는 SubAdmin도 사업장 전체 지원서를 읽을 수 있었고,
+    //   status:"PENDING" 한 줄이면 canManageTo로 막아둔
+    //   callableGetPendingApplicationsForReview와 같은 목록이 나왔다.
+    //   UI에 진입 경로가 없다는 것은 서버 authorization이 아니다.
+    //
+    //   generic endpoint라 attendance/workforce/payroll caller가 함께 쓰므로
+    //   canManageTo를 전역 강제하면 REGRESSION이다. 대신:
+    //     (1) purpose=applicantReview → canManageTo strict
+    //     (2) 그 외 → 지원서를 읽을 이유가 있는 권한 중 하나는 있어야 한다.
+    //         넷 다 없는 SubAdmin은 관리자 UI에서 할 수 있는 일이 없으므로
+    //         이 검증으로 잃는 정상 caller가 없다.
+    const appsAdminIds = (appsBizData?.adminIds as string[] | undefined) ?? [];
+    const appsOwnerId = appsBizData?.ownerId as string | undefined;
+    const appsIsFullAccess =
+      (appsCallerData?.role as string | undefined) === "SUPER_ADMIN" ||
+      appsAdminIds.includes(callerUid) ||
+      appsOwnerId === callerUid;
+    if (!appsIsFullAccess) {
+      const appsMemberSnap = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const appsPerms =
+        appsMemberSnap.data()?.permissions as
+          Record<string, boolean> | undefined;
+      if (isApplicantReview) {
+        if (appsPerms?.canManageTo !== true) {
+          throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+        }
+      } else {
+        const APPLICATION_READ_PERMISSIONS = [
+          "canManageTo", "canManageWorkers",
+          "canManageWage", "canManageContract",
+        ];
+        const hasAny = APPLICATION_READ_PERMISSIONS
+          .some((p) => appsPerms?.[p] === true);
+        if (!hasAny) {
+          throw new HttpsError("permission-denied", "지원서 조회 권한이 없습니다.");
+        }
+      }
+    }
 
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 500,

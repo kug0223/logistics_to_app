@@ -115,6 +115,34 @@ class FormatHelper {
     return DateTime.utc(kst.year, kst.month, kst.day);
   }
 
+  /// [R1.2.1] KST 영업일(business day) 구간 — device timezone 무관.
+  ///
+  /// 입력: 그 영업일에 속하는 아무 instant.
+  ///   - canonical DATE_ONLY 값(slot.date, workDate) — KST 자정 instant
+  ///   - `DateTime.now()`
+  ///   - `toKstDate()`가 돌려준 `DateTime.utc(y, m, d)` 정규화 키
+  /// 반환: `[그 날 KST 00:00, 다음 날 KST 00:00)` 의 **절대 시각** 쌍.
+  ///
+  /// day-range 쿼리는 이 값을 `millisecondsSinceEpoch`로 보낸다.
+  /// `DateTime(d.year, d.month, d.day)`로 만든 기기 local 자정을 쓰면
+  /// KST가 아닌 기기에서 창이 통째로 어긋나 그 날의 지원자가 0건이 된다.
+  static (DateTime, DateTime) kstDayRange(DateTime dt) {
+    final start = toKstDate(dt).subtract(_kst);
+    return (start, start.add(const Duration(days: 1)));
+  }
+
+  /// [R1.2.1] KST 기준 그 달 전체 구간 — `kstDayRange`와 같은 계약의 월 단위.
+  ///
+  /// 반환: `[그 달 1일 KST 00:00, 다음 달 1일 KST 00:00)`.
+  /// 월 경계에서 KST 1일 근무가 전달로 빠지거나 다음 달 1일이 끼어드는 것을 막는다.
+  static (DateTime, DateTime) kstMonthRange(DateTime dt) {
+    final d = toKstDate(dt);
+    return (
+      DateTime.utc(d.year, d.month, 1).subtract(_kst),
+      DateTime.utc(d.year, d.month + 1, 1).subtract(_kst),
+    );
+  }
+
   /// DateTime을 시간만 포맷팅
   ///
   /// 예시:

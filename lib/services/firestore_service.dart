@@ -280,18 +280,27 @@ class FirestoreService {
   /// CF callableGetUsersBatch를 통해 서버 사이드 소속 검증 후 반환
   /// — 극도 민감 필드(ci, residentNumber, foreignIdNumber, idCardImageUrl,
   ///   signatureBase64, sealBase64, bankbookImageUrl)는 CF에서 제거됨
+  /// [R1.2.1] [purpose]를 지정하면 서버가 그 목적에 필요한 필드만 돌려준다.
+  /// 현재 값은 `'applicantReview'` 하나 — 지원 검토 단계의 지원자 조회다.
+  /// 서버가 canManageTo를 요구하고 계좌·정확한 주소 등을 제외한다.
+  ///
+  /// purpose 호출은 **캐시를 쓰지도, 채우지도 않는다.** 한 캐시에 축약본과
+  /// 전체본이 섞이면 확정자 화면이 계좌 없는 사용자를 받거나, 반대로 검토
+  /// 화면이 계좌가 실린 사용자를 받는다. 목적이 다르면 캐시도 공유하지 않는다.
   Future<Map<String, UserModel>> getUsersBatch(
     List<String> uids, {
     required String businessId,
+    String? purpose,
   }) async {
     if (uids.isEmpty) return {};
 
+    final usesCache = purpose == null;
     final result = <String, UserModel>{};
     final uncached = <String>[];
     final now = DateTime.now();
 
     for (final uid in uids.toSet()) {
-      final cached = _userCache[uid];
+      final cached = usesCache ? _userCache[uid] : null;
       final ts = _userCacheTimestamps[uid];
       if (cached != null && ts != null && now.difference(ts) < _userCacheTTL) {
         result[uid] = cached;
@@ -319,6 +328,7 @@ class FirestoreService {
           return await callable.call<Map<String, dynamic>>({
             'uids': chunk,
             'businessId': businessId,
+            if (purpose != null) 'purpose': purpose,
           });
         } catch (e) {
           debugPrint('❌ getUsersBatch CF 실패 (chunk $idx): $e');
@@ -334,8 +344,11 @@ class FirestoreService {
         try {
           final data = _cfHydrate(Map<String, dynamic>.from(entry.value as Map));
           final user = UserModel.fromMap(data, uid);
-          _userCache[uid] = user;
-          _userCacheTimestamps[uid] = now;
+          // purpose 축약본은 캐시에 남기지 않는다 — 다른 목적의 화면이 주워가면 안 된다.
+          if (usesCache) {
+            _userCache[uid] = user;
+            _userCacheTimestamps[uid] = now;
+          }
           result[uid] = user;
         } catch (e) {
           debugPrint('⚠️ getUsersBatch: uid=$uid 파싱 실패 (건너뜀): $e');
@@ -1287,9 +1300,13 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 특정 사용자의 우리 사업장 근무 이력 조회
+  ///
+  /// [R1.2.1] [purpose]를 지정하면 서버가 그 목적의 capability를 재검증한다.
+  /// 지원 검토(`'applicantReview'`)는 canManageTo를 요구한다.
   Future<Map<String, dynamic>> getBusinessWorkHistory({
     required String userId,
     required String businessId,
+    String? purpose,
   }) async {
     try {
       debugPrint('🔍 [getBusinessWorkHistory] 조회: userId=$userId, businessId=$businessId');
@@ -1306,6 +1323,7 @@ class FirestoreService {
         callable.call({
           'businessId': businessId,
           'uid': userId,
+          if (purpose != null) 'purpose': purpose,
         }),
         reviewCallable.call<Map<String, dynamic>>({
           'targetUserId': userId,

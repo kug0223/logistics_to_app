@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/user_model.dart';
+import '../../models/core/user_region.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
 import '../../models/core/employment_contract_model.dart';
@@ -144,7 +145,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         // 0: 우리 사업장 이력
         businessId != null
             ? _firestoreService.getBusinessWorkHistory(
-                businessId: businessId, userId: widget.user.uid)
+                businessId: businessId,
+                userId: widget.user.uid,
+                // [R1.2.1] 검토 단계 조회는 purpose-scoped — 서버가 canManageTo를
+                //   재검증한다. 확정자 화면은 기존 경로 그대로다.
+                purpose: widget.isConfirmed ? null : 'applicantReview')
             : Future.value(null),
 
         // 1: 최근 리뷰 (monthly_reviews 컬렉션) — CF 경유 (callableGetReviewsForUser)
@@ -653,8 +658,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       icon: Icons.person_outline,
       child: Column(
         children: [
-          if (widget.user.address != null)
-            _buildInfoRow(context, '주소', 
+          // [R1.2.1] 검토 단계에서는 정확한 주거 주소를 쓰지 않는다.
+          //   통근 판단에 필요한 것은 시/군/구 수준이고 homeRegion이 이미 그 값이다.
+          //   서버도 purpose=applicantReview 응답에서 address/detailAddress를 뺀다.
+          if (!widget.isConfirmed)
+            if (widget.user.homeRegion != null)
+              _buildInfoRow(context, '거주 지역', _coarseRegionLabel(widget.user.homeRegion!))
+            else
+              const SizedBox.shrink()
+          else if (widget.user.address != null)
+            _buildInfoRow(context, '주소',
               '${widget.user.address}${widget.user.detailAddress != null ? ' ${widget.user.detailAddress}' : ''}'),
           if (app != null)
             widget.isConfirmed && app.confirmedAt != null
@@ -696,6 +709,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
   String _getWeekdayName(DateTime date) => FormatHelper.weekday(date);
+
+  /// [R1.2.1] 시/군/구까지만. district(동)는 붙이지 않는다 —
+  /// 통근 판단에 필요한 정밀도를 넘어선다.
+  String _coarseRegionLabel(UserRegion r) =>
+      r.province != null && r.province!.isNotEmpty ? '${r.province} ${r.city}' : r.city;
 
   /// 근무 통계
   Widget _buildWorkStats(BuildContext context) {

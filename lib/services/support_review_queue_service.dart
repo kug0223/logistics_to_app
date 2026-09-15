@@ -111,7 +111,13 @@ class SupportReviewQueueService {
     final uids = apps.map((a) => a.uid).toSet().toList();
     if (uids.isEmpty) return {};
     try {
-      return await _svc.getUsersBatch(uids, businessId: primaryBizId);
+      // [R1.2.1] purpose-scoped — 서버가 canManageTo를 재검증하고 계좌·정확한
+      //   주소 등 지원 검토와 무관한 필드를 응답에서 제외한다.
+      return await _svc.getUsersBatch(
+        uids,
+        businessId: primaryBizId,
+        purpose: 'applicantReview',
+      );
     } catch (e) {
       debugPrint('[SupportReviewQueue] 사용자 배치 로드 실패: $e');
       return null;

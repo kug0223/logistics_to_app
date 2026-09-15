@@ -38,14 +38,17 @@ class PendingApprovalCalendarDialog extends StatefulWidget {
 class _PendingApprovalCalendarDialogState
     extends State<PendingApprovalCalendarDialog> with LoadingStateMixin {
   // ─── 포맷터 캐싱 (build마다 재생성 방지) ─────────────────────
+  // [R1.2.1] 근무 날짜 표기·그룹 키는 FormatHelper(KST)를 쓴다.
+  //   _monthFmt는 사용자가 넘기는 달력 월 라벨이라 local component가 곧 그 값이다.
   static final _monthFmt  = DateFormat('yyyy년 M월');
-  static final _dateFmtKo = DateFormat('M/d(E)', 'ko_KR');
 
   late DateTime _currentMonth;
   String? _selectedBusinessId; // null = 전체 사업장
 
-  // 날짜별 PENDING 카운트: 'yyyy-MM-dd' → count
+  // 날짜별 PENDING 카운트: KST 'yyyy-MM-dd' → count
   Map<String, int> _pendingCountByDate = {};
+  // [R1.2.1] 조회 실패 — '승인 대기 0건'과 구분한다.
+  bool _hasLoadError = false;
 
   // 요약 통계
   int _totalCount = 0;
@@ -62,11 +65,14 @@ class _PendingApprovalCalendarDialogState
     _loadData();
   }
 
-  Future<void> _loadData() => runWithLoading(() async {
-        final bizIds = _selectedBusinessId != null
-            ? [_selectedBusinessId!]
-            : widget.businessIds;
+  Future<void> _loadData() {
+    _hasLoadError = false;
+    return runWithLoading(() async {
+      final bizIds = _selectedBusinessId != null
+          ? [_selectedBusinessId!]
+          : widget.businessIds;
 
+      try {
         final results = await Future.wait(
           bizIds.map((id) => _svc.getPendingApplicationsByMonthAndBusiness(
                 month: _currentMonth,
@@ -77,20 +83,33 @@ class _PendingApprovalCalendarDialogState
         final allApps = results.expand((list) => list).toList();
         final Map<String, int> countMap = {};
         for (final app in allApps) {
-          final key = DateFormat('yyyy-MM-dd').format(app.workDate);
+          // [R1.2.1] KST 영업일 키 — 쿼리 창(kstDayRange)과 같은 경계를 쓴다.
+          final key = FormatHelper.formatDateISO(app.workDate);
           countMap[key] = (countMap[key] ?? 0) + 1;
         }
 
         _pendingCountByDate = countMap;
         _calculateStats();
-      },
-      errorTag: '승인대기 캘린더',
-      errorMessage: '승인 대기 현황을 불러오는데 실패했습니다');
+      } catch (_) {
+        // [R1.2.1] 사업장 하나라도 실패하면 전체 ERROR — 일부만 센 숫자를
+        //   '전체 현황'으로 보여주지 않는다. stale 데이터도 남기지 않는다.
+        _hasLoadError = true;
+        _pendingCountByDate = {};
+        _totalCount = 0;
+        _todayCount = 0;
+        _overdueCount = 0;
+        rethrow;
+      }
+    },
+        errorTag: '승인대기 캘린더',
+        errorMessage: '승인 대기 현황을 불러오는데 실패했습니다');
+  }
 
   void _calculateStats() {
-    final today = DateTime.now();
-    final todayOnly = FormatHelper.toKstDate(today);
-    final todayKey = DateFormat('yyyy-MM-dd').format(today);
+    // [R1.2.1] 키도 today도 같은 KST 문자열로 비교한다.
+    //   전에는 키가 기기 local, todayOnly가 DateTime.utc라 서로 다른 기준끼리
+    //   isBefore로 비교되고 있었다.
+    final todayKey = FormatHelper.formatDateISO(DateTime.now());
 
     int total = 0;
     int todayC = 0;
@@ -100,9 +119,8 @@ class _PendingApprovalCalendarDialogState
       total += entry.value;
       if (entry.key == todayKey) {
         todayC += entry.value;
-      } else {
-        final date = DateTime.parse(entry.key);
-        if (date.isBefore(todayOnly)) overdue += entry.value;
+      } else if (entry.key.compareTo(todayKey) < 0) {
+        overdue += entry.value;
       }
     }
 
@@ -154,13 +172,16 @@ class _PendingApprovalCalendarDialogState
           onClose: () => Navigator.pop(context),
           trailing: _buildHeaderTrailing(),
         ),
-        if (!isLoading) _buildSummaryCard(),
+        // [R1.2.1] 조회 실패 상태에서는 0건 요약 카드를 띄우지 않는다.
+        if (!isLoading && !_hasLoadError) _buildSummaryCard(),
         Expanded(
           child: isLoading
               ? const LoadingWidget(message: '승인 대기 현황 조회 중...')
-              : _pendingCountByDate.isEmpty
-                  ? _buildEmptyState()
-                  : _buildContent(theme),
+              : _hasLoadError
+                  ? _buildErrorState()
+                  : _pendingCountByDate.isEmpty
+                      ? _buildEmptyState()
+                      : _buildContent(theme),
         ),
         // 닫기 Footer 없음 — Header X 버튼으로 충분
       ],
@@ -295,6 +316,33 @@ class _PendingApprovalCalendarDialogState
     );
   }
 
+  /// [R1.2.1] 조회 실패 — '0건'과 다른 화면을 그린다.
+  ///   여기서 빈 상태를 보여주면 관리자가 처리할 지원자가 없다고 믿는다.
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: ResponsiveHelper.cardPadding(context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline,
+                size: ResponsiveHelper.iconSize(context, 64),
+                color: AppColors.error),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '승인 대기 현황을 불러오지 못했어요',
+              style: ResponsiveHelper.bodyStyle(context,
+                  color: AppColors.textPrimary),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            TextButton(onPressed: _loadData, child: const Text('다시 시도')),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Padding(
@@ -319,8 +367,8 @@ class _PendingApprovalCalendarDialogState
   }
 
   Widget _buildContent(ThemeData theme) {
-    final today = DateTime.now();
-    final todayOnly = FormatHelper.toKstDate(today);
+    // [R1.2.1] 키가 KST 영업일 문자열이므로 비교도 키끼리 한다.
+    final todayKey = FormatHelper.formatDateISO(DateTime.now());
 
     final sortedEntries = _pendingCountByDate.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
@@ -331,13 +379,16 @@ class _PendingApprovalCalendarDialogState
       separatorBuilder: (_, __) => Divider(height: 1, color: AppColors.border),
       itemBuilder: (context, index) {
         final entry = sortedEntries[index];
-        final date = DateTime.parse(entry.key);
+        // [R1.2.1] 키를 KST calendar date로 되돌린다. DateTime.parse는 기기
+        //   local 자정을 만들므로 그대로 쓰면 창 계산이 다시 기기에 끌려간다.
+        //   DateTime.utc(y,m,d)는 toKstDate가 쓰는 정규화 키와 같은 모양이라
+        //   kstDayRange가 어느 기기에서든 같은 영업일 창을 만든다.
+        final parsed = DateTime.parse(entry.key);
+        final date = DateTime.utc(parsed.year, parsed.month, parsed.day);
         final count = entry.value;
 
-        final isPast = date.isBefore(todayOnly);
-        final isToday = date.year == today.year &&
-            date.month == today.month &&
-            date.day == today.day;
+        final isPast = entry.key.compareTo(todayKey) < 0;
+        final isToday = entry.key == todayKey;
 
         final Color indicatorColor;
         final Color countColor;
@@ -357,7 +408,7 @@ class _PendingApprovalCalendarDialogState
           urgencyLabel = '';
         }
 
-        final dateStr = _dateFmtKo.format(date);
+        final dateStr = FormatHelper.formatDateCompact(date);
 
         return InkWell(
           onTap: () => _openDayApplicants(date),

@@ -1121,8 +1121,9 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime date,
     required String businessId,
   }) async {
-    final dateStart = DateTime(date.year, date.month, date.day);
-    final dateEnd = dateStart.add(const Duration(days: 1));
+    // [R1.2.1] KST 영업일 창. canonical workDate가 KST 자정 instant이므로
+    //   기기 local 자정으로 창을 만들면 UTC 기기에서 그 지원자가 창 밖으로 나간다.
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetApplicationsByBiz',
@@ -1154,8 +1155,9 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime month,
     required String businessId,
   }) async {
-    final monthStart = DateTime(month.year, month.month, 1);
-    final monthEnd = DateTime(month.year, month.month + 1, 1);
+    // [R1.2.1] KST 영업월 — 기기 local 1일 자정을 쓰면 UTC 기기에서 창이
+    //   9시간 밀려 KST 1일 근무가 빠지고 다음 달 1일이 끼어든다.
+    final (monthStart, monthEnd) = FormatHelper.kstMonthRange(month);
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetApplicationsByBiz',
@@ -1177,8 +1179,11 @@ extension ApplicationFirestore on FirestoreService {
           .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
           .toList();
     } catch (e) {
+      // [R1.2.1] ERROR != ZERO. 빈 목록으로 삼키면 조회 실패가 '승인 대기 0건'이
+      //   되어 관리자가 처리할 일이 없다고 믿게 된다. 호출자(캘린더)가 ERROR 상태를
+      //   그린다. 유일한 호출자이므로 다른 화면에 영향 없다.
       debugPrint('❌ [승인대기] 월별 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -1274,8 +1279,9 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime date,
     required String businessId,
   }) async {
-    final dateStart = DateTime(date.year, date.month, date.day);
-    final dateEnd = dateStart.add(const Duration(days: 1));
+    // [R1.2.1] 대기 지원자 쿼리와 같은 KST 영업일 창을 쓴다 —
+    //   두 목록이 같은 다이얼로그에 나란히 서므로 경계가 어긋나면 안 된다.
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
 
     {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')

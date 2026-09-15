@@ -300,8 +300,11 @@ extension AttendanceFirestore on FirestoreService {
   }) async {
     // try-catch 제거 — 호출자(loadHasWorkedMap)가 rethrow를 담당
     // return [] 시 "근무자 없음"으로 오인되어 확정취소 가드가 오동작할 수 있음
-    final dateStart = DateTime(date.year, date.month, date.day);
-    final dateEnd = dateStart.add(const Duration(days: 1));
+    //
+    // [R1.2.1] KST 영업일 창. 이 결과는 DayApplicantsDialog에서 같은 날짜의
+    //   지원자 목록과 uid로 맞춰지므로, 지원자 쿼리만 KST로 고치고 여기를 두면
+    //   UTC 기기에서 '이미 근무한 사람'이 비어 확정취소 가드가 풀린다.
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
     return _callableGetAdminAttendances(
       businessId: businessId,
       startDate: dateStart,
