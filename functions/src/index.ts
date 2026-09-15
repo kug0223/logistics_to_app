@@ -32980,14 +32980,29 @@ export const callableGetStaffingReadiness = onCall(
           publishedCount++;
           const toType = (d["type"] as string | undefined) ?? "";
           const rawWDs = (d["workDetails"] as unknown[] | undefined) ?? [];
+          // [SYSTEM-INTEGRATION-R0] 이 배열은 **CONTRACT 전용**이다.
+          //
+          //   이전에는 `w["id"]`를 읽고 `id.length > 0`으로 걸렀다. 그런데
+          //   WorkDetailData.toMap()이 내보내는 키는 `workType`·`requiredCount`와
+          //   (있을 때만) `wdId`이고 `id`는 스키마에 존재하지 않는다. 그래서
+          //   모든 workDetail이 필터에서 탈락했고, FLEX는 빈 배열을 돌아
+          //   required가 한 번도 더해지지 않았으며 CONTRACT는 totalRequired가 0이라
+          //   `if (to.totalRequired === 0) return;`에서 즉시 반환됐다.
+          //   결과적으로 이 callable은 **어떤 TO에 대해서도** 0이 아닌 required를
+          //   만들어낼 수 없었다. 공고 목록은 같은 필드를 필터 없이 읽어 `필요 30`을
+          //   보여주는데 Home은 `예정된 근무 없음`이라고 말하는 모순이 여기서 났다.
+          //
+          //   FLEX는 여기서 식별자를 얻지 않는다 — TO-level workDetails에는 wdId가
+          //   없고(서버는 slot 생성 때만 generateWdId()를 돌린다), 슬롯마다 독립
+          //   wdId가 발급되므로 TO 한 벌로는 어떤 날짜의 counter와도 join할 수 없다.
+          //   canonical join은 5b에서 slot 자신의 workDetails로 수행한다.
           const wds: WdEntry[] = rawWDs
             .filter((w): w is Record<string, unknown> =>
               typeof w === "object" && w !== null)
             .map((w) => ({
-              id:       ((w["id"] as string | undefined) ?? "").trim(),
+              id:       ((w["wdId"] as string | undefined) ?? "").trim(),
               required: Math.max(0, (w["requiredCount"] as number | undefined) ?? 0),
-            }))
-            .filter((w) => w.id.length > 0);
+            }));
 
           if (toType === "flex") {
             flexTOs.push({toId: toDoc.id, wds});
@@ -33026,18 +33041,39 @@ export const callableGetStaffingReadiness = onCall(
               const wdc = (sd["workDetailCounts"] as
                 Record<string, {confirmedCount?: number}> | undefined) ?? {};
 
+              // [SYSTEM-INTEGRATION-R0] canonical join — **같은 슬롯 문서 안에서** 한다.
+              //   slot.workDetails[].wdId ↔ slot.workDetailCounts[wdId]
+              //   필요 인원도 슬롯 자신의 requiredCount를 쓴다. 날짜마다 workDetail
+              //   구성이 다를 수 있으므로 TO 한 벌을 모든 날짜에 적용하면 안 된다.
+              //   슬롯은 이미 읽은 문서라 추가 read가 0이다.
+              const rawSlotWDs =
+                (sd["workDetails"] as unknown[] | undefined) ?? [];
+              const slotWds = rawSlotWDs
+                .filter((w): w is Record<string, unknown> =>
+                  typeof w === "object" && w !== null)
+                .map((w) => ({
+                  wdId: ((w["wdId"] as string | undefined) ?? "").trim(),
+                  required: Math.max(
+                    0, (w["requiredCount"] as number | undefined) ?? 0),
+                }));
+
               // per-wdId shortage 합산 — 초과확정 wdId surplus는 다른 wdId 부족분 상쇄 금지
-              for (const wd of to.wds) {
-                if (!(wd.id in wdc)) {
-                  // LEGACY_WORKDETAIL: workDetailCounts에 wdId 없음 → 임의 fallback 없이 skip
-                  // 슬롯 재생성 전까지 해당 wdId 집계 제외 — aggregate 왜곡 방지
-                  console.debug(
-                    `[staffingReadiness] LEGACY_WORKDETAIL: TO ${to.toId} slot ${slotDoc.id}` +
-                    ` wdId "${wd.id}" not in workDetailCounts — skip`
+              for (const wd of slotWds) {
+                if (wd.wdId.length === 0 || !(wd.wdId in wdc)) {
+                  // [SYSTEM-INTEGRATION-R0] DATA CONTRACT ERROR ≠ ZERO.
+                  //   이전에는 조용히 skip했다. 그러면 required가 빠진 채로 정상
+                  //   응답이 되어 Home이 `예정된 근무 없음`·`전원 충원` 같은 **부정
+                  //   주장**을 하게 된다 — 확인하지 못한 것을 없다고 말하는 것이다.
+                  //   throw하면 이 사업장이 success=false가 되어 available/partial로
+                  //   내려가고, 클라이언트의 기존 error·partial 표면이 처리한다.
+                  throw new Error(
+                    "[staffingReadiness] WORKDETAIL_CONTRACT_BROKEN: " +
+                    `TO ${to.toId} slot ${slotDoc.id} wdId "${wd.wdId}" ` +
+                    `(counts keys: ${Object.keys(wdc).join(",")})`
                   );
-                  continue;
                 }
-                const confirmed = Math.max(0, wdc[wd.id]?.confirmedCount ?? 0);
+                const cnt = wdc[wd.wdId]?.confirmedCount ?? 0;
+                const confirmed = Math.max(0, cnt);
                 const shortage  = Math.max(0, wd.required - confirmed);
                 dayAcc[dayIdx].required  += wd.required;
                 dayAcc[dayIdx].confirmed += confirmed;

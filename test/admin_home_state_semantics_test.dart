@@ -387,15 +387,24 @@ void main() {
       // flex: per-wdId 부족분 합산 (초과확정이 다른 wdId를 상쇄하지 않음)
       expect(cf.contains('const shortage  = Math.max(0, wd.required - confirmed);'),
           isTrue);
-      expect(cf.contains('wdc[wd.id]?.confirmedCount'), isTrue,
+      // [SYSTEM-INTEGRATION-R0] canonical source는 그대로 workDetailCounts다.
+      //   바뀐 것은 **키를 어디서 얻는가**뿐이다 — TO-level workDetails(`id`,
+      //   존재하지 않는 필드)가 아니라 같은 슬롯 문서의 workDetails[].wdId.
+      expect(cf.contains('wdc[wd.wdId]?.confirmedCount'), isTrue,
           reason: 'workDetailCounts가 canonical source로 유지돼야 한다');
+      expect(cf.contains('wdc[wd.id]?.confirmedCount'), isFalse,
+          reason: 'id는 스키마에 없는 필드였다');
       // contract: per-TO per-day 부족분 합산
       expect(
         cf.contains('dayAcc[i].shortage  += Math.max(0, to.totalRequired - confirmedOnDay);'),
         isTrue,
       );
-      // LEGACY_WORKDETAIL은 여전히 임의 fallback 없이 skip
-      expect(cf.contains('LEGACY_WORKDETAIL'), isTrue);
+      // [SYSTEM-INTEGRATION-R0] workDetailCounts 결손은 여전히 임의 fallback이
+      //   없다. 다만 skip이 아니라 해당 사업장 success=false가 된다 —
+      //   skip은 결손을 0으로 합성해 정상 응답처럼 보이게 했다.
+      expect(cf.contains('WORKDETAIL_CONTRACT_BROKEN'), isTrue);
+      expect(cf.contains('LEGACY_WORKDETAIL'), isFalse,
+          reason: 'silent skip은 결손을 0으로 합성했다');
     });
 
     test('permission 게이트가 그대로다', () {

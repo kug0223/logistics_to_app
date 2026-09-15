@@ -425,7 +425,9 @@ void main() {
         cf.contains('dayAcc[i].shortage  += Math.max(0, to.totalRequired - confirmedOnDay);'),
         isTrue,
       );
-      expect(cf.contains('LEGACY_WORKDETAIL'), isTrue);
+      expect(cf.contains('WORKDETAIL_CONTRACT_BROKEN'), isTrue);
+      expect(cf.contains('LEGACY_WORKDETAIL'), isFalse,
+          reason: 'silent skip은 결손을 0으로 합성했다');
     });
 
     test('pendingCount null 의미 유지', () {
