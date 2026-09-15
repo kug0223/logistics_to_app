@@ -8672,6 +8672,24 @@ export const callableCreateTO = onCall(
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
     finalData.totalConfirmed = 0;
     finalData.totalPending = 0;
+    // [SYSTEM-INTEGRATION-R1] FLEX의 totalRequired도 서버 전용 집계다.
+    //
+    //   클라이언트는 `perSlotRequired * dates.length`를 계산해 보내고
+    //   (to_firestore.dart), 그 값이 여기 저장된 뒤
+    //   callableCreateFlexSlots가 같은 양을 다시 increment 한다.
+    //   → 정확히 2배. 필요 3명 × 2일 공고가 12로 저장됐다.
+    //
+    //   totalRequired는 syncTOStats의 FULL 판정 기준이므로
+    //   (totalRequired > 0 && confirmedCnt >= totalRequired), 부풀려진 값은
+    //   자리를 다 채워도 FULL이 되지 않게 만든다.
+    //
+    //   FLEX의 필요 인원은 슬롯이 소유한다 — 슬롯을 만들 때 증가하고,
+    //   슬롯을 고칠 때 delta로 조정된다. 그래서 생성 시점의 씨앗은 0이어야
+    //   한다. CONTRACT는 슬롯이 없고 workDetails 합이 곧 필요 인원이므로
+    //   클라이언트 값을 그대로 쓴다.
+    if (finalData.type === "flex") {
+      finalData.totalRequired = 0;
+    }
     // [STALE-EDIT] 낙관적 동시성 버전 토큰 초기화
     finalData.editRevision = 0;
     // [H-2-FIX] 보안 민감 필드 서버 강제 덮어쓰기 — toData spread로 status/isPublished 주입 차단
