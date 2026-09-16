@@ -20582,6 +20582,40 @@ export const callableReleaseNoshowSeat = onCall(
       throw new HttpsError("failed-precondition", "장기 근무 지원서는 대체충원 좌석 반납 대상이 아닙니다.");
     }
 
+    // [PREDEVICE-PAST-REPLACEMENT] 이미 지난 근무는 대체충원 대상이 아니다.
+    //
+    //   자동 노쇼는 06:00에 "어제" 근무를 NO_SHOW로 기록한다. 그 기록은 좌석을
+    //   반납하지 않으므로 staffingReleasedAt이 비어 있고, 다른 조건(단기·확정·
+    //   NO_SHOW 기록 존재)은 모두 만족한다. 날짜를 보지 않으면 끝난 근무의
+    //   좌석이 반납되면서 totalConfirmed가 줄고 FULL이 ACTIVE로 돌아간다 —
+    //   이미 지나간 날짜에 대해 다시 사람을 구하는 상태가 만들어진다.
+    //
+    //   근태 화면은 이미 당일 게이트를 갖고 있었지만 지원자 화면에는 없었고,
+    //   근무 탭이 과거 날짜로 그 화면을 연다. UI 한쪽만 막는 것으로는 부족하다.
+    //   과거 NO_SHOW 기록 자체는 그대로 보인다 — 막는 것은 action뿐이다.
+    {
+      const relWorkDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
+      if (relWorkDateTs) {
+        const KST_OFFSET_MS_REL = 9 * 60 * 60 * 1000;
+        const todayKstStartMs = (() => {
+          const d = new Date(Date.now() + KST_OFFSET_MS_REL);
+          d.setUTCHours(0, 0, 0, 0);
+          return d.getTime() - KST_OFFSET_MS_REL;
+        })();
+        const wdKstStartMs = (() => {
+          const d = new Date(relWorkDateTs.toMillis() + KST_OFFSET_MS_REL);
+          d.setUTCHours(0, 0, 0, 0);
+          return d.getTime() - KST_OFFSET_MS_REL;
+        })();
+        if (wdKstStartMs < todayKstStartMs) {
+          throw new HttpsError(
+            "failed-precondition",
+            "이미 지난 근무는 대체 인력을 충원할 수 없습니다."
+          );
+        }
+      }
+    }
+
     // CONFIRMED_STATUSES 검증
     const appStatus = appData.status as string | undefined;
     if (!appStatus || !CONFIRMED_STATUSES.includes(appStatus)) {

@@ -1718,7 +1718,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   (app.toId != null && hasMultipleParts && canManageTo) ||
                   // [R5.1] NO_SHOW + 미반납 + 단기 + 권한 있을 때 버튼 표시
                   (_noShowApplicationIds.contains(app.id) && !app.isStaffingReleased &&
-                      !app.isLongTermApplication && canManageTo))) ...[
+                      !app.isLongTermApplication && canManageTo &&
+                      _isReplacementActionable))) ...[
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
@@ -1727,7 +1728,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     if (_noShowApplicationIds.contains(app.id) &&
                         !app.isStaffingReleased &&
                         !app.isLongTermApplication &&
-                        canManageTo) ...[
+                        canManageTo &&
+                        _isReplacementActionable) ...[
                       _actionButton(
                         context,
                         label: '대체 인력 충원',
@@ -2835,6 +2837,23 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   /// 단기 근무: 당일 checkIn 기록이 있으면 이미 근무한 것 → 취소 불가
   /// 장기 근무: 계약 시작일(workDate)이 widget.date 이전이면 이미 근무 시작 → 취소 불가
   ///            (workDate == widget.date는 첫 근무일 당일 — 아직 출근 전이면 취소 허용)
+  /// 이 화면의 날짜에 대체 인력 충원이 의미 있는가 — 오늘 이후만.
+  ///
+  /// [PREDEVICE-PAST-REPLACEMENT] 자동 노쇼는 06:00에 "어제" 근무를 NO_SHOW로
+  /// 기록한다. 그 기록은 좌석을 반납하지 않으므로 다른 조건(NO_SHOW · 단기 ·
+  /// 미반납 · 권한)이 모두 맞고, 근무 탭은 과거 날짜로 이 화면을 연다.
+  /// 끝난 근무에 대체충원 버튼이 뜨면 이미 지나간 날짜에 다시 사람을 구하는
+  /// 상태가 만들어진다(totalConfirmed 감소, FULL→ACTIVE).
+  ///
+  /// 근태 화면(AttendanceStatusDialog)이 이미 쓰는 것과 같은 당일 게이트다.
+  /// 과거 NO_SHOW 기록과 '대체 충원 진행 중' 배지는 그대로 보인다 —
+  /// 막는 것은 action뿐이다.
+  bool get _isReplacementActionable {
+    final todayKst = FormatHelper.toKstDate(DateTime.now());
+    final dateKst = FormatHelper.toKstDate(widget.date);
+    return !dateKst.isBefore(todayKst);
+  }
+
   bool _canCancelConfirmation(ApplicationModel app) {
     // 당일 출근 기록 체크 (단기·장기 공통)
     if (_hasWorkedMap[app.uid] == true) return false;
