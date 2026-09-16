@@ -478,8 +478,18 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
                       ),
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    // [SYSTEM-INTEGRATION-R2.4.2 §1] `대기 N명`을 뺐다.
+                    //
+                    //   그 숫자는 `slot.pendingCount`였다. 초대를 보내면 +1 되고
+                    //   syncTOStats가 PENDING만 다시 세면서 내려가는 값이라,
+                    //   지원 대기 0 · 초대 중 2인 날짜가 `대기 2명`으로 보였다.
+                    //   관리자가 "지원자가 두 명 기다린다"고 읽는 숫자다.
+                    //
+                    //   이 다이얼로그가 결정하는 것은 마감·재개·삭제이고, 그
+                    //   판단에 필요한 것은 **이 날짜에 확정된 사람이 있는가**다.
+                    //   지원/초대 구분이 필요하면 당일명단이 이미 나눠 보여준다.
                     Text(
-                      '확정 ${slot.confirmedCount}/${slot.totalRequired}명  대기 ${slot.pendingCount}명',
+                      '확정 ${slot.confirmedCount}/${slot.totalRequired}명',
                       style: ResponsiveHelper.smallStyle(context,
                           color: AppColors.grey600),
                     ),

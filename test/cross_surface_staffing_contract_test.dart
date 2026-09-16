@@ -417,6 +417,55 @@ void main() {
   });
 
   // ═════════════════════════════════════════════════════════════
+  // 13. [R2.4.2 §1] 일괄 마감 화면이 잘못된 `대기` 수를 말하지 않는다
+  // ═════════════════════════════════════════════════════════════
+  group('R2.4.2-13 SlotBatch pending truth', () {
+    final sb = _codeOf(
+        _src('lib/screens/business_admin/dialogs/slot_batch_select_dialog.dart'));
+
+    test('13-a slot.pendingCount를 사용자 truth로 쓰지 않는다', () {
+      // 초대 발송 시 +1 되었다가 syncTOStats가 PENDING만 세며 내려가는 값이다.
+      expect(sb.contains('slot.pendingCount'), isFalse,
+          reason: '지원 대기 0 · 초대 중 2가 `대기 2명`으로 보인다');
+      expect(sb.contains("대기 \${slot.pendingCount}명"), isFalse);
+    });
+
+    test('13-b 마감 판단에 필요한 확정 수는 남겼다', () {
+      expect(sb.contains(r"'확정 ${slot.confirmedCount}/${slot.totalRequired}명'"),
+          isTrue);
+    });
+
+    test('13-c 대신 새 aggregate를 만들지 않았다', () {
+      for (final banned in const [
+        'pendingApplicationCount',
+        'invitedCount',
+        'inviteCount',
+      ]) {
+        expect(sb.contains(banned), isFalse, reason: '$banned 가 추가됐다');
+      }
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 14. [R2.4.2 §2] 지원 검토 task는 PENDING만 센다
+  // ═════════════════════════════════════════════════════════════
+  group('R2.4.2-14 task lifecycle', () {
+    test('14-a task reader가 PENDING만 센다 — 초대는 task가 아니다', () {
+      final f = _after(cfRaw, 'async function srvHomeApproval(', 900);
+      expect(f.contains('.where("status", "==", "PENDING")'), isTrue);
+      expect(f.contains('INVITED'), isFalse,
+          reason: '관리자가 먼저 보낸 제안이 지원 검토 task로 잡힌다');
+    });
+
+    test('14-b task는 applications를 세지 notifications를 세지 않는다', () {
+      final f = _after(cfRaw, 'async function srvHomeApproval(', 900);
+      expect(f.contains('collection("applications")'), isTrue);
+      expect(f.contains('notifications'), isFalse,
+          reason: 'Notification != Task');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
   // 9. 권한 (§12)
   // ═════════════════════════════════════════════════════════════
   group('R2.4-09 permission', () {
