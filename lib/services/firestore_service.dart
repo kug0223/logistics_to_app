@@ -83,8 +83,10 @@ class BatchResult {
 //            (UI disabled + 2중 서버 체크로 실용적 방어, Rules 레벨 방어 미구현)
 //   A04      두 관리자가 동일 지원자 동시 확정 → CONTRACT_PENDING 선점으로 방어됨
 //   B03/B04  급여 수정/취소 트랜잭션 없음 — 단일 관리자 흐름이 일반적, 충돌 빈도 낮음
-//   C01      동시 계약서 생성 → isNewUnsaved:true로 각자 다른 doc에 set
-//            중복 발생 가능하나 saveEmployerSignature 트랜잭션 전까지 저장 안 됨
+//   C01      [해소] 동시 계약서 생성 → isNewUnsaved:true로 각자 다른 doc에 set.
+//            "저장 전까지는 안전" 설명은 일괄 발송이 생긴 뒤로는 성립하지 않았다
+//            — 일괄 발송은 각 건마다 곧바로 서명까지 저장한다.
+//            [DUP-CONTRACT-01] 서버가 지원서 기준으로 차단(pre-read + 트랜잭션).
 //   B16      8일 소급 계산 중 동시 마감 → prevDays 오차 가능 (best effort)
 //   D01      알림 중복 발송 → 호출 측 1회 보장 설계, Rules 중복 방어 없음
 //   D02      읽음 처리 동시 요청 → isRead:true 덮어쓰기는 멱등하여 안전
