@@ -8712,9 +8712,13 @@ export const callableCreateTO = onCall(
     }
     // [HIGH-1 수정 2026-07-17] rangeStart < rangeEnd 역전 검증
     //   역전된 날짜가 계약서·임금 계산 전체로 전파됨 (workEndDate = rangeEnd)
+    // [SYSTEM-INTEGRATION-POSTING-1] 같은 날은 역전이 아니다.
+    //   FLEX는 rangeStart=min(선택날짜), rangeEnd=max(선택날짜)로 보낸다.
+    //   날짜를 하나만 고르면 두 값이 같아지는데, 그것이 가장 흔한 하루짜리
+    //   단기 공고다. >= 로 막으면 그 공고를 아예 등록할 수 없다.
     const rsTs = finalData.rangeStart as admin.firestore.Timestamp | undefined;
     const reTs = finalData.rangeEnd as admin.firestore.Timestamp | undefined;
-    if (rsTs && reTs && rsTs.toMillis() >= reTs.toMillis()) {
+    if (rsTs && reTs && rsTs.toMillis() > reTs.toMillis()) {
       throw new HttpsError("invalid-argument", "rangeEnd는 rangeStart보다 이후여야 합니다.");
     }
     // workDetails 내부 날짜 필드도 복원
@@ -9827,7 +9831,8 @@ export const callableUpdateTO = onCall(
         ? admin.firestore.Timestamp.fromMillis(updates.rangeEnd as number)
         : updates.rangeEnd as admin.firestore.Timestamp | undefined)
         ?? (toData.rangeEnd as admin.firestore.Timestamp | undefined);
-      if (newRs && newRe && newRs.toMillis() >= newRe.toMillis()) {
+      // [SYSTEM-INTEGRATION-POSTING-1] 생성 쪽과 같은 이유로 같은 날을 허용한다.
+      if (newRs && newRe && newRs.toMillis() > newRe.toMillis()) {
         throw new HttpsError("invalid-argument", "rangeEnd는 rangeStart보다 이후여야 합니다.");
       }
       // [CONTRACT-DATE-GUARD] 통합 TX 내부로 이전 — 직렬화 보장
@@ -26032,6 +26037,13 @@ export const callableApplyToTO = onCall(
 
     if ((toData["businessId"] as string | undefined) !== businessId) {
       throw new HttpsError("invalid-argument", "businessId 불일치.");
+    }
+    // [SYSTEM-INTEGRATION-POSTING-1] 삭제된 공고를 명시적으로 막는다.
+    //   삭제는 isPublished=false로도 걸리지만 status는 그대로 남는다.
+    //   딥링크로 들어온 사람에게 "아직 공개되지 않은 공고"라고 말하면 기다리게
+    //   된다 — 없어진 공고라고 말해야 한다.
+    if (toData["isDeleted"] === true) {
+      throw new HttpsError("not-found", "삭제된 공고입니다.");
     }
     if (toData["status"] === "DRAFT") {
       throw new HttpsError("permission-denied", "비공개 공고에는 지원할 수 없습니다.");

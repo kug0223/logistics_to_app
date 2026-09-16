@@ -107,6 +107,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   /// "근무일이 실제로 0개"인 상태와 구분되지 않아 '선택 가능한 근무 날짜가
   /// 없습니다'로 보인다 — ERROR != ZERO 위반이다. 별도 상태로 갈라 놓는다.
   bool _slotLoadError = false;
+
+  /// [SYSTEM-INTEGRATION-POSTING-1] 공고를 못 읽었다(≠ 없다).
+  /// 이 구분이 없으면 네트워크 실패가 '공고를 찾을 수 없습니다'로 보인다.
+  bool _loadFailed = false;
   List<ApplicationModel> _myApplications = [];
   String? _applicantUid;
 
@@ -317,7 +321,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         _workDetails = widget.workDetails ?? [];
         _business = widget.business;
       } else {
-        _to = await _firestoreService.getTO(widget.toId!);
+        // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 것과 없는 것을 구분해서 받는다.
+        final loaded = await _firestoreService.getTOOrFailure(widget.toId!);
+        _to = loaded.to;
+        _loadFailed = loaded.failed;
         if (_to != null) {
           final results = await Future.wait([
             _firestoreService.getWorkDetails(_to!.id),
@@ -480,22 +487,40 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   }
 
   Widget _buildErrorState(BuildContext context) {
+    // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 것을 없어진 것으로 말하지 않는다.
+    //   딥링크로 들어온 사람에게 둘은 완전히 다른 얘기다 — 하나는 기다렸다
+    //   다시 열면 되고, 하나는 끝난 공고다.
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 64, color: AppColors.grey400),
+          Icon(_loadFailed ? Icons.wifi_off : Icons.error_outline,
+              size: 64, color: AppColors.grey400),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          Text('공고를 찾을 수 없습니다',
+          Text(_loadFailed ? '공고를 불러오지 못했습니다' : '공고를 찾을 수 없습니다',
               style: ResponsiveHelper.subtitleStyle(context)
                   .copyWith(color: AppColors.grey600)),
+          if (_loadFailed) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Text('네트워크 상태를 확인한 뒤 다시 시도해주세요',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey500)),
+          ],
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          CommonWidgets.outlineButton(
-            context: context,
-            text: '돌아가기',
-            onPressed: () => Navigator.pop(context),
-            icon: Icons.arrow_back,
-          ),
+          if (_loadFailed)
+            CommonWidgets.outlineButton(
+              context: context,
+              text: '다시 시도',
+              onPressed: _loadData,
+              icon: Icons.refresh,
+            )
+          else
+            CommonWidgets.outlineButton(
+              context: context,
+              text: '돌아가기',
+              onPressed: () => Navigator.pop(context),
+              icon: Icons.arrow_back,
+            ),
         ],
       ),
     );

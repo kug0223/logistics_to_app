@@ -132,17 +132,32 @@ extension TOFirestore on FirestoreService {
 
   /// 공고 단건 조회 (workDetails 배열 포함)
   Future<TOModel?> getTO(String toId) async {
+    final r = await getTOOrFailure(toId);
+    return r.to;
+  }
+
+  /// [SYSTEM-INTEGRATION-POSTING-1] 없는 공고와 못 읽은 공고를 구분해서 돌려준다.
+  ///
+  /// [getTO]는 둘 다 null로 만든다. 그 값을 그대로 화면에 쓰면 네트워크가
+  /// 끊긴 순간에 멀쩡한 공고가 "삭제된 공고"로 보인다 — 근로자에게는 자기
+  /// 약속이 사라진 것처럼 읽힌다. 문구를 고르는 화면(내 지원, 공고 상세)은
+  /// 이쪽을 쓴다.
+  ///
+  /// - 문서 있음·삭제 아님 → (to, failed: false)
+  /// - 문서 없음 또는 소프트 삭제 → (null, failed: false)
+  /// - 읽기 실패 → (null, failed: true)
+  Future<({TOModel? to, bool failed})> getTOOrFailure(String toId) async {
     try {
       final doc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
-      if (!doc.exists) return null;
+      if (!doc.exists) return (to: null, failed: false);
       final model = TOModel.tryFromMap(doc.data()!, doc.id);
       // [BUG-SOFT FIX] 소프트 삭제 TO 단건 조회 차단 — FCM 딥링크·공유 링크로 삭제 공고 접근 시 null 반환
       // getTOsByIds(복수), getPublishedTOs 등 다른 조회 메서드의 isSoftDeleted 필터와 동작 통일
-      if (model?.isSoftDeleted == true) return null;
-      return model;
+      if (model?.isSoftDeleted == true) return (to: null, failed: false);
+      return (to: model, failed: false);
     } catch (e) {
       debugPrint('❌ [TO] 공고 조회 실패: $e');
-      return null;
+      return (to: null, failed: true);
     }
   }
 

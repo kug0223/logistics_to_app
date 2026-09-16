@@ -107,6 +107,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Map<String, EmploymentContractModel>  _contractMap   = {};
   Map<String, MonthlyReviewModel?>      _reviewMap     = {};
   final Map<String, TOModel>            _toCache       = {};
+
+  /// [SYSTEM-INTEGRATION-POSTING-1] 조회에 실패한 공고 id — 삭제된 공고와 다르다.
+  final Set<String>                     _toLoadFailedIds = {};
   final Map<String, MonthlyReviewModel?> _reviewKeyCache = {};
   bool _contractsLoaded = false;
 
@@ -307,9 +310,20 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
     final uncachedIds = toIds.where((id) => !_toCache.containsKey(id)).toList();
     if (uncachedIds.isNotEmpty) {
-      final fetched = await Future.wait(uncachedIds.map((id) => _firestoreService.getTO(id)));
-      for (final to in fetched.whereType<TOModel>()) {
-        _toCache[to.id] = to;
+      // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 공고를 '삭제된 공고'로 말하지 않는다.
+      //   근로자에게는 자기 약속이 사라진 것처럼 읽힌다.
+      final fetched = await Future.wait(
+          uncachedIds.map((id) => _firestoreService.getTOOrFailure(id)));
+      for (var i = 0; i < uncachedIds.length; i++) {
+        final r = fetched[i];
+        if (r.to != null) {
+          _toCache[r.to!.id] = r.to!;
+          _toLoadFailedIds.remove(uncachedIds[i]);
+        } else if (r.failed) {
+          _toLoadFailedIds.add(uncachedIds[i]);
+        } else {
+          _toLoadFailedIds.remove(uncachedIds[i]);
+        }
       }
     }
     return apps
@@ -803,7 +817,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // ─── 삭제된 공고 카드 (간소화) ─────────────────────────────────────────────
 
   Widget _buildDeletedCard(ApplicationModel app, TOModel? to) {
-    final isDeleted = to == null;
+    // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 것과 없어진 것을 가른다.
+    final loadFailed =
+        to == null && app.toId != null && _toLoadFailedIds.contains(app.toId);
+    final isDeleted = to == null && !loadFailed;
     final statusInfo = _statusInfo(app.status, app: app);
 
     return Padding(
@@ -821,7 +838,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
-                isDeleted ? '삭제된 공고' : to.title,
+                loadFailed
+                    ? '공고 정보를 불러오지 못했어요'
+                    : (to == null ? '삭제된 공고' : to.title),
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -831,7 +850,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
               const SizedBox(height: 2),
               Text(
-                '${app.businessName} · ${statusInfo.label}${isDeleted ? ' · 공고 삭제됨' : ''}',
+                '${app.businessName} · ${statusInfo.label}'
+                '${isDeleted ? ' · 공고 삭제됨' : ''}'
+                '${loadFailed ? ' · 새로고침하면 다시 보여요' : ''}',
                 style: const TextStyle(fontSize: 12, color: AppColors.grey400),
               ),
             ]),

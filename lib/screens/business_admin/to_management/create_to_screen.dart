@@ -24,6 +24,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/dialog_helper.dart';
 
@@ -1375,6 +1376,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     : '공고가 등록되었습니다';
         ToastHelper.showSuccess(label);
         AnalyticsService.logTOCreate(toType: _selectedJobType);
+        // [SYSTEM-INTEGRATION-POSTING-1] 방금 만든 공고를 바로 찾을 수 있게 한다.
+        //   등록 후 돌아가면 목록은 새로고침되지만 어느 것이 방금 만든
+        //   공고인지 알 수 없었다 — 필터에 가려 안 보이는 경우도 있다.
+        //   알림 deep link가 이미 쓰는 reveal 경로를 그대로 쓴다(새 경로 없음).
+        //   Shell/목록이 없으면 false를 돌려주고 아무 일도 하지 않는다.
+        AdminTabSwitcher.instance.switchToJobsWithTarget(toId);
         NavigationHelper.popWithChange(context);
       } else if (mounted) {
         ToastHelper.showError('공고 등록에 실패했습니다');
