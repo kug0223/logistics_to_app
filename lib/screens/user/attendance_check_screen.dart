@@ -677,72 +677,111 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     );
   }
 
-  /// 출근 버튼 영역 — 미서명 계약서가 있으면 차단 UI, 없으면 출근하기 버튼
+  /// 출근 버튼 영역 — 미서명 계약서가 있으면 안내와 함께, 다만 출근은 막지 않는다.
+  ///
+  /// [PREDEVICE-CONTRACT-GATE] 계약 완료는 출근의 전제조건이 아니다.
+  ///
+  ///   이 화면은 서명 대기(pending_worker) 계약서가 있으면 출근 버튼 자체를
+  ///   계약 CTA로 **대체**했다. 그런데 서버(callableCheckIn)는 계약서를 전혀
+  ///   읽지 않는다 — DEV 실측에서 계약이 아예 없는 CONTRACT_PENDING 좌석도
+  ///   HTTP 200으로 출근이 됐다. 즉 gate는 클라이언트에만 있었고,
+  ///   게다가 방향이 뒤집혀 있었다:
+  ///     계약 없음        → 출근 가능   (가장 나쁜 상태인데 통과)
+  ///     pending_employer → 출근 가능
+  ///     pending_worker   → 출근 차단   (거의 다 끝난 상태인데 차단)
+  ///     completed        → 출근 가능
+  ///
+  ///   더 중요한 것은 이 차단이 노쇼와 충돌했다는 점이다. 출근 버튼이 없으면
+  ///   근로자는 앱에서 출근을 찍을 방법이 없고, 다음 날 06:00 자동 NO_SHOW가
+  ///   그 자리를 무단결근으로 기록한다. 그 기록은 trust 트리거를 타고
+  ///   noShowCount를 올리며 90일 3회면 계정이 제한된다. 앱이 막아 놓고
+  ///   앱이 벌점을 주는 구조였다.
+  ///
+  ///   그래서 안내와 CTA는 그대로 두되 출근은 열어 둔다. 서버가 실제로
+  ///   판단하는 것과 화면이 말하는 것을 같게 만드는 쪽이 맞다.
+  ///   계약 완료를 정말로 출근 조건으로 삼으려면 서버 guard가 먼저 생겨야
+  ///   하고, 그때는 자동 NO_SHOW 대상에서 빼는 정책이 함께 있어야 한다.
   Widget _buildCheckInArea(ApplicationModel work) {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final pendingContract = userProvider.pendingContractForTo(work.toId ?? '');
 
-    if (pendingContract != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: AppColors.yellowWarnBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.yellowWarnBorder),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.warning_amber_rounded,
-                    color: AppColors.yellowWarnDark, size: 18),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Text(
-                    '계약서 서명이 완료되지 않았습니다',
-                    style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: AppColors.yellowWarnText,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ContractSignScreen(
-                  contract: pendingContract,
-                  role: 'worker',
-                ),
-              ),
-            ).then((_) {
-              if (mounted) setState(() {});
-            }),
-            icon: const Icon(Icons.draw_outlined, size: 18),
-            label: const Text('작성하기'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.yellowWarnDark,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 44),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-        ],
-      );
-    }
-
-    return LoadingButton.primary(
+    final checkInButton = LoadingButton.primary(
       text: '출근하기',
       icon: Icons.login,
       expand: true,
       isLoading: _isProcessing,
       onPressed: () async => _checkIn(work),
+    );
+
+    if (pendingContract == null) return checkInButton;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+          decoration: BoxDecoration(
+            color: AppColors.yellowWarnBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.yellowWarnBorder),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.draw_outlined,
+                  color: AppColors.yellowWarnDark, size: 18),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '계약서 서명이 필요해요',
+                      style: ResponsiveHelper.smallStyle(context).copyWith(
+                        color: AppColors.yellowWarnText,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Text(
+                      '출근은 지금 할 수 있어요. 근무 전에 서명해 주세요.',
+                      style: ResponsiveHelper.smallStyle(context).copyWith(
+                        color: AppColors.yellowWarnText,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        OutlinedButton.icon(
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ContractSignScreen(
+                contract: pendingContract,
+                role: 'worker',
+              ),
+            ),
+          ).then((_) async {
+            // 다른 기기에서 서명했을 수도 있으므로 목록을 다시 받는다.
+            await userProvider.refreshPendingContracts();
+            if (mounted) setState(() {});
+          }),
+          icon: const Icon(Icons.description_outlined, size: 18),
+          label: const Text('계약서 확인'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.yellowWarnDark,
+            side: const BorderSide(color: AppColors.yellowWarnBorder),
+            minimumSize: const Size(double.infinity, 44),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        checkInButton,
+      ],
     );
   }
 
