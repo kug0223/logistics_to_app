@@ -1287,7 +1287,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       isPending: false,
                       isGroupIdCardMode: _idCardSelectGroupKey == g.groupKey,
                       index: e.key + 1,
-                      hasMultipleParts: hasMultipleParts))
+                      hasMultipleParts: hasMultipleParts,
+                      // [CROSS-SLICE-1] 종료된 모집 단위에는 대체충원을 권하지 않는다
+                      isRecruitClosed: g.canonicalClosed))
                   .toList(),
             ),
           ),
@@ -1438,7 +1440,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Applicant Card ─────────────────────────────────────────────────────────
 
   Widget _buildApplicantCard(BuildContext context, ApplicationModel app,
-      {required bool isPending, bool isGroupIdCardMode = false, int index = 0, bool hasMultipleParts = false}) {
+      {required bool isPending, bool isGroupIdCardMode = false, int index = 0,
+      bool hasMultipleParts = false, bool isRecruitClosed = false}) {
     final user = _userMap[app.uid];
     final isSelected = _selectedIds.contains(app.id);
     final isStarred = isPending && _starredIds.contains(app.id);
@@ -1721,9 +1724,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   (_canCancelConfirmation(app) && canManageTo) ||
                   (app.toId != null && hasMultipleParts && canManageTo) ||
                   // [R5.1] NO_SHOW + 미반납 + 단기 + 권한 있을 때 버튼 표시
+                  // [CROSS-SLICE-1] 종료된 날짜는 제외 — 반납해도 채울 수 없다
                   (_noShowApplicationIds.contains(app.id) && !app.isStaffingReleased &&
                       !app.isLongTermApplication && canManageTo &&
-                      _isReplacementActionable))) ...[
+                      _isReplacementActionable && !isRecruitClosed))) ...[
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
@@ -1733,7 +1737,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                         !app.isStaffingReleased &&
                         !app.isLongTermApplication &&
                         canManageTo &&
-                        _isReplacementActionable) ...[
+                        _isReplacementActionable &&
+                        !isRecruitClosed) ...[
                       _actionButton(
                         context,
                         label: '대체 인력 충원',

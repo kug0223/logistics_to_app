@@ -12705,8 +12705,11 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       ),
     ];
 
-    const [confirmedSnap, pendingSnap, ...wtSnaps] = await Promise.all([
+    const [confirmedSnap, releasedSnap, pendingSnap, ...wtSnaps] = await Promise.all([
       appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
+      // [SYSTEM-INTEGRATION-CROSS-SLICE-1] 반납된 좌석은 占有가 아니다.
+      appsRef.where("status", "in", CONFIRMED_STATUSES)
+        .where("staffingReleased", "==", true).count().get(),
       appsRef.where("status", "in", PENDING_STATUSES).count().get(),
       ...contractWorkTypes.map((wt) =>
         appsRef
@@ -12722,7 +12725,8 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       workTypeConfirmedUpdate[`workTypeConfirmedCounts.${wt}`] = wtSnaps[i].data().count;
     });
 
-    const confirmedCnt = confirmedSnap.data().count;
+    const confirmedCnt = Math.max(
+      0, confirmedSnap.data().count - releasedSnap.data().count);
     const totalRequired = (toData?.totalRequired as number) ?? 0;
     const toStatus = toData?.status as string | undefined;
     const toStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(toStatus ?? "")
@@ -12744,19 +12748,27 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
 
   const [
     toConfirmedSnap,
+    toReleasedSnap,
     toPendingSnap,
     slotConfirmedSnap,
+    slotReleasedSnap,
     slotPendingSnap,
     slotDoc,
   ] = await Promise.all([
     appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
+    // [SYSTEM-INTEGRATION-CROSS-SLICE-1] 반납된 좌석은 占有가 아니다.
+    appsRef.where("status", "in", CONFIRMED_STATUSES)
+      .where("staffingReleased", "==", true).count().get(),
     appsRef.where("status", "in", PENDING_STATUSES).count().get(),
     slotAppsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
+    slotAppsRef.where("status", "in", CONFIRMED_STATUSES)
+      .where("staffingReleased", "==", true).count().get(),
     slotAppsRef.where("status", "in", PENDING_STATUSES).count().get(),
     slotRef.get(),
   ]);
 
-  const confirmedCount = slotConfirmedSnap.data().count;
+  const confirmedCount = Math.max(
+    0, slotConfirmedSnap.data().count - slotReleasedSnap.data().count);
   // 슬롯 문서는 workDetails[].requiredCount 합계로 총 필요 인원 계산
   const workDetails =
     (slotDoc.data()?.workDetails as
@@ -12772,7 +12784,8 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const flexToData = toSnap.data();
   const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
   const flexToStatus = flexToData?.status as string | undefined;
-  const flexConfirmedCnt = toConfirmedSnap.data().count;
+  const flexConfirmedCnt = Math.max(
+    0, toConfirmedSnap.data().count - toReleasedSnap.data().count);
   const flexToStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(flexToStatus ?? "")
     ? {status: flexTotalRequired > 0 && flexConfirmedCnt >= flexTotalRequired ? "FULL" : "ACTIVE"}
     : {};
@@ -20580,8 +20593,14 @@ export const callableBatchSetNoShow = onCall(
 // 설계 원칙:
 //  - status 변경 금지 (NO_SHOW 이력 보존) — application.status = CONFIRMED 유지
 //  - staffingReleasedAt 마커로 "정원 미소모" 표시
-//  - syncTOStats early-exit 조건: beforeStatus === afterStatus → staffingReleasedAt만
-//    기록하면 status가 바뀌지 않아 syncTOStats가 발동하지 않음 → 카운터 수동 감소 안전
+//  - [SYSTEM-INTEGRATION-CROSS-SLICE-1] 이 자리의 원래 설계는
+//    "status가 안 바뀌니 syncTOStats가 발동하지 않는다 → 수동 감소 안전"이었다.
+//    그 말은 **이 지원서 자신의 write**에 대해서만 맞다. 같은 공고에 다른
+//    지원서가 하나라도 쓰이면(대체 인력 초대가 바로 그것이다) 재계산이 돌고,
+//    재계산은 status만 세므로 반납한 좌석을 다시 占有로 되돌렸다.
+//    실측: 반납 직후 1/2 → 대체 초대 직후 2/2 → 대체 인력 수락 400.
+//    그래서 반납 여부를 재계산도 읽을 수 있게 staffingReleased 불리언을 함께
+//    기록하고, srvCountCommittedSeats가 그것을 빼고 센다. 정의는 한 곳이다.
 //  - 단기/Flex TO 전용 (applicationType != 'long_term' 검증)
 //  - TO.status: syncTOStats가 발동하지 않으므로 FULL → ACTIVE 전환을 명시적으로 처리
 export const callableReleaseNoshowSeat = onCall(
@@ -20692,6 +20711,42 @@ export const callableReleaseNoshowSeat = onCall(
       ? db.collection("tos").doc(releaseToId).collection("slots").doc(releaseSlotId)
       : null;
 
+    // [SYSTEM-INTEGRATION-CROSS-SLICE-1] 모집이 종료된 자리는 반납하지 않는다.
+    //
+    //   이 기능의 뜻은 "빈 자리를 오늘 안에 다시 채운다"이다. 그런데 날짜가
+    //   마감돼 있으면 그 자리는 채울 수 없다 — 지원도(callableApplyToTO),
+    //   초대도(callableInviteWorker), 초대 수락도(callableAcceptTOInvitation)
+    //   전부 마감을 보고 거절한다. 반납만 보지 않았다.
+    //
+    //   실측한 결과: 오늘 날짜만 마감한 다중 날짜 공고에서 반납이 통과했고
+    //   TO가 FULL에서 ACTIVE로 되살아났다. 그 날짜는 여전히 closed여서
+    //   "모집 중인데 1명 부족, 그런데 아무도 넣을 수 없는" 상태가 됐다.
+    //
+    //   마감의 뜻을 여기서 새로 정하는 것이 아니라, 이미 있는 뜻을 빠져 있던
+    //   한 곳에 적용한다. 되돌리는 길은 재오픈이고, 메시지로 그것을 알린다.
+    //   NO_SHOW 기록은 건드리지 않는다 — 막는 것은 action뿐이다.
+    if (releaseSlotRef) {
+      const relSlotPre = await releaseSlotRef.get();
+      const relSlotPreData = relSlotPre.data();
+      if (relSlotPreData &&
+        (relSlotPreData["isManualClosed"] === true ||
+          relSlotPreData["status"] === "closed")) {
+        throw new HttpsError(
+          "failed-precondition",
+          "종료된 근무일입니다. 대체 인력을 충원하려면 먼저 날짜를 재오픈해주세요.");
+      }
+    }
+    if (releaseToRef) {
+      const relToPre = await releaseToRef.get();
+      const relToStatus = relToPre.data()?.["status"] as string | undefined;
+      if (relToPre.data()?.["isManualClosed"] === true ||
+        ["CLOSED", "POSTING_EXPIRED", "DELETED"].includes(relToStatus ?? "")) {
+        throw new HttpsError(
+          "failed-precondition",
+          "종료된 공고입니다. 대체 인력을 충원하려면 먼저 공고를 재오픈해주세요.");
+      }
+    }
+
     // ── Step 5: 단일 TX ──────────────────────────────────────
     await db.runTransaction(async (tx) => {
       // 동일 Promise.all reads-before-writes
@@ -20705,6 +20760,9 @@ export const callableReleaseNoshowSeat = onCall(
       // 5-a. Application에 좌석 반납 마커
       tx.update(appRef, {
         staffingReleasedAt: now,
+        // [CROSS-SLICE-1] 재계산이 읽을 수 있는 형태. Timestamp 존재 여부는
+        //   Firestore 집계 쿼리로 물을 수 없어서 불리언을 함께 둔다.
+        staffingReleased: true,
         staffingReleaseReason: "NO_SHOW",
         updatedAt: now,
       });
@@ -20891,6 +20949,9 @@ export const callableBatchCancelNoShow = onCall(
         // 1. staffingReleasedAt 마커 삭제 (Case F/G 공통)
         tx.update(appRef, {
           staffingReleasedAt: admin.firestore.FieldValue.delete(),
+          // [CROSS-SLICE-1] 짝이 되는 표식도 같이 지운다 — 둘이 어긋나면
+          //   재계산과 predicate가 다른 답을 하게 된다.
+          staffingReleased: admin.firestore.FieldValue.delete(),
           staffingReleaseReason: admin.firestore.FieldValue.delete(),
           updatedAt: now,
         });
