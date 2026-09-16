@@ -1389,43 +1389,153 @@ extension ApplicationFirestore on FirestoreService {
       final dayWeekday = FormatHelper.weekday(date);
 
       for (final app in longTermCandidates) {
-        final endDate = app.actualResignDate ?? app.workEndDate;
-        if (endDate == null) continue;
-
-        DateTime effectiveStart = app.desiredStartDate ?? app.workDate;
-        if (app.confirmedAt != null && app.desiredStartDate == null) {
-          final confirmedDay = DateTime(
-              app.confirmedAt!.year, app.confirmedAt!.month, app.confirmedAt!.day);
-          if (confirmedDay.isAfter(app.workDate)) effectiveStart = confirmedDay;
-        }
-
-        final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
-        final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
-
-        if (dateStart.isBefore(startOnly) || dateStart.isAfter(endOnly)) continue;
-
-        // [F02-FIX] extraWorkDates 우선 처리 — 비정규 요일 추가 근무일이면
-        // workDays에 해당 요일이 없어도 당일명단에 포함되어야 한다.
-        // isWorkingOnDate getter와 동일한 우선순위(extra → leave → workDays)를 유지한다.
-        final isExtraWork = app.extraWorkDates != null &&
-            app.extraWorkDates!.any((d) =>
-                d.year == dateStart.year && d.month == dateStart.month && d.day == dateStart.day);
-        if (isExtraWork) {
-          result.add(app);
-          continue;
-        }
-
-        if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
-          final isLeave = app.leaveDates!.any((d) =>
-              d.year == dateStart.year && d.month == dateStart.month && d.day == dateStart.day);
-          if (isLeave) continue;
-        }
-
-        if (app.workDays!.contains(dayWeekday)) result.add(app);
+        if (isLongTermSeatedOnDate(app, dateStart, dayWeekday)) result.add(app);
       }
 
       return result;
     }
+  }
+
+  /// 장기 지원서가 [dayStart]에 실제 운영 대상인지 — 단일 판정.
+  ///
+  /// [PREDEVICE-WORK-CALENDAR] 근무 탭의 "그 날 일하는 사람" 규칙은 원래 당일
+  /// 명단 조회 안에 인라인으로 있었다. 달력 marker가 같은 날짜에 대해 다른 답을
+  /// 내면 marker와 목록이 서로 다른 현실이 되므로, 규칙을 한 곳으로 꺼내
+  /// 당일 조회와 범위 조회가 같은 함수를 부르게 한다.
+  ///
+  /// 우선순위는 isWorkingOnDate getter와 같다: extra → leave → workDays.
+  ///
+  /// [dayStart]는 KST 영업일의 시작(kstDayRange의 첫 값),
+  /// [dayWeekday]는 그 날짜의 요일 문자열이다.
+  static bool isLongTermSeatedOnDate(
+    ApplicationModel app,
+    DateTime dayStart,
+    String dayWeekday,
+  ) {
+    if (app.workDays == null || app.workDays!.isEmpty) return false;
+
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    if (endDate == null) return false;
+
+    DateTime effectiveStart = app.desiredStartDate ?? app.workDate;
+    if (app.confirmedAt != null && app.desiredStartDate == null) {
+      final confirmedDay = DateTime(
+          app.confirmedAt!.year, app.confirmedAt!.month, app.confirmedAt!.day);
+      if (confirmedDay.isAfter(app.workDate)) effectiveStart = confirmedDay;
+    }
+
+    final startOnly =
+        DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
+    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+    if (dayStart.isBefore(startOnly) || dayStart.isAfter(endOnly)) return false;
+
+    // [F02-FIX] extraWorkDates 우선 — 비정규 요일 추가 근무일이면
+    // workDays에 그 요일이 없어도 포함되어야 한다.
+    final isExtraWork = app.extraWorkDates != null &&
+        app.extraWorkDates!.any((d) =>
+            d.year == dayStart.year &&
+            d.month == dayStart.month &&
+            d.day == dayStart.day);
+    if (isExtraWork) return true;
+
+    if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
+      final isLeave = app.leaveDates!.any((d) =>
+          d.year == dayStart.year &&
+          d.month == dayStart.month &&
+          d.day == dayStart.day);
+      if (isLeave) return false;
+    }
+
+    return app.workDays!.contains(dayWeekday);
+  }
+
+  /// [start, end) 사이에서 운영 대상 근무자가 한 명이라도 있는 KST 날짜 집합.
+  ///
+  /// [PREDEVICE-WORK-CALENDAR] 달력 marker 전용 조회.
+  ///
+  ///   날짜마다 쿼리를 돌리지 않는다 — 사업장당 두 번(단기 범위 · 장기 후보)만
+  ///   읽고, 판정은 당일 명단과 **같은 규칙**으로 메모리에서 한다. 보이는 달이
+  ///   31일이든 42칸이든 읽기 횟수는 그대로다.
+  ///
+  ///   실패는 삼키지 않는다. marker가 없는 것과 못 불러온 것은 다르고,
+  ///   dot이 하나도 없는 달력은 "그 달에 일이 없다"로 읽힌다.
+  ///
+  /// 반환값은 KST 자정 기준 DateTime 집합(FormatHelper.toKstDate와 같은 포맷).
+  Future<Set<DateTime>> getSeatedWorkDatesInRange({
+    required DateTime start,
+    required DateTime end,
+    required String businessId,
+  }) async {
+    final (rangeStart, _) = FormatHelper.kstDayRange(start);
+    final (_, rangeEnd) = FormatHelper.kstDayRange(end);
+
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetApplicationsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+
+    final futures = await Future.wait([
+      // 단기: 보이는 범위 전체를 한 번에
+      callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'workDateGteMs': rangeStart.millisecondsSinceEpoch,
+        'workDateLtMs': rangeEnd.millisecondsSinceEpoch,
+        'limit': 2000,
+      }),
+      // 장기: 범위 시작 이후 종료되는 계약 후보 (당일 조회와 같은 조건)
+      callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'workEndDateGteMs': rangeStart.millisecondsSinceEpoch,
+        'limit': 2000,
+      }),
+    ]);
+
+    List<ApplicationModel> parseApps(HttpsCallableResult<Map<String, dynamic>> r) =>
+        (r.data['applications'] as List? ?? [])
+            .whereType<Map>()
+            .map((m) {
+              final raw = _cfHydrate(Map<String, dynamic>.from(m));
+              final id = raw.remove('id') as String? ?? '';
+              return ApplicationModel.tryFromMap(raw, id);
+            })
+            .whereType<ApplicationModel>()
+            .toList();
+
+    final parsed = futures.map(parseApps).toList();
+    const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
+
+    final dates = <DateTime>{};
+
+    // 단기 — 지원서의 근무일 하나가 곧 그 날짜다.
+    for (final app in parsed[0]) {
+      if (!confirmedStatuses.contains(app.status)) continue;
+      if (app.isLongTermApplication) continue;
+      dates.add(FormatHelper.toKstDate(app.workDate));
+    }
+
+    // 장기 — 범위의 각 날짜에 당일 명단과 같은 규칙을 적용한다.
+    final longTerm = parsed[1]
+        .where((app) =>
+            confirmedStatuses.contains(app.status) &&
+            app.workDays != null &&
+            app.workDays!.isNotEmpty)
+        .toList();
+    if (longTerm.isNotEmpty) {
+      for (var d = rangeStart;
+          d.isBefore(rangeEnd);
+          d = d.add(const Duration(days: 1))) {
+        final key = FormatHelper.toKstDate(d);
+        if (dates.contains(key)) continue; // 이미 단기로 잡힌 날
+        final weekday = FormatHelper.weekday(d);
+        for (final app in longTerm) {
+          if (isLongTermSeatedOnDate(app, d, weekday)) {
+            dates.add(key);
+            break;
+          }
+        }
+      }
+    }
+
+    return dates;
   }
 
   Future<List<ApplicationModel>> getConfirmedSchedules({

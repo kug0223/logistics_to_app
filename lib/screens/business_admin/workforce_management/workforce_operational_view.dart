@@ -144,6 +144,12 @@ class _WorkGroup {
 
 enum _SummaryFilter { all, checkedIn, notCheckedIn, noShow }
 
+/// 달력 marker 하나를 뜻하는 sentinel.
+///
+/// [PREDEVICE-WORK-CALENDAR] marker의 의미는 "이 날짜에 볼 일이 있다" 하나뿐이다.
+/// 같은 날 업무가 셋이어도 dot은 하나다 — 개수나 상태별 색을 만들지 않는다.
+const Object _kWorkMarker = Object();
+
 // ══════════════════════════════════════════════════════════════════
 // WorkforceOperationalView
 // ══════════════════════════════════════════════════════════════════
@@ -187,11 +193,38 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   // 로드 완료 시 1회 정렬. 실시간 재정렬 금지 (처리 중 row 이동 방지).
   List<_WorkGroup>? _sortedGroups;
 
+  // ── 달력 marker ────────────────────────────────────────────────
+  //
+  // [PREDEVICE-WORK-CALENDAR] 어느 날짜에 볼 일이 있는지 날짜를 하나씩
+  //   눌러보지 않고도 알 수 있게 한다.
+  //
+  //   marker의 뜻은 하나다 — "이 날짜에 운영할 근무자가 있다".
+  //   판정은 선택 날짜 명단과 **같은 규칙**을 쓴다(getSeatedWorkDatesInRange가
+  //   당일 조회와 같은 isLongTermSeatedOnDate를 부른다). 모집 상태(OPEN/FULL/
+  //   CLOSED)는 보지 않는다 — 이 탭은 운영 화면이고, FULL은 모집 충족이지
+  //   근무 삭제가 아니다.
+  //
+  //   null = 아직 모름(로딩 전/실패). 빈 Set = 그 범위에 일이 없음.
+  //   둘을 구분한다 — dot이 없는 달력은 "일이 없다"로 읽히기 때문이다.
+  Set<DateTime>? _workDates;
+
+  /// marker 조회가 실패했는가 — 실패를 "일 없음"으로 그리지 않기 위한 상태.
+  bool _markerFailed = false;
+
+  /// 현재 _workDates가 담고 있는 범위의 기준 달(1일). 중복 조회 방지.
+  DateTime? _markerRangeAnchor;
+
+  /// marker 요청 세대 — 늦게 온 응답이 최신 범위를 덮지 않도록.
+  int _markerRequestId = 0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadDayData(_selectedDay);
+      if (mounted) {
+        _loadDayData(_selectedDay);
+        _loadMarkerRange(_selectedDay);
+      }
     });
     // [SYSTEM-INTEGRATION-R2.4 §14/§19] 다른 탭의 mutation을 받는다.
     //
@@ -299,6 +332,65 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   }
 
   // ── 데이터 로드 ────────────────────────────────────────────────
+
+  /// 달력에 보이는 범위의 "일 있는 날짜"를 한 번에 가져온다.
+  ///
+  /// [PREDEVICE-WORK-CALENDAR] 날짜마다 조회하지 않는다 — 사업장당 두 번만
+  /// 읽고 판정은 메모리에서 한다. 주간 strip이 달 경계를 넘나들고 월 달력이
+  /// 앞뒤 달 날짜까지 그리므로, 기준 달 앞뒤로 7일씩 넉넉히 덮는다.
+  /// [force]는 mutation 후처럼 같은 범위를 다시 받아야 할 때 쓴다.
+  Future<void> _loadMarkerRange(DateTime anchorDay, {bool force = false}) async {
+    final anchor = DateTime(anchorDay.year, anchorDay.month, 1);
+    if (!force && _markerRangeAnchor == anchor && _workDates != null) return;
+
+    final requestId = ++_markerRequestId;
+    final businesses = await _ensureBusinesses();
+    if (!mounted || requestId != _markerRequestId) return;
+    if (businesses.isEmpty) {
+      setState(() {
+        _workDates = const <DateTime>{};
+        _markerFailed = false;
+        _markerRangeAnchor = anchor;
+      });
+      return;
+    }
+
+    final start = anchor.subtract(const Duration(days: 7));
+    final end = DateTime(anchor.year, anchor.month + 1, 1)
+        .add(const Duration(days: 7));
+
+    try {
+      final sets = await Future.wait(businesses.map((b) =>
+          _firestoreService.getSeatedWorkDatesInRange(
+            start: start,
+            end: end,
+            businessId: b.id,
+          )));
+      if (!mounted || requestId != _markerRequestId) return;
+      setState(() {
+        // 현재 사업장 scope 안에서만 합친다 — 다른 사업장 날짜가 섞이지 않는다.
+        _workDates = sets.expand((s) => s).toSet();
+        _markerFailed = false;
+        _markerRangeAnchor = anchor;
+      });
+    } catch (e) {
+      debugPrint('❌ 근무 날짜 marker 조회 실패: $e');
+      if (!mounted || requestId != _markerRequestId) return;
+      // 실패를 "일 없음"으로 그리지 않는다 — marker를 숨기고 모른다고 둔다.
+      setState(() {
+        _workDates = null;
+        _markerFailed = true;
+        _markerRangeAnchor = null;
+      });
+    }
+  }
+
+  /// 그 날짜에 운영할 근무가 있는가 — 모르면 null.
+  bool? _hasWorkOn(DateTime day) {
+    final dates = _workDates;
+    if (dates == null) return null;
+    return dates.contains(FormatHelper.toKstDate(day));
+  }
 
   Future<void> _loadDayData(DateTime day) async {
     if (!mounted) return;
@@ -444,7 +536,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Future<void> _reload() async {
     _cachedBusinesses = null; // 사업장 캐시 무효화
-    await _loadDayData(_selectedDay);
+    // [PREDEVICE-WORK-CALENDAR] marker도 같은 mutation에서 갱신한다 —
+    //   확정 한 건으로 그 날짜에 일이 생겼는데 달력만 예전 그대로면
+    //   marker와 목록이 서로 다른 현실이 된다. 새 listener는 만들지 않고
+    //   기존 refresh 경로에 얹는다.
+    await Future.wait([
+      _loadDayData(_selectedDay),
+      _loadMarkerRange(_selectedDay, force: true),
+    ]);
   }
 
   Future<List<BusinessModel>> _ensureBusinesses() async {
@@ -628,6 +727,35 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
             ],
           ),
           const SizedBox(height: 4),
+          // [PREDEVICE-WORK-CALENDAR] marker 조회만 실패했을 때.
+          //   dot이 하나도 없는 달력은 "이번 달에 일이 없다"로 읽힌다.
+          //   선택 날짜 명단은 따로 로드되므로 화면 전체를 오류로 만들지 않고,
+          //   marker만 모른다는 사실을 한 줄로 알리고 다시 시도할 길을 둔다.
+          if (_markerFailed)
+            GestureDetector(
+              onTap: () => _loadMarkerRange(_selectedDay, force: true),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Row(children: [
+                  Icon(Icons.cloud_off_rounded,
+                      size: 13, color: AppColors.grey500),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '근무가 있는 날짜를 표시하지 못했어요',
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.grey500),
+                    ),
+                  ),
+                  Text(
+                    '다시 시도',
+                    style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.grey600)
+                        .copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ]),
+              ),
+            ),
           const Divider(height: 1, color: AppColors.grey100),
         ],
       ),
@@ -680,24 +808,40 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
                 color: isSelected ? Colors.white : dayNumColor,
               ),
             ),
-            // 오늘 indicator dot (선택 상태와 별개)
+            // 오늘 indicator + 근무 marker
+            //
+            // [PREDEVICE-WORK-CALENDAR] 선택된 날짜에서도 marker가 사라지지
+            //   않아야 한다 — 선택 배경 위에서는 흰 점으로 그린다.
+            //   모르는 상태(_workDates == null)에서는 아무것도 그리지 않는다.
+            //   "일이 없다"고 말하지 않기 위해서다.
             const SizedBox(height: 2),
-            if (isTodayDay && !isSelected)
-              Container(
-                width: 4,
-                height: 4,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Theme.of(context).primaryColor,
-                ),
-              )
-            else
-              const SizedBox(height: 4),
+            SizedBox(
+              height: 4,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isTodayDay && !isSelected)
+                    _dot(Theme.of(context).primaryColor),
+                  if (isTodayDay && !isSelected && _hasWorkOn(day) == true)
+                    const SizedBox(width: 3),
+                  if (_hasWorkOn(day) == true)
+                    _dot(isSelected ? Colors.white : AppColors.grey600),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+
+  /// 4px 원 — 오늘 표시와 근무 marker가 공유하는 최소 형태.
+  Widget _dot(Color color) => Container(
+        width: 4,
+        height: 4,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+      );
 
   String _weekdayLabel(int weekday) {
     const labels = ['', '월', '화', '수', '목', '금', '토', '일'];
@@ -715,13 +859,21 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     await DialogHelper.showSheet<DateTime>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => _MonthCalendarSheet(
-        initialDay: _selectedDay,
-        onDaySelected: (day) {
-          Navigator.of(ctx).pop();
-          // 다른 주면 WeekStrip 주간도 이동
-          _selectDay(day);
-        },
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => _MonthCalendarSheet(
+          initialDay: _selectedDay,
+          // 주간 strip과 같은 집합을 넘긴다 — 시트가 따로 조회하지 않는다.
+          workDates: _workDates,
+          onMonthChanged: (anchor) async {
+            await _loadMarkerRange(anchor);
+            if (ctx.mounted) setSheetState(() {});
+          },
+          onDaySelected: (day) {
+            Navigator.of(ctx).pop();
+            // 다른 주면 WeekStrip 주간도 이동
+            _selectDay(day);
+          },
+        ),
       ),
     );
   }
@@ -1507,8 +1659,18 @@ class _MonthCalendarSheet extends StatefulWidget {
   final DateTime initialDay;
   final void Function(DateTime) onDaySelected;
 
+  /// [PREDEVICE-WORK-CALENDAR] 주간 strip과 **같은 집합**을 받는다.
+  ///   월 달력이 자기 조회를 따로 하면 같은 날짜에 대해 두 화면이 다른 답을
+  ///   낼 수 있다. null은 "아직 모름" — marker를 그리지 않는다.
+  final Set<DateTime>? workDates;
+
+  /// 달을 넘길 때 그 범위를 불러오도록 요청한다 (호출부가 캐시·중복 방지 담당).
+  final void Function(DateTime anchor)? onMonthChanged;
+
   const _MonthCalendarSheet({
     required this.initialDay,
+    this.workDates,
+    this.onMonthChanged,
     required this.onDaySelected,
   });
 
@@ -1571,8 +1733,30 @@ class _MonthCalendarSheetState extends State<_MonthCalendarSheet> {
           },
           onPageChanged: (focusedDay) {
             setState(() => _focusedDay = focusedDay);
+            // 보이는 달이 바뀌면 그 범위의 marker를 요청한다.
+            widget.onMonthChanged?.call(focusedDay);
           },
-          eventLoader: (_) => const [],
+          // [PREDEVICE-WORK-CALENDAR] 주간 strip과 같은 집합을 읽는다.
+          //   모르는 상태(null)면 빈 목록을 돌려 marker를 그리지 않는다 —
+          //   "일이 없다"와 구분하기 위해서다.
+          eventLoader: (day) {
+            final dates = widget.workDates;
+            if (dates == null) return const [];
+            return dates.contains(FormatHelper.toKstDate(day))
+                ? const [_kWorkMarker]
+                : const [];
+          },
+          markerBuilder: (ctx, day, events) {
+            if (events.isEmpty) return null;
+            return Container(
+              width: 4,
+              height: 4,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.grey600,
+              ),
+            );
+          },
         ),
         const SizedBox(height: 16),
       ],
