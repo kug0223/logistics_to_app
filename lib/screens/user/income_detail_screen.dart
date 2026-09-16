@@ -55,6 +55,10 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   String _amountOrUnknown(int amount) =>
       _loadFailed ? '확인 불가' : FormatHelper.formatWage(amount);
 
+  /// 일했지만 금액이 아직 확정되지 않은 근무 건수 (이 달 기준).
+  int get _settlementPending => CalendarHelper.settlementPendingCount(
+      _attendances, DateTime(_year, _month));
+
   @override
   void initState() {
     super.initState();
@@ -518,6 +522,20 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                         label: '근무 예정',
                         value: _isLoading ? null : _amountOrUnknown(wageScheduled),
                       ),
+                      // [PREDEVICE-PENDING-WAGE-VISIBILITY] 홈에서 '정산 중 N건'을
+                      //   보고 들어온 사람이 여기서 같은 사실을 확인할 수 있어야
+                      //   한다. 아래 근무 내역에 '근무 완료' 행으로 실제 건들이
+                      //   있다. 조회 실패 시에는 0건이라고 말하지 않는다.
+                      if (_isLoading || _loadFailed || _settlementPending > 0) ...[
+                        SizedBox(height: 10 * s),
+                        _incomeRow(
+                          s: s,
+                          label: '정산 중',
+                          value: _isLoading
+                              ? null
+                              : (_loadFailed ? '확인 불가' : '$_settlementPending건'),
+                        ),
+                      ],
                       SizedBox(height: 12 * s),
                       Divider(height: 1, color: AppColors.borderLight),
                       SizedBox(height: 12 * s),

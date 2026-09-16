@@ -3764,6 +3764,30 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         return;
       }
 
+      // [PREDEVICE-ADJUST-REASON] 근태 시간을 바꾸는 것은 곧 금액을 바꾸는 일이다.
+      //   누가 언제 고쳤는지는 남지만 왜 고쳤는지가 없으면, 나중에 그 금액이
+      //   맞았는지 아무도 되짚을 수 없다. 서버도 같은 이유로 사유 없는 시간
+      //   변경을 거절하므로, 여기서 받지 않으면 저장 자체가 실패한다.
+      //   실제로 시각이 달라지는 건이 하나라도 있을 때만 묻는다.
+      if (!mounted) return;
+      final reason = await DialogHelper.showTextInput(
+        context,
+        title: '근태 수정 사유',
+        message: '왜 시간을 바꾸는지 적어주세요. 급여 확인에 사용됩니다.',
+        hintText: '예: 실제 업무 시작 시각 확인',
+        maxLines: 2,
+        maxLength: 200,
+        icon: Icons.edit_calendar_outlined,
+        validator: (v) => (v ?? '').trim().isNotEmpty,
+      );
+      if (reason == null || reason.trim().isEmpty) {
+        // 취소 — 아무것도 바꾸지 않는다.
+        return;
+      }
+      for (final e in entries) {
+        e['reason'] = reason.trim();
+      }
+
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableBatchAdjustAttendanceTime',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))

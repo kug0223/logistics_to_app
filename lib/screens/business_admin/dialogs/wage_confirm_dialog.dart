@@ -288,6 +288,56 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
   }
 
+  /// 근무자가 실제로 누른 시각이 급여 적용 시각과 다를 때만 함께 보여준다.
+  ///
+  /// [PREDEVICE-WAGE-RAW-PUNCH] 이 화면은 지금까지 급여에 적용되는 시각만
+  /// 보여줬다. 그런데 사업장 근태 기준이 적용되면 09:06에 누른 출근이 09:30으로,
+  /// 18:30에 누른 퇴근이 18:00으로 계산된다. 금액을 확정하는 자리에서 그 차이를
+  /// 볼 수 없으면, 관리자는 실제 근무를 확인할 근거도 보정할 이유도 알 수 없다.
+  /// 규칙을 바꾸지 않고 판단할 정보만 되돌려 놓는다.
+  ///
+  /// 같으면 아무것도 그리지 않는다 — 같은 값을 두 줄로 반복하지 않는다.
+  /// 적용 시각이 기준이라는 사실이 흐려지지 않도록 보조 정보로만 둔다.
+  Widget _buildPunchDivergenceRow(
+    BuildContext context,
+    AttendanceModel? attendance,
+  ) {
+    if (attendance == null) return const SizedBox.shrink();
+    String? trim(String? v) => v?.split(':').take(2).join(':');
+
+    final rawIn = trim(attendance.originalCheckIn);
+    final rawOut = trim(attendance.originalCheckOut);
+    final appliedIn = trim(attendance.checkIn);
+    final appliedOut = trim(attendance.checkOut);
+
+    final parts = <String>[];
+    if (rawIn != null && appliedIn != null && rawIn != appliedIn) {
+      parts.add('출근 $rawIn');
+    }
+    if (rawOut != null && appliedOut != null && rawOut != appliedOut) {
+      parts.add('퇴근 $rawOut');
+    }
+    if (parts.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 3)),
+      child: Row(
+        children: [
+          Icon(Icons.history, size: 12, color: AppColors.grey400),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Expanded(
+            child: Text(
+              '근무자 기록 ${parts.join(' · ')} · 사업장 근태 기준 시간으로 계산',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 근무자별 실제 적용 계약휴게 (override 없으면 TO 기본값)
   int _getAppliedScheduledBreak(ApplicationModel app) =>
       _workerAppliedScheduledBreakOverride[app.id] ?? _getScheduledBreakMinutes(app);
@@ -2211,6 +2261,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                                   ),
                                 ],
                               ),
+                              // 근무자가 실제로 누른 시각 — 적용 시각과 다를 때만
+                              _buildPunchDivergenceRow(context, attendance),
                             ],
                           ),
                         ),
@@ -2532,6 +2584,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                               ),
                             ],
                           ),
+
+                          // 근무자가 실제로 누른 시각 — 급여 적용 시각과 다를 때만
+                          _buildPunchDivergenceRow(context, attendance),
 
                           // 상태 배지 (지각/조퇴/연장/심야)
                           Builder(builder: (context) {

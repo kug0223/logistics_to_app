@@ -21981,7 +21981,12 @@ interface AdjustEntry {
   workHours?: number;
   status: string;
   resetWageDetail: boolean;
+  /** [PREDEVICE-ADJUST-REASON] 실제 시각이 바뀔 때 필수. modifyReason에 저장된다. */
+  reason?: string;
 }
+
+/** 근태 수정 사유 최대 길이 — 한 줄 메모 분량. */
+const ADJUST_REASON_MAX = 200;
 
 // ── callableRejectApplication ─────────────────────────────────
 // 지원서 거절 (PENDING → REJECTED) — rejectedBy 서버 강제, statusHistory.at 서버 타임스탬프
@@ -22849,6 +22854,54 @@ export const callableBatchAdjustAttendanceTime = onCall(
       }
     }
 
+    // Phase 1.5: [PREDEVICE-ADJUST-REASON] 실제로 시각이 바뀌는 건에만 사유를 요구.
+    //
+    //   근태 시간 수정은 곧 금액 변경이다(calculated면 재계산, pending이면 이후
+    //   계산 기준이 바뀐다). 누가·언제 고쳤는지는 남지만 왜 고쳤는지가 없으면
+    //   나중에 그 금액이 맞았는지 재구성할 수 없다.
+    //
+    //   요구 시점은 "값이 실제로 달라질 때"뿐이다. 같은 값을 다시 보내는 건에
+    //   사유를 요구하면 운영만 느려진다. 그래서 쓰기 전에 현재 값을 한 번 읽어
+    //   변경 여부를 판정하고, 모자라면 **아무것도 쓰기 전에** 거절한다.
+    //   (마지막에 실패시켜 사유 입력을 헛수고로 만들지 않는다.)
+    {
+      const preRefs = entries
+        .filter((e) => !skippedSet.has(e.attendanceId))
+        .map((e) => db.collection("attendance").doc(e.attendanceId));
+      const preSnaps = preRefs.length > 0 ? await db.getAll(...preRefs) : [];
+      const preById = new Map(preSnaps.map((s) => [s.id, s]));
+
+      for (const entry of entries) {
+        if (skippedSet.has(entry.attendanceId)) continue;
+        const cur = preById.get(entry.attendanceId);
+        if (!cur || !cur.exists) continue; // 없는 문서는 TX에서 skip 처리된다
+
+        type TS = admin.firestore.Timestamp | undefined;
+        const curIn = (cur.data()?.["checkIn"] as TS)?.toMillis();
+        const curOut = (cur.data()?.["checkOut"] as TS)?.toMillis();
+        const changesIn =
+          entry.checkInMs != null && entry.checkInMs !== curIn;
+        const changesOut =
+          entry.checkOutMs != null && entry.checkOutMs !== curOut;
+        if (!changesIn && !changesOut) continue;
+
+        const reason =
+          typeof entry.reason === "string" ? entry.reason.trim() : "";
+        if (reason.length === 0) {
+          throw new HttpsError(
+            "invalid-argument",
+            "근태 시간을 바꾸려면 수정 사유가 필요합니다."
+          );
+        }
+        if (reason.length > ADJUST_REASON_MAX) {
+          throw new HttpsError(
+            "invalid-argument",
+            `수정 사유는 ${ADJUST_REASON_MAX}자 이하여야 합니다.`
+          );
+        }
+      }
+    }
+
     // Phase 2: [PERF-2026-07-16] 순차 → chunk-20 병렬 트랜잭션
     // 각 트랜잭션: 1 read + 1 write = 2 ops → chunk-20 최대 40 ops (한도 500 이내)
     const validEntries = entries.filter(e => !skippedSet.has(e.attendanceId));
@@ -22858,6 +22911,8 @@ export const callableBatchAdjustAttendanceTime = onCall(
       await Promise.allSettled(
         chunk.map(async (entry) => {
           const {attendanceId, checkInMs, checkOutMs, workHours, status, resetWageDetail} = entry;
+          const adjReason =
+            typeof entry.reason === "string" ? entry.reason.trim() : "";
           const attRef = db.collection("attendance").doc(attendanceId);
           try {
             await db.runTransaction(async (tx) => {
@@ -22903,6 +22958,12 @@ export const callableBatchAdjustAttendanceTime = onCall(
                 updatedAt: now,
                 status,
               };
+              type CurTS = admin.firestore.Timestamp | undefined;
+              const curInMs = (snapData.checkIn as CurTS)?.toMillis();
+              const curOutMs = (snapData.checkOut as CurTS)?.toMillis();
+              const didChangeTime =
+                (checkInMs != null && checkInMs !== curInMs) ||
+                (checkOutMs != null && checkOutMs !== curOutMs);
               if (checkInMs != null) {
                 updates["checkIn"] = admin.firestore.Timestamp.fromMillis(checkInMs);
                 updates["checkInMethod"] = "manual";
@@ -22910,6 +22971,14 @@ export const callableBatchAdjustAttendanceTime = onCall(
               if (checkOutMs != null) {
                 updates["checkOut"] = admin.firestore.Timestamp.fromMillis(checkOutMs);
                 updates["checkOutMethod"] = "manual";
+              }
+              // [PREDEVICE-ADJUST-REASON] 사유는 시각이 실제로 바뀐 건에만 남긴다.
+              //   Phase 1.5가 이미 존재를 보장했으므로 여기서는 저장만 한다.
+              //   TOCTOU로 그 사이 값이 바뀌었을 수 있어 여기서도 한 번 더 판정한다.
+              //   여러 번 수정하면 최신 사유가 이전 사유를 덮는다 — 문서 하나에
+              //   현재 상태만 두는 기존 구조를 따른다. 이력이 필요하면 별도 판단.
+              if (didChangeTime && adjReason.length > 0) {
+                updates["modifyReason"] = adjReason.slice(0, ADJUST_REASON_MAX);
               }
               if (workHours != null) updates["workHours"] = workHours;
               if (effectiveResetWageDetail) {

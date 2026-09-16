@@ -1851,6 +1851,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         .where((a) => CalendarHelper.isScheduledIncome(a, _attendances))
         .fold<int>(0, (sum, a) => sum + _scheduledDailyWage(a));
 
+    // 일했지만 금액이 아직 확정되지 않은 근무 — 어느 합계에도 더하지 않는다.
+    final settlementPending =
+        CalendarHelper.settlementPendingCount(_attendances, now);
+
     final wageTotal = wageCompleted + wageScheduled;
 
     return Container(
@@ -1931,6 +1935,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     valueColor: AppColors.textPrimary,
                     valueBold: false,
                   ),
+                  // ── 정산 중 행 — 일했지만 금액이 아직 확정되지 않은 근무 ──
+                  // [PREDEVICE-PENDING-WAGE-VISIBILITY] 그 날은 출근했으므로
+                  //   근무 예정에서 빠지고, 아직 확정 전이라 근무 완료에도 들어
+                  //   가지 않는다. 두 합계 어디에도 없으면 일한 하루가 사라진
+                  //   것처럼 보인다. 확정 전 금액을 확정 금액인 양 더하지 않고
+                  //   건수만 말한다. 0건이면 줄을 만들지 않는다.
+                  if (!_isLoadingData && settlementPending > 0) ...[
+                    SizedBox(height: 8 * s),
+                    _incomeRow(
+                      s: s,
+                      label: '정산 중',
+                      labelColor: AppColors.textSecondary,
+                      value: '$settlementPending건',
+                      valueColor: AppColors.warning,
+                      valueBold: false,
+                    ),
+                  ],
                   SizedBox(height: 12 * s),
                   Divider(height: 1, color: AppColors.borderLight),
                   SizedBox(height: 12 * s),

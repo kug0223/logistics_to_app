@@ -179,6 +179,35 @@ class CalendarHelper {
       att.status == AttendanceModel.statusNoShow ||
       att.status == AttendanceModel.statusAbsent;
 
+  /// 실제로 일했는데 금액이 아직 확정되지 않은 근무인가 — "정산 중".
+  ///
+  /// [PREDEVICE-PENDING-WAGE-VISIBILITY] 근무를 마친 날은 예상수입에서 빠지고
+  /// (출근했으므로) 실수입에도 들어가지 않는다(아직 확정 전이므로). 그 결과
+  /// 일한 하루가 두 합계 어디에도 없어서, 근로자에게는 돈이 사라진 것처럼
+  /// 보인다. 금액을 억지로 어느 쪽에 더하지 않는다 — 확정 전 금액은 확정
+  /// 금액이 아니다. 대신 그런 근무가 몇 건인지를 말한다.
+  ///
+  /// 조건: 출근 기록이 있고(= 실제 근무), NO_SHOW·결근이 아니며,
+  ///       급여가 아직 confirmed/transferred가 아니다.
+  static bool isSettlementPending(AttendanceModel att) {
+    if (att.checkInAt == null) return false;
+    if (isNonEarning(att)) return false;
+    return att.wageStatus != AttendanceModel.wageConfirmed &&
+        att.wageStatus != AttendanceModel.wageTransferred;
+  }
+
+  /// 해당 월의 정산 중 근무 건수.
+  static int settlementPendingCount(
+    List<AttendanceModel> attendances,
+    DateTime focusedDay,
+  ) =>
+      attendances
+          .where((att) =>
+              att.workDate.year == focusedDay.year &&
+              att.workDate.month == focusedDay.month &&
+              isSettlementPending(att))
+          .length;
+
   /// 아직 벌 예정으로 셀 수 있는 지원서인가 — 예상수입의 단일 판정.
   ///
   /// 제외 대상:
