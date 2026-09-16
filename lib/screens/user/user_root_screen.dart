@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 
-import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
 import '../../theme/app_colors.dart';
-import '../../utils/responsive_helper.dart';
 import 'my_schedule_screen.dart';
 import 'user_home_screen.dart';
-import 'user_contracts_screen.dart';
+import '../../widgets/user/pending_contract_bar.dart';
 import 'user_tab_scope.dart';
 import 'tabs/user_job_tab.dart';
 import 'tabs/user_my_tab.dart';
@@ -154,7 +151,7 @@ class _UserRootScreenState extends State<UserRootScreen> {
           children: [
             // 미서명 계약서 배너 — UserHomeScreen에서 이동
             // (내부에서 isAdminMode·hasPendingContract 체크하여 자체 표시 제어)
-            const _PendingContractBar(),
+            const PendingContractBar(),
             BottomNavigationBar(
               currentIndex: _currentIndex,
               onTap: switchToTab,
@@ -196,71 +193,6 @@ class _UserRootScreenState extends State<UserRootScreen> {
         ),
         ),       // UserTabScope
       ),
-    );
-  }
-}
-
-// ── 미서명 계약서 배너 (UserHomeScreen에서 이동) ────────────────────
-// UserHomeScreen.bottomNavigationBar에 있던 위젯을 UserRootScreen으로 이전.
-// 내부적으로 isAdminMode·hasPendingContract를 감시하여 표시 여부를 스스로 결정한다.
-// maintainSize: true → 숨겨도 레이아웃 높이가 유지되어 탭바 위치가 흔들리지 않는다.
-class _PendingContractBar extends StatelessWidget {
-  const _PendingContractBar();
-
-  @override
-  Widget build(BuildContext context) {
-    final data = context.select<UserProvider, ({bool show, int count})>(
-      (p) => (
-        show: !p.isAdminMode && p.hasPendingContract,
-        count: p.pendingContractCount,
-      ),
-    );
-    // maintainSize: true 제거 — 배너 숨겨질 때 공간도 함께 사라져야 함.
-    // AnimatedSize로 출현/소멸 시 탭바 위치 변화를 부드럽게 처리.
-    //
-    // SafeArea 불필요: 이 배너는 BottomNavigationBar 위(Column 위쪽)에 위치하므로
-    // 시스템 하단 inset을 직접 처리하지 않는다.
-    // BottomNavigationBar가 MediaQuery.padding.bottom을 내부적으로 처리한다.
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-      child: data.show
-          ? GestureDetector(
-              onTap: () {
-                // _PendingContractBar는 UserRootScreen.Scaffold 내에 있으므로
-                // Navigator.of(context)는 앱 루트 네비게이터를 찾아 전체화면 push
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const UserContractsScreen()),
-                );
-              },
-              child: Container(
-                width: double.infinity,
-                color: AppColors.yellowWarnBg,
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 16),
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-                child: Row(children: [
-                  const Icon(Icons.warning_amber_rounded,
-                      color: AppColors.yellowWarnDark, size: 18),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      '미서명 계약서 ${data.count}건이 있습니다. 탭하여 확인하세요.',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: AppColors.yellowWarnText,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const Icon(Icons.chevron_right,
-                      color: AppColors.yellowWarnDark, size: 18),
-                ]),
-              ),
-            )
-          : const SizedBox.shrink(), // 배너 숨김 시 공간 없음
     );
   }
 }

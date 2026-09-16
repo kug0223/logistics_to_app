@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
+import '../../models/core/employment_contract_model.dart';
+import '../../providers/user_provider.dart';
+import '../../screens/contract/contract_sign_screen.dart';
 import '../../utils/dialog_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
@@ -31,6 +35,72 @@ class ScheduleCard extends StatelessWidget {
     this.onChanged,
     this.selectedDay,
   });
+
+  /// 이 근무의 계약서가 근로자 서명을 기다리고 있으면 안내 + CTA를 낸다.
+  ///
+  /// 기다리는 계약이 없으면 아무것도 그리지 않는다 — 카드마다 계약 배지를
+  /// 달지 않는다는 뜻이다. 완료된 계약에는 별도 표시를 하지 않는다.
+  Widget _buildContractActionRow(BuildContext context) {
+    final toId = application.toId ?? '';
+    if (toId.isEmpty) return const SizedBox.shrink();
+    final pending =
+        context.select<UserProvider, EmploymentContractModel?>(
+      (p) => p.pendingContractForTo(toId),
+    );
+    if (pending == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      child: Material(
+        color: AppColors.yellowWarnBg,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            final provider = context.read<UserProvider>();
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    ContractSignScreen(contract: pending, role: 'worker'),
+              ),
+            ).then((_) => provider.refreshPendingContracts());
+          },
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 10),
+              vertical: ResponsiveHelper.spacing(context, 7),
+            ),
+            child: Row(children: [
+              Icon(Icons.draw_outlined,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: AppColors.yellowWarnDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Expanded(
+                child: Text(
+                  '계약서 서명이 필요해요',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: AppColors.yellowWarnText,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '계약서 확인',
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  color: AppColors.yellowWarnDark,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Icon(Icons.chevron_right,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: AppColors.yellowWarnDark),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -166,6 +236,21 @@ class ScheduleCard extends StatelessWidget {
                     ),
                   ],
                 ),
+
+                // ═══════════════════════════════════════════════════
+                // 계약서 서명 필요 (근로자가 할 일이 있을 때만)
+                // ═══════════════════════════════════════════════════
+                // [PREDEVICE-SCHEDULE-CONTRACT] 근무는 절대 숨기지 않는다.
+                //   약속(확정된 근무)과 남은 행동(서명)을 같은 카드에서 함께
+                //   보여준다. 근무 전에 발견할 수 있는 자리가 알림 말고도
+                //   필요하기 때문이다.
+                //
+                //   서명 대기(pending_worker)일 때만 띄운다. 계약이 아직
+                //   없거나 사업주 처리 중인 상태는 근로자가 할 수 있는 일이
+                //   없으므로 "서명 필요"라고 말하면 거짓이 된다 — 근로자가
+                //   가진 데이터로는 그 두 경우를 구분할 수도 없으므로
+                //   아무 말도 하지 않는 쪽이 정확하다.
+                _buildContractActionRow(context),
 
                 // ═══════════════════════════════════════════════════
                 // 세금 공제 배지 (급여 계산 후에만 표시)

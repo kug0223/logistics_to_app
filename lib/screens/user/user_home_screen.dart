@@ -1,4 +1,6 @@
 ﻿import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -332,6 +334,16 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     setState(() => _isLoadingData = true);
     final now = DateTime.now();
     try {
+      // [PREDEVICE-CONTRACT-CONTEXT] 미서명 계약 목록도 홈 로드에 합류시킨다.
+      //   지금까지는 로그인 시점과 FCM 수신 시에만 갱신됐다. push를 놓치면
+      //   앱을 다시 켤 때까지 계약 배너가 나타나지 않았고, 배너를 읽는
+      //   일정 카드·출근 카드도 같이 낡은 상태로 남았다.
+      //   실패해도 홈 로드를 깨뜨리지 않는다 — 배너는 부가 정보다.
+      unawaited(context
+          .read<UserProvider>()
+          .refreshPendingContracts()
+          .catchError((Object e) => debugPrint('⚠️ 미서명 계약 갱신 실패: $e')));
+
       final results = await Future.wait([
         _appFirestore.getMyApplications(uid),
         _appFirestore.getMyMonthlyAttendances(userId: uid, year: now.year, month: now.month),

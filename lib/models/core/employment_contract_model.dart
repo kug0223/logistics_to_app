@@ -432,6 +432,42 @@ class EmploymentContractModel {
   bool get needsWorkerSignature => status == ContractStatus.pendingWorker;
   bool get hasVoidFailedApps => voidFailedAppIds.isNotEmpty;
 
+  // ── 알림/배너용 최소 context ─────────────────────────────────────
+  //
+  // [PREDEVICE-CONTRACT-CONTEXT] "미서명 계약서 3건"만으로는 어떤 근무의
+  // 계약인지 알 수 없어, 근로자가 목록을 열어 다시 찾아야 했다. 어느 날
+  // 어느 사업장인지는 이미 계약서 안에 있으므로 여기서 꺼내 쓴다.
+
+  /// 가장 이른 근무일 — 'yyyy-MM-dd'. 슬롯이 없으면 null(장기 계약 등).
+  /// workDate가 ISO 문자열이라 사전순 정렬이 곧 날짜순이다.
+  String? get earliestWorkDate {
+    if (slots.isEmpty) return null;
+    return slots
+        .map((s) => s.workDate)
+        .reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+  }
+
+  /// 'M월 D일' — 슬롯이 없으면 null.
+  String? get shortWorkDateLabel {
+    final iso = earliestWorkDate;
+    if (iso == null) return null;
+    final p = iso.split('-');
+    if (p.length != 3) return null;
+    final m = int.tryParse(p[1]);
+    final d = int.tryParse(p[2]);
+    if (m == null || d == null) return null;
+    return '$m월 $d일';
+  }
+
+  /// '9월 22일 · 오산센터' — 날짜를 모르면 사업장만, 둘 다 없으면 null.
+  String? get contextLabel {
+    final biz = snapshot.businessName.trim();
+    final date = shortWorkDateLabel;
+    if (date != null && biz.isNotEmpty) return '$date · $biz';
+    if (biz.isNotEmpty) return biz;
+    return date;
+  }
+
   factory EmploymentContractModel.fromFirestore(DocumentSnapshot doc) {
     final raw = doc.data();
     if (raw == null) {

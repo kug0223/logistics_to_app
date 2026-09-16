@@ -93,6 +93,23 @@ class UserProvider with ChangeNotifier {
   int get pendingContractCount => _pendingContracts.length;
 
   /// 특정 TO에 연결된 미서명 계약서 (출근 차단 확인용)
+  /// [PREDEVICE-CONTRACT-CONTEXT] 서명 대기 계약 중 가장 가까운 근무 한 건.
+  ///
+  /// 배너는 목록을 펼치지 않는다 — 한 건이면 그 건을, 여러 건이면 가장 이른
+  /// 근무를 대표로 보여주고 나머지는 개수로만 말한다.
+  /// 근무일이 없는 계약(슬롯 없는 장기)은 대표가 되지 못하므로 뒤로 민다.
+  EmploymentContractModel? get nearestPendingContract {
+    if (_pendingContracts.isEmpty) return null;
+    EmploymentContractModel? best;
+    for (final c in _pendingContracts) {
+      final d = c.earliestWorkDate;
+      if (d == null) continue;
+      final bd = best?.earliestWorkDate;
+      if (bd == null || d.compareTo(bd) < 0) best = c;
+    }
+    return best ?? _pendingContracts.first;
+  }
+
   EmploymentContractModel? pendingContractForTo(String toId) {
     if (toId.isEmpty) return null;
     try {
