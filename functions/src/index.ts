@@ -29,6 +29,16 @@ const _emailTransporter = (_gmailUser && _gmailPassword)
 // 확정 상태 그룹 (CONFIRMED + CONTRACT_PENDING 동일 처리)
 const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 
+// [SYSTEM-INTEGRATION-POSTING-E2E] 대기 상태 그룹.
+//
+//   `[Phase 8.1E.2A]` 이후 초대(INVITED)도 자리를 잡아 두는 대기다 —
+//   invite writer가 pendingCount를 +1 하고, 만료·수락이 -1 한다.
+//   그런데 절대값으로 다시 세는 경로는 `status == "PENDING"`만 세고 있었다.
+//   지원서가 하나라도 쓰이면 그 경로가 돌아 미수락 초대가 대기 수에서
+//   사라졌다(실측: 실제 1 · slot 0 · workDetailCounts 3 — 한 화면 안에서
+//   서로 다른 숫자). 세는 곳이 여럿이면 정의는 하나여야 한다.
+const PENDING_STATUSES = ["PENDING", "INVITED"];
+
 // ═══════════════════════════════════════════════════════════
 // 🔑 비밀번호 재설정 코드 발송
 // ═══════════════════════════════════════════════════════════
@@ -12697,7 +12707,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
 
     const [confirmedSnap, pendingSnap, ...wtSnaps] = await Promise.all([
       appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
-      appsRef.where("status", "==", "PENDING").count().get(),
+      appsRef.where("status", "in", PENDING_STATUSES).count().get(),
       ...contractWorkTypes.map((wt) =>
         appsRef
           .where("selectedWorkType", "==", wt)
@@ -12740,9 +12750,9 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
     slotDoc,
   ] = await Promise.all([
     appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
-    appsRef.where("status", "==", "PENDING").count().get(),
+    appsRef.where("status", "in", PENDING_STATUSES).count().get(),
     slotAppsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
-    slotAppsRef.where("status", "==", "PENDING").count().get(),
+    slotAppsRef.where("status", "in", PENDING_STATUSES).count().get(),
     slotRef.get(),
   ]);
 
@@ -19164,6 +19174,19 @@ export const callableCloseSlots = onCall(
         const slotUpdate: Record<string, unknown> = {
           pendingCount: admin.firestore.FieldValue.increment(-slotCanceled),
         };
+        // [SYSTEM-INTEGRATION-POSTING-E2E] 업무 단위 대기도 같이 줄인다.
+        //   슬롯 합계만 줄이면 날짜칩(업무별 대기)은 거절된 지원을 계속 세어
+        //   같은 화면의 두 숫자가 어긋난다(실측: 슬롯 0 · 업무 3 · 실제 1).
+        const rejectedByWd = new Map<string, number>();
+        for (const doc of docs) {
+          const rejectedWdId = doc.data().wdId as string | undefined;
+          if (!rejectedWdId) continue;
+          rejectedByWd.set(rejectedWdId, (rejectedByWd.get(rejectedWdId) ?? 0) + 1);
+        }
+        for (const [rejectedWdId, n] of rejectedByWd) {
+          slotUpdate[`workDetailCounts.${rejectedWdId}.pendingCount`] =
+            admin.firestore.FieldValue.increment(-n);
+        }
 
         let cancelBatch = db.batch();
         let cancelCount = 0;
