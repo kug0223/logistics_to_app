@@ -328,12 +328,14 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
     return CalendarHelper.getConfirmedIncome(_attendances, focusedDay);
   }
 
-  /// 근무 예정 = 확정된 지원서 중 아직 미출근인 것 (시급→일당 환산)
+  /// 근무 예정 = 확정된 지원서 중 아직 벌 예정인 것 (시급→일당 환산)
+  ///
+  /// [PREDEVICE-INCOME-NOSHOW] NO_SHOW·결근으로 마감된 날은 제외한다 —
+  /// 판정은 홈과 같은 CalendarHelper.isScheduledIncome을 쓴다.
   int get _wageScheduled {
     return _monthApps
         .where((a) => AppStatus.confirmedStatuses.contains(a.status))
-        .where((a) => !_attendances
-            .any((att) => att.applicationId == a.id && att.checkInAt != null))
+        .where((a) => CalendarHelper.isScheduledIncome(a, _attendances))
         .fold(0, (sum, a) => sum + _dailyWageOf(a));
   }
 

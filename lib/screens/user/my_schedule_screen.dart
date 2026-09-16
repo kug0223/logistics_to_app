@@ -82,7 +82,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     final thisMonth = CalendarHelper.getThisMonthApplications(_applications, _focusedDay);
     final attendances = _attendanceMap.values.toList();
     _cachedConfirmedCount  = CalendarHelper.getConfirmedCount(thisMonth);
-    _cachedTotalIncome     = CalendarHelper.getTotalIncome(thisMonth, _focusedDay);
+    // [PREDEVICE-INCOME-NOSHOW] 근태를 함께 넘긴다 — NO_SHOW·결근으로 마감된
+    //   날이 예상수입에 남지 않도록.
+    _cachedTotalIncome     = CalendarHelper.getTotalIncome(
+        thisMonth, _focusedDay, attendances: attendances);
     _cachedActualDays      = CalendarHelper.getActualWorkDays(attendances, _focusedDay);
     _cachedConfirmedIncome = CalendarHelper.getConfirmedIncome(attendances, _focusedDay);
     // H2: 확정 급여 기록 — 월 기준으로 필터링 후 캐시

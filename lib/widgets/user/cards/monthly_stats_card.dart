@@ -28,7 +28,9 @@ class MonthlyStatsCard extends StatelessWidget {
     // 예정 통계
     final confirmedCount = CalendarHelper.getConfirmedCount(thisMonth);
     final pendingCount = CalendarHelper.getPendingCount(thisMonth);
-    final totalIncome = CalendarHelper.getTotalIncome(thisMonth, focusedDay);
+    // [PREDEVICE-INCOME-NOSHOW] 근태를 함께 넘긴다 — NO_SHOW·결근 날 제외.
+    final totalIncome = CalendarHelper.getTotalIncome(
+        thisMonth, focusedDay, attendances: attendances);
     
     // 완료 통계 — 단일 순회로 두 값 동시 계산
     final attStats = CalendarHelper.getAttendanceStats(attendances, focusedDay);

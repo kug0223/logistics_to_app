@@ -12859,34 +12859,41 @@ export const onTODeleted = onDocumentDeleted(
       }
     }
 
-    // ── 3. attendance 삭제 (wageTransferred / wageConfirmed 보존) ──
-    const WAGE_DONE = ["wageTransferred", "wageConfirmed", "transferred", "confirmed"];
-    for (let i = 0; i < appIds.length; i += 30) {
-      const chunk = appIds.slice(i, i + 30);
-      const attSnaps = await Promise.all(
-        chunk.map((appId) =>
+    // ── 3. attendance — 지우지 않는다 ────────────────────────────────────
+    //
+    // [PREDEVICE-HISTORY-RETENTION] 공고 lifecycle과 근무·급여 기록 lifecycle은
+    //   분리한다. 공고가 사라졌다는 사실은 사람이 그 날 일했다는 사실을 바꾸지
+    //   않는다.
+    //
+    //   이전에는 wageStatus가 transferred/confirmed인 것만 남기고 나머지를
+    //   지웠다. 그 "나머지"에는
+    //     · calculated — 금액이 이미 계산돼 관리자 확정만 남은 급여
+    //     · pending    — 근로자가 실제로 출근을 찍어 생긴 근무 기록
+    //   이 들어 있었다. attendance 문서는 체크인 또는 NO_SHOW writer로만
+    //   생기므로, 사실상 모든 문서가 실제 근무 또는 기록된 결근을 뜻한다.
+    //   지울 수 있는 "빈 껍데기"는 없다.
+    //
+    //   callableDeleteTO는 애초에 soft delete라 이 트리거를 타지 않는다
+    //   (isDeleted=true, "법적 기록 보존"). 이 경로는 콘솔에서 tos 문서를
+    //   직접 지웠을 때만 도는 안전망인데, 안전망이 돈과 근무 기록을 지우고
+    //   있었다. 공고 정리를 이유로 근로기준법상 보존 대상을 잃지 않는다.
+    //
+    //   attendance는 businessId/userId로 조회되고 toId로 조인하지 않으므로
+    //   (callableGetAdminAttendances, getMyMonthlyAttendances 모두 그렇다)
+    //   공고가 없어도 관리자·근로자 양쪽에서 그대로 읽힌다.
+    if (appIds.length > 0) {
+      const attCounts = await Promise.all(
+        appIds.slice(0, 30).map((appId) =>
           db.collection("attendance")
             .where("applicationId", "==", appId)
-            .limit(500) // 단일 계약 최대 ~500일 근무 가정 (약 1.4년)
-            .get()
+            .count().get()
         )
       );
-      const attDocs = attSnaps.flatMap((s) => s.docs);
-      if (attDocs.length > 0) {
-        let batch = db.batch();
-        let count = 0;
-        for (const d of attDocs) {
-          const wageStatus = d.data().wageStatus as string | undefined;
-          if (wageStatus && WAGE_DONE.includes(wageStatus)) continue;
-          batch.delete(d.ref);
-          count++;
-          if (count >= PAGE) {
-            await batch.commit();
-            batch = db.batch();
-            count = 0;
-          }
-        }
-        if (count > 0) await batch.commit();
+      const kept = attCounts.reduce((a, c) => a + c.data().count, 0);
+      if (kept > 0) {
+        console.log(
+          `[onTODeleted] attendance ${kept}건 보존 (공고 삭제와 무관한 기록)`
+        );
       }
     }
 

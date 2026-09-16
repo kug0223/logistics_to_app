@@ -168,19 +168,61 @@ class CalendarHelper {
   ///
   /// ⚠️ 단기도 반드시 _dailyWage 경유: wageType='hourly'인 경우 app.wage는 시급이므로
   ///    app.wage를 그대로 합산하면 실제 예상수입보다 대폭 과소 계산됨.
+  /// [PREDEVICE-INCOME-NOSHOW] 근무가 없었던 것으로 정산된 날인가.
+  ///
+  /// NO_SHOW와 결근은 관리자가 `finalWage: 0, wageStatus: "confirmed"`로
+  /// 마감한 상태다. 벌 돈이 없다는 결론이 이미 났다는 뜻이다.
+  /// 그런데 NO_SHOW는 이력 보존을 위해 application.status를 CONFIRMED로
+  /// 그대로 두므로(index.ts: "status 변경 금지 — NO_SHOW 이력 보존"),
+  /// 지원서만 보는 집계는 그 날을 계속 "벌 예정"으로 센다.
+  static bool isNonEarning(AttendanceModel att) =>
+      att.status == AttendanceModel.statusNoShow ||
+      att.status == AttendanceModel.statusAbsent;
+
+  /// 아직 벌 예정으로 셀 수 있는 지원서인가 — 예상수입의 단일 판정.
+  ///
+  /// 제외 대상:
+  ///   · 이미 출근한 날 (checkIn 있음) — 그 금액은 확정수입 쪽에서 센다
+  ///   · NO_SHOW / 결근으로 마감된 날 — 벌 돈이 0으로 확정됐다
+  static bool isScheduledIncome(
+    ApplicationModel app,
+    List<AttendanceModel> attendances,
+  ) {
+    for (final att in attendances) {
+      if (att.applicationId != app.id) continue;
+      if (att.checkInAt != null) return false;
+      if (isNonEarning(att)) return false;
+    }
+    return true;
+  }
+
+  /// 예상수입 합계.
+  ///
+  /// [attendances]를 주면 NO_SHOW·결근으로 마감된 날을 빼고 센다.
+  /// 주지 않으면 지원서만으로 세므로, 근태를 가진 화면은 반드시 넘긴다.
   static int getTotalIncome(
     List<ApplicationModel> applications,
-    DateTime focusedDay,
-  ) {
+    DateTime focusedDay, {
+    List<AttendanceModel> attendances = const [],
+  }) {
     return applications
         .where((app) => AppStatus.confirmedStatuses.contains(app.status))
         .fold(0, (sum, app) {
-          if (!app.isLongTermApplication) {
-            return sum + _dailyWage(app);
-          }
-          final workDaysCount = _workDaysInMonth(app, focusedDay);
           final daily = _dailyWage(app);
-          return sum + daily * workDaysCount;
+          if (!app.isLongTermApplication) {
+            return isScheduledIncome(app, attendances) ? sum + daily : sum;
+          }
+          // 장기는 날짜 단위로 뺀다 — 계약 전체가 아니라 결근한 그 날만이다.
+          final workDaysCount = _workDaysInMonth(app, focusedDay);
+          final nonEarningDays = attendances
+              .where((att) =>
+                  att.applicationId == app.id &&
+                  att.workDate.year == focusedDay.year &&
+                  att.workDate.month == focusedDay.month &&
+                  isNonEarning(att))
+              .length;
+          final payable = workDaysCount - nonEarningDays;
+          return sum + daily * (payable > 0 ? payable : 0);
         });
   }
 

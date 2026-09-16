@@ -1830,11 +1830,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // 근무 완료: 관리자가 임금 확정/지급 처리한 금액 (attendance.finalWage)
     final wageCompleted = CalendarHelper.getConfirmedIncome(_attendances, now);
 
-    // 근무 예정: 이번 달 확정 지원서 중 아직 미출근인 것 (시급 환산 포함)
+    // 근무 예정: 이번 달 확정 지원서 중 아직 벌 예정인 것 (시급 환산 포함)
+    // [PREDEVICE-INCOME-NOSHOW] 미출근 여부만 보면 NO_SHOW·결근이 계속
+    //   "벌 예정"으로 남는다 — 그 날은 벌 돈이 0으로 이미 마감됐다.
+    //   판정은 CalendarHelper.isScheduledIncome 한 곳에 있다.
     final wageScheduled = monthApps
         .where((a) => AppStatus.confirmedStatuses.contains(a.status))
-        .where((a) => !_attendances
-            .any((att) => att.applicationId == a.id && att.checkInAt != null))
+        .where((a) => CalendarHelper.isScheduledIncome(a, _attendances))
         .fold<int>(0, (sum, a) => sum + _scheduledDailyWage(a));
 
     final wageTotal = wageCompleted + wageScheduled;
