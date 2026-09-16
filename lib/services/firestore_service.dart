@@ -534,10 +534,19 @@ class FirestoreService {
         to.id,
         businessId: to.businessId,
       );
+      // [SYSTEM-INTEGRATION-R2.4 §4/§19] 좌석을 반납한 확정은 정원을 소모하지 않는다.
+      //
+      //   NO_SHOW 대체충원(R5.1)은 `staffingReleasedAt`만 남기고 status는
+      //   CONFIRMED로 둔다(이력 보존). canonical `workDetailCounts.confirmedCount`는
+      //   그때 함께 내려가고, Home(staffingReadiness)·당일명단도 반납분을 뺀다.
+      //   여기만 status로 세면 같은 근무를 두고 Home은 `1명 부족`, 공고 카드는
+      //   `3/3 모집 완료`라고 말하게 된다.
       const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'};
+      bool countsAsSeat(ApplicationModel a) =>
+          activeStatuses.contains(a.status) && !a.isStaffingReleased;
       final apps = slotId != null
-          ? allApps.where((a) => a.slotId == slotId && activeStatuses.contains(a.status)).toList()
-          : allApps.where((a) => activeStatuses.contains(a.status)).toList();
+          ? allApps.where((a) => a.slotId == slotId && countsAsSeat(a)).toList()
+          : allApps.where(countsAsSeat).toList();
       for (final app in apps) {
         // workDetailId가 compositeId 형식(workType과 다름)이면 그대로 사용,
         // 아니면 시간 정보로 composite key 생성 (레거시 데이터 호환)

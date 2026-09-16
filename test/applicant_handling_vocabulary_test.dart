@@ -197,7 +197,11 @@ void main() {
       expect(s.contains(r"'인력 초대 ($shortage명 부족)'"), true);
       expect(s.contains('isPendingSufficient'), true);
       // shortage 공식: Σ max(required - confirmed(active), 0)
-      expect(s.contains('g.requiredCount -'), true);
+      //
+      // [R2.4] 식은 그대로고 **계산 위치**만 한 곳으로 모였다. 통계 스트립·CTA·
+      //   초대 방법 시트가 각자 계산해 같은 다이얼로그 안에서 숫자가 갈라졌다.
+      expect(s.contains('int get shortage {'), true);
+      expect(s.contains('final n = requiredCount - seatedConfirmed;'), true);
       expect(s.contains('!a.isStaffingReleased'), true);
     });
 

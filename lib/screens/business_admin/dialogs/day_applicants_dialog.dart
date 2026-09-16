@@ -152,6 +152,30 @@ class _GroupData {
   List<ApplicationModel> get unitClosedInvites =>
       capacityState == InviteCapacityState.closed ? invitedApps : const [];
 
+  /// [SYSTEM-INTEGRATION-R2.4 §4/§19] 이 모집 단위의 **자리를 차지한** 확정 수.
+  ///
+  ///   NO_SHOW 대체충원으로 좌석을 반납한 확정(`staffingReleasedAt`)은 status가
+  ///   CONFIRMED로 남지만 정원을 소모하지 않는다. canonical
+  ///   `workDetailCounts.confirmedCount`도 그때 함께 내려간다.
+  int get seatedConfirmed =>
+      confirmedApps.where((a) => !a.isStaffingReleased).length;
+
+  /// [SYSTEM-INTEGRATION-R2.4 §4/§5] 부족 — 이 화면의 **모든** 표면이 이것만 쓴다.
+  ///
+  ///   이전에는 통계 스트립·초대 CTA·초대 방법 시트가 각자 계산했다.
+  ///   식이 조금씩 달라 같은 다이얼로그 안에서 `부족 2`라고 적힌 버튼을 눌렀는데
+  ///   열린 시트는 `부족 1`이라고 말할 수 있었다.
+  ///
+  ///   · 초대(INVITED)는 빼지 않는다 — 초대는 자리를 확보하지 않는다.
+  ///   · 대기(PENDING)도 빼지 않는다 — 같은 이유.
+  ///   · 종료된 모집 단위는 채울 수 없으므로 부족이 아니다
+  ///     (callableGetStaffingReadiness·DayStaffingRow.shortage와 같은 계약).
+  int get shortage {
+    if (capacityState == InviteCapacityState.closed) return 0;
+    final n = requiredCount - seatedConfirmed;
+    return n > 0 ? n : 0;
+  }
+
   /// capacity를 모른다 — 수락 가능한지도 찼는지도 말할 수 없다.
   List<ApplicationModel> get unknownInvites =>
       capacityState == InviteCapacityState.unknown ? invitedApps : const [];
@@ -796,12 +820,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Widget _buildStatsStrip(BuildContext context) {
     // [UX-D-02] 총 부족 = workDetail별 max(required_i - confirmed_i, 0) 합산
     // aggregate 공식(Σrequired - Σconfirmed)은 과충원 그룹이 다른 그룹 부족을 상쇄하므로 사용 금지
-    // [R5.1] 좌석 반납된 (staffingReleasedAt != null) 확정자는 정원 계산에서 제외
-    final totalShortage = _cachedGroups.fold<int>(
-      0,
-      (acc, g) => acc + (g.requiredCount -
-          g.confirmedApps.where((a) => !a.isStaffingReleased).length).clamp(0, 99999),
-    );
+    // [R2.4] 계산식은 _GroupData.shortage 하나다 — 반납 좌석·모집 종료 포함.
+    final totalShortage =
+        _cachedGroups.fold<int>(0, (acc, g) => acc + g.shortage);
     final shortageColor =
         totalShortage > 0 ? AppColors.errorDark : AppColors.grey500;
     return Container(
@@ -1208,7 +1229,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         //   UNKNOWN일 때는 CTA 대신 `_buildCapacityUnknownNotice`가 선다.
         if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
             g.capacityState == InviteCapacityState.available &&
-            g.requiredCount > g.confirmedApps.where((a) => !a.isStaffingReleased).length)
+            g.shortage > 0)
           Builder(builder: (ctx) {
             // [R2] slotId는 그룹 자신이 안다. 이전에는 지원서에서 유도해
             //   지원자가 0명인 모집 단위에서 null이 되고 CTA가 사라졌다 —
@@ -1308,9 +1329,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── [Phase 8.1B.3] 인력 초대 버튼 + InviteMethodSheet 라우팅 ─────────────
 
   Widget _buildInviteButton(_GroupData g, String slotId) {
-    // [R6.1] staffingReleasedAt 좌석 제외 — invite button label/CTA strength 정합성
-    final shortage = g.requiredCount -
-        g.confirmedApps.where((a) => !a.isStaffingReleased).length;
+    // [R2.4] 같은 계산식 — 이 버튼의 숫자와 열리는 시트의 숫자가 갈라지지 않는다.
+    final shortage = g.shortage;
     // [UX-D-03] pendingCount >= shortage: 현재 대기자 풀로 이론적 부족 충족 가능
     // → 기존 지원자 처리가 운영 우선순위이므로 CTA를 tertiary 약화로 신호.
     // PENDING을 공식 shortage/capacity에서 차감하지 않음 — 시각 강도만 조정.
@@ -1346,8 +1366,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<void> _openInviteMethod(_GroupData g, String slotId) async {
     if (!mounted) return;
-    // [GAP-DAD-STAFFING-RELEASED-01 FIX] staffingReleased 좌석 반납 앱 제외 — stats strip과 동일 기준
-    final shortage = (g.requiredCount - g.confirmedApps.where((a) => !a.isStaffingReleased).length).clamp(0, 99);
+    // [R2.4] 통계 스트립·초대 CTA와 **같은 값**을 쓴다.
+    final shortage = g.shortage;
 
     // 1. 인력 초대 방식 선택 시트 — State.context 사용 (mounted 보장)
     final choice = await DialogHelper.showSheet<String>(
@@ -1386,7 +1406,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           startTime: g.startTime,
           endTime: g.endTime,
           requiredCount: g.requiredCount,
-          confirmedCount: g.confirmedApps.length,
+          // [R2.4 §19] 반납 좌석을 뺀 값 — 이 시트 헤더의 `확정 N · 부족 M`이
+          //   방금 누른 `인력 초대 (M명 부족)` 버튼과 어긋나지 않게 한다.
+          confirmedCount: g.seatedConfirmed,
         ),
       );
     } else if (choice == 'direct') {
@@ -1984,7 +2006,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Widget _buildGroupStats(BuildContext context, _GroupData g) {
     // [GAP-DAD-STAFFING-RELEASED-01 FIX] staffingReleased 좌석 반납 앱 제외 — NO_SHOW 반납 후 FULL 오판정 방지
-    final confirmed = g.confirmedApps.where((a) => !a.isStaffingReleased).length;
+    final confirmed = g.seatedConfirmed;
     final pending = g.pendingApps.length;
     final required = g.requiredCount;
     final isFull = required > 0 && confirmed >= required;

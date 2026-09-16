@@ -202,7 +202,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   @override
   void initState() {
     super.initState();
-    _loadApplicants();
+    // [SYSTEM-INTEGRATION-R2.4 §16] 열자마자 실제 지원서로 인원 수치를 세운다.
+    //
+    //   알림에서 진입하면 이 다이얼로그는 `WorkDetailData.currentCount`로 만든
+    //   TOItem을 받는다. 그 getter는 구 아키텍처 잔재라 **항상 0을 반환**한다.
+    //   그래서 확정자가 3명인 업무를 알림으로 열면 `확정 0`이라고 적혀 있었고,
+    //   확정 가능 인원 가드도 `required - 0`으로 계산돼 아무것도 막지 못했다.
+    //   (서버 정원 가드는 그대로 동작하므로 초과 확정은 일어나지 않지만,
+    //    화면이 현재 상태가 아닌 값을 말하고 있었다.)
+    //
+    //   지원서는 어차피 지금 불러온다 — 그 결과로 수치를 만든다.
+    //   다른 표면과 같은 source이므로 숫자가 갈라지지 않는다.
+    _loadApplicants().then((_) {
+      if (mounted) _updateLocalStats(markChanged: false);
+    });
   }
 
   /// 지원자 + 사용자 정보 + 신분증 상태 로드
@@ -3093,8 +3106,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
   /// 로컬 통계 갱신 (toItem의 workDetailStats + slot 단위 카운트 업데이트)
   /// _loadApplicants 직후 캐시된 _allApplications를 재사용해 이중 fetch 방지
-  Future<void> _updateLocalStats() async {
-    _hasChanges = true;
+  Future<void> _updateLocalStats({bool markChanged = true}) async {
+    // 첫 로드에서는 변경이 아니다 — 부모에게 갱신을 요구하지 않는다.
+    if (markChanged) _hasChanges = true;
 
     try {
       final applications = _allApplications;

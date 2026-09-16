@@ -385,8 +385,11 @@ void main() {
           isTrue);
       expect(cf.contains('.where("status", "in", CONFIRMED_STATUSES)'), isTrue);
       // flex: per-wdId 부족분 합산 (초과확정이 다른 wdId를 상쇄하지 않음)
-      expect(cf.contains('const shortage  = Math.max(0, wd.required - confirmed);'),
-          isTrue);
+      // [R2.4] 뺄셈 식은 그대로다 — 확정만 빼고, per-wdId이며, 음수는 0이다.
+      //   앞에 종료 여부가 붙었을 뿐이다: 채울 수 없는 단위는 부족이 아니고,
+      //   같은 규칙을 callableGetDayStaffingDetail이 이미 쓰고 있다.
+      expect(cf.contains('Math.max(0, wd.required - confirmed)'), isTrue);
+      expect(cf.contains('const shortage  = wd.closed ?'), isTrue);
       // [SYSTEM-INTEGRATION-R0] canonical source는 그대로 workDetailCounts다.
       //   바뀐 것은 **키를 어디서 얻는가**뿐이다 — TO-level workDetails(`id`,
       //   존재하지 않는 필드)가 아니라 같은 슬롯 문서의 workDetails[].wdId.

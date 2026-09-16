@@ -167,8 +167,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
       _totalRequired  = g.totalRequired;
       _isFull = g.isFull;
     } else {
+      // [SYSTEM-INTEGRATION-R2.4 §9] 헤더와 날짜 칩이 같은 source를 쓴다.
+      //
+      //   헤더는 슬롯 문서의 denormalized 카운터(`slot.confirmedCount` /
+      //   `slot.pendingCount`)를 더했고, 같은 카드의 날짜 칩과 업무 행은
+      //   `resolveStats()`(지원서 집계)를 썼다. 한 카드 안에서 두 수치가
+      //   갈라질 수 있었다.
+      //
+      //   특히 `slot.pendingCount`는 초대 발송 시 +1 되었다가 syncTOStats가
+      //   PENDING만 세어 다시 내리는 값이라, 관리자에게 보여 줄 `대기`의
+      //   truth가 아니다. `resolveStats()`는 이미 통계 실패를 알고
+      //   (`workDetailStatsFailed`) 그때만 슬롯 카운터로 폴백한다.
       int c = 0, p = 0, r = 0;
-      for (final t in _targetTOs) { c += t.confirmedCount; p += t.pendingCount; r += t.totalRequired; }
+      for (final t in _targetTOs) {
+        final s = t.resolveStats();
+        c += s.confirmed;
+        p += s.pending;
+        r += s.required;
+      }
       _totalConfirmed = c;
       _totalPending   = p;
       _totalRequired  = r;

@@ -34589,6 +34589,17 @@ export const callableGetStaffingReadiness = onCall(
               const wdc = (sd["workDetailCounts"] as
                 Record<string, {confirmedCount?: number}> | undefined) ?? {};
 
+              // [SYSTEM-INTEGRATION-R2.4 §4/§19] 종료된 모집 단위는 부족이 아니다.
+              //
+              //   callableGetDayStaffingDetail은 슬롯/업무 종료를 읽어 shortage를
+              //   0으로 만들고 충원 CTA도 내린다. 이 reader가 같은 사실을 보지
+              //   않으면 Home은 `3명 부족`이라 말하고 같은 날짜를 연 다이얼로그는
+              //   `모집 종료`라고 말한다 — 같은 근무에 truth가 둘이 된다.
+              //   required·confirmed는 그대로 보고하고 shortage만 0이다
+              //   (DayStaffingRow.shortage와 같은 계약).
+              const slotClosed =
+                sd["isManualClosed"] === true || sd["status"] === "closed";
+
               // [SYSTEM-INTEGRATION-R0] canonical join — **같은 슬롯 문서 안에서** 한다.
               //   slot.workDetails[].wdId ↔ slot.workDetailCounts[wdId]
               //   필요 인원도 슬롯 자신의 requiredCount를 쓴다. 날짜마다 workDetail
@@ -34603,6 +34614,9 @@ export const callableGetStaffingReadiness = onCall(
                   wdId: ((w["wdId"] as string | undefined) ?? "").trim(),
                   required: Math.max(
                     0, (w["requiredCount"] as number | undefined) ?? 0),
+                  // 업무 단위 종료도 슬롯 종료와 같다 (WorkDetailData.isClosed).
+                  closed: slotClosed ||
+                    w["isManualClosed"] === true || w["closedAt"] != null,
                 }));
 
               // per-wdId shortage 합산 — 초과확정 wdId surplus는 다른 wdId 부족분 상쇄 금지
@@ -34622,7 +34636,9 @@ export const callableGetStaffingReadiness = onCall(
                 }
                 const cnt = wdc[wd.wdId]?.confirmedCount ?? 0;
                 const confirmed = Math.max(0, cnt);
-                const shortage  = Math.max(0, wd.required - confirmed);
+                // 종료된 단위는 채울 수 없으므로 부족이 아니다.
+                const shortage  = wd.closed ?
+                  0 : Math.max(0, wd.required - confirmed);
                 dayAcc[dayIdx].required  += wd.required;
                 dayAcc[dayIdx].confirmed += confirmed;
                 dayAcc[dayIdx].shortage  += shortage;

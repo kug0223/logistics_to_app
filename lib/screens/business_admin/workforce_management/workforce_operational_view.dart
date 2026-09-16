@@ -193,10 +193,33 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _loadDayData(_selectedDay);
     });
+    // [SYSTEM-INTEGRATION-R2.4 §14/§19] 다른 탭의 mutation을 받는다.
+    //
+    //   Home과 Jobs는 이미 dataRevision을 구독하는데 이 화면만 빠져 있었다.
+    //   Shell이 IndexedStack이라 이 화면은 계속 mount된 채 남으므로,
+    //   Home에서 지원자를 확정해도 근무 탭 명단은 예전 그대로였다 —
+    //   같은 날짜, 같은 사업장을 두고 두 탭이 다른 인원을 말하는 상태다.
+    //   Home·Jobs와 **같은 방식**을 쓴다. 새 listener 종류를 만들지 않는다.
+    WorkforceController.dataRevision.addListener(_onAdminMutation);
   }
+
+  /// 자기 화면이 낸 mutation은 이미 자기 성공 콜백이 `_reload()`를 돌렸다.
+  void _onAdminMutation() {
+    final rev = WorkforceController.dataRevision.value;
+    if (rev <= _lastSeenMutationRevision) return;
+    _lastSeenMutationRevision = rev;
+    if (WorkforceController.lastMutationOrigin ==
+        AdminMutationOrigin.workforce) {
+      return;
+    }
+    if (mounted) _reload();
+  }
+
+  int _lastSeenMutationRevision = 0;
 
   @override
   void dispose() {
+    WorkforceController.dataRevision.removeListener(_onAdminMutation);
     _scrollController.dispose();
     super.dispose();
   }

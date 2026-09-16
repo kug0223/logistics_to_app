@@ -419,8 +419,11 @@ void main() {
     test('capacity 계산 정책 미변경', () {
       expect(cf.contains('const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];'),
           isTrue);
-      expect(cf.contains('const shortage  = Math.max(0, wd.required - confirmed);'),
-          isTrue);
+      // [R2.4] 뺄셈 식은 그대로다 — 확정만 빼고, per-wdId이며, 음수는 0이다.
+      //   앞에 종료 여부가 붙었을 뿐이다: 채울 수 없는 단위는 부족이 아니고,
+      //   같은 규칙을 callableGetDayStaffingDetail이 이미 쓰고 있다.
+      expect(cf.contains('Math.max(0, wd.required - confirmed)'), isTrue);
+      expect(cf.contains('const shortage  = wd.closed ?'), isTrue);
       expect(
         cf.contains('dayAcc[i].shortage  += Math.max(0, to.totalRequired - confirmedOnDay);'),
         isTrue,
