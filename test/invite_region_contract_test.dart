@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/data/korean_regions.dart';
 import 'package:ALfit/models/core/invite_region_preference.dart';
 import 'package:ALfit/models/core/user_region.dart';
+import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/utils/region_key.dart';
 
 String _src(String p) {
@@ -458,7 +459,7 @@ void main() {
           'export const callableSyncInviteKeys');
       expect(setAv.contains('{merge: true}'), isTrue);
       final at = setAv.indexOf('const payload');
-      final payload = setAv.substring(at, setAv.indexOf('await avRef.set'));
+      final payload = setAv.substring(at, setAv.indexOf('tx.set(avRef'));
       for (final f in const ['inviteEnabled', 'inviteRegions', 'inviteRegionKeys']) {
         expect(payload.contains('$f:'), isFalse, reason: '$f 를 덮어쓴다');
       }
@@ -509,28 +510,28 @@ void main() {
 
     test('09-b dates와 파생 inviteKeys가 한 번의 write로 저장된다', () {
       // 두 번의 set/update로 나뉘면 부분 성공이 생긴다.
-      expect(setAv.contains('await avRef.set(payload, {merge: true});'), isTrue);
-      final writes = RegExp(r'await avRef\.(set|update)\(')
+      expect(setAv.contains('tx.set(avRef, payload, {merge: true});'), isTrue);
+      final writes = RegExp(r'tx\.set\(avRef|await avRef\.(set|update)\(')
           .allMatches(setAv)
           .length;
       expect(writes, 1, reason: 'availability 저장이 여러 write로 쪼개졌다');
       // 같은 payload에 둘 다 들어간다
       final at = setAv.indexOf('const payload');
-      final payload = setAv.substring(at, setAv.indexOf('await avRef.set'));
+      final payload = setAv.substring(at, setAv.indexOf('tx.set(avRef'));
       expect(payload.contains('dates,'), isTrue);
       expect(payload.contains('inviteKeys,'), isTrue);
     });
 
     test('09-c 지역 저장도 같은 성질이다', () {
-      expect(setRegions.contains('await avRef.set(payload, {merge: true});'),
+      expect(setRegions.contains('tx.set(avRef, payload, {merge: true});'),
           isTrue);
-      final writes = RegExp(r'await avRef\.(set|update)\(')
+      final writes = RegExp(r'tx\.set\(avRef|await avRef\.(set|update)\(')
           .allMatches(setRegions)
           .length;
       expect(writes, 1);
       final at = setRegions.indexOf('const payload');
       final payload =
-          setRegions.substring(at, setRegions.indexOf('await avRef.set'));
+          setRegions.substring(at, setRegions.indexOf('tx.set(avRef'));
       expect(payload.contains('inviteRegionKeys:'), isTrue);
       expect(payload.contains('inviteKeys,'), isTrue);
     });
@@ -623,7 +624,185 @@ void main() {
           'export const callableSetInviteRegions',
           'export const callableSetAvailability');
       expect(setRegions.contains('if (seen.has(key)) continue;'), isTrue);
-      expect(setRegions.contains('.slice(0, MAX_INVITE_REGIONS)'), isTrue);
+      // [FINAL §8] 상한 초과는 자르지 않고 거부한다 — 14-a 참조
+      expect(setRegions.contains('MAX_INVITE_REGIONS'), isTrue);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 12. [FINAL] concurrent writer — 단일 write 원자성 ≠ cross-callable 원자성
+  //
+  //   두 callable이 같은 문서의 서로 다른 canonical input을 바꾸면서 같은
+  //   파생값(inviteKeys)을 만든다. 각자 한 번의 write를 하더라도, 상대의
+  //   최신 입력을 못 본 채 계산한 값으로 덮으면 불변식이 깨진다.
+  //   그 drift는 reader 재검증으로 false positive만 막을 뿐,
+  //   false negative(쿼리에서 이미 빠진 후보)는 복원하지 못한다.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.3-12 concurrent writer', () {
+    final setAv = _tsSliceOf(cfRaw, 'export const callableSetAvailability',
+        'export const callableSyncInviteKeys');
+    final setRegions = _tsSliceOf(cfRaw,
+        'export const callableSetInviteRegions',
+        'export const callableSetAvailability');
+
+    test('12-a 두 writer 모두 트랜잭션 안에서 읽고 쓴다', () {
+      for (final e in {'setAvailability': setAv, 'setInviteRegions': setRegions}
+          .entries) {
+        expect(e.value.contains('await db.runTransaction'), isTrue,
+            reason: '${e.key} 가 트랜잭션이 아니다');
+        expect(e.value.contains('await tx.get(avRef)'), isTrue,
+            reason: '${e.key} 가 트랜잭션 밖에서 읽는다');
+        expect(e.value.contains('tx.set(avRef, payload, {merge: true})'), isTrue,
+            reason: '${e.key} 가 트랜잭션 밖에서 쓴다');
+      }
+    });
+
+    test('12-b counterpart를 트랜잭션 안에서 읽는다', () {
+      // setAvailability는 inviteRegionKeys를, setInviteRegions는 dates를
+      // 상대의 canonical 입력으로 읽는다. 그 읽기가 tx 밖이면 stale이다.
+      final avTx = _after(setAv, 'await db.runTransaction', 1200);
+      expect(avTx.contains('cur["inviteRegionKeys"]'), isTrue);
+      expect(avTx.contains('cur["inviteEnabled"]'), isTrue);
+      final rgTx = _after(setRegions, 'await db.runTransaction', 1200);
+      expect(rgTx.contains('cur["dates"]'), isTrue);
+    });
+
+    test('12-c 트랜잭션 밖에 avRef read/write가 남아 있지 않다', () {
+      for (final e in {'setAvailability': setAv, 'setInviteRegions': setRegions}
+          .entries) {
+        expect(e.value.contains('await avRef.get()'), isFalse,
+            reason: '${e.key} 에 tx 밖 read가 남았다');
+        expect(e.value.contains('await avRef.set('), isFalse,
+            reason: '${e.key} 에 tx 밖 write가 남았다');
+      }
+    });
+
+    test('12-d 불변식을 계산하는 식이 양쪽 동일하다', () {
+      const formula =
+          'regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d)))';
+      expect(setAv.contains(formula), isTrue);
+      expect(setRegions.contains(formula), isTrue);
+    });
+
+    test('12-e 클라이언트 재시도·후속 sync에 의존하지 않는다', () {
+      final svc = _codeOf(_src(_availSvcPath));
+      expect(svc.contains('retry'), isFalse);
+      expect(svc.contains('callableSyncInviteKeys'), isFalse);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 13. [FINAL] region coverage — 세종 포함 (§5, §6)
+  // ═════════════════════════════════════════════════════════════
+  group('R2.3-13 region coverage', () {
+    test('13-a 광역자치단체 전수 — 코드 기준', () {
+      final p = KoreanRegions.provinces;
+      // 2026.7.1 전남광주통합특별시 출범 반영 → 17 → 16
+      expect(p.length, 16, reason: p.join(', '));
+      for (final want in const [
+        '서울특별시', '부산광역시', '대구광역시', '인천광역시', '대전광역시', '울산광역시',
+        '세종특별자치시', '경기도', '강원특별자치도', '충청북도', '충청남도',
+        '전북특별자치도', '경상북도', '경상남도', '제주특별자치도', '전남광주통합특별시',
+      ]) {
+        expect(p.contains(want), isTrue, reason: '$want 누락');
+      }
+      final total = KoreanRegions.citiesByProvince.values
+          .fold<int>(0, (a, b) => a + b.length);
+      expect(total, 229);
+    });
+
+    test('13-b 세종의 시/군/구는 자기 자신 하나뿐 — 가짜를 만들지 않는다', () {
+      // 이 형태가 "하위 단계 없음"의 canonical 표현이다.
+      expect(KoreanRegions.citiesOf('세종특별자치시'), ['세종특별자치시']);
+      expect(KoreanRegions.isSejong('세종특별자치시'), isTrue);
+      // 다른 시/도는 모두 자기 자신이 아닌 하위 지역을 갖는다
+      for (final e in KoreanRegions.citiesByProvince.entries) {
+        if (e.key == '세종특별자치시') continue;
+        expect(e.value.contains(e.key), isFalse, reason: '${e.key} 가 자기 자신을 담았다');
+        expect(e.value.length, greaterThan(1), reason: e.key);
+      }
+    });
+
+    test('13-c 세종의 canonical key는 시/도 자신이다', () {
+      const want = '세종특별자치시|세종특별자치시';
+      // picker가 만드는 값 (province == city)
+      expect(regionKeyOf(province: '세종특별자치시', city: '세종특별자치시'), want);
+      // province만 알아도 같은 key
+      expect(regionKeyOf(city: '세종특별자치시'), want);
+      // 축약형도
+      expect(regionKeyOf(province: '세종', city: '세종특별자치시'), want);
+    });
+
+    test('13-d picker가 세종을 그렇게 만든다 — 규칙이 한 곳에서 나온다', () {
+      final picker = _codeOf(_src('lib/widgets/inputs/home_region_picker_sheet.dart'));
+      expect(picker.contains('KoreanRegions.isSejong(province)'), isTrue);
+      expect(picker.contains('UserRegion(province: province, city: province)'),
+          isTrue);
+    });
+
+    test('13-e 세종 사업장의 잘못 저장된 city가 매칭을 막지 않는다', () {
+      // parseAddressCity('세종특별자치시 한누리대로 2130')은 시/도를 건너뛴 뒤
+      // parts[1] = '한누리대로'를 city로 저장한다. 실측 확인된 동작이다.
+      expect(FormatHelper.parseAddressCity('세종특별자치시 한누리대로 2130'),
+          '한누리대로',
+          reason: '이 동작이 바뀌면 아래 서버 보정의 전제가 달라진다');
+      // 그래서 서버는 시/군/구 단계가 없는 시/도면 저장된 city를 쓰지 않는다.
+      expect(cf.contains('provCities.length === 1 && provCities[0] === province'),
+          isTrue);
+      final f = _after(cfRaw, 'function srvWorkRegionKeyOfBusiness(', 1600);
+      expect(f.contains('return srvRegionKeyOf(province, province);'), isTrue);
+      // 클라이언트 정규화도 이름이 아니라 "하위 지역 없음"으로 판단한다
+      expect(normalizeCityName('세종특별자치시', '한누리대로'), '세종특별자치시');
+      expect(normalizeCityName('세종특별자치시', ''), '세종특별자치시');
+    });
+
+    test('13-f 세종 규칙이 다른 시/도로 새지 않는다', () {
+      expect(normalizeCityName('경기도', '한누리대로'), isNull);
+      expect(normalizeCityName('경기도', ''), isNull);
+      expect(regionKeyOf(province: '경기도', city: ''), isNull);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 14. [FINAL] region ceiling (§7, §8)
+  // ═════════════════════════════════════════════════════════════
+  group('R2.3-14 region ceiling', () {
+    test('14-a 21개는 조용히 잘리지 않고 거부된다', () {
+      final setRegions = _tsSliceOf(cfRaw,
+          'export const callableSetInviteRegions',
+          'export const callableSetAvailability');
+      expect(setRegions.contains('.slice(0, MAX_INVITE_REGIONS)'), isFalse,
+          reason: 'silent truncate가 남아 있다');
+      expect(
+          setRegions.contains(
+              'if ((regions ?? []).length > MAX_INVITE_REGIONS)'),
+          isTrue);
+      expect(setRegions.contains('곳까지 선택할 수 있어요.'), isTrue);
+    });
+
+    test('14-b 클라이언트도 추가 시점에 막는다', () {
+      final ui = _codeOf(_src(_settingsPath));
+      expect(
+          ui.contains('_regions.length >= InviteRegionPreference.maxRegions'),
+          isTrue);
+      expect(ui.contains('곳까지 선택할 수 있어요.'), isTrue);
+    });
+
+    test('14-c 모델 검증도 같은 상한을 쓴다', () {
+      expect(InviteRegionPreference.maxRegions, 20);
+      final over = InviteRegionPreference(
+        enabled: true,
+        regions: List.generate(21,
+            (i) => UserRegion(province: '경기도', city: '수원시$i')),
+      );
+      expect(over.validationError(), isNotNull);
+    });
+
+    test('14-d 일괄 선택 기능을 만들지 않았다 (§7)', () {
+      final ui = _src(_settingsPath);
+      for (final banned in const ['전국', '전체 선택', 'selectAll', '모두 선택']) {
+        expect(ui.contains(banned), isFalse, reason: '$banned 가 추가됐다');
+      }
     });
   });
 

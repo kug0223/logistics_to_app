@@ -76,6 +76,14 @@ class _InviteRegionSettingsScreenState
   }
 
   Future<void> _addRegion() async {
+    // [R2.3 FINAL §8] 상한은 **추가 시점에** 막는다. 21개를 고르게 해 놓고
+    //   저장할 때 조용히 20개로 자르면, 사용자가 골랐다고 믿는 지역의 초대가
+    //   영문 없이 오지 않는다.
+    if (_regions.length >= InviteRegionPreference.maxRegions) {
+      ToastHelper.showError(
+          '초대 받을 지역은 최대 ${InviteRegionPreference.maxRegions}곳까지 선택할 수 있어요.');
+      return;
+    }
     final picked = await HomeRegionPickerSheet.show(context: context);
     if (picked == null || !mounted) return;
     if (_regions.contains(picked)) {

@@ -101,11 +101,21 @@ class InviteRegionPreference {
         regions: regions ?? this.regions,
       );
 
+  /// [R2.3 FINAL §7/§8] 선택 상한 — **technical hard ceiling**이다.
+  ///
+  ///   20곳을 고르라는 권장이 아니다. 인덱스 비용(20 × 60일 = 1,200 entries)에서
+  ///   나온 안전 한계이고, 서버가 같은 값으로 최종 방어한다.
+  ///   전국/전체 선택 같은 일괄 기능은 만들지 않는다.
+  static const int maxRegions = 20;
+
   /// 저장 전 검증 — 서버와 같은 규칙.
   /// 통과하지 못하는 이유를 돌려준다(null이면 유효).
   String? validationError() {
     if (enabled == true && regions.isEmpty) {
       return '초대 받을 지역을 한 곳 이상 선택해 주세요.';
+    }
+    if (regions.length > maxRegions) {
+      return '초대 받을 지역은 최대 $maxRegions곳까지 선택할 수 있어요.';
     }
     for (final r in regions) {
       final p = r.province;

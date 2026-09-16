@@ -28493,9 +28493,15 @@ function srvProvinceOfCity(city: string): string | null {
  */
 function srvNormalizeCity(province: string, rawCity: string): string | null {
   const c = (rawCity ?? "").trim().replace(/\s+/g, " ");
+  const cities = KOREAN_CITIES_BY_PROVINCE[province];
+  if (cities === undefined) return null; // 모르는 시/도
+  // [R2.3 FINAL §5] 시/군/구 단계가 없는 시/도는 시/도 자체가 선택 단위다.
+  //   이름으로 판단하지 않는다. 표에서 그 시/도의 시/군/구가 **자기 자신 하나뿐**
+  //   이라는 사실로 판단한다 — 세종특별자치시가 그렇게 저장돼 있고,
+  //   HomeRegionPickerSheet도 같은 지역을 같은 값으로 만든다.
+  //   가짜 하위 지역을 만들지 않는다.
+  if (cities.length === 1 && cities[0] === province) return province;
   if (c.length === 0) return null;
-  if (province === "세종특별자치시" && c === province) return c;
-  const cities = KOREAN_CITIES_BY_PROVINCE[province] ?? [];
   if (cities.includes(c)) return c;
   const tokens = c.split(" ");
   for (let n = tokens.length - 1; n >= 1; n--) {
@@ -28552,13 +28558,30 @@ function srvWorkRegionKeyOfBusiness(
   bizData: Record<string, unknown>
 ): string | null {
   const city = (bizData["city"] as string | undefined)?.trim() ?? "";
-  if (city.length === 0) return null;
   const address = (bizData["address"] as string | undefined) ?? "";
   // 주소 첫 토큰이 시/도면 그것을 쓴다 — 유추보다 정확하다.
   const head = address.trim().split(/\s+/)[0] ?? "";
   const fromAddress = head.length > 0 ? srvCanonicalProvince(head) : "";
   const province =
     (fromAddress in KOREAN_CITIES_BY_PROVINCE) ? fromAddress : "";
+
+  // [R2.3 FINAL §6] 시/군/구 단계가 없는 시/도는 저장된 city를 쓸 수 없다.
+  //
+  //   세종 사업장 주소 "세종특별자치시 한누리대로 2130"에 대해
+  //   Daum의 sigungu는 비어 있고, `parseAddressCity` 폴백은 시/도를 건너뛴 뒤
+  //   `parts[1]` 즉 **"한누리대로"**(도로명)를 city로 저장한다. 실측 확인.
+  //   그 값으로는 어떤 지역도 특정할 수 없어 세종 사업장은 후보 조회 자체가
+  //   불가능했다(WORK_REGION_UNRESOLVED).
+  //
+  //   이 시/도의 선택 단위는 시/도 자신이므로 저장된 city를 무시하고 시/도로
+  //   키를 만든다 — 지원자 피커가 만드는 값과 정확히 같아진다.
+  const provCities = KOREAN_CITIES_BY_PROVINCE[province] ?? [];
+  if (province.length > 0 &&
+      provCities.length === 1 && provCities[0] === province) {
+    return srvRegionKeyOf(province, province);
+  }
+
+  if (city.length === 0) return null;
   return srvRegionKeyOf(province, city);
 }
 
@@ -28601,11 +28624,19 @@ export const callableSetInviteRegions = onCall(
     // 지역 정규화 + 검증 — 클라이언트가 보낸 key를 믿지 않고 서버가 만든다.
     const cleaned: Array<{province: string; city: string; key: string}> = [];
     const seen = new Set<string>();
-    // [R2.3 CLOSURE §9] 선택 상한 MAX_INVITE_REGIONS.
-    //   근거: 가장 많은 시/군/구를 가진 시/도가 경기도 31개다. 20개면 한 시/도의
-    //   대부분을 덮을 수 있고, 인덱스 비용은 20 × 60(dates 상한) = 1,200 entries로
-    //   Firestore 문서당 40,000 index entries 한도의 3% 수준이다.
-    for (const r of (regions ?? []).slice(0, MAX_INVITE_REGIONS)) {
+    // [R2.3 FINAL §8] 상한 초과는 **조용히 자르지 않는다.**
+    //
+    //   `.slice(0, MAX)`로 잘라 저장하면 사용자가 고른 지역이 저장 과정에서
+    //   말없이 사라진다. 화면에는 21개가 보이는데 실제로는 20개만 매칭되고,
+    //   빠진 지역의 초대는 영문 없이 오지 않는다.
+    //   클라이언트도 추가 시점에 막지만, 서버가 최종 방어선이다.
+    if ((regions ?? []).length > MAX_INVITE_REGIONS) {
+      throw new HttpsError(
+        "invalid-argument",
+        `초대 받을 지역은 최대 ${MAX_INVITE_REGIONS}곳까지 선택할 수 있어요.`
+      );
+    }
+    for (const r of (regions ?? [])) {
       const rawCity = (r?.city ?? "").trim();
       const rawProvince = (r?.province ?? "").trim();
       if (rawCity.length === 0) continue;
@@ -28630,44 +28661,73 @@ export const callableSetInviteRegions = onCall(
         "failed-precondition", "초대 받을 지역을 한 곳 이상 선택해 주세요.");
     }
 
+    // 불변식과 무관한 읽기는 트랜잭션 밖에서 — 재시도 때 다시 읽을 필요가 없다.
+    const uSnap = await db.collection("users").doc(uid).get();
+    const preHome =
+      uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
+    const preHomeCity =
+      ((preHome?.["city"] as string | undefined) ?? "").trim();
+
     const avRef = db.collection("worker_availability").doc(uid);
-    const avSnap = await avRef.get();
-    // 근무 가능일은 근로자가 직접 쓰는 기존 필드다 — 여기서 만들지 않고 읽기만 한다.
-    const dates = ((avSnap.data()?.["dates"] as string[] | undefined) ?? [])
-      .filter((d) => typeof d === "string" && d.length > 0);
-
     const regionKeys = cleaned.map((c) => c.key);
-    // OFF면 어떤 초대 지역에도 걸리지 않는다. 선택 목록(inviteRegions)은
-    // 남겨 둔다 — 다시 켤 때 처음부터 고르게 하지 않기 위해서다(§11).
-    const inviteKeys = enabled ?
-      regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d))) :
-      [];
+    let dateCount = 0;
 
-    const payload: Record<string, unknown> = {
-      uid,
-      inviteEnabled: enabled,
-      inviteRegions: cleaned.map((c) => ({province: c.province, city: c.city})),
-      inviteRegionKeys: enabled ? regionKeys : [],
-      inviteKeys,
-      inviteUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    // 문서가 없으면 city canonical 필드가 없어 rules가 막는 형태가 되므로,
-    // CF가 만들 때는 homeRegion.city를 함께 채운다(기존 스키마 유지 목적).
-    if (!avSnap.exists) {
-      const uSnap = await db.collection("users").doc(uid).get();
-      const home =
-        uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
-      const homeCity = (home?.["city"] as string | undefined) ?? "";
-      if (homeCity.length > 0) payload["city"] = homeCity;
-      payload["dates"] = [];
-    }
-    await avRef.set(payload, {merge: true});
+    // [R2.3 FINAL §1/§2] 트랜잭션 — 단일 문서 write의 원자성은
+    //   **서로 다른 callable의 read-modify-write 안전성을 보장하지 않는다.**
+    //
+    //   두 callable이 같은 문서의 서로 다른 canonical input을 바꾸면서
+    //   같은 파생값(inviteKeys)을 계산한다:
+    //
+    //     초기: dates=[9/22], regions=[오산], keys=[오산#9/22]
+    //     A(setAvailability)   read → dates=[9/22], regions=[오산]
+    //     B(setInviteRegions)  read → dates=[9/22], regions=[오산]
+    //     A write: dates=[9/23], keys=[오산#9/23]
+    //     B write: regions=[수원], keys=[수원#9/22]   ← 9/22는 이미 없다
+    //
+    //   마지막 쓰기가 상대의 최신 입력을 모른 채 파생값을 덮는다. 그 drift는
+    //   reader 재검증으로 false positive는 막아도 **false negative(후보 누락)는
+    //   복원하지 못한다** — 쿼리에서 이미 빠지기 때문이다.
+    //
+    //   트랜잭션 안에서 읽으면 충돌 시 Firestore가 재시도하며 상대의 최신
+    //   counterpart를 다시 읽어 계산한다. 클라이언트 재시도나 후속 sync에
+    //   의존하지 않는다.
+    await db.runTransaction(async (tx) => {
+      const avSnap = await tx.get(avRef);
+      const cur = avSnap.data() ?? {};
+      // 근무 가능일은 이 callable의 입력이 아니다 — 트랜잭션 안에서 현재 값을
+      // 읽어 파생값을 만든다.
+      const dates = ((cur["dates"] as string[] | undefined) ?? [])
+        .filter((d) => typeof d === "string" && d.length > 0);
+      dateCount = dates.length;
+
+      // OFF면 어떤 초대 지역에도 걸리지 않는다. 선택 목록(inviteRegions)은
+      // 남겨 둔다 — 다시 켤 때 처음부터 고르게 하지 않기 위해서다(§11).
+      const inviteKeys = enabled ?
+        regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d))) :
+        [];
+
+      const payload: Record<string, unknown> = {
+        uid,
+        inviteEnabled: enabled,
+        inviteRegions: cleaned.map(
+          (c) => ({province: c.province, city: c.city})),
+        inviteRegionKeys: enabled ? regionKeys : [],
+        inviteKeys,
+        inviteUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      // 문서가 없으면 기존 스키마 필드도 함께 세운다.
+      if (!avSnap.exists) {
+        if (preHomeCity.length > 0) payload["city"] = preHomeCity;
+        payload["dates"] = [];
+      }
+      tx.set(avRef, payload, {merge: true});
+    });
 
     return {
       enabled,
       regions: cleaned.map((c) => ({province: c.province, city: c.city})),
       regionKeys,
-      dateCount: dates.length,
+      dateCount,
     };
   }
 );
@@ -28717,11 +28777,8 @@ export const callableSetAvailability = onCall(
         .filter((d) => d >= todayKey && d <= maxKey)
     )].sort().slice(-MAX_AVAILABILITY_DATES);
 
-    const avRef = db.collection("worker_availability").doc(uid);
-    const snap = await avRef.get();
-    const cur = snap.data() ?? {};
-
     // 거주지 city는 기존 스키마 유지 — 사용자가 직접 보내지 않는다.
+    //   불변식(inviteKeys = regions × dates)과 무관하므로 트랜잭션 밖에서 읽는다.
     const uSnap = await db.collection("users").doc(uid).get();
     const home =
       uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
@@ -28732,27 +28789,40 @@ export const callableSetAvailability = onCall(
     }
     const homeDistrict = (home?.["district"] as string | undefined) ?? null;
 
-    // 파생값을 같은 write에 담는다 — 이것이 원자성의 전부다.
-    const enabled = cur["inviteEnabled"] === true;
-    const regionKeys = ((cur["inviteRegionKeys"] as string[] | undefined) ?? [])
-      .filter((k) => typeof k === "string" && k.length > 0);
-    const inviteKeys = enabled ?
-      regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d))) :
-      [];
+    const avRef = db.collection("worker_availability").doc(uid);
+    let inviteKeyCount = 0;
 
-    const payload: Record<string, unknown> = {
-      uid,
-      dates,
-      city: homeCity,
-      inviteKeys,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    if (homeDistrict && homeDistrict.length > 0) {
-      payload["district"] = homeDistrict;
-    }
-    await avRef.set(payload, {merge: true});
+    // [R2.3 FINAL §1/§2] 트랜잭션 — callableSetInviteRegions와 같은 문서의
+    //   같은 파생값을 만든다. 각자 한 번의 write를 하더라도, 상대의 최신 입력을
+    //   못 본 채 계산한 파생값으로 덮으면 불변식이 깨진다.
+    //   충돌 시 Firestore가 재시도하며 최신 inviteRegionKeys를 다시 읽는다.
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(avRef);
+      const cur = snap.data() ?? {};
+      // 초대 지역은 이 callable의 입력이 아니다 — 현재 값을 읽어 파생값을 만든다.
+      const enabled = cur["inviteEnabled"] === true;
+      const regionKeys =
+        ((cur["inviteRegionKeys"] as string[] | undefined) ?? [])
+        .filter((k) => typeof k === "string" && k.length > 0);
+      const inviteKeys = enabled ?
+        regionKeys.flatMap((k) => dates.map((d) => srvInviteKey(k, d))) :
+        [];
+      inviteKeyCount = inviteKeys.length;
 
-    return {dates, dateCount: dates.length, inviteKeyCount: inviteKeys.length};
+      const payload: Record<string, unknown> = {
+        uid,
+        dates,
+        city: homeCity,
+        inviteKeys,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (homeDistrict && homeDistrict.length > 0) {
+        payload["district"] = homeDistrict;
+      }
+      tx.set(avRef, payload, {merge: true});
+    });
+
+    return {dates, dateCount: dates.length, inviteKeyCount};
   }
 );
 

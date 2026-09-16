@@ -38,9 +38,13 @@ const String kRegionKeySeparator = '|';
 ///   뒤 토큰을 떼고, 끝내 없으면 null(UNKNOWN)이다.
 String? normalizeCityName(String province, String rawCity) {
   final c = rawCity.trim().replaceAll(RegExp(r'\s+'), ' ');
-  if (c.isEmpty) return null;
-  if (KoreanRegions.isSejong(province) && c == province) return c;
+  if (!KoreanRegions.citiesByProvince.containsKey(province)) return null;
   final cities = KoreanRegions.citiesOf(province);
+  // [R2.3 FINAL §5] 시/군/구 단계가 없는 시/도는 시/도 자체가 선택 단위다.
+  //   이름이 아니라 표에서 그 시/도의 시/군/구가 **자기 자신 하나뿐**이라는
+  //   사실로 판단한다 — 세종특별자치시가 그렇게 저장돼 있다.
+  if (cities.length == 1 && cities.first == province) return province;
+  if (c.isEmpty) return null;
   if (cities.contains(c)) return c;
   final tokens = c.split(' ');
   for (var n = tokens.length - 1; n >= 1; n--) {
