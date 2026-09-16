@@ -860,10 +860,16 @@ class _PayrollPaymentDashboardScreenState
         }
       }
       if (mounted) {
-        // [PAY-09-FIX] 실제 처리 건수만 성공으로 표시 (선택 총 건수 표시 금지)
-        final processedCount = _selectedIds.length - batchResult.allSkipped.length;
+        // [PREDEVICE-TRANSFER-TRUTH] 서버가 이번에 실제로 바꾼 건수만 말한다.
+        //   선택 수에서 skip을 빼면 이미 이체돼 있던 건이 새로 처리된 것처럼
+        //   섞인다 — 같은 목록을 다시 보내도 늘 성공 건수가 나왔다.
+        final processedCount = batchResult.transferredNow;
         if (processedCount > 0) {
           ToastHelper.showSuccess('$processedCount건 이체 완료 처리되었습니다');
+        }
+        if (batchResult.alreadyTransferred.isNotEmpty) {
+          ToastHelper.showInfo(
+              '${batchResult.alreadyTransferred.length}건은 이미 이체 완료된 항목이에요');
         }
         _load();
       }

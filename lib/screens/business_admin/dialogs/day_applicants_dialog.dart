@@ -2667,9 +2667,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final sealBytes = base64Decode(sealBase64);
       final finalWorkDetail = workDetail;
 
-      Future<bool> processOne(ApplicationModel app) async {
+      // 'sent'  = 이번에 발송됨
+      // 'already' = 서버가 이미 발송된 근무라고 답함 — 다시 시도할 일이 아니다
+      // 'failed'  = 실제 실패
+      Future<String> processOne(ApplicationModel app) async {
         final user = _userMap[app.uid];
-        if (user == null) return false;
+        if (user == null) return 'failed';
         try {
           final contract = await ContractService().findOrCreateContract(
             application: app,
@@ -2682,15 +2685,23 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             contract: contract,
             signatureBytes: sealBytes,
           );
-          return true;
+          return 'sent';
+        } on FirebaseFunctionsException catch (e) {
+          if (e.code == 'already-exists') {
+            debugPrint('ℹ️ [${app.id}] 이미 발송된 근무 — 중복 발송 차단됨');
+            return 'already';
+          }
+          debugPrint('❌ [${app.id}] 계약서 발송 실패: $e');
+          return 'failed';
         } catch (e) {
           debugPrint('❌ [${app.id}] 계약서 발송 실패: $e');
-          return false;
+          return 'failed';
         }
       }
 
       const batchSize = 5;
       int successCount = 0;
+      int alreadyCount = 0;
       final List<ApplicationModel> successApps = [];
       for (var i = 0; i < toProcess.length; i += batchSize) {
         final batch =
@@ -2698,21 +2709,30 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final results = await Future.wait(batch.map(processOne));
         if (!mounted) return;
         for (var j = 0; j < batch.length; j++) {
-          if (results[j]) {
+          if (results[j] == 'sent') {
             successCount++;
+            successApps.add(batch[j]);
+          } else if (results[j] == 'already') {
+            alreadyCount++;
+            // 목록이 낡아 다시 누른 경우다 — 화면을 서버 사실에 맞춘다
             successApps.add(batch[j]);
           }
         }
       }
 
       if (!mounted) return;
-      if (successCount < toProcess.length) {
+      final failedCount = toProcess.length - successCount - alreadyCount;
+      if (failedCount > 0) {
         ToastHelper.showWarning(
-            '$successCount/${toProcess.length}명 계약서 발송 완료. 실패한 항목은 다시 시도해주세요.');
+            '$successCount/${toProcess.length}명 계약서 발송 완료. 실패한 $failedCount건은 다시 시도해주세요.');
+      } else if (alreadyCount > 0) {
+        ToastHelper.showSuccess(successCount > 0
+            ? '$successCount명에게 계약서가 발송되었습니다 ($alreadyCount건은 이미 발송된 근무)'
+            : '$alreadyCount건은 이미 계약서가 발송된 근무예요');
       } else {
         ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
       }
-      if (successCount > 0) {
+      if (successCount > 0 || alreadyCount > 0) {
         _hasChanges = true;
         setState(() {
           for (final app in successApps) {

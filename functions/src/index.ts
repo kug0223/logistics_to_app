@@ -7016,6 +7016,14 @@ export const callableFinalizeEmployerSignature = onCall(
         if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appData.status as string)) {
           throw new HttpsError("failed-precondition", "해당 지원서는 계약서 작성 가능한 상태가 아닙니다.");
         }
+        // [DUP-CONTRACT-01] 지원서 기준 중복 발송 차단.
+        //   contractId 기준 가드(위)는 같은 문서만 막는다. 발송이 타임아웃으로
+        //   실패한 줄 알고 다시 누르거나, 목록이 낡은 채 두 관리자가 동시에
+        //   누르면 새 contractId가 생겨 같은 근무에 계약서가 두 장 간다.
+        //   판정식은 미발송 집계(srvContractIssuedFor)와 같은 것을 쓴다.
+        if (await srvIssuedContractExists(targetAppId, bizId)) {
+          throw new HttpsError("already-exists", "이미 계약서가 발송된 근무입니다.");
+        }
       } else {
         const workerAppQuery = await db.collection("applications")
           .where("businessId", "==", bizId)
@@ -7074,6 +7082,15 @@ export const callableFinalizeEmployerSignature = onCall(
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(contractRef);
           if (snap.exists) throw new HttpsError("already-exists", "이미 계약서가 생성되었습니다.");
+          // [DUP-CONTRACT-01] 위 pre-read는 두 요청이 같은 순간에 들어오면
+          //   둘 다 통과한다. 여기서 같은 판정을 트랜잭션 읽기로 다시 한다 —
+          //   한쪽이 먼저 쓰면 다른 쪽은 재시도 후 그 계약서를 보고 멈춘다.
+          const dupAppId = contractData["applicationId"] as string | undefined;
+          const dupBizId = contractData["businessId"] as string | undefined;
+          if (dupAppId && dupBizId &&
+            await srvIssuedContractExists(dupAppId, dupBizId, tx)) {
+            throw new HttpsError("already-exists", "이미 계약서가 발송된 근무입니다.");
+          }
           // [SEC-CONTRACT-DATA] 클라이언트 contractData에서 서버 전용 필드 제거 — worker 서명 위조 방지
           const cleanData: Record<string, unknown> = {...contractData};
           for (const f of [
@@ -23160,6 +23177,8 @@ export const callableMarkTransferredBatch = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     const skipped: string[] = [];
     const lockedSkipped: string[] = []; // [PAY-08] 중간정산 APPROVED lock으로 제외된 ID
+    // [PREDEVICE-TRANSFER-TRUTH] 이미 이체된 건 — 성공도 실패도 아닌 멱등 통과.
+    const alreadyTransferred: string[] = [];
     let processed = 0;
     // [MEDIUM-3] 실제로 transferred 상태로 전환된 attendanceId 추적 — 알림 필터링용
     // 멱등 처리(already-transferred)는 포함하지 않아 중복 알림 방지
@@ -23177,6 +23196,7 @@ export const callableMarkTransferredBatch = onCall(
       // 재시도 시 이전 누적분 초기화
       skipped.length = 0;
       lockedSkipped.length = 0; // [PAY-08]
+      alreadyTransferred.length = 0;
       processed = 0;
       processedAttendanceIds.clear();
       validWorkerUserIds.clear();
@@ -23204,9 +23224,29 @@ export const callableMarkTransferredBatch = onCall(
 
         const ws = data.wageStatus as string | undefined;
 
-        // 이미 transferred: 멱등 처리 (성공으로 카운트)
+        // 이미 transferred: 멱등 — 상태를 바꾸지 않으므로 처리 건수에 넣지 않는다.
+        //   [PREDEVICE-TRANSFER-TRUTH] 예전에는 여기서 processed++를 했다.
+        //   그래서 같은 목록을 다시 보내면 실제로는 아무것도 바뀌지 않는데
+        //   "N건 이체 처리"라고 답했다. 재시도인지 새 이체인지 구분할 수 없었다.
         if (ws === "transferred") {
-          processed++;
+          alreadyTransferred.push(id);
+          continue;
+        }
+
+        // [PREDEVICE-TRANSFER-NONPAYABLE] 지급 대상이 아닌 기록은 이체하지 않는다.
+        //
+        //   NO_SHOW와 결근은 finalWage 0으로 마감되면서 wageStatus가
+        //   confirmed가 된다. 여기서 wageStatus만 보면 그 둘이 그대로 통과해
+        //   "이체 처리 완료"가 된다 — 실제로 보낸 돈은 0원인데.
+        //   transferred는 급여 lifecycle에서 "이체됐다"는 뜻이지 "처리가
+        //   끝났다"는 뜻이 아니다.
+        //
+        //   미이체 집계(srvHomeUnpaidWage)가 쓰는 것과 같은 식이다 — 화면이
+        //   목록에서 빼 주는 것에 기대지 않고 서버가 직접 판정한다.
+        const attStatus = (data.status as string | undefined) ?? "";
+        const fw = (data.finalWage as number | undefined) ?? 0;
+        if ((attStatus === "NO_SHOW" || attStatus === "absent") && fw === 0) {
+          skipped.push(id);
           continue;
         }
 
@@ -23302,7 +23342,16 @@ export const callableMarkTransferredBatch = onCall(
       );
     }
 
-    return {success: true, processed, skipped, lockedBySettlement: lockedSkipped};
+    // [PREDEVICE-TRANSFER-TRUTH] processed는 이번 호출에서 실제로 transferred가
+    //   된 건수다. 이미 이체돼 있던 건은 alreadyTransferred로 따로 센다 —
+    //   재시도가 새 이체처럼 보이지 않게.
+    return {
+      success: true,
+      processed,
+      alreadyTransferred,
+      skipped,
+      lockedBySettlement: lockedSkipped,
+    };
   }
 );
 
@@ -33345,20 +33394,35 @@ async function srvContractIssuedFor(
   appId: string,
   bizId: string
 ): Promise<boolean> {
-  const byId = await db.collection("employment_contracts")
-    .where("applicationId", "==", appId)
-    .where("businessId", "==", bizId)
-    .select("status")
-    .limit(5)
-    .get();
+  return srvIssuedContractExists(appId, bizId);
+}
+
+/**
+ * srvContractIssuedFor와 같은 판정을 트랜잭션 안에서도 수행한다.
+ *
+ * 미발송 집계(홈·계약탭)와 발송 차단이 같은 식을 써야 한다 —
+ * 집계가 "발송됨"이라고 본 지원서에 계약서가 한 장 더 생기면 안 된다.
+ *
+ * @param {string} appId 지원서 문서 ID
+ * @param {string} bizId 사업장 ID — 타 사업장 계약서 오매칭 차단
+ * @param {FirebaseFirestore.Transaction|undefined} tx 있으면 트랜잭션 읽기
+ * @return {Promise<boolean>} 근로자에게 전달된 계약서가 있으면 true
+ */
+async function srvIssuedContractExists(
+  appId: string,
+  bizId: string,
+  tx?: FirebaseFirestore.Transaction
+): Promise<boolean> {
+  const run = (q: FirebaseFirestore.Query) => (tx ? tx.get(q) : q.get());
+  const base = db.collection("employment_contracts")
+    .where("businessId", "==", bizId);
+  const byId = await run(
+    base.where("applicationId", "==", appId).select("status").limit(5));
   let docs = byId.docs;
   if (docs.length === 0) {
-    const byArray = await db.collection("employment_contracts")
-      .where("applicationIds", "array-contains", appId)
-      .where("businessId", "==", bizId)
-      .select("status")
-      .limit(5)
-      .get();
+    const byArray = await run(
+      base.where("applicationIds", "array-contains", appId)
+        .select("status").limit(5));
     docs = byArray.docs;
   }
   // 한 건이라도 근로자에게 전달된 계약서가 있으면 의무는 이행된 것으로 본다.

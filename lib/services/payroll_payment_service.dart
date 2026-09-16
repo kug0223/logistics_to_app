@@ -138,6 +138,8 @@ class PayrollPaymentService {
     final List<String> chunkErrors = [];
     final List<String> allSkipped = [];             // 전체 skip attendanceId
     final List<String> allLockedBySettlement = [];  // [PAY-08] ISR lock으로 skip된 ID
+    // [PREDEVICE-TRANSFER-TRUTH] 이미 이체돼 있던 건 — 새로 처리한 것이 아니다.
+    final List<String> allAlreadyTransferred = [];
     // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 서버 성공 응답을 받은 청크의 처리 건수 누적
     // 실패 청크는 0건으로 처리 (클라이언트에서 추정 불가)
     int confirmedCount = 0;
@@ -164,9 +166,13 @@ class PayrollPaymentService {
         final locked = (data['lockedBySettlement'] as List?)?.cast<String>() ?? [];
         allSkipped.addAll(skipped);
         allLockedBySettlement.addAll(locked);
-        // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 서버 확인 완료 건수 누적
-        // processed = chunk 크기 - 이 청크에서 skip된 건수 (bank + ISR 합산)
-        confirmedCount += chunk.length - (skipped.length);
+        // [PREDEVICE-TRANSFER-TRUTH] 서버가 실제로 바꾼 건수를 그대로 쓴다.
+        //   예전에는 chunk 크기에서 skip을 뺐는데, 이미 이체돼 있던 건은
+        //   skip도 아니어서 새로 처리한 것처럼 세어졌다. 같은 목록을 다시
+        //   보내도 늘 "N건 처리"로 보이던 이유다.
+        confirmedCount += (data['processed'] as int?) ?? 0;
+        allAlreadyTransferred
+            .addAll((data['alreadyTransferred'] as List?)?.cast<String>() ?? []);
       } catch (e) {
         final msg = e is FirebaseFunctionsException
             ? (e.message ?? e.code)
@@ -188,6 +194,8 @@ class PayrollPaymentService {
     return MarkTransferResult(
       bankSkipped: bankSkipped,
       settlementLocked: allLockedBySettlement,
+      transferredNow: confirmedCount,
+      alreadyTransferred: allAlreadyTransferred,
     );
   }
 
@@ -686,9 +694,20 @@ class MarkTransferResult {
   /// 승인된 중간정산 lock으로 제외된 attendanceId 목록 [PAY-08]
   final List<String> settlementLocked;
 
+  /// [PREDEVICE-TRANSFER-TRUTH] 이번 호출에서 실제로 이체 처리된 건수.
+  ///
+  /// 선택 수에서 skip을 뺀 값이 아니다 — 이미 이체돼 있던 건은 skip도 아니라
+  /// 그렇게 세면 재시도가 늘 새 이체처럼 보인다.
+  final int transferredNow;
+
+  /// 이미 이체돼 있어 아무것도 바뀌지 않은 건.
+  final List<String> alreadyTransferred;
+
   const MarkTransferResult({
     required this.bankSkipped,
     required this.settlementLocked,
+    this.transferredNow = 0,
+    this.alreadyTransferred = const [],
   });
 
   /// 전체 제외된 attendanceId 목록
