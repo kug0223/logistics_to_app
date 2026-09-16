@@ -12692,6 +12692,46 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const appsRef = db.collection("applications").where("toId", "==", toId);
   const IMMUTABLE_TO_STATUSES = ["CLOSED", "EXPIRED", "SCHEDULED", "DRAFT"];
 
+  // [SYSTEM-INTEGRATION-CROSS-SLICE-1A] 占有 중인 좌석을 센다.
+  //
+  //   좌석을 반납한 지원서는 status가 CONFIRMED 그대로다(NO_SHOW 이력 보존).
+  //   그래서 status만 세면 반납한 자리가 다시 차 있는 것으로 돌아온다.
+  //
+  //   반납 여부의 canonical 표식은 `staffingReleasedAt`이고, 이 필드는 반납된
+  //   문서에만 존재한다. Firestore 집계 쿼리로는 "필드가 있는 문서"를 셀 수
+  //   없다 — `== null`은 명시적 null만, `!= null`·`orderBy`는 새 인덱스를
+  //   요구한다(실측 확인). 불리언 표식을 따로 두면 그 필드가 없는 **기존**
+  //   반납 문서가 자동으로 빠져 다시 좌석으로 세어진다(실측: 기대 1 · 실제 2).
+  //
+  //   그래서 확정 상태 문서를 직접 읽고 걸러 센다. 읽는 범위는 이 공고의
+  //   확정 지원서뿐이고, 필요한 두 필드만 가져온다. 한 번 읽어 공고 단위와
+  //   슬롯 단위를 함께 만든다 — 이전의 count() 4번을 대체한다.
+  const countCommittedSeats = async (): Promise<{
+    to: number; bySlot: Map<string, number>;
+  }> => {
+    const bySlot = new Map<string, number>();
+    let to = 0;
+    let cursor: FirebaseFirestore.DocumentSnapshot | undefined;
+    for (;;) {
+      let q = appsRef
+        .where("status", "in", CONFIRMED_STATUSES)
+        .select("slotId", "staffingReleasedAt")
+        .limit(500);
+      if (cursor) q = q.startAfter(cursor);
+      const page = await q.get();
+      if (page.empty) break;
+      for (const d of page.docs) {
+        if (d.get("staffingReleasedAt") != null) continue; // 반납된 자리
+        to++;
+        const sid = d.get("slotId") as string | undefined;
+        if (sid) bySlot.set(sid, (bySlot.get(sid) ?? 0) + 1);
+      }
+      if (page.size < 500) break;
+      cursor = page.docs[page.size - 1];
+    }
+    return {to, bySlot};
+  };
+
   if (!slotId) {
     // contract TO: TO 카운터 + 업무별 확정 카운터 재계산
     // workTypeConfirmedCounts.$workType은 applyToTO 정원 초과 체크에서 직접 읽으므로
@@ -12705,11 +12745,8 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       ),
     ];
 
-    const [confirmedSnap, releasedSnap, pendingSnap, ...wtSnaps] = await Promise.all([
-      appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
-      // [SYSTEM-INTEGRATION-CROSS-SLICE-1] 반납된 좌석은 占有가 아니다.
-      appsRef.where("status", "in", CONFIRMED_STATUSES)
-        .where("staffingReleased", "==", true).count().get(),
+    const [seats, pendingSnap, ...wtSnaps] = await Promise.all([
+      countCommittedSeats(),
       appsRef.where("status", "in", PENDING_STATUSES).count().get(),
       ...contractWorkTypes.map((wt) =>
         appsRef
@@ -12725,8 +12762,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       workTypeConfirmedUpdate[`workTypeConfirmedCounts.${wt}`] = wtSnaps[i].data().count;
     });
 
-    const confirmedCnt = Math.max(
-      0, confirmedSnap.data().count - releasedSnap.data().count);
+    const confirmedCnt = seats.to;
     const totalRequired = (toData?.totalRequired as number) ?? 0;
     const toStatus = toData?.status as string | undefined;
     const toStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(toStatus ?? "")
@@ -12747,28 +12783,19 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const slotAppsRef = appsRef.where("slotId", "==", slotId);
 
   const [
-    toConfirmedSnap,
-    toReleasedSnap,
+    seats,
     toPendingSnap,
-    slotConfirmedSnap,
-    slotReleasedSnap,
     slotPendingSnap,
     slotDoc,
   ] = await Promise.all([
-    appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
-    // [SYSTEM-INTEGRATION-CROSS-SLICE-1] 반납된 좌석은 占有가 아니다.
-    appsRef.where("status", "in", CONFIRMED_STATUSES)
-      .where("staffingReleased", "==", true).count().get(),
+    // 공고 단위와 슬롯 단위를 한 번의 읽기에서 함께 만든다.
+    countCommittedSeats(),
     appsRef.where("status", "in", PENDING_STATUSES).count().get(),
-    slotAppsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
-    slotAppsRef.where("status", "in", CONFIRMED_STATUSES)
-      .where("staffingReleased", "==", true).count().get(),
     slotAppsRef.where("status", "in", PENDING_STATUSES).count().get(),
     slotRef.get(),
   ]);
 
-  const confirmedCount = Math.max(
-    0, slotConfirmedSnap.data().count - slotReleasedSnap.data().count);
+  const confirmedCount = seats.bySlot.get(slotId) ?? 0;
   // 슬롯 문서는 workDetails[].requiredCount 합계로 총 필요 인원 계산
   const workDetails =
     (slotDoc.data()?.workDetails as
@@ -12784,8 +12811,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const flexToData = toSnap.data();
   const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
   const flexToStatus = flexToData?.status as string | undefined;
-  const flexConfirmedCnt = Math.max(
-    0, toConfirmedSnap.data().count - toReleasedSnap.data().count);
+  const flexConfirmedCnt = seats.to;
   const flexToStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(flexToStatus ?? "")
     ? {status: flexTotalRequired > 0 && flexConfirmedCnt >= flexTotalRequired ? "FULL" : "ACTIVE"}
     : {};
@@ -20599,8 +20625,9 @@ export const callableBatchSetNoShow = onCall(
 //    지원서가 하나라도 쓰이면(대체 인력 초대가 바로 그것이다) 재계산이 돌고,
 //    재계산은 status만 세므로 반납한 좌석을 다시 占有로 되돌렸다.
 //    실측: 반납 직후 1/2 → 대체 초대 직후 2/2 → 대체 인력 수락 400.
-//    그래서 반납 여부를 재계산도 읽을 수 있게 staffingReleased 불리언을 함께
-//    기록하고, srvCountCommittedSeats가 그것을 빼고 센다. 정의는 한 곳이다.
+//    [CROSS-SLICE-1A] 그래서 재계산(_syncTOCounters)이 확정 지원서를 직접 읽고
+//    staffingReleasedAt이 있는 것을 빼고 센다. 표식은 이 필드 하나다 —
+//    불리언을 따로 두면 그 필드가 없는 기존 반납 문서가 다시 좌석으로 세어진다.
 //  - 단기/Flex TO 전용 (applicationType != 'long_term' 검증)
 //  - TO.status: syncTOStats가 발동하지 않으므로 FULL → ACTIVE 전환을 명시적으로 처리
 export const callableReleaseNoshowSeat = onCall(
@@ -20758,11 +20785,11 @@ export const callableReleaseNoshowSeat = onCall(
       const now = admin.firestore.FieldValue.serverTimestamp();
 
       // 5-a. Application에 좌석 반납 마커
+      // [CROSS-SLICE-1A] 반납 표식은 staffingReleasedAt 하나다.
+      //   불리언을 따로 두면 그 필드가 없는 기존 반납 문서가 재계산에서
+      //   빠져 다시 좌석으로 세어진다 — 표식이 둘이면 정의가 둘이 된다.
       tx.update(appRef, {
         staffingReleasedAt: now,
-        // [CROSS-SLICE-1] 재계산이 읽을 수 있는 형태. Timestamp 존재 여부는
-        //   Firestore 집계 쿼리로 물을 수 없어서 불리언을 함께 둔다.
-        staffingReleased: true,
         staffingReleaseReason: "NO_SHOW",
         updatedAt: now,
       });
@@ -20949,8 +20976,8 @@ export const callableBatchCancelNoShow = onCall(
         // 1. staffingReleasedAt 마커 삭제 (Case F/G 공통)
         tx.update(appRef, {
           staffingReleasedAt: admin.firestore.FieldValue.delete(),
-          // [CROSS-SLICE-1] 짝이 되는 표식도 같이 지운다 — 둘이 어긋나면
-          //   재계산과 predicate가 다른 답을 하게 된다.
+          // [CROSS-SLICE-1A] 한동안 함께 쓰던 불리언 표식이 남아 있을 수 있다.
+          //   이제 쓰지 않지만, 남겨 두면 문서마다 표식이 어긋난 채로 보인다.
           staffingReleased: admin.firestore.FieldValue.delete(),
           staffingReleaseReason: admin.firestore.FieldValue.delete(),
           updatedAt: now,
@@ -26195,9 +26222,29 @@ export const callableApplyToTO = onCall(
       }
       // SLOT-003: workDate가 지난 슬롯은 applicationDeadline 유무 관계없이 차단
       // [TZ-FIX] SlotModel은 'date' 필드 사용 (slot_model.dart toMap() 참고) — 'workDate' 오탈자 수정
+      //
+      // [SYSTEM-INTEGRATION-CROSS-SLICE-1A] 비교 단위는 **날짜**다.
+      //
+      //   슬롯의 date는 그 날 KST 자정이다. 시각으로 비교하면 오늘 00:00을
+      //   지나는 순간부터 오늘 슬롯이 전부 "지난 날짜"가 되어, 09:00 근무의
+      //   07:00 마감(= 시작 2시간 전)이 한 번도 열리지 않는다. 당일 지원
+      //   창이 서버에서 통째로 사라진 것이다.
+      //   클라이언트의 canonical 판정(WorkDetailData.isEffectivelyClosed)은
+      //   `toKstDate(slotDate).isBefore(toKstDate(today))` — 오늘은 포함하지
+      //   않는다. 같은 action의 판정이 화면과 서버에서 갈려 있었다.
+      //   오늘 슬롯의 마감은 바로 아래 applicationDeadline 검사가 판단한다.
       const slotWorkDateTs = sd["date"] as admin.firestore.Timestamp | undefined;
-      if (slotWorkDateTs && slotWorkDateTs.toDate() < new Date()) {
-        throw new HttpsError("permission-denied", "이미 지난 날짜의 슬롯에는 지원할 수 없습니다.");
+      if (slotWorkDateTs) {
+        const KST_OFFSET_MS_APPLY = 9 * 60 * 60 * 1000;
+        const kstDayStartOf = (ms: number) => {
+          const d = new Date(ms + KST_OFFSET_MS_APPLY);
+          d.setUTCHours(0, 0, 0, 0);
+          return d.getTime() - KST_OFFSET_MS_APPLY;
+        };
+        if (kstDayStartOf(slotWorkDateTs.toMillis()) < kstDayStartOf(Date.now())) {
+          throw new HttpsError(
+            "permission-denied", "이미 지난 날짜의 슬롯에는 지원할 수 없습니다.");
+        }
       }
       const rawWD = (sd["workDetails"] as unknown[]) ?? [];
       // [4H.0C-REF-01] workDetailId 매칭 정책

@@ -104,6 +104,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Map<String, BusinessWorkTypeModel> _workTypeMap = {};  // 업무유형 정보
   Map<String, dynamic> _workDetailTimeMap = {};  // 업무별 근무시간 (WorkDetail)
   Map<String, String?> _contractStatusMap = {};  // 계약서 서명 상태
+
+  /// [CROSS-SLICE-1A] wdId → 그 모집 단위가 종료됐는가.
+  ///
+  /// null = 아직 모른다(조회 실패). 모르는 것을 '종료됨'으로 바꾸지 않는다 —
+  /// 대체충원 CTA는 그대로 두고, 서버가 사유와 함께 최종 판정한다.
+  Map<String, bool>? _closedUnitByWdId;
   AttendanceRules? _attendanceRules;            // 현재 사업장 반올림 정책
   String? _rulesLoadedForBusinessId;           // 마지막으로 정책을 로드한 businessId (캐싱용)
   Map<String, ApplicationModel> _workerIdMap = {};   // id → worker (O(1) 조회용)
@@ -279,6 +285,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final workDetailTimeMap = step2Results[2] as Map<String, dynamic>;
       final contractStatusMap = step2Results[3] as Map<String, String?>;
 
+      // [CROSS-SLICE-1A] 이 날짜 모집 단위의 종료 여부 — 지원자 화면이 쓰는
+      //   것과 같은 canonical source(callableGetDayStaffingDetail)에서 읽는다.
+      //   여기서 슬롯 상태를 따로 캐시하거나 추측하지 않는다.
+      //   실패하면 null로 둔다 — 모르는 것을 '종료됨'으로 바꾸지 않는다.
+      //   (서버가 최종 권위이고, 모르는 채로 눌러도 사유와 함께 거절된다.)
+      Map<String, bool>? closedByUnit;
+      try {
+        final (dayStart, _) = FormatHelper.kstDayRange(widget.date);
+        final rows = await _firestoreService.getDayStaffingDetail(
+          businessId: _selectedBusinessId ?? '',
+          dayStartMs: dayStart.millisecondsSinceEpoch,
+        );
+        closedByUnit = {for (final r in rows) r.wdId: r.isClosed};
+      } catch (e) {
+        debugPrint('⚠️ [당일명단] 모집 단위 종료 여부 조회 실패: $e');
+      }
+
       // 사업장이 바뀐 경우에만 반올림 정책 로드 (매 refresh마다 Firestore 읽지 않음)
       if (_rulesLoadedForBusinessId != _selectedBusinessId) {
         try {
@@ -299,6 +322,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _workTypeMap = workTypeMap;
         _workDetailTimeMap = workDetailTimeMap;
         _contractStatusMap = contractStatusMap;
+        _closedUnitByWdId = closedByUnit;
         _isLoading = false;
         _rebuildStatusCache();
         _rebuildTabWorkers();
@@ -2126,7 +2150,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   // [R5.2] NO_SHOW 대체 인력 충원 버튼 구성
-  // 조건: today + !isLongTerm + !isStaffingReleased + canManageTo
+  // 조건: today + !isLongTerm + !isStaffingReleased + canManageTo + 모집 단위 open
   // [GAP-ATT-NOSHOW-RECOVERY-DATE-01] 당일 운영 복구 전용 — 과거 날짜 미노출
   // 이미 released: Wrap에 _buildStaffingReleasedBadge() 표시 (위에서 처리)
   Widget _buildNoshowRecoveryButton(ApplicationModel app) {
@@ -2136,6 +2160,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if (!canManageTo) return const SizedBox.shrink();
     if (app.isLongTermApplication) return const SizedBox.shrink();
     if (app.isStaffingReleased) return const SizedBox.shrink();
+    // [CROSS-SLICE-1A] 종료된 모집 단위에는 권하지 않는다 — 반납해도 채울 수
+    //   없고 서버도 같은 이유로 거절한다. 지원자 화면과 같은 판정이다.
+    //   모르는 상태(null)는 숨기지 않는다 — 서버가 최종 판정한다.
+    final wdId = app.wdId;
+    if (wdId != null && _closedUnitByWdId?[wdId] == true) {
+      return const SizedBox.shrink();
+    }
     // 당일 날짜 게이트 (연/월/일 비교 — 시간값 비교 금지)
     final todayKst = FormatHelper.toKstDate(DateTime.now());
     final dialogDateKst = FormatHelper.toKstDate(widget.date);

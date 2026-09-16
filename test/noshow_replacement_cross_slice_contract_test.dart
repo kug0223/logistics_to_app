@@ -65,26 +65,36 @@ void main() {
   final rel = _flat(_codeOf(_callableOf(raw, 'callableReleaseNoshowSeat')));
 
   group('반납한 좌석은 다시 세어도 빈 자리다', () {
-    test('반납이 재계산도 읽을 수 있는 표식을 남긴다', () {
-      expect(rel.contains('staffingReleasedAt: now, staffingReleased: true,'), true,
-          reason: 'Timestamp 존재 여부는 집계 쿼리로 물을 수 없다');
+    test('반납 표식은 staffingReleasedAt 하나다', () {
+      expect(rel.contains('staffingReleasedAt: now, staffingReleaseReason: "NO_SHOW",'), true);
+      expect(rel.contains('staffingReleased: true'), false,
+          reason: '표식이 둘이면 그 필드가 없는 기존 반납 문서가 다시 좌석으로 세어진다');
     });
 
-    test('재계산이 반납된 좌석을 뺀다', () {
-      expect('.where("staffingReleased", "==", true).count().get()'
-          .allMatches(fnsFlat).length >= 3, true,
-          reason: 'TO·슬롯 양쪽 모두에서 빼야 두 숫자가 같아진다');
-      expect(fnsFlat.contains('const confirmedCount = Math.max( 0, '
-          'slotConfirmedSnap.data().count - slotReleasedSnap.data().count);'), true);
-      expect(fnsFlat.contains('const flexConfirmedCnt = Math.max( 0, '
-          'toConfirmedSnap.data().count - toReleasedSnap.data().count);'), true);
+    test('재계산이 확정 문서를 직접 읽고 반납된 것을 뺀다', () {
+      // 집계 쿼리는 "필드가 있는 문서"를 셀 수 없다 — == null 은 명시적 null만
+      // 잡고, != null·orderBy 는 새 인덱스를 요구한다(실측). 그래서 읽고 거른다.
+      expect(fnsFlat.contains('if (d.get("staffingReleasedAt") != null) continue;'), true);
+      expect(fnsFlat.contains('.select("slotId", "staffingReleasedAt")'), true);
+      expect(fnsFlat.contains('const confirmedCount = seats.bySlot.get(slotId) ?? 0;'), true);
+      expect(fnsFlat.contains('const flexConfirmedCnt = seats.to;'), true);
+      expect(fnsFlat.contains('const confirmedCnt = seats.to;'), true);
     });
 
-    test('복구(노쇼 취소)는 두 표식을 함께 지운다', () {
+    test('불리언 표식에 의존하는 집계가 남아 있지 않다', () {
+      expect(fnsFlat.contains('.where("staffingReleased", "==", true)'), false,
+          reason: '필드가 없는 문서를 자동 제외하는 구조는 legacy를 놓친다');
+    });
+
+    test('한 번 읽어 공고 단위와 슬롯 단위를 함께 만든다', () {
+      expect(fnsFlat.contains('to: number; bySlot: Map<string, number>;'), true,
+          reason: '두 숫자가 다른 읽기에서 나오면 서로 어긋날 수 있다');
+    });
+
+    test('복구(노쇼 취소)는 남아 있을 수 있는 표식까지 지운다', () {
       final cancel = _flat(_codeOf(_callableOf(raw, 'callableBatchCancelNoShow')));
       expect(cancel.contains('staffingReleasedAt: admin.firestore.FieldValue.delete(), '
-          'staffingReleased: admin.firestore.FieldValue.delete(),'), true,
-          reason: '둘이 어긋나면 재계산과 판정이 다른 답을 한다');
+          'staffingReleased: admin.firestore.FieldValue.delete(),'), true);
     });
 
     test('반납해도 지원서 status는 그대로다', () {
@@ -176,11 +186,75 @@ void main() {
       expect(a.contains('return const SizedBox.shrink(); // 과거/미래 날짜 → CTA 숨김'), true);
     });
 
+    test('근태 화면도 종료된 모집 단위에는 권하지 않는다', () {
+      final a = _flat(_codeOf(
+          _src('lib/screens/business_admin/dialogs/attendance_status_dialog.dart')));
+      expect(a.contains('if (wdId != null && _closedUnitByWdId?[wdId] == true) '
+          '{ return const SizedBox.shrink(); }'), true);
+    });
+
+    test('종료 여부를 지원자 화면과 같은 source에서 읽는다', () {
+      final a = _flat(_codeOf(
+          _src('lib/screens/business_admin/dialogs/attendance_status_dialog.dart')));
+      expect(a.contains('_firestoreService.getDayStaffingDetail('), true,
+          reason: '슬롯 상태를 따로 캐시하거나 추측하면 두 화면이 갈린다');
+      expect(a.contains('closedByUnit = {for (final r in rows) r.wdId: r.isClosed};'), true);
+      final d = _flat(_codeOf(
+          _src('lib/screens/business_admin/dialogs/day_applicants_dialog.dart')));
+      expect(d.contains('_svc.getDayStaffingDetail('), true);
+    });
+
+    test('모르는 상태를 종료로 바꾸지 않는다', () {
+      final a = _flat(_codeOf(
+          _src('lib/screens/business_admin/dialogs/attendance_status_dialog.dart')));
+      expect(a.contains('Map<String, bool>? _closedUnitByWdId;'), true,
+          reason: 'null = UNKNOWN. 조회 실패를 종료로 읽으면 멀쩡한 CTA가 사라진다');
+    });
+
     test('거절 사유가 그대로 관리자에게 전달된다', () {
       final s = _flat(_codeOf(_src('lib/services/firestore/application_firestore.dart')));
       expect(s.contains("ToastHelper.showError(e.message ?? '대체 충원 처리에 실패했습니다');"),
           true, reason: 'generic 문구로 덮으면 재오픈하면 된다는 것을 알 수 없다');
       expect(s.contains("if (e.code == 'already-exists')"), true);
+    });
+  });
+
+  // 당일 지원 창 — 슬롯 date는 그 날 KST 자정이다. 시각으로 비교하면
+  // 00:00을 지나는 순간 오늘 슬롯이 전부 '지난 날짜'가 되어, 시작 2시간 전
+  // 마감이 한 번도 열리지 않는다. 클라이언트 canonical 판정은 오늘을 제외하지
+  // 않는다 — 같은 action의 판정이 화면과 서버에서 갈려 있었다.
+  // 실측(수정 후): 어제 차단 · 오늘 마감 전 허용 · 오늘 마감 후 차단 · 내일 허용
+  group('당일 지원 창은 마감시각이 판단한다', () {
+    final apply = _flat(_codeOf(_callableOf(raw, 'callableApplyToTO')));
+
+    test('과거는 날짜 단위로 막는다', () {
+      expect(apply.contains(
+          'if (kstDayStartOf(slotWorkDateTs.toMillis()) < kstDayStartOf(Date.now()))'), true);
+      expect(apply.contains('slotWorkDateTs.toDate() < new Date()'), false,
+          reason: '시각 비교는 오늘을 통째로 과거로 만든다');
+    });
+
+    test('오늘은 마감시각이 판단한다', () {
+      final d = apply.indexOf('kstDayStartOf(slotWorkDateTs.toMillis())');
+      final w = apply.indexOf('해당 업무의 지원 마감 시간이 지났습니다');
+      expect(d > 0 && w > d, true, reason: '날짜 게이트를 지나야 마감 검사에 닿는다');
+      expect(apply.contains('if (wdDeadlineTs && wdDeadlineTs.toDate() < new Date())'), true);
+    });
+
+    test('클라이언트 판정도 오늘을 제외하지 않는다', () {
+      final m = _flat(_codeOf(_src('lib/models/core/work_detail_data.dart')));
+      expect(m.contains('if (isClosed || isTimeExpired) return true;'), true);
+      expect(m.contains(
+          'return FormatHelper.toKstDate(slotDate).isBefore(FormatHelper.toKstDate(today));'),
+          true, reason: 'isBefore — 오늘은 포함되지 않는다. 서버와 같은 기준이어야 한다');
+    });
+
+    test('마감 계산은 서버가 만든다', () {
+      final flex = _flat(_codeOf(_callableOf(raw, 'callableCreateFlexSlots')));
+      expect(flex.contains('newWd.applicationDeadline = admin.firestore.Timestamp.fromMillis( '
+          'calcDeadlineMs(dateStr, wd.startTime as string, hoursBeforeStart)'), true);
+      expect(flex.contains('if (dateStr < todayStr)'), true,
+          reason: '오늘 날짜 공고 생성은 허용된다 — 당일 모집이 정상 경로다');
     });
   });
 

@@ -45,10 +45,15 @@ void main() {
         false,
         reason: '기기 로컬 자정 창이 남아 있으면 비KST 기기에서 하루가 밀린다',
       );
+      // [CROSS-SLICE-1A] 개수를 못 박지 않는다. 이 단언이 지키려는 것은
+      //   "이 화면의 날짜 창은 전부 KST"이지 "창이 두 개"가 아니다.
+      //   실제로 모집 단위 종료 여부를 읽는 세 번째 창이 생겼고, 그것도 KST다.
+      //   개수를 고정하면 올바른 창이 늘어날 때마다 깨진다.
+      //   진짜 가드는 위의 기기 로컬 자정 금지다.
       expect(
-        'FormatHelper.kstDayRange(widget.date)'.allMatches(code).length,
-        2,
-        reason: '확정 명단 창과 근태 조회 창 둘 다 KST여야 한다',
+        'FormatHelper.kstDayRange(widget.date)'.allMatches(code).length >= 2,
+        true,
+        reason: '확정 명단 창과 근태 조회 창을 포함해 모든 창이 KST여야 한다',
       );
     });
 
