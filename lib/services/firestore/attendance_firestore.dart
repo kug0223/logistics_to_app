@@ -156,8 +156,11 @@ extension AttendanceFirestore on FirestoreService {
     required String applicationId,
   }) async {
     try {
-      final today = DateTime.now();
-      final todayStart = DateTime(today.year, today.month, today.day);
+      // [PREDEVICE-ATTENDANCE-KST] 문서 ID의 날짜는 서버가 KST로 만든다
+      //   (callableCheckIn: `${applicationId}_${KST yyyyMMdd}`). 여기서 기기
+      //   로컬 자정으로 만들면 비KST 기기에서 다른 ID를 찾게 된다. 아래
+      //   전날 폴백이 서쪽으로 밀린 경우만 가려 줬을 뿐 동쪽은 그대로 놓쳤다.
+      final todayStart = FormatHelper.toKstDate(DateTime.now());
 
       String dateStr(DateTime d) =>
           '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
@@ -184,9 +187,8 @@ extension AttendanceFirestore on FirestoreService {
     required String businessId,
   }) async {
     try {
-      final today = DateTime.now();
-      final todayStart = DateTime(today.year, today.month, today.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
+      // [PREDEVICE-ATTENDANCE-KST] 영업일 창은 KST 달력 날짜로 만든다.
+      final (todayStart, todayEnd) = FormatHelper.kstDayRange(DateTime.now());
       debugPrint('🔍 [getTodayAttendanceByBusiness] CF 조회 시작... businessId=$businessId');
       final attendances = await _callableGetAdminAttendances(
         businessId: businessId,
@@ -207,9 +209,9 @@ extension AttendanceFirestore on FirestoreService {
     required String businessId,
   }) async {
     try {
-      final today = DateTime.now();
-      final todayStart = DateTime(today.year, today.month, today.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
+      // [PREDEVICE-ATTENDANCE-KST] 출근 대상자도 같은 KST 영업일 창을 쓴다 —
+      //   근태 기록과 확정 명단이 다른 달력을 보면 서로 맞물리지 않는다.
+      final (todayStart, todayEnd) = FormatHelper.kstDayRange(DateTime.now());
 
       debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
 
@@ -744,9 +746,9 @@ extension AttendanceFirestore on FirestoreService {
     required DateTime weekEnd,
   }) async {
     try {
-      final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
-      final end = DateTime(weekEnd.year, weekEnd.month, weekEnd.day)
-          .add(const Duration(days: 1));
+      // [PREDEVICE-ATTENDANCE-KST] 주간 창의 양 끝도 KST 영업일 경계다.
+      final (start, _) = FormatHelper.kstDayRange(weekStart);
+      final (_, end) = FormatHelper.kstDayRange(weekEnd);
       final records = await _callableGetAdminAttendances(
         businessId: businessId,
         startDate: start,

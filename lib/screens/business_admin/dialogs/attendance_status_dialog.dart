@@ -320,8 +320,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 확정 근무자 조회 (해당 날짜) - 최적화
   Future<List<ApplicationModel>> _getConfirmedWorkersForDate() async {
-    final dateStart = DateTime(widget.date.year, widget.date.month, widget.date.day);
-    final dateEnd = dateStart.add(const Duration(days: 1));
+    // [PREDEVICE-ATTENDANCE-KST] 영업일은 Asia/Seoul 달력 날짜다.
+    //   이 쿼리 창만 기기 로컬 자정으로 만들고 아래 비교 키는 KST로 만들면
+    //   두 달력이 섞인다 — 비KST 기기에서 창이 통째로 밀려 그 날 확정 근무자가
+    //   0명으로 보이거나 하루 어긋난 사람이 잡힌다. 같은 날짜에 대해 창과
+    //   비교 키는 반드시 같은 달력에서 나와야 한다.
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(widget.date);
     // 날짜 비교용 — startDateOnly/endDateOnly와 동일한 UTC-midnight(KST) 포맷
     final dateKeyKst = FormatHelper.toKstDate(widget.date);
     
@@ -440,8 +444,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   ) async {
     if (applicationIds.isEmpty) return {};
 
-    final dateStart = DateTime(widget.date.year, widget.date.month, widget.date.day);
-    final dateEnd = dateStart.add(const Duration(days: 1));
+    // [PREDEVICE-ATTENDANCE-KST] 근태 조회 창도 KST 영업일 기준으로 만든다.
+    //   서버는 workDate를 KST 자정 instant로 저장하므로 기기 로컬 자정으로
+    //   창을 만들면 비KST 기기에서 하루가 밀린다.
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(widget.date);
     // [BUG-수정] 전날 야간 단기근무자 포함: workDate 조회 범위를 전날부터 시작
     final queryRangeStart = dateStart.subtract(const Duration(days: 1));
 
