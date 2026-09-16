@@ -237,6 +237,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   late final VoidCallback _onFcmRefresh;
   bool _isLoadingHomeData = false;
+
+  /// [PREDEVICE-WORKER-ERROR-NOT-ZERO] 마지막 홈 조회가 실패했는가.
+  ///
+  /// 이 화면은 지금까지 조회 실패를 빈 목록으로 받아 "검토중 0 · 확정 0"으로
+  /// 그렸다. 0건과 못 불러온 것은 근로자에게 전혀 다른 뜻이다 —
+  /// 앞은 지원하러 가라는 말이고, 뒤는 다시 시도하라는 말이다.
+  ///   LOADING          _isLoadingData
+  ///   ERROR            _homeLoadFailed && _applications.isEmpty
+  ///   PARTIAL(stale)   _homeLoadFailed && _applications.isNotEmpty
+  ///   SUCCESS_ZERO     !_homeLoadFailed && _applications.isEmpty
+  ///   SUCCESS_NONZERO  !_homeLoadFailed && _applications.isNotEmpty
+  bool _homeLoadFailed = false;
   DateTime? _lastAutoRefreshAt;
 
   @override
@@ -369,11 +381,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         _businessCache = cache;
       }
 
-      setState(() => _isLoadingData = false);
+      setState(() {
+        _isLoadingData = false;
+        _homeLoadFailed = false;
+      });
     } catch (e) {
       debugPrint('❌ 홈 데이터 로드 실패: $e');
       if (mounted) {
-        setState(() => _isLoadingData = false);
+        // 실패를 화면 상태로 남긴다 — 토스트는 사라지고 숫자는 남는다.
+        setState(() {
+          _isLoadingData = false;
+          _homeLoadFailed = true;
+        });
         ToastHelper.showError('데이터를 불러오지 못했습니다. 새로고침을 시도해주세요.');
       }
     } finally {
@@ -383,13 +402,21 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── [DS-03] 요청 처리 후 진입점만 갱신 ─────────────────────────
   /// 홈 전체를 다시 불러오지 않는다 — 바뀐 것은 요청 목록뿐이다.
-  /// 조회 실패 시 서비스가 빈 목록을 돌려주므로 진입점은 사라진다.
+  ///
+  /// [PREDEVICE-WORKER-ERROR-NOT-ZERO] 조회가 실패하면 진입점을 지우지 않고
+  /// 직전 상태를 그대로 둔다. 예전에는 서비스가 빈 목록을 돌려줘 카드가 조용히
+  /// 사라졌는데, 그러면 아직 남아 있는 요청을 근로자가 볼 방법이 없어진다.
   Future<void> _reloadPendingIdRequests() async {
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
-    final reqs = await _appFirestore.getPendingIdCardRequestsForUser(uid);
-    if (!mounted) return;
-    setState(() => _idRequestSurface = PendingIdRequestSurface.from(reqs));
+    try {
+      final reqs = await _appFirestore.getPendingIdCardRequestsForUser(uid);
+      if (!mounted) return;
+      setState(() => _idRequestSurface = PendingIdRequestSurface.from(reqs));
+    } catch (e) {
+      debugPrint('❌ 신분증 요청 갱신 실패: $e');
+      if (mounted) ToastHelper.showError('요청 목록을 갱신하지 못했습니다.');
+    }
   }
 
   /// 홈 → 기존 요청 다이얼로그. 닫힌 뒤 남은 건수를 다시 조회한다.
@@ -1486,6 +1513,90 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   // ── 지원 현황 (시안 .sec 지원현황) ──────────────────────────────
+  /// [PREDEVICE-WORKER-ERROR-NOT-ZERO] ERROR — 0건이 아니라 모르는 상태.
+  Widget _applicationStatusErrorCard(double s) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(vertical: 24 * s, horizontal: 16 * s),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.cloud_off_rounded, color: AppColors.textHint, size: 32 * s),
+          SizedBox(height: 8 * s),
+          Text(
+            '지원 현황을 불러오지 못했어요',
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textSecondary,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 4 * s),
+          Text(
+            '잠시 후 다시 시도해주세요',
+            style: const TextStyle(fontSize: 12, color: AppColors.textHint),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 14 * s),
+          GestureDetector(
+            onTap: _loadHomeData,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(
+                '다시 시도',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.infoDark,
+                ),
+              ),
+              SizedBox(width: 3 * s),
+              Icon(Icons.refresh_rounded,
+                  size: 15 * s, color: AppColors.infoDark),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [PREDEVICE-WORKER-ERROR-NOT-ZERO] PARTIAL — 보여 주는 값이 최신이 아니다.
+  Widget _staleNotice(double s) {
+    return GestureDetector(
+      onTap: _loadHomeData,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(vertical: 9 * s, horizontal: 12 * s),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(children: [
+          Icon(Icons.cloud_off_rounded, size: 15 * s, color: AppColors.warning),
+          SizedBox(width: 7 * s),
+          const Expanded(
+            child: Text(
+              '최신 정보를 불러오지 못했어요. 이전에 받은 내용을 보여주는 중이에요',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ),
+          SizedBox(width: 6 * s),
+          Text(
+            '다시 시도',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.warning,
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
   Widget _buildApplicationStatus(BuildContext context, double s) {
     // 3-column 통계
     final pendingCount = _cachedPendingCount;
@@ -1508,8 +1619,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                 MaterialPageRoute(builder: (_) => const MyApplicationsScreen())),
           ),
           SizedBox(height: 14 * s),
-          // 신규 사용자 Empty State — 지원 이력 없음
-          if (_applications.isEmpty && !_isLoadingData) ...[
+          // [PREDEVICE-WORKER-ERROR-NOT-ZERO] ERROR를 먼저 가른다.
+          //   조회에 실패하고 보여 줄 것이 하나도 없을 때 "아직 지원한 일자리가
+          //   없어요"라고 말하면 거짓말이 된다. 0건이 아니라 모르는 상태다.
+          if (_homeLoadFailed && _applications.isEmpty && !_isLoadingData) ...[
+            _applicationStatusErrorCard(s),
+          ] else if (_applications.isEmpty && !_isLoadingData) ...[
             Container(
               width: double.infinity,
               padding: EdgeInsets.symmetric(vertical: 24 * s, horizontal: 16 * s),
@@ -1555,6 +1670,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               ),
             ),
           ] else ...[
+          // PARTIAL — 직전 데이터는 있으나 마지막 조회가 실패했다.
+          //   숫자를 지우면 실수입/지원이 사라진 것처럼 보이므로 그대로 두되,
+          //   지금 보는 것이 최신이 아닐 수 있다는 사실을 함께 말한다.
+          if (_homeLoadFailed) ...[
+            _staleNotice(s),
+            SizedBox(height: 10 * s),
+          ],
           // 3열 통계 (시안 .app-summary)
           Container(
             decoration: BoxDecoration(

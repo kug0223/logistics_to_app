@@ -232,8 +232,16 @@ extension ApplicationFirestore on FirestoreService {
       _myApplicationsCacheTimestamps[uid] = DateTime.now();
       return list;
     } catch (e) {
+      // [PREDEVICE-WORKER-ERROR-NOT-ZERO] 실패를 빈 목록으로 바꾸지 않는다.
+      //   빈 목록을 돌려주면 홈은 "검토중 0 · 확정 0 · 초대 0"을 자신 있게
+      //   그린다 — 조회가 실패했다는 사실이 사라지고, 근로자는 자기 지원이
+      //   없어진 것으로 읽는다. 호출자 전원이 try/catch를 갖고 있으므로
+      //   판단은 화면이 한다. (attendance의 ...OrThrow가 같은 이유로 먼저
+      //   고쳐진 것과 같은 계열이다.)
+      //   캐시가 있으면 stale 데이터를 돌려주는 것이 빈 화면보다 낫다.
       debugPrint('내 지원 내역 조회 실패: $e');
-      return cached ?? [];
+      if (cached != null) return cached;
+      rethrow;
     }
   }
 

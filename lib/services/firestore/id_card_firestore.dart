@@ -227,8 +227,12 @@ extension IdCardFirestore on FirestoreService {
           .toList()
         ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt)));
     } catch (e) {
+      // [PREDEVICE-WORKER-ERROR-NOT-ZERO] 실패를 빈 목록으로 바꾸지 않는다.
+      //   빈 목록이면 홈의 신분증 열람 요청 카드가 조용히 사라진다 — 요청이
+      //   없는 것과 조회를 못 한 것이 같아 보이고, 근로자는 승인/거절할
+      //   기회를 잃는다. 호출자 둘 다 try/catch를 갖고 있다.
       debugPrint('❌ 신분증 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
