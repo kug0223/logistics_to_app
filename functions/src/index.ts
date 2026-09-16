@@ -1493,8 +1493,13 @@ async function processAutoNoShow(now: Timestamp): Promise<void> {
   let noShowCount = 0;
 
   // ── 1. 단기 근무자 ───────────────────────────────────────
+  // [PREDEVICE-NOSHOW-SEAT-PARITY] 좌석을 차지하는 상태는
+  //   CONFIRMED + CONTRACT_PENDING이다 (callableCheckIn의 허용 목록,
+  //   srvHomeUnclosed의 기대 근무일 전개와 동일). 장기 경로는 이미 두 상태를
+  //   모두 보는데 단기만 CONFIRMED였고, 그래서 계약 대기 상태로 근무일을
+  //   배정받은 단기 근로자의 무단결근은 자동 NO_SHOW가 되지 않았다.
   const shortSnap = await db.collection("applications")
-    .where("status", "==", "CONFIRMED")
+    .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
     .where("workDate", ">=", Timestamp.fromDate(yesterdayStartUTC))
     .where("workDate", "<",  Timestamp.fromDate(todayStartUTC))
     .limit(499)
@@ -1517,10 +1522,19 @@ async function processAutoNoShow(now: Timestamp): Promise<void> {
           businessName:  (d.businessName ?? "") as string,
           workDate:      workDateTs,
           yearMonth,
+          workType: (d.selectedWorkType ?? "") as string,
           status:        "NO_SHOW",
           finalWage:     0,
           wageStatus:    "confirmed",
+          isModified: false,
+          modifyRequested: false,
           autoNoShowAt:  admin.firestore.FieldValue.serverTimestamp(),
+          // [PREDEVICE-NOSHOW-VISIBLE] createdAt 필수 — AttendanceModel.fromMap이
+          //   createdAt 누락 시 throw하고 tryFromMap이 null을 돌려주므로, 이 필드가
+          //   없으면 자동 NO_SHOW 기록이 관리자 근태 목록에서 통째로 사라진다.
+          //   그 사이 srvHomeUnclosed는 status==="NO_SHOW"를 보고 그 날짜를 마감으로
+          //   처리하므로, 관리자에게는 "할 일 없음 + 기록 없음"으로 보인다.
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
         });
         noShowCount++;
@@ -1576,10 +1590,15 @@ async function processAutoNoShow(now: Timestamp): Promise<void> {
           businessName:  (d.businessName ?? "") as string,
           workDate:      workDateTs,
           yearMonth,
+          workType: (d.selectedWorkType ?? "") as string,
           status:        "NO_SHOW",
           finalWage:     0,
           wageStatus:    "confirmed",
+          isModified: false,
+          modifyRequested: false,
           autoNoShowAt:  admin.firestore.FieldValue.serverTimestamp(),
+          // [PREDEVICE-NOSHOW-VISIBLE] 단기 경로와 동일 — createdAt 누락 시 기록이 사라진다.
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
         });
         noShowCount++;
