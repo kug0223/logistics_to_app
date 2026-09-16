@@ -4346,7 +4346,6 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       // doc refs를 TX callback 밖에서 사전 생성 → TX retry 시에도 동일 ID 유지.
       const newAppRef = db.collection("applications").doc();
       const renewNotifRef = db.collection("users").doc(app.uid as string).collection("notifications").doc();
-      const newContractRef = db.collection("employment_contracts").doc();
 
       // [DS-08B.4] 갱신 근무관계용 신분증 auto-grant.
       // 신분증 등록 여부는 경합 대상이 아니므로 TX 밖에서 미리 읽는다.
@@ -4497,17 +4496,16 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           isRead: false,
           createdAt: now,
         });
-        // [EC-M-02] D-0 자동연장: 갱신된 application에 대한 employment_contracts 문서 생성
-        // 관리자가 서명해야 하는 새 계약서 — pending_employer 상태로 생성
-        tx.set(newContractRef, {
-          businessId: app.businessId,
-          workerId: app.uid,
-          applicationId: newAppRef.id,
-          status: "pending_employer",
-          createdAt: now,
-          createdBy: "SYSTEM",
-          renewedFromApplicationId: doc.id,
-        });
+        // [PREDEVICE-CONTRACT-OBLIGATION] D-0 자동연장은 계약서 문서를 미리 만들지 않는다.
+        //   이전에는 여기서 status:"pending_employer" 문서를 하나 썼다. 그 문서는
+        //   snapshot·toId·isLongTerm·articles가 없어 EmploymentContractModel이 파싱을
+        //   거부했고(tryFromMap → null), 근로자 목록에도 관리자 목록에도 안 떴다.
+        //   서명 흐름도 그것을 쓰지 않는다 — 장기 계약의 findOrCreateContract는
+        //   번들 탐색 없이 항상 _createNew로 가고, 저장은
+        //   callableFinalizeEmployerSignature가 pending_worker로 새 문서에 한다.
+        //   renewedFromApplicationId를 읽는 코드도 없었다. 즉 아무도 쓰지 않는
+        //   고아였고, 남겨두면 srvContractIssuedFor가 "계약서 있음"으로 오판한다.
+        //   갱신 근무관계의 계약 의무는 srvNeedsContractIssue가 좌석으로 판정한다.
         // [RENEWAL-001 수정] renewedToApplicationId 역참조 추가 — 원본→연장 양방향 추적
         //
         // [F-3 특이사항] 이전 application의 status가 CONFIRMED 그대로 남는 설계상 한계.
@@ -17048,31 +17046,26 @@ export const callableGetUnsentApplicationsByBiz = onCall(
 
     const cap = Math.min(typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 200, 500);
 
-    // Step 1: CONTRACT_PENDING 지원서 조회 (서버 사이드 필터)
+    // Step 1: 좌석 보유 지원서 조회 (서버 사이드 필터)
+    // [PREDEVICE-CONTRACT-OBLIGATION] CONTRACT_PENDING 단독 조건 폐기 —
+    //   초대 수락자는 CONFIRMED로 바로 가므로 이 탭에서 사라져 있었다.
     const appsSnap = await db.collection("applications")
       .where("businessId", "==", businessId)
-      .where("status", "==", "CONTRACT_PENDING")
+      .where("status", "in", CONTRACT_SEAT_STATUSES)
       .limit(cap)
       .get();
     if (appsSnap.empty) return {applications: []};
 
-    // Step 2: 각 지원서의 활성 계약서 존재 여부 병렬 확인
-    // applicationId(단수) 기준 — 배지/탭 표시 전용이므로 번들 2차 appId 미확인 허용된 설계
-    const hasActiveContract = await Promise.all(
-      appsSnap.docs.map(async (appDoc) => {
-        const contractSnap = await db.collection("employment_contracts")
-          .where("applicationId", "==", appDoc.id)
-          .where("businessId", "==", businessId)
-          .limit(1)
-          .get();
-        if (contractSnap.empty) return false;
-        const s = contractSnap.docs[0].data().status as string | undefined;
-        return !!s && s !== "voided"; // voided는 미발송으로 간주
-      })
+    // Step 2: 계약 의무 판정 — 홈(srvHomeUnsentContract)과 동일한 helper를 쓴다.
+    //   두 화면이 서로 다른 숫자를 말하지 않도록 정책은 한 곳에만 둔다.
+    const needsIssue = await Promise.all(
+      appsSnap.docs.map((appDoc) =>
+        srvNeedsContractIssue(appDoc.id, appDoc.data(), businessId)
+      )
     );
 
-    // Step 3: 활성 계약서 없는 지원서만 필터
-    const unsentDocs = appsSnap.docs.filter((_, i) => !hasActiveContract[i]);
+    // Step 3: 계약서를 아직 받지 못한 지원서만 필터
+    const unsentDocs = appsSnap.docs.filter((_, i) => needsIssue[i]);
 
     // Step 4: applicantName 누락 분 users 배치 조회 보완
     // callableGetApplicationsByBiz와 동일한 패턴 — 일부 문서에 applicantName 미저장
@@ -33185,12 +33178,113 @@ async function srvHomeApproval(
   return {total, overdue};
 }
 
+// ─── 계약 의무 canonical ─────────────────────────────────────────────────────
+//
+// [PREDEVICE-CONTRACT-OBLIGATION]
+//   Application commitment state ≠ Contract lifecycle state.
+//   좌석을 확정받은 사람(CONTRACT_PENDING 또는 CONFIRMED)은 근로계약서를
+//   받아야 한다. 어떤 경로로 그 좌석에 도달했는지는 상관없다 — 지원 승인이든
+//   초대 수락이든 자동연장이든 의무는 같다. 그래서 status 하나로 판단하지 않고
+//   "좌석 있음 + 아직 유효한 계약서가 발송되지 않음"으로 판단한다.
+//
+//   이전 구현은 status === "CONTRACT_PENDING"만 셌다. callableAcceptTOInvitation은
+//   INVITED → CONFIRMED로 바로 가므로, 초대를 수락한 근로자는 계약서 없이
+//   확정되고도 홈에도 계약 관리 화면에도 나타나지 않았다.
+
+/** 좌석을 차지하는(= 계약서를 받아야 하는) application 상태. */
+const CONTRACT_SEAT_STATUSES = ["CONTRACT_PENDING", "CONFIRMED"];
+
+/** 고용관계가 이미 끝나 계약서 발송이 더 이상 행동이 아닌 경우. */
+const CONTRACT_ENDED_STATUSES = ["APPROVED", "AUTO_APPROVED"];
+
+/**
+ * 계약서 상태 → 아직 근로자에게 전달되지 않았는가.
+ *
+ * pending_employer는 사업주 처리 대기다 — 문서는 있어도 근로자는 받지 못했다.
+ * pending_worker부터가 "발송됨"이다.
+ *
+ * @param {string|undefined} status employment_contracts.status
+ * @return {boolean} 근로자에게 아직 전달되지 않았으면 true
+ */
+function srvContractNotIssuedYet(status: string | undefined): boolean {
+  if (!status) return true;
+  return status === "voided" ||
+    status === "pending_employer" ||
+    status === "draft";
+}
+
+/**
+ * application 하나에 대해 유효한 계약서가 발송됐는지 판정.
+ *
+ * linking rule은 2단계다 — 계약해지 정리 경로가 이미 쓰는 것과 같다.
+ *   1) applicationId == appId          (단건/번들 1차)
+ *   2) applicationIds array-contains   (번들 2차 — _addSlot이 여기에만 쓴다)
+ * 1단계만 보면 번들 2차 지원서는 계약서가 있는데도 미발송으로 잡힌다.
+ *
+ * @param {string} appId 지원서 문서 ID
+ * @param {string} bizId 사업장 ID — 타 사업장 계약서 오매칭 차단
+ * @return {Promise<boolean>} 근로자에게 전달된 계약서가 있으면 true
+ */
+async function srvContractIssuedFor(
+  appId: string,
+  bizId: string
+): Promise<boolean> {
+  const byId = await db.collection("employment_contracts")
+    .where("applicationId", "==", appId)
+    .where("businessId", "==", bizId)
+    .select("status")
+    .limit(5)
+    .get();
+  let docs = byId.docs;
+  if (docs.length === 0) {
+    const byArray = await db.collection("employment_contracts")
+      .where("applicationIds", "array-contains", appId)
+      .where("businessId", "==", bizId)
+      .select("status")
+      .limit(5)
+      .get();
+    docs = byArray.docs;
+  }
+  // 한 건이라도 근로자에게 전달된 계약서가 있으면 의무는 이행된 것으로 본다.
+  return docs.some(
+    (d) => !srvContractNotIssuedYet(d.data()["status"] as string | undefined)
+  );
+}
+
+/**
+ * 좌석은 있으나 계약서가 아직 발송되지 않았는가.
+ *
+ * 홈(srvHomeUnsentContract)과 계약 관리 화면
+ * (callableGetUnsentApplicationsByBiz)이 함께 쓰는 단일 정책이다.
+ * 두 화면이 서로 다른 숫자를 말하지 않도록 사본을 만들지 않는다.
+ *
+ * @param {string} appId 지원서 문서 ID
+ * @param {admin.firestore.DocumentData} appData 지원서 데이터
+ * @param {string} bizId 사업장 ID
+ * @return {Promise<boolean>} 계약 미발송이면 true
+ */
+async function srvNeedsContractIssue(
+  appId: string,
+  appData: admin.firestore.DocumentData,
+  bizId: string
+): Promise<boolean> {
+  const st = (appData["status"] as string) ?? "";
+  if (!CONTRACT_SEAT_STATUSES.includes(st)) return false;
+  // 좌석이 반납된 자리(NO_SHOW 대체충원 등)는 발송 대상이 아니다.
+  if (appData["staffingReleasedAt"] != null) return false;
+  // 퇴사·해지가 승인된 관계는 지금 계약서를 보내는 것이 행동이 아니다.
+  const term = (appData["terminationStatus"] as string) ?? "";
+  const resign = (appData["resignStatus"] as string) ?? "";
+  if (CONTRACT_ENDED_STATUSES.includes(term)) return false;
+  if (CONTRACT_ENDED_STATUSES.includes(resign)) return false;
+  return !(await srvContractIssuedFor(appId, bizId));
+}
+
 // ─── Section 헬퍼: Unsent Contract (미발송 계약서) ───────────────────────────
 
 async function srvHomeUnsentContract(bizId: string): Promise<{count: number}> {
-  // CONTRACT_PENDING 전체를 페이지네이션으로 순회 — 200건 단순 limit으로 인한
+  // 좌석 보유 지원서 전체를 페이지네이션으로 순회 — 200건 단순 limit으로 인한
   // 무음 undercount(계약서 미확인 건 누락) 방지
-  // 기존 composite index: (businessId ASC, status ASC, createdAt DESC) 사용
   const PAGE_SIZE = 200;
   const MAX_PAGES = 25; // 최대 5,000건 — 초과 시 count 보장 불가 → throw
   let count = 0;
@@ -33199,12 +33293,21 @@ async function srvHomeUnsentContract(bizId: string): Promise<{count: number}> {
   const CHUNK = 20;
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    // createdAt 포함 select → startAfter cursor 위치 결정에 필요
+    // [PREDEVICE-UNSENT-ORDERBY] orderBy를 쓰지 않는다.
+    //   이전 구현은 orderBy("createdAt","desc")로 페이징했는데 applications에는
+    //   createdAt 필드가 없다(canonical은 appliedAt). Firestore는 정렬 필드가
+    //   없는 문서를 결과에서 제외하므로 이 쿼리는 언제나 0건이었고, 홈의
+    //   "계약 미발송"은 available:true인 채로 항상 0을 표시해 왔다.
+    //   실패가 아니라 성공한 0으로 보였다는 점이 이 버그의 핵심이다.
+    //   appliedAt으로 바꾸려면 새 복합 인덱스가 필요하다. 정렬 없이도
+    //   Firestore는 __name__ 순서를 암묵 적용하고 startAfter가 그대로 동작하므로
+    //   인덱스를 늘리지 않고 전수를 보장할 수 있다. 이 카운트에 순서는 무의미하다.
+    // srvNeedsContractIssue가 읽는 필드만 select — 문서 전체를 받지 않는다.
     let q: admin.firestore.Query = db.collection("applications")
       .where("businessId", "==", bizId)
-      .where("status", "==", "CONTRACT_PENDING")
-      .orderBy("createdAt", "desc")
-      .select("createdAt")
+      .where("status", "in", CONTRACT_SEAT_STATUSES)
+      .select("status", "staffingReleasedAt",
+        "terminationStatus", "resignStatus")
       .limit(PAGE_SIZE);
     if (cursor) q = q.startAfter(cursor);
 
@@ -33214,21 +33317,11 @@ async function srvHomeUnsentContract(bizId: string): Promise<{count: number}> {
     // employment_contracts 존재 여부 확인 (20개씩 병렬)
     for (let i = 0; i < appSnap.docs.length; i += CHUNK) {
       const chunk = appSnap.docs.slice(i, i + CHUNK);
-      const contractSnaps = await Promise.all(
-        chunk.map((d) =>
-          db.collection("employment_contracts")
-            .where("applicationId", "==", d.id)
-            .where("businessId", "==", bizId)
-            .select("status")
-            .limit(1)
-            .get()
-        )
+      // 정책은 srvNeedsContractIssue 한 곳에만 있다 — 화면별 사본을 만들지 않는다.
+      const needs = await Promise.all(
+        chunk.map((d) => srvNeedsContractIssue(d.id, d.data(), bizId))
       );
-      for (const cs of contractSnaps) {
-        // 계약서 없거나 voided → 미발송
-        const s = cs.docs[0]?.data()?.["status"] as string | undefined;
-        if (!s || s === "voided") count++;
-      }
+      for (const n of needs) if (n) count++;
     }
 
     if (appSnap.docs.length < PAGE_SIZE) { exhausted = true; break; }
@@ -33238,7 +33331,7 @@ async function srvHomeUnsentContract(bizId: string): Promise<{count: number}> {
   // cap 초과: 마지막 페이지가 꽉 찬 채로 루프 종료 → 잔여 건 미확인 → 거짓 count 반환 금지
   if (!exhausted) {
     throw new Error(
-      `[unsentContract] ${bizId} CONTRACT_PENDING 건수가 상한(${MAX_PAGES * PAGE_SIZE})을 초과합니다.`
+      `[unsentContract] ${bizId} 좌석 보유 지원서가 상한(${MAX_PAGES * PAGE_SIZE})을 초과합니다.`
     );
   }
 

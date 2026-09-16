@@ -285,8 +285,19 @@ void main() {
       }
     });
 
-    test('자동 갱신의 계약서 생성이 유지된다', () {
-      expect(autoRenewal.contains('employment_contracts'), isTrue);
+    // [PREDEVICE-CONTRACT-OBLIGATION] 이 계약은 뒤집혔다.
+    //   예전에는 자동 갱신이 employment_contracts 문서를 미리 하나 만들었다.
+    //   그 문서에는 snapshot·toId·isLongTerm·articles가 없어
+    //   EmploymentContractModel이 파싱을 거부했고(tryFromMap → null),
+    //   근로자에게도 관리자에게도 보이지 않았다. 서명 흐름도 그것을 쓰지 않는다
+    //   — 장기 계약의 findOrCreateContract는 항상 _createNew로 가고 저장은
+    //   callableFinalizeEmployerSignature가 pending_worker로 새 문서에 한다.
+    //   즉 아무도 쓰지 않는 고아였고, 남겨두면 srvContractIssuedFor가 그것을
+    //   보고 "계약서 있음"으로 오판한다. 갱신된 근무관계의 계약 의무는
+    //   문서를 미리 만드는 대신 srvNeedsContractIssue가 좌석으로 판정한다.
+    test('자동 갱신은 계약서 문서를 미리 만들지 않는다', () {
+      expect(autoRenewal.contains('employment_contracts'), isFalse,
+          reason: 'parse 불가 고아 계약서를 다시 만들면 계약 의무 판정이 왜곡된다');
     });
 
     test('집계 필드 초기화가 유지된다', () {
