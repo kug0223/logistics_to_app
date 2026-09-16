@@ -43,6 +43,18 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   List<AttendanceModel> _attendances = [];
   bool _isLoading = false;
 
+  /// [PREDEVICE-INCOME-ERROR-NOT-ZERO] 마지막 조회가 실패했는가.
+  /// 실패를 0원으로 그리면 일한 돈이 사라진 것처럼 보인다.
+  bool _loadFailed = false;
+
+  /// 조회에 실패했으면 금액 대신 모른다고 말한다.
+  ///
+  /// 0원은 "그 달에 번 돈이 없다"는 사실이고, 조회 실패는 "얼마인지 모른다"는
+  /// 전혀 다른 상태다. 둘을 같은 화면으로 그리면 근로자는 일한 돈이 사라진
+  /// 것으로 읽는다.
+  String _amountOrUnknown(int amount) =>
+      _loadFailed ? '확인 불가' : FormatHelper.formatWage(amount);
+
   @override
   void initState() {
     super.initState();
@@ -67,10 +79,14 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
         _allApplications = results[0] as List<ApplicationModel>;
         _attendances = results[1] as List<AttendanceModel>;
         _isLoading = false;
+        _loadFailed = false;
       });
     } catch (_) {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _loadFailed = true;
+        });
         ToastHelper.showError('데이터를 불러오지 못했습니다.');
       }
     }
@@ -88,9 +104,16 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
       setState(() {
         _attendances = atts;
         _isLoading = false;
+        _loadFailed = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadFailed = true;
+        });
+        ToastHelper.showError('수입 정보를 불러오지 못했습니다.');
+      }
     }
   }
 
@@ -487,13 +510,13 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       _incomeRow(
                         s: s,
                         label: '근무 완료',
-                        value: _isLoading ? null : FormatHelper.formatWage(wageCompleted),
+                        value: _isLoading ? null : _amountOrUnknown(wageCompleted),
                       ),
                       SizedBox(height: 10 * s),
                       _incomeRow(
                         s: s,
                         label: '근무 예정',
-                        value: _isLoading ? null : FormatHelper.formatWage(wageScheduled),
+                        value: _isLoading ? null : _amountOrUnknown(wageScheduled),
                       ),
                       SizedBox(height: 12 * s),
                       Divider(height: 1, color: AppColors.borderLight),
@@ -501,7 +524,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                       _incomeRow(
                         s: s,
                         label: '예상 수입',
-                        value: _isLoading ? null : FormatHelper.formatWage(wageTotal),
+                        value: _isLoading ? null : _amountOrUnknown(wageTotal),
                         isTotalRow: true,
                       ),
                     ],

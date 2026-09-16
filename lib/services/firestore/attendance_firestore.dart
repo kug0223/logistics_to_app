@@ -365,10 +365,20 @@ extension AttendanceFirestore on FirestoreService {
       _myAttendanceCacheTimestamps[cacheKey] = DateTime.now();
       return list;
     } catch (e) {
+      // [PREDEVICE-INCOME-ERROR-NOT-ZERO] 실패를 빈 목록으로 바꾸지 않는다.
+      //   이 조회는 근로자의 수입 숫자를 만든다. 빈 목록을 돌려주면 홈과
+      //   수입 상세가 "근무 완료 0원 · 예상 수입 0원"을 자신 있게 그리고,
+      //   근로자는 일한 돈이 사라진 것으로 읽는다. 0원과 모르는 것은
+      //   전혀 다른 뜻이다.
+      //   호출자(홈·수입 상세·일정)는 모두 try/catch를 갖고 있으므로
+      //   판단은 화면이 한다. getMyApplications와 같은 계열의 수정이다.
+      //   캐시가 있으면 stale을 주는 편이 빈 화면보다 낫다.
       debugPrint('❌ 월별 출근 기록 조회 실패: $e');
-      return cached ?? [];
+      if (cached != null) return cached;
+      rethrow;
     }
   }
+
   /// 관리자용 출근 기록 목록 조회 (CF 프록시)
   /// attendance allow list: if false 이후 이 CF 사용 — 서버사이드 권한 검증
   Future<List<AttendanceModel>> _callableGetAdminAttendances({
