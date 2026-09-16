@@ -212,6 +212,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   bool _isLoading = true;
   bool _isProcessing = false;
+
+  /// [BULK-PROGRESS] 일괄 처리 진행 상황 — null이면 진행 중 아님.
+  /// 순차 처리라 인원에 비례해 걸리므로 몇 명째인지 보여 준다.
+  ({int done, int total})? _batchProgress;
   bool _hasChanges = false;
   String? _selectedBusinessId;
 
@@ -3332,11 +3336,24 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ),
       child: Row(
         children: [
-          Icon(Icons.check_circle_rounded, size: 14, color: brand),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text('${_selectedIds.length}명 선택',
-              style: ResponsiveHelper.smallStyle(context).copyWith(
-                  fontWeight: FontWeight.bold, color: brand)),
+          // [BULK-PROGRESS] 처리 중에는 선택 인원 대신 진행 상황을 말한다.
+          if (_batchProgress != null) ...[
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: brand),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text('처리 중 ${_batchProgress!.done}/${_batchProgress!.total}',
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                    fontWeight: FontWeight.bold, color: brand)),
+          ] else ...[
+            Icon(Icons.check_circle_rounded, size: 14, color: brand),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text('${_selectedIds.length}명 선택',
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                    fontWeight: FontWeight.bold, color: brand)),
+          ],
           const Spacer(),
           TextButton(
             onPressed: () => setState(() => _selectedIds.clear()),
@@ -3581,7 +3598,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   병렬 처리 시 CF 간 레이스컨디션으로 동일 슬롯 중복 확정 가능 → 순차 처리 필수.
       //   [보안] PERMISSION_DENIED 포함 실패 로그 유지 — 크로스-사업장 접근 감지용.
       int successCount = 0;
+      int processed = 0;
       for (final appId in ids) {
+        // [BULK-PROGRESS] 순차 처리라 인원에 비례해 걸린다 — DEV 실측 기준
+        //   한 건에 약 0.26초, 60명이면 16초다. 그동안 버튼만 잠겨 있으면
+        //   관리자는 멈춘 것인지 진행 중인지 알 수 없다. 몇 명째인지 말한다.
+        //   (병렬로 바꾸지 않는다 — 동일 슬롯 중복 확정을 막는 순차 처리다.)
+        if (mounted && total > 1) {
+          setState(() => _batchProgress = (done: processed, total: total));
+        }
         try {
           await _svc.updateApplicationStatus(
             applicationId: appId,
@@ -3594,7 +3619,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         } catch (e) {
           debugPrint('❌ [_batchApprove] 확정 실패 [$appId]: $e');
         }
+        processed++;
       }
+      if (mounted) setState(() => _batchProgress = null);
       if (successCount > 0) _hasChanges = true;
       if (!mounted) return;
       // [4J.1] 부분 실패 피드백 — 성공/전체 카운트 표시
