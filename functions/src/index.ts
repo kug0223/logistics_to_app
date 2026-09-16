@@ -20593,24 +20593,30 @@ export const callableReleaseNoshowSeat = onCall(
     //   근태 화면은 이미 당일 게이트를 갖고 있었지만 지원자 화면에는 없었고,
     //   근무 탭이 과거 날짜로 그 화면을 연다. UI 한쪽만 막는 것으로는 부족하다.
     //   과거 NO_SHOW 기록 자체는 그대로 보인다 — 막는 것은 action뿐이다.
+    //
+    //   조건은 "오늘"이다. 이 기능의 뜻이 "오늘 빈 좌석을 오늘 메운다"이고,
+    //   두 client 화면도 같은 식을 쓴다. 미래 날짜는 애초에 NO_SHOW가 될 수
+    //   없다 — NO_SHOW를 쓰는 writer는 둘뿐이고(callableBatchSetNoShow는
+    //   [NS-02-FIX]로 미래를 skip, processAutoNoShow는 어제만 훑는다),
+    //   그래서 미래를 허용해 둘 이유가 없다. 과거만 막고 미래를 열어 두면
+    //   같은 action의 권위 판정이 화면과 서버에서 갈린다.
     {
       const relWorkDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
       if (relWorkDateTs) {
         const KST_OFFSET_MS_REL = 9 * 60 * 60 * 1000;
-        const todayKstStartMs = (() => {
-          const d = new Date(Date.now() + KST_OFFSET_MS_REL);
+        const kstDayStart = (ms: number) => {
+          const d = new Date(ms + KST_OFFSET_MS_REL);
           d.setUTCHours(0, 0, 0, 0);
           return d.getTime() - KST_OFFSET_MS_REL;
-        })();
-        const wdKstStartMs = (() => {
-          const d = new Date(relWorkDateTs.toMillis() + KST_OFFSET_MS_REL);
-          d.setUTCHours(0, 0, 0, 0);
-          return d.getTime() - KST_OFFSET_MS_REL;
-        })();
-        if (wdKstStartMs < todayKstStartMs) {
+        };
+        const todayKstStartMs = kstDayStart(Date.now());
+        const wdKstStartMs = kstDayStart(relWorkDateTs.toMillis());
+        if (wdKstStartMs !== todayKstStartMs) {
           throw new HttpsError(
             "failed-precondition",
-            "이미 지난 근무는 대체 인력을 충원할 수 없습니다."
+            wdKstStartMs < todayKstStartMs ?
+              "이미 지난 근무는 대체 인력을 충원할 수 없습니다." :
+              "당일 근무만 대체 인력을 충원할 수 있습니다."
           );
         }
       }

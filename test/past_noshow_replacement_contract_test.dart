@@ -12,10 +12,17 @@
 //   · 실행되면 totalConfirmed가 줄고 FULL이 ACTIVE로 돌아간다 —
 //     이미 지나간 날짜에 대해 다시 사람을 구하는 상태가 만들어진다.
 //
-// DEV runtime (수정 후):
-//   오늘   → HTTP 200, 좌석 반납됨
-//   어제   → HTTP 400 "이미 지난 근무는 대체 인력을 충원할 수 없습니다.", 반납 안 됨
-//   내일   → HTTP 200, 좌석 반납됨
+// 그리고 client는 "당일"인데 server는 "오늘 이후"였다 — 같은 action의 권위
+// 판정이 화면과 서버에서 갈렸다. NO_SHOW를 쓰는 writer는 둘뿐이고 둘 다 미래
+// 날짜를 만들 수 없으므로(관리자 경로는 [NS-02-FIX]로 skip, 자동 경로는 어제만),
+// 서버도 당일로 좁혔다.
+//
+// DEV runtime (최종):
+//   어제 · NO_SHOW · 미반납  → 400  좌석 유지 · TO confirmed 1 · FULL
+//   오늘 · NO_SHOW · 미반납  → 200  좌석 반납 · TO confirmed 0 · ACTIVE
+//   내일 · NO_SHOW · 미반납  → 400  좌석 유지 · TO confirmed 1 · FULL
+//   오늘 · 이미 반납         → 200  alreadyReleased (중복 감소 없음)
+//   오늘 · NO_SHOW 기록 없음 → 400  거절
 //
 // 계약:
 //   과거 NO_SHOW 기록 자체는 그대로 보인다. 막는 것은 action뿐이다.
@@ -56,13 +63,13 @@ void main() {
 
     test('workDate를 오늘(KST)과 비교한다', () {
       expect(flat.contains('const relWorkDateTs = appData.workDate'), true);
-      expect(flat.contains('if (wdKstStartMs < todayKstStartMs)'), true,
+      expect(flat.contains('if (wdKstStartMs !== todayKstStartMs)'), true,
           reason: '날짜 조건이 없으면 끝난 근무의 좌석이 반납된다');
       expect(cf.contains('이미 지난 근무는 대체 인력을 충원할 수 없습니다.'), true);
     });
 
     test('쓰기 전에 막는다 — 트랜잭션 진입 이전', () {
-      final guardAt = flat.indexOf('if (wdKstStartMs < todayKstStartMs)');
+      final guardAt = flat.indexOf('if (wdKstStartMs !== todayKstStartMs)');
       final txAt = flat.indexOf('await db.runTransaction(');
       expect(guardAt > 0 && txAt > guardAt, true,
           reason: '좌석 감소가 일어난 뒤 막으면 의미가 없다');
@@ -80,11 +87,28 @@ void main() {
       }
     });
 
-    test('오늘은 여전히 허용된다 — 미래도 막지 않는다', () {
-      // 과거만 막는 단방향 비교여야 한다. `!=` 나 `>` 로 바뀌면 당일이 막힌다.
-      expect(flat.contains('wdKstStartMs < todayKstStartMs'), true);
-      expect(flat.contains('wdKstStartMs !== todayKstStartMs'), false,
-          reason: '당일만 허용하면 내일 근무의 사전 대체충원이 막힌다');
+    test('당일만 허용한다 — 과거도 미래도 막는다', () {
+      // client 두 화면이 "오늘"을 쓰므로 서버도 같은 식이어야 한다.
+      // 과거만 막는 단방향 비교로 되돌아가면 같은 action의 권위 판정이
+      // 화면과 서버에서 갈린다.
+      expect(flat.contains('if (wdKstStartMs !== todayKstStartMs)'), true,
+          reason: '부등호 비교로 되돌아가면 서버만 미래를 허용하게 된다');
+      expect(flat.contains('"당일 근무만 대체 인력을 충원할 수 있습니다."'), true,
+          reason: '미래와 과거는 이유가 다르므로 문구도 달라야 한다');
+      expect(flat.contains('"이미 지난 근무는 대체 인력을 충원할 수 없습니다."'), true);
+    });
+
+    test('미래 NO_SHOW를 만드는 writer가 없다 — 당일 한정의 근거', () {
+      final src = _src(_fnsPath);
+      final code = _codeOf(src);
+      // NO_SHOW를 쓰는 writer는 둘뿐이다.
+      expect('status: "NO_SHOW",'.allMatches(code).length, 2,
+          reason: 'NO_SHOW writer가 늘면 미래 날짜 가능성을 다시 판단해야 한다');
+      // 관리자 수동 경로는 미래 날짜를 skip한다.
+      expect(_flat(code).contains('if (workDateMs > todayKSTStartMs) { skippedSet.add(resolvedId); return undefined; }'),
+          true, reason: '[NS-02-FIX] 미래 NO_SHOW 선제 생성 차단이 사라졌다');
+      // 자동 경로는 어제만 훑는다.
+      expect(code.contains('const yesterdayWeekday = KR_WEEKDAYS['), true);
     });
   });
 
@@ -93,9 +117,9 @@ void main() {
       final d = _codeOf(_src(_dayDialogPath));
       expect(d.contains('bool get _isReplacementActionable'), true);
       expect(
-        _flat(d).contains('return !dateKst.isBefore(todayKst);'),
+        _flat(d).contains('return dateKst.isAtSameMomentAs(todayKst);'),
         true,
-        reason: '과거만 막고 오늘·미래는 허용',
+        reason: '서버와 같은 식 — 당일만',
       );
     });
 

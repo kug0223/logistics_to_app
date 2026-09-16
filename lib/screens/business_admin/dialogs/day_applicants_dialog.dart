@@ -2837,7 +2837,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   /// 단기 근무: 당일 checkIn 기록이 있으면 이미 근무한 것 → 취소 불가
   /// 장기 근무: 계약 시작일(workDate)이 widget.date 이전이면 이미 근무 시작 → 취소 불가
   ///            (workDate == widget.date는 첫 근무일 당일 — 아직 출근 전이면 취소 허용)
-  /// 이 화면의 날짜에 대체 인력 충원이 의미 있는가 — 오늘 이후만.
+  /// 이 화면의 날짜에 대체 인력 충원이 의미 있는가 — 당일만.
   ///
   /// [PREDEVICE-PAST-REPLACEMENT] 자동 노쇼는 06:00에 "어제" 근무를 NO_SHOW로
   /// 기록한다. 그 기록은 좌석을 반납하지 않으므로 다른 조건(NO_SHOW · 단기 ·
@@ -2851,7 +2851,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   bool get _isReplacementActionable {
     final todayKst = FormatHelper.toKstDate(DateTime.now());
     final dateKst = FormatHelper.toKstDate(widget.date);
-    return !dateKst.isBefore(todayKst);
+    return dateKst.isAtSameMomentAs(todayKst);
   }
 
   bool _canCancelConfirmation(ApplicationModel app) {
