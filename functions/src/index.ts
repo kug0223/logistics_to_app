@@ -34865,6 +34865,13 @@ export const callableGetStaffingReadiness = onCall(
         return p["canManageTo"] === true || p["canManageWorkers"] === true;
       });
       if (businessIds.length === 0) {
+        // [CROSS-DOMAIN-R5.1] 여기의 `available`은 권한 플래그가 아니라
+        //   **조회에 성공했는가**다(AH-V2-03.1 — 부분 실패를 false로 알리는 용도).
+        //   권한 0개는 조회 실패가 아니라 scope가 빈 것이므로 true를 유지한다.
+        //   Task 단위 권한 표현은 callableGetAdminHomeSummary의
+        //   actions.*.available이 따로 맡는다.
+        //   다만 홈 인력 블록이 이 empty를 `부족 없음`처럼 읽히게 하는지는
+        //   별개 문제다 → [CORRECTION-READINESS-SCOPE-COPY]
         return {available: true, partial: false, failedBusinessCount: 0, days: []};
       }
     }

@@ -4,9 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../screens/business_admin/admin_review_list_screen.dart';
-import '../screens/business_admin/payroll/payroll_payment_dashboard_screen.dart'; // [FCM-ROUTE-01]
-import '../screens/business_admin/admin_contract_management_screen.dart'; // [PATCH-FCM-C]
 import '../screens/common/notification_screen.dart';
 import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_applications_screen.dart';
@@ -451,14 +448,12 @@ class FCMService {
       // USER(isAdmin=false)이면 관리자 전용 화면 대신 UserContractsScreen으로 폴백.
       case 'contractSigned':
         if (_currentUserIsAdmin) {
-          if (notifBusinessId == null) {
-            _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
-          } else {
-            _pushFcmScreen(
-              destinationKey: 'admin_contract_mgmt:$notifBusinessId:contractSigned',
-              builder: (_) => AdminContractManagementScreen(businessId: notifBusinessId),
-            );
-          }
+          // [CROSS-DOMAIN-R5.1] 관리자 목적지는 canonical dispatcher를 거친다.
+          //   여기서 바로 밀면 capability 검사가 없다 — 인앱 경로는 같은 알림에
+          //   canManageContract를 요구한다. _currentUserIsAdmin은 관리자 모드로
+          //   전환한 SUB_ADMIN에도 true이므로, 권한이 회수된 뒤에도 푸시로
+          //   들어갈 수 있었다. 권한 판정은 한 곳에만 둔다.
+          _navigateToNotificationScreen(autoDispatchPayload: data);
         } else {
           _pushFcmScreen(
             destinationKey: 'user_contracts',
@@ -500,21 +495,8 @@ class FCMService {
       // 'contractRenewal'(contractExpiringReminder) — 관리자는 계약 관리 화면으로 직접 이동.
       // 갱신 대상 계약은 이미 완료(완료 탭)된 상태이므로 Tab 3이 가장 관련성 높음.
       case 'contractRenewal':
-        if (_currentUserIsAdmin) {
-          if (notifBusinessId == null) {
-            _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
-          } else {
-            _pushFcmScreen(
-              destinationKey: 'admin_contract_mgmt:$notifBusinessId:contractRenewal',
-              builder: (_) => AdminContractManagementScreen(
-                businessId: notifBusinessId,
-                initialTab: 3,
-              ),
-            );
-          }
-        } else {
-          _navigateToNotificationScreen();
-        }
+        // [CROSS-DOMAIN-R5.1] canonical dispatcher 경유 — canManageContract 검사.
+        _navigateToNotificationScreen(autoDispatchPayload: data);
         break;
       // ─── [Phase 8.1C] 일자리 매칭 알림 ─────────────────────────
       // toMatch: 근로자가 가능일에 새 일자리 발견 → 해당 공고 상세 직접 진입
@@ -663,21 +645,8 @@ class FCMService {
       // ─── 계약 작성 요청 ──────────────────────────────────────────
       // contractRequested: worker→admin — 근로자가 계약서 발송을 요청/독촉 → 미발송 탭에서 처리.
       case 'contractRequested':
-        if (_currentUserIsAdmin) {
-          if (notifBusinessId == null) {
-            _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
-          } else {
-            _pushFcmScreen(
-              destinationKey: 'admin_contract_mgmt:$notifBusinessId:contractRequested',
-              builder: (_) => AdminContractManagementScreen(
-                businessId: notifBusinessId,
-                initialTab: 1,
-              ),
-            );
-          }
-        } else {
-          _navigateToNotificationScreen();
-        }
+        // [CROSS-DOMAIN-R5.1] canonical dispatcher 경유 — canManageContract 검사.
+        _navigateToNotificationScreen(autoDispatchPayload: data);
         break;
       // ─── 고용 생애주기 결과 알림 ─────────────────────────────────
       // [PATCH-FCM-A1C] FCM-BRANCH6-DEAD-ADMIN: admin path는 producer상 dead legacy.
@@ -715,10 +684,9 @@ class FCMService {
       // ─── 리뷰 ────────────────────────────────────────────────────
       case 'reviewReceived':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: 'admin_review_list',
-            builder: (_) => const AdminReviewListScreen(),
-          );
+          // [CROSS-DOMAIN-R5.1] canonical dispatcher 경유 — canManageWorkers 검사.
+          //   여기서는 businessId조차 보지 않고 관리자 목록을 열고 있었다.
+          _navigateToNotificationScreen(autoDispatchPayload: data);
         } else {
           // "리뷰 받았습니다" → 내 근무 평가 화면에서 직접 확인
           _pushFcmScreen(
@@ -750,32 +718,12 @@ class FCMService {
             _navigateToNotificationScreen();
             break;
           }
-          final now = DateTime.now();
-          // Shell active → Settlement tab canonical routing (Back: Dashboard → PayrollOverview)
-          if (!AdminTabSwitcher.instance.switchToTabAndPush(
-            AdminTabSwitcher.payrollTab,
-            MaterialPageRoute<void>(
-              builder: (_) => PayrollPaymentDashboardScreen(
-                businessId: notifBusinessId,
-                year: now.year,
-                month: now.month,
-                initialTab: 3,
-                showPendingSettlementOnly: true,
-              ),
-            ),
-          )) {
-            // Shell 미활성(cold-start / 앱 종료) → root navigator fallback
-            _pushFcmScreen(
-              destinationKey: 'payroll_settlement:$notifBusinessId',
-              builder: (_) => PayrollPaymentDashboardScreen(
-                businessId: notifBusinessId,
-                year: now.year,
-                month: now.month,
-                initialTab: 3,
-                showPendingSettlementOnly: true,
-              ),
-            );
-          }
+          // [CROSS-DOMAIN-R5.1] 이 알림은 canManageWage 서브어드민에게도
+          //   팬아웃된다(callableRequestInterimSettlement). 그 뒤 권한이
+          //   회수돼도 여기서는 그대로 통과했다 — 인앱 경로는 같은 알림에
+          //   canManageWage를 다시 읽는다. 판정은 한 곳에만 둔다.
+          //   목적지(급여 대시보드 tab 3)는 dispatcher 쪽과 같다.
+          _navigateToNotificationScreen(autoDispatchPayload: data);
         } else {
           _navigateToNotificationScreen();
         }
