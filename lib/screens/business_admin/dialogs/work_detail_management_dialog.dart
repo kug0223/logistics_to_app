@@ -43,6 +43,24 @@ class WorkDetailManagementDialog {
     final selectedWorkDetails = <String>{};
     String? selectedStatus;
 
+    // [SYSTEM-INTEGRATION-R2.4.1 §4] 인원 현황을 못 읽었으면 마감 결정을 시키지 않는다.
+    //
+    //   이 화면은 `$confirmed/${work.requiredCount}명`을 보여 주면서 같은 자리에서
+    //   일괄 마감·재개·긴급모집을 실행한다. 통계 조회가 실패하면 confirmed가
+    //   0으로 떨어져 `0/3`이 되고, 실제로는 3명이 확정된 업무를 관리자가
+    //   `아무도 안 왔다`고 보고 마감할 수 있었다.
+    //
+    //   ERROR != ZERO. 읽지 못한 것은 0이 아니다.
+    if (toItem.workDetailStatsFailed) {
+      DialogHelper.showAlert(
+        context,
+        title: '인원 현황을 불러오지 못했어요',
+        message: '지금 인원 수를 확인할 수 없어 업무를 마감하거나 재개할 수 없어요.\n'
+            '새로고침 후 다시 시도해 주세요.',
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,

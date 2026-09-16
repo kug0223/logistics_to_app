@@ -1130,10 +1130,18 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
     final workStats = widget.workDetailStats?[work.id];
     final workConfirmed = workStats?['confirmed'] ?? 0;
-    final workPending = workStats?['pending'] ?? 0;
     final workRequired = work.requiredCount;
+    // [SYSTEM-INTEGRATION-R2.4.1 §2] 잔여 좌석에서 대기(PENDING)를 빼지 않는다.
+    //
+    //   PENDING은 관심이고 INVITED는 제안이다. 자리를 차지하는 것은
+    //   CONTRACT_PENDING과 CONFIRMED뿐이다 — 관리자 쪽 모든 표면이 이미 그렇게
+    //   센다. 여기만 대기까지 빼서, 필요 5 · 확정 2 · 대기 2인 근무를 관리자는
+    //   `3명 부족`이라 보고 지원자는 `잔여 1명`으로 봤다. 그러면 아직 세 자리가
+    //   열려 있는데 지원자는 거의 찼다고 판단해 지원을 포기한다.
+    //
+    //   같은 entity, 같은 사건, 같은 truth.
     final workAvailable =
-        (workRequired - workConfirmed - workPending).clamp(0, workRequired);
+        (workRequired - workConfirmed).clamp(0, workRequired);
     final hasWorkStats = widget.workDetailStats != null;
 
     final isWorkFull = workConfirmed >= workRequired && workRequired > 0;
@@ -1373,9 +1381,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                             if (hasWorkStats) ...[
                               const TextSpan(text: ' · 잔여 '),
                               TextSpan(
+                                // [R2.4.1 §2] 잔여 0은 자리가 다 찼다는 뜻이다.
+                                //   예전에는 대기자 수까지 빼서 0이 될 수 있었고,
+                                //   그때 `대기중`이라고 얼버무렸다. 이제 0은
+                                //   확정이 정원에 닿았다는 사실 하나뿐이다.
                                 text: workAvailable > 0
                                     ? '$workAvailable명'
-                                    : (workPending > 0 ? '대기중' : '마감'),
+                                    : '마감',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   color: availableColor,

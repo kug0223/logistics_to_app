@@ -324,6 +324,99 @@ void main() {
   });
 
   // ═════════════════════════════════════════════════════════════
+  // 10. [R2.4.1 §2] 지원자 화면도 같은 shortage truth를 쓴다
+  //
+  //   PENDING은 관심, INVITED는 제안. 자리를 차지하는 것은
+  //   CONTRACT_PENDING과 CONFIRMED뿐이다. 지원자 화면이라고 예외가 아니다.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.4.1-10 지원자 공고 잔여 좌석', () {
+    final jp = _codeOf(_src('lib/screens/common/job_posting_screen.dart'));
+
+    test('10-a 잔여 좌석에서 대기를 빼지 않는다', () {
+      expect(
+          jp.contains('(workRequired - workConfirmed).clamp(0, workRequired)'),
+          isTrue);
+      expect(jp.contains('workRequired - workConfirmed - workPending'), isFalse,
+          reason: '지원자만 다른 부족을 본다');
+    });
+
+    test('10-b 잔여 0은 정원 마감이라는 뜻이다', () {
+      // 예전에는 대기까지 빼서 0이 될 수 있어 `대기중`으로 얼버무렸다.
+      expect(jp.contains("workPending > 0 ? '대기중' : '마감'"), isFalse);
+      expect(jp.contains("workAvailable > 0\n                                    ? '\$workAvailable명'\n                                    : '마감'"),
+          isTrue);
+    });
+
+    test('10-c FULL 판정도 확정만 본다', () {
+      expect(
+          jp.contains('workConfirmed >= workRequired && workRequired > 0'),
+          isTrue);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 11. [R2.4.1 §4] 인원을 못 읽었으면 인원 기반 action을 막는다
+  // ═════════════════════════════════════════════════════════════
+  group('R2.4.1-11 ERROR != ZERO (mutation 가능 화면)', () {
+    test('11-a 업무별 마감 관리가 통계 실패 시 열리지 않는다', () {
+      final d = _codeOf(
+          _src('lib/screens/business_admin/dialogs/work_detail_management_dialog.dart'));
+      expect(d.contains('if (toItem.workDetailStatsFailed) {'), isTrue,
+          reason: '0/N을 보고 마감할 수 있다');
+      expect(d.contains('인원 현황을 불러오지 못했어요'), isTrue);
+      // 가드가 showDialog보다 앞에 있어야 한다
+      final guard = d.indexOf('if (toItem.workDetailStatsFailed) {');
+      final show = d.indexOf('showDialog(');
+      expect(guard, greaterThan(0));
+      expect(show, greaterThan(guard));
+    });
+
+    test('11-b 실패 플래그가 실제로 세워진다', () {
+      final ctl = _codeOf(_src('lib/controllers/workforce_controller.dart'));
+      expect(ctl.contains('slot.markWorkDetailStatsFailed()'), isTrue);
+      final m = _codeOf(_src('lib/models/ui/admin_to_list_ui_models.dart'));
+      expect(m.contains('workDetailStatsFailed = true;'), isTrue);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // 12. [R2.4.1 §5] composite identity 고유성 — 모든 writer에서
+  //
+  //   Posting은 아직 `workType_startTime_endTime`으로 workDetail을 조인한다.
+  //   그 조인이 안전하려면 같은 슬롯에 같은 조합이 둘 생길 수 없어야 한다.
+  //   "현재 fixture에서 숫자가 같았다"가 아니라 writer가 막는다는 증거다.
+  // ═════════════════════════════════════════════════════════════
+  group('R2.4.1-12 composite identity', () {
+    test('12-a 생성 경로가 중복을 막는다', () {
+      expect(cfRaw.contains('function srvAssertUniqueWorkDetailIds('), isTrue);
+      final create = _tsSliceOf(cfRaw, 'export const callableCreateTO',
+          'export const callableCreateFlexSlots');
+      expect(create.contains('srvAssertUniqueWorkDetailIds(toWorkDetailsCreate)'),
+          isTrue, reason: '공고 생성이 중복 composite를 통과시킨다');
+    });
+
+    test('12-b 슬롯 생성 경로도 막는다', () {
+      final flex = _tsSliceOf(cfRaw, 'export const callableCreateFlexSlots',
+          'export const callablePublishTO');
+      expect(flex.contains('srvAssertUniqueWorkDetailIds(workDetails)'), isTrue);
+    });
+
+    test('12-c 수정 경로는 이미 막고 있었다', () {
+      expect(
+          cfRaw.contains(
+              '"같은 업무 유형과 근무 시간의 업무가 중복되었습니다. 각 업무의 조합은 고유해야 합니다."'),
+          isTrue);
+      expect(cfRaw.contains('const checkDuplicateIds ='), isTrue);
+    });
+
+    test('12-d 클라이언트도 같은 규칙을 안내한다', () {
+      final edit = _codeOf(
+          _src('lib/screens/business_admin/to_management/edit_to_screen.dart'));
+      expect(edit.contains('같은 업무와 근무 시간이 이미 있습니다.'), isTrue);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
   // 9. 권한 (§12)
   // ═════════════════════════════════════════════════════════════
   group('R2.4-09 permission', () {

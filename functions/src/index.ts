@@ -8532,6 +8532,33 @@ async function getEffectiveActivePostingCountTx(
 // ── callableCreateTO ─────────────────────────────────────
 // [HIGH-02] TO 생성 개수 제한 서버 강제 — 클라이언트 Firestore.add() 직접 호출 우회 차단
 // 1) 관리자·소속 사업장 교차검증  2) draft 아닌 경우 개수 제한 체크  3) TO 문서 생성(serverTimestamp 강제)
+/**
+ * [SYSTEM-INTEGRATION-R2.4.1 §5] workDetail composite identity는 고유해야 한다.
+ *
+ *   `workType_startTime_endTime` 조합은 공고 카드·업무 행·지원자 화면이
+ *   workDetail을 찾는 키다. canonical identity는 wdId지만, 그 조인들은 아직
+ *   composite를 쓴다. 같은 슬롯에 같은 조합이 둘 있으면 두 모집 단위의 인원이
+ *   한 줄로 합쳐지거나 서로의 값을 덮는다.
+ *
+ *   callableUpdateTO와 슬롯 갱신 경로는 이미 막고 있었는데 **생성 경로에는
+ *   없었다.** 클라이언트 UI가 막아도 callable을 직접 부르면 통과했다.
+ *   그래서 "composite 조인은 구조적으로 안전하다"고 말할 수 없었다.
+ *
+ * @param {unknown[]} wds workDetails 배열
+ * @return {void} 중복이면 throw
+ */
+function srvAssertUniqueWorkDetailIds(wds: unknown[]): void {
+  const ids = (wds as Record<string, unknown>[]).map(
+    (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
+  );
+  if (new Set(ids).size !== ids.length) {
+    throw new HttpsError(
+      "invalid-argument",
+      "같은 업무 유형과 근무 시간의 업무가 중복되었습니다. 각 업무의 조합은 고유해야 합니다."
+    );
+  }
+}
+
 // 슬롯 생성은 클라이언트가 반환된 toId로 직접 처리 (flex TO의 복잡한 배치 커밋 유지)
 // Input:  { toData: object }  — TOModel.toMap() 결과 (createdAt/statusUpdatedAt 제외)
 // Output: { toId: string }
@@ -8623,6 +8650,8 @@ export const callableCreateTO = onCall(
     if (toWorkDetailsCreate.length < 1) {
       throw new HttpsError("failed-precondition", "공고에 최소 1개의 업무가 필요합니다.");
     }
+    // [R2.4.1 §5] 생성 시점부터 composite identity 고유성을 강제한다.
+    srvAssertUniqueWorkDetailIds(toWorkDetailsCreate);
 
     // [WORKTYPE-SCOPE] submitted workType이 해당 business의 active workType인지 검증
     // assertBusinessPostingReady는 active count >= 1만 확인 — 이름 교차검증은 별도 (SUPER_ADMIN 면제)
@@ -9084,6 +9113,8 @@ export const callableCreateFlexSlots = onCall(
     if (!toId || !businessId) throw new HttpsError("invalid-argument", "toId, businessId 필요");
     if (!Array.isArray(dates) || dates.length === 0) throw new HttpsError("invalid-argument", "dates 필요");
     if (!Array.isArray(workDetails) || workDetails.length === 0) throw new HttpsError("invalid-argument", "workDetails 필요");
+    // [R2.4.1 §5] 슬롯 생성에도 같은 고유성 계약을 적용한다.
+    srvAssertUniqueWorkDetailIds(workDetails);
     // [TO-M-05] dates 입력 검증: YYYY-MM-DD 포맷 · 과거날짜 차단 · 중복 제거
     {
       const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
