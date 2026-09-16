@@ -344,25 +344,62 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           .refreshPendingContracts()
           .catchError((Object e) => debugPrint('⚠️ 미서명 계약 갱신 실패: $e')));
 
+      // [PREDEVICE-WORKER-ERROR-NOT-ZERO] 도메인별로 실패를 따로 받는다.
+      //   Future.wait는 하나가 실패하면 나머지가 성공했어도 결과를 통째로
+      //   버린다. 지원 내역만 못 불러왔을 뿐인데 오늘 근무·추천 공고·신분증
+      //   요청까지 같이 사라지면, 화면 전체가 빈 것처럼 보인다.
+      //   실패한 칸만 모른다고 두고 나머지는 그대로 그린다.
+      Object? appsErr;
+      Object? attsErr;
+      Object? tosErr;
+      Object? idErr;
       final results = await Future.wait([
-        _appFirestore.getMyApplications(uid),
-        _appFirestore.getMyMonthlyAttendances(userId: uid, year: now.year, month: now.month),
-        _appFirestore.getPublishedTOs(), // Hero C 날짜 카운트용
+        _appFirestore.getMyApplications(uid).catchError((Object e) {
+          appsErr = e;
+          return <ApplicationModel>[];
+        }),
+        _appFirestore
+            .getMyMonthlyAttendances(userId: uid, year: now.year, month: now.month)
+            .catchError((Object e) {
+          attsErr = e;
+          return <AttendanceModel>[];
+        }),
+        _appFirestore.getPublishedTOs().catchError((Object e) {
+          tosErr = e;
+          return <TOModel>[];
+        }),
         // [DS-03] 홈 요청 진입점 — 기존 홈 로드 1회에 합류시킨다 (중복 호출 없음)
-        _appFirestore.getPendingIdCardRequestsForUser(uid),
+        _appFirestore.getPendingIdCardRequestsForUser(uid).catchError((Object e) {
+          idErr = e;
+          return <IdCardAccessRequestModel>[];
+        }),
       ]);
       if (!mounted) return;
-      final apps = results[0] as List<ApplicationModel>;
-      final atts = results[1] as List<AttendanceModel>;
-      final tos  = results[2] as List<TOModel>;
-      final idReqs = results[3] as List<IdCardAccessRequestModel>;
-      // 캐시는 setState 전에 계산 — build 중 재계산 없이 준비된 값 사용
-      _applications = apps;
-      _attendances  = atts;
-      _publishedTos = tos;
-      _idRequestSurface = PendingIdRequestSurface.from(idReqs);
-      _idRequestsLoaded = true;
+
+      // 지원 내역이 실패했으면 이전 값을 유지한다 — 0으로 덮어쓰지 않는다.
+      if (appsErr == null) {
+        _applications = results[0] as List<ApplicationModel>;
+      } else {
+        debugPrint('⚠️ 지원 내역 로드 실패: $appsErr');
+      }
+      if (attsErr == null) _attendances = results[1] as List<AttendanceModel>;
+      if (tosErr == null) _publishedTos = results[2] as List<TOModel>;
+      if (idErr == null) {
+        _idRequestSurface =
+            PendingIdRequestSurface.from(results[3] as List<IdCardAccessRequestModel>);
+        _idRequestsLoaded = true;
+      }
       _rebuildCaches();
+
+      // 지원 내역은 홈의 숫자를 만드는 축이다 — 그것만 오류 상태로 올린다.
+      if (appsErr != null) {
+        setState(() {
+          _isLoadingData = false;
+          _homeLoadFailed = true;
+        });
+        ToastHelper.showError('지원 현황을 불러오지 못했어요.');
+        return;
+      }
 
       // ── BusinessModel 캐시 로드 — 추천 카드에 사업장 이미지·혜택 표시용
       // _getRecommendedTos 점수 기준 상위 8개 TO의 businessId만 로드한다.
@@ -378,7 +415,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             .take(8)
             .toList();
       } else {
-        targetBizIds = tos.map((t) => t.businessId).toSet().take(8).toList();
+        targetBizIds =
+            _publishedTos.map((t) => t.businessId).toSet().take(8).toList();
       }
       if (targetBizIds.isNotEmpty) {
         final bizResults = await Future.wait(
