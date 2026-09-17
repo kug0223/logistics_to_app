@@ -2145,6 +2145,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       final affectedTOIds = await _firestoreService.updateApplicationStatus(
         applicationId: app.id,
+        // [CROSS-DOMAIN-R5.1D] 서버가 문서를 읽기 전에 인가하도록 사업장을 함께 보낸다
+        businessId: app.businessId,
         status: AppStatus.confirmed,
         confirmedBy: adminUID,
       );

@@ -420,6 +420,10 @@ extension ApplicationFirestore on FirestoreService {
   Future<List<String>> updateApplicationStatus({
     required String applicationId,
     required String status,
+    /// [CROSS-DOMAIN-R5.1D] 확정 경로에서 서버가 **문서를 읽기 전에** 인가하도록
+    /// 어느 사업장 일인지 함께 보낸다. 없으면 서버는 문서에서 사업장을 읽은 뒤
+    /// 인가하는데, 그 순서에서는 id 존재 여부가 응답 모양으로 새어나간다.
+    String? businessId,
     String? confirmedBy,
     String? rejectedBy,
     String? canceledBy,
@@ -430,6 +434,7 @@ extension ApplicationFirestore on FirestoreService {
       if (status == AppStatus.confirmed) {
         return await _confirmWithConflictCheck(
           applicationId: applicationId,
+          businessId: businessId,
           confirmedBy: confirmedBy,
           message: message,
         );
@@ -1614,6 +1619,7 @@ extension ApplicationFirestore on FirestoreService {
   /// 트랜잭션·CAPACITY-GUARD·배치·슬롯 재계산·확정 알림을 서버에서 원자적으로 처리
   Future<List<String>> _confirmWithConflictCheck({
     required String applicationId,
+    String? businessId,
     String? confirmedBy,
     String? message,
   }) async {
@@ -1625,6 +1631,7 @@ extension ApplicationFirestore on FirestoreService {
 
     final result = await callable.call<Map<String, dynamic>>({
       'applicationId': applicationId,
+      if (businessId != null && businessId.isNotEmpty) 'businessId': businessId,
       if (message != null) 'message': message,
     });
 

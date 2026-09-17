@@ -269,7 +269,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
       // 날짜 모드: 해당 날짜의 대기 요청 로드 (appsFuture와 병렬로 이미 실행 중)
       if (_isDateMode) {
-        _pendingRequestsForDate = await scheduleRequestsFuture;
+        // [CROSS-DOMAIN-R5.1D] 이 표시는 근로자 관리 권한이 있어야 볼 수 있다.
+        //   계약 권한만으로 이 화면에 들어온 경우 서버가 거절하는데, 그것 때문에
+        //   고정근무 목록 전체가 실패하면 안 된다 — 표시만 비운다.
+        try {
+          _pendingRequestsForDate = await scheduleRequestsFuture;
+        } catch (e) {
+          debugPrint('⚠️ [고정근무] 일정변경 요청 표시 생략: $e');
+          _pendingRequestsForDate = const [];
+        }
       }
 
       if (!mounted) return;

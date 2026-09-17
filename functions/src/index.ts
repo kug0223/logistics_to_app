@@ -22373,7 +22373,10 @@ export const callableConfirmApplication = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
 
-    const {applicationId, message} = request.data as {applicationId: string; message?: string};
+    const {applicationId, message, businessId: claimedBusinessId} =
+      request.data as {
+        applicationId: string; message?: string; businessId?: string;
+      };
     if (!applicationId || typeof applicationId !== "string") {
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     }
@@ -22382,11 +22385,50 @@ export const callableConfirmApplication = onCall(
       throw new HttpsError("invalid-argument", "메시지는 500자 이내로 입력해주세요.");
     }
 
+    // [CROSS-DOMAIN-R5.1D] 인가를 지원서를 읽기 **전에** 끝낸다.
+    //
+    //   businessId를 문서에서만 얻으면 인가 전에 문서를 읽을 수밖에 없고,
+    //   그러면 없는 id와 있는 id의 응답이 갈려 존재 확인 수단이 된다.
+    //   호출자가 어느 사업장 일인지 먼저 말하게 하고, 그 사업장에 대한
+    //   권한을 먼저 본다. 권한이 없으면 어떤 id에 대해서도 같은 답이다.
+    //   이후 문서의 businessId가 주장과 다르면 없는 것과 같이 답한다 —
+    //   남의 사업장 지원서를 자기 사업장 이름으로 물어볼 수 없다.
+    //
+    //   선택 인자로 두면 생략한 직접 호출이 옛 순서로 떨어져 구멍이 그대로
+    //   남는다(실측: 같은 사업장 P0가 403/404로 존재를 구분). 그래서 필수다.
+    if (typeof claimedBusinessId !== "string" || claimedBusinessId.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    {
+      const {callerData: preCaller, bizData: preBiz} =
+        await assertBizAdmin(callerUid, claimedBusinessId);
+      const preAdminIds = (preBiz?.adminIds as string[] | undefined) ?? [];
+      const preFull =
+        (preCaller?.role as string | undefined) === "SUPER_ADMIN" ||
+        preAdminIds.includes(callerUid) ||
+        (preBiz?.ownerId as string | undefined) === callerUid;
+      if (!preFull) {
+        const preMember = await db.collection("businesses")
+          .doc(claimedBusinessId).collection("members").doc(callerUid).get();
+        const prePerms = preMember.data()?.permissions as
+          Record<string, boolean> | undefined;
+        if (prePerms?.canManageTo !== true) {
+          throw new HttpsError(
+            "permission-denied", "TO 관리 권한이 없습니다.");
+        }
+      }
+    }
+
     const appRef = db.collection("applications").doc(applicationId);
     const appSnap = await appRef.get();
     if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
     const appDataPre = appSnap.data()!;
     const businessId = appDataPre.businessId as string;
+
+    // [CROSS-DOMAIN-R5.1D] 주장한 사업장과 실제 소속이 다르면 없는 것과 같다.
+    if (businessId !== claimedBusinessId) {
+      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    }
 
     // [SEC-ROLE] 사업장 관리자 권한 검증
     // [CROSS-DOMAIN-R5.1C] 사업장과 무관한 호출자에게는 존재 여부를 알리지 않는다.
@@ -24270,6 +24312,24 @@ export const callableGetScheduleChangeRequestsForDate = onCall(
         const ownerId = biz.data()?.ownerId as string | undefined;
         const ok = adminIds.includes(callerUid) || ownerId === callerUid || callerSubAdminBusinessIds.includes(businessIds[i]);
         if (!ok) throw new HttpsError("permission-denied", `사업장 ${businessIds[i]}에 대한 권한이 없습니다.`);
+
+        // [CROSS-DOMAIN-R5.1D] 이 목록을 보는 화면(고정근무 관리)은 같은
+        //   자리에서 승인·거절까지 한다. 그 writer는 canManageWorkers를
+        //   요구하므로 읽기도 같은 권한이어야 한다 — membership만 보면
+        //   계약 권한만 가진 SubAdmin이 근로자 일정 요청을 읽게 된다.
+        //   (화면은 이 거절을 '표시 없음'으로 받아 목록 자체는 뜬다.)
+        const isFullAccess =
+          adminIds.includes(callerUid) || ownerId === callerUid;
+        if (!isFullAccess) {
+          const scrDMember = await db.collection("businesses")
+            .doc(businessIds[i]).collection("members").doc(callerUid).get();
+          const scrDPerms = scrDMember.data()?.permissions as
+            Record<string, boolean> | undefined;
+          if (scrDPerms?.canManageWorkers !== true) {
+            throw new HttpsError(
+              "permission-denied", "근로자 관리 권한이 없습니다.");
+          }
+        }
       }
     }
 

@@ -292,25 +292,66 @@ void main() {
   // 그 상태로 소속 실패를 그대로 내보내면 없는 id는 404, 있는 id는 403이 됐다.
   // 실측: 타 사업장 member → 두 경우 모두 404 (동일)
   //       같은 사업장 member, canManageTo 없음 → 403 (권한 없음은 그대로 말한다)
+  // 권한 없는 호출자가 id의 존재 여부를 알아낼 수 있으면 안 된다.
+  // businessId를 문서에서만 얻으면 인가 전에 문서를 읽을 수밖에 없고,
+  // 그러면 없는 id는 404, 있는 id는 403이 되어 존재 확인 수단이 된다.
+  // 호출자가 어느 사업장 일인지 먼저 말하게 하고 인가를 먼저 끝낸다.
+  //
+  // 실측(수정 후): P0 같은사업장 / 다른 capability만 / 타 사업장 To
+  //   → 세 caller 모두 존재하는 id와 없는 id의 응답이 동일
+  //   authorized → 200 vs 404 (쓸모 있는 구분 유지)
+  //   businessId 생략 → 400 (옛 순서로 떨어지는 경로 자체를 없앴다)
   group('지원서 존재 여부가 권한 없는 호출자에게 새지 않는다', () {
     final cf = _flat(_codeOf(_callableOf(raw, 'callableConfirmApplication')));
 
-    test('소속이 없으면 없는 id와 같은 응답이다', () {
-      expect(cf.contains('if (e instanceof HttpsError && e.code === "permission-denied") '
-          '{ throw new HttpsError("not-found", "지원서를 찾을 수 없습니다."); }'), true);
+    test('인가가 문서 읽기보다 먼저다', () {
+      final auth = cf.indexOf('await assertBizAdmin(callerUid, claimedBusinessId)');
+      final fetch = cf.indexOf('const appSnap = await appRef.get();');
+      expect(auth > 0 && fetch > auth, true,
+          reason: '문서를 먼저 읽으면 없는 id와 있는 id의 응답이 갈린다');
     });
 
-    test('capability 거부는 그대로 권한 오류다', () {
-      // 그 사업장 member는 이미 지원서의 존재를 안다 —
-      // 여기서 not-found로 바꾸면 권한 없음을 없는 것처럼 말하게 된다.
-      expect(cf.contains('if (!confirmPerms.canManageTo) throw new HttpsError('
-          '"permission-denied", "TO 관리 권한이 없습니다.");'), true);
+    test('businessId는 선택이 아니다', () {
+      expect(cf.contains('if (typeof claimedBusinessId !== "string" || '
+          'claimedBusinessId.length === 0) { throw new HttpsError('
+          '"invalid-argument", "businessId가 필요합니다."); }'), true,
+          reason: '생략 가능하면 생략한 직접 호출이 옛 순서로 떨어진다');
     });
 
-    test('다른 오류는 삼키지 않는다', () {
-      final i = cf.indexOf('e.code === "permission-denied"');
-      expect(i > 0, true);
-      expect(cf.substring(i, i + 160).contains('throw e;'), true);
+    test('주장한 사업장과 실제가 다르면 없는 것과 같다', () {
+      expect(cf.contains('if (businessId !== claimedBusinessId) { '
+          'throw new HttpsError("not-found", "지원서를 찾을 수 없습니다."); }'), true);
+    });
+
+    test('authorized의 쓸모 있는 404는 남는다', () {
+      expect(cf.contains('if (!appSnap.exists) throw new HttpsError('
+          '"not-found", "지원서를 찾을 수 없습니다.");'), true);
+    });
+
+    test('클라이언트가 사업장을 함께 보낸다', () {
+      final s = _flat(_codeOf(
+          _src('lib/services/firestore/application_firestore.dart')));
+      expect(s.contains("if (businessId != null && businessId.isNotEmpty) "
+          "'businessId': businessId,"), true);
+    });
+  });
+
+  // 같은 화면에서 승인·거절까지 하는 목록은 읽기도 그 권한이어야 한다.
+  group('일정변경 날짜 목록도 처리 권한을 따른다', () {
+    final rd = _flat(_codeOf(
+        _callableOf(raw, 'callableGetScheduleChangeRequestsForDate')));
+
+    test('canManageWorkers를 요구한다', () {
+      expect(rd.contains('if (scrDPerms?.canManageWorkers !== true)'), true);
+    });
+
+    test('화면은 거절을 표시 없음으로 받는다', () {
+      // 계약 권한으로 들어온 사용자의 고정근무 목록까지 깨지면 안 된다.
+      final d = _flat(_codeOf(
+          _src('lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart')));
+      expect(d.contains('_pendingRequestsForDate = await scheduleRequestsFuture; } catch (e)'),
+          true);
+      expect(d.contains('_pendingRequestsForDate = const [];'), true);
     });
   });
 

@@ -3474,6 +3474,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
+        businessId: app.businessId,
         // [P1-A-FIX] contractPending 직접 write 제거 → confirmed CF 경유 필수
         // updateApplicationStatus(confirmed) → _confirmWithConflictCheck() → callableConfirmApplication
         // CF가 TOCTOU 잠금·충돌감지·계약서 생성 후 CONTRACT_PENDING 상태로 설정
@@ -3618,6 +3619,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final ids = _selectedIds.toList();
       final total = ids.length; // [4J.1] 부분 실패 카운트 계산용
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
+      // [CROSS-DOMAIN-R5.1D] 서버가 지원서를 읽기 전에 인가하려면 사업장이 필요하다.
+      //   선택 사업장이 비어 있을 수 있으므로 화면에 있는 지원서에서 함께 모은다.
+      final bizOf = <String, String>{
+        for (final g in _cachedGroups)
+          for (final a in [...g.pendingApps, ...g.confirmedApps]) a.id: a.businessId,
+      };
       // [P1-A-FIX] parallel Future.wait → sequential for-loop
       //   confirmed CF 경유: callableConfirmApplication은 Firestore 트랜잭션 내 충돌감지 수행.
       //   병렬 처리 시 CF 간 레이스컨디션으로 동일 슬롯 중복 확정 가능 → 순차 처리 필수.
@@ -3635,6 +3642,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         try {
           await _svc.updateApplicationStatus(
             applicationId: appId,
+            businessId: _selectedBusinessId ?? bizOf[appId],
             // confirmed → _confirmWithConflictCheck() → CF callableConfirmApplication
             // CF가 TOCTOU 잠금·충돌감지·계약서 생성 후 CONTRACT_PENDING 설정
             status: AppStatus.confirmed,
