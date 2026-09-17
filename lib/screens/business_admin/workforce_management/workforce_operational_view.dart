@@ -948,11 +948,15 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
             onTap: _openApplicantsDialog,
           ),
           // 고정 근로자 관리
-          _buildIconButton(
-            icon: Icons.settings_outlined,
-            tooltip: '고정 근로자',
-            onTap: _openFixedWorkerManagement,
-          ),
+          // [CROSS-DOMAIN-R5.1F.1] read가 아니라 구독이다 — 권한이 회수되면
+          //   누를 수 없는 버튼을 남기지 않는다.
+          if (context.select<UserProvider, bool>(
+              (p) => p.can((x) => x.canManageWorkers)))
+            _buildIconButton(
+              icon: Icons.settings_outlined,
+              tooltip: '고정 근로자',
+              onTap: _openFixedWorkerManagement,
+            ),
         ],
       ),
     );
@@ -1592,7 +1596,11 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Future<void> _openFixedWorkerManagement() async {
     final up = context.read<UserProvider>();
-    if (!up.can((p) => p.canManageWorkers)) return;
+    if (!up.can((p) => p.canManageWorkers)) {
+      // [CROSS-DOMAIN-R5.1F.1] 아무 일도 일어나지 않는 탭은 이유가 없다.
+      ToastHelper.showWarning('근로자 관리 권한이 없습니다');
+      return;
+    }
     try {
       final businesses = await _ensureBusinesses();
       if (businesses.isEmpty) {

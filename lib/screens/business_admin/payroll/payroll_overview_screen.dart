@@ -69,8 +69,23 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   // gate는 _init() 내부에 그대로 유지 — unauthorized hidden tab은 계속 차단됨
   void _onPermissionChanged() {
     if (!mounted) return;
+    final allowed = _userProvider.can((p) => p.canManageWage);
+
+    // [CROSS-DOMAIN-R5.1F.1] 회수 방향도 본다.
+    //   이 handler는 grant(false→true) 복구만 하고 있었다. 화면을 열어 둔 채
+    //   권한이 회수되면 급여 화면과 그 action이 그대로 남아, 서버 403을
+    //   받아봐야 알 수 있었다. 권한은 지금 값으로 즉시 다시 판정한다.
+    if (!allowed) {
+      if (_accessDenied) return;
+      setState(() {
+        _accessDenied = true;
+        _isLoading = false;
+        _loadError = null;
+      });
+      return;
+    }
+
     if (!_accessDenied) return;
-    if (!_userProvider.can((p) => p.canManageWage)) return;
 
     setState(() {
       _accessDenied = false;

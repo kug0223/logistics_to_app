@@ -67,6 +67,9 @@ enum _HeroState {
   partialInfo,
   setup,
   draftOnly,
+  /// [CROSS-DOMAIN-R5.1F.1] 공고를 볼 수 있는 사업장이 하나도 없다.
+  /// 0은 "공고가 없다"가 아니라 "볼 수 있는 범위가 없다"이다.
+  noPostingScope,
   noPosting,
   shortage,
   attention,
@@ -87,6 +90,8 @@ typedef _AdminHomeData = ({
   bool canManageWorkers,
   bool canManageContract,
   bool canManageWage,
+  bool subAdminPermissionsLoaded,
+  bool canManageToAnywhere,
 });
 
 class BusinessAdminHomeScreen extends StatefulWidget {
@@ -1028,6 +1033,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         canManageWorkers: p.can((x) => x.canManageWorkers),
         canManageContract: p.can((x) => x.canManageContract),
         canManageWage: p.can((x) => x.canManageWage),
+        // [CROSS-DOMAIN-R5.1F.1] Hero는 선택 사업장이 아니라 배정 전체의
+        //   scope를 본다 — 그 판정에 쓰는 값도 같이 구독해야 한다.
+        subAdminPermissionsLoaded: p.subAdminPermissionsLoaded,
+        canManageToAnywhere:
+            p.canForAnyBusiness((x) => x.canManageTo, whenUnknown: true),
       ),
       builder: (context, data, _) {
         final theme = Theme.of(context);
@@ -1333,6 +1343,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             ctaLabel: _canCreatePosting(up) ? '공고 등록' : null,
             onCta: _canCreatePosting(up) ? () => _openCreatePosting(context) : null);
 
+      case _HeroState.noPostingScope:
+        // [CROSS-DOMAIN-R5.1F.1] 권한 부재를 사업 상태로 번역하지 않는다.
+        //   CTA 없음 — 이 사용자가 여기서 할 수 있는 일이 없다.
+        return _heroShell(s,
+            icon: Icons.lock_outline,
+            color: AppColors.grey600,
+            message: '공고 정보를 볼 수 있는 권한이 없어요',
+            supporting: '공고를 관리할 수 있는 사업장이 배정되어 있지 않습니다.\n'
+                '필요하면 사업장 관리자에게 권한을 요청하세요.');
+
       case _HeroState.draftOnly:
         return _heroShell(s,
             icon: Icons.edit_note,
@@ -1499,6 +1519,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //    SubAdmin은 사업장 소유 설정을 할 수 없어 이 분기를 타지 않는다(기존 정책).
     final r = _firstPosting;
     if (!isSub && r != null && !r.allReady) return _HeroState.setup;
+
+    // 2-0. [CROSS-DOMAIN-R5.1F.1] authorized scope 판정이 emptiness보다 먼저다.
+    //    publishedPostingCount는 "authorized scope 합"이므로, 공고를 볼 수 있는
+    //    사업장이 하나도 없으면 그 0은 언제나 0이다. 그걸 `공고 없음`이라고
+    //    말하면 권한 부재를 사업 상태로 바꿔 말하는 것이다.
+    //    하이드레이션 전에는 아무 주장도 하지 않는다(UNKNOWN ≠ EMPTY).
+    if (isSub) {
+      if (!up.subAdminPermissionsLoaded) return _HeroState.loading;
+      if (!up.canForAnyBusiness((p) => p.canManageTo, whenUnknown: true)) {
+        return _HeroState.noPostingScope;
+      }
+    }
 
     // 2·3. lifecycle — **partial이면 건너뛴다.**
     //    부분합의 0은 "없다"가 아니라 "일부만 셌다"이다. 실패한 사업장에

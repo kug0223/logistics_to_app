@@ -236,8 +236,11 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               SizedBox(width: 2 * s),
               // 공고 등록 CTA — SubAdmin은 canManageTo 권한 있을 때만 표시
               // [P2-A-FIX] 서버 게이트(callableCreateTO canManageTo 검증)와 동기화
-              if (!context.read<UserProvider>().isSubAdmin ||
-                  context.read<UserProvider>().can((p) => p.canManageTo))
+              // [CROSS-DOMAIN-R5.1F.1] read가 아니라 구독이다.
+              //   탭 루트는 Shell의 const child라 Shell이 다시 그려져도 여기까지
+              //   오지 않는다. read로 읽으면 권한이 회수돼도 이 버튼이 남는다.
+              if (context.select<UserProvider, bool>(
+                  (p) => !p.isSubAdmin || p.can((x) => x.canManageTo)))
                 _JobsCreateButton(
                   scale: s,
                   onTap: () {

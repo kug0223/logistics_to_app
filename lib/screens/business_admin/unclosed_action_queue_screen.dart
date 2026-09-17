@@ -71,6 +71,10 @@ class _UnclosedActionQueueScreenState
   bool _isAvailable                 = true;
   bool _hasChanges                  = false;
 
+  // [CROSS-DOMAIN-R5.1F.1] 진입 시점 한 번이 아니라, 머무는 동안에도 본다.
+  UserProvider? _userProvider;
+  bool _accessRevoked               = false;
+
   // ─── 로드 ──────────────────────────────────────────────────────────────────
 
   @override
@@ -84,8 +88,30 @@ class _UnclosedActionQueueScreenState
         Navigator.of(context).pop();
         return;
       }
+      // [CROSS-DOMAIN-R5.1F.1] 진입 후 회수/부여도 화면에 닿아야 한다.
+      _userProvider = up;
+      up.addListener(_onPermissionChanged);
       _load();
     });
+  }
+
+  /// [CROSS-DOMAIN-R5.1F.1] entry guard와 같은 predicate로 회수·부여를 본다.
+  void _onPermissionChanged() {
+    if (!mounted) return;
+    final up = _userProvider;
+    if (up == null) return;
+    // 하이드레이션 전(UNKNOWN)을 거부로 읽지 않는다.
+    if (up.currentUser?.isSubAdmin == true && !up.permissionsLoaded) return;
+    final allowed = up.can((p) => p.canManageWage);
+    if (allowed != _accessRevoked) return; // 상태 변화 없음
+    setState(() => _accessRevoked = !allowed);
+    if (allowed) _load();
+  }
+
+  @override
+  void dispose() {
+    _userProvider?.removeListener(_onPermissionChanged);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -136,7 +162,7 @@ class _UnclosedActionQueueScreenState
           IconButton(
             icon: const Icon(Icons.refresh, size: 22),
             color: AppColors.textSecondary,
-            onPressed: isLoading ? null : _load,
+            onPressed: (isLoading || _accessRevoked) ? null : _load,
             tooltip: '새로고침',
           ),
           IconButton(
@@ -157,9 +183,16 @@ class _UnclosedActionQueueScreenState
             ),
           ),
         ],
-        body: isLoading
-            ? const LoadingWidget()
-            : _buildBody(),
+        body: _accessRevoked
+            // [CROSS-DOMAIN-R5.1F.1] 권한 회수 — "마감 필요 0건"이 아니다.
+            ? const AppEmptyState(
+                icon: Icons.lock_outline,
+                title: '접근 권한이 없습니다',
+                subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
+              )
+            : isLoading
+                ? const LoadingWidget()
+                : _buildBody(),
       ),
     );
   }

@@ -53,9 +53,11 @@ void main() {
     });
 
     test('구독 대상 타입에도 권한이 들어 있다', () {
+      // [CROSS-DOMAIN-R5.1F.1] scope 판정 값이 더해졌다 — 개수를 못 박지 않고
+      //   "권한이 구독 대상 안에 있다"는 성질만 고정한다.
       expect(home.contains('typedef _AdminHomeData = ({ String userName, '
           'bool canManageTo, bool canManageWorkers, '
-          'bool canManageContract, bool canManageWage, });'), true);
+          'bool canManageContract, bool canManageWage,'), true);
     });
   });
 

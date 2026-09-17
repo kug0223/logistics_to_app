@@ -93,6 +93,10 @@ class _AdminContractManagementScreenState
   String _searchQuery = '';
   Timer? _searchDebounce;
 
+  // [CROSS-DOMAIN-R5.1F.1] 진입 시점 한 번이 아니라, 머무는 동안에도 본다.
+  UserProvider? _userProvider;
+  bool _accessRevoked = false;
+
   bool get _isUnsentTab => _tabCtrl.index == 1;
 
   ContractStatus? get _currentFilter =>
@@ -148,8 +152,32 @@ class _AdminContractManagementScreenState
         Navigator.of(context).pop();
         return;
       }
+      // [CROSS-DOMAIN-R5.1F.1] 진입 후 회수/부여도 화면에 닿아야 한다.
+      final up = context.read<UserProvider>();
+      _userProvider = up;
+      up.addListener(_onPermissionChanged);
       _load();
     });
+  }
+
+  /// [CROSS-DOMAIN-R5.1F.1] 대상 사업장(widget.businessId) 권한 변화 반영.
+  ///
+  /// UNKNOWN(권한을 모르는 상태)은 거부가 아니다 — map에 없으면 아무것도 하지
+  /// 않는다. 회수도 부여도 같은 판정으로 본다.
+  void _onPermissionChanged() {
+    if (!mounted) return;
+    final up = _userProvider;
+    final user = up?.currentUser;
+    if (up == null || user == null || !user.isSubAdmin) return;
+    final perms = up.permissionsForBusiness(widget.businessId);
+    if (perms == null) return; // UNKNOWN — EMPTY/DENY로 바꾸지 않는다
+    final allowed = perms.canManageContract;
+    if (allowed != _accessRevoked) return; // 상태 변화 없음
+    setState(() {
+      _accessRevoked = !allowed;
+      if (!allowed) _isLoading = false;
+    });
+    if (allowed) unawaited(_refresh());
   }
 
   /// widget.businessId(target B) 기준 canManageContract 권한 확인.
@@ -193,6 +221,7 @@ class _AdminContractManagementScreenState
 
   @override
   void dispose() {
+    _userProvider?.removeListener(_onPermissionChanged);
     _searchDebounce?.cancel();
     _tabCtrl.dispose();
     _scrollCtrl.dispose();
@@ -540,7 +569,7 @@ class _AdminContractManagementScreenState
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh_rounded),
-          onPressed: _refresh,
+          onPressed: _accessRevoked ? null : _refresh,
           color: AppColors.textSecondary,
         ),
         IconButton(
@@ -598,7 +627,14 @@ class _AdminContractManagementScreenState
         dividerColor: Colors.transparent,
         tabs: _tabLabels.map((l) => Tab(child: AppTabLabel(label: l))).toList(),
       ),
-      body: _isLoading
+      body: _accessRevoked
+          // [CROSS-DOMAIN-R5.1F.1] 권한 회수 — "계약 없음"이 아니라 "볼 수 없음"이다.
+          ? const AppEmptyState(
+              icon: Icons.lock_outline,
+              title: '접근 권한이 없습니다',
+              subtitle: '계약 관리 권한이 있는 관리자에게 문의하세요.',
+            )
+          : _isLoading
           ? const LoadingWidget(message: '계약서 목록을 불러오는 중...')
           : Column(
               children: [
