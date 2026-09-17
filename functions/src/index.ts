@@ -16929,20 +16929,22 @@ export const callableGetTOsByBiz = onCall(
     const {callerData: tosCallerData, bizData: tosBizData} =
       await assertBizAdmin(callerUid, businessId);
 
-    // [CROSS-DOMAIN-R5.1B] 공고 목록 read 권한.
+    // [CROSS-DOMAIN-R5.1C] 공고 목록 read 권한 = canManageTo.
     //
     //   지금까지 membership만 봤다 — 권한 flag가 하나도 없는
     //   SubAdmin도 DRAFT·SCHEDULED를 포함한 공고 구조를 읽었다.
     //   DTO에 근로자 개인정보·계좌·임금은 없지만 미공개 공고는
     //   지원자에게도 보이지 않는 관리자 정보다.
     //
-    //   기준을 새로 만들지 않는다. 같은 질문을 [R1.2.1]이 지원서
-    //   목록에서 이미 답해 뒀다: generic read를 canManageTo 하나로
-    //   강제하면 workforce/payroll caller가 깨지므로 **읽을 이유가
-    //   있는 권한 중 하나**를 요구한다. 넷 다 없으면 관리자 UI에서
-    //   할 수 있는 일이 없어 잃는 정상 caller가 없다.
-    //   실제 소비자(기존 공고 불러오기, 업무유형 삭제 전 확인,
-    //   활성 공고 수 제한)도 모두 그 안에 든다.
+    //   범위는 이 endpoint의 **실제 소비자**로 정한다. 다른 generic
+    //   endpoint가 무엇을 쓰는지는 근거가 아니다(R5.1B에서 그렇게
+    //   넓혔다가 되돌렸다). 살아 있는 소비자는 셋이고 전부 공고 작업이다:
+    //     · 공고 등록 화면의 기존 공고 불러오기 → canManageTo
+    //     · 업무유형 삭제 전 사용 중 공고 확인   → canManageTo
+    //     · draft→active 전환 시 활성 공고 수 한도 → canManageTo
+    //   canManageWorkers·canManageContract·canManageWage만 가진
+    //   사용자가 이 목록을 필요로 하는 화면은 없다(근태·계약·급여는
+    //   각자의 reader를 쓴다). 그래서 최소권한은 canManageTo 하나다.
     {
       const tosAdminIds = (tosBizData?.adminIds as string[] | undefined) ?? [];
       const tosOwnerId = tosBizData?.ownerId as string | undefined;
@@ -16955,13 +16957,9 @@ export const callableGetTOsByBiz = onCall(
           .collection("members").doc(callerUid).get();
         const tosPerms = tosMemberSnap.data()?.permissions as
           Record<string, boolean> | undefined;
-        const TO_READ_PERMISSIONS = [
-          "canManageTo", "canManageWorkers",
-          "canManageWage", "canManageContract",
-        ];
-        if (!TO_READ_PERMISSIONS.some((p) => tosPerms?.[p] === true)) {
+        if (tosPerms?.canManageTo !== true) {
           throw new HttpsError(
-            "permission-denied", "공고 조회 권한이 없습니다.");
+            "permission-denied", "공고 관리 권한이 없습니다.");
         }
       }
     }
@@ -22391,7 +22389,27 @@ export const callableConfirmApplication = onCall(
     const businessId = appDataPre.businessId as string;
 
     // [SEC-ROLE] 사업장 관리자 권한 검증
-    const {callerData: confirmCallerData, bizData: confirmBizData} = await assertBizAdmin(callerUid, businessId);
+    // [CROSS-DOMAIN-R5.1C] 사업장과 무관한 호출자에게는 존재 여부를 알리지 않는다.
+    //
+    //   businessId는 지원서 문서에서만 얻어지므로(클라이언트 전달값을 믿지
+    //   않는다) 문서를 먼저 읽을 수밖에 없다. 그 상태로 소속 실패를 그대로
+    //   내보내면 없는 id는 404, 있는 id는 403이 되어 남의 사업장 지원서
+    //   존재 여부를 확인하는 수단이 된다.
+    //   소속이 없으면 없는 id와 **같은** 응답으로 돌려준다.
+    //
+    //   반면 그 사업장의 member인데 canManageTo가 없는 경우는 아래에서
+    //   그대로 permission-denied다 — 이미 그 사업장 지원서의 존재를 아는
+    //   사람이고, 여기서 not-found로 바꾸면 권한 없음을 없는 것처럼 말하게 된다.
+    let confirmCallerData; let confirmBizData;
+    try {
+      ({callerData: confirmCallerData, bizData: confirmBizData} =
+        await assertBizAdmin(callerUid, businessId));
+    } catch (e) {
+      if (e instanceof HttpsError && e.code === "permission-denied") {
+        throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      }
+      throw e;
+    }
     // [SUBADMIN-PERM-01] 서브어드민 canManageTo 세부 권한 검증
     const confirmAdminIds = (confirmBizData?.adminIds as string[] | undefined) ?? [];
     if (
@@ -23893,7 +23911,40 @@ export const callableGetScheduleChangeRequests = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    const {callerData: scrRCaller, bizData: scrRBiz} =
+      await assertBizAdmin(callerUid, businessId);
+
+    // [CROSS-DOMAIN-R5.1C] 일정변경 요청 read = canManageWorkers.
+    //
+    //   같은 일을 두고 판정이 셋이었다:
+    //     승인/거절 writer  canManageWorkers
+    //     알림 라우트       canManageWorkers
+    //     이 reader        membership만
+    //   그래서 권한이 하나도 없는 SubAdmin이 근로자 이름·현재 일정·
+    //   요청 일정·사유가 담긴 목록을 통째로 읽을 수 있었다.
+    //
+    //   살아 있는 소비자는 ScheduleRequestManagementDialog 하나이고
+    //   그 화면의 일이 승인/거절이다 — 읽기와 처리가 같은 권한이어야 한다.
+    //   (날짜 단위 변형 callableGetScheduleChangeRequestsForDate는
+    //    고정근무 관리에서 계약 맥락으로 쓰여 여기서 건드리지 않는다.)
+    {
+      const scrRAdminIds = (scrRBiz?.adminIds as string[] | undefined) ?? [];
+      const scrROwnerId = scrRBiz?.ownerId as string | undefined;
+      const scrRFull =
+        (scrRCaller?.role as string | undefined) === "SUPER_ADMIN" ||
+        scrRAdminIds.includes(callerUid) ||
+        scrROwnerId === callerUid;
+      if (!scrRFull) {
+        const scrRMember = await db.collection("businesses").doc(businessId)
+          .collection("members").doc(callerUid).get();
+        const scrRPerms = scrRMember.data()?.permissions as
+          Record<string, boolean> | undefined;
+        if (scrRPerms?.canManageWorkers !== true) {
+          throw new HttpsError(
+            "permission-denied", "근로자 관리 권한이 없습니다.");
+        }
+      }
+    }
 
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 2000,

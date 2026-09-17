@@ -231,19 +231,25 @@ void main() {
   // generic read를 canManageTo 하나로 강제하면 다른 caller가 깨지므로
   // "읽을 이유가 있는 권한 중 하나"를 요구한다.
   // 실측(수정 후): owner·To·Workers·Contract·Wage 각각 200 / 넷 다 false 403
-  group('공고 목록은 읽을 이유가 있는 권한을 요구한다', () {
+  // 읽기 권한은 그 endpoint의 **실제 소비자**로 정한다.
+  // 다른 generic endpoint가 무엇을 쓰는지는 근거가 아니다 —
+  // 한 번 그렇게 넓혔다가(넷 중 하나) 소비자 근거가 없어 되돌렸다.
+  //
+  // 공고 목록의 살아 있는 소비자는 셋이고 전부 공고 작업이다:
+  //   기존 공고 불러오기 · 업무유형 삭제 전 사용 확인 · 활성 공고 수 한도
+  // 실측: owner/To 200 · Workers/Contract/Wage/전부false/타사업장 403
+  //       세 소비 경로 모두 canManageTo 계정에서 200
+  group('공고 목록은 공고 권한을 요구한다', () {
     final tos = _flat(_codeOf(_callableOf(raw, 'callableGetTOsByBiz')));
 
-    test('넷 중 하나는 있어야 한다', () {
-      expect(tos.contains('const TO_READ_PERMISSIONS = [ "canManageTo", "canManageWorkers", '
-          '"canManageWage", "canManageContract", ];'), true);
-      expect(tos.contains('if (!TO_READ_PERMISSIONS.some((p) => tosPerms?.[p] === true))'), true);
-      expect(tos.contains('공고 조회 권한이 없습니다'), true);
+    test('canManageTo를 요구한다', () {
+      expect(tos.contains('if (tosPerms?.canManageTo !== true)'), true);
+      expect(tos.contains('공고 관리 권한이 없습니다'), true);
     });
 
-    test('canManageTo 하나로 잠그지 않는다', () {
-      // 그렇게 하면 attendance/workforce/payroll 쪽 caller가 깨진다 — R1.2.1이 겪은 일이다.
-      expect(tos.contains('if (tosPerms?.canManageTo !== true)'), false);
+    test('다른 endpoint의 권한 목록을 베끼지 않는다', () {
+      expect(tos.contains('TO_READ_PERMISSIONS'), false,
+          reason: '소비자 근거 없이 네 권한으로 넓히면 최소권한이 아니다');
     });
 
     test('owner·SUPER_ADMIN은 그대로 통과한다', () {
@@ -251,17 +257,60 @@ void main() {
           'tosAdminIds.includes(callerUid) || tosOwnerId === callerUid'), true);
     });
 
-    test('지원서 목록과 같은 식을 쓴다', () {
-      final apps = _flat(_codeOf(_callableOf(raw, 'callableGetApplicationsByBiz')));
-      expect(apps.contains('const APPLICATION_READ_PERMISSIONS = [ "canManageTo", "canManageWorkers", '
-          '"canManageWage", "canManageContract", ];'), true,
-          reason: '두 generic read가 다른 기준을 쓰면 같은 사용자가 한쪽만 볼 수 있다');
-    });
-
     test('사업장 소속 확인이 먼저다', () {
       final i = tos.indexOf('await assertBizAdmin(callerUid, businessId)');
-      final p = tos.indexOf('TO_READ_PERMISSIONS');
+      final p = tos.indexOf('tosPerms?.canManageTo');
       expect(i > 0 && p > i, true);
+    });
+  });
+
+  // 같은 일에 판정이 셋이었다 — 승인/거절 writer와 알림 라우트는
+  // canManageWorkers인데 목록 reader만 membership이었다.
+  // 실측: owner/Workers 200 · To/Contract/Wage/전부false/타사업장 403
+  group('일정변경 요청은 읽기와 처리가 같은 권한이다', () {
+    final rd = _flat(_codeOf(_callableOf(raw, 'callableGetScheduleChangeRequests')));
+
+    test('reader가 canManageWorkers를 요구한다', () {
+      expect(rd.contains('if (scrRPerms?.canManageWorkers !== true)'), true);
+      expect(rd.contains('근로자 관리 권한이 없습니다'), true);
+    });
+
+    test('승인 writer와 같은 권한이다', () {
+      final wr = _flat(_codeOf(_callableOf(raw, 'callableApproveScheduleChangeRequest')));
+      expect(wr.contains('canManageWorkers'), true,
+          reason: '읽을 수 있는데 처리할 수 없거나 그 반대면 화면이 성립하지 않는다');
+    });
+
+    test('날짜 단위 변형은 건드리지 않는다', () {
+      // 고정근무 관리가 계약 맥락에서 쓴다 — 여기서 같이 조이면 그 화면이 깨진다.
+      expect(raw.contains('callableGetScheduleChangeRequestsForDate'), true);
+    });
+  });
+
+  // 권한 없는 호출자가 id의 존재 여부를 알아낼 수 있으면 안 된다.
+  // businessId는 지원서 문서에서만 얻어지므로 문서를 먼저 읽을 수밖에 없고,
+  // 그 상태로 소속 실패를 그대로 내보내면 없는 id는 404, 있는 id는 403이 됐다.
+  // 실측: 타 사업장 member → 두 경우 모두 404 (동일)
+  //       같은 사업장 member, canManageTo 없음 → 403 (권한 없음은 그대로 말한다)
+  group('지원서 존재 여부가 권한 없는 호출자에게 새지 않는다', () {
+    final cf = _flat(_codeOf(_callableOf(raw, 'callableConfirmApplication')));
+
+    test('소속이 없으면 없는 id와 같은 응답이다', () {
+      expect(cf.contains('if (e instanceof HttpsError && e.code === "permission-denied") '
+          '{ throw new HttpsError("not-found", "지원서를 찾을 수 없습니다."); }'), true);
+    });
+
+    test('capability 거부는 그대로 권한 오류다', () {
+      // 그 사업장 member는 이미 지원서의 존재를 안다 —
+      // 여기서 not-found로 바꾸면 권한 없음을 없는 것처럼 말하게 된다.
+      expect(cf.contains('if (!confirmPerms.canManageTo) throw new HttpsError('
+          '"permission-denied", "TO 관리 권한이 없습니다.");'), true);
+    });
+
+    test('다른 오류는 삼키지 않는다', () {
+      final i = cf.indexOf('e.code === "permission-denied"');
+      expect(i > 0, true);
+      expect(cf.substring(i, i + 160).contains('throw e;'), true);
     });
   });
 
