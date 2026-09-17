@@ -27813,13 +27813,14 @@ export const callableInviteWorker = onCall(
     //     → 관리자가 화면에 남아 있던 행에서 초대
     //   후보 목록은 스냅샷이고, 스냅샷을 authoritative하게 믿지 않는다.
     //   canonical `dates`로 본다 — 파생 인덱스(inviteKeys)가 아니다.
+    // [CROSS-DOMAIN-R5.1G.2] 이 날짜 라벨을 아래 충돌 검사도 같이 쓴다.
+    const invKstDate =
+      new Date(new Date(workDate).getTime() + 9 * 3600 * 1000);
+    const invDateKey =
+      `${invKstDate.getUTCFullYear()}-` +
+      `${String(invKstDate.getUTCMonth() + 1).padStart(2, "0")}-` +
+      `${String(invKstDate.getUTCDate()).padStart(2, "0")}`;
     if (slotId) {
-      const invKstDate =
-        new Date(new Date(workDate).getTime() + 9 * 3600 * 1000);
-      const invDateKey =
-        `${invKstDate.getUTCFullYear()}-` +
-        `${String(invKstDate.getUTCMonth() + 1).padStart(2, "0")}-` +
-        `${String(invKstDate.getUTCDate()).padStart(2, "0")}`;
       const invAvDates =
         (inviteAvData?.["dates"] as string[] | undefined) ?? [];
       if (!invAvDates.includes(invDateKey)) {
@@ -27878,13 +27879,26 @@ export const callableInviteWorker = onCall(
     // callableAcceptTOInvitation transaction에서도 재검증 (ACCEPT_REVALIDATION = final authority)
     // 충돌 중 근로자에게 불필요한 초대 알림 발송 방지
     if (startTime && endTime) {
-      const invWdObj     = new Date(workDate);
-      const invWdObjNext = new Date(invWdObj.getTime() + 24 * 60 * 60 * 1000);
+      // [CROSS-DOMAIN-R5.1G.2] 창을 UTC 자정으로 잡으면 같은 날을 놓친다.
+      //
+      //   workDate는 **KST 자정** 타임스탬프로 저장된다(2026-09-18 → 09-17T15:00Z).
+      //   그런데 여기서는 `new Date("2026-09-18")`(= UTC 자정)부터 24시간을
+      //   창으로 썼다. 그 창은 같은 KST 날짜의 확정 근무를 통째로 건너뛴다.
+      //   실측(R5.1G.2): 09-18 13:00~19:00 확정이 있는 근로자에게 09-18
+      //   09:00~18:00 초대가 **생성됐고**, 수락 단계에서야 거부됐다 —
+      //   받을 수 없는 초대와 알림, 그리고 풀리지 않는 대기 1건이 남는다.
+      //
+      //   수락 경로(ACCEPT_REVALIDATION)는 KST 달력일로 비교해 제대로 막는다.
+      //   두 자리가 같은 규칙을 쓰게 맞춘다 — 창은 넉넉히 잡고 날짜는 KST로 본다.
+      const KST_OFF = 9 * 60 * 60 * 1000;
+      const invWdObj  = new Date(workDate);
+      const invQryFrom = new Date(invWdObj.getTime() - 24 * 60 * 60 * 1000);
+      const invQryTo   = new Date(invWdObj.getTime() + 24 * 60 * 60 * 1000);
       const invConflictSnap = await db.collection("applications")
         .where("uid", "==", targetUid)
         .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-        .where("workDate", ">=", admin.firestore.Timestamp.fromDate(invWdObj))
-        .where("workDate", "<",  admin.firestore.Timestamp.fromDate(invWdObjNext))
+        .where("workDate", ">=", admin.firestore.Timestamp.fromDate(invQryFrom))
+        .where("workDate", "<",  admin.firestore.Timestamp.fromDate(invQryTo))
         .limit(200)
         .get();
       for (const conflictDoc of invConflictSnap.docs) {
@@ -27892,6 +27906,15 @@ export const callableInviteWorker = onCall(
         const cStart = cd.startTime as string | undefined;
         const cEnd   = cd.endTime   as string | undefined;
         if (!cStart || !cEnd) continue;
+        // 넓힌 창에서 실제로 같은 KST 날짜인 것만 본다.
+        const cWdTs = cd.workDate as admin.firestore.Timestamp | undefined;
+        if (!cWdTs) continue;
+        const cKst = new Date(cWdTs.toMillis() + KST_OFF);
+        const cKey =
+          `${cKst.getUTCFullYear()}-` +
+          `${String(cKst.getUTCMonth() + 1).padStart(2, "0")}-` +
+          `${String(cKst.getUTCDate()).padStart(2, "0")}`;
+        if (cKey !== invDateKey) continue;
         if (_hasTimeOverlap(startTime, endTime, cStart, cEnd)) {
           throw new HttpsError(
             "failed-precondition",
