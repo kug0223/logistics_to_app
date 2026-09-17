@@ -50,11 +50,17 @@ void main() {
 
   group('같은 건을 두 번 확정해도 부작용은 한 번', () {
     test('이미 확정된 건은 알림 블록 이전에 빠져나간다', () {
-      final retAt = flat.indexOf('if (alreadyConfirmed) return');
+      // [CROSS-DOMAIN-R5.2A] early return 블록 안에 grant 복구 호출이 들어와
+      //   `if (alreadyConfirmed) {` 형태가 됐다. 빠져나가는 위치는 그대로다.
+      final retAt = flat.indexOf('if (alreadyConfirmed) {');
       final notifAt = flat.indexOf('type: "applicationConfirmed"');
       expect(retAt > 0, true, reason: '멱등 early return이 없다');
       expect(notifAt > retAt, true,
           reason: '알림이 early return보다 앞이면 재호출마다 알림이 쌓인다');
+      expect(
+          flat.indexOf('return {success: true, alreadyConfirmed: true};', retAt) < notifAt,
+          true,
+          reason: '확정 알림 블록에 도달하기 전에 반환한다');
     });
 
     test('좌석 증감은 트랜잭션 안에서 건당 1', () {

@@ -13461,10 +13461,23 @@ export const callableGetBankbookSignedUrl = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {applicationId} = request.data as {applicationId?: string};
+    // [CROSS-DOMAIN-R5.2A] 대상 사업장을 호출자가 명시한다.
+    //
+    //   예전에는 caller의 사업장을 `users/{uid}.businessId` 하나로 해석했다.
+    //   소유자는 그 필드가 비어 있고 `managedBusinessIds`/`businesses.ownerId`로
+    //   관리하는 경우가 있어, 자기 사업장 지원서인데도 403이 났다(실측).
+    //   `users.businessId`는 legacy hint일 뿐 authorization truth가 아니다.
+    //
+    //   그리고 인가를 **지원서를 읽기 전에** 끝낸다. 문서를 먼저 읽고 소속을
+    //   보면 없는 id와 있는 id의 응답이 갈려 존재 확인 수단이 된다.
+    const {applicationId, businessId: claimedBizId} =
+      request.data as {applicationId?: string; businessId?: string};
 
     if (!applicationId || typeof applicationId !== "string") {
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+    if (!claimedBizId || typeof claimedBizId !== "string") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
     // 1. caller 정보 조회
@@ -13487,42 +13500,24 @@ export const callableGetBankbookSignedUrl = onCall(
       throw new HttpsError("permission-denied", "사업장 관리자만 통장사본에 접근 가능합니다.");
     }
 
-    // 2. Application 조회
-    const appDoc = await db.collection("applications").doc(applicationId).get();
-    if (!appDoc.exists) {
-      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
-    }
-    const appData = appDoc.data()!;
-    const appBusinessId = appData.businessId as string | undefined;
-    const appUid = appData.uid as string | undefined;
-    const appStatus = appData.status as string | undefined;
-    const docConsentGiven = appData.documentAccessConsentGiven === true;
+    // 2. [CROSS-DOMAIN-R5.2A] 대상 사업장 인가 — 지원서를 읽기 **전에**.
+    //   canonical source는 businesses 문서(ownerId/adminIds)와 users의
+    //   managedBusinessIds/subAdminBusinessIds다. users.businessId 단독 판정 금지.
+    const callerBizId = claimedBizId;
+    const callerManagedBizIds =
+      (callerData.managedBusinessIds as string[] | undefined) ?? [];
+    const allSubBizIds = [...new Set([
+      ...callerSubAdminBizIds,
+      ...(callerSubAdminOf ? [callerSubAdminOf] : []),
+    ])];
+    // users 쪽 배정 필드 — businesses 문서와 함께 봐서, 어느 한쪽만 갱신된
+    // 과도기에도 소유자가 자기 사업장에서 막히지 않게 한다.
+    const claimedByCallerFields =
+      callerManagedBizIds.includes(callerBizId) ||
+      allSubBizIds.includes(callerBizId) ||
+      (callerBusinessId !== undefined && callerBusinessId === callerBizId);
 
-    if (!appUid || !appBusinessId) {
-      throw new HttpsError("internal", "지원서 데이터가 유효하지 않습니다.");
-    }
-
-    // 3. 사업장 관계 검증
-    // BUSINESS_ADMIN: callerBusinessId == appBusinessId
-    // SubAdmin: appBusinessId in subAdminBusinessIds or subAdminOf
-    let callerBizId: string | undefined;
-    if (isBusinessAdmin && callerBusinessId) {
-      if (callerBusinessId === appBusinessId) {
-        callerBizId = callerBusinessId;
-      }
-    }
-    if (!callerBizId) {
-      // SubAdmin 경로
-      const allSubBizIds = [...new Set([...callerSubAdminBizIds, ...(callerSubAdminOf ? [callerSubAdminOf] : [])])];
-      if (allSubBizIds.includes(appBusinessId)) {
-        callerBizId = appBusinessId;
-      }
-    }
-    if (!callerBizId) {
-      throw new HttpsError("permission-denied", "해당 사업장의 관리자가 아닙니다.");
-    }
-
-    // 4. 현재 사업장 소속 재검증 (퇴직 관리자 stale access 방어)
+    // 3. 현재 사업장 소속 재검증 (퇴직 관리자 stale access 방어)
     const bizDoc = await db.collection("businesses").doc(callerBizId).get();
     if (!bizDoc.exists) throw new HttpsError("not-found", "사업장 정보를 찾을 수 없습니다.");
     const bizData = bizDoc.data()!;
@@ -13532,9 +13527,11 @@ export const callableGetBankbookSignedUrl = onCall(
       bizOwnerId === callerUid ||
       bizAdminIds.includes(callerUid) ||
       callerSubAdminBizIds.includes(callerBizId) ||
-      (callerSubAdminOf.length > 0 && callerSubAdminOf === callerBizId);
+      (callerSubAdminOf.length > 0 && callerSubAdminOf === callerBizId) ||
+      // [CROSS-DOMAIN-R5.2A] users 쪽 배정만 있는 과도기도 소속으로 인정한다.
+      claimedByCallerFields;
     if (!stillMember) {
-      throw new HttpsError("permission-denied", "현재 해당 사업장 소속이 아닙니다.");
+      throw new HttpsError("permission-denied", "해당 사업장의 관리자가 아닙니다.");
     }
 
     // 5. canManageWage 권한 검증
@@ -13547,6 +13544,26 @@ export const callableGetBankbookSignedUrl = onCall(
     }
     if (!canManageWage) {
       throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+    }
+
+    // 5.5. [CROSS-DOMAIN-R5.2A] 인가가 끝난 **뒤에** 지원서를 읽는다.
+    //   권한 없는 호출자는 어떤 applicationId에 대해서도 같은 답을 받는다.
+    //   주장한 사업장과 실제 소속이 다르면 없는 것과 같이 답한다 —
+    //   남의 사업장 지원서를 자기 사업장 이름으로 물어볼 수 없다.
+    const appDoc = await db.collection("applications").doc(applicationId).get();
+    if (!appDoc.exists) {
+      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    }
+    const appData = appDoc.data()!;
+    const appBusinessId = appData.businessId as string | undefined;
+    const appUid = appData.uid as string | undefined;
+    const appStatus = appData.status as string | undefined;
+    const docConsentGiven = appData.documentAccessConsentGiven === true;
+    if (!appUid || !appBusinessId) {
+      throw new HttpsError("internal", "지원서 데이터가 유효하지 않습니다.");
+    }
+    if (appBusinessId !== callerBizId) {
+      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
     }
 
     // 6. Application 상태 및 동의 검증
@@ -22753,7 +22770,28 @@ export const callableConfirmApplication = onCall(
       });
     });
 
-    if (alreadyConfirmed) return {success: true, alreadyConfirmed: true};
+    if (alreadyConfirmed) {
+      // [CROSS-DOMAIN-R5.2A] 멱등 재호출이 **복구 경로**다.
+      //
+      //   grant 쓰기는 좌석 트랜잭션 밖이라(POST_COMMIT), 좌석은 커밋됐는데
+      //   grant만 실패한 상태가 남을 수 있다. 예전에는 이 early return이
+      //   헬퍼보다 앞서 있어서, 다시 눌러도 grant를 만들 기회가 없었다 —
+      //   근로자가 신분증을 다시 올리기 전까지 영영 비어 있었다.
+      //   여기서 같은 헬퍼를 한 번 더 호출한다. 이미 있으면 skip이고,
+      //   좌석·카운터·상태는 건드리지 않는다.
+      try {
+        await ensureIdCardGrantForConfirmedApplication(
+          applicationId,
+          appDataPre,
+          businessId,
+          (appDataPre.businessName as string | undefined) ?? "",
+          (appDataPre.uid as string | undefined) ?? ""
+        );
+      } catch (e) {
+        console.warn("[confirmApplication] 멱등 재호출 grant 복구 실패:", e);
+      }
+      return {success: true, alreadyConfirmed: true};
+    }
 
     // ── 2. 트랜잭션이 status/confirmedAt/confirmedBy만 업데이트했으므로 appDataPre 재사용 ──
     // [PERF-01] 불필요한 appRef.get() 제거 — appDataPre는 이미 최신 나머지 필드를 포함
@@ -28132,7 +28170,22 @@ export const callableAcceptTOInvitation = onCall(
 
     // ── 2. 상태 검증 ─────────────────────────────────────────────────────────
     const currentStatus = appData.status as string | undefined;
-    if (currentStatus === "CONFIRMED") return {success: true, alreadyConfirmed: true};
+    if (currentStatus === "CONFIRMED") {
+      // [CROSS-DOMAIN-R5.2A] 확정 경로와 같은 이유로, 멱등 재호출이 복구 경로다.
+      //   grant가 이미 있으면 skip. 좌석·카운터·상태는 손대지 않는다.
+      try {
+        await ensureIdCardGrantForConfirmedApplication(
+          applicationId,
+          appData,
+          (appData.businessId as string | undefined) ?? "",
+          (appData.businessName as string | undefined) ?? "",
+          callerUid
+        );
+      } catch (e) {
+        console.warn("[acceptTOInvitation] 멱등 재호출 grant 복구 실패:", e);
+      }
+      return {success: true, alreadyConfirmed: true};
+    }
     if (currentStatus === "EXPIRED") {
       throw new HttpsError("failed-precondition", "만료된 초대는 수락할 수 없습니다.");
     }

@@ -196,9 +196,10 @@ void main() {
     });
 
     test('확정 경로와 수락 경로가 같은 헬퍼를 쓴다', () {
+      // [CROSS-DOMAIN-R5.2A] 각 경로에 멱등 재호출 복구 지점이 더해져 4곳이다.
       expect('await ensureIdCardGrantForConfirmedApplication('
-          .allMatches(cf).length, 2,
-          reason: 'callableConfirmApplication + callableAcceptTOInvitation');
+          .allMatches(cf).length, 4,
+          reason: '확정 2(정상+멱등) + 수락 2(정상+멱등)');
       expect(_flat(_callableBody(rawCf, 'callableConfirmApplication'))
           .contains('await ensureIdCardGrantForConfirmedApplication('), true);
       expect(accept.contains('await ensureIdCardGrantForConfirmedApplication('), true);

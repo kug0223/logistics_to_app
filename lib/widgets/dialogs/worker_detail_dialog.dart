@@ -246,12 +246,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ToastHelper.showError('지원서 정보가 없습니다.');
       return;
     }
+    // [CROSS-DOMAIN-R5.2A] 대상 사업장을 명시한다 — 서버가 그 사업장 기준으로
+    //   먼저 인가하고, 지원서는 그 뒤에 읽는다.
+    final bizId = widget.application?.businessId;
+    if (bizId == null || bizId.isEmpty) {
+      ToastHelper.showError('사업장 정보가 없습니다.');
+      return;
+    }
     if (!mounted) return;
     setState(() => _bankbookLoading = true);
     try {
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetBankbookSignedUrl')
-          .call({'applicationId': appId});
+          .call({'applicationId': appId, 'businessId': bizId});
       if (!mounted) return;
       final signedUrl = result.data['signedUrl'] as String?;
       if (signedUrl == null || signedUrl.isEmpty) {
