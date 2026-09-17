@@ -57,12 +57,15 @@ void main() {
     });
 
     test('같은 사업장을 여러 surface가 봐도 구독은 하나다', () {
+      // [CROSS-DOMAIN-R5.1F.4] 살아 있으면 그대로 쓰고, 에러로 죽은 자리면
+      //   다시 붙인다. 어느 쪽이든 사업장당 구독은 하나다.
       expect(
-          up.contains('_targetPermsSubs[businessId] = '
-              '(sub: existing.sub, count: existing.count + 1);'),
+          up.contains('sub: existing.sub ?? '
+              '_attachTargetPermsListener(businessId, user.uid), '
+              'count: existing.count + 1,'),
           true,
           reason: 'refcount가 없으면 다이얼로그를 겹쳐 열 때마다 listener가 늘어난다');
-      expect(up.contains('if (cur.count <= 1) { cur.sub.cancel(); '
+      expect(up.contains('if (cur.count <= 1) { cur.sub?.cancel(); '
           '_targetPermsSubs.remove(businessId);'), true,
           reason: '마지막 surface가 닫히면 끊어야 상시 구독이 아니다');
       expect(up.contains('_targetPermsSubs[businessId] = '
@@ -79,30 +82,32 @@ void main() {
     });
 
     test('폴링이 아니라 snapshot이다', () {
-      final i = up.indexOf('VoidCallback watchBusinessPermissions');
-      final body = up.substring(i, i + 2200);
-      expect(body.contains(".collection('members') .doc(user.uid) .snapshots() .listen"),
-          true);
+      // [CROSS-DOMAIN-R5.1F.4] 구독 생성이 _attachTargetPermsListener로 빠졌다
+      //   (재부착이 같은 자리를 쓰기 위해서다). 보는 성질은 그대로다.
+      final i = up.indexOf('_attachTargetPermsListener(String businessId, String uid) {');
+      expect(i, greaterThan(-1));
+      final body = up.substring(i, i + 2400);
+      expect(body.contains(".collection('members') .doc(uid) .snapshots() .listen"), true);
       expect(body.contains('Timer'), false, reason: '주기적 재조회를 넣지 않는다');
     });
 
     test('membership이 사라지면 fail-closed다', () {
-      final i = up.indexOf('VoidCallback watchBusinessPermissions');
-      final body = up.substring(i, i + 2200);
+      final i = up.indexOf('_attachTargetPermsListener(String businessId, String uid) {');
+      final body = up.substring(i, i + 2400);
       expect(body.contains('data == null ? null : MemberPermissions.fromMap('), true,
           reason: '문서가 없으면 map에서 지운다 — canForBusiness가 false를 돌려준다');
     });
 
     test('대상 사업장 구독이 선택 사업장 복구 로직을 타지 않는다', () {
-      final i = up.indexOf('VoidCallback watchBusinessPermissions');
-      final body = up.substring(i, i + 2200);
+      final i = up.indexOf('_attachTargetPermsListener(String businessId, String uid) {');
+      final body = up.substring(i, i + 2400);
       expect(body.contains('_recoverFromSelectedMembershipLoss'), false,
           reason: 'B의 membership 상실이 A의 선택 context를 흔들면 안 된다');
       expect(body.contains('_switchGeneration++'), false);
     });
 
     test('provider dispose에서 전부 끊는다', () {
-      expect(up.contains('for (final e in _targetPermsSubs.values) { e.sub.cancel(); } '
+      expect(up.contains('for (final e in _targetPermsSubs.values) { e.sub?.cancel(); } '
           '_targetPermsSubs.clear();'), true);
     });
   });

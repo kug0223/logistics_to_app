@@ -3429,9 +3429,17 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                           ] else if (_cancelCheck(ctx) == PermissionCheck.unknown ||
                               _cancelCheck(ctx) == PermissionCheck.error) ...[
                             const SizedBox(height: 6),
-                            Text('권한 정보를 확인하지 못했습니다',
-                                style: ResponsiveHelper.tinyStyle(ctx,
-                                    color: AppColors.grey500)),
+                            // [CROSS-DOMAIN-R5.1F.4] 확인 실패는 terminal이다 —
+                            //   기다린다고 저절로 낫지 않으므로 다시 붙일
+                            //   방법을 준다. 자동 반복도 타이머도 없다.
+                            GestureDetector(
+                              onTap: () => ctx
+                                  .read<UserProvider>()
+                                  .retryBusinessPermissionWatch(widget.businessId),
+                              child: Text('권한 정보를 확인하지 못했습니다 · 다시 확인',
+                                  style: ResponsiveHelper.tinyStyle(ctx,
+                                      color: AppColors.grey500)),
+                            ),
                           ],
                         ],
                       ],

@@ -192,7 +192,10 @@ void main() {
           s.contains('] else if (_cancelCheck(ctx) == PermissionCheck.unknown || '
               '_cancelCheck(ctx) == PermissionCheck.error) ...['),
           true);
-      expect(s.contains("Text('권한 정보를 확인하지 못했습니다',"), true);
+      // [CROSS-DOMAIN-R5.1F.4] 확인 실패는 terminal이라 재시도 수단이 붙었다.
+      //   여전히 CTA는 아니다 — 권한을 다시 확인할 뿐 이체를 취소하지 않는다.
+      expect(s.contains("Text('권한 정보를 확인하지 못했습니다 · 다시 확인',"), true);
+      expect(s.contains('.retryBusinessPermissionWatch(widget.businessId),'), true);
     });
 
     test('전송 직전에 한 번 더 본다', () {

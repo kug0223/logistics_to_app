@@ -97,7 +97,14 @@ class UserProvider with ChangeNotifier {
   /// 해결은 "모든 배정 사업장을 상시 구독"이 아니다 — 화면이 살아 있는 동안
   /// **그 사업장 하나만** 본다. 같은 사업장을 여러 surface가 보면 구독은 하나로
   /// 합치고(refcount), 마지막 surface가 닫히면 끊는다. 폴링은 없다.
-  final Map<String, ({StreamSubscription<DocumentSnapshot<Map<String, dynamic>>> sub, int count})>
+  /// [CROSS-DOMAIN-R5.1F.4] `sub`가 null이면 **죽은 구독**이다.
+  ///
+  /// Firestore의 listen 에러는 terminal이다 — 같은 구독이 나중에 snapshot을
+  /// 다시 주지 않는다. 그래서 에러가 나면 구독을 끊고 자리를 비워 두되,
+  /// refcount(`count`)는 보존한다. 보고 있는 화면 수는 그대로이기 때문이다.
+  /// 비어 있는 자리는 "이미 구독 중"이 아니라 "다시 붙일 수 있음"을 뜻한다.
+  final Map<String,
+          ({StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? sub, int count})>
       _targetPermsSubs = {};
 
   /// [CROSS-DOMAIN-R5.1F.3] 사업장별 권한 값이 **지금 검증된 것인지**.
@@ -261,12 +268,17 @@ class UserProvider with ChangeNotifier {
           //   들어온 권한 회수가 공고 탭·카드에 반영되지 않았다.
           //   같은 snapshot으로 map도 정렬한다 — 새 listener도, 새 read도 없다.
           _setBusinessPermission(businessId, _memberPermissions);
+          // [CROSS-DOMAIN-R5.1F.4] 선택 사업장 값도 신선도를 남긴다 —
+          //   대상 사업장 구독과 같은 축을 쓴다.
+          _setPermissionWatchState(businessId, PermissionWatchState.verified);
         } else {
           // BUG-2 수정: 멤버 문서 삭제(권한 전면 해제) 시 캐시를 null로 초기화
           _memberPermissions = null;
           // [POSTING-V2-03B.1] membership 자체가 사라졌으므로 map에서도 제거한다.
           //   fail-closed: canForBusiness가 곧바로 false를 돌려준다.
           _setBusinessPermission(businessId, null);
+          // [CROSS-DOMAIN-R5.1F.4] 문서가 없다는 것도 확인된 사실이다.
+          _setPermissionWatchState(businessId, PermissionWatchState.verified);
           // [NEW-QA-01 FIX] membership 상실 → 모든 in-flight switchToAdminMode 무효화.
           // 원칙: "membership 상실 시 모든 in-flight switch는 즉시 stale 처리된다."
           // _switchGeneration++를 _isAdminMode 조건 바깥에 배치:
@@ -292,7 +304,25 @@ class UserProvider with ChangeNotifier {
       } catch (e) {
         debugPrint('⚠️ memberPerms 파싱 실패 (권한 유지): $e');
       }
-    }, onError: (e) => debugPrint('⚠️ memberPerms 리스너 에러: $e'));
+    }, onError: (e) {
+      // [CROSS-DOMAIN-R5.1F.4] 대상 사업장 구독과 같은 원칙이다.
+      //
+      //   Firestore의 listen 에러는 terminal이라 이 구독은 다시 snapshot을
+      //   주지 않는다. 그런데 _memberPermsSub가 non-null로 남아 있으면
+      //   _normalizeSelectedContext가 "이미 이 사업장을 보고 있다"고 판단해
+      //   access refresh에서도 다시 붙이지 않는다 — 영영 죽은 채로 남는다.
+      //   자리를 비워 기존 refresh 경로가 다시 붙일 수 있게 한다.
+      //
+      //   권한 값은 지우지 않는다(ERROR ≠ NO_PERMISSION). 대신 그 값이
+      //   검증된 값이 아니라고 표시한다.
+      debugPrint('⚠️ memberPerms 리스너 에러: $e');
+      if (_disposed) return;
+      _memberPermsSub?.cancel();
+      _memberPermsSub = null;
+      _memberPermsBusinessId = null;
+      _setPermissionWatchState(businessId, PermissionWatchState.error);
+      notifyListeners();
+    });
   }
 
   /// 근무자 모드로 복귀 (하위 관리자만 호출 가능)
@@ -423,6 +453,19 @@ class UserProvider with ChangeNotifier {
     _permissionWatchStateView = Map.unmodifiable(next);
   }
 
+  /// [CROSS-DOMAIN-R5.1F.4] 아무도 보고 있지 않을 때만 신선도를 비운다.
+  ///
+  /// 대상 사업장 구독 하나가 닫혀도 선택 사업장 listener가 같은 사업장을
+  /// 보고 있으면 그 값은 여전히 검증된 값이다 — verified를 unknown으로
+  /// 되돌리면 멀쩡한 CTA가 "확인 불가"가 된다.
+  void _releaseWatchStateIfUnwatched(String businessId) {
+    final watchedByTarget = _targetPermsSubs[businessId]?.sub != null;
+    final watchedBySelected =
+        _memberPermsSub != null && _memberPermsBusinessId == businessId;
+    if (watchedByTarget || watchedBySelected) return;
+    _clearPermissionWatchState(businessId);
+  }
+
   void _clearPermissionWatchState(String businessId) {
     if (!_permissionWatchStateView.containsKey(businessId)) return;
     final next = Map<String, PermissionWatchState>.from(_permissionWatchStateView);
@@ -486,18 +529,83 @@ class UserProvider with ChangeNotifier {
     }
     final existing = _targetPermsSubs[businessId];
     if (existing != null) {
-      _targetPermsSubs[businessId] = (sub: existing.sub, count: existing.count + 1);
+      // [R5.1F.4] 자리가 비어 있으면(이전 구독이 에러로 죽었다면) 다시 붙인다.
+      //   죽은 구독을 "이미 구독 중"으로 오인하면 그 사업장은 화면이 전부
+      //   닫힐 때까지 영영 미검증으로 남는다.
+      _targetPermsSubs[businessId] = (
+        sub: existing.sub ?? _attachTargetPermsListener(businessId, user.uid),
+        count: existing.count + 1,
+      );
     } else {
-      // 해제 함수와 dispose에서 모두 취소한다. refcount map에 담기므로
-      // lint가 취소 경로를 따라가지 못한다.
-      // ignore: cancel_subscriptions
-      final sub = FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .collection('members')
-          .doc(user.uid)
-          .snapshots()
-          .listen((snap) {
+      _targetPermsSubs[businessId] =
+          (sub: _attachTargetPermsListener(businessId, user.uid), count: 1);
+    }
+
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      final cur = _targetPermsSubs[businessId];
+      if (cur == null) return;
+      if (cur.count <= 1) {
+        cur.sub?.cancel();
+        _targetPermsSubs.remove(businessId);
+        // 더 이상 보고 있지 않으니 "지금 검증됨"도 아니다 — unknown으로 되돌린다.
+        _releaseWatchStateIfUnwatched(businessId);
+      } else {
+        _targetPermsSubs[businessId] = (sub: cur.sub, count: cur.count - 1);
+      }
+    };
+  }
+
+  /// [CROSS-DOMAIN-R5.1F.4] 에러로 죽은 대상 사업장 구독을 다시 붙인다.
+  ///
+  /// 아무도 보고 있지 않거나(entry 없음) 이미 살아 있으면 아무 일도 하지
+  /// 않는다 — 같은 사업장에 구독이 둘 생기지 않는다. refcount는 건드리지
+  /// 않는다(보고 있는 화면 수는 변하지 않았다).
+  /// 타이머도, 자동 반복도 없다 — 화면의 재시도와 기존 refresh 생명주기만
+  /// 이 함수를 부른다.
+  void retryBusinessPermissionWatch(String businessId) {
+    final user = _currentUser;
+    if (user == null || !user.isSubAdmin) return;
+    final cur = _targetPermsSubs[businessId];
+    if (cur == null || cur.sub != null) return;
+    _targetPermsSubs[businessId] = (
+      sub: _attachTargetPermsListener(businessId, user.uid),
+      count: cur.count,
+    );
+    // 다시 붙였을 뿐 아직 답을 받지 못했다 — error도 verified도 아니다.
+    _setPermissionWatchState(businessId, PermissionWatchState.unknown);
+    notifyListeners();
+  }
+
+  /// [CROSS-DOMAIN-R5.1F.4] 에러로 죽은 대상 사업장 구독 전부를 다시 붙인다.
+  ///
+  /// 사용자가 만든 결정적 refresh(당겨서 새로고침·resume·access refresh)에
+  /// 얹혀 동작한다. **열려 있는** 사업장만 대상이다 — 배정 전체를 구독하지
+  /// 않는다.
+  void retryDeadPermissionWatches() {
+    final dead = _targetPermsSubs.entries
+        .where((e) => e.value.sub == null)
+        .map((e) => e.key)
+        .toList();
+    for (final id in dead) {
+      retryBusinessPermissionWatch(id);
+    }
+  }
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>
+      _attachTargetPermsListener(String businessId, String uid) {
+    // 해제 함수와 dispose에서 모두 취소한다. refcount map에 담기므로
+    // lint가 취소 경로를 따라가지 못한다.
+    // ignore: cancel_subscriptions
+    final sub = FirebaseFirestore.instance
+        .collection('businesses')
+        .doc(businessId)
+        .collection('members')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) {
         if (_disposed) return;
         try {
           final data = snap.data();
@@ -527,32 +635,28 @@ class UserProvider with ChangeNotifier {
           _setPermissionWatchState(businessId, PermissionWatchState.error);
           notifyListeners();
         }
-      }, onError: (e) {
-        // 읽기 실패는 권한 없음이 아니다 — 기존 값을 그대로 둔다.
-        // 다만 그 값은 더 이상 "검증된 허용"이 아니다(R5.1F.3).
-        debugPrint('⚠️ [R5.1F.2] target perms 리스너 에러 ($businessId): $e');
-        if (_disposed) return;
-        _setPermissionWatchState(businessId, PermissionWatchState.error);
-        notifyListeners();
-      });
-      _targetPermsSubs[businessId] = (sub: sub, count: 1);
-    }
+    }, onError: (e) {
+      // 읽기 실패는 권한 없음이 아니다 — 기존 값을 그대로 둔다.
+      // 다만 그 값은 더 이상 "검증된 허용"이 아니다(R5.1F.3).
+      debugPrint('⚠️ [R5.1F.2] target perms 리스너 에러 ($businessId): $e');
+      if (_disposed) return;
+      _setPermissionWatchState(businessId, PermissionWatchState.error);
+      // [R5.1F.4] Firestore의 listen 에러는 terminal이다 — 이 구독은 다시
+      //   snapshot을 주지 않는다. 죽은 구독을 registry에 남겨 두면 다음
+      //   watch/retry가 "이미 구독 중"으로 오인한다. 끊고 자리를 비운다.
+      //   refcount는 그대로다 — 보고 있는 화면 수는 변하지 않았다.
+      _markTargetPermsListenerDead(businessId);
+      notifyListeners();
+    });
+    return sub;
+  }
 
-    var released = false;
-    return () {
-      if (released) return;
-      released = true;
-      final cur = _targetPermsSubs[businessId];
-      if (cur == null) return;
-      if (cur.count <= 1) {
-        cur.sub.cancel();
-        _targetPermsSubs.remove(businessId);
-        // 더 이상 보고 있지 않으니 "지금 검증됨"도 아니다 — unknown으로 되돌린다.
-        _clearPermissionWatchState(businessId);
-      } else {
-        _targetPermsSubs[businessId] = (sub: cur.sub, count: cur.count - 1);
-      }
-    };
+  /// [CROSS-DOMAIN-R5.1F.4] terminal error가 난 구독 자리를 비운다.
+  void _markTargetPermsListenerDead(String businessId) {
+    final cur = _targetPermsSubs[businessId];
+    if (cur == null || cur.sub == null) return;
+    cur.sub!.cancel();
+    _targetPermsSubs[businessId] = (sub: null, count: cur.count);
   }
 
   /// 배정 사업장별 권한을 채운다.
@@ -843,6 +947,10 @@ class UserProvider with ChangeNotifier {
     // 선택 사업장 권한·listener·저장값을 최신 scope로 맞춘다.
     _permissionsLoaded = true;
     _normalizeSelectedContext(uid);
+    // [CROSS-DOMAIN-R5.1F.4] terminal error로 죽은 대상 사업장 구독을 이 기회에
+    //   다시 붙인다. 열려 있는 화면의 사업장만이고, 타이머는 없다 — 사용자가
+    //   만든 refresh(당겨서 새로고침·resume·명시 재시도)에 얹혀 동작한다.
+    retryDeadPermissionWatches();
     notifyListeners();
   }
 
@@ -858,7 +966,7 @@ class UserProvider with ChangeNotifier {
     _authSubscription?.cancel();
     _memberPermsSub?.cancel();
     for (final e in _targetPermsSubs.values) {
-      e.sub.cancel();
+      e.sub?.cancel();
     }
     _targetPermsSubs.clear();
     if (_contractFcmCallback != null) {
