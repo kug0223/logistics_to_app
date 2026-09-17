@@ -15,6 +15,36 @@ import '../services/fcm_service.dart';
 import '../services/firestore_service.dart';
 import '../utils/navigation_key.dart';
 
+/// [CROSS-DOMAIN-R5.1F.3] 사업장 권한 값의 신선도.
+///
+/// 권한 bool과 **다른 축**이다. bool은 "무엇이 허용되는가"를, 이것은
+/// "그 값이 지금 검증된 것인가"를 말한다.
+enum PermissionWatchState {
+  /// 아직 한 번도 확인하지 못했다. 거부가 아니다.
+  unknown,
+
+  /// 방금 서버 snapshot으로 확인했다. 문서가 없으면 그것도 확인된 사실이다.
+  verified,
+
+  /// 확인에 실패했다. 기존 값은 지우지 않지만 검증된 값도 아니다.
+  error,
+}
+
+/// [CROSS-DOMAIN-R5.1F.3] 권한 판정 결과 — bool 하나로 뭉개지 않는다.
+enum PermissionCheck {
+  /// 검증된 허용.
+  allowed,
+
+  /// 검증된 거부(권한 없음 또는 membership 없음).
+  denied,
+
+  /// 아직 모른다 — 거부도, 허용도 아니다.
+  unknown,
+
+  /// 확인 실패 — 예전 값이 남아 있을 수 있으나 그것으로 허용하지 않는다.
+  error,
+}
+
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
 
@@ -69,6 +99,13 @@ class UserProvider with ChangeNotifier {
   /// 합치고(refcount), 마지막 surface가 닫히면 끊는다. 폴링은 없다.
   final Map<String, ({StreamSubscription<DocumentSnapshot<Map<String, dynamic>>> sub, int count})>
       _targetPermsSubs = {};
+
+  /// [CROSS-DOMAIN-R5.1F.3] 사업장별 권한 값이 **지금 검증된 것인지**.
+  ///
+  /// bool 하나로는 "허용"과 "마지막으로 봤을 때 허용이었음"이 구분되지 않는다.
+  /// 구독이 에러를 받으면 기존 값을 지우지 않지만(ERROR ≠ NO_PERMISSION),
+  /// 그 값을 지금 검증된 허용처럼 쓰면 안 된다 — 그 차이를 여기 담는다.
+  Map<String, PermissionWatchState> _permissionWatchStateView = const {};
   // SA-01: switchToAdminMode 경쟁조건 방지용 세대 카운터
   int _switchGeneration = 0;
 
@@ -380,6 +417,59 @@ class UserProvider with ChangeNotifier {
     _hydratedPermissionBusinessIds = hydrated;
   }
 
+  void _setPermissionWatchState(String businessId, PermissionWatchState s) {
+    final next = Map<String, PermissionWatchState>.from(_permissionWatchStateView);
+    next[businessId] = s;
+    _permissionWatchStateView = Map.unmodifiable(next);
+  }
+
+  void _clearPermissionWatchState(String businessId) {
+    if (!_permissionWatchStateView.containsKey(businessId)) return;
+    final next = Map<String, PermissionWatchState>.from(_permissionWatchStateView);
+    next.remove(businessId);
+    _permissionWatchStateView = Map.unmodifiable(next);
+  }
+
+  /// 이 사업장 권한 값이 지금 검증된 것인지. 구독하지 않는 사업장은 unknown.
+  PermissionWatchState permissionWatchStateFor(String businessId) =>
+      _permissionWatchStateView[businessId] ?? PermissionWatchState.unknown;
+
+  /// [CROSS-DOMAIN-R5.1F.3] 대상 사업장 권한 판정 — 네 상태를 구분한다.
+  ///
+  /// [canForBusiness]는 bool 하나라 "거부"와 "모름"과 "확인 실패"가 모두
+  /// false로 뭉개진다. mutation CTA처럼 **지금 검증된 허용**만 열어야 하는
+  /// 자리에서는 이쪽을 쓴다.
+  ///
+  ///   · 소유자·SUPER_ADMIN            → allowed (member 문서로 판정하지 않는다)
+  ///   · SUB_ADMIN 아님                → denied
+  ///   · 구독이 error                  → error  (예전 값으로 허용하지 않는다)
+  ///   · 권한 map에 있음               → allowed / denied
+  ///   · map에 없고 하이드레이션 전    → unknown
+  ///   · map에 없고 검증됨(문서 없음)  → denied (membership 상실)
+  PermissionCheck checkForBusiness(
+    String businessId,
+    bool Function(MemberPermissions p) check,
+  ) {
+    final user = _currentUser;
+    if (user == null) return PermissionCheck.denied;
+    if (user.isBusinessAdmin || user.isSuperAdmin) return PermissionCheck.allowed;
+    if (!user.isSubAdmin) return PermissionCheck.denied;
+
+    final watch = permissionWatchStateFor(businessId);
+    if (watch == PermissionWatchState.error) return PermissionCheck.error;
+
+    final perms = _subAdminPermissionsByBusinessView[businessId];
+    if (perms != null) {
+      return check(perms) ? PermissionCheck.allowed : PermissionCheck.denied;
+    }
+    // map에 없다 — 확인해서 없는 것인지, 아직 모르는 것인지 구분한다.
+    if (watch == PermissionWatchState.verified) return PermissionCheck.denied;
+    if (!user.subAdminBusinessIds.contains(businessId)) return PermissionCheck.denied;
+    return _subAdminPermissionsLoaded
+        ? PermissionCheck.denied
+        : PermissionCheck.unknown;
+  }
+
   /// [CROSS-DOMAIN-R5.1F.2] 대상 사업장 권한을 화면이 열려 있는 동안만 구독한다.
   ///
   /// 반환값은 해제 함수다 — `dispose`에서 반드시 호출한다. 두 번 불러도 안전하다.
@@ -428,13 +518,22 @@ class UserProvider with ChangeNotifier {
                 ? null
                 : _subAdminPermissionsByBusinessView[businessId];
           }
+          // [R5.1F.3] 문서가 없다는 것도 **확인된 사실**이다 — membership 상실은
+          //   에러가 아니라 검증된 거부다.
+          _setPermissionWatchState(businessId, PermissionWatchState.verified);
           notifyListeners();
         } catch (e) {
           debugPrint('⚠️ [R5.1F.2] target perms 파싱 실패 (권한 유지): $e');
+          _setPermissionWatchState(businessId, PermissionWatchState.error);
+          notifyListeners();
         }
       }, onError: (e) {
         // 읽기 실패는 권한 없음이 아니다 — 기존 값을 그대로 둔다.
+        // 다만 그 값은 더 이상 "검증된 허용"이 아니다(R5.1F.3).
         debugPrint('⚠️ [R5.1F.2] target perms 리스너 에러 ($businessId): $e');
+        if (_disposed) return;
+        _setPermissionWatchState(businessId, PermissionWatchState.error);
+        notifyListeners();
       });
       _targetPermsSubs[businessId] = (sub: sub, count: 1);
     }
@@ -448,6 +547,8 @@ class UserProvider with ChangeNotifier {
       if (cur.count <= 1) {
         cur.sub.cancel();
         _targetPermsSubs.remove(businessId);
+        // 더 이상 보고 있지 않으니 "지금 검증됨"도 아니다 — unknown으로 되돌린다.
+        _clearPermissionWatchState(businessId);
       } else {
         _targetPermsSubs[businessId] = (sub: cur.sub, count: cur.count - 1);
       }

@@ -223,16 +223,31 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   Future<void> _load() async {
     // [CR-01 FIX] 로드 시작 시 에러 플래그 초기화 (동기 컨텍스트 — mounted 보장)
     setState(() => _hasLoadError = false);
+    final up = context.read<UserProvider>();
     // [CROSS-DOMAIN-R5.1F.2] 이 화면은 배정 사업장 전체를 한 번에 보여주므로
     //   사업장마다 listener를 달지 않는다. 대신 목록을 다시 읽는 이 길목에서
     //   권한도 같은 주기로 다시 읽는다(in-flight는 하나로 합쳐진다).
     //   폴링이 아니라 사용자가 만든 결정적 refresh다.
-    unawaited(context.read<UserProvider>().refreshSubAdminAccessState());
+    unawaited(up.refreshSubAdminAccessState());
+    // [CROSS-DOMAIN-R5.1F.3] 권한이 **확인된 거부**인 사업장은 아예 묻지 않는다.
+    //
+    //   서버는 이 큐의 read를 canManageTo로 막으므로, 회수된 사업장을 그대로
+    //   요청하면 per-business 실패가 Future.wait를 타고 올라가 큐 전체가
+    //   ERROR가 된다(CR-01의 partial 금지 정책). 권한이 없는 줄 아는 곳을
+    //   빼면 나머지 사업장은 정상으로 남고, 그 사업장의 row와 CTA는 사라진다.
+    //
+    //   빼는 것은 denied뿐이다 — unknown/error는 서버에 물어본다.
+    //   거절을 받아 빈 목록으로 바꾸는 것(catch→[])이 아니다.
+    final scoped = widget.businessIds
+        .where((id) =>
+            up.checkForBusiness(id, (p) => p.canManageTo) !=
+            PermissionCheck.denied)
+        .toList();
     await runWithLoading(() async {
       try {
-        final apps = await _queueSvc.loadPendingApplications(widget.businessIds);
-        final users = apps.isNotEmpty && widget.businessIds.isNotEmpty
-            ? await _queueSvc.loadUsers(apps, widget.businessIds.first)
+        final apps = await _queueSvc.loadPendingApplications(scoped);
+        final users = apps.isNotEmpty && scoped.isNotEmpty
+            ? await _queueSvc.loadUsers(apps, scoped.first)
             : const <String, UserModel>{};
 
         if (!mounted) return;
@@ -370,16 +385,22 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   ///
   /// 하이드레이션 전(UNKNOWN)에는 fail-closed로 두고, `_load()`가 부르는
   /// access refresh가 채우면 다시 그려진다 — 폴링이 아니라 결정적 refresh다.
-  bool _canActOn(ApplicationModel app) =>
-      context.read<UserProvider>().canForBusiness(
+  /// [CROSS-DOMAIN-R5.1F.3] bool이 아니라 네 상태다 — 거부와 모름을 섞지 않는다.
+  PermissionCheck _actCheck(ApplicationModel app) =>
+      context.read<UserProvider>().checkForBusiness(
             app.businessId,
             (p) => p.canManageTo,
           );
 
+  bool _canActOn(ApplicationModel app) =>
+      _actCheck(app) == PermissionCheck.allowed;
+
   Future<void> _approveApp(ApplicationModel app, String? userName) async {
     // [CROSS-DOMAIN-R5.1F.2] 서버와 같은 단위로 먼저 막는다.
     if (!_canActOn(app)) {
-      ToastHelper.showWarning('이 사업장의 공고 관리 권한이 없습니다.');
+      ToastHelper.showWarning(_actCheck(app) == PermissionCheck.denied
+          ? '이 사업장의 공고 관리 권한이 없습니다.'
+          : '권한 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
       return;
     }
     if (_isActing) return;
@@ -434,7 +455,9 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   Future<void> _rejectApp(ApplicationModel app, String? userName) async {
     // [CROSS-DOMAIN-R5.1F.2] 승인과 같은 권한·같은 단위다.
     if (!_canActOn(app)) {
-      ToastHelper.showWarning('이 사업장의 공고 관리 권한이 없습니다.');
+      ToastHelper.showWarning(_actCheck(app) == PermissionCheck.denied
+          ? '이 사업장의 공고 관리 권한이 없습니다.'
+          : '권한 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
       return;
     }
     if (_isActing) return;
@@ -845,7 +868,10 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
             //   이유를 보여준다 — 누를 수 없는 버튼을 남기지 않는다.
             if (!_canActOn(app))
               Text(
-                '권한 없음',
+                // 확인된 거부와 "확인하지 못함"은 다른 말이다.
+                _actCheck(app) == PermissionCheck.denied
+                    ? '권한 없음'
+                    : '권한 확인 불가',
                 style: ResponsiveHelper.bodyStyle(
                   context,
                   color: AppColors.textTertiary,

@@ -140,10 +140,8 @@ class _PayrollPaymentDashboardScreenState
   final Map<String, Map<String, String>> _userBankCache = {};
   String _lastTransferNote = '';
 
-  // [BIZCTX-01A] target business permission — widget.businessId 기준
-  // BUSINESS_ADMIN: null (not needed, always allowed)
-  // SUB_ADMIN: loaded via MemberService.getMemberPermissions(widget.businessId, uid)
-  MemberPermissions? _targetPermissions;
+  // [CROSS-DOMAIN-R5.1F.3] 이 화면이 열려 있는 동안만 대상 사업장을 구독한다.
+  VoidCallback? _releasePermsWatch;
 
   // ─────────────────────────────────────────────────
   @override
@@ -168,6 +166,12 @@ class _PayrollPaymentDashboardScreenState
     // SUB_ADMIN: target business permission 비동기 확인 후 data load
     // 기타 USER: pop (아래 _startDashboard 가 isSubAdmin == false 로 분기)
     final up = context.read<UserProvider>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _releasePermsWatch = context
+          .read<UserProvider>()
+          .watchBusinessPermissions(widget.businessId);
+    });
     if (up.isBusinessAdmin) {
       // BUSINESS_ADMIN — fast path: target permission load 없이 기존 load 실행
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -216,8 +220,9 @@ class _PayrollPaymentDashboardScreenState
         Navigator.of(context).pop();
         return;
       }
-      // target permission 확정 — data load 허용
-      setState(() => _targetPermissions = perms);
+      // target permission 확정 — data load 허용.
+      // [CROSS-DOMAIN-R5.1F.3] 값을 화면 state로 들고 있지 않는다. 이후 판정은
+      //   구독이 갱신하는 provider의 사업장별 권한이 canonical이다.
       _load();
       if (widget.showAllOutstanding) _loadAllOutstanding();
     } catch (e) {
@@ -226,16 +231,11 @@ class _PayrollPaymentDashboardScreenState
     }
   }
 
-  // [BIZCTX-01A] target business 기준 cancel 전송 권한.
-  // invariant: target.canManageWage == true AND target.canCancelTransfer == true
-  // BUSINESS_ADMIN: 항상 true (member document 불필요).
-  bool _canCancelTransferForTarget(UserProvider up) {
-    if (up.isBusinessAdmin) return true;
-    final perms = _targetPermissions;
-    return perms != null &&
-        perms.canManageWage &&
-        perms.canCancelTransfer;
-  }
+  // [BIZCTX-01A] target business 기준 cancel 권한이 여기 있었다.
+  // [CROSS-DOMAIN-R5.1F.3] 진입 시점 snapshot(_targetPermissions)으로 bool을
+  //   만들어 상세 화면에 넘기던 구조를 없앴다 — 그 bool은 화면에 머무는 동안
+  //   갱신되지 않고, "검증된 허용"과 "예전에 허용이었음"을 구분하지 못한다.
+  //   이제 상세 화면이 UserProvider.checkForBusiness로 직접 본다.
 
   // H1: 파생 상태(필터링 결과·배지) 일괄 재계산 — setState 콜백 내에서 호출
   void _recomputeDerived() {
@@ -268,6 +268,7 @@ class _PayrollPaymentDashboardScreenState
 
   @override
   void dispose() {
+    _releasePermsWatch?.call();
     _searchDebounce?.cancel();
     _tabCtrl.dispose();
     _searchCtrl.dispose();
@@ -1176,6 +1177,11 @@ class _PayrollPaymentDashboardScreenState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [CROSS-DOMAIN-R5.1F.3] 진입 gate 한 번이 아니라 머무는 동안에도 본다.
+    //   denied(확인된 거부)일 때만 잠근다 — unknown/error는 화면을 빼앗지 않고,
+    //   금전 mutation CTA 쪽이 fail-closed로 막는다.
+    final wageAccess = context.watch<UserProvider>().checkForBusiness(
+        widget.businessId, (p) => p.canManageWage);
     return AppPageScaffold(
       title: '급여 지급 현황',
       actions: [
@@ -1203,7 +1209,14 @@ class _PayrollPaymentDashboardScreenState
           ),
         ),
       ],
-      body: _isLoading
+      body: wageAccess == PermissionCheck.denied
+          // [CROSS-DOMAIN-R5.1F.3] 권한 회수/멤버십 상실 — "0건"이 아니다.
+          ? const AppEmptyState(
+              icon: Icons.lock_outline,
+              title: '접근 권한이 없습니다',
+              subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
+            )
+          : _isLoading
           ? const LoadingWidget(message: '급여 현황 불러오는 중...')
           : Column(children: [
               // ── 검색바
@@ -1437,8 +1450,6 @@ class _PayrollPaymentDashboardScreenState
                       scheduleLabel: schLabel,
                       daysUntilDue:  daysUntil,
                       onCardTap: () async {
-                        final up = Provider.of<UserProvider>(context, listen: false);
-                        final canCancel = _canCancelTransferForTarget(up); // [BIZCTX-01A] target B 기준
                         final result = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
@@ -1446,7 +1457,7 @@ class _PayrollPaymentDashboardScreenState
                               workerName:        workerName,
                               records:           recs,
                               bankInfo:          bankStr,
-                              canCancelTransfer: canCancel,
+                              businessId: widget.businessId,
                             ),
                           ),
                         );
@@ -1678,8 +1689,6 @@ class _PayrollPaymentDashboardScreenState
                       scheduleLabel:            schLabel,
                       daysUntilDue:             daysUntil,
                       onCardTap: !_batchMode ? () async {
-                        final up = Provider.of<UserProvider>(context, listen: false);
-                        final canCancel = _canCancelTransferForTarget(up); // [BIZCTX-01A] target B 기준
                         final result = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
@@ -1687,7 +1696,7 @@ class _PayrollPaymentDashboardScreenState
                               workerName: workerName,
                               records:    recs,
                               bankInfo:   bankStr,
-                              canCancelTransfer: canCancel,
+                              businessId: widget.businessId,
                             ),
                           ),
                         );
@@ -1865,8 +1874,6 @@ class _PayrollPaymentDashboardScreenState
                       scheduleLabel:           schLabel,
                       daysUntilDue:            daysUntil,
                       onCardTap: () async {
-                        final up = Provider.of<UserProvider>(context, listen: false);
-                        final canCancel = _canCancelTransferForTarget(up); // [BIZCTX-01A] target B 기준
                         final result = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
@@ -1876,7 +1883,7 @@ class _PayrollPaymentDashboardScreenState
                               bankInfo:   bank?['bankName'] != null
                                   ? '${bank!['bankName']} ${bank['accountNumber'] ?? ''}'.trim()
                                   : null,
-                              canCancelTransfer: canCancel,
+                              businessId: widget.businessId,
                             ),
                           ),
                         );
@@ -2881,13 +2888,20 @@ class _WorkerPayDetailScreen extends StatefulWidget {
   final String workerName;
   final List<AttendanceModel> records;
   final String? bankInfo;
-  final bool canCancelTransfer;
+
+  /// [CROSS-DOMAIN-R5.1F.3] 진입 시점 bool 대신 **대상 사업장 id**를 받는다.
+  ///
+  /// 예전에는 호출부가 계산한 `canCancelTransfer` bool을 그대로 들고 있었다.
+  /// 그러면 이 화면에 머무는 동안 권한이 회수돼도 버튼이 남고, bool 하나로는
+  /// "검증된 허용"과 "마지막으로 봤을 때 허용"이 구분되지 않는다.
+  /// 여기서 현재 권한을 직접 본다 — 판정하는 자리가 하나다.
+  final String businessId;
 
   const _WorkerPayDetailScreen({
     required this.workerName,
     required this.records,
+    required this.businessId,
     this.bankInfo,
-    this.canCancelTransfer = false,
   });
 
   @override
@@ -2898,6 +2912,38 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
   bool _deductionExpanded = false;
   bool _isCancelling = false;
   final _payService = PayrollPaymentService();
+
+  // [CROSS-DOMAIN-R5.1F.3] 이 화면이 열려 있는 동안만 대상 사업장을 구독한다.
+  VoidCallback? _releasePermsWatch;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _releasePermsWatch = context
+          .read<UserProvider>()
+          .watchBusinessPermissions(widget.businessId);
+    });
+  }
+
+  @override
+  void dispose() {
+    _releasePermsWatch?.call();
+    super.dispose();
+  }
+
+  /// [CROSS-DOMAIN-R5.1F.3] 이체 취소 권한 — 네 상태를 구분한다.
+  ///
+  /// canonical invariant: `canManageWage && canCancelTransfer`
+  /// (서버 `callableCancelTransfer`가 두 권한을 차례로 검증한다.)
+  /// 확인하지 못한 상태(unknown/error)에서는 **허용하지 않는다** — 예전 값이
+  /// 남아 있어도 그것으로 금전 mutation을 열지 않는다.
+  PermissionCheck _cancelCheck(BuildContext ctx) =>
+      ctx.watch<UserProvider>().checkForBusiness(
+            widget.businessId,
+            (p) => p.canManageWage && p.canCancelTransfer,
+          );
 
   Future<void> _cancelTransfer(AttendanceModel r) async {
     final note = await DialogHelper.showTextInput(
@@ -2915,6 +2961,14 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
       validator: (v) => v != null && v.trim().isNotEmpty,
     );
     if (note == null || note.trim().isEmpty || !mounted) return;
+    // [CROSS-DOMAIN-R5.1F.3] 확인 직전에 한 번 더 — 다이얼로그를 띄운 사이에
+    //   권한이 회수됐을 수 있다. 검증된 허용이 아니면 보내지 않는다.
+    if (context.read<UserProvider>().checkForBusiness(
+            widget.businessId, (p) => p.canManageWage && p.canCancelTransfer) !=
+        PermissionCheck.allowed) {
+      ToastHelper.showWarning('이체 취소 권한을 확인하지 못했습니다.');
+      return;
+    }
 
     setState(() => _isCancelling = true);
     try {
@@ -3351,23 +3405,34 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                           ),
                         ],
                         // [PAY-08] 중간정산 처리된 이체는 개별 취소 불가 (r.isFromInterimSettlement)
-                        if (isXfer && widget.canCancelTransfer && !r.isFromInterimSettlement) ...[
-                          const SizedBox(height: 6),
-                          GestureDetector(
-                            onTap: _isCancelling ? null : () => _cancelTransfer(r),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: AppColors.error.withValues(alpha: 0.5)),
-                                borderRadius: BorderRadius.circular(4),
+                        // [CROSS-DOMAIN-R5.1F.3] 권한은 지금 값으로 본다.
+                        //   allowed만 CTA — denied는 아무것도 없고,
+                        //   unknown/error는 이유를 말하되 누르게 하지 않는다.
+                        if (isXfer && !r.isFromInterimSettlement) ...[
+                          if (_cancelCheck(ctx) == PermissionCheck.allowed) ...[
+                            const SizedBox(height: 6),
+                            GestureDetector(
+                              onTap: _isCancelling ? null : () => _cancelTransfer(r),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: AppColors.error.withValues(alpha: 0.5)),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text('이체 취소',
+                                    style: ResponsiveHelper.tinyStyle(ctx,
+                                        color: AppColors.error,
+                                        fontWeight: FontWeight.w600)),
                               ),
-                              child: Text('이체 취소',
-                                  style: ResponsiveHelper.tinyStyle(ctx,
-                                      color: AppColors.error,
-                                      fontWeight: FontWeight.w600)),
                             ),
-                          ),
+                          ] else if (_cancelCheck(ctx) == PermissionCheck.unknown ||
+                              _cancelCheck(ctx) == PermissionCheck.error) ...[
+                            const SizedBox(height: 6),
+                            Text('권한 정보를 확인하지 못했습니다',
+                                style: ResponsiveHelper.tinyStyle(ctx,
+                                    color: AppColors.grey500)),
+                          ],
                         ],
                       ],
                     ),

@@ -63,8 +63,11 @@ void main() {
           true,
           reason: 'refcount가 없으면 다이얼로그를 겹쳐 열 때마다 listener가 늘어난다');
       expect(up.contains('if (cur.count <= 1) { cur.sub.cancel(); '
-          '_targetPermsSubs.remove(businessId); }'), true,
+          '_targetPermsSubs.remove(businessId);'), true,
           reason: '마지막 surface가 닫히면 끊어야 상시 구독이 아니다');
+      expect(up.contains('_targetPermsSubs[businessId] = '
+          '(sub: cur.sub, count: cur.count - 1);'), true,
+          reason: '남아 있는 surface가 있으면 유지한다');
     });
 
     test('SUB_ADMIN이 아니면 구독하지 않는다', () {
@@ -192,20 +195,27 @@ void main() {
 
     test('지원 검토 큐 — 행의 사업장 기준 canManageTo', () {
       final s = _load(_queue);
+      // [CROSS-DOMAIN-R5.1F.3] bool → 4상태로 올라갔다. 판정 대상(행의 사업장,
+      //   canManageTo)은 그대로이고, 거부와 확인불가를 더 구분한다.
       expect(
-          s.contains('bool _canActOn(ApplicationModel app) => '
-              'context.read<UserProvider>().canForBusiness( app.businessId, '
+          s.contains('PermissionCheck _actCheck(ApplicationModel app) => '
+              'context.read<UserProvider>().checkForBusiness( app.businessId, '
               '(p) => p.canManageTo, );'),
           true);
-      expect(s.contains('if (!_canActOn(app)) { '
-          "ToastHelper.showWarning('이 사업장의 공고 관리 권한이 없습니다.'); return; }"), true,
+      expect(
+          s.contains('bool _canActOn(ApplicationModel app) => '
+              '_actCheck(app) == PermissionCheck.allowed;'),
+          true,
+          reason: '검증된 허용에서만 action이 열린다');
+      expect(s.contains("? '이 사업장의 공고 관리 권한이 없습니다.'"), true,
           reason: '승인·거절 양쪽 모두');
       expect("if (!_canActOn(app)) {".allMatches(s).length, greaterThanOrEqualTo(2));
     });
 
     test('지원 검토 큐 — 누를 수 없는 CTA를 남기지 않는다', () {
       final s = _load(_queue);
-      expect(s.contains("if (!_canActOn(app)) Text( '권한 없음',"), true);
+      expect(s.contains('if (!_canActOn(app)) Text( '
+          "_actCheck(app) == PermissionCheck.denied ? '권한 없음' : '권한 확인 불가',"), true);
       expect(s.contains('context.watch<UserProvider>();'), true,
           reason: '권한이 바뀌면 다시 그려야 한다');
     });
@@ -213,7 +223,8 @@ void main() {
     test('지원 검토 큐 — 목록과 권한을 같은 주기로 다시 읽는다', () {
       final s = _load(_queue);
       expect(
-          s.contains('unawaited(context.read<UserProvider>().refreshSubAdminAccessState());'),
+          s.contains('final up = context.read<UserProvider>();') &&
+              s.contains('unawaited(up.refreshSubAdminAccessState());'),
           true,
           reason: '사업장마다 listener를 달지 않는 대신 결정적 refresh를 쓴다');
     });
