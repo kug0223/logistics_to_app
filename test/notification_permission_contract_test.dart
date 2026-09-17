@@ -345,13 +345,15 @@ void main() {
       expect(rd.contains('if (scrDPerms?.canManageWorkers !== true)'), true);
     });
 
-    test('화면은 거절을 표시 없음으로 받는다', () {
-      // 계약 권한으로 들어온 사용자의 고정근무 목록까지 깨지면 안 된다.
+    test('권한이 없으면 화면이 아예 호출하지 않는다', () {
+      // [R5.1E 정정] 처음에는 403을 catch해 빈 목록으로 바꿨는데, 그러면
+      //   `볼 수 없다`가 `요청 없음`이 된다. 호출하지 않는 쪽이 맞다.
+      //   네 상태 구분은 permission_ui_propagation_contract_test가 고정한다.
       final d = _flat(_codeOf(
           _src('lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart')));
-      expect(d.contains('_pendingRequestsForDate = await scheduleRequestsFuture; } catch (e)'),
+      expect(d.contains('final scheduleRequestsFuture = (_isDateMode && canSeeScheduleReq)'),
           true);
-      expect(d.contains('_pendingRequestsForDate = const [];'), true);
+      expect(d.contains('_scheduleReqState = _ScheduleReqState.notPermitted;'), true);
     });
   });
 

@@ -51,6 +51,13 @@ enum _WorkerDayStatus {
 }
 
 /// 고정근무자 관리 다이얼로그
+/// [CROSS-DOMAIN-R5.1E] 일정변경 요청 영역의 네 상태.
+///
+/// 권한 없음 / 불러오기 실패 / 데이터(0건 포함)를 구분한다.
+/// 셋을 빈 목록 하나로 합치면 화면이 서로 다른 사실을 같은 말로 하게 된다.
+/// (로딩은 화면 전체 `_isLoading`이 이미 담당한다 — 여기에 겹쳐 두지 않는다.)
+enum _ScheduleReqState { notPermitted, error, loaded }
+
 class FixedWorkerManagementDialog extends StatefulWidget {
   final List<String>? businessIds;  // 여러 사업장 (캘린더에서 호출 시)
   final List<BusinessModel>? businesses;
@@ -92,6 +99,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   // 날짜 모드 (focusDate != null 일 때)
   List<ScheduleChangeRequestModel> _pendingRequestsForDate = [];
+
+  /// [CROSS-DOMAIN-R5.1E] 일정변경 요청 영역의 상태 — 네 가지를 섞지 않는다.
+  ///
+  /// 이 영역은 근로자 관리 권한이 있어야 보고 처리할 수 있다. 그런데 이 화면은
+  /// 계약 맥락에서도 열린다. 권한이 없을 때 서버 거절을 받아 빈 목록으로
+  /// 바꾸면 `요청 없음`이 되어, 볼 수 없는 것과 없는 것이 같은 화면이 된다.
+  /// 권한이 없으면 **호출하지 않는다**.
+  _ScheduleReqState _scheduleReqState = _ScheduleReqState.notPermitted;
   bool get _isDateMode => widget.focusDate != null;
 
   // 승인/거절 중복 클릭 방지
@@ -188,12 +203,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     // [PERF] 독립적인 3개 Future 동시 시작 — 순차 await 제거
     final appsFuture = _firestoreService.getApplicationsByBusinessId(businessId);
     final workTypesFuture = _firestoreService.getBusinessWorkTypes(businessId);
-    final scheduleRequestsFuture = _isDateMode
+    // [CROSS-DOMAIN-R5.1E] 이 사업장에 대한 현재 권한으로 판단한다.
+    //   권한이 없으면 호출 자체를 하지 않는다 — 거절을 받아 빈 목록으로
+    //   바꾸면 `요청 없음`과 구분되지 않는다.
+    final canSeeScheduleReq = context
+        .read<UserProvider>()
+        .canForBusiness(businessId, (p) => p.canManageWorkers);
+    final scheduleRequestsFuture = (_isDateMode && canSeeScheduleReq)
         ? _firestoreService.getScheduleChangeRequestsForDate(
             date: widget.focusDate!,
             businessIds: [businessId],
           )
-        : Future.value(<ScheduleChangeRequestModel>[]);
+        : null;
 
     final allApps = await appsFuture;
 
@@ -268,15 +289,19 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           .compareTo(a.application.confirmedAt ?? a.application.appliedAt));
 
       // 날짜 모드: 해당 날짜의 대기 요청 로드 (appsFuture와 병렬로 이미 실행 중)
-      if (_isDateMode) {
-        // [CROSS-DOMAIN-R5.1D] 이 표시는 근로자 관리 권한이 있어야 볼 수 있다.
-        //   계약 권한만으로 이 화면에 들어온 경우 서버가 거절하는데, 그것 때문에
-        //   고정근무 목록 전체가 실패하면 안 된다 — 표시만 비운다.
+      if (scheduleRequestsFuture == null) {
+        // 권한 없음(또는 날짜 모드 아님) — 호출하지 않았다.
+        _pendingRequestsForDate = const [];
+        _scheduleReqState = _ScheduleReqState.notPermitted;
+      } else {
         try {
           _pendingRequestsForDate = await scheduleRequestsFuture;
+          _scheduleReqState = _ScheduleReqState.loaded;
         } catch (e) {
-          debugPrint('⚠️ [고정근무] 일정변경 요청 표시 생략: $e');
+          // 불러오기 실패는 `요청 없음`이 아니다.
+          debugPrint('⚠️ [고정근무] 일정변경 요청 조회 실패: $e');
           _pendingRequestsForDate = const [];
+          _scheduleReqState = _ScheduleReqState.error;
         }
       }
 
@@ -452,7 +477,25 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 ),
               ),
               const Spacer(),
-              if (_pendingRequestsForDate.isNotEmpty)
+              // [CROSS-DOMAIN-R5.1E] 불러오지 못한 것을 `요청 없음`으로 말하지 않는다.
+              if (_scheduleReqState == _ScheduleReqState.error)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),
+                    vertical: ResponsiveHelper.spacing(context, 3),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.grey200,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '변경 요청 확인 불가',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                )
+              else if (_scheduleReqState == _ScheduleReqState.loaded &&
+                  _pendingRequestsForDate.isNotEmpty)
                 Container(
                   padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 8),

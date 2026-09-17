@@ -75,8 +75,18 @@ enum _HeroState {
   normalToday,
 }
 
+/// [CROSS-DOMAIN-R5.1E] Home이 다시 그려져야 하는 이유들.
+///
+/// 이 화면은 권한을 `context.read`로 읽어 섹션마다 내려준다 — 구독이 아니다.
+/// 그래서 Selector가 이름만 보고 있던 동안에는 권한이 회수돼도 화면이 그대로
+/// 남아, 누를 수 없는 CTA와 처리할 수 없는 Task가 계속 보였다(서버는 막는다).
+/// 권한 자체를 지켜본다 — 바뀔 때만 다시 그린다.
 typedef _AdminHomeData = ({
   String userName,
+  bool canManageTo,
+  bool canManageWorkers,
+  bool canManageContract,
+  bool canManageWage,
 });
 
 class BusinessAdminHomeScreen extends StatefulWidget {
@@ -1011,7 +1021,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Widget build(BuildContext context) {
     final s = _s(context);
     return Selector<UserProvider, _AdminHomeData>(
-      selector: (_, p) => (userName: p.currentUser?.name ?? '관리자'),
+      selector: (_, p) => (
+        userName: p.currentUser?.name ?? '관리자',
+        // 권한이 바뀌면 값이 바뀌고, 값이 바뀌면 Home이 다시 그려진다.
+        canManageTo: p.can((x) => x.canManageTo),
+        canManageWorkers: p.can((x) => x.canManageWorkers),
+        canManageContract: p.can((x) => x.canManageContract),
+        canManageWage: p.can((x) => x.canManageWage),
+      ),
       builder: (context, data, _) {
         final theme = Theme.of(context);
         final up = context.read<UserProvider>();
