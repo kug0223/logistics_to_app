@@ -443,10 +443,22 @@ class FCMService {
     //   그래서 관리자 맥락에서 권한이 걸린 타입은 screen을 보지 않고
     //   dispatcher로 넘긴다 — 판정은 한 곳에서만 일어난다.
     //   근로자 수신 경로(_currentUserIsAdmin == false)는 그대로 둔다.
+    // [CROSS-DOMAIN-R5.1G.1] 여기에 `_currentUserIsAdmin &&`가 있었다.
+    //
+    //   그 값은 initialize/updateAdminStatus가 채우는 **캐시**다. 관리자 모드를
+    //   벗어났거나 아직 갱신되지 않은 순간에는 false가 되고, 그러면 같은
+    //   payload가 이 분기를 건너뛰어 screen 기준 worker route로 흘렀다.
+    //   같은 알림이 캐시 상태 때문에 다른 도메인 화면으로 가는 것이고,
+    //   목적지가 다르면 적용되는 권한도 달라진다.
+    //
+    //   판정은 캐시가 아니라 **type + 현재 계정 맥락**이다. 그래서 권한이 걸린
+    //   타입은 역할을 묻지 않고 공용 dispatcher로 보낸다. 거기서 현재 role·
+    //   membership·permission을 다시 보고 목적지를 정한다 —
+    //   근로자 수신분(dual-recipient)은 dispatcher의 isUser 분기가 받고,
+    //   순수 USER나 배정이 회수된 SUB_ADMIN은 그 자리에서 fail-closed다.
+    //   `_currentUserIsAdmin`은 이제 표시·레거시 힌트용으로만 남는다.
     final rawType = data['type'] as String?;
-    if (_currentUserIsAdmin &&
-        rawType != null &&
-        kPermissionBearingNotifTypes.contains(rawType)) {
+    if (rawType != null && kPermissionBearingNotifTypes.contains(rawType)) {
       _navigateToNotificationScreen(autoDispatchPayload: data);
       return;
     }
@@ -569,9 +581,13 @@ class FCMService {
       // callableConfirmApplication이 screen='applicationDetail'을 포함하므로
       // data['screen']='applicationDetail' → type 폴백 없이 이 케이스로 직접 라우팅
       case 'applicationDetail':
+        // [CROSS-DOMAIN-R5.1G.1] 인앱과 같은 목적지·같은 identity를 쓴다.
+        //   같은 payload가 두 경로에서 다른 화면을 열면 안 된다.
         _pushFcmScreen(
           destinationKey: 'my_applications',
-          builder: (_) => const MyApplicationsScreen(),
+          builder: (_) => MyApplicationsScreen(
+            focusApplicationId: data['applicationId'] as String?,
+          ),
         );
         break;
       // ─── 파트변경 알림 (근무자 전용) ─────────────────────────

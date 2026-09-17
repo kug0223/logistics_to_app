@@ -129,7 +129,7 @@ void main() {
   group('같은 payload는 같은 목적지로 간다', () {
     test('권한이 걸린 타입은 FCM도 type으로 판정한다', () {
       expect(
-          fcm.contains('if (_currentUserIsAdmin && rawType != null && '
+          fcm.contains('if (rawType != null && '
               'kPermissionBearingNotifTypes.contains(rawType)) { '
               '_navigateToNotificationScreen(autoDispatchPayload: data); return; }'),
           true,
@@ -185,19 +185,16 @@ void main() {
   });
 
   group('N3 — applicationConfirmed의 현재 목적지', () {
-    // [CROSS-DOMAIN-R5.1G] 원본 N3는 "exact current Application"을 요구한다.
-    //   실제 구현은 수신자(근로자) 본인의 지원 목록을 열 뿐, 특정 지원서로
-    //   초점을 맞추지 않는다. 이것이 현재 사실이다.
-    //
-    //   보안 영향은 없다 — 본인 목록이고 남의 지원서가 보이지 않는다.
-    //   다만 "지목한다"는 요구는 충족되지 않았다. 조용히 충족된 것처럼
-    //   지나가지 않도록 그 사실을 여기 고정한다.
-    //   ([CORRECTION-N3-NO-APPLICATION-FOCUS] — 보고서에 별도 항목)
-    test('수신자 본인의 목록으로 간다 (초점 없음)', () {
+    // [CROSS-DOMAIN-R5.1G.1] R5.1G에서 "초점 없음"으로 기록했던 것을 닫았다.
+    //   이제 payload의 applicationId로 그 지원서를 지목한다.
+    //   자세한 계약은 n3_focus_fcm_parity_contract_test.dart에 있다.
+    test('수신자 본인의 목록에서 그 지원서를 지목한다', () {
       expect(
           notif.contains('case NotificationType.applicationConfirmed: '
-              'case NotificationType.applicationRejected: Navigator.push( context, '
-              'MaterialPageRoute(builder: (_) => const MyApplicationsScreen()), );'),
+              'case NotificationType.applicationRejected:'),
+          true);
+      expect(
+          notif.contains("focusApplicationId: notification.data?['applicationId'] as String?,"),
           true);
     });
 

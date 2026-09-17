@@ -659,9 +659,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // applicationConfirmed·applicationRejected는 근무자(지원자) 전용 발송 — isUser 가드 불필요
       case NotificationType.applicationConfirmed:
       case NotificationType.applicationRejected:
+        // [CROSS-DOMAIN-R5.1G.1] N3 — 이 알림은 지원서 **하나**에 대한 소식이다.
+        //   여태 목록만 열어 어느 건인지 말하지 않았다. canonical identity는
+        //   payload의 applicationId다(두 생산 지점 모두 넣는다).
+        //   화면은 그 id로 **지금 상태를** 다시 읽어 연다 — payload에 실린
+        //   과거 상태는 쓰지 않는다. id가 없는 옛 payload는 예전처럼 목록만 연다.
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          MaterialPageRoute(
+            builder: (_) => MyApplicationsScreen(
+              focusApplicationId:
+                  notification.data?['applicationId'] as String?,
+            ),
+          ),
         );
         break;
 

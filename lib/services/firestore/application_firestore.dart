@@ -245,6 +245,19 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
+  /// [CROSS-DOMAIN-R5.1G.1] 지원서 한 건을 **현재 상태로** 읽는다.
+  ///
+  /// 알림이 지목한 지원서가 첫 페이지 밖에 있을 때만 쓴다. 소유 판정은
+  /// 호출부가 `uid` 비교로 한 번 더 하고(서버 규칙과 이중 방어), 여기서는
+  /// 문서를 읽어 파싱만 한다. 없으면 null — 실패는 그대로 던진다
+  /// ("못 읽었다"를 "없다"로 바꾸지 않는다).
+  Future<ApplicationModel?> getApplicationOnce(String applicationId) async {
+    final doc =
+        await _firestore.collection('applications').doc(applicationId).get();
+    if (!doc.exists) return null;
+    return ApplicationModel.tryFromFirestore(doc);
+  }
+
   /// 내 지원 내역 페이지네이션 조회 (내 지원 화면 전용)
   ///
   /// [startAfterDocId] cursor 문서 ID — null이면 첫 페이지

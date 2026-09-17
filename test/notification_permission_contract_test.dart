@@ -131,9 +131,13 @@ void main() {
   // 두 라우터의 우선순위가 반대라서(FCM: screen 우선 / 인앱: type 우선) 값이
   // 어긋난 payload는 서로 다른 목적지 — 따라서 서로 다른 권한 — 을 고를 수 있었다.
   group('권한이 걸린 알림은 한 곳에서만 판정한다', () {
-    test('관리자 맥락에서는 type으로 dispatcher에 넘긴다', () {
+    test('type으로 dispatcher에 넘긴다', () {
+      // [CROSS-DOMAIN-R5.1G.1] 조건에서 `_currentUserIsAdmin &&`가 빠졌다.
+      //   그 값은 캐시라, 갱신 전이거나 관리자 모드를 벗어난 순간에는 false가
+      //   되어 같은 payload가 screen 기준 worker route로 흘렀다.
+      //   이제 역할을 묻지 않고 넘기고, 판정은 dispatcher가 현재 맥락으로 한다.
       expect(
-        fcm.contains('if (_currentUserIsAdmin && rawType != null && '
+        fcm.contains('if (rawType != null && '
             'kPermissionBearingNotifTypes.contains(rawType)) '
             '{ _navigateToNotificationScreen(autoDispatchPayload: data); return; }'),
         true,
@@ -141,12 +145,18 @@ void main() {
       );
     });
 
-    test('근로자 경로는 건드리지 않는다', () {
-      // 같은 type을 근로자도 받는다(resignApproved 등). 관리자 맥락에서만 적용한다.
+    test('근로자 수신분은 dispatcher의 isUser 분기가 받는다', () {
+      // 같은 type을 근로자도 받는다(resignApproved 등). 라우터가 역할을
+      // 판단하는 대신, 목적지 화면이 현재 역할로 갈린다.
       final i = fcm.indexOf('kPermissionBearingNotifTypes.contains(rawType)');
       expect(i > 0, true);
-      expect(fcm.substring(0, i).endsWith('if (_currentUserIsAdmin && rawType != null && '),
-          true);
+      expect(fcm.substring(0, i).endsWith('if (rawType != null && '), true);
+      final screen = _codeOf(_src(_notifPath));
+      for (final t in ['terminationApproved', 'resignApproved', 'terminationRequested']) {
+        final at = screen.indexOf('case NotificationType.$t:');
+        expect(at, greaterThan(-1), reason: t);
+        expect(screen.substring(at, at + 400).contains('if (isUser) {'), true, reason: t);
+      }
     });
 
     test('목록이 인앱 라우트와 어긋나면 알아차린다', () {

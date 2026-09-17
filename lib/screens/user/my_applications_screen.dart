@@ -80,10 +80,20 @@ class MyApplicationsScreen extends StatefulWidget {
   /// - 함수 전달: TabBarView 임베드 시 상위 탭으로 전환하는 용도
   final VoidCallback? onBack;
 
+  /// [CROSS-DOMAIN-R5.1G.1] 알림이 지목한 지원서.
+  ///
+  /// `applicationConfirmed` / `applicationRejected` 알림은 특정 지원서 하나에
+  /// 대한 소식인데, 여태 목록만 열어 어느 건인지 말하지 않았다(N3 미충족).
+  /// 여기에 id를 주면 **현재 데이터로** 그 건을 찾아 카드 탭과 같은 화면을
+  /// 연다. payload에 담긴 과거 상태는 쓰지 않는다 — 열리는 것은 지금 읽은
+  /// Application이다. null이면 예전처럼 목록만 연다(legacy payload).
+  final String? focusApplicationId;
+
   const MyApplicationsScreen({
     super.key,
     this.initialTabIndex = 0,
     this.onBack,
+    this.focusApplicationId,
   });
 
   @override
@@ -223,6 +233,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _isLoading     = false;
           _cachedFiltered = null;
         });
+        // [CROSS-DOMAIN-R5.1G.1] 지목된 지원서가 있으면 지금 읽은 데이터로 연다.
+        unawaited(_focusRequestedApplication());
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
@@ -233,6 +245,73 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     } finally {
       _fetchInProgress = false;
     }
+  }
+
+  /// [CROSS-DOMAIN-R5.1G.1] 알림이 지목한 지원서를 **현재 상태로** 연다.
+  ///
+  ///   · 첫 로드 한 번만 동작한다(뒤로 돌아온 뒤 다시 열리지 않는다).
+  ///   · 방금 읽은 목록에서 id로 찾는다 — payload의 과거 상태를 쓰지 않는다.
+  ///   · 목록은 페이지 단위라 첫 페이지에 없을 수 있다. 그때는 그 문서 하나만
+  ///     읽고, **본인 소유인지 확인한 뒤** 연다. 남의 지원서 id를 들고 와도
+  ///     열리지 않는다(서버 규칙과 이중 방어).
+  ///   · 찾지 못하면 조용히 목록만 두지 않고 이유를 말한다.
+  bool _focusHandled = false;
+
+  Future<void> _focusRequestedApplication() async {
+    final wanted = widget.focusApplicationId;
+    if (wanted == null || wanted.isEmpty || _focusHandled) return;
+    _focusHandled = true;
+
+    _ApplicationWithTO? hit;
+    for (final e in _applications) {
+      if (e.application.id == wanted) { hit = e; break; }
+    }
+
+    if (hit == null) {
+      // 첫 페이지 밖일 수 있다 — 그 한 건만 확인한다.
+      final uid = context.read<UserProvider>().currentUser?.uid;
+      try {
+        final one = await _firestoreService.getApplicationOnce(wanted);
+        if (!mounted) return;
+        if (one == null || uid == null || one.uid != uid) {
+          ToastHelper.showWarning('지원 정보를 찾을 수 없습니다.');
+          return;
+        }
+        final withTO = await _attachTOInfo([one]);
+        if (!mounted || withTO.isEmpty) {
+          if (mounted) ToastHelper.showWarning('지원 정보를 찾을 수 없습니다.');
+          return;
+        }
+        hit = withTO.first;
+      } catch (e) {
+        debugPrint('⚠️ [R5.1G.1] 지목된 지원서 조회 실패: $e');
+        if (mounted) ToastHelper.showError('지원 정보를 불러오지 못했습니다.');
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    final to = hit.to;
+    if (to == null || to.isSoftDeleted) {
+      // 공고가 사라진 건은 목록의 삭제 카드가 canonical 표현이다.
+      ToastHelper.showWarning('해당 공고가 삭제되어 상세를 열 수 없습니다.');
+      return;
+    }
+    // 카드 탭과 **같은** 목적지 — 새 상세 화면을 만들지 않는다.
+    final app = hit.application;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => JobPostingScreen(
+          to: to,
+          workDetails: to.workDetails,
+          myApplication: app,
+          myContract: _contractMap[app.id],
+        ),
+      ),
+    ).then((changed) {
+      if (changed == true && mounted) _loadApplications();
+    });
   }
 
   String _firestoreErrMsg(dynamic e, String fallback) {
