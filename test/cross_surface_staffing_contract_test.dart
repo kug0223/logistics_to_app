@@ -248,7 +248,9 @@ void main() {
   group('R2.4-06 notification', () {
     test('06-a 알림에서 연 다이얼로그가 실제 지원서로 수치를 만든다', () {
       final wad = _codeOf(_src(_wadPath));
-      final init = _after(_src(_wadPath), 'void initState() {', 900);
+      // [CROSS-DOMAIN-R5.1F.2] initState에 대상 사업장 권한 구독이 더해져
+      //   창이 좁아졌다. 보는 성질은 그대로 — 창 크기만 맞춘다.
+      final init = _after(_src(_wadPath), 'void initState() {', 1500);
       expect(init.contains('_updateLocalStats(markChanged: false)'), isTrue,
           reason: '알림 진입 시 확정 0으로 표시된다');
       expect(wad.contains('Future<void> _updateLocalStats({bool markChanged = true})'),

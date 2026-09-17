@@ -57,6 +57,18 @@ class UserProvider with ChangeNotifier {
   /// 지금 map이 담고 있는 사업장 집합 — 재조회 필요 여부 판단용.
   /// 조회에 성공한 사업장만 담는다(실패분은 다음 하이드레이션에서 재시도).
   Set<String> _hydratedPermissionBusinessIds = const {};
+
+  /// [CROSS-DOMAIN-R5.1F.2] **열려 있는 대상 사업장 화면**만의 권한 구독.
+  ///
+  /// 선택 사업장 listener(_memberPermsSub)는 하나뿐이라, selected=A인 상태에서
+  /// target=B 화면(계약 관리·지원자 다이얼로그 등)을 보고 있으면 B의 권한
+  /// 회수가 화면에 닿지 않았다. 서버는 막지만 클라이언트에는 stale 권한이 남는다.
+  ///
+  /// 해결은 "모든 배정 사업장을 상시 구독"이 아니다 — 화면이 살아 있는 동안
+  /// **그 사업장 하나만** 본다. 같은 사업장을 여러 surface가 보면 구독은 하나로
+  /// 합치고(refcount), 마지막 surface가 닫히면 끊는다. 폴링은 없다.
+  final Map<String, ({StreamSubscription<DocumentSnapshot<Map<String, dynamic>>> sub, int count})>
+      _targetPermsSubs = {};
   // SA-01: switchToAdminMode 경쟁조건 방지용 세대 카운터
   int _switchGeneration = 0;
 
@@ -368,6 +380,80 @@ class UserProvider with ChangeNotifier {
     _hydratedPermissionBusinessIds = hydrated;
   }
 
+  /// [CROSS-DOMAIN-R5.1F.2] 대상 사업장 권한을 화면이 열려 있는 동안만 구독한다.
+  ///
+  /// 반환값은 해제 함수다 — `dispose`에서 반드시 호출한다. 두 번 불러도 안전하다.
+  /// SUB_ADMIN이 아니면(소유자·SUPER_ADMIN·일반 USER) 권한 map 자체가 판정에
+  /// 쓰이지 않으므로 구독하지 않고 no-op을 돌려준다 — 불필요한 read를 만들지 않는다.
+  ///
+  /// 선택 사업장 listener와 **분리돼 있다.** 여기서는 `_memberPermissions`나
+  /// 선택 context를 건드리지 않는다. 대상 사업장 판정에 쓰이는 map만 갱신한다 —
+  /// A의 권한이 B 화면에 적용되거나 그 반대가 되는 일이 없어야 한다.
+  VoidCallback watchBusinessPermissions(String businessId) {
+    final user = _currentUser;
+    if (businessId.isEmpty || user == null || !user.isSubAdmin) {
+      return () {};
+    }
+    final existing = _targetPermsSubs[businessId];
+    if (existing != null) {
+      _targetPermsSubs[businessId] = (sub: existing.sub, count: existing.count + 1);
+    } else {
+      // 해제 함수와 dispose에서 모두 취소한다. refcount map에 담기므로
+      // lint가 취소 경로를 따라가지 못한다.
+      // ignore: cancel_subscriptions
+      final sub = FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(businessId)
+          .collection('members')
+          .doc(user.uid)
+          .snapshots()
+          .listen((snap) {
+        if (_disposed) return;
+        try {
+          final data = snap.data();
+          // membership이 사라지면 entry를 지운다 — canForBusiness가 곧바로
+          // false를 돌려준다(fail-closed). 선택 사업장 복구 로직은 타지 않는다.
+          _setBusinessPermission(
+            businessId,
+            data == null
+                ? null
+                : MemberPermissions.fromMap(
+                    (data['permissions'] as Map<String, dynamic>?) ?? {}),
+          );
+          // 지금 보고 있는 사업장이 곧 선택 사업장이면 그 값도 같은 snapshot으로
+          // 맞춘다 — 두 자리가 다른 값을 들고 있으면 화면마다 답이 달라진다.
+          if (_memberPermsBusinessId == businessId ||
+              _selectedSubAdminBusinessId == businessId) {
+            _memberPermissions = data == null
+                ? null
+                : _subAdminPermissionsByBusinessView[businessId];
+          }
+          notifyListeners();
+        } catch (e) {
+          debugPrint('⚠️ [R5.1F.2] target perms 파싱 실패 (권한 유지): $e');
+        }
+      }, onError: (e) {
+        // 읽기 실패는 권한 없음이 아니다 — 기존 값을 그대로 둔다.
+        debugPrint('⚠️ [R5.1F.2] target perms 리스너 에러 ($businessId): $e');
+      });
+      _targetPermsSubs[businessId] = (sub: sub, count: 1);
+    }
+
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      final cur = _targetPermsSubs[businessId];
+      if (cur == null) return;
+      if (cur.count <= 1) {
+        cur.sub.cancel();
+        _targetPermsSubs.remove(businessId);
+      } else {
+        _targetPermsSubs[businessId] = (sub: cur.sub, count: cur.count - 1);
+      }
+    };
+  }
+
   /// 배정 사업장별 권한을 채운다.
   ///
   /// 범위는 **배정 집합**이지 선택 사업장이 아니다 — 사업장을 A→B로 바꿨다고
@@ -670,6 +756,10 @@ class UserProvider with ChangeNotifier {
     _disposed = true;
     _authSubscription?.cancel();
     _memberPermsSub?.cancel();
+    for (final e in _targetPermsSubs.values) {
+      e.sub.cancel();
+    }
+    _targetPermsSubs.clear();
     if (_contractFcmCallback != null) {
       FCMService().removeUserContractRefreshListener(_contractFcmCallback!);
     }

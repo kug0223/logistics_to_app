@@ -89,9 +89,12 @@ void main() {
           reason: '데이터가 있을 때만 대기 건수를 말한다');
     });
 
-    test('처리 action은 이미 같은 권한을 요구한다', () {
-      expect(d.contains("if (!context.read<UserProvider>().can((p) => p.canManageWorkers))"),
-          true);
+    test('처리 action은 같은 권한을 요구한다', () {
+      // [CROSS-DOMAIN-R5.1F.2] 읽기는 대상 사업장, action은 선택 사업장이라
+      //   A의 권한으로 B의 action이 열렸다. 둘 다 대상 사업장 기준으로 맞췄다.
+      expect(d.contains('if (!_canForThisBiz((p) => p.canManageWorkers)) {'), true);
+      expect(d.contains('context.read<UserProvider>().can((p) => p.canManageWorkers)'),
+          false, reason: '선택 사업장 권한을 대상 사업장 화면에 재사용하지 않는다');
     });
   });
 

@@ -213,9 +213,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     //
     //   지원서는 어차피 지금 불러온다 — 그 결과로 수치를 만든다.
     //   다른 표면과 같은 source이므로 숫자가 갈라지지 않는다.
+    // [CROSS-DOMAIN-R5.1F.2] 이 다이얼로그의 사업장은 selected와 다를 수 있다
+    //   (알림·deep-link 진입). 열려 있는 동안 그 사업장 권한만 구독한다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _releasePermsWatch = context
+          .read<UserProvider>()
+          .watchBusinessPermissions(widget.toItem.to.businessId);
+    });
     _loadApplicants().then((_) {
       if (mounted) _updateLocalStats(markChanged: false);
     });
+  }
+
+  VoidCallback? _releasePermsWatch;
+
+  @override
+  void dispose() {
+    _releasePermsWatch?.call();
+    super.dispose();
   }
 
   /// 지원자 + 사용자 정보 + 신분증 상태 로드

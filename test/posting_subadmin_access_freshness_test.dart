@@ -167,8 +167,12 @@ void main() {
 
     test('01-e 새 listener도 새 read도 없다 (§1 조건)', () {
       final code = _codeOf(_src(_providerPath));
-      expect('snapshots()'.allMatches(code).length, 1,
-          reason: 'realtime listener는 선택 사업장 하나뿐이어야 한다');
+      // [CROSS-DOMAIN-R5.1F.2] +1 — 대상 사업장 화면이 열려 있는 동안만 사는
+      //   구독. 상시 listener는 여전히 선택 사업장 하나다.
+      expect('snapshots()'.allMatches(code).length, 2,
+          reason: '상시 1(선택 사업장) + 화면 수명 1(대상 사업장)');
+      expect(code.contains('_targetPermsSubs.remove(businessId);'), true,
+          reason: '화면이 닫히면 끊어야 한다 — 끊기지 않으면 상시가 된다');
       final setter = _codeOf(
           _bodyOf(_src(_providerPath), 'void _setBusinessPermission('));
       for (final forbidden in ['await', 'getMemberPermissions', 'FirebaseFirestore']) {
@@ -365,7 +369,10 @@ void main() {
         hits += 'refreshSubAdminAccessState()'.allMatches(code).length;
       }
       // pull/retry(공유) 1 + resume 1 + CreateTO 진입 1 + CreateTO submit preflight 1
-      expect(hits, 4, reason: '무분별한 refresh 추가 금지');
+      // [CROSS-DOMAIN-R5.1F.2] + 지원 검토 큐 1 — 여러 사업장을 한 화면에 모으는
+      //   유일한 surface다. 사업장마다 listener를 다는 대신 목록을 다시 읽는
+      //   같은 길목에서 권한도 다시 읽는다(폴링 아님, in-flight는 하나로 합쳐짐).
+      expect(hits, 5, reason: '무분별한 refresh 추가 금지');
     });
   });
 

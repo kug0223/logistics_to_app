@@ -96,6 +96,7 @@ class _AdminContractManagementScreenState
   // [CROSS-DOMAIN-R5.1F.1] 진입 시점 한 번이 아니라, 머무는 동안에도 본다.
   UserProvider? _userProvider;
   bool _accessRevoked = false;
+  VoidCallback? _releasePermsWatch;
 
   bool get _isUnsentTab => _tabCtrl.index == 1;
 
@@ -156,6 +157,9 @@ class _AdminContractManagementScreenState
       final up = context.read<UserProvider>();
       _userProvider = up;
       up.addListener(_onPermissionChanged);
+      // [CROSS-DOMAIN-R5.1F.2] selected와 다를 수 있는 **이 화면의 사업장**을
+      //   화면이 살아 있는 동안만 구독한다.
+      _releasePermsWatch = up.watchBusinessPermissions(widget.businessId);
       _load();
     });
   }
@@ -222,6 +226,7 @@ class _AdminContractManagementScreenState
   @override
   void dispose() {
     _userProvider?.removeListener(_onPermissionChanged);
+    _releasePermsWatch?.call();
     _searchDebounce?.cancel();
     _tabCtrl.dispose();
     _scrollCtrl.dispose();

@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
+import '../../../models/core/business_member_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/notification_model.dart';
 import '../../../models/core/schedule_change_request_model.dart';
@@ -141,8 +142,33 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   @override
   void dispose() {
+    _releasePermsWatch?.call();
     _searchController.dispose();
     super.dispose();
+  }
+
+  // [CROSS-DOMAIN-R5.1F.2] 보고 있는 사업장 하나만, 열려 있는 동안만 구독한다.
+  String? _watchedBizId;
+  VoidCallback? _releasePermsWatch;
+
+  /// [CROSS-DOMAIN-R5.1F.2] 이 다이얼로그는 selected 사업장이 아니라
+  ///   **보고 있는** 사업장(`_selectedBusinessId`)의 일을 한다. 서버 guard도
+  ///   그 사업장 기준이므로 클라이언트도 같은 단위로 판정한다.
+  ///   `can()`(선택 사업장)을 쓰면 A의 권한으로 B의 action이 열린다.
+  bool _canForThisBiz(bool Function(MemberPermissions p) check) {
+    final bizId = _selectedBusinessId;
+    if (bizId == null) return false;
+    return context.read<UserProvider>().canForBusiness(bizId, check);
+  }
+
+  void _watchPermsFor(String? bizId) {
+    if (_watchedBizId == bizId) return;
+    _releasePermsWatch?.call();
+    _releasePermsWatch = null;
+    _watchedBizId = bizId;
+    if (bizId == null || !mounted) return;
+    _releasePermsWatch =
+        context.read<UserProvider>().watchBusinessPermissions(bizId);
   }
 
   /// 사업장 데이터 초기화
@@ -198,6 +224,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 고정근무자 로드
   Future<void> _loadFixedWorkers() => runWithLoading(() async {
     final businessId = _selectedBusinessId;
+    // 사업장이 정해지는 길목 — 구독 대상을 여기서 맞춘다.
+    _watchPermsFor(businessId);
     if (businessId == null) return;
 
     // [PERF] 독립적인 3개 Future 동시 시작 — 순차 await 제거
@@ -749,7 +777,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Future<void> _approvePendingRequest(
       ScheduleChangeRequestModel request) async {
     // TO-06: 스케줄 변경 요청 승인 권한 확인
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
@@ -1310,12 +1338,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// callableCreateContractRenewal이 서버에서 동일 권한을 강제한다.
   /// BUSINESS_ADMIN은 UserProvider.can()이 항상 true.
   bool _canManageContract() =>
-      context.read<UserProvider>().can((p) => p.canManageContract);
+      _canForThisBiz((p) => p.canManageContract);
 
   /// 만료 임박자 일괄 연장
   Future<void> _batchExtendExpiringWorkers() async {
     // TO-06: 계약 일괄 연장 권한 확인
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
@@ -1662,7 +1690,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   Future<ApplicationModel?> _processRenewal(ApplicationModel app, UserModel? user, {required DateTime newEndDate}) async {
     // [FC-FW-PERM] canManageWorkers guard — 계약 연장도 인력 관리 권한 필요
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return null;
     }
@@ -2190,7 +2218,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 추가 근무 요청 다이얼로그
   Future<void> _showExtraWorkRequestDialog(ApplicationModel app) async {
     // [FC-FW-PERM] canManageWorkers guard — Firestore rules 중복 방어, UX 오류 방지
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
@@ -2350,7 +2378,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
     // [FC-FW-PERM] canManageWorkers guard — Firestore rules 중복 방어, UX 오류 방지
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
@@ -2502,7 +2530,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 계약해지 요청 다이얼로그
   Future<void> _showTerminationRequestDialog(_FixedWorkerItem item) async {
     // [FC-FW-PERM] canManageWorkers guard — CF 호출 전 UX 오류 방지 (서버도 assertBizAdmin)
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
@@ -2556,7 +2584,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 해지 요청 취소
   Future<void> _cancelTerminationRequest(ApplicationModel app) async {
     // [FC-FW-PERM] canManageWorkers guard — CF 호출 전 UX 오류 방지 (CF callableCancelTermination 내부 검증)
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }

@@ -588,8 +588,16 @@ void main() {
       //   여전히 **동시에 살아 있는 구독은 하나**다(연결 전 cancel).
       expect('_startMemberPermsListener('.allMatches(code).length, 4,
           reason: '정의 1 + 호출 3 (switchToAdminMode, _loadUserData, access refresh)');
-      expect('snapshots()'.allMatches(code).length, 1,
-          reason: 'realtime 구독 지점은 하나뿐이어야 한다');
+      // [CROSS-DOMAIN-R5.1F.2] +1 — 대상 사업장 화면이 열려 있는 동안만 사는
+      //   구독이 생겼다(selected≠target일 때 권한 회수가 화면에 닿지 않던 문제).
+      //   **상시** 구독은 여전히 선택 사업장 하나뿐이고, 새 구독은 refcount로
+      //   합쳐지고 마지막 화면이 닫히면 끊긴다 — 그 성질을 여기서 못박는다.
+      expect('snapshots()'.allMatches(code).length, 2,
+          reason: '상시 구독 1(선택 사업장) + 화면 수명 구독 1(대상 사업장)');
+      expect(code.contains('if (cur.count <= 1) {'), true,
+          reason: '화면 수명 구독이 해제 경로를 잃으면 상시 구독이 된다');
+      expect(code.contains('for (final e in _targetPermsSubs.values) {'), true,
+          reason: 'provider dispose에서도 전부 끊어야 한다');
     });
 
     test('11-c 액션마다 조회하지 않는다 (§5)', () {

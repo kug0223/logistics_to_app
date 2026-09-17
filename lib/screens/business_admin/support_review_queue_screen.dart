@@ -12,9 +12,13 @@
 //   - V1: 클라이언트 측 용량(requiredCount) 검증 없음 (기존 DayApplicantsDialog 동일)
 //   - V1: 전체 fetch (페이지네이션 미구현)
 
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../models/core/application_model.dart';
+import '../../providers/user_provider.dart';
 import '../../models/core/business_model.dart';
 import '../../models/core/user_model.dart';
 import '../../services/firestore_service.dart';
@@ -219,6 +223,11 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   Future<void> _load() async {
     // [CR-01 FIX] 로드 시작 시 에러 플래그 초기화 (동기 컨텍스트 — mounted 보장)
     setState(() => _hasLoadError = false);
+    // [CROSS-DOMAIN-R5.1F.2] 이 화면은 배정 사업장 전체를 한 번에 보여주므로
+    //   사업장마다 listener를 달지 않는다. 대신 목록을 다시 읽는 이 길목에서
+    //   권한도 같은 주기로 다시 읽는다(in-flight는 하나로 합쳐진다).
+    //   폴링이 아니라 사용자가 만든 결정적 refresh다.
+    unawaited(context.read<UserProvider>().refreshSubAdminAccessState());
     await runWithLoading(() async {
       try {
         final apps = await _queueSvc.loadPendingApplications(widget.businessIds);
@@ -351,9 +360,28 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
 
   // ─── 액션 ──────────────────────────────────────────────────────────────────
 
+  /// [CROSS-DOMAIN-R5.1F.2] 이 큐는 여러 사업장의 지원서를 한 화면에 모은다.
+  ///
+  /// [APPROVE-AUTH-01 C2]는 selected-A 기준 `can()` 게이트가 B 행을 잘못
+  /// 막는다는 이유로 클라이언트 게이트를 **없앴다**. 그러면 권한 없는 사업장의
+  /// 승인/거절 CTA가 그대로 남고, 누르면 서버 403으로만 끝난다.
+  /// 답은 "게이트 없음"이 아니라 **행의 사업장 기준 게이트**다 — 서버가 보는
+  /// 단위(`callableApproveApplicationForReview`의 target business)와 같다.
+  ///
+  /// 하이드레이션 전(UNKNOWN)에는 fail-closed로 두고, `_load()`가 부르는
+  /// access refresh가 채우면 다시 그려진다 — 폴링이 아니라 결정적 refresh다.
+  bool _canActOn(ApplicationModel app) =>
+      context.read<UserProvider>().canForBusiness(
+            app.businessId,
+            (p) => p.canManageTo,
+          );
+
   Future<void> _approveApp(ApplicationModel app, String? userName) async {
-    // [APPROVE-AUTH-01 C2] 클라이언트 selected-A canManageTo 게이트 제거.
-    // 서버(callableApproveApplicationForReview)가 target business 권한을 재검증한다.
+    // [CROSS-DOMAIN-R5.1F.2] 서버와 같은 단위로 먼저 막는다.
+    if (!_canActOn(app)) {
+      ToastHelper.showWarning('이 사업장의 공고 관리 권한이 없습니다.');
+      return;
+    }
     if (_isActing) return;
 
     final adminUID = FirebaseAuth.instance.currentUser?.uid;
@@ -404,8 +432,11 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   }
 
   Future<void> _rejectApp(ApplicationModel app, String? userName) async {
-    // [APPROVE-AUTH-01 C2] 클라이언트 selected-A canManageTo 게이트 제거.
-    // 서버(callableRejectApplication)가 target business 권한을 재검증한다.
+    // [CROSS-DOMAIN-R5.1F.2] 승인과 같은 권한·같은 단위다.
+    if (!_canActOn(app)) {
+      ToastHelper.showWarning('이 사업장의 공고 관리 권한이 없습니다.');
+      return;
+    }
     if (_isActing) return;
 
     final adminUID = FirebaseAuth.instance.currentUser?.uid;
@@ -463,6 +494,9 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
 
   @override
   Widget build(BuildContext context) {
+    // [CROSS-DOMAIN-R5.1F.2] 행마다 사업장이 다르므로 판정은 _canActOn이 하고,
+    //   여기서는 권한이 바뀌면 다시 그려지도록 구독만 건다.
+    context.watch<UserProvider>();
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -807,10 +841,21 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
             ),
             // ─ 액션 버튼 ──────────────────────────────────────────────────
             const SizedBox(width: 8),
-            _ActionButtons(
-              onReject: _isActing ? null : () => _rejectApp(app, user?.displayName ?? user?.name),
-              onApprove: _isActing ? null : () => _approveApp(app, user?.displayName ?? user?.name),
-            ),
+            // [CROSS-DOMAIN-R5.1F.2] 이 행의 사업장에 권한이 없으면 CTA 대신
+            //   이유를 보여준다 — 누를 수 없는 버튼을 남기지 않는다.
+            if (!_canActOn(app))
+              Text(
+                '권한 없음',
+                style: ResponsiveHelper.bodyStyle(
+                  context,
+                  color: AppColors.textTertiary,
+                ).copyWith(fontSize: 12),
+              )
+            else
+              _ActionButtons(
+                onReject: _isActing ? null : () => _rejectApp(app, user?.displayName ?? user?.name),
+                onApprove: _isActing ? null : () => _approveApp(app, user?.displayName ?? user?.name),
+              ),
           ],
         ),
       ),

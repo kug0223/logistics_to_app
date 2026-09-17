@@ -306,6 +306,28 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     _load();
   }
 
+  // [CROSS-DOMAIN-R5.1F.2] 이 다이얼로그가 보고 있는 사업장은 selected와 다를
+  //   수 있고, 사업장 선택기로 바뀌기도 한다. 보고 있는 **하나만** 구독하고,
+  //   바뀌면 구독을 옮겨 단다. 닫히면 끊는다 — 상시 구독이 아니다.
+  String? _watchedBizId;
+  VoidCallback? _releasePermsWatch;
+
+  void _watchPermsFor(String? bizId) {
+    if (_watchedBizId == bizId) return;
+    _releasePermsWatch?.call();
+    _releasePermsWatch = null;
+    _watchedBizId = bizId;
+    if (bizId == null || !mounted) return;
+    _releasePermsWatch =
+        context.read<UserProvider>().watchBusinessPermissions(bizId);
+  }
+
+  @override
+  void dispose() {
+    _releasePermsWatch?.call();
+    super.dispose();
+  }
+
   String _bizName(String? bizId) {
     if (bizId == null) return '';
     for (final b in widget.businesses) {
@@ -316,6 +338,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<void> _load() async {
     final bizId = _selectedBusinessId;
+    // 사업장이 정해지는 유일한 길목이다 — 여기서 구독 대상을 맞춘다.
+    _watchPermsFor(bizId);
     if (bizId == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
