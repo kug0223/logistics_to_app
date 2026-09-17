@@ -30,6 +30,7 @@ import 'admin_contract_management_screen.dart';
 import 'payroll/payroll_payment_dashboard_screen.dart';
 // payroll_payment_service.dart — home screen에서 직접 사용 없음 (canonical summary로 대체됨)
 import '../../theme/app_colors.dart';
+import '../../models/core/business_member_model.dart'; // [R5.1F.5] MemberPermissions
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
 import 'expiring_contracts_screen.dart';
@@ -92,6 +93,7 @@ typedef _AdminHomeData = ({
   bool canManageWage,
   bool subAdminPermissionsLoaded,
   bool canManageToAnywhere,
+  PermissionWatchState permissionHealth,
 });
 
 class BusinessAdminHomeScreen extends StatefulWidget {
@@ -958,7 +960,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     Map<String, int>? secondaryCountPerBiz,
   }) async {
     final up = context.read<UserProvider>();
-    if (!up.can((p) => p.canManageWage)) {
+    if (!_verified(up, (p) => p.canManageWage)) {
       ToastHelper.showWarning('급여 관리 권한이 없습니다.');
       return;
     }
@@ -1038,6 +1040,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         subAdminPermissionsLoaded: p.subAdminPermissionsLoaded,
         canManageToAnywhere:
             p.canForAnyBusiness((x) => x.canManageTo, whenUnknown: true),
+        // [CROSS-DOMAIN-R5.1F.5] 권한 bool은 그대로인데 전송 상태만 바뀌는
+        //   전이가 있다(verified → error). bool만 구독하면 true→true라
+        //   다시 그리지 않아, 검증되지 않은 값으로 Task와 CTA가 남는다.
+        permissionHealth: p.currentBusinessPermissionHealth,
       ),
       builder: (context, data, _) {
         final theme = Theme.of(context);
@@ -1438,8 +1444,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   /// 공고 생성/편집 권한 — 기존 permission 계약 그대로.
   /// (서버 게이트 callableCreateTO canManageTo 검증과 같은 기준)
+  /// [CROSS-DOMAIN-R5.1F.5] 선택 사업장 권한 — **확인된 허용**에서만 true.
+  ///
+  /// 예전에는 `!isSub || up.can(...)` 이었다. bool 하나라서 구독이 죽어
+  /// 마지막 값만 남은 상태와 방금 확인한 허용이 구분되지 않았고, 그 값으로
+  /// Task와 CTA가 계속 열려 있었다. 이제 네 상태 중 allowed만 통과시킨다 —
+  /// error/unknown은 fail-closed다(값을 지우는 것이 아니라 쓰지 않는 것이다).
+  /// 소유자는 `checkCurrentBusiness`가 먼저 allowed로 돌려주므로 영향이 없다.
+  bool _verified(UserProvider up, bool Function(MemberPermissions p) check) =>
+      up.checkCurrentBusiness(check) == PermissionCheck.allowed;
+
   bool _canCreatePosting(UserProvider up) =>
-      up.currentUser?.isSubAdmin != true || up.can((p) => p.canManageTo);
+      up.currentUser?.isSubAdmin != true || _verified(up, (p) => p.canManageTo);
 
   /// [HOME-V2-08D.2] 공고 등록 — Jobs 탭의 생성 버튼과 같은 경로다.
   void _openCreatePosting(BuildContext context) {
@@ -1476,6 +1492,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   /// [PH1] SUB_ADMIN 권한 요약 한 줄 (compact)
+  ///
+  /// [CROSS-DOMAIN-R5.1F.5] 여기만 bool `can()`을 그대로 쓴다 — 행동 경로가
+  /// 아니라 "무슨 권한을 받았는지" 알려주는 줄이기 때문이다. 전송 상태가
+  /// 나빠졌다고 받은 권한이 없어진 것은 아니므로, 목록을 지우면 오히려
+  /// ERROR를 DENIED로 말하는 셈이 된다. 누를 수 있는 것은 전부 _verified로
+  /// 판정한다.
   Widget _buildPermissionSummaryLine(double s, UserProvider up) {
     final perms = <String>[];
     if (up.can((p) => p.canManageTo)) perms.add('공고');
@@ -2064,11 +2086,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // 근태 확인 / 당일 명단: canManageWorkers → AttendanceStatusDialog(오늘) [R5.2]
   // ERROR≠ZERO: 쿼리 실패 시 null 유지 (영역별 재시도 행 유지)
   Widget _buildTodayOps(BuildContext context, double s, ThemeData theme, UserProvider up) {
-    final isSub = up.currentUser?.isSubAdmin == true;
-    final canSeeStaffing = !isSub
-        || up.can((p) => p.canManageTo)
-        || up.can((p) => p.canManageWorkers);
-    final canSeeAttendance = !isSub || up.can((p) => p.canManageWorkers);
+    final canSeeStaffing = _verified(up, (p) => p.canManageTo)
+        || _verified(up, (p) => p.canManageWorkers);
+    final canSeeAttendance = _verified(up, (p) => p.canManageWorkers);
 
     if (!canSeeStaffing && !canSeeAttendance) return const SizedBox.shrink();
 
@@ -2221,7 +2241,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     required bool canSeeAttendance,
   }) {
     final rows = <Widget>[];
-    final isSub = up.currentUser?.isSubAdmin == true;
 
     // 부족 — 로딩 중이거나 조회 실패면 숫자를 주장하지 않는다.
     if (canSeeStaffing && !_staffingLoading) {
@@ -2230,7 +2249,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (day != null && shortage > 0) {
         // [R6.1] canManageTo일 때만 DayApplicantsDialog로 갈 수 있다.
         //   권한이 없어도 상태는 보여준다 — chevron과 tap만 없앤다.
-        final canManageTo = !isSub || up.can((p) => p.canManageTo);
+        final canManageTo = _verified(up, (p) => p.canManageTo);
         // [HOME-V2-08D.3] 부족 위치는 shortageBusinesses에서만 온다.
         //   _todayWorkSummary는 오늘 전체 근무 context라 부족 위치와 다를 수 있다.
         //   [AH-V2-04B] 단일 사업장은 header가 이미 사업장명을 말한다.
@@ -2251,7 +2270,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (canSeeAttendance && !_attendanceLoading && _todayCheckedIn != null) {
       final needsAttention = _todayNeedsAttention ?? 0;
       if (needsAttention > 0) {
-        final canManageWorkers = !isSub || up.can((p) => p.canManageWorkers);
+        final canManageWorkers = _verified(up, (p) => p.canManageWorkers);
         // [HOME-V2-08D.3] 지각/미출근/미퇴근 breakdown은 여기서 펼치지 않는다.
         //   그것은 AttendanceStatusDialog의 역할이다.
         rows.add(_todayIssueRow(s,
@@ -2429,10 +2448,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // [RULE] 정렬 = 부족 있는 날 먼저, 각 그룹 안에서 date ASC
   Widget _buildFutureStaffing(
       BuildContext context, double s, ThemeData theme, UserProvider up) {
-    final isSub = up.currentUser?.isSubAdmin == true;
-    final canSeeBlock = !isSub
-        || up.can((p) => p.canManageTo)
-        || up.can((p) => p.canManageWorkers);
+    final canSeeBlock = _verified(up, (p) => p.canManageTo)
+        || _verified(up, (p) => p.canManageWorkers);
     if (!canSeeBlock) return const SizedBox.shrink();
 
     // 로딩: Today Ops와 _staffingLoading 공유 (동일 fetch)
@@ -2534,11 +2551,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     required bool isFirst,
     required bool isLast,
   }) {
-    final isSub = up.currentUser?.isSubAdmin == true;
     // OWNER 또는 SubAdmin canManageTo → 탭 가능
     // SubAdmin canManageWorkers only → 상태는 읽히되 탭 불가, chevron 없음
     //   (누를 수 없는 chevron은 거짓 affordance다)
-    final canNavigate = !isSub || up.can((p) => p.canManageTo);
+    final canNavigate = _verified(up, (p) => p.canManageTo);
 
     final dateLabel = _futureDateLabel(day.date);
     final required  = day.requiredCount;
@@ -2808,7 +2824,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [PH1] SUB_ADMIN 권한 게이트: 권한 없는 항목은 목록에서 제외
     // CF aggSimple()이 permCount==0(권한없음)과 실제 쿼리 실패를 모두 available:false로
     // 반환하기 때문에 클라이언트에서 먼저 권한 기반 필터링을 적용한다.
-    final isSub = up.currentUser?.isSubAdmin == true;
 
     // [AH-V2-05B.3] atIndex는 '이체 대기' 연체 상향 한 곳에만 쓴다.
     //   행 목록을 점수로 재정렬하는 구조가 아니라, 정해진 자리에 넣는 것이다.
@@ -2845,7 +2860,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [AH-V2-02B] 다른 항목과 달리 방치하면 D+3에 시스템이 자동 승인한다.
     //   관리자가 결정하지 않은 것과 못 본 것이 같은 결과를 내므로 최상단에 둔다.
     //   기존 발견 경로는 알림뿐이었고, 경고(D+1·D+2)도 알림이라 함께 사라졌다.
-    if (!isSub || up.can((p) => p.canManageWorkers)) {
+    if (_verified(up, (p) => p.canManageWorkers)) {
       final resign = cs?.actions.resignRequest;
       final soon = resign?.soonCount ?? 0;
       add(
@@ -2855,7 +2870,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         count: resign?.count ?? 0, countStr: '${resign?.count ?? 0}건',
         available: resign?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!up.can((p) => p.canManageWorkers)) {
+          if (!_verified(up, (p) => p.canManageWorkers)) {
             ToastHelper.showWarning('근로자 관리 권한이 없습니다.'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
@@ -2891,7 +2906,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final overdueWageSlot = result.length;
 
     // 2. 지원 검토 — canManageTo
-    if (!isSub || up.can((p) => p.canManageTo)) {
+    if (_verified(up, (p) => p.canManageTo)) {
       final approval = cs?.actions.approval;
       add(
         icon: Icons.assignment_late_outlined, label: '지원 검토',
@@ -2931,7 +2946,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   서버가 requestedBy == APPLICANT 로 이미 걸러서 내려준다 —
     //   관리자가 보낸 NO_WORK/EXTRA_WORK는 근로자 응답 대기라 여기 없다.
     //   자동 처리가 없어 방치하면 영구 PENDING으로 남는다.
-    if (!isSub || up.can((p) => p.canManageWorkers)) {
+    if (_verified(up, (p) => p.canManageWorkers)) {
       final sched = cs?.actions.scheduleChangeRequest;
       add(
         icon: Icons.edit_calendar_outlined, label: '스케줄 변경 요청',
@@ -2939,7 +2954,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         count: sched?.count ?? 0, countStr: '${sched?.count ?? 0}건',
         available: sched?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!up.can((p) => p.canManageWorkers)) {
+          if (!_verified(up, (p) => p.canManageWorkers)) {
             ToastHelper.showWarning('근로자 관리 권한이 없습니다.'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
@@ -2970,7 +2985,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     // 4. 계약 미발송 — canManageContract
-    if (!isSub || up.can((p) => p.canManageContract)) {
+    if (_verified(up, (p) => p.canManageContract)) {
       final unsent = cs?.actions.unsentContract;
       add(
         icon: Icons.folder_off_outlined, label: '계약 미발송',
@@ -2978,7 +2993,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         count: unsent?.count ?? 0, countStr: '${unsent?.count ?? 0}명',
         available: unsent?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!up.can((p) => p.canManageContract)) {
+          if (!_verified(up, (p) => p.canManageContract)) {
             ToastHelper.showWarning('계약서 관리 권한이 없습니다.'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
@@ -3005,7 +3020,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     // 5. 마감 필요 — canManageWage
-    if (!isSub || up.can((p) => p.canManageWage)) {
+    if (_verified(up, (p) => p.canManageWage)) {
       final unclosed = cs?.actions.unclosed;
       add(
         icon: Icons.lock_open_outlined, label: '마감 필요',
@@ -3024,7 +3039,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [AH-V2-02A] 근로자가 보낸 중간정산 요청(interim_settlement_requests
     //   status=PENDING). showPendingSettlementOnly는 "홈 진입 시 true"로
     //   설계돼 있었으나 Home에서 넘기는 곳이 없어 dead parameter였다.
-    if (!isSub || up.can((p) => p.canManageWage)) {
+    if (_verified(up, (p) => p.canManageWage)) {
       final settlement = cs?.actions.settlementRequest;
       add(
         icon: Icons.payments_outlined, label: '중간정산 요청',
@@ -3053,7 +3068,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     // [AH-V2-02A] 근로자가 보낸 급여 지급주기 변경 요청(payment_change_requests
     //   status=PENDING). CF·DTO는 이미 집계해 내려보내고 있었고 Home row만 없었다.
     //   방치하면 effectiveFrom(다음 지급 주기) 전에 처리되지 못한다.
-    if (!isSub || up.can((p) => p.canManageWage)) {
+    if (_verified(up, (p) => p.canManageWage)) {
       final wageChange = cs?.actions.wageChangeRequest;
       add(
         icon: Icons.edit_calendar_outlined, label: '급여 변경 요청',
@@ -3078,7 +3093,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     // 8. 이체 대기 — canManageWage
-    if (!isSub || up.can((p) => p.canManageWage)) {
+    if (_verified(up, (p) => p.canManageWage)) {
       final wage = cs?.actions.unpaidWage;
       final wageParts = <String>[];
       if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
@@ -3126,7 +3141,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   있어도 이 행을 볼 수 없었다 — 없는 업무를 보여주던 08D.5의 반대 방향
     //   결함이다. canonical 권한은 server aggregation·행 onTap 가드·
     //   contractExpiringReminder 알림 모두 canManageContract 단독이다.
-    if (!isSub || up.can((p) => p.canManageContract)) {
+    if (_verified(up, (p) => p.canManageContract)) {
       final expiring = cs?.upcoming.expiringContract;
       add(
         icon: Icons.event_busy_outlined, label: '계약 종료 예정',
@@ -3134,7 +3149,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         count: expiring?.count ?? 0, countStr: '${expiring?.count ?? 0}명',
         available: expiring?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!up.can((p) => p.canManageContract)) {
+          if (!_verified(up, (p) => p.canManageContract)) {
             ToastHelper.showWarning('계약서 관리 권한이 없습니다.'); return;
           }
           if (!_ensureCanonicalSummary(context)) return;
@@ -3182,12 +3197,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   /// 섹션 전체의 상태이고 다른 문구를 쓴다.
   int _unknownTaskCount(UserProvider up, AdminHomeSummaryModel? cs) {
     if (cs == null) return 0;
-    final isSub = up.currentUser?.isSubAdmin == true;
     // _makeActionRows의 9종과 **같은** 권한 게이트를 쓴다.
-    final canWorkers  = !isSub || up.can((p) => p.canManageWorkers);
-    final canTo       = !isSub || up.can((p) => p.canManageTo);
-    final canContract = !isSub || up.can((p) => p.canManageContract);
-    final canWage     = !isSub || up.can((p) => p.canManageWage);
+    final canWorkers  = _verified(up, (p) => p.canManageWorkers);
+    final canTo       = _verified(up, (p) => p.canManageTo);
+    final canContract = _verified(up, (p) => p.canManageContract);
+    final canWage     = _verified(up, (p) => p.canManageWage);
 
     var n = 0;
     void chk({required bool permitted, required bool available}) {

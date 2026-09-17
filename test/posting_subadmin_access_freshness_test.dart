@@ -372,7 +372,10 @@ void main() {
       // [CROSS-DOMAIN-R5.1F.2] + 지원 검토 큐 1 — 여러 사업장을 한 화면에 모으는
       //   유일한 surface다. 사업장마다 listener를 다는 대신 목록을 다시 읽는
       //   같은 길목에서 권한도 다시 읽는다(폴링 아님, in-flight는 하나로 합쳐짐).
-      expect(hits, 5, reason: '무분별한 refresh 추가 금지');
+      // [CROSS-DOMAIN-R5.1F.5] + 2 — 급여 개요·미마감 큐의 "다시 확인".
+      //   선택 사업장 권한을 확인하지 못한 화면이 재시도할 유일한 경로다.
+      //   새 trigger를 만들지 않고 이 refresh를 그대로 쓴다.
+      expect(hits, 7, reason: '무분별한 refresh 추가 금지');
     });
   });
 

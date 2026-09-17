@@ -355,7 +355,7 @@ void main() {
     });
 
     test('permission 불변 — approval = canManageTo', () {
-      expect(home.contains('if (!isSub || up.can((p) => p.canManageTo)) {'), isTrue);
+      expect(home.contains('if (_verified(up, (p) => p.canManageTo)) {'), isTrue);
     });
 
     test('마감 필요 destination 불변', () {

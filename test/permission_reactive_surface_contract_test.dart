@@ -63,9 +63,12 @@ void main() {
     final s = _load(_jobs);
 
     test('read가 아니라 select다', () {
+      // [CROSS-DOMAIN-R5.1F.5] bool → 4상태. 구독한다는 성질은 그대로이고,
+      //   허용 값이 그대로인 채 전송 상태만 바뀌는 전이도 이제 닿는다.
       expect(
-          s.contains('if (context.select<UserProvider, bool>( '
-              '(p) => !p.isSubAdmin || p.can((x) => x.canManageTo)))'),
+          s.contains('if (context.select<UserProvider, PermissionCheck>( '
+              '(p) => p.checkCurrentBusiness((x) => x.canManageTo)) == '
+              'PermissionCheck.allowed)'),
           true);
     });
 
@@ -80,7 +83,11 @@ void main() {
     final s = _load(_payroll);
 
     test('listener가 양방향이다', () {
-      expect(s.contains('final allowed = _userProvider.can((p) => p.canManageWage);'),
+      // [CROSS-DOMAIN-R5.1F.5] 판정이 4상태가 됐다 — 양방향이라는 성질은 그대로.
+      expect(
+          s.contains('final check = _userProvider.checkCurrentBusiness('
+              '(p) => p.canManageWage); '
+              'final allowed = check == PermissionCheck.allowed;'),
           true);
       expect(s.contains('if (!allowed) { if (_accessDenied) return;'), true,
           reason: '회수 방향');
@@ -141,30 +148,39 @@ void main() {
     final s = _load(_queue);
 
     test('entry guard와 listener가 같은 권한을 쓴다', () {
-      expect(s.contains('if (!up.can((p) => p.canManageWage)) { '
-          'Navigator.of(context).pop();'), true);
-      expect(s.contains('final allowed = up.can((p) => p.canManageWage);'), true,
-          reason: '두 자리가 다른 규칙을 쓰면 다시 어긋난다');
+      // [CROSS-DOMAIN-R5.1F.5] 둘 다 checkCurrentBusiness(canManageWage)다.
+      expect(
+          s.contains('final entry = up.checkCurrentBusiness((p) => p.canManageWage);'),
+          true);
+      expect(
+          s.contains('final check = up.checkCurrentBusiness((p) => p.canManageWage);'),
+          true, reason: '두 자리가 다른 규칙을 쓰면 다시 어긋난다');
     });
 
     test('하이드레이션 전(UNKNOWN)을 거부로 읽지 않는다', () {
-      expect(
-          s.contains('if (up.currentUser?.isSubAdmin == true && '
-              '!up.permissionsLoaded) return;'),
-          true);
+      // unknown은 checkCurrentBusiness가 직접 돌려주고, 여기서는 거부와
+      // 다른 화면으로 간다 — pop하지 않는다.
+      expect(s.contains('if (entry == PermissionCheck.denied) { '
+          'Navigator.of(context).pop(); return; }'), true);
+      expect(s.contains('final unverified = check == PermissionCheck.error || '
+          'check == PermissionCheck.unknown;'), true);
     });
 
     test('회수·부여 양방향이다', () {
-      expect(s.contains('if (allowed != _accessRevoked) return;'), true);
+      expect(s.contains('if (allowed == _accessRevoked) {'), true);
       expect(s.contains('if (allowed) _load();'), true);
     });
 
     test('거부를 "마감 필요 0건"으로 말하지 않는다', () {
-      expect(s.contains('body: _accessRevoked ? const AppEmptyState( '
+      expect(s.contains(': _accessRevoked ? const AppEmptyState( '
           'icon: Icons.lock_outline, '
           "title: '접근 권한이 없습니다',"), true);
       expect(s.contains('onPressed: (isLoading || _accessRevoked) ? null : _load,'),
           true);
+    });
+
+    test('확인 실패는 거부와 다른 화면이다', () {
+      expect(s.contains("title: '권한 정보를 확인하지 못했습니다',"), true);
     });
 
     test('listener를 dispose에서 해제한다', () {
@@ -177,15 +193,17 @@ void main() {
     final s = _load(_workforce);
 
     test('고정 근로자 CTA가 권한을 구독한다', () {
+      // [CROSS-DOMAIN-R5.1F.5] bool → 4상태.
       expect(
-          s.contains('if (context.select<UserProvider, bool>( '
-              '(p) => p.can((x) => x.canManageWorkers))) _buildIconButton( '
+          s.contains('if (context.select<UserProvider, PermissionCheck>( '
+              '(p) => p.checkCurrentBusiness((x) => x.canManageWorkers)) == '
+              'PermissionCheck.allowed) _buildIconButton( '
               'icon: Icons.settings_outlined,'),
           true);
     });
 
     test('action-time guard는 이유를 말한다', () {
-      expect(s.contains("ToastHelper.showWarning('근로자 관리 권한이 없습니다');"), true,
+      expect(s.contains("? '근로자 관리 권한이 없습니다'"), true,
           reason: '아무 일도 일어나지 않는 탭은 고장과 구분되지 않는다');
       expect(s.contains('if (!up.can((p) => p.canManageWorkers)) return;'), false,
           reason: '조용한 return은 남겨두지 않는다');

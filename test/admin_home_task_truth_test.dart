@@ -343,7 +343,7 @@ void main() {
       for (final perm in [
         'canManageWorkers', 'canManageTo', 'canManageContract', 'canManageWage',
       ]) {
-        expect(u.contains('!isSub || up.can((p) => p.$perm)'), isTrue,
+        expect(u.contains('_verified(up, (p) => p.$perm)'), isTrue,
             reason: perm);
       }
     });
@@ -366,8 +366,10 @@ void main() {
     });
 
     test('05-b 그래서 클라이언트가 권한 게이트를 먼저 건다', () {
-      expect(makeCode, contains('final isSub = up.currentUser?.isSubAdmin == true;'));
-      expect(_codeOf(unknownFn), contains('final isSub ='));
+      // [CROSS-DOMAIN-R5.1F.5] isSub 분기는 _verified 안으로 들어갔다 —
+      //   소유자 판정과 신선도 판정을 한 자리에서 한다.
+      expect(makeCode, contains('_verified(up, (p) => p.'));
+      expect(_codeOf(unknownFn), contains('_verified(up, (p) => p.'));
     });
 
     test('05-c 사업장 0개는 오류가 아니라 정상 0이다 (FP-02)', () {

@@ -483,7 +483,7 @@ class WorkDetailManagementDialog {
   // 일괄 마감
   Future<void> _handleBulkClose(List<WorkDetailModel> works) async {
     // TO-05: 업무별 마감 권한 확인
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageTo) != PermissionCheck.allowed) {
       ToastHelper.showWarning('공고 관리 권한이 없습니다.');
       return;
     }
@@ -549,7 +549,7 @@ class WorkDetailManagementDialog {
 
   // 일괄 재오픈
   Future<void> _handleBulkReopen(List<WorkDetailModel> works) async {
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageTo) != PermissionCheck.allowed) {
       ToastHelper.showWarning('공고 관리 권한이 없습니다.');
       return;
     }
@@ -610,7 +610,7 @@ class WorkDetailManagementDialog {
 
   // 긴급모집 종료
   Future<void> _handleBulkStopEmergency(List<WorkDetailModel> works) async {
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageTo) != PermissionCheck.allowed) {
       ToastHelper.showWarning('공고 관리 권한이 없습니다.');
       return;
     }

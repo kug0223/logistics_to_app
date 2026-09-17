@@ -159,7 +159,7 @@ void main() {
 
     test('01-c 행 onTap 가드가 canManageContract다', () {
       final seg = makeCode.substring(makeCode.indexOf("label: '계약 종료 예정'"));
-      expect(seg, contains("if (!up.can((p) => p.canManageContract)) {"));
+      expect(seg, contains("if (!_verified(up, (p) => p.canManageContract)) {"));
       expect(seg, contains("ToastHelper.showWarning('계약서 관리 권한이 없습니다.')"));
     });
 
@@ -186,8 +186,8 @@ void main() {
   group('[08D.5.1-02] nesting 제거', () {
     test('02-a 계약 종료 예정 블록이 canManageWage 밖에 있다', () {
       // block gate(`!isSub ||` 로 시작)만 본다 — onTap 안의 재검증 가드와 구분한다
-      const wageGate = 'if (!isSub || up.can((p) => p.canManageWage))';
-      const contractGate = 'if (!isSub || up.can((p) => p.canManageContract))';
+      const wageGate = 'if (_verified(up, (p) => p.canManageWage))';
+      const contractGate = 'if (_verified(up, (p) => p.canManageContract))';
       final wageGateAt = makeCode.lastIndexOf(wageGate);
       final expiringGateAt = makeCode.lastIndexOf(contractGate);
       final labelAt = makeCode.indexOf("label: '계약 종료 예정'");
@@ -203,7 +203,7 @@ void main() {
     test('02-b 두 게이트가 형제 관계다 — 같은 들여쓰기', () {
       final lines = makeCode.split('\n');
       final gateLines =
-          lines.where((l) => l.contains('if (!isSub || up.can((p) => p.'));
+          lines.where((l) => l.contains('if (_verified(up, (p) => p.'));
       expect(gateLines.length, 9);
       for (final l in gateLines) {
         expect(l.length - l.trimLeft().length, 4,
@@ -212,7 +212,7 @@ void main() {
     });
 
     test('02-c 9종 게이트가 정확히 9개다', () {
-      expect(RegExp(r'if \(!isSub \|\| up\.can\(').allMatches(makeCode).length, 9);
+      expect(RegExp(r'if \(_verified\(up, ').allMatches(makeCode).length, 9);
     });
   });
 
@@ -312,7 +312,7 @@ void main() {
         final rowAt = makeCode.indexOf("label: '${e.key}'");
         expect(rowAt, isNot(-1), reason: e.key);
         // 라벨 직전 게이트가 그 권한이어야 한다
-        final gateAt = makeCode.lastIndexOf('up.can((p) => p.${e.value})', rowAt);
+        final gateAt = makeCode.lastIndexOf('_verified(up, (p) => p.${e.value})', rowAt);
         expect(gateAt, isNot(-1), reason: '${e.key} → ${e.value}');
       }
       // _unknownTaskCount 쪽 개수

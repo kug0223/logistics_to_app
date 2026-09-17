@@ -510,7 +510,7 @@ void main() {
       expect(hero.contains("ctaLabel: _canCreatePosting(up) ? '작성 계속하기' : null"),
           true);
       final can = _codeOf(_bodyOf(home, 'bool _canCreatePosting('));
-      expect(can.contains("up.can((p) => p.canManageTo)"), true);
+      expect(can.contains("_verified(up, (p) => p.canManageTo)"), true);
     });
 
     test('06-g 로딩 skeleton에 shimmer가 없다 (§24)', () {

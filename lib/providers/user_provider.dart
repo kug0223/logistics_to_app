@@ -513,6 +513,49 @@ class UserProvider with ChangeNotifier {
         : PermissionCheck.unknown;
   }
 
+  /// [CROSS-DOMAIN-R5.1F.5] **선택 사업장** 권한 판정 — 네 상태를 구분한다.
+  ///
+  /// [can]과 값의 출처가 같다(`_memberPermissions`). 달라지는 것은 두 가지뿐:
+  /// 구독이 에러면 `error`, 아직 못 읽었으면 `unknown`을 돌려준다.
+  /// bool 하나로는 이 둘이 모두 false/true 어느 한쪽으로 뭉개진다 —
+  /// 특히 마지막으로 본 값이 허용이면 transport가 죽어 있는데도 화면은
+  /// 검증된 허용처럼 계속 쓰게 된다.
+  ///
+  /// 소유자·SUPER_ADMIN은 member 문서로 판정하지 않으므로 언제나 allowed다.
+  PermissionCheck checkCurrentBusiness(
+    bool Function(MemberPermissions p) check,
+  ) {
+    final user = _currentUser;
+    if (user == null) return PermissionCheck.denied;
+    if (user.isBusinessAdmin || user.isSuperAdmin) return PermissionCheck.allowed;
+    if (!user.isSubAdmin) return PermissionCheck.denied;
+
+    // 구독이 죽었으면 마지막 값이 무엇이든 "지금 검증된 값"이 아니다.
+    final bizId = _selectedSubAdminBusinessId ?? _memberPermsBusinessId;
+    if (bizId != null &&
+        permissionWatchStateFor(bizId) == PermissionWatchState.error) {
+      return PermissionCheck.error;
+    }
+    if (!_permissionsLoaded) return PermissionCheck.unknown;
+    final perms = _memberPermissions;
+    // 읽었는데 없다 = membership 상실. 확인된 거부다.
+    if (perms == null) return PermissionCheck.denied;
+    return check(perms) ? PermissionCheck.allowed : PermissionCheck.denied;
+  }
+
+  /// [CROSS-DOMAIN-R5.1F.5] 선택 사업장 권한 전송 상태 — UI 구독용.
+  ///
+  /// 권한 bool은 그대로인데 신선도만 바뀌는 전이(verified → error)가 있다.
+  /// Selector가 bool만 보고 있으면 값이 true→true라 다시 그리지 않는다.
+  /// 이 값을 함께 구독해야 그 전이가 화면에 닿는다.
+  PermissionWatchState get currentBusinessPermissionHealth {
+    final user = _currentUser;
+    if (user == null || !user.isSubAdmin) return PermissionWatchState.verified;
+    final bizId = _selectedSubAdminBusinessId ?? _memberPermsBusinessId;
+    if (bizId == null) return PermissionWatchState.unknown;
+    return permissionWatchStateFor(bizId);
+  }
+
   /// [CROSS-DOMAIN-R5.1F.2] 대상 사업장 권한을 화면이 열려 있는 동안만 구독한다.
   ///
   /// 반환값은 해제 함수다 — `dispose`에서 반드시 호출한다. 두 번 불러도 안전하다.

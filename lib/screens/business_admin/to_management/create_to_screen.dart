@@ -1577,7 +1577,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         context.read<UserProvider>().isSubAdmin;
     // [AUTHZ.2] canManageContract — OWNER는 항상 true, SUB_ADMIN은 권한 확인
     final canManageContract =
-        !isSubAdmin || context.read<UserProvider>().can((p) => p.canManageContract);
+        context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageContract) ==
+            PermissionCheck.allowed;
     final cardCount = isSubAdmin ? 4 : 5;
     return AppPageScaffold(
       title: '공고 등록',

@@ -193,7 +193,9 @@ void main() {
 
     test('Home 지원 검토 Task — canManageTo', () {
       final s = _load('lib/screens/business_admin/business_admin_home_screen.dart');
-      expect(s.contains('if (!isSub || up.can((p) => p.canManageTo)) { '
+      // [CROSS-DOMAIN-R5.1F.5] 같은 capability를 더 좁게 본다 —
+      //   확인된 허용에서만 Task가 열린다.
+      expect(s.contains('if (_verified(up, (p) => p.canManageTo)) { '
           'final approval = cs?.actions.approval;'), true);
       expect(s.contains('chk(permitted: canTo, available: a.approval.available);'), true);
     });

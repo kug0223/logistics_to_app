@@ -58,7 +58,7 @@ class _ContractTemplateListScreenState
       // [AUTHZ.2] SUB_ADMIN canManageContract 진입 가드
       // Settings/Home의 메뉴 미노출 철학 동일 — 어떤 경로로 진입해도 권한 없으면 차단
       final up = context.read<UserProvider>();
-      if (up.isSubAdmin && !up.can((p) => p.canManageContract)) {
+      if (up.checkCurrentBusiness((p) => p.canManageContract) != PermissionCheck.allowed) {
         ToastHelper.showWarning('계약서 관리 권한이 없습니다');
         Navigator.pop(context);
         return;

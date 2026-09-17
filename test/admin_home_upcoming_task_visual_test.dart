@@ -417,7 +417,7 @@ void main() {
   group('[08D.4-06] permission', () {
     test('06-a 기존 canManageTo 게이트를 넓히지 않았다', () {
       expect(_flat(rowCode),
-          contains('canNavigate = !isSub || up.can((p) => p.canManageTo)'));
+          contains('canNavigate = _verified(up, (p) => p.canManageTo)'));
     });
 
     test('06-b 권한이 없으면 chevron도 tap도 없다 — 거짓 affordance 금지', () {
@@ -439,7 +439,7 @@ void main() {
     test('06-d 섹션 가시성 게이트가 그대로다', () {
       final flat = _flat(futureCode);
       expect(flat,
-          contains('canSeeBlock = !isSub || up.can((p) => p.canManageTo) || up.can((p) => p.canManageWorkers)'));
+          contains('canSeeBlock = _verified(up, (p) => p.canManageTo) || _verified(up, (p) => p.canManageWorkers)'));
     });
 
     test('06-e Home이 businessIds를 새로 확장하지 않는다', () {
@@ -613,8 +613,8 @@ void main() {
     });
 
     test('09-c permission 게이트가 그대로다', () {
-      expect(make, contains('isSub'));
-      expect(make, contains('up.can('));
+      // [CROSS-DOMAIN-R5.1F.5] 게이트는 그대로 있고 판정만 4상태가 됐다.
+      expect(make, contains('_verified(up, (p) => p.'));
     });
 
     test('09-d task gate 의미를 바꾸지 않았다', () {

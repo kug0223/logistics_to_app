@@ -239,8 +239,12 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               // [CROSS-DOMAIN-R5.1F.1] read가 아니라 구독이다.
               //   탭 루트는 Shell의 const child라 Shell이 다시 그려져도 여기까지
               //   오지 않는다. read로 읽으면 권한이 회수돼도 이 버튼이 남는다.
-              if (context.select<UserProvider, bool>(
-                  (p) => !p.isSubAdmin || p.can((x) => x.canManageTo)))
+              // [CROSS-DOMAIN-R5.1F.5] bool이 아니라 4상태를 구독한다 —
+              //   허용 값은 그대로인데 전송 상태만 나빠진 전이(verified→error)도
+              //   선택값을 바꾸므로 여기까지 닿는다. allowed만 통과시킨다.
+              if (context.select<UserProvider, PermissionCheck>(
+                      (p) => p.checkCurrentBusiness((x) => x.canManageTo)) ==
+                  PermissionCheck.allowed)
                 _JobsCreateButton(
                   scale: s,
                   onTap: () {

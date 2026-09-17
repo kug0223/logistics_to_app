@@ -478,7 +478,7 @@ void main() {
 
     test('03-f 기존 canSeeStaffing/canSeeAttendance 계약을 넓히지 않는다', () {
       final flat = _flat(_codeOf(todayOps));
-      expect(flat, contains('canSeeAttendance = !isSub || up.can((p) => p.canManageWorkers)'));
+      expect(flat, contains('canSeeAttendance = _verified(up, (p) => p.canManageWorkers)'));
       expect(flat, contains('canManageTo'));
     });
 

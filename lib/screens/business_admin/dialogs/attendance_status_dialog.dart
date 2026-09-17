@@ -1172,7 +1172,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Widget _buildBatchActionBar(ThemeData theme) {
     // 서브어드민 권한 체크 — canManageWorkers=false이면 모든 조작 버튼 비활성화
     final canManage = Provider.of<UserProvider>(context, listen: false)
-        .can((p) => p.canManageWorkers);
+        .checkCurrentBusiness((p) => p.canManageWorkers) == PermissionCheck.allowed;
 
     int checkInCount = 0;
     int adjustCount = 0;
@@ -2155,8 +2155,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 이미 released: Wrap에 _buildStaffingReleasedBadge() 표시 (위에서 처리)
   Widget _buildNoshowRecoveryButton(ApplicationModel app) {
     final up = Provider.of<UserProvider>(context, listen: false);
-    final isSub = up.currentUser?.isSubAdmin == true;
-    final canManageTo = !isSub || up.can((p) => p.canManageTo);
+    final canManageTo = up.checkCurrentBusiness((p) => p.canManageTo) == PermissionCheck.allowed;
     if (!canManageTo) return const SizedBox.shrink();
     if (app.isLongTermApplication) return const SizedBox.shrink();
     if (app.isStaffingReleased) return const SizedBox.shrink();
@@ -2873,7 +2872,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           // 급여관리 버튼 — OutlinedButton (보조 액션)
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: _confirmedWorkers.isNotEmpty && context.read<UserProvider>().can((p) => p.canManageWage)
+              onPressed: _confirmedWorkers.isNotEmpty && context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) == PermissionCheck.allowed
                   ? _showWageConfirmDialog
                   : null,
               icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
@@ -4866,7 +4865,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 한 번에 수백 명을 선택하는 경우는 현실적으로 없다.
   Future<void> _batchCancelFinal() async {
     // PERM-02: 마감취소 권한 확인 — 급여 관련이므로 canManageWage
-    if (!context.read<UserProvider>().can((p) => p.canManageWage)) {
+    if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) != PermissionCheck.allowed) {
       ToastHelper.showWarning('마감취소 권한이 없습니다.');
       return;
     }

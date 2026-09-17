@@ -1190,7 +1190,7 @@ Future<void> pushAdminStatsScreen(BuildContext context) async {
   // [ADMIN-STATS-WAGE-GATE 2026-09-04] SUB_ADMIN canManageWage 방어 게이트
   // Home visibility guard에서 1차 차단하나, helper에서 fail-closed 재검증.
   // BUSINESS_ADMIN(user.isSubAdmin == false)은 이 체크 통과.
-  if (user.isSubAdmin && !userProvider.can((p) => p.canManageWage)) {
+  if (userProvider.checkCurrentBusiness((p) => p.canManageWage) != PermissionCheck.allowed) {
     ToastHelper.showWarning('급여 관리 권한이 없습니다.');
     return;
   }

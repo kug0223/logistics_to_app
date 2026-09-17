@@ -258,7 +258,7 @@ void main() {
       // 주석뿐 아니라 실제 가드도 라벨보다 앞에 있어야 한다
       _rowPermission.forEach((label, perm) {
         final at = rows.indexOf("label: '$label'");
-        final guardAt = rows.lastIndexOf('up.can((p) => p.$perm)', at);
+        final guardAt = rows.lastIndexOf('_verified(up, (p) => p.$perm)', at);
         expect(guardAt, isNot(-1), reason: '$label → $perm 가드 없음');
       });
     });

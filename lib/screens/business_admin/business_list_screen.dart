@@ -475,7 +475,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   void _showMoreMenuSheet(BuildContext context, ThemeData theme, BusinessModel business) {
     final userProvider = context.read<UserProvider>();
     final isSubAdmin = userProvider.isSubAdmin;
-    final canManageTo = !isSubAdmin || userProvider.can((p) => p.canManageTo);
+    final canManageTo = userProvider.checkCurrentBusiness((p) => p.canManageTo) ==
+        PermissionCheck.allowed;
 
     AppMenuSheet.show(
       context: context,

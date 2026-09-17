@@ -1045,7 +1045,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 급여 정보 (확정자 + canManageWage 권한자만)
   Widget _buildPaymentInfo(BuildContext context) {
     // [SEC-01] 계좌 정보는 급여 담당 권한자만 열람 가능
-    if (!context.read<UserProvider>().can((p) => p.canManageWage)) {
+    if (context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageWage) != PermissionCheck.allowed) {
       return const SizedBox.shrink();
     }
 
@@ -1117,7 +1117,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 모두 canManageContract를 요구하므로 UI 진입도 동일 기준으로 정렬한다.
   /// BUSINESS_ADMIN은 UserProvider.can()이 항상 true.
   bool _canManageContract() =>
-      context.read<UserProvider>().can((p) => p.canManageContract);
+      context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageContract) == PermissionCheck.allowed;
 
   Widget _buildContractContent(BuildContext context) {
     final contract = _contract;
@@ -2141,7 +2141,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
     // [SEC-01] 신분증 요청은 급여 담당 권한자만 가능
-    if (!userProvider.can((p) => p.canManageWage)) {
+    if (userProvider.checkCurrentBusiness((p) => p.canManageWage) != PermissionCheck.allowed) {
       ToastHelper.showWarning('신분증 열람 요청 권한이 없습니다.');
       return;
     }

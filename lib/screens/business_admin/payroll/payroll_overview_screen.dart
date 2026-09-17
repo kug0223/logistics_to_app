@@ -41,6 +41,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   bool _isLoading = true;
   bool _noData = false; // Tab 루트에서 picker 취소 / 사업장 없음 시 empty state
   bool _accessDenied = false; // [5C.1A-SCREEN-01] canManageWage=false SubAdmin
+  // [CROSS-DOMAIN-R5.1F.5] 권한을 확인하지 못한 상태 — 거부와 다른 말이다.
+  bool _accessUnverified = false;
   String? _loadError;
   List<PayrollSummaryModel> _summaries = [];
   int _todayPaymentCount = 0; // null(조회실패) 시 이전 값 유지
@@ -69,7 +71,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   // gate는 _init() 내부에 그대로 유지 — unauthorized hidden tab은 계속 차단됨
   void _onPermissionChanged() {
     if (!mounted) return;
-    final allowed = _userProvider.can((p) => p.canManageWage);
+    // [CROSS-DOMAIN-R5.1F.5] 네 상태로 본다 — 확인 실패를 권한 없음으로
+    //   바꾸지 않는다. 확인된 허용에서만 화면을 연다.
+    final check = _userProvider.checkCurrentBusiness((p) => p.canManageWage);
+    final allowed = check == PermissionCheck.allowed;
+    final unverified = check == PermissionCheck.error ||
+        check == PermissionCheck.unknown;
+    if (_accessUnverified != unverified) {
+      setState(() => _accessUnverified = unverified);
+    }
 
     // [CROSS-DOMAIN-R5.1F.1] 회수 방향도 본다.
     //   이 handler는 grant(false→true) 복구만 하고 있었다. 화면을 열어 둔 채
@@ -99,8 +109,18 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     final userProvider = context.read<UserProvider>();
     // [5C.1A-SCREEN-01] canManageWage=false SubAdmin 직접 진입 차단
     // PERMISSION_DENIED를 정상 UX로 사용하지 않도록 Firestore 쿼리 전 선행 체크
-    if (!userProvider.can((p) => p.canManageWage)) {
-      if (mounted) setState(() { _isLoading = false; _accessDenied = true; });
+    // [CROSS-DOMAIN-R5.1F.5] 확인된 허용에서만 조회한다. 확인 실패는
+    //   거부와 다른 상태로 표시한다 — ERROR를 DENIED로 바꾸지 않는다.
+    final entryCheck = userProvider.checkCurrentBusiness((p) => p.canManageWage);
+    if (entryCheck != PermissionCheck.allowed) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _accessUnverified = entryCheck == PermissionCheck.error ||
+              entryCheck == PermissionCheck.unknown;
+          _accessDenied = entryCheck == PermissionCheck.denied;
+        });
+      }
       return;
     }
     final uid = userProvider.currentUser?.uid;
@@ -337,6 +357,20 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           _buildYearSelector(theme),
           if (_isLoading)
             const Expanded(child: PayrollGridSkeleton())
+          else if (_accessUnverified)
+            // [CROSS-DOMAIN-R5.1F.5] 확인 실패 — "권한 없음"이 아니다.
+            Expanded(
+              child: AppEmptyState(
+                icon: Icons.sync_problem_outlined,
+                title: '권한 정보를 확인하지 못했습니다',
+                subtitle: '잠시 후 다시 시도해주세요.',
+                action: TextButton(
+                  onPressed: () =>
+                      unawaited(_userProvider.refreshSubAdminAccessState()),
+                  child: const Text('다시 확인'),
+                ),
+              ),
+            )
           else if (_accessDenied)
             // [5C.1A-SCREEN-01] canManageWage=false SubAdmin 접근 차단 상태
             const Expanded(

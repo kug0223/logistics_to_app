@@ -209,7 +209,13 @@ class _AdminContractManagementScreenState
     // 현재 선택 사업장 == target이고 권한이 로드됐으면 캐시 사용 (네트워크 절약)
     if (up.permissionsLoaded &&
         up.selectedSubAdminBusinessId == widget.businessId) {
-      return up.can((p) => p.canManageContract);
+      // [CROSS-DOMAIN-R5.1F.5] 확인된 허용에서만 캐시 경로를 신뢰한다.
+      //   확인하지 못한 상태면 아래 target-local 조회로 떨어진다.
+      final cached = up.checkCurrentBusiness((p) => p.canManageContract);
+      if (cached != PermissionCheck.error &&
+          cached != PermissionCheck.unknown) {
+        return cached == PermissionCheck.allowed;
+      }
     }
 
     // 다른 사업장 선택 중이거나 캐시 미로드 → target-local Firestore 직접 조회

@@ -806,8 +806,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Future<void> _rejectPendingRequest(
       ScheduleChangeRequestModel request) async {
     // BUG-004: _approvePendingRequest와 대칭 — 거절도 canManageWorkers 필요
-    final up = context.read<UserProvider>();
-    if (!up.can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
@@ -1811,13 +1810,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Future<void> _processTermination(ApplicationModel app, UserModel? user) async {
     if (!mounted || isLoading) return;
     // async gap 이전에 미리 추출 — BuildContext across async gaps 오류 방지
-    final up = context.read<UserProvider>();
     // TO-06: 계약 해지 권한 확인
-    if (!up.can((p) => p.canManageWorkers)) {
+    if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
       return;
     }
-    final adminUID = up.currentUser?.uid;
+    final adminUID = context.read<UserProvider>().currentUser?.uid;
     setLoading(true);
     try {
       // 1. renewalDecision = 'TERMINATE'

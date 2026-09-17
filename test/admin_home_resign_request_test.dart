@@ -70,7 +70,7 @@ String _fnBody(String source, String signature) {
 String _rowBlock(String rows, String label) {
   final at = rows.indexOf("label: '$label'");
   expect(at, isNot(-1), reason: "'$label' row를 찾지 못함");
-  final next = rows.indexOf('if (!isSub || up.can(', at);
+  final next = rows.indexOf('if (_verified(up, (p) => p.', at);
   return next == -1 ? rows.substring(at) : rows.substring(at, next);
 }
 
@@ -129,13 +129,13 @@ void main() {
 
     test('클라이언트 row도 canManageWorkers 아래 있다', () {
       final at = rows.indexOf("label: '퇴사 요청'");
-      final gate = rows.substring(0, at).lastIndexOf('if (!isSub || up.can(');
+      final gate = rows.substring(0, at).lastIndexOf('if (_verified(up, (p) => p.');
       expect(rows.substring(gate, at).contains('canManageWorkers'), isTrue);
     });
 
     test('탭 시점에도 권한을 재확인한다', () {
       final block = _rowBlock(rows, '퇴사 요청');
-      expect(block.contains("up.can((p) => p.canManageWorkers)"), isTrue);
+      expect(block.contains("_verified(up, (p) => p.canManageWorkers)"), isTrue);
       expect(block.contains('근로자 관리 권한이 없습니다'), isTrue);
     });
 

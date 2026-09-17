@@ -207,7 +207,7 @@ void main() {
       ]) {
         final at = rows.indexOf("label: '${pair[0]}'");
         final before = rows.substring(0, at);
-        final gate = before.lastIndexOf('if (!isSub || up.can(');
+        final gate = before.lastIndexOf('if (_verified(up, (p) => p.');
         expect(gate, isNot(-1));
         expect(before.substring(gate).contains('canManageWage'), isTrue,
             reason: '${pair[0]} 가 canManageWage 게이트 아래 있어야 한다');
@@ -218,7 +218,7 @@ void main() {
       // row 블록은 다음 row의 권한 게이트 직전까지만 본다.
       for (final label in ['급여 변경 요청', '중간정산 요청']) {
         final at = rows.indexOf("label: '$label'");
-        final nextGate = rows.indexOf('if (!isSub || up.can(', at);
+        final nextGate = rows.indexOf('if (_verified(up, (p) => p.', at);
         final block =
             nextGate == -1 ? rows.substring(at) : rows.substring(at, nextGate);
         expect(block.contains('canManageWorkers'), isFalse);
@@ -235,7 +235,7 @@ void main() {
 
     test('목적지 헬퍼도 자체 권한 검증을 유지한다', () {
       final helper = _bodyOf(home, 'Future<void> _toPayrollTabDrilldown(');
-      expect(helper.contains("up.can((p) => p.canManageWage)"), isTrue);
+      expect(helper.contains("_verified(up, (p) => p.canManageWage)"), isTrue);
       expect(helper.contains('급여 관리 권한이 없습니다'), isTrue);
     });
   });

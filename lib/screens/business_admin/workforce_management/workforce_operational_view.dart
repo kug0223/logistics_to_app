@@ -950,8 +950,11 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
           // 고정 근로자 관리
           // [CROSS-DOMAIN-R5.1F.1] read가 아니라 구독이다 — 권한이 회수되면
           //   누를 수 없는 버튼을 남기지 않는다.
-          if (context.select<UserProvider, bool>(
-              (p) => p.can((x) => x.canManageWorkers)))
+          // [CROSS-DOMAIN-R5.1F.5] 4상태를 구독한다 — 전송 상태만 바뀌는
+          //   전이도 선택값을 바꿔 여기까지 닿는다.
+          if (context.select<UserProvider, PermissionCheck>(
+                  (p) => p.checkCurrentBusiness((x) => x.canManageWorkers)) ==
+              PermissionCheck.allowed)
             _buildIconButton(
               icon: Icons.settings_outlined,
               tooltip: '고정 근로자',
@@ -1596,9 +1599,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Future<void> _openFixedWorkerManagement() async {
     final up = context.read<UserProvider>();
-    if (!up.can((p) => p.canManageWorkers)) {
+    // [CROSS-DOMAIN-R5.1F.5] 확인된 허용에서만 연다. 확인 실패는 거부와
+    //   다른 말을 한다 — ERROR를 "권한 없음"으로 바꾸지 않는다.
+    final check = up.checkCurrentBusiness((p) => p.canManageWorkers);
+    if (check != PermissionCheck.allowed) {
       // [CROSS-DOMAIN-R5.1F.1] 아무 일도 일어나지 않는 탭은 이유가 없다.
-      ToastHelper.showWarning('근로자 관리 권한이 없습니다');
+      ToastHelper.showWarning(check == PermissionCheck.denied
+          ? '근로자 관리 권한이 없습니다'
+          : '권한 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
       return;
     }
     try {

@@ -15,6 +15,8 @@
 //   - open-ended 장기 근로자는 CF와 동일하게 미집계
 //     (Home LEGACY count와 미미한 차이 가능, PHASE 3에서 해소 예정)
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -74,6 +76,8 @@ class _UnclosedActionQueueScreenState
   // [CROSS-DOMAIN-R5.1F.1] 진입 시점 한 번이 아니라, 머무는 동안에도 본다.
   UserProvider? _userProvider;
   bool _accessRevoked               = false;
+  // [CROSS-DOMAIN-R5.1F.5] 확인하지 못한 상태 — 거부와 다른 말이다.
+  bool _accessUnverified            = false;
 
   // ─── 로드 ──────────────────────────────────────────────────────────────────
 
@@ -84,14 +88,21 @@ class _UnclosedActionQueueScreenState
       if (!mounted) return;
       // [AUDIT.2-M003] screen-level guard — canManageWage 없는 직접 진입 방어
       final up = context.read<UserProvider>();
-      if (!up.can((p) => p.canManageWage)) {
+      // [CROSS-DOMAIN-R5.1F.5] 확인된 거부일 때만 되돌린다. 확인하지 못한
+      //   상태에서 pop하면 ERROR를 DENIED로 말하는 것이다 — 화면은 열어 두고
+      //   아래 listener가 "확인하지 못했습니다"로 표시한다.
+      final entry = up.checkCurrentBusiness((p) => p.canManageWage);
+      if (entry == PermissionCheck.denied) {
         Navigator.of(context).pop();
         return;
       }
+      _accessUnverified = entry != PermissionCheck.allowed;
       // [CROSS-DOMAIN-R5.1F.1] 진입 후 회수/부여도 화면에 닿아야 한다.
       _userProvider = up;
       up.addListener(_onPermissionChanged);
-      _load();
+      // 확인되지 않은 상태에서는 조회하지 않는다 — 권한이 확인되면
+      // listener가 그때 _load()를 부른다.
+      if (!_accessUnverified) _load();
     });
   }
 
@@ -100,12 +111,27 @@ class _UnclosedActionQueueScreenState
     if (!mounted) return;
     final up = _userProvider;
     if (up == null) return;
-    // 하이드레이션 전(UNKNOWN)을 거부로 읽지 않는다.
-    if (up.currentUser?.isSubAdmin == true && !up.permissionsLoaded) return;
-    final allowed = up.can((p) => p.canManageWage);
-    if (allowed != _accessRevoked) return; // 상태 변화 없음
-    setState(() => _accessRevoked = !allowed);
-    if (allowed) _load();
+    // [CROSS-DOMAIN-R5.1F.5] 네 상태로 본다.
+    //   unknown(하이드레이션 전)과 error(전송 실패)는 거부가 아니므로
+    //   잠금 화면으로 바꾸지 않는다 — 대신 확인 실패라고 말한다.
+    final check = up.checkCurrentBusiness((p) => p.canManageWage);
+    final unverified = check == PermissionCheck.error ||
+        check == PermissionCheck.unknown;
+    final wasUnverified = _accessUnverified;
+    if (wasUnverified != unverified) {
+      setState(() => _accessUnverified = unverified);
+    }
+    if (unverified) return;
+
+    final allowed = check == PermissionCheck.allowed;
+    if (allowed == _accessRevoked) {
+      setState(() => _accessRevoked = !allowed);
+      if (allowed) _load();
+      return;
+    }
+    // 상태 bool은 그대로지만, 확인하지 못한 상태에서 막 벗어났다면
+    // 그동안 하지 못한 조회를 지금 한다.
+    if (wasUnverified && allowed) _load();
   }
 
   @override
@@ -183,7 +209,20 @@ class _UnclosedActionQueueScreenState
             ),
           ),
         ],
-        body: _accessRevoked
+        body: _accessUnverified
+            // [CROSS-DOMAIN-R5.1F.5] 확인 실패 — "권한 없음"이 아니다.
+            ? AppEmptyState(
+                icon: Icons.sync_problem_outlined,
+                title: '권한 정보를 확인하지 못했습니다',
+                subtitle: '잠시 후 다시 시도해주세요.',
+                action: TextButton(
+                  onPressed: () => unawaited(
+                      _userProvider?.refreshSubAdminAccessState() ??
+                          Future.value()),
+                  child: const Text('다시 확인'),
+                ),
+              )
+            : _accessRevoked
             // [CROSS-DOMAIN-R5.1F.1] 권한 회수 — "마감 필요 0건"이 아니다.
             ? const AppEmptyState(
                 icon: Icons.lock_outline,
