@@ -260,7 +260,14 @@ void main() {
     });
 
     test('CTA가 동의를 명시한다', () {
-      expect(myApps.contains("child: const Text('동의하고 초대 수락',"), true);
+      // [R5.3B] 초대 수락과 제안 수락으로 갈렸다 — 두 문구 모두 동의를 말한다.
+      expect(
+          myApps.contains(
+              "child: Text(isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락',"),
+          true);
+      for (final label in ['동의하고 초대 수락', '동의하고 제안 수락']) {
+        expect(myApps.contains(label), true, reason: 'CTA 누락: $label');
+      }
     });
 
     test('수락 호출에 동의와 버전을 함께 보낸다', () {

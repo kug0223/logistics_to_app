@@ -105,6 +105,13 @@ enum NotificationType {
   toInviteDeclined,       // 초대 거절됨 (초대한 관리자에게, CF: "toInviteDeclined")
   toInviteCanceled,       // 초대 취소됨 (근로자에게, CF: "toInviteCanceled")
 
+  // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 (PENDING 재배치)
+  //   제안은 초대의 한 종류지만 **원 지원(A)이 살아 있다**는 점이 다르다.
+  //   그래서 목적지·문구·행동 요구가 toInvite* 와 같을 수 없다.
+  workReassignmentOffered,  // 다른 업무 제안 도착 (근로자에게, actionable, CF: "workReassignmentOffered")
+  workReassignmentAccepted, // 제안 수락됨 (제안한 관리자에게, informational, CF: "workReassignmentAccepted")
+  workReassignmentDeclined, // 제안 거절됨 (제안한 관리자에게, informational, CF: "workReassignmentDeclined")
+
   // 출퇴근 재확인 관련 (근무 당일 H-2/H-1 스케줄러)
   reconfirmRequest,        // 오늘 근무 확인 요청 (근로자에게, CF: "reconfirmRequest")
   reconfirmAdminWarning,   // 출근 미확인 경고 (관리자에게, CF: "reconfirmAdminWarning")
@@ -154,6 +161,10 @@ const Set<String> kPermissionBearingNotifTypes = {
   'confirmationCanceled',
   'toInviteAccepted',
   'toInviteDeclined',
+  // [R5.3B] 제안 결과는 관리자가 받고 canManageTo 게이트를 탄다.
+  //   제안 자체(workReassignmentOffered)는 근로자 수신이라 여기 없다.
+  'workReassignmentAccepted',
+  'workReassignmentDeclined',
   'scheduleChangeRequested',
   'contractSigned',
   'contractRequested',
@@ -219,6 +230,10 @@ const Set<NotificationType> kAdminNotifTypes = {
   // TO 초대 결과 (초대한 관리자에게)
   NotificationType.toInviteAccepted,
   NotificationType.toInviteDeclined,
+
+  // [R5.3B] 다른 업무 제안 결과 (제안한 관리자에게)
+  NotificationType.workReassignmentAccepted,
+  NotificationType.workReassignmentDeclined,
 
   // 출퇴근 재확인 (관리자 수신)
   NotificationType.reconfirmAdminWarning,
@@ -350,6 +365,8 @@ class NotificationModel {
     NotificationType.resignRequested,
     NotificationType.contractRequested,
     NotificationType.interimSettlementRequested,
+    // [R5.3B] 제안은 근로자가 수락/거절을 골라야 끝난다 — 통보가 아니다.
+    NotificationType.workReassignmentOffered,
   };
 
   /// REMINDER_INFO 알림 type 집합 (resolvedImportance fallback용)
@@ -504,6 +521,13 @@ class NotificationModel {
         return 'how_to_reg';
       case NotificationType.toInviteDeclined:
         return 'person_remove';
+      // [R5.3B] 다른 업무 제안 — 자리 이동이지 새 초대가 아니다.
+      case NotificationType.workReassignmentOffered:
+        return 'swap_horiz';
+      case NotificationType.workReassignmentAccepted:
+        return 'how_to_reg';
+      case NotificationType.workReassignmentDeclined:
+        return 'person_remove';
       // 출퇴근 재확인 관련
       case NotificationType.reconfirmRequest:
         return 'check_circle_outline';
@@ -644,6 +668,10 @@ class NotificationModel {
       case 'toInviteAccepted': return NotificationType.toInviteAccepted;
       case 'toInviteDeclined': return NotificationType.toInviteDeclined;
       case 'toInviteCanceled': return NotificationType.toInviteCanceled;
+      // [R5.3B] 다른 업무 제안
+      case 'workReassignmentOffered': return NotificationType.workReassignmentOffered;
+      case 'workReassignmentAccepted': return NotificationType.workReassignmentAccepted;
+      case 'workReassignmentDeclined': return NotificationType.workReassignmentDeclined;
       // 출퇴근 재확인 관련
       case 'reconfirmRequest': return NotificationType.reconfirmRequest;
       case 'reconfirmAdminWarning': return NotificationType.reconfirmAdminWarning;
@@ -723,6 +751,10 @@ class NotificationModel {
       case NotificationType.toInviteAccepted: return 'toInviteAccepted';
       case NotificationType.toInviteDeclined: return 'toInviteDeclined';
       case NotificationType.toInviteCanceled: return 'toInviteCanceled';
+      // [R5.3B] 다른 업무 제안
+      case NotificationType.workReassignmentOffered: return 'workReassignmentOffered';
+      case NotificationType.workReassignmentAccepted: return 'workReassignmentAccepted';
+      case NotificationType.workReassignmentDeclined: return 'workReassignmentDeclined';
       // 출퇴근 재확인 관련
       case NotificationType.reconfirmRequest: return 'reconfirmRequest';
       case NotificationType.reconfirmAdminWarning: return 'reconfirmAdminWarning';

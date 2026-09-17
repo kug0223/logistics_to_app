@@ -1345,17 +1345,30 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             ],
           );
         }
+        // [CROSS-DOMAIN-R5.3B] 제안은 초대와 다르다 — 원래 지원(A)이 살아 있다.
+        //   `근무 초대가 도착했어요`라고만 하면 근로자는 이것이 **기존 지원을
+        //   대신하는 선택**이라는 것을 모른다. 무엇을 포기하는지 먼저 말한다.
+        final isOffer = app.isAlternativeWorkOffer;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '근무 초대가 도착했어요',
-              style: TextStyle(
+            Text(
+              isOffer ? '다른 업무 제안이 도착했어요' : '근무 초대가 도착했어요',
+              style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
                 color: AppColors.brand,
               ),
             ),
+            if (isOffer) ...[
+              const SizedBox(height: 2),
+              Text(
+                '수락하면 기존 지원'
+                '${app.sourceWorkType != null ? "(${app.sourceWorkType})" : ""}'
+                '은 자동으로 정리돼요',
+                style: const TextStyle(fontSize: 12, color: AppColors.grey500),
+              ),
+            ],
             if (app.inviteExpiresAt != null) ...[
               const SizedBox(height: 2),
               Text(
@@ -1367,7 +1380,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             Row(
               children: [
                 _inviteActionButton(
-                  label: '수락하기',
+                  label: isOffer ? '제안 조건으로 수락' : '수락하기',
                   color: AppColors.brand,
                   bgColor: AppColors.infoBg,
                   loading: _acceptingIds.contains(app.id),
@@ -1465,6 +1478,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       case 'SAME_DAY_CANCEL':           return '당일 취소 처리된 지원이에요';
       case 'ADMIN_CANCELED':            return '사업장 사정으로 근무가 취소되었어요';
       case 'SCHEDULE_CONFLICT':         return '다른 업무가 확정되어 자동 취소되었어요';
+      // [R5.3B] 제안을 받아들인 결과다 — 취소가 아니고 불이익도 없다.
+      case 'REASSIGNMENT_ACCEPTED':     return '제안받은 다른 업무로 확정됐어요';
       case 'WORK_DETAIL_EXPIRED':       return '해당 업무 모집이 마감되었어요';
       case 'SLOT_WORK_DETAIL_EXPIRED':  return '해당 업무 모집이 마감되었어요';
       case 'TO_EXPIRED':                return '모집 기간이 종료되어 자동 취소되었어요';
@@ -1702,6 +1717,64 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // 액션 핸들러 — 비즈니스 로직 변경 없음
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// [CROSS-DOMAIN-R5.3B] 제안 비교 한 줄 — A와 B를 같은 축으로 보여준다.
+  ///
+  /// 값을 모르면 **비워 둔다**. 모르는 조건을 `-`나 `0원`으로 채우면
+  /// 근로자가 없는 사실을 근거로 고르게 된다.
+  Widget _offerComparisonRow({
+    required String label,
+    required String workType,
+    required String? timeText,
+    required String? wageText,
+    required String? wageTypeText,
+    required bool muted,
+  }) {
+    final fg = muted ? AppColors.grey500 : AppColors.textPrimary;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: muted ? AppColors.grey100 : AppColors.infoBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: muted ? AppColors.grey500 : AppColors.brand,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            workType,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: fg,
+              decoration: muted ? TextDecoration.lineThrough : null,
+            ),
+          ),
+          if (timeText != null) ...[
+            const SizedBox(height: 2),
+            Text(timeText, style: TextStyle(fontSize: 12, color: fg)),
+          ],
+          if (wageText != null && wageText.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              wageTypeText != null && wageTypeText.isNotEmpty ?
+                  '$wageTypeText $wageText' : wageText,
+              style: TextStyle(fontSize: 12, color: fg),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _acceptInvite(String applicationId) async {
     if (_acceptingIds.contains(applicationId)) return;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
@@ -1726,16 +1799,62 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       if (!ok || !mounted) return;
     }
 
+    // [CROSS-DOMAIN-R5.3B] 제안이면 A와 B를 **나란히** 보여주고 고르게 한다.
+    //   "업무를 바로 변경합니다"가 아니다 — 근로자가 B를 확정하고 A를 접는 것이다.
+    //   A는 같은 목록에 PENDING으로 함께 있다. 못 찾으면 비교를 생략하되
+    //   "기존 지원이 정리된다"는 사실은 그대로 말한다(모름을 없음으로 읽지 않는다).
+    final offerApp = item.application;
+    final isOfferAccept = offerApp.isAlternativeWorkOffer;
+    ApplicationModel? sourceApp;
+    if (isOfferAccept && offerApp.sourceApplicationId != null) {
+      for (final e in _applications) {
+        if (e.application.id == offerApp.sourceApplicationId) {
+          sourceApp = e.application;
+          break;
+        }
+      }
+    }
+
     final confirmed = await DialogHelper.showCustom<bool>(
       context,
-      title: '초대 수락',
-      icon: Icons.check_circle_outline,
+      title: isOfferAccept ? '다른 업무 제안 수락' : '초대 수락',
+      icon: isOfferAccept ? Icons.swap_horiz : Icons.check_circle_outline,
       iconColor: AppColors.success,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.'),
+          if (isOfferAccept) ...[
+            _offerComparisonRow(
+              label: '기존 지원',
+              workType: sourceApp?.selectedWorkType ??
+                  offerApp.sourceWorkType ?? '기존 업무',
+              timeText: sourceApp == null ? null :
+                  '${sourceApp.startTime} ~ ${sourceApp.endTime}',
+              wageText: sourceApp?.formattedWage,
+              wageTypeText: sourceApp?.wageTypeLabel,
+              muted: true,
+            ),
+            const SizedBox(height: 6),
+            const Icon(Icons.arrow_downward,
+                size: 18, color: AppColors.grey400),
+            const SizedBox(height: 6),
+            _offerComparisonRow(
+              label: '제안받은 업무',
+              workType: offerApp.selectedWorkType,
+              timeText: '${offerApp.startTime} ~ ${offerApp.endTime}',
+              wageText: offerApp.formattedWage,
+              wageTypeText: offerApp.wageTypeLabel,
+              muted: false,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '제안받은 업무로 확정되고, 기존 지원은 자동으로 정리됩니다.\n'
+              '취소 이력이나 불이익은 남지 않아요.',
+              style: TextStyle(fontSize: 13),
+            ),
+          ] else
+            const Text('이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.'),
           const SizedBox(height: 12),
           DocumentAccessConsent.card(item.application.businessName),
         ],
@@ -1748,8 +1867,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
           onPressed: () => Navigator.pop(context, true),
-          child: const Text('동의하고 초대 수락',
-              style: TextStyle(color: Colors.white)),
+          child: Text(isOfferAccept ? '동의하고 제안 수락' : '동의하고 초대 수락',
+              style: const TextStyle(color: Colors.white)),
         ),
       ],
     );

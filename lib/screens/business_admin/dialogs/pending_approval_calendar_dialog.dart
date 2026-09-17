@@ -454,7 +454,9 @@ class _PendingApprovalCalendarDialogState
                         ),
                       const Spacer(),
                       Text(
-                        '$count명 대기',
+                        // [CROSS-DOMAIN-R5.3B] 지원서 수이지 사람 수가 아니다.
+                        //   다른 업무를 제안받은 사람은 A·B 두 건으로 세어진다.
+                        '$count건 대기',
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           fontWeight: FontWeight.w700,
                           color: countColor,

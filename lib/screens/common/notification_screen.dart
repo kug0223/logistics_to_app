@@ -773,6 +773,44 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // ═══════════════════════════════════════════════════════════
+      // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 (PENDING 재배치)
+      // ═══════════════════════════════════════════════════════════
+      // workReassignmentOffered — 제안받은 근로자에게 발송.
+      //   제안은 **어느 지원서인지**가 전부다. 목록만 열면 A와 B가 같은 날
+      //   같은 사업장으로 나란히 보여서 무엇을 수락하는지 알 수 없다.
+      //   그래서 대상 Application(B)을 정확히 지목해 연다 — FCM도 같은 값.
+      case NotificationType.workReassignmentOffered:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MyApplicationsScreen(
+              focusApplicationId:
+                  notification.data?['applicationId']?.toString(),
+            ),
+          ),
+        );
+        break;
+
+      // workReassignmentAccepted/Declined — 제안한 관리자에게 발송.
+      //   초대 결과와 같은 도메인(canManageTo)·같은 목적지를 쓴다.
+      case NotificationType.workReassignmentAccepted:
+      case NotificationType.workReassignmentDeclined:
+        if (isUser) {
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
+        } else {
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageTo,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            await _openWorkApplicantsFromNotification(context, notification);
+          }
+        }
+        break;
+
+      // ═══════════════════════════════════════════════════════════
       // 스케줄 변경 관련 알림
       // ═══════════════════════════════════════════════════════════
       // scheduleChangeRequested: 근로자→관리자 발송 — ADMIN_ONLY

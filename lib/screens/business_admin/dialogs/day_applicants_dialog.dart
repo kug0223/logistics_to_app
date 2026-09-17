@@ -42,6 +42,7 @@ import '../../../models/core/contract_template_model.dart' show ContractArticle;
 import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
+import '../../../widgets/dialogs/alternative_work_offer_sheet.dart';
 import 'available_workers_bottom_sheet.dart';
 import 'invite_method_sheet.dart';
 import 'invite_worker_dialog.dart';
@@ -1225,8 +1226,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // ── 대기 중 섹션 ──
         // [R4] Hierarchy: 이미 지원한 대기자를 먼저 검토 → outbound invite는 그 아래
         if (g.pendingApps.isNotEmpty) ...[
+          // [CROSS-DOMAIN-R5.3B] 지원서 건수다. 다른 업무를 제안받은 사람은
+          //   A(PENDING)와 B(INVITED)로 두 줄에 나타나므로 `명`이 아니다.
           _sectionDivider(
-              context, '지원 (${g.pendingApps.length}명)', AppColors.warning),
+              context, '지원 (${g.pendingApps.length}건)', AppColors.warning),
           Padding(
             padding: EdgeInsets.symmetric(
                 horizontal: ResponsiveHelper.spacing(context, 8)),
@@ -1363,7 +1366,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     // [UX-D-03] pendingCount >= shortage: 현재 대기자 풀로 이론적 부족 충족 가능
     // → 기존 지원자 처리가 운영 우선순위이므로 CTA를 tertiary 약화로 신호.
     // PENDING을 공식 shortage/capacity에서 차감하지 않음 — 시각 강도만 조정.
-    final isPendingSufficient = g.pendingApps.length >= shortage;
+    // [CROSS-DOMAIN-R5.3B] 여기서만은 **사람 수**로 센다.
+    //   "대기자 풀로 부족을 메울 수 있는가"는 사람에 대한 질문이고, 한 사람이
+    //   A(PENDING)와 B(INVITED)로 두 건을 갖고 있어도 메울 수 있는 자리는 하나다.
+    final isPendingSufficient =
+        g.pendingApps.map((a) => a.uid).toSet().length >= shortage;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: isPendingSufficient
@@ -1698,6 +1705,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 — WorkApplicants와 같은 행동.
+                  //   후보 판정에 필요한 슬롯 WorkDetail은 이 화면이 들고 있지
+                  //   않으므로 눌렀을 때 읽는다. 상시 listener를 붙이지 않는다.
+                  if (app.slotId != null && app.toId != null)
+                    _actionButton(
+                      context,
+                      label: '다른 업무 제안',
+                      color: AppColors.info,
+                      onTap: () => _offerAlternativeWork(app, user),
+                    ),
+                  if (app.slotId != null && app.toId != null)
+                    const SizedBox(width: 8),
                   _actionButton(
                     context,
                     label: '거절',
@@ -3282,6 +3301,79 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (mounted) ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  /// [CROSS-DOMAIN-R5.3B] 다른 업무 제안.
+  ///
+  /// 이 화면은 하루치 여러 공고를 한 번에 보므로 슬롯의 WorkDetail 목록을
+  /// 들고 있지 않다. 눌렀을 때만 그 슬롯을 읽는다 — 상시 listener나 polling을
+  /// 추가하지 않는다.
+  ///
+  /// 읽기 실패는 "제안할 업무가 없다"가 아니다. 실패라고 말하고 아무것도
+  /// 바꾸지 않는다.
+  Future<void> _offerAlternativeWork(
+      ApplicationModel app, UserModel? user) async {
+    if (_isProcessing || !mounted) return;
+    final toId = app.toId;
+    final slotId = app.slotId;
+    if (toId == null || slotId == null) return;
+    final workerName = user?.name ?? '지원자';
+
+    setState(() => _isProcessing = true);
+    List<WorkDetailData> wds;
+    try {
+      wds = await _svc.getSlotWorkDetails(toId, slotId);
+    } catch (e) {
+      debugPrint('⚠️ [R5.3B] slot workDetails 조회 실패 [$toId/$slotId]: $e');
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ToastHelper.showError('업무 목록을 불러오지 못했습니다. 다시 시도해주세요.');
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    // 지금 지원한 업무 — wdId가 canonical, 없으면 후보에서 빼지 못한다.
+    WorkDetailData? current;
+    for (final w in wds) {
+      if (w.id.isNotEmpty && w.id == app.wdId) { current = w; break; }
+    }
+    final candidates = AlternativeWorkOfferSheet.offerableFrom(wds, current);
+    if (candidates.isEmpty) {
+      setState(() => _isProcessing = false);
+      ToastHelper.showWarning('제안할 수 있는 다른 업무가 없습니다.');
+      return;
+    }
+
+    // 확정 인원은 이 화면에 로드된 지원서에서 센다(자연키 wdId 기준).
+    int confirmedOf(WorkDetailData w) => _confirmedApps
+        .where((a) => a.wdId == w.id && a.slotId == slotId)
+        .length;
+
+    setState(() => _isProcessing = false);
+    final selectedWdId = await AlternativeWorkOfferSheet.pickTarget(
+      context,
+      workerName: workerName,
+      currentWork: current,
+      candidates: candidates,
+      confirmedCountOf: confirmedOf,
+    );
+    if (selectedWdId == null || !mounted) return;
+    final target = candidates.firstWhere((w) => w.id == selectedWdId);
+
+    setState(() => _isProcessing = true);
+    try {
+      final sent = await AlternativeWorkOfferSheet.confirmAndSend(
+        context,
+        workerName: workerName,
+        sourceApplicationId: app.id,
+        target: target,
+      );
+      if (!sent || !mounted) return;
+      await _load();
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }

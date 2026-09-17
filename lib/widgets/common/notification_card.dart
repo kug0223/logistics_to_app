@@ -165,6 +165,10 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.toInviteCanceled:          return Icons.mail_outline;
       case NotificationType.toInviteAccepted:          return Icons.how_to_reg;
       case NotificationType.toInviteDeclined:          return Icons.person_remove;
+      // [R5.3B] 다른 업무 제안 — 자리 이동
+      case NotificationType.workReassignmentOffered:   return Icons.swap_horiz;
+      case NotificationType.workReassignmentAccepted:  return Icons.how_to_reg;
+      case NotificationType.workReassignmentDeclined:  return Icons.person_remove;
       case NotificationType.reconfirmRequest:          return Icons.check_circle_outline;
       case NotificationType.reconfirmAdminWarning:
       case NotificationType.reconfirmDeclined:         return Icons.warning_amber;
@@ -196,6 +200,7 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.memberInvitationAccepted:
       case NotificationType.contractSigned:
       case NotificationType.toInviteAccepted:
+      case NotificationType.workReassignmentAccepted:
         return AppColors.success;
 
       // ── 거절·무효·차단 → red ───────────────────────────────────────────
@@ -237,6 +242,7 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.memberInvitationRejected:
       case NotificationType.toInviteDeclined:
       case NotificationType.toInviteCanceled:
+      case NotificationType.workReassignmentDeclined:
         return AppColors.grey500;
 
       // ── 액션·요청·변경·정보 → primary blue ────────────────────────────
@@ -251,6 +257,8 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.idCardAccessRequested:
       case NotificationType.memberInvitationReceived:
       case NotificationType.toInvite:
+      // [R5.3B] 제안 도착 — 근로자가 선택해야 하는 요청 → primary blue
+      case NotificationType.workReassignmentOffered:
       case NotificationType.reconfirmRequest:
       case NotificationType.toMatch:  // [Phase 8.1C] 일자리 발견 — 긍정적 정보 알림 → primary blue
       case NotificationType.systemNotice:
@@ -273,6 +281,9 @@ class _NotificationCardState extends State<NotificationCard>
         return '초대 확인';
       case NotificationType.reconfirmRequest:
         return '근무 확인';
+      // [R5.3B] '수락하기'가 아니다 — 조건을 먼저 비교하고 고르는 화면으로 간다.
+      case NotificationType.workReassignmentOffered:
+        return '제안 확인';
       default:
         return '확인하기';
     }

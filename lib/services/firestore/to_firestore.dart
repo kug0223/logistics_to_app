@@ -783,6 +783,28 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// [CROSS-DOMAIN-R5.3B] 슬롯의 WorkDetail 목록 — 다른 업무 제안 후보용.
+  ///
+  /// 정원 맵(`getSlotWorkDetailCapacities`)만으로는 제안 시트를 그릴 수 없다.
+  /// 근로자에게 보여줄 조건(시간·기본임금·휴게)이 거기 없기 때문이다.
+  ///
+  /// 실패는 빈 목록이 아니라 **예외**다. 읽지 못한 것을 "제안할 업무가 없다"로
+  /// 바꾸면 관리자는 없는 사실을 근거로 포기하게 된다. ERROR != ZERO.
+  Future<List<WorkDetailData>> getSlotWorkDetails(
+      String toId, String slotId) async {
+    final doc = await _firestore
+        .collection('tos').doc(toId)
+        .collection('slots').doc(slotId)
+        .get(const GetOptions(source: Source.server));
+    if (!doc.exists) return [];
+    final raw = doc.data()?['workDetails'] as List? ?? [];
+    return raw
+        .whereType<Map>()
+        .map((m) => WorkDetailData.tryFromMap(Map<String, dynamic>.from(m)))
+        .whereType<WorkDetailData>()
+        .toList();
+  }
+
   /// 슬롯 목록 조회
   /// [visibleOnly] true 면 visibleFrom <= 현재시각인 슬롯만 반환 (유저용)
   ///

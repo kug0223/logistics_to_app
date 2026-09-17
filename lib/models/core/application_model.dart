@@ -193,6 +193,22 @@ class ApplicationModel {
   final DateTime? invitedAt;       // 초대 발송 시각 (만료 계산 기준)
   final DateTime? inviteExpiresAt; // 초대 만료 시각 (CF에서 invitedAt + 24h 계산 저장)
 
+  // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 — **서버가 쓰고 클라이언트는 읽기만** 한다.
+  //
+  //   이 값들이 있으면 이 INVITED는 일반 초대가 아니라 "이미 지원한 사람(A)에게
+  //   같은 슬롯의 다른 업무(B)를 제안한 것"이다. 두 관계는 화면에서 구분해야
+  //   한다 — 근로자는 A와 B를 나란히 비교하고 하나를 골라야 하기 때문이다.
+  //   toMap에는 넣지 않는다: 클라이언트가 이 관계를 쓰는 경로는 없다.
+  final String? offerKind;            // 'ALTERNATIVE_WORK'
+  final String? offerId;              // 제안 identity (알림 dedupe 키와 동일)
+  final String? sourceApplicationId;  // 원 지원 A의 문서 id
+  final String? sourceWdId;           // A의 WorkDetail id
+  final String? sourceWorkType;       // A의 업무명 (비교 표시용)
+
+  /// [R5.3B] A쪽에 남는 종료 링크. `cancelReason == 'REASSIGNMENT_ACCEPTED'`와
+  /// 짝이며, 이 값이 있으면 A는 '지원 취소'가 아니라 **다른 업무로 확정됨**이다.
+  final String? reassignedToApplicationId;
+
   /// [SYSTEM-INTEGRATION-R2.2 / R2.2.1] 이 초대의 모집 단위에 지금 자리가 있는가.
   ///
   /// Firestore 문서의 필드가 아니라 `callableGetMyApplications`가 조회 시점에
@@ -323,6 +339,13 @@ class ApplicationModel {
     this.invitedBy,
     this.invitedAt,
     this.inviteExpiresAt,
+    // [R5.3B] 다른 업무 제안 (server-owned)
+    this.offerKind,
+    this.offerId,
+    this.sourceApplicationId,
+    this.sourceWdId,
+    this.sourceWorkType,
+    this.reassignedToApplicationId,
     this.workInstanceCapacityState = InviteCapacityState.unknown,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     this.idCardConsentGiven = false,
@@ -456,6 +479,13 @@ class ApplicationModel {
       invitedBy: data['invitedBy'] as String?,
       invitedAt: parseTimestampNullable(data['invitedAt']),
       inviteExpiresAt: parseTimestampNullable(data['inviteExpiresAt']),
+      // [R5.3B] 다른 업무 제안 (server-owned, 읽기 전용)
+      offerKind: data['offerKind'] as String?,
+      offerId: data['offerId'] as String?,
+      sourceApplicationId: data['sourceApplicationId'] as String?,
+      sourceWdId: data['sourceWdId'] as String?,
+      sourceWorkType: data['sourceWorkType'] as String?,
+      reassignedToApplicationId: data['reassignedToApplicationId'] as String?,
       // [R2.2 / R2.2.1] Firestore 필드가 아니라 조회 시점에 서버가 계산해 준 값.
       //   **없으면 unknown이다.** 없음을 `자리 있음`으로 읽지 않는다 —
       //   그것이 UNKNOWN을 AVAILABLE로 흘려보낸 원래 결함이었다.
@@ -592,8 +622,21 @@ class ApplicationModel {
     };
   }
 
+  /// [R5.3B] 이 INVITED가 '다른 업무 제안'인가 — 일반 초대와 화면이 달라진다.
+  bool get isAlternativeWorkOffer => offerKind == 'ALTERNATIVE_WORK';
+
+  /// [R5.3B] 이 지원(A)이 제안 수락으로 접힌 것인가.
+  ///
+  /// 근로자가 마음을 바꾼 취소가 아니다. 그래서 '지원 취소'로 표시하지 않는다.
+  /// 판정은 서버가 쓴 cancelReason 하나로만 한다 — 링크 필드 유무로 추측하지 않는다.
+  bool get isReassignedAway =>
+      status == 'AUTO_CANCELED' && cancelReason == 'REASSIGNMENT_ACCEPTED';
+
   /// 상태 한글 표시
   String get statusText {
+    // [R5.3B] 제안 수락으로 접힌 지원은 '자동 취소됨'이 아니다.
+    //   근로자 이력에 남는 문장이므로 사건을 정확히 말한다.
+    if (isReassignedAway) return '다른 업무로 확정됨';
     switch (status) {
       case 'PENDING':           return '대기 중';
       case 'CONTRACT_PENDING':  return '계약 대기';
@@ -601,7 +644,7 @@ class ApplicationModel {
       case 'REJECTED':          return '거절';
       case 'CANCELED':          return '취소됨';
       case 'AUTO_CANCELED':     return '자동 취소됨';
-      case 'INVITED':           return '초대받음';
+      case 'INVITED':           return isAlternativeWorkOffer ? '업무 제안' : '초대받음';
       case 'EXPIRED':           return '초대 만료';
       default:                  return '알 수 없음';
     }
@@ -705,6 +748,13 @@ class ApplicationModel {
     String? invitedBy,
     DateTime? invitedAt,
     DateTime? inviteExpiresAt,
+    // [R5.3B] 다른 업무 제안 (server-owned)
+    String? offerKind,
+    String? offerId,
+    String? sourceApplicationId,
+    String? sourceWdId,
+    String? sourceWorkType,
+    String? reassignedToApplicationId,
     InviteCapacityState? workInstanceCapacityState,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
     bool? idCardConsentGiven,
@@ -799,6 +849,14 @@ class ApplicationModel {
       invitedBy: invitedBy ?? this.invitedBy,
       invitedAt: invitedAt ?? this.invitedAt,
       inviteExpiresAt: inviteExpiresAt ?? this.inviteExpiresAt,
+      // [R5.3B] 다른 업무 제안 (server-owned)
+      offerKind: offerKind ?? this.offerKind,
+      offerId: offerId ?? this.offerId,
+      sourceApplicationId: sourceApplicationId ?? this.sourceApplicationId,
+      sourceWdId: sourceWdId ?? this.sourceWdId,
+      sourceWorkType: sourceWorkType ?? this.sourceWorkType,
+      reassignedToApplicationId:
+          reassignedToApplicationId ?? this.reassignedToApplicationId,
       workInstanceCapacityState:
           workInstanceCapacityState ?? this.workInstanceCapacityState,
       // [ID-CONSENT] 신분증 열람 사전동의 (legacy)

@@ -13134,6 +13134,46 @@ function calcPreConsentIdCardExpiryMs(
  * @return {Promise<"created" | "skipped" | "no_consent" | "no_id_card">}
  *   무엇을 했는지 — 호출부 로깅용.
  */
+/**
+ * [CROSS-DOMAIN-R5.3B] 알림 문장에 쓸 근로자 이름.
+ *
+ * Application의 `applicantName`은 **일부 문서에 없다** — 지원 경로가 항상
+ * 쓰지 않아서, 조회 경로들은 이미 users 배치 조회로 이 구멍을 메우고 있다.
+ * 그런데 알림 문구는 `?? "근로자"` 하나로 끝냈다. `??`는 null만 걸러내므로
+ * 빈 문자열이 그대로 통과했고, 실제로 이름이 통째로 빠진 문장이 나갔다:
+ *
+ *     "님이 '사무업무' 업무 제안을 거절했습니다"
+ *
+ * 없는 것은 없다고 다루고(빈 문자열도 없음이다), users에서 읽어 본 다음
+ * 그것도 없을 때만 일반 명사로 떨어진다. 이름을 지어내지는 않는다.
+ *
+ * @param {FirebaseFirestore.DocumentData | null} appData 지원서 데이터
+ * @param {string | undefined} uid 근로자 uid
+ * @return {Promise<string>} 표시할 이름
+ */
+async function srvResolveApplicantName(
+  appData: FirebaseFirestore.DocumentData | null,
+  uid: string | undefined
+): Promise<string> {
+  const stored = (appData?.["applicantName"] as string | undefined)?.trim();
+  if (stored) return stored;
+  if (!uid) return "근로자";
+  try {
+    const u = await db.collection("users").doc(uid).get();
+    const d = u.data() ?? {};
+    // displayName 규칙과 같은 우선순위: koreanName → legalName → name
+    const name = (
+      (d["koreanName"] as string | undefined) ??
+      (d["legalName"] as string | undefined) ??
+      (d["name"] as string | undefined) ?? ""
+    ).trim();
+    if (name) return name;
+  } catch (e) {
+    console.warn("[applicantName] users 조회 실패:", e);
+  }
+  return "근로자";
+}
+
 async function ensureIdCardGrantForConfirmedApplication(
   applicationId: string,
   appData: FirebaseFirestore.DocumentData,
@@ -15309,7 +15349,7 @@ export const callableRespondToReconfirm = onCall(
     // 관리자 알림 (best-effort — 취소 처리에 영향 없음)
     try {
       const toTitle = (appData.toTitle as string | undefined) ?? "근무";
-      const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      const workerName = await srvResolveApplicantName(appData, appData.uid as string | undefined);
       // [TZ-FIX] timeZone 명시 — CF 서버(UTC)에서 기본 로케일 날짜가 KST와 다를 수 있음
       const dateStr = workDateTs
         ? new Date(workDateTs.toMillis()).toLocaleDateString("ko-KR", {month: "long", day: "numeric", timeZone: "Asia/Seoul"})
@@ -27908,6 +27948,315 @@ export const callableInviteWorker = onCall(
   }
 );
 
+// ── callableOfferAlternativeWork ─────────────────────────────────────────────
+// [CROSS-DOMAIN-R5.3B] 다른 업무 제안 — A에 지원한 사람에게 B를 권한다.
+//
+//   A 업무는 다 찼는데 B가 부족할 때, A에 지원한 PENDING 근로자에게 B를
+//   제안한다. 예전 '파트변경'은 관리자가 A를 B로 덮어썼다(R5.3A에서 동결).
+//   업무를 옮기는 것은 **제안**이고 근로자가 수락해야 성립한다.
+//
+//   그래서 A는 손대지 않는다. B는 자기 자연키로 **새 Application(INVITED)**
+//   가 되고, 수락한 순간에만 A가 종료된다. Application identity는 불변이다 —
+//   A의 wdId를 B로 바꾸지 않는다.
+//
+//   `worker_availability`는 요구하지 않는다. 일반 초대는 불특정 근로자를
+//   찾는 일이라 가용일이 필요하지만, 이 제안은 **같은 근무일에 이미 지원한
+//   사람**에게 보내는 재매칭이다. 나머지 안전장치(계정 상태·제재·대상 검증·
+//   중복 관계·대상 마감/정원)는 그대로 둔다.
+//
+// Input : { sourceApplicationId, targetWdId, compensationOption }
+// Output: { success, offerId, targetApplicationId }
+export const callableOfferAlternativeWork = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {sourceApplicationId, targetWdId, compensationOption} =
+      request.data as {
+        sourceApplicationId?: string;
+        targetWdId?: string;
+        compensationOption?: string;
+      };
+
+    if (!sourceApplicationId || typeof sourceApplicationId !== "string") {
+      throw new HttpsError("invalid-argument", "sourceApplicationId가 필요합니다.");
+    }
+    if (!targetWdId || typeof targetWdId !== "string") {
+      throw new HttpsError("invalid-argument", "targetWdId가 필요합니다.");
+    }
+    // [R5.3B] 금액은 클라이언트가 보내지 않는다 — 옵션만 받고 서버가 읽는다.
+    //   Core v1은 TARGET_BASE만 지원한다. SOURCE_WAGE(기존 급여 유지)는
+    //   wage 하나만 옮기면 baseHourlyWage·wageType 같은 나머지 조건이 B의 것과
+    //   짝이 맞지 않는 조합이 되어(누구도 승인한 적 없는 조건) 보류한다.
+    if (compensationOption !== "TARGET_BASE") {
+      throw new HttpsError(
+        "invalid-argument",
+        "현재는 제안 업무의 기본 조건으로만 제안할 수 있습니다."
+      );
+    }
+
+    // ── 1. source Application ──────────────────────────────────────────────
+    const srcRef = db.collection("applications").doc(sourceApplicationId);
+    const srcSnap = await srcRef.get();
+    if (!srcSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const srcData = srcSnap.data()!;
+    const offerBizId = srcData.businessId as string | undefined;
+    const offerToId = srcData.toId as string | undefined;
+    const offerSlotId = srcData.slotId as string | undefined;
+    const offerUid = srcData.uid as string | undefined;
+    const srcWdId = srcData.wdId as string | undefined;
+    const srcWorkType = srcData.selectedWorkType as string | undefined;
+    if (!offerBizId || !offerToId || !offerSlotId || !offerUid) {
+      throw new HttpsError(
+        "failed-precondition",
+        "이 지원서는 다른 업무 제안을 보낼 수 없습니다. (공고·근무일 정보 없음)"
+      );
+    }
+
+    // ── 2. 권한 — 공고 관리와 같은 권한이다 ───────────────────────────────
+    const {callerData: offerCallerData} = await assertBizAdmin(callerUid, offerBizId);
+    const offerCallerRole = offerCallerData?.role as string | undefined;
+    if (offerCallerRole !== "BUSINESS_ADMIN" && offerCallerRole !== "SUPER_ADMIN") {
+      const offerMemberSnap = await db.collection("businesses").doc(offerBizId)
+        .collection("members").doc(callerUid).get();
+      const offerPerms =
+        (offerMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (offerPerms.canManageTo !== true) {
+        throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+      }
+    }
+
+    // ── 3. source 상태 — PENDING만 ────────────────────────────────────────
+    //   확정·계약대기는 이미 약속이 선 관계다. 그 조건을 바꾸는 일은
+    //   근로자 재동의와 계약 처리가 따로 필요하므로 이 경로 대상이 아니다.
+    if ((srcData.status as string | undefined) !== "PENDING") {
+      throw new HttpsError(
+        "failed-precondition",
+        "지원 대기 중인 지원자에게만 다른 업무를 제안할 수 있습니다."
+      );
+    }
+    if (srcWdId && srcWdId === targetWdId) {
+      throw new HttpsError("failed-precondition", "이미 지원한 업무입니다.");
+    }
+
+    // ── 4. target workDetail — 같은 공고·같은 근무일의 다른 업무 ──────────
+    const offerToRef = db.collection("tos").doc(offerToId);
+    const offerSlotRef = offerToRef.collection("slots").doc(offerSlotId);
+    const [offerToSnap, offerSlotSnap] = await Promise.all([
+      offerToRef.get(), offerSlotRef.get(),
+    ]);
+    if (!offerToSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    if (!offerSlotSnap.exists) throw new HttpsError("not-found", "근무일을 찾을 수 없습니다.");
+    const offerToData = offerToSnap.data()!;
+    const offerSlotData = offerSlotSnap.data()!;
+    if (offerToData.businessId !== offerBizId) {
+      throw new HttpsError("permission-denied", "공고가 해당 사업장에 속하지 않습니다.");
+    }
+    if (offerToData.isDeleted === true) {
+      throw new HttpsError("failed-precondition", "삭제된 공고입니다.");
+    }
+    if ((offerToData.status as string | undefined) === "CLOSED") {
+      throw new HttpsError("failed-precondition", "마감된 공고에는 제안할 수 없습니다.");
+    }
+    if ((offerSlotData.status as string | undefined) === "closed") {
+      throw new HttpsError("failed-precondition", "마감된 근무일에는 제안할 수 없습니다.");
+    }
+
+    const offerWdList =
+      (offerSlotData.workDetails as Record<string, unknown>[] | undefined) ?? [];
+    const targetWD = offerWdList.find((w) => w["wdId"] === targetWdId);
+    if (!targetWD) {
+      throw new HttpsError("not-found", "제안할 업무를 찾을 수 없습니다.");
+    }
+
+    // 대상 업무 정원 — 지금 값으로 본다.
+    const targetCounts = getWorkDetailCount(
+      offerSlotData as Record<string, unknown>, targetWD);
+    const targetRequired = (targetWD["requiredCount"] as number | undefined) ?? 0;
+    if (targetRequired > 0 && targetCounts.confirmedCount >= targetRequired) {
+      throw new HttpsError(
+        "failed-precondition", "제안할 업무의 정원이 이미 찼습니다.");
+    }
+
+    // ── 5. 대상 근로자 상태 — 초대와 같은 안전장치 ────────────────────────
+    const offerTargetSnap = await db.collection("users").doc(offerUid).get();
+    if (!offerTargetSnap.exists) {
+      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    const offerTargetData = offerTargetSnap.data()!;
+    if (offerTargetData.isBlacklisted === true) {
+      throw new HttpsError(
+        "failed-precondition", "제재 중인 근로자에게는 제안할 수 없습니다.");
+    }
+    if (((offerTargetData.accountStatus as string | undefined) ?? "active") !== "active") {
+      throw new HttpsError(
+        "failed-precondition", "비활성 계정의 근로자에게는 제안할 수 없습니다.");
+    }
+    const offerRestricted =
+      offerTargetData.restrictedUntil as admin.firestore.Timestamp | undefined;
+    if (offerRestricted && offerRestricted.toDate() > new Date()) {
+      throw new HttpsError(
+        "failed-precondition", "현재 제재 중인 근로자에게는 제안할 수 없습니다.");
+    }
+
+    // ── 6. 대상 자연키와 기존 관계 ────────────────────────────────────────
+    const targetAppId = `${offerToId}_${offerSlotId}_${targetWdId}_${offerUid}`;
+    const targetRef = db.collection("applications").doc(targetAppId);
+    const targetExisting = await targetRef.get();
+    if (targetExisting.exists) {
+      const tStatus = (targetExisting.data()?.status as string | undefined) ?? "";
+      if (tStatus === "PENDING") {
+        throw new HttpsError(
+          "already-exists", "이미 이 업무에 직접 지원한 근로자입니다.");
+      }
+      if (tStatus === "INVITED") {
+        throw new HttpsError(
+          "already-exists", "이미 이 업무를 제안했습니다.");
+      }
+      if (tStatus === "CONFIRMED" || tStatus === "CONTRACT_PENDING") {
+        throw new HttpsError(
+          "already-exists", "이미 이 업무에 확정된 근로자입니다.");
+      }
+      if (tStatus === "EXPIRED") {
+        throw new HttpsError(
+          "already-exists", "이 업무의 이전 제안이 만료되었습니다.");
+      }
+      if (tStatus === "REJECTED") {
+        // 초대 경로와 같은 구분을 유지한다:
+        //   invitedAt 있음 = 근로자가 제안을 거절했다 → 다시 보내지 않는다.
+        //   invitedAt 없음 = 관리자가 지원을 거절했다 → 다시 제안할 수 있다.
+        if (targetExisting.data()?.invitedAt != null) {
+          throw new HttpsError(
+            "already-exists", "이 업무의 제안을 이미 거절한 근로자입니다.");
+        }
+      }
+      // REJECTED(관리자 거절) / CANCELED / AUTO_CANCELED → 재제안 허용
+    }
+
+    // ── 7. 제안 조건 — B의 지금 조건 그대로 ───────────────────────────────
+    //   근로자 이름은 여기서 확정한다. source에 없을 수 있고(지원 경로가 늘
+    //   쓰지는 않는다), 빈 값을 그대로 옮기면 알림 문장에서 이름이 빠진다.
+    const offerApplicantName =
+      await srvResolveApplicantName(srcData, offerUid);
+    const offeredWage = targetWD["wage"] as number | undefined;
+    const offeredWageType = targetWD["wageType"] as string | undefined;
+    const offeredSnapshot = buildCompensationSnapshot(targetWD);
+    const offerTime = admin.firestore.Timestamp.now();
+    const offerExpiresAt = admin.firestore.Timestamp.fromMillis(
+      offerTime.toMillis() + 24 * 60 * 60 * 1000);
+    // 재시도와 재제안을 구분하는 불변 id — 알림 identity로도 쓴다.
+    const offerId = `${targetAppId}_${offerTime.toMillis()}`;
+
+    const offerAppData: Record<string, unknown> = {
+      toId: offerToId,
+      businessId: offerBizId,
+      businessName: (srcData.businessName as string | undefined) ?? "",
+      toTitle: (offerToData.title as string | undefined) ?? "",
+      uid: offerUid,
+      // 빈 문자열을 넣지 않는다 — 나중에 `?? "근로자"`가 걸러내지 못한다.
+      applicantName: offerApplicantName,
+      status: "INVITED",
+      type: "short",
+      slotId: offerSlotId,
+      wdId: targetWdId,
+      workDetailId: targetWdId,
+      selectedWorkType: targetWD["workType"] as string | undefined,
+      startTime: targetWD["startTime"] as string | undefined,
+      endTime: targetWD["endTime"] as string | undefined,
+      workDate: srcData.workDate,
+      ...(offeredWage !== undefined && {wage: offeredWage}),
+      ...(offeredWageType !== undefined && {wageType: offeredWageType}),
+      ...offeredSnapshot,
+      invitedBy: callerUid,
+      invitedAt: offerTime,
+      inviteExpiresAt: offerExpiresAt,
+      appliedAt: offerTime,
+      // [R5.3B] 이 관계가 어디서 왔는지는 서버가 정하고 서버만 읽는다.
+      //   수락 때 클라이언트가 보내는 sourceApplicationId를 믿지 않는다.
+      offerKind: "ALTERNATIVE_WORK",
+      offerId,
+      sourceApplicationId,
+      sourceWdId: srcWdId ?? null,
+      sourceWorkType: srcWorkType ?? null,
+      baseCompensationSnapshotAtOffer: offeredSnapshot,
+      offeredCompensationSnapshot: offeredSnapshot,
+      compensationSource: "ALTERNATIVE_WORK_OFFER",
+      offeredBy: callerUid,
+      offeredAt: offerTime,
+      statusHistory: [{
+        status: "INVITED",
+        at: offerTime,
+        by: callerUid,
+        action: "ALTERNATIVE_WORK_OFFERED",
+      }],
+    };
+
+    // ── 8. 생성 + 카운터 — 초대와 같은 트랜잭션 모양 ──────────────────────
+    await db.runTransaction(async (offerTx) => {
+      const fresh = await offerTx.get(targetRef);
+      if (fresh.exists) {
+        const fStatus = (fresh.data()?.status as string | undefined) ?? "";
+        const REOFFERABLE = ["REJECTED", "CANCELED", "AUTO_CANCELED"];
+        if (!REOFFERABLE.includes(fStatus)) {
+          throw new HttpsError(
+            "already-exists", "이미 이 업무에 대한 관계가 있는 근로자입니다.");
+        }
+      }
+      // source가 그 사이 PENDING을 벗어났으면 만들지 않는다.
+      const freshSrc = await offerTx.get(srcRef);
+      if (!freshSrc.exists ||
+          (freshSrc.data()?.status as string | undefined) !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition", "지원 상태가 바뀌어 제안할 수 없습니다.");
+      }
+      offerTx.set(targetRef, offerAppData);
+      offerTx.update(offerSlotRef, {
+        pendingCount: admin.firestore.FieldValue.increment(1),
+        [`workDetailCounts.${targetWdId}.pendingCount`]:
+          admin.firestore.FieldValue.increment(1),
+      });
+      offerTx.update(offerToRef, {
+        totalPending: admin.firestore.FieldValue.increment(1),
+      });
+    });
+
+    // ── 9. 근로자 알림 — offerId가 곧 알림 identity다 ─────────────────────
+    //   같은 제안의 재시도는 같은 문서라 두 번 생기지 않고,
+    //   정당한 재제안은 새 offerId를 받아 별도 알림이 된다.
+    db.collection("users").doc(offerUid).collection("notifications")
+      .doc(`work_reassignment_offered_${offerId}`)
+      .create({
+        userId: offerUid,
+        type: "workReassignmentOffered",
+        title: "다른 업무 제안이 도착했어요",
+        body: `${(srcData.businessName as string | undefined) ?? ""}에서 ` +
+          `'${targetWD["workType"] as string}' 업무를 제안했습니다. ` +
+          "조건을 확인하고 수락해주세요.",
+        data: {
+          offerId,
+          applicationId: targetAppId,
+          targetApplicationId: targetAppId,
+          sourceApplicationId,
+          businessId: offerBizId,
+          toId: offerToId,
+          slotId: offerSlotId,
+          targetWdId,
+          action: "alternativeWorkOffer",
+        },
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        readAt: null,
+      })
+      .catch((err: unknown) => {
+        if ((err as {code?: number})?.code !== 6) {
+          console.error("[callableOfferAlternativeWork] 알림 실패:", err);
+        }
+      });
+
+    return {success: true, offerId, targetApplicationId: targetAppId};
+  }
+);
+
 // ── callableAcceptTOInvitation ────────────────────────────────────────────────
 // 근로자가 TO 초대를 수락한다. INVITED → CONFIRMED (스케줄 충돌 검증 포함)
 // Input : { applicationId }
@@ -28178,6 +28527,67 @@ export const callableAcceptTOInvitation = onCall(
         fd: freshData,
       });
 
+      // [CROSS-DOMAIN-R5.3B] 다른 업무 제안(B) 수락 — 원 지원(A)을 같은 commit에서 끝낸다.
+      //
+      //   A와 B가 모두 살아 있으면 같은 날 같은 슬롯에 같은 사람이 두 줄로
+      //   남는다. 관리자 화면의 대기 인원도 그 사람을 두 번 센다.
+      //   그래서 B의 좌석과 A의 종료는 하나의 commit boundary 안에 있다:
+      //   B CONFIRMED + A PENDING ❌ / A AUTO_CANCELED + B INVITED ❌
+      //
+      //   sourceApplicationId는 제안 시점에 **서버가** 적어둔 값만 읽는다 —
+      //   수락 요청 payload는 이 관계를 바꾸지 못한다.
+      const reassignOfferKind = freshData.offerKind as string | undefined;
+      const reassignSourceId  = freshData.sourceApplicationId as string | undefined;
+      let reassignSourceRef: FirebaseFirestore.DocumentReference | null = null;
+      let reassignSourceData: FirebaseFirestore.DocumentData | null = null;
+      let reassignSourceActive = false;
+      if (reassignOfferKind === "ALTERNATIVE_WORK") {
+        if (!reassignSourceId || !freshData.toId || !freshData.slotId) {
+          throw new HttpsError(
+            "failed-precondition", "제안 정보가 손상되어 수락할 수 없습니다.");
+        }
+        const reassignSrcRef = db.collection("applications").doc(reassignSourceId);
+        const reassignSrcSnap = await tx.get(reassignSrcRef);
+        if (!reassignSrcSnap.exists) {
+          throw new HttpsError(
+            "failed-precondition", "원 지원서를 찾을 수 없어 제안을 수락할 수 없습니다.");
+        }
+        const reassignSrcData = reassignSrcSnap.data()!;
+        // 서버가 적은 관계라도 같은 사람·같은 근무 단위인지 여기서 다시 본다.
+        const reassignSameParty =
+          (reassignSrcData.uid as string | undefined) === callerUid &&
+          (reassignSrcData.businessId as string | undefined) ===
+            (freshData.businessId as string | undefined) &&
+          (reassignSrcData.toId as string | undefined) ===
+            (freshData.toId as string | undefined) &&
+          (reassignSrcData.slotId as string | undefined) ===
+            (freshData.slotId as string | undefined) &&
+          (reassignSrcData.workDate as admin.firestore.Timestamp | undefined)
+            ?.toMillis() ===
+            (freshData.workDate as admin.firestore.Timestamp | undefined)
+              ?.toMillis();
+        if (!reassignSameParty) {
+          throw new HttpsError(
+            "failed-precondition", "제안 정보가 일치하지 않아 수락할 수 없습니다.");
+        }
+        const reassignSrcStatus = (reassignSrcData.status as string | undefined) ?? "";
+        if (reassignSrcStatus === "PENDING") {
+          reassignSourceActive = true;
+        } else if (!["AUTO_CANCELED", "CANCELED", "REJECTED", "EXPIRED"]
+          .includes(reassignSrcStatus)) {
+          // 이미 확정/계약 단계면 이 수락은 그 약속과 충돌한다 — 조용히 접지 않는다.
+          throw new HttpsError(
+            "failed-precondition", "원 지원이 이미 확정되어 제안을 수락할 수 없습니다.");
+        }
+        reassignSourceRef  = reassignSrcRef;
+        reassignSourceData = reassignSrcData;
+        // A는 한 가지 규칙으로만 끝난다 — 일반 겹침 정리 대상에서 뺀다.
+        //   (같은 슬롯이라 시간이 겹치면 SCHEDULE_CONFLICT로도 잡힌다.
+        //    그러면 근로자 이력에 사유가 두 벌 생기고 표현도 달라진다.)
+        acceptOverlapPlan.toCancel =
+          acceptOverlapPlan.toCancel.filter((d) => d.id !== reassignSourceId);
+      }
+
       // [BUG-10 수정] 수락 시점에 TO 상태 재검증 — 초대 발송 후 TO가 삭제/마감된 경우 차단
       // [BUG-11 수정] FULL 상태도 차단 — callableInviteWorker(BUG-09)와 동일 정책 적용
       if (toId) {
@@ -28237,19 +28647,31 @@ export const callableAcceptTOInvitation = onCall(
             }
             // [§8.1B.1] workType별 정원 재검증 — 같은 슬롯 내 특정 업무 FULL 차단
             // [Phase 8.1E.5] getWorkDetailCount() 사용 — workTypeCounts 제거
-            if (freshSelectedWorkType) {
-              for (const wd of rawWDs) {
-                const wdMap = wd as Record<string, unknown>;
-                if (wdMap.workType !== freshSelectedWorkType) continue;
-                const wtReq = (wdMap.requiredCount as number | undefined) ?? 0;
-                const {confirmedCount: wtConf} = getWorkDetailCount(freshSlotData as Record<string, unknown>, wdMap);
+            // [CROSS-DOMAIN-R5.3B] 정원을 보는 단위는 **이 수락이 들어가는
+            //   WorkDetail**이다. 이전에는 workType 이름으로 찾아 첫 항목만 보고
+            //   break했다. 한 슬롯에 같은 이름의 업무가 둘 있으면(오전 파트 /
+            //   오후 파트 — 다른 업무 제안이 정확히 그 모양이다) 수락하는 자리가
+            //   아니라 엉뚱한 자리의 정원을 본다.
+            //   wdId가 있으면 그것으로 찾고, 없을 때만 legacy workType 폴백.
+            if (acceptWdId || freshSelectedWorkType) {
+              const acceptTargetWd = acceptWdId ?
+                (rawWDs as Record<string, unknown>[])
+                  .find((w) => w["wdId"] === acceptWdId) :
+                (rawWDs as Record<string, unknown>[])
+                  .find((w) => w["workType"] === freshSelectedWorkType);
+              if (acceptTargetWd) {
+                const wtReq = (acceptTargetWd["requiredCount"] as number | undefined) ?? 0;
+                const {confirmedCount: wtConf} = getWorkDetailCount(
+                  freshSlotData as Record<string, unknown>, acceptTargetWd);
                 if (wtReq > 0 && wtConf >= wtReq) {
+                  const wtName =
+                    (acceptTargetWd["workType"] as string | undefined) ??
+                    freshSelectedWorkType ?? "해당";
                   throw new HttpsError(
                     "failed-precondition",
-                    `${freshSelectedWorkType} 업무 정원이 초과되었습니다. (${wtConf}/${wtReq}명)`
+                    `${wtName} 업무 정원이 초과되었습니다. (${wtConf}/${wtReq}명)`
                   );
                 }
-                break;
               }
             }
           }
@@ -28313,6 +28735,28 @@ export const callableAcceptTOInvitation = onCall(
         nowTs: confirmedAt,
       });
 
+      // [R5.3B] A 종료 — 근로자가 마음을 바꾼 게 아니라 제안을 받아들인 결과다.
+      //   reliability 패널티 없음 / noShow 없음 / 취소 횟수 누적 없음.
+      //   worker-facing 표현은 '지원 취소'가 아니라 '다른 업무로 확정됨'이며,
+      //   그 판정 근거가 cancelReason = REASSIGNMENT_ACCEPTED 하나다.
+      if (reassignSourceActive && reassignSourceRef) {
+        tx.update(reassignSourceRef, {
+          status: "AUTO_CANCELED",
+          canceledAt: confirmedAt,
+          cancelReason: "REASSIGNMENT_ACCEPTED",
+          reassignedToApplicationId: applicationId,
+          reassignedAt: confirmedAt,
+          statusHistory: admin.firestore.FieldValue.arrayUnion({
+            status: "AUTO_CANCELED",
+            at: confirmedAt,
+            by: "SYSTEM",
+            action: "REASSIGNMENT_ACCEPTED",
+            reason: "REASSIGNMENT_ACCEPTED",
+            reassignedToApplicationId: applicationId,
+          }),
+        });
+      }
+
       // [CROSS-DOMAIN-R5.2] 동의는 commitment와 **같은 트랜잭션**에 쓴다.
       //   좌석은 잡혔는데 동의 기록만 없는 상태가 생기지 않게 한다.
       const acceptUpdate: Record<string, unknown> = {
@@ -28335,12 +28779,20 @@ export const callableAcceptTOInvitation = onCall(
       }
       tx.update(appRef, acceptUpdate);
 
+      // [R5.3B] A가 잡고 있던 대기 자리도 이 commit에서 돌려준다.
+      //   A와 B는 같은 TO·같은 슬롯이므로(위에서 동일성 확인) 같은 문서를
+      //   두 번 쓰지 않고 B의 감소와 합쳐서 한 번에 반영한다.
+      const reassignPendingBack = reassignSourceActive ? 1 : 0;
+      const reassignSourceWdId = reassignSourceActive ?
+        (reassignSourceData?.wdId as string | undefined) : undefined;
+
       if (toId) {
         // [6.1 INV-03] TO 카운터: totalConfirmed +1 + totalPending -1 + (slot 없을 때) workTypeConfirmedCounts +1
         // [Phase 8.1E.2A] INVITED → CONFIRMED: totalPending -1 (INVITED 생성 시 +1 했으므로 대칭 감소)
         const toUpdate: Record<string, unknown> = {
           totalConfirmed: admin.firestore.FieldValue.increment(1),
-          totalPending:   admin.firestore.FieldValue.increment(-1), // [Phase 8.1E.2A]
+          totalPending:   admin.firestore.FieldValue.increment(
+            -1 - reassignPendingBack), // [Phase 8.1E.2A] + [R5.3B] A분
         };
         if (!slotId && freshSelectedWorkType) {
           toUpdate[`workTypeConfirmedCounts.${freshSelectedWorkType}`] = admin.firestore.FieldValue.increment(1);
@@ -28353,7 +28805,8 @@ export const callableAcceptTOInvitation = onCall(
           // [Phase 8.1E.2A] INVITED → CONFIRMED: pendingCount -1 (대칭 감소)
           const slotUpdate: Record<string, unknown> = {
             confirmedCount: admin.firestore.FieldValue.increment(1),
-            pendingCount:   admin.firestore.FieldValue.increment(-1), // [Phase 8.1E.2A]
+            pendingCount:   admin.firestore.FieldValue.increment(
+              -1 - reassignPendingBack), // [Phase 8.1E.2A] + [R5.3B] A분
           };
           // [Phase 8.1E.2] wdId canonical counter dual-write
           const inviteAcceptWdId = freshData.wdId as string | undefined;
@@ -28362,6 +28815,11 @@ export const callableAcceptTOInvitation = onCall(
               admin.firestore.FieldValue.increment(1);
             slotUpdate[`workDetailCounts.${inviteAcceptWdId}.pendingCount`] =
               admin.firestore.FieldValue.increment(-1); // [Phase 8.1E.2A]
+          }
+          // [R5.3B] A의 업무(wdId)는 B와 다른 자리다 — 그 자리의 대기도 내린다.
+          if (reassignSourceWdId && reassignSourceWdId !== inviteAcceptWdId) {
+            slotUpdate[`workDetailCounts.${reassignSourceWdId}.pendingCount`] =
+              admin.firestore.FieldValue.increment(-1);
           }
           tx.update(db.collection("tos").doc(toId).collection("slots").doc(slotId), slotUpdate);
         }
@@ -28372,25 +28830,41 @@ export const callableAcceptTOInvitation = onCall(
     try {
       const invitedBy  = appData.invitedBy  as string | undefined;
       const toTitle    = (appData.toTitle   as string | undefined) ?? (toId ?? "업무");
-      const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      const workerName = await srvResolveApplicantName(appData, appData.uid as string | undefined);
       // [CALLER1-PATCH] 딥링크 navigation 식별자 — wdId 우선(Phase 8.1E canonical), legacy composite 보완
       const navWdId    = appData.wdId              as string | undefined;
       const navWt      = appData.selectedWorkType  as string | undefined;
       const navSt      = appData.startTime         as string | undefined;
       const navEt      = appData.endTime           as string | undefined;
       const navWdKey   = (navWt && navSt && navEt) ? `${navWt}_${navSt}_${navEt}` : undefined;
+      // [R5.3B] 다른 업무 제안을 수락한 경우는 일반 초대 수락과 사건이 다르다.
+      //   관리자는 "A 대기가 끝나고 B로 확정됐다"를 알아야 하고, 그 알림은
+      //   행동을 요구하지 않는 informational이다.
+      const acceptIsReassign =
+        (appData.offerKind as string | undefined) === "ALTERNATIVE_WORK";
+      const acceptOfferId = appData.offerId as string | undefined;
+      const acceptSourceAppId = appData.sourceApplicationId as string | undefined;
+      const acceptOfferedWorkType =
+        (appData.selectedWorkType as string | undefined) ?? "업무";
       if (invitedBy) {
         db.collection("users").doc(invitedBy).collection("notifications").add({
           userId:    invitedBy,
-          type:      "toInviteAccepted",
-          title:     "초대를 수락했습니다 ✅",
-          body:      `${workerName}님이 '${toTitle}' 근무 초대를 수락했습니다.`,
+          type:      acceptIsReassign ? "workReassignmentAccepted" : "toInviteAccepted",
+          title:     acceptIsReassign ?
+            "제안한 업무로 확정됐습니다" : "초대를 수락했습니다 ✅",
+          body:      acceptIsReassign ?
+            `${workerName}님이 '${acceptOfferedWorkType}' 업무 제안을 수락했습니다. ` +
+              "기존 지원은 자동으로 정리됐습니다." :
+            `${workerName}님이 '${toTitle}' 근무 초대를 수락했습니다.`,
           data: {
             applicationId,
             businessId: appData.businessId,
             ...(toId     ? {toId}                   : {}),
             ...(navWdId  ? {wdId: navWdId}          : {}),
             ...(navWdKey ? {workDetailId: navWdKey}  : {}),
+            ...(acceptIsReassign && acceptOfferId ? {offerId: acceptOfferId} : {}),
+            ...(acceptIsReassign && acceptSourceAppId ?
+              {sourceApplicationId: acceptSourceAppId} : {}),
             action: "applicationDetail",
           },
           isRead:    false,
@@ -28526,25 +29000,41 @@ export const callableDeclineTOInvitation = onCall(
       const invitedBy  = appData.invitedBy     as string | undefined;
       const toId       = appData.toId          as string | undefined;
       const toTitle    = (appData.toTitle      as string | undefined) ?? (toId ?? "업무");
-      const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      const workerName = await srvResolveApplicantName(appData, appData.uid as string | undefined);
       // [CALLER1-PATCH] 딥링크 navigation 식별자 — wdId 우선(Phase 8.1E canonical), legacy composite 보완
       const navWdId    = appData.wdId              as string | undefined;
       const navWt      = appData.selectedWorkType  as string | undefined;
       const navSt      = appData.startTime         as string | undefined;
       const navEt      = appData.endTime           as string | undefined;
       const navWdKey   = (navWt && navSt && navEt) ? `${navWt}_${navSt}_${navEt}` : undefined;
+      // [R5.3B] 제안 거절은 초대 거절과 결과가 다르다 —
+      //   근로자는 **원래 지원(A)에 그대로 PENDING으로 남는다**.
+      //   관리자에게 그 사실을 알려야 A를 계속 검토할지 판단할 수 있다.
+      const declineIsReassign =
+        (appData.offerKind as string | undefined) === "ALTERNATIVE_WORK";
+      const declineOfferId = appData.offerId as string | undefined;
+      const declineSourceAppId = appData.sourceApplicationId as string | undefined;
+      const declineOfferedWorkType =
+        (appData.selectedWorkType as string | undefined) ?? "업무";
       if (invitedBy) {
         db.collection("users").doc(invitedBy).collection("notifications").add({
           userId:    invitedBy,
-          type:      "toInviteDeclined",
-          title:     "초대를 거절했습니다",
-          body:      `${workerName}님이 '${toTitle}' 근무 초대를 거절했습니다.`,
+          type:      declineIsReassign ? "workReassignmentDeclined" : "toInviteDeclined",
+          title:     declineIsReassign ?
+            "제안한 업무를 거절했습니다" : "초대를 거절했습니다",
+          body:      declineIsReassign ?
+            `${workerName}님이 '${declineOfferedWorkType}' 업무 제안을 거절했습니다. ` +
+              "기존 지원은 그대로 대기 중입니다." :
+            `${workerName}님이 '${toTitle}' 근무 초대를 거절했습니다.`,
           data: {
             applicationId,
             businessId: appData.businessId,
             ...(toId     ? {toId}                   : {}),
             ...(navWdId  ? {wdId: navWdId}          : {}),
             ...(navWdKey ? {workDetailId: navWdKey}  : {}),
+            ...(declineIsReassign && declineOfferId ? {offerId: declineOfferId} : {}),
+            ...(declineIsReassign && declineSourceAppId ?
+              {sourceApplicationId: declineSourceAppId} : {}),
             action: "applicationDetail",
           },
           isRead:    false,

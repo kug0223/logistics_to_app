@@ -2576,9 +2576,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final bizLine = _isMultiBusinessScope ? day.targetLocationLabel() : null;
     if (bizLine != null) parts.add(bizLine);
 
-    // PENDING_ZERO_DISPLAY=HIDE: null(실패)·0 → 숨김, >0 → '지원 대기 N명'
+    // PENDING_ZERO_DISPLAY=HIDE: null(실패)·0 → 숨김, >0 → '지원 대기 N건'
+    // [CROSS-DOMAIN-R5.3B] 단위는 **건**이다 — 사람 수가 아니다.
+    //   한 사람이 같은 슬롯의 다른 업무를 제안받으면(A PENDING + B INVITED)
+    //   이 카운터에 두 번 들어간다. `N명`이라고 하면 없는 사람을 세게 된다.
     if (day.pendingCount != null && day.pendingCount! > 0) {
-      parts.add('지원 대기 ${day.pendingCount}명');
+      parts.add('지원 대기 ${day.pendingCount}건');
     }
 
     final radius = BorderRadius.only(

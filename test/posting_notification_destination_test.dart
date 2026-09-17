@@ -599,7 +599,11 @@ void main() {
       final fns = _src('functions/src/index.ts');
       expect(fns.contains('type: "toPostingExpired"'), true);
       expect(fns.contains('screen: "toDetail"'), true);
-      expect(fns.contains('type:      "toInviteAccepted"'), true);
+      // [R5.3B] 제안 수락과 갈렸지만 초대 수락 알림은 그대로 나간다.
+      expect(
+          fns.contains('type:      acceptIsReassign ? '
+              '"workReassignmentAccepted" : "toInviteAccepted",'),
+          true);
     });
 
     test('09-b payload를 확장하지 않았다', () {

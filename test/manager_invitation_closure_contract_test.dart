@@ -411,8 +411,13 @@ void main() {
       final accept = _tsSliceOf(cf, 'export const callableAcceptTOInvitation',
           'export const callableDeclineTOInvitation');
       expect(accept.contains('db.runTransaction'), isTrue);
-      expect(accept.contains('getWorkDetailCount(freshSlotData'), isTrue);
+      // [R5.3B] 정원을 보는 단위가 workType 이름에서 wdId로 좁혀졌다.
+      //   판정 재료(slot의 canonical counter)는 그대로다.
+      expect(accept.contains('getWorkDetailCount('), isTrue);
+      expect(accept.contains('freshSlotData as Record<string, unknown>'), isTrue);
       expect(accept.contains('업무 정원이 초과되었습니다.'), isTrue);
+      expect(accept.contains('w["wdId"] === acceptWdId'), isTrue,
+          reason: '같은 이름의 다른 업무를 구분해야 한다');
       // [R2 FINAL] 오히려 구멍을 메웠다 — 슬롯/업무 단위 모집 종료는 막혀 있지
       //   않았다. 정원과 무관한 사건이라 정원 guard가 잡지 못한다.
       expect(
@@ -443,14 +448,16 @@ void main() {
     });
 
     test('02b-i 세 상태가 각각 다른 화면을 낳는다', () {
-      // available: 수락하기 / full: 모집 완료 / unknown: 확인 못 함
-      expect(mine.contains("label: '수락하기'"), isTrue);
+      // available: 수락 CTA / full: 모집 완료 / unknown: 확인 못 함
+      // [R5.3B] available 분기의 라벨이 초대/제안으로 갈렸다 — 분기는 그대로다.
+      const acceptCta = "label: isOffer ? '제안 조건으로 수락' : '수락하기',";
+      expect(mine.contains(acceptCta), isTrue);
       expect(mine.contains('모집이 완료된 초대예요'), isTrue);
       expect(mine.contains('근무 가능 여부를 확인하지 못했어요'), isTrue);
       // 세 문구가 서로 다른 분기에 있다
       final a = mine.indexOf('모집이 완료된 초대예요');
       final b = mine.indexOf('근무 가능 여부를 확인하지 못했어요');
-      final c = mine.indexOf("label: '수락하기'");
+      final c = mine.indexOf(acceptCta);
       expect(a, greaterThan(0));
       expect(b, greaterThan(a));
       expect(c, greaterThan(b), reason: 'available 분기가 마지막 폴백이어야 한다');

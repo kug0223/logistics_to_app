@@ -560,6 +560,19 @@ class FCMService {
       // [PATCH-FCM-B] ADMIN.POSTING.ROUTE-INTEGRITY-01
       // admin: Jobs tab (Shell active + visible) / NotificationScreen fallback
       // worker: MyApplicationsScreen (기존 유지)
+      // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 — 근로자 수신, 대상 Application 지목.
+      //   인앱 dispatcher와 **같은 focusApplicationId**를 넘긴다.
+      case 'workReassignmentOffered':
+        _pushFcmScreen(
+          destinationKey: 'my_applications',
+          builder: (_) => MyApplicationsScreen(
+            focusApplicationId: data['applicationId']?.toString(),
+          ),
+        );
+        break;
+      // workReassignmentAccepted/Declined: 관리자 수신 — 초대 결과와 같은 경로.
+      case 'workReassignmentAccepted':
+      case 'workReassignmentDeclined':
       case 'toInviteAccepted':
       case 'toInviteDeclined':
         if (_currentUserIsAdmin) {

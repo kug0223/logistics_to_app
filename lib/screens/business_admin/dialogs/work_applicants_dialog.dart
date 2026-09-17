@@ -22,6 +22,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
+import '../../../widgets/dialogs/alternative_work_offer_sheet.dart';
 import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../common/settings_screen.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
@@ -1615,6 +1616,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           children: [
                             // [CROSS-DOMAIN-R5.3A] '파트변경' CTA 제거 (대기자 경로).
                             //   PENDING 지원자의 지원 조건을 동의 없이 덮어썼다.
+                            // [CROSS-DOMAIN-R5.3B] 그 자리를 '다른 업무 제안'이 대신한다.
+                            //   관리자는 바꾸지 않는다 — 제안하고, 근로자가 고른다.
+                            //   제안할 다른 업무가 실제로 있을 때만 띄운다.
+                            if (_offerableWorkDetails(app).isNotEmpty) ...[
+                              _buildActionButton(
+                                context,
+                                label: '다른 업무 제안',
+                                icon: Icons.swap_horiz,
+                                bgColor: AppColors.infoBg,
+                                textColor: AppColors.info,
+                                onTap: () => _showAlternativeWorkOfferSheet(item),
+                              ),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                            ],
                             _buildActionButton(
                               context,
                               label: '거절',
@@ -1891,6 +1906,71 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return '${diff.inDays}일 전';
     } else {
       return DateFormat('MM/dd HH:mm').format(appliedAt);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // [CROSS-DOMAIN-R5.3B] 다른 업무 제안
+  //
+  //   R5.3A에서 '파트변경'을 얼린 이유는 그것이 **근로자가 동의한 적 없는 조건**
+  //   으로 지원서를 덮어썼기 때문이다. 대체 경로는 덮어쓰지 않는다:
+  //   같은 슬롯의 다른 업무(B)로 **새 제안**을 만들고, 원 지원(A)은 근로자가
+  //   수락하는 순간에만 서버가 같은 트랜잭션에서 접는다.
+  //
+  //   그래서 이 화면의 문구는 "업무를 바로 변경합니다"가 될 수 없다.
+  //   관리자가 하는 일은 제안을 보내는 것까지다.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// 이 지원자에게 제안할 수 있는 다른 업무들 — 판정은 공용 시트가 갖는다.
+  List<WorkDetailModel> _offerableWorkDetails(ApplicationModel app) =>
+      AlternativeWorkOfferSheet.offerableFrom(
+          widget.toItem.workDetails, _getWorkForApp(app));
+
+  /// 이 업무에 지금 확정된 인원 수 — 화면에 이미 로드된 지원서에서 센다.
+  int _confirmedCountForWork(WorkDetailModel work) {
+    return _applicants.where((item) {
+      final a = item['application'] as ApplicationModel;
+      return _appMatchesWork(a, work) &&
+          AppStatus.confirmedStatuses.contains(a.status);
+    }).length;
+  }
+
+  Future<void> _showAlternativeWorkOfferSheet(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+    final workerName = user?.name ?? '지원자';
+    final currentWork = _getWorkForApp(app);
+    final candidates = _offerableWorkDetails(app);
+    if (candidates.isEmpty) {
+      ToastHelper.showWarning('제안할 수 있는 다른 업무가 없습니다.');
+      return;
+    }
+
+    final selectedWdId = await AlternativeWorkOfferSheet.pickTarget(
+      context,
+      workerName: workerName,
+      currentWork: currentWork,
+      candidates: candidates,
+      confirmedCountOf: _confirmedCountForWork,
+    );
+    if (selectedWdId == null || !mounted) return;
+    final target = candidates.firstWhere((w) => w.id == selectedWdId);
+
+    setState(() => _isProcessing = true);
+    try {
+      final sent = await AlternativeWorkOfferSheet.confirmAndSend(
+        context,
+        workerName: workerName,
+        sourceApplicationId: app.id,
+        target: target,
+      );
+      if (!sent || !mounted) return;
+      await _loadApplicants();
+      if (!mounted) return;
+      await _updateLocalStats();
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
