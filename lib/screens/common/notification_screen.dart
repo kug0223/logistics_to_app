@@ -1992,8 +1992,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (uid == null) return _AdminAccessResult.noPermission;
 
       // 현재 선택된 사업장 = 알림 사업장이고 권한이 이미 로드됐으면 캐시 사용 (네트워크 절약)
+      //
+      // [CROSS-DOMAIN-R5.1G] 단, **지금 검증된 값**일 때만 그렇다.
+      //   선택 사업장 구독이 죽어 있으면 캐시에 남은 허용은 마지막으로 본 값일
+      //   뿐이다. 그 값으로 목적지를 열면 알림이 권한을 부여하는 셈이 된다.
+      //   확인하지 못한 상태는 거부가 아니라 permissionUnknown이다.
       if (up.permissionsLoaded && up.selectedSubAdminBusinessId == businessId) {
-        if (!up.can(requiredPermission)) return _AdminAccessResult.noPermission;
+        switch (up.checkCurrentBusiness(requiredPermission)) {
+          case PermissionCheck.allowed:
+            break;
+          case PermissionCheck.denied:
+            return _AdminAccessResult.noPermission;
+          case PermissionCheck.error:
+          case PermissionCheck.unknown:
+            return _AdminAccessResult.permissionUnknown;
+        }
       } else {
         // 다른 사업장이거나 캐시 미로드 → Firestore 직접 조회 (다중 사업장 정확도 보장)
         try {
