@@ -15,6 +15,7 @@ import '../screens/common/job_posting_screen.dart';         // [Phase 8.1C] toMa
 import 'contract_service.dart';
 import 'firestore_service.dart';
 import '../models/core/employment_contract_model.dart';
+import '../models/core/notification_model.dart';
 import '../utils/admin_tab_switcher.dart';
 import '../utils/app_navigator_observer.dart';
 
@@ -434,6 +435,21 @@ class FCMService {
   /// FCM data payload 기반 딥링크 라우팅
   void _navigateByPayload(Map<String, dynamic> data) {
     if (_navigatorKey?.currentState == null) return;
+    // [CROSS-DOMAIN-R5.1A] 권한이 걸린 알림의 판정 기준은 언제나 type이다.
+    //
+    //   아래 switch는 screen을 먼저 본다. 인앱 dispatcher는 type을 먼저 본다.
+    //   두 값이 어긋난 payload에서는 같은 알림이 서로 다른 목적지로 갈 수 있고,
+    //   목적지가 다르면 적용되는 권한도 달라진다.
+    //   그래서 관리자 맥락에서 권한이 걸린 타입은 screen을 보지 않고
+    //   dispatcher로 넘긴다 — 판정은 한 곳에서만 일어난다.
+    //   근로자 수신 경로(_currentUserIsAdmin == false)는 그대로 둔다.
+    final rawType = data['type'] as String?;
+    if (_currentUserIsAdmin &&
+        rawType != null &&
+        kPermissionBearingNotifTypes.contains(rawType)) {
+      _navigateToNotificationScreen(autoDispatchPayload: data);
+      return;
+    }
     // screen 필드 우선, 없으면 type 폴백 (일부 알림은 screen 없이 type만 포함)
     final screen = (data['screen'] as String?) ?? (data['type'] as String?);
     // BUG-5 수정: 다중 사업장 서브어드민이 알림 탭 시 올바른 사업장으로 이동하도록 businessId 추출

@@ -127,6 +127,104 @@ void main() {
   // (admin_home_staffing_rollout_contract_test CONTRACT-06).
   // Task 단위 권한은 홈 요약의 actions.*.available이 맡는다.
   // 두 의미를 한 필드에 겹치지 않는 것이 현재 계약이다.
+  // 판정 기준은 언제나 type이다. screen은 FCM 라우터가 쓰는 별칭일 뿐이고,
+  // 두 라우터의 우선순위가 반대라서(FCM: screen 우선 / 인앱: type 우선) 값이
+  // 어긋난 payload는 서로 다른 목적지 — 따라서 서로 다른 권한 — 을 고를 수 있었다.
+  group('권한이 걸린 알림은 한 곳에서만 판정한다', () {
+    test('관리자 맥락에서는 type으로 dispatcher에 넘긴다', () {
+      expect(
+        fcm.contains('if (_currentUserIsAdmin && rawType != null && '
+            'kPermissionBearingNotifTypes.contains(rawType)) '
+            '{ _navigateToNotificationScreen(autoDispatchPayload: data); return; }'),
+        true,
+        reason: 'screen switch를 타면 인앱과 다른 목적지가 나올 수 있다',
+      );
+    });
+
+    test('근로자 경로는 건드리지 않는다', () {
+      // 같은 type을 근로자도 받는다(resignApproved 등). 관리자 맥락에서만 적용한다.
+      final i = fcm.indexOf('kPermissionBearingNotifTypes.contains(rawType)');
+      expect(i > 0, true);
+      expect(fcm.substring(0, i).endsWith('if (_currentUserIsAdmin && rawType != null && '),
+          true);
+    });
+
+    test('목록이 인앱 라우트와 어긋나면 알아차린다', () {
+      // 손으로 맞춘 목록이 아니라 검증되는 목록이어야 한다.
+      // notification_screen.dart에서 requiredPermission을 요구하는 라우트의
+      // case 라벨을 모아, 전부 집합에 들어 있는지 본다.
+      final screenSrc = _codeOf(_src(_notifPath));
+      final blocks = screenSrc.split('case NotificationType.');
+      final needPerm = <String>{};
+      for (var i = 1; i < blocks.length; i++) {
+        final name = RegExp(r'^(\w+)').firstMatch(blocks[i])?.group(1);
+        if (name == null) continue;
+        // 이 case부터 다음 case 전까지에 requiredPermission이 있으면 권한 라우트다.
+        if (blocks[i].contains('requiredPermission:')) needPerm.add(name);
+      }
+      final model = _src('lib/models/core/notification_model.dart');
+      final setBlock = model.substring(
+          model.indexOf('const Set<String> kPermissionBearingNotifTypes = {'),
+          model.indexOf('const Set<NotificationType> kAdminNotifTypes'));
+      final missing = needPerm.where((t) => !setBlock.contains("'$t'")).toList();
+      expect(missing, isEmpty,
+          reason: '권한 라우트가 생겼는데 kPermissionBearingNotifTypes에 없다: $missing');
+    });
+  });
+
+  group('권한을 못 읽은 것과 없는 것을 구분한다', () {
+    test('조회 실패는 별도 상태다', () {
+      expect(notif.contains('permissionUnknown,'), true);
+      expect(notif.contains("debugPrint('[_validateAdminNotificationAccess] 권한 조회 실패: \$e'); "
+          'return _AdminAccessResult.permissionUnknown;'), true,
+          reason: '못 읽은 것을 noPermission으로 합치면 멀쩡한 관리자에게 거짓말을 한다');
+    });
+
+    test('문구가 서로 다르고 다시 시도할 수 있다', () {
+      expect(notif.contains("ToastHelper.showError('권한 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');"),
+          true);
+      expect(notif.contains("ToastHelper.showWarning('이 업무를 처리할 권한이 없습니다.');"), true);
+    });
+
+    test('모르는 상태에서도 진입은 막는다', () {
+      // fail-open 금지 — 막되 이유만 사실대로 말한다.
+      final i = notif.indexOf('case _AdminAccessResult.permissionUnknown:');
+      expect(i > 0, true);
+      expect(notif.substring(i, i + 200).contains('return false;'), true);
+    });
+  });
+
+  // 멤버 관리 라우트의 `requiredPermission: (p) => false` 의미 —
+  // validator를 끝까지 읽어 확정한 것이지 추측이 아니다.
+  //   BUSINESS_ADMIN : isSubAdmin이 아니므로 그 앞 단계에서 allowed로 반환된다
+  //                    (콜백에 닿지 않는다)
+  //   SUB_ADMIN      : 멤버십 확인 후 콜백이 false → noPermission
+  // 즉 owner 전용이고, MemberManagementScreen 자체 가드와 같은 계약이다.
+  group('멤버 관리는 사업주 전용이다', () {
+    test('사업주는 권한 콜백 이전에 통과한다', () {
+      expect(notif.contains('if (!up.isSubAdmin) return _AdminAccessResult.allowed;'), true);
+    });
+
+    test('서브어드민은 항상 거부된다', () {
+      final i = notif.indexOf('case NotificationType.memberInvitationAccepted:');
+      expect(i > 0, true);
+      expect(notif.substring(i, i + 500).contains('requiredPermission: (p) => false'), true);
+    });
+
+    test('화면 자체도 같은 기준으로 막는다', () {
+      final m = _flat(_codeOf(
+          _src('lib/screens/business_admin/member_management_screen.dart')));
+      expect(m.contains('if (!(up.currentUser?.isBusinessAdmin == true))'), true,
+          reason: '라우트만 막고 화면이 열려 있으면 다른 진입점으로 들어간다');
+    });
+
+    test('알림은 초대한 관리자에게만 가고 businessId를 싣는다', () {
+      final f = _flat(_codeOf(_src(_fnsPath)));
+      expect(f.contains('data: {action: "memberManagement", businessId},'), true);
+      expect(f.contains('const adminUid = inv.invitedBy as string | undefined;'), true);
+    });
+  });
+
   group('권한 표현은 정해진 필드로만 한다', () {
     test('readiness의 available은 조회 성공 플래그로 유지된다', () {
       final r = _flat(_codeOf(_callableOf(raw, 'callableGetStaffingReadiness')));

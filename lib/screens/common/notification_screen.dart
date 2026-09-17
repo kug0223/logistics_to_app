@@ -67,6 +67,13 @@ enum _AdminAccessResult {
   noPermission,      // 멤버십 있으나 현재 MemberPermissions 없음
   noBusinessId,      // businessId 필수이나 알림 data에 누락
   invalidContext,    // 순수 USER가 관리자 전용 알림을 탭
+
+  /// [CROSS-DOMAIN-R5.1A] 권한을 **확인하지 못했다** — 없는 것과 다르다.
+  ///
+  /// 조회 실패를 noPermission으로 합치면, 권한이 멀쩡한 관리자에게
+  /// "권한이 없습니다"라고 말하게 된다. 진입은 여전히 막되(fail-closed)
+  /// 이유는 사실대로 말하고 다시 시도할 수 있게 한다.
+  permissionUnknown,
 }
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
@@ -1995,8 +2002,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
             return _AdminAccessResult.noPermission;
           }
         } catch (e) {
+          // [CROSS-DOMAIN-R5.1A] 못 읽은 것을 '권한 없음'이라고 말하지 않는다.
           debugPrint('[_validateAdminNotificationAccess] 권한 조회 실패: $e');
-          return _AdminAccessResult.noPermission;
+          return _AdminAccessResult.permissionUnknown;
         }
       }
     }
@@ -2015,6 +2023,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return false;
       case _AdminAccessResult.noPermission:
         ToastHelper.showWarning('이 업무를 처리할 권한이 없습니다.');
+        return false;
+      case _AdminAccessResult.permissionUnknown:
+        // 막되, 없다고 말하지 않는다 — 다시 시도하면 되는 상황이다.
+        ToastHelper.showError('권한 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
         return false;
       case _AdminAccessResult.noBusinessId:
         ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');

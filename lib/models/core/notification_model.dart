@@ -135,6 +135,51 @@ enum NotificationType {
 /// - confirmationCanceled: CF 스케줄러가 근로자에게만 발송 → personal
 /// - reviewReceived: CF 미구현 (Dead), 수신자는 리뷰를 받는 근로자 → personal
 /// - reviewRequest: 관리자·근로자 양방향 → category 필드로만 구분
+/// [CROSS-DOMAIN-R5.1A] 관리자 맥락에서 **권한 검사가 걸린** 알림 타입(raw 문자열).
+///
+/// 알림의 canonical identity는 `type`이다. `screen`은 FCM 라우터가 쓰는 별칭일
+/// 뿐이고, 두 값의 우선순위가 라우터마다 반대여서(FCM: screen 우선 /
+/// 인앱: type 우선) 값이 어긋나면 서로 다른 목적지를 고를 수 있었다.
+///
+/// 그래서 **권한이 걸린 알림은 언제나 type으로, dispatcher 한 곳에서** 판정한다.
+/// FCMService가 관리자 맥락에서 이 집합을 만나면 screen switch를 타지 않고
+/// NotificationScreen dispatcher로 넘긴다.
+///
+/// 이 집합이 notification_screen.dart의 `requiredPermission` 라우트와 어긋나면
+/// notification_permission_contract_test가 실패한다 — 손으로 맞춘 목록이 아니라
+/// 검증되는 목록이다. 근로자 수신 경로는 영향을 받지 않는다(관리자 맥락에서만 적용).
+const Set<String> kPermissionBearingNotifTypes = {
+  'newApplication',
+  'applicationCanceled',
+  'confirmationCanceled',
+  'toInviteAccepted',
+  'toInviteDeclined',
+  'scheduleChangeRequested',
+  'contractSigned',
+  'contractRequested',
+  'contractExpiringReminder',
+  'terminationRequested',
+  'terminationApproved',
+  'terminationRejected',
+  'resignRequested',
+  'resignApproved',
+  'resignReminder',
+  'idCardAccessApproved',
+  'idCardAccessRejected',
+  'idCardAccessExpiringSoon',
+  'idCardConsentGranted',
+  'reviewRequest',
+  'reviewReceived',
+  'interimSettlementRequested',
+  'memberInvitationReceived',
+  'memberInvitationAccepted',
+  'memberInvitationRejected',
+  'reconfirmAdminWarning',
+  'reconfirmDeclined',
+  'toPostingExpired',
+  'toPostingExpiringTomorrow',
+};
+
 const Set<NotificationType> kAdminNotifTypes = {
   // 지원·채용 관련
   NotificationType.newApplication,
