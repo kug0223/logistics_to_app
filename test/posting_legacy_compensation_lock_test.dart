@@ -1010,10 +1010,15 @@ void main() {
       expect(legacyLocked(oldWD: oldWD, newWD: newWD, apps: const [after]), false);
     });
 
-    test('07-c 업무 변경도 서버가 재스냅샷한다 (§15)', () {
+    test('07-c 업무 변경 경로는 동결됐다 (§15 / R5.3A)', () {
+      // [CROSS-DOMAIN-R5.3A] direct mutation 경로가 사라졌다. 서버가 조건을
+      //   재스냅샷한다는 성질은 살아 있는 두 경로(지원·초대)가 계속 지킨다.
       final fns = _src(_fnsPath);
       expect(fns.contains('changedCompensation = buildCompensationSnapshot(newWD);'),
+          false);
+      expect(fns.contains('const compensationSnapshot = buildCompensationSnapshot(promisedWD);'),
           true);
+      expect(fns.contains('...buildCompensationSnapshot(inviteMatchedWD),'), true);
     });
 
     test('07-d 관계가 끝나면 저절로 풀린다 (§13)', () {

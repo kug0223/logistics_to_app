@@ -21636,255 +21636,35 @@ export const callableWageCancel = onCall(
 //  1. workTypeCounts/workTypeConfirmedCounts FieldValue.increment → CF 서버 강제
 //  2. attendance wageStatus: pending 직접 write → BulkWriter로 교체
 //  3. assertBizAdmin 교차검증 추가
+// [CROSS-DOMAIN-R5.3A] `[BLOCKER-WORK-PART-DIRECT-MUTATION]` — 사용 중지.
+//
+//   이 callable은 확정된 약속을 관리자 혼자 덮어썼다. R5.3 READ에서 확인한 것:
+//     · 서명 완료(completed) 계약의 workType·wage를 소급 수정했다.
+//       서명본 PDF는 그대로라 문서와 레코드가 갈린다.
+//     · 출근 기록이 있어도 Application을 바꿨다 — 지난 사실을 다시 썼다.
+//     · wdId를 갱신하지 않아 화면은 B, 집계는 A로 갈렸다.
+//       (workDetailCounts·syncTOStats는 모두 wdId 기준이다)
+//     · target의 FULL/CLOSED를 읽지 않아 마감된 업무로도 옮길 수 있었다.
+//     · 시간이 다른 업무로 옮겨도 겹침을 다시 보지 않았다.
+//     · PENDING 지원자의 지원 조건을 동의 없이 바꾸고 사후 통보했다.
+//
+//   업무를 옮기는 일 자체는 필요하다. 다만 그것은 **제안이고 근로자가 수락**해야
+//   성립한다 — 초대(INVITED)가 이미 그 모양이다. 그 구조로 옮기기 전까지,
+//   이 경로는 아무것도 쓰지 않고 거절한다. 옛 클라이언트가 호출해도 같다.
+//   권한 정책(canManageTo)은 그대로 두고 기능만 내린다.
 export const callableChangeApplicationWorkType = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
-    const {
-      applicationId, businessId, newWorkType, newWage,
-      newWorkDetailId, newWageType, newWorkTypeIcon, newWorkTypeColor, newWorkTypeBackgroundColor,
-    } = request.data as {
-      applicationId: string;
-      businessId: string;
-      newWorkType: string;
-      newWage: number;
-      newWorkDetailId?: string;
-      newWageType?: string;
-      newWorkTypeIcon?: string;
-      newWorkTypeColor?: string;
-      newWorkTypeBackgroundColor?: string;
-    };
-
-    if (!applicationId || !businessId || !newWorkType || typeof newWage !== "number") {
-      throw new HttpsError("invalid-argument", "필수 파라미터가 누락됐습니다.");
-    }
-    if (newWage < 0 || !Number.isInteger(newWage) || newWage > 100_000_000) {
-      throw new HttpsError("invalid-argument", "임금 값이 유효하지 않습니다.");
-    }
-
-    const callerUid = request.auth.uid;
-    const {callerData: changeWTCallerData} = await assertBizAdmin(callerUid, businessId);
-    // [PERM-TO-05][R1 수정] 서브어드민 canManageTo 세부 권한 검증
-    // 파트 변경(파트변경 버튼)은 TO 지원자 관리 화면에서 호출되며, Flutter 클라이언트가 canManageTo로 가드함
-    // day_applicants_dialog.dart:1363, work_applicants_dialog.dart:1495 양쪽 동일 canManageTo 사용
-    const changeWTCallerRole = changeWTCallerData?.role as string | undefined;
-    if (changeWTCallerRole !== "BUSINESS_ADMIN" && changeWTCallerRole !== "SUPER_ADMIN") {
-      const memberSnapForChangeWT = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
-      const memberPermsForChangeWT = (memberSnapForChangeWT.data()?.permissions as Record<string, boolean>) ?? {};
-      if (!memberPermsForChangeWT.canManageTo) throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
-    }
-
-    // 1. application 조회 + businessId 교차검증
-    const appRef = db.collection("applications").doc(applicationId);
-    const appSnap = await appRef.get();
-    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
-    const appData = appSnap.data()!;
-    if (appData.businessId !== businessId) {
-      throw new HttpsError("permission-denied", "해당 사업장의 지원서가 아닙니다.");
-    }
-
-    const currentWorkType = (appData.selectedWorkType as string) ?? "";
-    const currentWage = (appData.wage as number) ?? 0;
-    const currentStatus = (appData.status as string) ?? "";
-    const toId = appData.toId as string | undefined;
-    const slotId = appData.slotId as string | undefined;
-    const uid = (appData.uid as string) ?? "";
-    const bizName = (appData.businessName as string) ?? "";
-    const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
-
-    // [M-5 수정 2026-07-15] 종료 상태 지원서 변경 차단 — REJECTED/CANCELED 등은 근무가 종료된 상태
-    const TERMINAL_APP_STATUSES = new Set(["REJECTED", "CANCELED", "AUTO_CANCELED", "COMPLETED", "NO_SHOW"]);
-    if (TERMINAL_APP_STATUSES.has(currentStatus)) {
-      throw new HttpsError("failed-precondition", "이미 종료된 지원서는 업무유형을 변경할 수 없습니다.");
-    }
-
-    if (currentWorkType === newWorkType) {
-      throw new HttpsError("failed-precondition", "동일한 업무유형입니다.");
-    }
-
-    // [POSTING-V2-03I.3] 업무를 옮기는 것은 명시적 약속 변경이다.
-    //   공고 수정과 달리 새 업무의 조건으로 다시 약속하는 것이 맞다.
-    //   금액만 바꾸고 휴게·야간·연장 단가를 이전 업무 것으로 남기면
-    //   어느 쪽 약속도 아닌 값이 된다. 조건은 서버가 결정한다.
-    let changedCompensation: Record<string, unknown> = {};
-    if (toId) {
-      const toRefForWD = db.collection("tos").doc(toId);
-      const wdSourceSnap = slotId ?
-        await toRefForWD.collection("slots").doc(slotId).get() :
-        await toRefForWD.get();
-      const wdList = (wdSourceSnap.data()?.workDetails as
-        Record<string, unknown>[] | undefined) ?? [];
-      const byId = newWorkDetailId ?
-        wdList.find((w) =>
-          `${w["workType"]}_${w["startTime"]}_${w["endTime"]}` ===
-            newWorkDetailId || w["wdId"] === newWorkDetailId) :
-        undefined;
-      const newWD = byId ?? wdList.find((w) => w["workType"] === newWorkType);
-      if (newWD) changedCompensation = buildCompensationSnapshot(newWD);
-    }
-
-    // 2. attendance 쿼리 (calculated + confirmed 병렬)
-    const [calcSnap, confSnap] = await Promise.all([
-      db.collection("attendance")
-        .where("applicationId", "==", applicationId)
-        .where("businessId", "==", businessId)
-        .where("wageStatus", "==", "calculated")
-        .get(),
-      db.collection("attendance")
-        .where("applicationId", "==", applicationId)
-        .where("businessId", "==", businessId)
-        .where("wageStatus", "==", "confirmed")
-        .get(),
-    ]);
-    // confirmed 기록이 있으면 파트전환 완전 차단 — 마감 취소 후 재시도 필요
-    if (confSnap.docs.length > 0) {
-      throw new HttpsError(
-        "failed-precondition",
-        `확정된 급여 기록이 ${confSnap.docs.length}건 있어 파트변경이 불가합니다. 먼저 마감을 취소한 후 다시 시도해주세요.`
-      );
-    }
-
-    const attDocs = [...calcSnap.docs]; // confirmed는 항상 0건이 보장된 이후 도달
-
-    // 3. employment_contracts 쿼리 (장기 직접 → 단기 번들 fallback)
-    let contractSnap: admin.firestore.QueryDocumentSnapshot | null = null;
-    const contractQ1 = await db.collection("employment_contracts")
-      .where("applicationId", "==", applicationId)
-      .where("businessId", "==", businessId)
-      .limit(1)
-      .get();
-    if (contractQ1.docs.length > 0) {
-      contractSnap = contractQ1.docs[0];
-    } else {
-      const contractQ2 = await db.collection("employment_contracts")
-        .where("applicationIds", "array-contains", applicationId)
-        .where("businessId", "==", businessId)
-        .limit(1)
-        .get();
-      if (contractQ2.docs.length > 0) contractSnap = contractQ2.docs[0];
-    }
-
-    // 4. 트랜잭션: application 재읽기 + 카운터 + contract 원자적 커밋 (TOCTOU 방지)
-    const CONFIRMED_STATUSES = new Set(["CONFIRMED", "CONTRACT_PENDING"]);
-    await db.runTransaction(async (t) => {
-      // 재읽기 — 1차 읽기 이후 상태 변경 여부 확인
-      const freshSnap = await t.get(appRef);
-      if (!freshSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
-      const freshData = freshSnap.data()!;
-      if (freshData.businessId !== businessId) {
-        throw new HttpsError("permission-denied", "해당 사업장의 지원서가 아닙니다.");
-      }
-      const freshStatus = (freshData.status as string) ?? "";
-      if (TERMINAL_APP_STATUSES.has(freshStatus)) {
-        throw new HttpsError("failed-precondition", "이미 종료된 지원서는 업무유형을 변경할 수 없습니다.");
-      }
-      if ((freshData.selectedWorkType as string) === newWorkType) {
-        throw new HttpsError("failed-precondition", "동일한 업무유형입니다.");
-      }
-      const freshWorkType = (freshData.selectedWorkType as string) ?? currentWorkType;
-
-      const appUpdate: Record<string, unknown> = {
-        selectedWorkType: newWorkType,
-        wage: newWage,
-        originalWorkType: freshData.originalWorkType ?? freshWorkType,
-        originalWage: freshData.originalWage ?? currentWage,
-        changedAt: admin.firestore.FieldValue.serverTimestamp(),
-        changedBy: callerUid,
-        // [POSTING-V2-03I.3] 새 업무 조건으로 다시 약속
-        ...changedCompensation,
-      };
-      if (newWorkDetailId !== undefined) appUpdate.workDetailId = newWorkDetailId;
-      if (newWageType !== undefined) appUpdate.wageType = newWageType;
-      if (newWorkTypeIcon !== undefined) appUpdate.workTypeIcon = newWorkTypeIcon;
-      if (newWorkTypeColor !== undefined) appUpdate.workTypeColor = newWorkTypeColor;
-      if (newWorkTypeBackgroundColor !== undefined) appUpdate.workTypeBackgroundColor = newWorkTypeBackgroundColor;
-      t.update(appRef, appUpdate);
-
-      // [Phase 8.1E.5] slot workTypeCounts 카운터 제거 — workDetailCounts canonical
-      // slot 카운터 (단기TO — slotId 있음)는 workDetailCounts로만 관리
-
-      // TO 카운터 (장기TO — slotId 없음, confirmed 상태)
-      if (toId && !slotId && CONFIRMED_STATUSES.has(freshStatus)) {
-        const toRef = db.collection("tos").doc(toId);
-        t.update(toRef, {
-          [`workTypeConfirmedCounts.${freshWorkType}`]: admin.firestore.FieldValue.increment(-1),
-          [`workTypeConfirmedCounts.${newWorkType}`]: admin.firestore.FieldValue.increment(1),
-        });
-      }
-
-      // contract 업데이트
-      if (contractSnap) {
-        const contractData = contractSnap.data();
-        const contractUpdate: Record<string, unknown> = {workType: newWorkType, wage: newWage};
-        if (newWageType !== undefined) contractUpdate.wageType = newWageType;
-        if (contractData.status === "pending_employer") {
-          const rawSlots = (contractData.slots as unknown[]) ?? [];
-          if (rawSlots.length > 0) {
-            contractUpdate.slots = rawSlots.map((s) => {
-              const slot = {...(s as Record<string, unknown>)};
-              if (slot.applicationId === applicationId) {
-                slot.wage = newWage;
-                if (newWageType !== undefined) slot.wageType = newWageType;
-              }
-              return slot;
-            });
-          }
-        }
-        t.update(contractSnap.ref, contractUpdate);
-      }
-    });
-
-    // 5. 2차 attendance BulkWriter — wagePending 초기화 (500+건 대응)
-    // [M-6 수정 2026-07-15] 1차 batch 커밋 성공 후 BulkWriter 실패 시 부분 커밋 발생.
-    // 완전한 원자성은 불가(Admin SDK 한계)이므로 실패 시 명확한 오류 + 대상 ID 반환으로 재처리 가능하게.
-    if (attDocs.length > 0) {
-      const bw = db.bulkWriter();
-      const bwFailedIds: string[] = [];
-      bw.onWriteError((err) => {
-        bwFailedIds.push(err.documentRef.id);
-        console.error(`[M-6] BulkWriter 근태 초기화 실패: ${err.documentRef.id}`, err.code);
-        return false; // 재시도 없이 계속 진행
-      });
-      for (const attDoc of attDocs) {
-        bw.update(attDoc.ref, {
-          wageStatus: "pending",
-          finalWage: admin.firestore.FieldValue.delete(),
-          wageDetail: admin.firestore.FieldValue.delete(),
-          yearMonth: admin.firestore.FieldValue.delete(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-      await bw.close();
-      if (bwFailedIds.length > 0) {
-        console.error(`[M-6] 근태 임금 초기화 부분 실패 — applicationId: ${applicationId}, 실패 건수: ${bwFailedIds.length}`);
-        throw new HttpsError("internal", `업무유형 변경은 완료됐으나 근태 임금 초기화가 일부 실패했습니다. 영향 근태 수: ${bwFailedIds.length}`);
-      }
-    }
-
-    // 6. 알림 — 지원자에게 파트 변경 알림 (비동기, 실패 허용)
-    if (uid && workDateTs) {
-      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-      const workDateKST = new Date(workDateTs.toDate().getTime() + KST_OFFSET_MS);
-      const formattedWage = newWage.toString().replace(/(\d{1,3})(?=(\d{3})+(?!\d))/g, "$1,");
-      const dateStr = `${workDateKST.getUTCMonth() + 1}/${workDateKST.getUTCDate()}`;
-      // [NOTIF-PATH-FIX] 루트 notifications → users/{uid}/notifications 서브컬렉션으로 수정
-      // 기존: db.collection("notifications")  ← Flutter가 읽지 않는 경로
-      // 수정: db.collection("users").doc(uid).collection("notifications")
-      db.collection("users").doc(uid).collection("notifications").add({
-        userId: uid,
-        type: "workTypeChanged",
-        title: "파트 변경",
-        body: `${bizName}에서 귀하의 파트가 변경되었습니다.\n${currentWorkType} → ${newWorkType} (${formattedWage}원)\n근무일: ${dateStr}`,
-        data: {applicationId, businessId, action: "applicationDetail"},
-        isRead: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        readAt: null,
-      }).catch((err) => console.error("[callableChangeApplicationWorkType] 알림 실패:", err));
-    }
-
-    return {success: true, attendanceResetCount: attDocs.length};
+    // 어떤 문서도 읽거나 쓰기 전에 끝낸다 — 부분 실행이 남지 않는다.
+    throw new HttpsError(
+      "failed-precondition",
+      "파트변경은 더 이상 지원되지 않습니다. 지원자에게 '다른 업무 제안'을 보내 " +
+      "근로자가 수락하는 방식으로 진행해주세요."
+    );
   }
 );
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [5A.1] 관리자 배치 근태 처리 — 날짜/업무 컨텍스트 검증 helper

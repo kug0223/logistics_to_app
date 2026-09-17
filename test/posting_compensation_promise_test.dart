@@ -215,11 +215,20 @@ void main() {
       expect(fns.contains('inviteMatchedWD = matchedWD;'), true);
     });
 
-    test('02-d 명시적 업무 변경은 새 조건으로 재약속 (§5)', () {
+    test('02-d 명시적 업무 변경 경로는 동결됐다 (§5 / R5.3A)', () {
+      // [CROSS-DOMAIN-R5.3A] 이 어서션은 `callableChangeApplicationWorkType`이
+      //   새 조건으로 재스냅샷하는 것을 지켰다. 그 경로는 통째로 동결됐다 —
+      //   확정된 약속을 관리자 혼자 덮어쓰는 구조였기 때문이다.
+      //   재약속 계약은 앞으로 '다른 업무 제안 → 근로자 수락' 경로가 갖는다.
       final fns = _src(_fnsPath);
       expect(fns.contains('changedCompensation = buildCompensationSnapshot(newWD);'),
-          true);
-      expect(fns.contains('...changedCompensation,'), true);
+          false, reason: 'direct mutation 경로가 되살아나면 안 된다');
+      expect(fns.contains('"파트변경은 더 이상 지원되지 않습니다.'), true);
+      // 살아 있는 두 약속 경로는 여전히 서버가 스냅샷을 만든다.
+      expect(fns.contains('const compensationSnapshot = buildCompensationSnapshot(promisedWD);'),
+          true, reason: '지원 경로');
+      expect(fns.contains('...buildCompensationSnapshot(inviteMatchedWD),'), true,
+          reason: '초대 경로');
     });
 
     test('02-e 클라이언트 전달값을 신뢰하지 않는다 (§17)', () {

@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -1561,15 +1560,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           spacing: ResponsiveHelper.spacing(context, 8),
                           runSpacing: ResponsiveHelper.spacing(context, 6),
                           children: [
-                            if (widget.toItem.workDetails.length > 1)
-                              _buildActionButton(
-                                context,
-                                label: '파트변경',
-                                icon: Icons.swap_horiz,
-                                bgColor: AppColors.infoBg,
-                                textColor: AppColors.info,
-                                onTap: () => _showChangeWorkPartDialog(item),
-                              ),
+                            // [CROSS-DOMAIN-R5.3A] '파트변경' CTA 제거.
+                            //   관리자 혼자 확정된 약속을 덮어쓰던 경로다.
+                            //   업무를 옮기는 일은 제안이고 근로자가 수락해야
+                            //   성립한다 — '다른 업무 제안'이 준비되면 돌아온다.
                             // 계약 미작성 시 개별 작성 버튼 — [CSA-02] canManageContract 필수
                             if (_canManageContract() &&
                                 (_contractStatusMap[app.id] == null ||
@@ -1619,17 +1613,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            if (widget.toItem.workDetails.length > 1) ...[
-                              _buildActionButton(
-                                context,
-                                label: '파트변경',
-                                icon: Icons.swap_horiz,
-                                bgColor: AppColors.infoBg,
-                                textColor: AppColors.info,
-                                onTap: () => _showChangeWorkPartDialog(item),
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                            ],
+                            // [CROSS-DOMAIN-R5.3A] '파트변경' CTA 제거 (대기자 경로).
+                            //   PENDING 지원자의 지원 조건을 동의 없이 덮어썼다.
                             _buildActionButton(
                               context,
                               label: '거절',
@@ -1906,215 +1891,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return '${diff.inDays}일 전';
     } else {
       return DateFormat('MM/dd HH:mm').format(appliedAt);
-    }
-  }
-  /// 파트변경 다이얼로그
-  Future<void> _showChangeWorkPartDialog(Map<String, dynamic> item) async {
-    if (_isProcessing) return;
-    final app = item['application'] as ApplicationModel;
-    final user = item['user'] as UserModel?;
-    final workDetails = widget.toItem.workDetails;
-
-    // 현재 파트 제외한 다른 파트 목록 (id 기반 비교 — workType 이름 중복 방지)
-    final currentWork = _getWorkForApp(app) ?? widget.work;
-    final otherWorkDetails = workDetails.where((w) => w.id != (currentWork?.id ?? '')).toList();
-
-    if (otherWorkDetails.isEmpty) {
-      ToastHelper.showWarning('변경 가능한 다른 파트가 없습니다');
-      return;
-    }
-    setState(() => _isProcessing = true);
-
-    // [C-1] 파트변경 전 급여 상태 확인 — confirmed: 완전 차단 / calculated: 경고 후 선택
-    // [H-CF-1] callableGetWageStatusCount CF 경유 — assertBizAdmin 서버 교차검증
-    final int confirmedCount;
-    final int calculatedCount;
-    try {
-      final wageCountResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetWageStatusCount')
-          .call({'applicationId': app.id, 'businessId': app.businessId});
-      final resultMap = wageCountResult.data as Map;
-      confirmedCount   = resultMap['confirmedCount']   as int? ?? 0;
-      calculatedCount  = resultMap['calculatedCount']  as int? ?? 0;
-    } catch (e) {
-      debugPrint('❌ 급여 상태 확인 실패: $e');
-      if (mounted) {
-        setState(() => _isProcessing = false);
-        ToastHelper.showError('급여 상태 확인 중 오류가 발생했습니다. 다시 시도해주세요.');
-      }
-      return;
-    }
-    if (!mounted) return;
-
-    // confirmed(마감 완료) 기록 있으면 파트변경 완전 차단
-    if (confirmedCount > 0) {
-      setState(() => _isProcessing = false);
-      await DialogHelper.showError(
-        context,
-        title: '파트변경 불가',
-        message: '마감 처리된 급여가 $confirmedCount건 있습니다.\n먼저 마감을 취소한 후 다시 시도해주세요.',
-      );
-      return;
-    }
-
-    // calculated(계산 완료, 미마감) 기록 있으면 경고 후 선택
-    if (calculatedCount > 0) {
-      final proceed = await DialogHelper.showConfirm(
-        context,
-        title: '임금 계산 초기화 안내',
-        message: '계산된 급여 $calculatedCount건이 있습니다.\n파트변경 시 해당 급여가 초기화되어 재계산이 필요합니다.\n계속하시겠습니까?',
-        confirmText: '계속',
-        cancelText: '취소',
-      );
-      if (proceed != true || !mounted) {
-        if (mounted) setState(() => _isProcessing = false);
-        return;
-      }
-    }
-
-    final selectedWorkId = await showDialog<String>(
-      context: context,
-      builder: (context) => StyledDialog(
-        title: '파트변경',
-        icon: Icons.swap_horiz,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${user?.name ?? '지원자'}님의 파트를 변경합니다.',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: ResponsiveHelper.spacing(context, 8),
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.grey100,
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-              ),
-              child: Row(
-                children: [
-                  Text('현재: ', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
-                  Text(
-                    currentWork?.workType ?? '',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '변경할 파트 선택',
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            ...otherWorkDetails.map((work) => Padding(
-              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () async {
-                    final confirmed = await DialogHelper.showConfirm(
-                      context,
-                      title: '파트 변경',
-                      message: '${user?.name ?? '지원자'}님을\n${currentWork?.workType ?? ''} → ${work.workType}(으)로\n변경하시겠습니까?',
-                      confirmText: '변경',
-                    );
-                    if (confirmed == true && context.mounted) {
-                      Navigator.pop(context, work.id);
-                    }
-                  },
-                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 12),
-                      vertical: ResponsiveHelper.spacing(context, 10),
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.border),
-                      borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-                    ),
-                    child: Row(
-                      children: [
-                        WorkTypeIcon.buildWithBackground(
-                          iconString: work.workTypeIcon,
-                          backgroundColor: work.workTypeBackgroundColor,
-                          size: ResponsiveHelper.iconSize(context, 18),
-                          containerSize: ResponsiveHelper.spacing(context, 32),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                work.workType,
-                                style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
-                              ),
-                              Text(
-                                '${work.startTime}~${work.endTime} | ${work.formattedWage}',
-                                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Icon(Icons.arrow_forward_ios, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey300),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            )),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-    );
-
-    if (selectedWorkId == null || !mounted) {
-      if (mounted) setState(() => _isProcessing = false);
-      return;
-    }
-
-    // 파트 변경 처리
-    try {
-      final userProvider = context.read<UserProvider>();
-      final adminUID = userProvider.currentUser?.uid ?? 'UNKNOWN';
-      final selectedWork = otherWorkDetails.firstWhere(
-        (w) => w.id == selectedWorkId,
-        orElse: () => throw StateError('선택한 파트를 찾을 수 없습니다'),
-      );
-
-      await _firestoreService.changeApplicationWorkType(
-        applicationId: app.id,
-        newWorkType: selectedWork.workType,
-        newWage: selectedWork.wage,
-        adminUID: adminUID,
-        newWorkDetailId: selectedWork.id,
-        newWageType: selectedWork.wageType,
-        newWorkTypeIcon: selectedWork.workTypeIcon,
-        newWorkTypeColor: selectedWork.workTypeColor,
-        newWorkTypeBackgroundColor: selectedWork.workTypeBackgroundColor,
-      );
-      final resetMsg = calculatedCount > 0
-          ? '\n계산된 급여 $calculatedCount건이 초기화되었습니다.'
-          : '';
-      if (!mounted) return;
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다$resetMsg');
-      await _loadApplicants();
-      if (!mounted) return;
-      await _updateLocalStats();
-    } catch (e) {
-      if (mounted) ToastHelper.showError('파트 변경에 실패했습니다');
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
