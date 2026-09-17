@@ -346,7 +346,9 @@ void main() {
 
     test('07-a 정원 재검증이 트랜잭션 안에 있다', () {
       expect(accept.contains('await db.runTransaction(async (tx)'), isTrue);
-      final tx = _after(accept, 'await db.runTransaction(async (tx)', 6000);
+      // [CROSS-DOMAIN-R5.2] 트랜잭션 앞부분에 서류 readiness 재검증이 들어와
+      //   창이 좁아졌다. 보는 성질은 그대로 — 창 크기만 맞춘다.
+      final tx = _after(accept, 'await db.runTransaction(async (tx)', 12000);
       expect(tx.contains('getWorkDetailCount'), isTrue);
       expect(tx.contains('업무 정원이 초과되었습니다'), isTrue);
     });

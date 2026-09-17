@@ -284,10 +284,14 @@ void main() {
 
   group('DS08B5 범위 제한', () {
     test('auto-grant·조기퇴사·갱신 grant 로직 무변경', () {
+      // [CROSS-DOMAIN-R5.2] grant 생성 로직이 공용 헬퍼로 옮겨졌다 —
+      //   초대 수락 경로가 같은 계약을 쓰기 위해서다. 조건 자체는 그대로다.
       final confirm =
           _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('grantSource: "pre_consent"'), isTrue);
-      expect(confirm.contains('calcPreConsentIdCardExpiryMs(appDataPre'), isTrue);
+      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      final helper = _codeOf(source);
+      expect(helper.contains('grantSource: "pre_consent",'), isTrue);
+      expect(helper.contains('calcPreConsentIdCardExpiryMs(appData,'), isTrue);
       expect(code.contains('shortenedPreConsentExpiry('), isTrue);
     });
 

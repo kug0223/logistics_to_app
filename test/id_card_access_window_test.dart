@@ -306,7 +306,10 @@ void main() {
     });
 
     test('확정 경로가 헬퍼를 쓴다', () {
-      expect(confirmApp.contains('calcPreConsentIdCardExpiryMs(appDataPre'), isTrue);
+      // [CROSS-DOMAIN-R5.2] 만료 계산은 공용 grant 헬퍼 안으로 들어갔다.
+      //   확정 경로가 그 헬퍼를 거치므로 같은 공식을 쓴다.
+      expect(confirmApp.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs(appData,'), isTrue);
     });
 
     test('DS08B4-30~32 늦은 업로드 소급 생성도 같은 헬퍼를 쓴다', () {

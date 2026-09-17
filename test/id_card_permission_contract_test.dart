@@ -211,10 +211,14 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08A 범위 제한', () {
     test('auto-grant 생성 로직이 그대로다', () {
+      // [CROSS-DOMAIN-R5.2] 생성 로직이 공용 헬퍼로 옮겨졌다 — 초대 수락
+      //   경로가 같은 계약을 쓰기 위해서다. 조건·id·상태는 그대로다.
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains(r'`auto_${applicationId}`'), isTrue);
-      expect(confirm.contains('grantSource: "pre_consent"'), isTrue);
-      expect(confirm.contains('status: "approved"'), isTrue);
+      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      final all = _codeOf(source);
+      expect(all.contains(r'`auto_${applicationId}`'), isTrue);
+      expect(all.contains('grantSource: "pre_consent",'), isTrue);
+      expect(all.contains('status: "approved",'), isTrue);
     });
 
     test('7일 duration이 그대로다', () {
@@ -226,7 +230,8 @@ void main() {
         isTrue,
       );
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('calcPreConsentIdCardExpiryMs('), isTrue);
+      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs('), isTrue);
     });
 
     test('통장사본 권한 로직은 건드리지 않았다', () {

@@ -13112,6 +13112,91 @@ function calcPreConsentIdCardExpiryMs(
 }
 
 /**
+ * [CROSS-DOMAIN-R5.2] 확정된 Application 하나에 대한 신분증 pre-consent grant.
+ *
+ * 직접 지원 확정(callableConfirmApplication)과 초대 수락
+ * (callableAcceptTOInvitation)은 같은 "근무 확정" 이벤트다. 그런데 grant는
+ * 확정 경로에만 있었다 — 초대로 확정된 근로자는 같은 동의를 했는데도
+ * 신분증 열람 권한이 서지 않았다. 조건을 두 벌로 베끼지 않도록 여기 한 곳에
+ * 둔다.
+ *
+ * **쓰기 위치**: 좌석 트랜잭션 **밖**이다(POST_COMMIT). 확정 자체를 grant
+ * 실패로 되돌리지 않는다는 기존 정책을 그대로 따른다. 대신
+ *   · 문서 id가 `auto_${applicationId}`로 결정적이라 재시도가 중복을 만들지 않고,
+ *   · 이미 approved면 덮어쓰지 않으며,
+ *   · 실패해도 `callableMarkIdCardVerified`의 소급 생성 경로가 나중에 메운다.
+ *
+ * @param {string} applicationId 확정된 지원서 id
+ * @param {FirebaseFirestore.DocumentData} appData 그 지원서 데이터(동의·날짜 판정용)
+ * @param {string} businessId 대상 사업장
+ * @param {string} businessName 사업장명(알림 문구용)
+ * @param {string} workerUid 근로자 uid
+ * @return {Promise<"created" | "skipped" | "no_consent" | "no_id_card">}
+ *   무엇을 했는지 — 호출부 로깅용.
+ */
+async function ensureIdCardGrantForConfirmedApplication(
+  applicationId: string,
+  appData: FirebaseFirestore.DocumentData,
+  businessId: string,
+  businessName: string,
+  workerUid: string
+): Promise<"created" | "skipped" | "no_consent" | "no_id_card"> {
+  const consentGiven =
+    appData["idCardConsentGiven"] === true ||
+    appData["documentAccessConsentGiven"] === true;
+  if (!consentGiven) return "no_consent";
+
+  const workerSnap = await db.collection("users").doc(workerUid).get();
+  const workerData = workerSnap.data();
+  const hasIdCard =
+    (workerData?.idCardImagePath ?? null) !== null ||
+    (workerData?.idCardImageUrl ?? null) !== null;
+  if (!hasIdCard) return "no_id_card";
+
+  const grantRef = db.collection("idCardAccessRequests").doc(`auto_${applicationId}`);
+  const existingGrant = await grantRef.get();
+  if (existingGrant.exists && existingGrant.data()?.status === "approved") {
+    return "skipped";
+  }
+
+  const workerName =
+    (workerData?.name as string | undefined) ??
+    (appData["applicantName"] as string | undefined) ?? "";
+  const expiresAt = admin.firestore.Timestamp.fromMillis(
+    calcPreConsentIdCardExpiryMs(appData, admin.firestore.Timestamp.now().toMillis())
+  );
+  await grantRef.set({
+    requesterId: `business:${businessId}`,
+    requesterName: businessName,
+    requesterBusinessId: businessId,
+    requesterBusinessName: businessName,
+    targetUserId: workerUid,
+    targetUserName: workerName,
+    reason: "incomeTax",
+    status: "approved",
+    grantSource: "pre_consent",
+    requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+    respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt,
+    applicationId,
+  });
+
+  const expiresKST = new Date(expiresAt.toMillis() + 9 * 60 * 60 * 1000);
+  const expireStr = `${expiresKST.getUTCMonth() + 1}월 ${expiresKST.getUTCDate()}일`;
+  await db.collection("users").doc(workerUid).collection("notifications").add({
+    userId: workerUid,
+    type: "idCardConsentGranted",
+    title: "신분증 열람 권한 활성화",
+    body: `[${businessName}] 근무 확정으로 소득신고용 신분증 열람 권한이 활성화되었습니다. ${expireStr}까지 열람할 수 있습니다.`,
+    data: {applicationId, businessId, screen: "applicationDetail"},
+    isRead: false,
+    category: "personal",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return "created";
+}
+
+/**
  * 조기 종료 확정 시 pre_consent auto-grant 만료를 단축한 값.
  *
  * 단축 방향만 허용한다 — 조기 종료를 근거로 접근을 늘리지 않는다.
@@ -22970,77 +23055,19 @@ export const callableConfirmApplication = onCall(
     }
 
     // ── 8. [ID-CONSENT / DOCUMENT-CONSENT] 사전동의 Auto-Grant 생성 ──
-    // 조건: Application에 idCardConsentGiven==true 또는 documentAccessConsentGiven==true이고
-    //       근무자가 신분증을 등록한 경우
-    // [DOCUMENT-CONSENT] V3 신규 지원은 documentAccessConsentGiven으로 Grant 생성
-    // Idempotency: documentId = "auto_${applicationId}" (결정적 ID — 재호출 시 덮어쓰기 방지)
-    // Grant owner: "business:${businessId}" 센티널 — 동일 사업장 모든 관리자가 열람 가능
+    // [CROSS-DOMAIN-R5.2] 조건·id·만료·멱등성은 공용 헬퍼가 소유한다.
+    //   초대 수락 경로가 같은 계약을 쓰기 위해서다 — 두 벌로 베끼지 않는다.
+    //   여기는 좌석 트랜잭션 **밖**이다(POST_COMMIT): grant 실패로 확정을
+    //   되돌리지 않는다. 결정적 id로 재시도가 안전하고, 실패분은
+    //   callableMarkIdCardVerified의 소급 생성이 나중에 메운다.
     try {
-      const consentGiven =
-        appDataPre["idCardConsentGiven"] === true ||
-        appDataPre["documentAccessConsentGiven"] === true;
-      if (consentGiven) {
-        // 근무자 신분증 등록 확인 + 이름 조회
-        const workerSnap = await db.collection("users").doc(uid).get();
-        const workerData = workerSnap.data();
-        const hasIdCard =
-          (workerData?.idCardImagePath ?? null) !== null ||
-          (workerData?.idCardImageUrl ?? null) !== null;
-
-        if (hasIdCard) {
-          const workerName =
-            (workerData?.name as string | undefined) ??
-            (appDataPre["applicantName"] as string | undefined) ?? "";
-          const grantDocId = `auto_${applicationId}`;
-          const grantRef = db.collection("idCardAccessRequests").doc(grantDocId);
-
-          // 멱등성: 이미 approved Grant가 있으면 skip (alreadyConfirmed 재시도 방어)
-          const existingGrant = await grantRef.get();
-          if (!existingGrant.exists || existingGrant.data()?.status !== "approved") {
-            const nowMs = admin.firestore.Timestamp.now().toMillis();
-            // [DS-08B.4] 동의 버전별 접근 창 — calcPreConsentIdCardExpiryMs 참조.
-            //   v2 → max(확정, 마지막 근무일) + 7일
-            //   v1/legacy → 확정 + 7일 (고지한 범위 그대로)
-            const expiresAt = admin.firestore.Timestamp.fromMillis(
-              calcPreConsentIdCardExpiryMs(appDataPre, nowMs)
-            );
-            await grantRef.set({
-              // requesterId 센티널: "business:${businessId}"
-              // → callableGetIdCardSignedUrl이 businessId 기반 2nd 쿼리로 조회
-              requesterId: `business:${businessId}`,
-              requesterName: businessName ?? "",
-              requesterBusinessId: businessId,
-              requesterBusinessName: businessName ?? "",
-              targetUserId: uid,
-              targetUserName: workerName,
-              reason: "incomeTax",         // 소득신고 목적
-              status: "approved",           // 사전동의 → 즉시 approved (pending 단계 없음)
-              grantSource: "pre_consent",   // 수동 요청과 구분
-              requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-              respondedAt: admin.firestore.FieldValue.serverTimestamp(),
-              expiresAt,
-              applicationId,               // 취소 시 회수 경로 연결
-            });
-            console.info(
-              `[confirmApplication] ID-CONSENT auto-grant 생성: ` +
-              `app=${applicationId}, worker=${uid}, biz=${businessId}, expires=${expiresAt.toDate().toISOString()}`
-            );
-
-            // 근무자에게 신분증 열람 권한 활성화 알림
-            const expiresKST = new Date(expiresAt.toMillis() + 9 * 60 * 60 * 1000);
-            const expireStr = `${expiresKST.getUTCMonth() + 1}월 ${expiresKST.getUTCDate()}일`;
-            await db.collection("users").doc(uid).collection("notifications").add({
-              userId: uid,
-              type: "idCardConsentGranted",
-              title: "신분증 열람 권한 활성화",
-              body: `[${businessName}] 근무 확정으로 소득신고용 신분증 열람 권한이 활성화되었습니다. ${expireStr}까지 열람할 수 있습니다.`,
-              data: {applicationId, businessId, screen: "applicationDetail"},
-              isRead: false,
-              category: "personal",
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-          }
-        }
+      const grantResult = await ensureIdCardGrantForConfirmedApplication(
+        applicationId, appDataPre, businessId, businessName ?? "", uid);
+      if (grantResult === "created") {
+        console.info(
+          "[confirmApplication] ID-CONSENT auto-grant 생성: " +
+          `app=${applicationId}, worker=${uid}, biz=${businessId}`
+        );
       }
     } catch (e) {
       // Grant 생성 실패는 확정 자체를 롤백하지 않음 (fire-and-forget)
@@ -28073,10 +28100,25 @@ export const callableAcceptTOInvitation = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
 
-    const {applicationId} = request.data as {applicationId: string};
+    // [CROSS-DOMAIN-R5.2] 초대 수락도 "근무 확정"이다 — 직접 지원과 같은
+    //   서류 준비·서류 접근 동의를 요구한다. 초대 **발송** 시점에는 아무것도
+    //   요구하지 않는다(초대는 관리자의 제안일 뿐이다).
+    const {
+      applicationId,
+      documentAccessConsentGiven: acceptDocConsentRaw,
+      documentAccessConsentVersion: acceptDocConsentVersionRaw,
+    } = request.data as {
+      applicationId: string;
+      documentAccessConsentGiven?: boolean;
+      documentAccessConsentVersion?: string;
+    };
     if (!applicationId || typeof applicationId !== "string") {
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     }
+    const acceptDocConsentGiven = acceptDocConsentRaw === true;
+    // 미지원·변조 버전을 조용히 최신으로 치환하지 않는다(지원 경로와 같은 규칙).
+    const acceptConsentVersion = resolveDocumentAccessConsentVersion(
+      acceptDocConsentVersionRaw, acceptDocConsentGiven);
 
     const appRef  = db.collection("applications").doc(applicationId);
     const appSnap = await appRef.get();
@@ -28243,6 +28285,50 @@ export const callableAcceptTOInvitation = onCall(
         throw new HttpsError("failed-precondition", "현재 플랫폼 제재 중에는 초대를 수락할 수 없습니다.");
       }
 
+      // [CROSS-DOMAIN-R5.2] 서류 준비·동의는 좌석을 잡기 **전에** 본다.
+      //
+      //   초대 수락은 직접 지원과 똑같이 CONFIRMED·좌석·계약 의무를 만든다.
+      //   그런데 이 경로에는 계정 상태 검사만 있었다. 그 결과 신분증·계좌·
+      //   통장사본이 없어도 좌석이 잡히고, 동의가 없어 통장사본 Signed URL은
+      //   거부되는데 관리자 Home에는 "계약 미발송" 할 일이 생겼다.
+      //   조건은 callableApplyToTO와 같은 것을 쓴다 — 두 경로가 같은
+      //   commitment를 만들기 때문이다.
+      //
+      //   실패하면 여기서 끝난다: INVITED 그대로, 좌석·카운터·계약·grant 변화 0.
+      //   서류를 채우고 **같은 초대로 다시 수락**할 수 있다(마이그레이션 불필요).
+      if (freshUserData.isBlacklisted === true) {
+        const blReason =
+          (freshUserData.blacklistReason as string | undefined) ?? "이용 정책 위반";
+        throw new HttpsError(
+          "permission-denied", `계정이 제한되어 초대를 수락할 수 없습니다. (사유: ${blReason})`);
+      }
+      const acceptIsForeign = freshUserData.isForeign === true;
+      if (!acceptIsForeign && !freshUserData.passVerifiedAt) {
+        throw new HttpsError("failed-precondition", "본인인증 후 초대를 수락할 수 있습니다.");
+      }
+      if (!freshUserData.idCardImagePath && !freshUserData.idCardImageUrl) {
+        throw new HttpsError("failed-precondition", "신분증 등록이 필요합니다.");
+      }
+      // 단기(슬롯) 근무는 지원 경로와 동일하게 업로드 완료 상태를 요구한다.
+      if (appData.slotId && freshUserData.isIdVerified !== true) {
+        throw new HttpsError("failed-precondition", "신분증 인증 후 초대를 수락할 수 있습니다.");
+      }
+      if (!freshUserData.bankName || !freshUserData.accountNumber ||
+          !freshUserData.accountHolder) {
+        throw new HttpsError("failed-precondition", "통장 정보 등록이 필요합니다.");
+      }
+      if (!freshUserData.bankbookImagePath && !freshUserData.bankbookImageUrl) {
+        throw new HttpsError("failed-precondition", "통장사본 등록이 필요합니다.");
+      }
+      // 이 Application에 대한 동의를 지금 받는다 —
+      // 다른 Application의 동의를 가져다 쓰지 않는다.
+      if (!acceptDocConsentGiven) {
+        throw new HttpsError(
+          "invalid-argument",
+          "소득신고·급여처리 목적 서류 접근에 동의해야 초대를 수락할 수 있습니다."
+        );
+      }
+
       // [6.1 INV-03] 트랜잭션 fresh read에서 selectedWorkType 추출 — 카운터 업데이트용
       const freshSelectedWorkType = freshData.selectedWorkType as string | undefined;
 
@@ -28394,13 +28480,27 @@ export const callableAcceptTOInvitation = onCall(
         nowTs: confirmedAt,
       });
 
-      tx.update(appRef, {
+      // [CROSS-DOMAIN-R5.2] 동의는 commitment와 **같은 트랜잭션**에 쓴다.
+      //   좌석은 잡혔는데 동의 기록만 없는 상태가 생기지 않게 한다.
+      const acceptUpdate: Record<string, unknown> = {
         status:      "CONFIRMED",
         confirmedAt,
         statusHistory: admin.firestore.FieldValue.arrayUnion({
           status: "CONFIRMED", at: confirmedAt, by: callerUid, action: "INVITE_ACCEPTED",
         }),
-      });
+        documentAccessConsentGiven: true,
+        documentAccessConsentAt: confirmedAt,
+        // legacy 필드도 함께 세운다 — 기존 소비자(grant 조건)가 둘 다 본다.
+        //   canonical은 documentAccessConsentGiven이고, 그 문구가 신분증
+        //   접근을 포함하므로 여기서 파생시킨다.
+        idCardConsentGiven: true,
+        idCardConsentAt: confirmedAt,
+      };
+      // 사용자가 실제로 본 문구의 버전만 기록한다(없으면 쓰지 않는다).
+      if (acceptConsentVersion !== null) {
+        acceptUpdate["documentAccessConsentVersion"] = acceptConsentVersion;
+      }
+      tx.update(appRef, acceptUpdate);
 
       if (toId) {
         // [6.1 INV-03] TO 카운터: totalConfirmed +1 + totalPending -1 + (slot 없을 때) workTypeConfirmedCounts +1
@@ -28466,6 +28566,30 @@ export const callableAcceptTOInvitation = onCall(
         }).catch((err) => console.error("[callableAcceptTOInvitation] 관리자 알림 실패:", err));
       }
     } catch (_) { /* 알림 실패는 수락 결과에 영향 없음 */ }
+
+    // [CROSS-DOMAIN-R5.2] 신분증 pre-consent grant — 확정 경로와 **같은 헬퍼**.
+    //   초대로 확정된 근로자도 같은 동의를 했으므로 같은 접근 창을 얻는다.
+    //   좌석 트랜잭션 밖이다(POST_COMMIT): grant 실패로 확정을 되돌리지
+    //   않는다. 결정적 id라 재시도가 중복을 만들지 않고, 실패분은
+    //   callableMarkIdCardVerified의 소급 생성이 나중에 메운다.
+    try {
+      const acceptGrantResult = await ensureIdCardGrantForConfirmedApplication(
+        applicationId,
+        // 방금 트랜잭션이 세운 동의 값을 그대로 반영해 판정한다.
+        {...appData, documentAccessConsentGiven: true, idCardConsentGiven: true},
+        (appData.businessId as string | undefined) ?? "",
+        (appData.businessName as string | undefined) ?? "",
+        callerUid
+      );
+      if (acceptGrantResult === "created") {
+        console.info(
+          "[acceptTOInvitation] ID-CONSENT auto-grant 생성: " +
+          `app=${applicationId}, worker=${callerUid}`
+        );
+      }
+    } catch (e) {
+      console.warn("[acceptTOInvitation] ID-CONSENT auto-grant 생성 실패 (수락은 완료됨):", e);
+    }
 
     return {success: true};
   }

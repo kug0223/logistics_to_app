@@ -26,6 +26,8 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/skeleton_widget.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../widgets/dialogs/apply/document_access_consent.dart';
+import 'apply_prerequisites_screen.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
@@ -1705,22 +1707,65 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
 
-    final confirmed = await DialogHelper.showConfirm(
+    // [CROSS-DOMAIN-R5.2] 수락은 근무 확정이다 — 직접 지원과 같은 문턱을 둔다.
+    //
+    //   1) 서류가 없으면 좌석을 잡기 전에 등록으로 보낸다(서버도 같은 조건으로
+    //      막지만, 여기서 막아야 근로자가 이유를 알고 고칠 수 있다).
+    //   2) 동의는 **이 초대 건에 대해** 지금 받는다. 다른 지원서의 동의를
+    //      가져다 쓰지 않는다. 문구는 지원 경로의 canonical 카드를 그대로 쓴다.
+    final item = _applications.firstWhere(
+      (e) => e.application.id == applicationId,
+      orElse: () => _applications.first,
+    );
+    final isFlex = item.to?.isFlexType ?? true;
+    final user = context.read<UserProvider>().currentUser;
+    if (user == null) return;
+    if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {
+      ToastHelper.showWarning('근무 확정을 위해 서류 등록이 필요합니다.');
+      final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: isFlex);
+      if (!ok || !mounted) return;
+    }
+
+    final confirmed = await DialogHelper.showCustom<bool>(
       context,
       title: '초대 수락',
-      message: '이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
-      confirmText: '수락',
-      cancelText: '취소',
       icon: Icons.check_circle_outline,
-      confirmColor: AppColors.success,
+      iconColor: AppColors.success,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.'),
+          const SizedBox(height: 12),
+          DocumentAccessConsent.card(item.application.businessName),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('동의하고 초대 수락',
+              style: TextStyle(color: Colors.white)),
+        ),
+      ],
     );
-    if (!confirmed || !mounted) return;
+    if (confirmed != true || !mounted) return;
 
     setState(() => _acceptingIds.add(applicationId));
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableAcceptTOInvitation');
-      await callable.call({'applicationId': applicationId});
+      // [CROSS-DOMAIN-R5.2] 이 건에 대한 동의를 함께 보낸다 — 서버가 CONFIRMED와
+      //   같은 트랜잭션에 기록한다. 버전은 방금 보여준 문구의 버전이다.
+      await callable.call({
+        'applicationId': applicationId,
+        'documentAccessConsentGiven': true,
+        'documentAccessConsentVersion': DocumentAccessConsent.version,
+      });
       if (!mounted) return;
       ToastHelper.showSuccess('초대를 수락했습니다!');
       _loadApplications();

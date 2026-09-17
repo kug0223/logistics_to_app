@@ -224,8 +224,10 @@ void main() {
     });
 
     test('auto-grant 생성은 확정 callable에도 그대로 있다', () {
+      // [CROSS-DOMAIN-R5.2] 공용 헬퍼 경유로 바뀌었다 — 초대 수락도 같은 것을 쓴다.
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('grantSource: "pre_consent"'), isTrue);
+      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      expect(_codeOf(source).contains('grantSource: "pre_consent",'), isTrue);
     });
   });
 
@@ -328,7 +330,8 @@ void main() {
       expect(code.contains('const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000'),
           isTrue);
       final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('calcPreConsentIdCardExpiryMs('), isTrue);
+      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs('), isTrue);
     });
   });
 }
