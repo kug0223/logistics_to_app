@@ -16926,7 +16926,45 @@ export const callableGetTOsByBiz = onCall(
       throw new HttpsError("invalid-argument", "statuses에 허용되지 않는 값이 포함되어 있습니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    const {callerData: tosCallerData, bizData: tosBizData} =
+      await assertBizAdmin(callerUid, businessId);
+
+    // [CROSS-DOMAIN-R5.1B] 공고 목록 read 권한.
+    //
+    //   지금까지 membership만 봤다 — 권한 flag가 하나도 없는
+    //   SubAdmin도 DRAFT·SCHEDULED를 포함한 공고 구조를 읽었다.
+    //   DTO에 근로자 개인정보·계좌·임금은 없지만 미공개 공고는
+    //   지원자에게도 보이지 않는 관리자 정보다.
+    //
+    //   기준을 새로 만들지 않는다. 같은 질문을 [R1.2.1]이 지원서
+    //   목록에서 이미 답해 뒀다: generic read를 canManageTo 하나로
+    //   강제하면 workforce/payroll caller가 깨지므로 **읽을 이유가
+    //   있는 권한 중 하나**를 요구한다. 넷 다 없으면 관리자 UI에서
+    //   할 수 있는 일이 없어 잃는 정상 caller가 없다.
+    //   실제 소비자(기존 공고 불러오기, 업무유형 삭제 전 확인,
+    //   활성 공고 수 제한)도 모두 그 안에 든다.
+    {
+      const tosAdminIds = (tosBizData?.adminIds as string[] | undefined) ?? [];
+      const tosOwnerId = tosBizData?.ownerId as string | undefined;
+      const tosIsFullAccess =
+        (tosCallerData?.role as string | undefined) === "SUPER_ADMIN" ||
+        tosAdminIds.includes(callerUid) ||
+        tosOwnerId === callerUid;
+      if (!tosIsFullAccess) {
+        const tosMemberSnap = await db.collection("businesses").doc(businessId)
+          .collection("members").doc(callerUid).get();
+        const tosPerms = tosMemberSnap.data()?.permissions as
+          Record<string, boolean> | undefined;
+        const TO_READ_PERMISSIONS = [
+          "canManageTo", "canManageWorkers",
+          "canManageWage", "canManageContract",
+        ];
+        if (!TO_READ_PERMISSIONS.some((p) => tosPerms?.[p] === true)) {
+          throw new HttpsError(
+            "permission-denied", "공고 조회 권한이 없습니다.");
+        }
+      }
+    }
 
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 200,

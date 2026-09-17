@@ -225,6 +225,46 @@ void main() {
     });
   });
 
+  // 공고 목록 read — 권한 flag가 하나도 없는 SubAdmin도 DRAFT를 포함한
+  // 사업장 전체 공고를 읽고 있었다(실측 200 · tos 3건).
+  // 기준을 새로 만들지 않고 [R1.2.1]이 지원서 목록에서 이미 정한 것을 쓴다:
+  // generic read를 canManageTo 하나로 강제하면 다른 caller가 깨지므로
+  // "읽을 이유가 있는 권한 중 하나"를 요구한다.
+  // 실측(수정 후): owner·To·Workers·Contract·Wage 각각 200 / 넷 다 false 403
+  group('공고 목록은 읽을 이유가 있는 권한을 요구한다', () {
+    final tos = _flat(_codeOf(_callableOf(raw, 'callableGetTOsByBiz')));
+
+    test('넷 중 하나는 있어야 한다', () {
+      expect(tos.contains('const TO_READ_PERMISSIONS = [ "canManageTo", "canManageWorkers", '
+          '"canManageWage", "canManageContract", ];'), true);
+      expect(tos.contains('if (!TO_READ_PERMISSIONS.some((p) => tosPerms?.[p] === true))'), true);
+      expect(tos.contains('공고 조회 권한이 없습니다'), true);
+    });
+
+    test('canManageTo 하나로 잠그지 않는다', () {
+      // 그렇게 하면 attendance/workforce/payroll 쪽 caller가 깨진다 — R1.2.1이 겪은 일이다.
+      expect(tos.contains('if (tosPerms?.canManageTo !== true)'), false);
+    });
+
+    test('owner·SUPER_ADMIN은 그대로 통과한다', () {
+      expect(tos.contains('(tosCallerData?.role as string | undefined) === "SUPER_ADMIN" || '
+          'tosAdminIds.includes(callerUid) || tosOwnerId === callerUid'), true);
+    });
+
+    test('지원서 목록과 같은 식을 쓴다', () {
+      final apps = _flat(_codeOf(_callableOf(raw, 'callableGetApplicationsByBiz')));
+      expect(apps.contains('const APPLICATION_READ_PERMISSIONS = [ "canManageTo", "canManageWorkers", '
+          '"canManageWage", "canManageContract", ];'), true,
+          reason: '두 generic read가 다른 기준을 쓰면 같은 사용자가 한쪽만 볼 수 있다');
+    });
+
+    test('사업장 소속 확인이 먼저다', () {
+      final i = tos.indexOf('await assertBizAdmin(callerUid, businessId)');
+      final p = tos.indexOf('TO_READ_PERMISSIONS');
+      expect(i > 0 && p > i, true);
+    });
+  });
+
   group('권한 표현은 정해진 필드로만 한다', () {
     test('readiness의 available은 조회 성공 플래그로 유지된다', () {
       final r = _flat(_codeOf(_callableOf(raw, 'callableGetStaffingReadiness')));
