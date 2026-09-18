@@ -63,6 +63,15 @@ class ApplicationModel {
   // 그 구분은 [hasCompensationSnapshot]이 한다. 별도 version 필드는 두지
   // 않는다: 신규 지원서는 아래 세 필드를 항상 쓰므로 존재 여부로 충분하다.
   final int? baseHourlyWage;           // 일급일 때 연장·조기출근 단가
+
+  /// [CROSS-DOMAIN-R5.3C.1] 통상시급을 누가 정했는가 — `MANUAL` | `AUTO`.
+  ///
+  /// 이 필드가 없으면 **약속의 부재가 공고의 현재값으로 메워졌다**.
+  /// `promisedCompensation`은 `baseHourlyWage == null`일 때 키 자체를
+  /// 넣지 않았고, `WorkDetailHelper.resolve`의 `{...live, ...promised}`에서
+  /// 나중에 공고에 추가된 통상시급이 그 빈자리로 그대로 들어왔다.
+  /// 자동계산에 맡긴 것도 하나의 약속이므로 명시해서 그 자리를 막는다.
+  final String? baseHourlyWageMode;
   final int? breakMinutes;             // 소정 휴게시간
   final bool? nightAllowanceApplied;   // 야간수당 지급 여부
   final bool? nightIncluded;           // 야간 포함 근무
@@ -92,6 +101,7 @@ class ApplicationModel {
         'wage': wage,
         if (wageType != null) 'wageType': wageType,
         if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+      if (baseHourlyWageMode != null) 'baseHourlyWageMode': baseHourlyWageMode,
         if (breakMinutes != null) 'breakMinutes': breakMinutes,
         if (nightAllowanceApplied != null)
           'nightAllowanceApplied': nightAllowanceApplied,
@@ -205,6 +215,10 @@ class ApplicationModel {
   final String? sourceWdId;           // A의 WorkDetail id
   final String? sourceWorkType;       // A의 업무명 (비교 표시용)
 
+  /// [R5.3C.1] 어떤 급여 조건으로 제안됐는가 — `TARGET_BASE` | `MATCH_SOURCE_WAGE`.
+  /// 근로자에게 "이 급여는 회원님께 제안된 조건"이라고 말할 수 있는 유일한 근거다.
+  final String? compensationOption;
+
   /// [R5.3B] A쪽에 남는 종료 링크. `cancelReason == 'REASSIGNMENT_ACCEPTED'`와
   /// 짝이며, 이 값이 있으면 A는 '지원 취소'가 아니라 **다른 업무로 확정됨**이다.
   final String? reassignedToApplicationId;
@@ -274,6 +288,7 @@ class ApplicationModel {
     // 🔥 업무 상세 정보
     this.wageType,
     this.baseHourlyWage,
+    this.baseHourlyWageMode,
     this.breakMinutes,
     this.nightAllowanceApplied,
     this.nightIncluded,
@@ -345,6 +360,7 @@ class ApplicationModel {
     this.sourceApplicationId,
     this.sourceWdId,
     this.sourceWorkType,
+    this.compensationOption,
     this.reassignedToApplicationId,
     this.workInstanceCapacityState = InviteCapacityState.unknown,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
@@ -398,6 +414,7 @@ class ApplicationModel {
       wageType: data['wageType'],
       // [POSTING-V2-03I.3] 없으면 null — 레거시 지원서와 구분된다
       baseHourlyWage: (data['baseHourlyWage'] as num?)?.toInt(),
+      baseHourlyWageMode: data['baseHourlyWageMode'] as String?,
       breakMinutes: (data['breakMinutes'] as num?)?.toInt(),
       nightAllowanceApplied: data['nightAllowanceApplied'] as bool?,
       nightIncluded: data['nightIncluded'] as bool?,
@@ -485,6 +502,7 @@ class ApplicationModel {
       sourceApplicationId: data['sourceApplicationId'] as String?,
       sourceWdId: data['sourceWdId'] as String?,
       sourceWorkType: data['sourceWorkType'] as String?,
+      compensationOption: data['compensationOption'] as String?,
       reassignedToApplicationId: data['reassignedToApplicationId'] as String?,
       // [R2.2 / R2.2.1] Firestore 필드가 아니라 조회 시점에 서버가 계산해 준 값.
       //   **없으면 unknown이다.** 없음을 `자리 있음`으로 읽지 않는다 —
@@ -625,6 +643,10 @@ class ApplicationModel {
   /// [R5.3B] 이 INVITED가 '다른 업무 제안'인가 — 일반 초대와 화면이 달라진다.
   bool get isAlternativeWorkOffer => offerKind == 'ALTERNATIVE_WORK';
 
+  /// [R5.3C.1] 이 제안의 급여가 **이 사람에게만 적용되는 개별 조건**인가.
+  bool get hasIndividualCompensation =>
+      compensationOption == 'MATCH_SOURCE_WAGE';
+
   /// [R5.3B] 이 지원(A)이 제안 수락으로 접힌 것인가.
   ///
   /// 근로자가 마음을 바꾼 취소가 아니다. 그래서 '지원 취소'로 표시하지 않는다.
@@ -686,6 +708,7 @@ class ApplicationModel {
     // 🔥 업무 상세 정보
     String? wageType,
     int? baseHourlyWage,
+    String? baseHourlyWageMode,
     int? breakMinutes,
     bool? nightAllowanceApplied,
     bool? nightIncluded,
@@ -754,6 +777,7 @@ class ApplicationModel {
     String? sourceApplicationId,
     String? sourceWdId,
     String? sourceWorkType,
+    String? compensationOption,
     String? reassignedToApplicationId,
     InviteCapacityState? workInstanceCapacityState,
     // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
@@ -787,6 +811,7 @@ class ApplicationModel {
       // 🔥 업무 상세 정보
       wageType: wageType ?? this.wageType,
       baseHourlyWage: baseHourlyWage ?? this.baseHourlyWage,
+      baseHourlyWageMode: baseHourlyWageMode ?? this.baseHourlyWageMode,
       breakMinutes: breakMinutes ?? this.breakMinutes,
       nightAllowanceApplied:
           nightAllowanceApplied ?? this.nightAllowanceApplied,
@@ -855,6 +880,7 @@ class ApplicationModel {
       sourceApplicationId: sourceApplicationId ?? this.sourceApplicationId,
       sourceWdId: sourceWdId ?? this.sourceWdId,
       sourceWorkType: sourceWorkType ?? this.sourceWorkType,
+      compensationOption: compensationOption ?? this.compensationOption,
       reassignedToApplicationId:
           reassignedToApplicationId ?? this.reassignedToApplicationId,
       workInstanceCapacityState:

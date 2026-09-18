@@ -9065,6 +9065,174 @@ function generateWdId(): string {
  * @param {Record<string, unknown>|undefined} wd 서버가 매칭한 workDetail
  * @return {Record<string, unknown>} application에 병합할 조건 필드
  */
+/**
+ * [CROSS-DOMAIN-R5.3C.1] 지원이 가리키는 WorkDetail을 **정확히** 찾는다.
+ *
+ * 이전에는 두 갈래였다:
+ *   · `workDetailId`에 "_"가 있으면 composite(`workType_start_end`) exact match
+ *   · 그 밖에는 `workType` **첫 번째** 일치
+ *
+ * 두 번째가 fail-open이었다. 한 슬롯에 같은 이름의 업무가 여럿이면
+ * (오전 파트 / 오후 파트 — 다른 업무 제안이 정확히 그 모양이다) 지원자가
+ * 고르지 않은 업무의 임금·휴게·통상시급이 약속으로 복사됐다. 금액이 서버
+ * 권위여도 **어느 업무의 금액인지**가 틀리면 소용이 없다.
+ *
+ * 이제 세 단계이고 마지막은 fail-closed다:
+ *   1. wdId exact — Phase 8.1E 이후 canonical 식별자
+ *   2. composite exact — 현재 클라이언트가 보내는 형태
+ *   3. workType 폴백 — 후보가 **하나뿐일 때만**. 여럿이면 거부한다.
+ *
+ * @param {unknown[]} rawWDs 슬롯 또는 TO의 workDetails 배열
+ * @param {string|undefined} workDetailId 클라이언트가 지목한 식별자
+ * @param {string|undefined} selectedWorkType 업무명(레거시 폴백용)
+ * @return {Record<string, unknown>} 매칭된 workDetail (없으면 빈 객체)
+ */
+function srvMatchWorkDetail(
+  rawWDs: unknown[],
+  workDetailId: string | undefined,
+  selectedWorkType: string | undefined
+): Record<string, unknown> {
+  const list = (rawWDs as Record<string, unknown>[]) ?? [];
+  if (workDetailId && workDetailId.length > 0) {
+    const byWdId = list.find((d) => d["wdId"] === workDetailId);
+    if (byWdId) return byWdId;
+    if (workDetailId.includes("_")) {
+      const byComposite = list.find(
+        (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}` === workDetailId
+      );
+      if (!byComposite) {
+        throw new HttpsError(
+          "failed-precondition",
+          "선택한 업무 정보가 현재 공고와 일치하지 않습니다. 공고를 새로고침 후 다시 시도해주세요."
+        );
+      }
+      return byComposite;
+    }
+    // "_"도 없고 wdId도 아니다 — 무엇을 가리키는지 알 수 없다.
+    throw new HttpsError(
+      "failed-precondition",
+      "선택한 업무 정보가 현재 공고와 일치하지 않습니다. 공고를 새로고침 후 다시 시도해주세요."
+    );
+  }
+  if (!selectedWorkType) return {};
+  const byType = list.filter((d) => d["workType"] === selectedWorkType);
+  if (byType.length === 1) return byType[0];
+  if (byType.length > 1) {
+    // 첫 번째를 고르면 지원자가 고르지 않은 조건이 약속이 된다.
+    throw new HttpsError(
+      "failed-precondition",
+      "같은 이름의 업무가 여러 개 있어 어느 업무인지 특정할 수 없습니다. " +
+      "공고를 새로고침 후 다시 시도해주세요."
+    );
+  }
+  return {};
+}
+
+/** [R5.3C.1] 통상시급 mode 값 — Dart `WorkDetailData.baseHourly*`와 같은 문자열. */
+const BASE_HOURLY_MANUAL = "MANUAL";
+const BASE_HOURLY_AUTO = "AUTO";
+
+/**
+ * [CROSS-DOMAIN-R5.3C.1] WorkDetail/Application map에서 통상시급 mode를 읽는다.
+ *
+ * 저장된 mode가 canonical이다. 없으면(R5.3C.1 이전 데이터) `baseHourlyWage`의
+ * **존재 여부**로 해석한다 — 값이 얼마인지로 추정하는 것이 아니라, 이 필드에
+ * non-null을 쓴 writer가 전 히스토리에서 관리자 입력 하나뿐이고 파생값이
+ * 저장된 적이 없다는 사실에서 나온다.
+ *
+ * @param {Record<string, unknown>|undefined} m WorkDetail 또는 Application 데이터
+ * @return {string} "MANUAL" | "AUTO"
+ */
+function srvResolveBaseHourlyWageMode(
+  m: Record<string, unknown> | undefined
+): string {
+  const stored = m?.["baseHourlyWageMode"];
+  if (stored === BASE_HOURLY_MANUAL || stored === BASE_HOURLY_AUTO) {
+    return stored;
+  }
+  const bhw = m?.["baseHourlyWage"];
+  return (typeof bhw === "number" && bhw > 0) ?
+    BASE_HOURLY_MANUAL : BASE_HOURLY_AUTO;
+}
+
+/** [R5.3C.1] 서버가 확정한 급여 산정 조건. 클라이언트 payload를 대체한다. */
+type SrvPromisedCompensation = {
+  wageType: string;
+  scheduledBreakMinutes: number | undefined;
+  baseHourlyWage: number | undefined;
+  baseHourlyWageMode: string;
+  nightAllowanceApplied: boolean;
+  nightIncluded: boolean;
+  taxDeductionType: string;
+  /** 약속 스냅샷이 있는 지원서인가. 없으면 레거시라 강제하지 않는다. */
+  hasSnapshot: boolean;
+};
+
+/**
+ * [CROSS-DOMAIN-R5.3C.1] 급여 산정 조건의 **서버 canonical 판정**.
+ *
+ * 이전에는 금액(`baseWage`)만 서버 권위였다. 나머지 조건 — 급여유형·소정휴게·
+ * 통상시급·야간 규칙·공제 방식 — 은 클라이언트가 보낸 값을 그대로 썼다.
+ * 그 값들은 실제 지급액을 바꾸므로, 약속이 있는데도 payload가 이기는 상태였다.
+ *
+ * 이제 Application의 약속이 있으면 그것이 이긴다. Flutter의
+ * `WorkDetailHelper.resolve`와 **같은 우선순위**다:
+ *   약속 > 공고 현재값, 그리고 AUTO면 통상시급은 비운다(파생).
+ *
+ * 스냅샷이 없는 레거시 지원서는 복원할 근거가 없으므로 클라이언트 값을
+ * 그대로 둔다 — 없는 약속을 지어내지 않는다. 그 경우의 변경 차단은
+ * 공고 수정 경로의 legacy lock이 맡는다.
+ *
+ * @param {FirebaseFirestore.DocumentData|null} appData Application 문서
+ * @param {Record<string, unknown>} fallback 클라이언트가 보낸 값(레거시용)
+ * @return {SrvPromisedCompensation} 계산에 쓸 조건
+ */
+function srvResolvePromisedCompensation(
+  appData: FirebaseFirestore.DocumentData | null,
+  fallback: {
+    wageType: string; scheduledBreakMinutes: number | undefined;
+    baseHourlyWage: number | undefined; nightAllowanceApplied: boolean;
+    nightIncluded: boolean; taxDeductionType: string;
+  }
+): SrvPromisedCompensation {
+  const hasSnapshot =
+    typeof appData?.["nightAllowanceApplied"] === "boolean";
+  if (!appData || !hasSnapshot) {
+    return {
+      // 금액·급여유형은 레거시 지원서도 갖고 있다 — 있으면 그것이 약속이다.
+      wageType: (appData?.["wageType"] as string | undefined) ?? fallback.wageType,
+      scheduledBreakMinutes: fallback.scheduledBreakMinutes,
+      baseHourlyWage: fallback.baseHourlyWage,
+      baseHourlyWageMode: srvResolveBaseHourlyWageMode(
+        appData as Record<string, unknown> | undefined),
+      nightAllowanceApplied: fallback.nightAllowanceApplied,
+      nightIncluded: fallback.nightIncluded,
+      taxDeductionType: fallback.taxDeductionType,
+      hasSnapshot: false,
+    };
+  }
+  const mode = srvResolveBaseHourlyWageMode(
+    appData as Record<string, unknown>);
+  const promisedBhw = appData["baseHourlyWage"];
+  return {
+    wageType: (appData["wageType"] as string | undefined) ?? fallback.wageType,
+    scheduledBreakMinutes:
+      typeof appData["breakMinutes"] === "number" ?
+        appData["breakMinutes"] as number : fallback.scheduledBreakMinutes,
+    // AUTO는 숫자를 갖지 않는다 — 약속된 금액과 현재 근무시간으로 파생한다.
+    baseHourlyWage: mode === BASE_HOURLY_MANUAL &&
+      typeof promisedBhw === "number" && promisedBhw > 0 ?
+      promisedBhw : undefined,
+    baseHourlyWageMode: mode,
+    nightAllowanceApplied: appData["nightAllowanceApplied"] === true,
+    nightIncluded: appData["nightIncluded"] === true,
+    taxDeductionType:
+      (appData["taxDeductionType"] as string | undefined) ??
+      fallback.taxDeductionType,
+    hasSnapshot: true,
+  };
+}
+
 export function buildCompensationSnapshot(
   wd: Record<string, unknown> | undefined
 ): Record<string, unknown> {
@@ -9072,6 +9240,11 @@ export function buildCompensationSnapshot(
   if (!wd) return out;
   const bhw = wd["baseHourlyWage"];
   if (typeof bhw === "number" && bhw > 0) out.baseHourlyWage = bhw;
+  // [CROSS-DOMAIN-R5.3C.1] 통상시급을 **누가 정했는지**까지 약속에 넣는다.
+  //   값이 없는 것도 하나의 약속(자동계산에 맡김)이다. 이걸 적지 않으면
+  //   나중에 공고에 추가된 수동값이 그 빈자리로 들어와 이미 확정된 사람의
+  //   연장·야간 단가를 바꾼다.
+  out.baseHourlyWageMode = srvResolveBaseHourlyWageMode(wd);
   const brk = wd["breakMinutes"];
   out.breakMinutes = typeof brk === "number" ? brk : 0;
   const nAp = wd["nightAllowanceApplied"];
@@ -16113,6 +16286,63 @@ function srvGetMinimumWage(year: number, fs: Record<number, number>): number {
   return SRV_MINIMUM_WAGE_BY_YEAR[latest];
 }
 
+/**
+ * [CROSS-DOMAIN-R5.3C.1] 그 해의 법정 최저임금을 읽는다 (Firestore 설정 우선).
+ *
+ * 급여 확정 경로가 쓰는 것과 **같은 출처·같은 우선순위**다. 제안 시점에
+ * 다른 기준으로 검증하면 "제안은 통과했는데 급여는 거부"가 다시 생긴다.
+ *
+ * @param {number} year 근무 연도(KST)
+ * @return {Promise<number>} 시간당 최저임금
+ */
+async function srvLoadMinimumWage(year: number): Promise<number> {
+  const cfgSnap = await db.collection("settings").doc("wage_config").get();
+  const cfg = cfgSnap.data() ?? {};
+  const fsMinWages: Record<number, number> = {};
+  if (cfg.minimumWages && typeof cfg.minimumWages === "object") {
+    for (const [k, v] of Object.entries(cfg.minimumWages as Record<string, unknown>)) {
+      const yr = parseInt(k, 10);
+      if (!isNaN(yr) && typeof v === "number") fsMinWages[yr] = v;
+    }
+  }
+  return srvGetMinimumWage(year, fsMinWages);
+}
+
+/**
+ * [CROSS-DOMAIN-R5.3C.1] 약속하려는 임금이 법정 최저임금을 넘는지 **제안 전에** 본다.
+ *
+ * 이전에는 이 검증이 급여 확정에만 있었다. 그래서 제안 → 수락 → 계약 →
+ * 출근까지 전부 끝난 뒤 마지막 단계에서 처음 거부될 수 있었다. 그때는
+ * 근로자가 이미 그 조건으로 일한 뒤다.
+ *
+ * 판정식은 급여 확정의 WAG-02 / WAG-03과 **같다**.
+ *
+ * @param {object} p 검증 입력
+ * @return {string|null} 위반 사유(사용자 문구) 또는 통과 시 null
+ */
+function srvValidateMinimumWagePromise(p: {
+  wageType: string; wage: number; minimumWage: number;
+  startTime: string; endTime: string; breakMinutes: number;
+}): string | null {
+  if (p.minimumWage <= 0) return null;
+  if (p.wageType === "hourly") {
+    return p.wage < p.minimumWage ?
+      `시급 ${p.wage.toLocaleString()}원은 최저임금 ` +
+        `${p.minimumWage.toLocaleString()}원 미만입니다.` : null;
+  }
+  if (p.wageType === "daily") {
+    const total = srvMinutesBetween(p.startTime, p.endTime);
+    const work = Math.max(0, total - p.breakMinutes);
+    if (work <= 0) return null;
+    const minDaily = Math.ceil(p.minimumWage * work / 60);
+    return p.wage < minDaily ?
+      `일급 ${p.wage.toLocaleString()}원은 소정근로시간 ` +
+        `${(work / 60).toFixed(1)}시간 기준 최저일급 ` +
+        `${minDaily.toLocaleString()}원 미만입니다.` : null;
+  }
+  return null;
+}
+
 function srvGetRates(year: number, fs: Record<number, Partial<SrvInsuranceRates>>): SrvInsuranceRates {
   const latestYear = Math.max(...Object.keys(SRV_INSURANCE_RATES_BY_YEAR).map(Number));
   const base = SRV_INSURANCE_RATES_BY_YEAR[year] ?? SRV_INSURANCE_RATES_BY_YEAR[latestYear];
@@ -16465,6 +16695,50 @@ export const callableCalculateAndConfirmWage = onCall(
     if (snapshotWage != null && snapshotWage > 0 && snapshotWage !== d.baseWage) {
       console.warn(`⚠️ [WAGE-M1] baseWage 불일치 — 체크인 스냅샷(${snapshotWage}) vs 클라이언트(${d.baseWage}). 스냅샷 기준으로 계산합니다.`);
     }
+
+    // [CROSS-DOMAIN-R5.3C.1] 금액 말고 **나머지 산정 조건도** 서버가 정한다.
+    //
+    //   같은 100,000원이라도 소정휴게·야간 규칙·통상시급·공제 방식에 따라
+    //   실제 지급액이 달라진다. 금액만 스냅샷으로 막고 나머지는 클라이언트가
+    //   보낸 값을 그대로 쓰면, 약속이 있는데도 payload가 이긴다.
+    //   Application의 약속을 읽어 그것으로 계산한다 — Flutter의
+    //   `WorkDetailHelper.resolve`와 같은 우선순위다.
+    const wageAppId = attData2.applicationId as string | undefined;
+    let wagePromiseApp: FirebaseFirestore.DocumentData | null = null;
+    if (wageAppId) {
+      const wageAppSnap =
+        await db.collection("applications").doc(wageAppId).get();
+      // 읽지 못한 것을 "약속 없음"으로 바꾸지 않는다 — 그러면 payload가 이긴다.
+      if (!wageAppSnap.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "이 근태의 지원서를 찾을 수 없어 급여를 확정할 수 없습니다.");
+      }
+      wagePromiseApp = wageAppSnap.data() ?? null;
+    }
+    const promised = srvResolvePromisedCompensation(wagePromiseApp, {
+      wageType: d.wageType,
+      scheduledBreakMinutes: typeof d.scheduledBreakMinutes === "number" ?
+        d.scheduledBreakMinutes :
+        (typeof d.breakMinutes === "number" ? d.breakMinutes : 0),
+      baseHourlyWage: typeof d.baseHourlyWage === "number" ?
+        d.baseHourlyWage : undefined,
+      nightAllowanceApplied: d.nightAllowanceApplied ?? true,
+      nightIncluded: d.nightIncluded ?? false,
+      taxDeductionType: d.taxDeductionType,
+    });
+    if (promised.hasSnapshot) {
+      const drift: string[] = [];
+      if (promised.wageType !== d.wageType) drift.push(`wageType ${d.wageType}→${promised.wageType}`);
+      if (promised.nightAllowanceApplied !== (d.nightAllowanceApplied ?? true)) drift.push("nightAllowanceApplied");
+      if (promised.nightIncluded !== (d.nightIncluded ?? false)) drift.push("nightIncluded");
+      if (promised.taxDeductionType !== d.taxDeductionType) drift.push(`taxDeductionType ${d.taxDeductionType}→${promised.taxDeductionType}`);
+      if (drift.length > 0) {
+        console.warn(
+          `⚠️ [R5.3C.1] 클라이언트 급여 조건이 약속과 다름 — 약속 기준으로 계산: ` +
+          `att=${d.attendanceId} app=${wageAppId} [${drift.join(", ")}]`);
+      }
+    }
     const businessId2 = attData2.businessId as string;
     const userId2 = attData2.userId as string;
     // 권한 확인
@@ -16509,18 +16783,17 @@ export const callableCalculateAndConfirmWage = onCall(
     const workYear2 = parseInt(d.workDate.substring(0, 4), 10);
     const minimumWage2 = srvGetMinimumWage(workYear2, fsMinWages);
     // [WAG-02] 시급제: baseWage가 해당 연도 법적 최저임금 미만이면 차단
-    if (d.wageType === "hourly" && minimumWage2 > 0 && effectiveBaseWage < minimumWage2) {
+    if (promised.wageType === "hourly" && minimumWage2 > 0 && effectiveBaseWage < minimumWage2) {
       throw new HttpsError("invalid-argument",
         `시급(${effectiveBaseWage}원)이 ${workYear2}년 최저임금(${minimumWage2}원) 미만입니다.`);
     }
     // [WAG-03] 일급제: 소정근로시간 기준 최저일급(최저시급 × 소정근로시간) 미만이면 차단
-    if (d.wageType === "daily" && minimumWage2 > 0) {
+    if (promised.wageType === "daily" && minimumWage2 > 0) {
       const [sh2, sm2] = d.scheduledStart.split(":").map(Number);
       const [eh2, em2] = d.scheduledEnd.split(":").map(Number);
       const scheduledTotalMins2 = ((eh2 * 60 + em2) - (sh2 * 60 + sm2) + 1440) % 1440;
-      const schedBreakMins2 = typeof d.scheduledBreakMinutes === "number"
-        ? d.scheduledBreakMinutes
-        : (typeof d.breakMinutes === "number" ? d.breakMinutes : 0);
+      // [R5.3C.1] 소정휴게는 약속값이다 — 최저일급 판정도 그것으로 한다.
+      const schedBreakMins2 = promised.scheduledBreakMinutes ?? 0;
       const schedWorkMins2 = Math.max(0, scheduledTotalMins2 - schedBreakMins2);
       if (schedWorkMins2 > 0) {
         const minimumDailyWage = Math.ceil(minimumWage2 * schedWorkMins2 / 60);
@@ -16531,8 +16804,10 @@ export const callableCalculateAndConfirmWage = onCall(
       }
     }
     const rates2 = srvGetRates(workYear2, fsRates);
+    // 실제 휴게(breakMins)는 관리자가 관측한 사실이라 그대로 둔다.
+    // 소정 휴게(schedBreakMins)는 **약속**이라 서버가 정한다.
     const breakMins = typeof d.breakMinutes === "number" ? d.breakMinutes : 0;
-    const schedBreakMins = typeof d.scheduledBreakMinutes === "number" ? d.scheduledBreakMinutes : breakMins;
+    const schedBreakMins = promised.scheduledBreakMinutes ?? breakMins;
     // [Phase 3.1] break <= actualPresence 검증 (silent clamp 대신 명시적 오류)
     {
       const [ah, am] = d.actualStart.split(":").map(Number);
@@ -16546,19 +16821,20 @@ export const callableCalculateAndConfirmWage = onCall(
     }
 
     const base2 = srvWageCalculate({
-      wageType: d.wageType, baseWage: effectiveBaseWage, minimumWage: minimumWage2,
+      wageType: promised.wageType, baseWage: effectiveBaseWage, minimumWage: minimumWage2,
       scheduledStart: d.scheduledStart, scheduledEnd: d.scheduledEnd,
       actualStart: d.actualStart, actualEnd: d.actualEnd,
       breakMinutes: breakMins, scheduledBreakMinutes: schedBreakMins,
-      nightAllowanceApplied: d.nightAllowanceApplied ?? true,
-      nightIncluded: d.nightIncluded ?? false,
+      nightAllowanceApplied: promised.nightAllowanceApplied,
+      nightIncluded: promised.nightIncluded,
       additionalAmount: typeof d.additionalAmount === "number" ? d.additionalAmount : 0,
-      baseHourlyWage: typeof d.baseHourlyWage === "number" ? d.baseHourlyWage : undefined,
+      // AUTO면 undefined다 — srvWageCalculate가 약속 금액과 근무시간으로 파생한다.
+      baseHourlyWage: promised.baseHourlyWage,
     });
 
     // 5. 공제 계산 (non-daily_auto_8 케이스는 트랜잭션 외부에서 미리 계산)
-    let wageResult2: SrvWageResult = d.taxDeductionType !== "daily_auto_8"
-      ? srvApplyDeduction(base2, d.taxDeductionType, rates2)
+    let wageResult2: SrvWageResult = promised.taxDeductionType !== "daily_auto_8"
+      ? srvApplyDeduction(base2, promised.taxDeductionType, rates2)
       : srvApplyEmpIncomeTax(base2, rates2); // [M-4] daily_auto_8은 트랜잭션 내부에서 재계산
     let effectiveNetWage2 = 0;
 
@@ -16570,7 +16846,7 @@ export const callableCalculateAndConfirmWage = onCall(
 
       // [M-4] daily_auto_8: prevDays/prevGross를 트랜잭션 내부에서 조회 — 동시 확정 경쟁 차단
       // [PERF-H4] srvGetMonthlyStatsTx 한 번 호출로 workDays+prevGrossTotal 동시 계산 (6→3회 tx.get)
-      if (d.taxDeductionType === "daily_auto_8") {
+      if (promised.taxDeductionType === "daily_auto_8") {
         const {workDays: prevDays, prevGrossTotal: prevGross} = await srvGetMonthlyStatsTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
         if (prevDays + 1 === 8) {
           wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
@@ -26284,23 +26560,8 @@ export const callableApplyToTO = onCall(
       // [4H.0C-REF-01] workDetailId 매칭 정책
       // composite(workType_startTime_endTime): exact match 필수 — 실패 시 REJECT (silent fallback 금지)
       // legacy(workType 단독) or 미전달: selectedWorkType fallback 허용
-      let wd: Record<string, unknown> = {};
-      if (workDetailId && workDetailId.length > 0 && workDetailId.includes("_")) {
-        const exactMatch = (rawWD as Record<string, unknown>[]).find(
-          (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}` === workDetailId
-        );
-        if (!exactMatch) {
-          throw new HttpsError(
-            "failed-precondition",
-            "선택한 업무 정보가 현재 공고와 일치하지 않습니다. 공고를 새로고침 후 다시 시도해주세요."
-          );
-        }
-        wd = exactMatch;
-      } else {
-        wd = (rawWD as Record<string, unknown>[]).find(
-          (d) => d["workType"] === selectedWorkType
-        ) ?? {};
-      }
+      const wd: Record<string, unknown> =
+        srvMatchWorkDetail(rawWD, workDetailId ?? undefined, selectedWorkType ?? undefined);
       promisedWD = wd;
       serverWage = wd["wage"] as number | undefined;
       serverWageType = wd["wageType"] as string | undefined;
@@ -26328,22 +26589,9 @@ export const callableApplyToTO = onCall(
       // [4H.0C-REF-02] non-slot 경로도 composite workDetailId exact match 우선
       // composite: workDetailId가 "_"를 포함 → exact match 필수, 실패 시 REJECT
       // legacy or 미전달: selectedWorkType first-match fallback 허용
-      let matchedWD: Record<string, unknown> | undefined;
-      if (workDetailId && workDetailId.length > 0 && workDetailId.includes("_")) {
-        matchedWD = (rawWDList as Record<string, unknown>[]).find(
-          (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}` === workDetailId
-        );
-        if (!matchedWD) {
-          throw new HttpsError(
-            "failed-precondition",
-            "선택한 업무 정보가 현재 공고와 일치하지 않습니다. 공고를 새로고침 후 다시 시도해주세요."
-          );
-        }
-      } else {
-        matchedWD = (rawWDList as Record<string, unknown>[]).find(
-          (d) => d["workType"] === selectedWorkType
-        );
-      }
+      const matchedRaw = srvMatchWorkDetail(rawWDList, workDetailId ?? undefined, selectedWorkType ?? undefined);
+      const matchedWD: Record<string, unknown> | undefined =
+        Object.keys(matchedRaw).length > 0 ? matchedRaw : undefined;
       if (matchedWD) {
         promisedWD = matchedWD;
         serverWage = matchedWD["wage"] as number | undefined;
@@ -27984,16 +28232,23 @@ export const callableOfferAlternativeWork = onCall(
     if (!targetWdId || typeof targetWdId !== "string") {
       throw new HttpsError("invalid-argument", "targetWdId가 필요합니다.");
     }
-    // [R5.3B] 금액은 클라이언트가 보내지 않는다 — 옵션만 받고 서버가 읽는다.
-    //   Core v1은 TARGET_BASE만 지원한다. SOURCE_WAGE(기존 급여 유지)는
-    //   wage 하나만 옮기면 baseHourlyWage·wageType 같은 나머지 조건이 B의 것과
-    //   짝이 맞지 않는 조합이 되어(누구도 승인한 적 없는 조건) 보류한다.
-    if (compensationOption !== "TARGET_BASE") {
+    // [CROSS-DOMAIN-R5.3C.1] 금액은 클라이언트가 보내지 않는다 —
+    //   **옵션만** 받고 값은 서버가 문서에서 읽는다. 임의 숫자 입력 경로는 없다.
+    //
+    //   TARGET_BASE        제안 업무 B의 공고 조건 그대로
+    //   MATCH_SOURCE_WAGE  B의 근로조건을 유지하되 금액만 원 지원 A와 같게
+    //
+    //   legacy "SOURCE_WAGE"는 받지 않는다 — 이름이 "원 지원의 wage"만 뜻해
+    //   긴급충원 프리미엄·협의급여로 넓힐 수 없고, 값 의미도 여기서 확정된다.
+    const OFFER_COMPENSATION_OPTIONS = ["TARGET_BASE", "MATCH_SOURCE_WAGE"];
+    if (typeof compensationOption !== "string" ||
+        !OFFER_COMPENSATION_OPTIONS.includes(compensationOption)) {
       throw new HttpsError(
         "invalid-argument",
-        "현재는 제안 업무의 기본 조건으로만 제안할 수 있습니다."
+        "지원하지 않는 급여 조건 옵션입니다."
       );
     }
+    const offerIsMatch = compensationOption === "MATCH_SOURCE_WAGE";
 
     // ── 1. source Application ──────────────────────────────────────────────
     const srcRef = db.collection("applications").doc(sourceApplicationId);
@@ -28014,6 +28269,11 @@ export const callableOfferAlternativeWork = onCall(
     }
 
     // ── 2. 권한 — 공고 관리와 같은 권한이다 ───────────────────────────────
+    //   [CROSS-DOMAIN-R5.3C.1] 다만 **개별 급여 제안은 다른 종류의 권한**이다.
+    //   공고 임금은 지원하는 누구에게나 적용되고 공개돼 스스로 감사된다.
+    //   worker-specific 급여는 당사자와 제안자만 아는 개별 지급 약속이라
+    //   견제가 없다 — canManageWage가 지키는 것과 같은 위험이다.
+    //   TARGET_BASE(공고 조건 그대로)는 금액 결정이 아니므로 canManageTo만 본다.
     const {callerData: offerCallerData} = await assertBizAdmin(callerUid, offerBizId);
     const offerCallerRole = offerCallerData?.role as string | undefined;
     if (offerCallerRole !== "BUSINESS_ADMIN" && offerCallerRole !== "SUPER_ADMIN") {
@@ -28023,6 +28283,10 @@ export const callableOfferAlternativeWork = onCall(
         (offerMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
       if (offerPerms.canManageTo !== true) {
         throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+      }
+      if (offerIsMatch && offerPerms.canManageWage !== true) {
+        throw new HttpsError(
+          "permission-denied", "개별 급여 제안 권한이 필요합니다.");
       }
     }
 
@@ -28151,8 +28415,25 @@ export const callableOfferAlternativeWork = onCall(
       }
     };
 
-    const targetExisting = await targetRef.get();
-    if (targetExisting.exists) {
+    // [CROSS-DOMAIN-R5.3C.1] 같은 업무에 대한 기존 관계는 **문서 id 하나로
+    //   찾을 수 없다.** 자연키의 discriminator가 경로마다 다르기 때문이다:
+    //     직접 지원  → workDetailId(= workType_start_end, 클라이언트가 보낸 값)
+    //     초대·제안  → wdId
+    //   그래서 targetRef만 보면 "이미 직접 지원한 근로자" 가드가 지나간다 —
+    //   같은 사람이 같은 업무에 두 줄로 남고 대기 카운터도 두 번 센다.
+    //   id가 아니라 **관계**(uid+toId+slotId+wdId)로 찾는다.
+    const offerRelSnap = await db.collection("applications")
+      .where("uid", "==", offerUid)
+      .where("toId", "==", offerToId)
+      .where("slotId", "==", offerSlotId)
+      .limit(50)
+      .get();
+    const offerAltKeyed = offerRelSnap.docs.find(
+      (d) => d.id !== targetAppId && d.get("wdId") === targetWdId);
+
+    const targetSelf = await targetRef.get();
+    const targetExisting = targetSelf.exists ? targetSelf : offerAltKeyed;
+    if (targetExisting && targetExisting.exists) {
       const tStatus = (targetExisting.data()?.status as string | undefined) ?? "";
       if (tStatus === "PENDING") {
         throw new HttpsError(
@@ -28180,6 +28461,19 @@ export const callableOfferAlternativeWork = onCall(
           // 일반 초대이거나 다른 지원서에서 나온 제안 — 재시도가 아니다.
           throw new HttpsError(
             "already-exists", "이미 이 업무를 제안했습니다.");
+        }
+        // [CROSS-DOMAIN-R5.3C.1] 조건이 다르면 재시도가 아니라 **다른 제안**이다.
+        //   여기서 조용히 기존 제안을 돌려주면, 관리자는 120,000원을 보냈다고
+        //   믿는데 근로자에게는 100,000원이 가 있는 상태가 된다.
+        const tOption =
+          (tExisting["compensationOption"] as string | undefined) ??
+          "TARGET_BASE";
+        if (tOption !== compensationOption) {
+          throw new HttpsError(
+            "already-exists",
+            "이미 다른 급여 조건으로 제안했습니다. " +
+            "기존 제안을 취소한 뒤 다시 보내주세요."
+          );
         }
         const repaired = await writeOfferedNotification(tOfferId);
         console.info(
@@ -28219,9 +28513,69 @@ export const callableOfferAlternativeWork = onCall(
     //   쓰지는 않는다), 빈 값을 그대로 옮기면 알림 문장에서 이름이 빠진다.
     const offerApplicantName =
       await srvResolveApplicantName(srcData, offerUid);
-    const offeredWage = targetWD["wage"] as number | undefined;
+    // 근로조건은 **언제나 B**다. 실제로 하는 일이 B이기 때문이다 —
+    //   근무시간·휴게·야간 규칙·공제는 A에서 가져오면 안 된다
+    //   (A 8시간 휴게 60분을 B 5시간에 옮기면 근로자가 1시간을 잃는다).
+    const targetBaseWage = targetWD["wage"] as number | undefined;
     const offeredWageType = targetWD["wageType"] as string | undefined;
     const offeredSnapshot = buildCompensationSnapshot(targetWD);
+    const targetBaseSnapshot = {...offeredSnapshot};
+
+    // [CROSS-DOMAIN-R5.3C.1] MATCH_SOURCE_WAGE — **금액 하나만** 옮긴다.
+    let offeredWage = targetBaseWage;
+    if (offerIsMatch) {
+      const srcWageType = srcData.wageType as string | undefined;
+      // 단위가 다르면 "기존 급여 유지"가 무슨 뜻인지 정해지지 않는다.
+      //   일급 120,000을 시급제 업무에 넣으려면 어떤 시간으로 나눌지 골라야
+      //   하고, 그 선택은 새로운 임금 약속이다 — 서버가 대신 정하지 않는다.
+      if (!srcWageType || !offeredWageType || srcWageType !== offeredWageType) {
+        throw new HttpsError(
+          "failed-precondition",
+          "기존 지원과 제안 업무의 급여 기준(시급/일급)이 달라 " +
+          "기존 급여를 그대로 승계할 수 없습니다."
+        );
+      }
+      const srcWage = srcData.wage;
+      if (typeof srcWage !== "number" || srcWage <= 0) {
+        throw new HttpsError(
+          "failed-precondition", "기존 지원의 급여 정보를 확인할 수 없습니다.");
+      }
+      offeredWage = srcWage;
+
+      // 통상시급은 **누가 정했는지**에 따라 갈린다.
+      //   MANUAL — 관리자가 직접 정한 정책값이다. 금액이 달라져도 유지한다.
+      //   AUTO   — 금액에서 파생되던 값이라 새 금액에서는 낡았다.
+      //            숫자를 얼리지 않고 mode만 남긴다: 급여 확정이 약속된
+      //            금액과 그때의 근무시간으로 파생한다(같은 공식, 시간 정합).
+      if (srvResolveBaseHourlyWageMode(targetWD) === BASE_HOURLY_AUTO) {
+        delete offeredSnapshot.baseHourlyWage;
+        offeredSnapshot.baseHourlyWageMode = BASE_HOURLY_AUTO;
+      }
+    }
+
+    // [CROSS-DOMAIN-R5.3C.1] 법정 최저임금은 **제안 전에** 본다.
+    //   이전에는 급여 확정에만 있어서, 수락·계약·출근까지 끝난 뒤 처음
+    //   거부될 수 있었다. 그때는 이미 그 조건으로 일한 뒤다.
+    {
+      const offerWorkDateTs =
+        srcData.workDate as admin.firestore.Timestamp | undefined;
+      const offerKstYear = new Date(
+        (offerWorkDateTs?.toMillis() ?? Date.now()) + 9 * 60 * 60 * 1000
+      ).getUTCFullYear();
+      const offerMinWage = await srvLoadMinimumWage(offerKstYear);
+      const violation = srvValidateMinimumWagePromise({
+        wageType: offeredWageType ?? "hourly",
+        wage: offeredWage ?? 0,
+        minimumWage: offerMinWage,
+        startTime: (targetWD["startTime"] as string | undefined) ?? "09:00",
+        endTime: (targetWD["endTime"] as string | undefined) ?? "18:00",
+        breakMinutes: (offeredSnapshot.breakMinutes as number | undefined) ?? 0,
+      });
+      if (violation) {
+        throw new HttpsError("failed-precondition", violation);
+      }
+    }
+
     const offerTime = admin.firestore.Timestamp.now();
     const offerExpiresAt = admin.firestore.Timestamp.fromMillis(
       offerTime.toMillis() + 24 * 60 * 60 * 1000);
@@ -28259,9 +28613,22 @@ export const callableOfferAlternativeWork = onCall(
       sourceApplicationId,
       sourceWdId: srcWdId ?? null,
       sourceWorkType: srcWorkType ?? null,
-      baseCompensationSnapshotAtOffer: offeredSnapshot,
-      offeredCompensationSnapshot: offeredSnapshot,
-      compensationSource: "ALTERNATIVE_WORK_OFFER",
+      // [CROSS-DOMAIN-R5.3C.1] 감사 chain — "왜 B 업무인데 이 금액인가"를
+      //   한 줄로 복원할 수 있어야 한다. 제안 당시 공고 B의 기본급을
+      //   **숫자로** 남긴다(이전에는 어디에도 기록되지 않았다).
+      compensationOption,
+      baseCompensationSnapshotAtOffer: {
+        ...targetBaseSnapshot,
+        wage: targetBaseWage ?? null,
+        wageType: offeredWageType ?? null,
+      },
+      offeredCompensationSnapshot: {
+        ...offeredSnapshot,
+        wage: offeredWage ?? null,
+        wageType: offeredWageType ?? null,
+      },
+      compensationSource: offerIsMatch ?
+        "ALTERNATIVE_WORK_OFFER_MATCH_SOURCE" : "ALTERNATIVE_WORK_OFFER",
       offeredBy: callerUid,
       offeredAt: offerTime,
       statusHistory: [{
@@ -28274,13 +28641,25 @@ export const callableOfferAlternativeWork = onCall(
 
     // ── 8. 생성 + 카운터 — 초대와 같은 트랜잭션 모양 ──────────────────────
     await db.runTransaction(async (offerTx) => {
+      const REOFFERABLE = ["REJECTED", "CANCELED", "AUTO_CANCELED"];
       const fresh = await offerTx.get(targetRef);
       if (fresh.exists) {
         const fStatus = (fresh.data()?.status as string | undefined) ?? "";
-        const REOFFERABLE = ["REJECTED", "CANCELED", "AUTO_CANCELED"];
         if (!REOFFERABLE.includes(fStatus)) {
           throw new HttpsError(
             "already-exists", "이미 이 업무에 대한 관계가 있는 근로자입니다.");
+        }
+      }
+      // [R5.3C.1] 다른 discriminator로 저장된 같은 업무의 관계도 본다.
+      //   읽기 집합에 넣어야 그 사이 상태가 바뀌면 재시도된다.
+      if (offerAltKeyed) {
+        const freshAlt = await offerTx.get(offerAltKeyed.ref);
+        if (freshAlt.exists) {
+          const aStatus = (freshAlt.data()?.status as string | undefined) ?? "";
+          if (!REOFFERABLE.includes(aStatus)) {
+            throw new HttpsError(
+              "already-exists", "이미 이 업무에 대한 관계가 있는 근로자입니다.");
+          }
         }
       }
       // source가 그 사이 PENDING을 벗어났으면 만들지 않는다.

@@ -98,19 +98,31 @@ void main() {
           reason: 'client가 보낸 금액을 쓰면 아무도 승인하지 않은 조건이 생긴다');
     });
 
-    test('Core v1은 TARGET_BASE만 — SOURCE_WAGE는 거절한다', () {
-      expect(offer.contains('if (compensationOption !== "TARGET_BASE") {'), true);
+    // [R5.3C.1] Core v1의 TARGET_BASE-only 제한은 MATCH_SOURCE_WAGE로 열렸다.
+    //   자세한 계약은 compensation_snapshot_authority_test가 고정한다.
+    //   여기서는 **allowlist라는 사실**과 legacy 이름 거부만 지킨다.
+    test('옵션은 서버 allowlist다 — legacy SOURCE_WAGE 금지', () {
       expect(
-          offer.contains('"현재는 제안 업무의 기본 조건으로만 제안할 수 있습니다."'),
+          offer.contains('const OFFER_COMPENSATION_OPTIONS = '
+              '["TARGET_BASE", "MATCH_SOURCE_WAGE"];'),
           true);
+      expect(offer.contains('"SOURCE_WAGE"'), false,
+          reason: 'source Application의 wage만 뜻하는 이름은 확장할 수 없다');
     });
 
-    test('제안 조건은 target WorkDetail에서 읽는다', () {
-      expect(offer.contains('const offeredWage = targetWD["wage"]'), true);
+    test('근로조건은 언제나 target WorkDetail에서 읽는다', () {
+      expect(offer.contains('const targetBaseWage = targetWD["wage"]'), true);
       expect(offer.contains('const offeredSnapshot = buildCompensationSnapshot(targetWD);'),
           true, reason: '다른 경로와 같은 snapshot builder를 써야 한다');
-      // source의 wage를 옮겨 붙이지 않는다.
-      expect(offer.contains('srcData.wage'), false);
+      // [R5.3C.1] MATCH에서 source가 주는 것은 **금액 하나**다.
+      //   휴게·야간·공제를 A에서 옮기면 A 8시간 휴게 60분이 B 5시간에 붙는다.
+      for (final f in [
+        'srcData.breakMinutes', 'srcData.nightAllowanceApplied',
+        'srcData.nightIncluded', 'srcData.taxDeductionType',
+        'srcData.baseHourlyWage',
+      ]) {
+        expect(offer.contains(f), false, reason: 'source에서 가져오면 안 되는 것: $f');
+      }
     });
 
     test('canManageTo 게이트 — 공고 관리와 같은 권한이다', () {
@@ -171,7 +183,7 @@ void main() {
         'offerId,',
         'sourceApplicationId,',
         'sourceWdId: srcWdId ?? null,',
-        'compensationSource: "ALTERNATIVE_WORK_OFFER",',
+        'compensationOption,',
         'offeredBy: callerUid,',
       ]) {
         expect(offer.contains(f), true, reason: '제안 메타데이터 누락: $f');
@@ -524,7 +536,9 @@ void main() {
 
     test('수락 전에 A와 B를 나란히 보여준다', () {
       expect(s.contains("label: '기존 지원',"), true);
-      expect(s.contains("label: '제안받은 업무',"), true);
+      expect(s.contains('label: offerApp.hasIndividualCompensation'), true,
+          reason: '개별 급여면 그 사실을 라벨이 말한다');
+      expect(s.contains("'제안받은 업무'"), true);
       expect(s.contains('취소 이력이나 불이익은 남지 않아요.'), true);
     });
 
@@ -598,8 +612,11 @@ void main() {
       expect(w.contains('if (_offerableWorkDetails(app).isNotEmpty) ...['), true);
     });
 
-    test('클라이언트는 금액을 보내지 않는다', () {
-      expect(sheet.contains("'compensationOption': 'TARGET_BASE',"), true);
+    test('클라이언트는 금액을 보내지 않는다 — 옵션만 보낸다', () {
+      expect(sheet.contains("'compensationOption': option,"), true);
+      // 임의 금액 입력란이 없다.
+      expect(sheet.contains('TextField'), false);
+      expect(sheet.contains('TextEditingController'), false);
       expect(sheet.contains("'sourceApplicationId': sourceApplicationId,"), true);
       expect(sheet.contains("'targetWdId': target.id,"), true);
       expect(RegExp(r"'wage'\s*:").hasMatch(sheet), false);

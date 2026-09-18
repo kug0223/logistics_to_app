@@ -270,7 +270,8 @@ void main() {
       expect(body.contains('final promised = app.promisedCompensation;'), true);
       expect(body.contains('if (promised == null) return live;'), false,
           reason: '03I.3의 전량 폴백이 남아 있으면 안 된다');
-      expect(body.contains('return {...live, ...promised};'), true);
+      expect(body.contains('final merged = <String, dynamic>{...live, ...promised};'),
+          true);
     });
 
     test('02-d 계약서도 레거시가 아는 값을 쓴다 (§16)', () {

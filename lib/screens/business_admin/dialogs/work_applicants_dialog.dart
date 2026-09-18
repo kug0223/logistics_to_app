@@ -1947,15 +1947,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return;
     }
 
-    final selectedWdId = await AlternativeWorkOfferSheet.pickTarget(
+    // [R5.3C.1] 개별 급여 제안은 canManageWage가 따로 필요하다 — 서버도 같다.
+    //   권한이 없어도 옵션을 숨기지 않고 비활성 + 이유를 보여준다.
+    final canManageWage = _permissionFor((p) => p.canManageWage);
+    final picked = await AlternativeWorkOfferSheet.pickOffer(
       context,
       workerName: workerName,
       currentWork: currentWork,
       candidates: candidates,
       confirmedCountOf: _confirmedCountForWork,
+      sourceWage: app.wage,
+      sourceWageType: app.wageType,
+      canManageWage: canManageWage,
     );
-    if (selectedWdId == null || !mounted) return;
-    final target = candidates.firstWhere((w) => w.id == selectedWdId);
+    if (picked == null || !mounted) return;
+    final target = candidates.firstWhere((w) => w.id == picked.wdId);
 
     setState(() => _isProcessing = true);
     try {
@@ -1964,6 +1970,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         workerName: workerName,
         sourceApplicationId: app.id,
         target: target,
+        option: picked.option,
+        sourceWage: app.wage,
       );
       if (!sent || !mounted) return;
       await _loadApplicants();

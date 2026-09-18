@@ -10,6 +10,7 @@
 
 import '../models/core/application_model.dart';
 import '../models/core/insurance_rate_model.dart';
+import '../models/core/work_detail_data.dart';
 
 class WorkDetailHelper {
   /// 'HH:mm:ss' → 'HH:mm' 정규화 (레거시 Firestore 데이터 대응)
@@ -40,6 +41,24 @@ class WorkDetailHelper {
   /// 레거시에 없는 조건(휴게·야간·연장 단가·공제)만 현재 값이 남는다 —
   /// **legacy compatibility 경로**다. 활성 레거시 관계가 있는 동안
   /// 그 조건이 바뀌지 않도록 막는 것은 서버 guard의 몫이다.
+  /// [CROSS-DOMAIN-R5.3C.1] **약속의 부재도 약속이다.**
+  ///
+  /// `{...live, ...promised}`는 promised에 **키가 있을 때만** live를 덮는다.
+  /// 그래서 통상시급을 자동계산에 맡긴 지원서(키 없음)는, 나중에 관리자가
+  /// 공고에 통상시급을 추가하면 그 값이 빈자리로 그대로 들어왔다 —
+  /// 이미 확정된 사람의 연장·야간 단가가 조용히 바뀌는 03I.2와 같은 결함이
+  /// "값이 없는 경우"에만 남아 있었다.
+  ///
+  /// 이제 mode가 그 자리를 막는다:
+  ///
+  ///   MANUAL — 약속된 숫자를 쓴다.
+  ///   AUTO   — live 값을 **명시적으로 지운다**. 급여 계산이 약속된 금액과
+  ///            현재 근무시간으로 파생한다(기존 공식 그대로).
+  ///
+  /// 레거시(mode 없음)는 [ApplicationModel.baseHourlyWage]의 존재 여부로
+  /// 해석한다 — canonical writer가 하나뿐이라는 invariant다. 단
+  /// **스냅샷 자체가 없는** 지원서는 UNKNOWN이라 손대지 않는다: 과거 약속을
+  /// 공고 현재값으로 추정하지 않고, 변경은 서버 legacy lock이 막는다.
   static Map<String, dynamic>? resolve(
     ApplicationModel app,
     Map<String, dynamic> timeMap,
@@ -47,7 +66,27 @@ class WorkDetailHelper {
     final live = _resolveLive(app, timeMap);
     final promised = app.promisedCompensation;
     if (live == null) return promised;
-    return {...live, ...promised};
+    final merged = <String, dynamic>{...live, ...promised};
+    if (baseHourlyWageModeOf(app) == WorkDetailData.baseHourlyAuto) {
+      merged.remove('baseHourlyWage');
+    }
+    return merged;
+  }
+
+  /// 이 지원서의 통상시급 mode. **유일한 판정 지점.**
+  ///
+  /// 스냅샷이 없는 레거시는 판정하지 않고 null을 돌려준다 — 그 경우
+  /// 기존 동작(공고 현재값)을 그대로 두고 서버 lock에 맡긴다.
+  static String? baseHourlyWageModeOf(ApplicationModel app) {
+    final stored = app.baseHourlyWageMode;
+    if (stored == WorkDetailData.baseHourlyManual ||
+        stored == WorkDetailData.baseHourlyAuto) {
+      return stored;
+    }
+    if (!app.hasCompensationSnapshot) return null; // UNKNOWN — 추정하지 않는다
+    return app.baseHourlyWage != null
+        ? WorkDetailData.baseHourlyManual
+        : WorkDetailData.baseHourlyAuto;
   }
 
   /// 공고의 현재 조건만 조회 (약속 스냅샷 미반영).

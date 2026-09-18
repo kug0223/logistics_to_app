@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../work_type_icon.dart';
@@ -43,65 +44,251 @@ class AlternativeWorkOfferSheet {
     }).toList();
   }
 
-  /// 제안할 업무를 고르게 한다. 고르지 않으면 null.
-  static Future<String?> pickTarget(
+  /// 급여 조건 옵션 — 서버 allowlist와 같은 값이다.
+  static const String optionTargetBase = 'TARGET_BASE';
+  static const String optionMatchSourceWage = 'MATCH_SOURCE_WAGE';
+
+  /// 제안 대상 업무와 급여 조건을 함께 고른다. 취소하면 null.
+  ///
+  /// [CROSS-DOMAIN-R5.3C.1] 급여 조건은 두 갈래뿐이고 **금액 입력란은 없다**.
+  ///   · 공고 기본 급여      — B가 모집 중인 조건 그대로
+  ///   · 기존 지원 급여 유지 — B의 근로조건을 유지하되 금액만 A와 같게
+  ///
+  /// 두 번째는 같은 급여 기준(시급/일급)일 때만, 그리고 개별 급여 제안
+  /// 권한이 있을 때만 고를 수 있다. 고를 수 없을 때도 **숨기지 않고**
+  /// 이유를 적는다 — 권한이나 조건의 부재를 "그런 기능이 없음"으로 보이게
+  /// 하지 않기 위해서다. 그리고 그 경우에도 업무 제안 자체는 막지 않는다.
+  static Future<({String wdId, String option})?> pickOffer(
     BuildContext context, {
     required String workerName,
     required WorkDetailModel? currentWork,
     required List<WorkDetailModel> candidates,
     required int Function(WorkDetailModel) confirmedCountOf,
+    required int sourceWage,
+    required String? sourceWageType,
+    required bool canManageWage,
   }) {
-    return DialogHelper.showSheet<String>(
+    WorkDetailModel? picked;
+    String option = optionTargetBase;
+
+    return DialogHelper.showSheet<({String wdId, String option})>(
       context,
       isScrollControlled: true,
-      builder: (sheetCtx) => SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final sel = picked;
+          final sameType =
+              sel != null && sourceWageType != null && sourceWageType == sel.wageType;
+          final matchEnabled = sameType && canManageWage && sourceWage > 0;
+          // 고를 수 없게 된 옵션이 선택돼 있으면 되돌린다.
+          if (!matchEnabled && option == optionMatchSourceWage) {
+            option = optionTargetBase;
+          }
+          return SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$workerName님에게 다른 업무 제안',
+                    style: ResponsiveHelper.subtitleStyle(ctx)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '제안을 보내면 근로자가 조건을 보고 직접 선택합니다.\n'
+                    '지금 지원은 그대로 유지되고, 근로자가 제안을 수락할 때만 정리됩니다.',
+                    style: ResponsiveHelper.smallStyle(ctx,
+                        color: AppColors.grey600),
+                  ),
+                  const SizedBox(height: 12),
+                  if (currentWork != null)
+                    _tile(
+                      ctx,
+                      work: currentWork,
+                      headline: '지금 지원한 업무',
+                      confirmedCount: confirmedCountOf(currentWork),
+                      muted: true,
+                      onTap: null,
+                    ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '제안할 업무 선택',
+                    style: ResponsiveHelper.bodyStyle(ctx)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  ...candidates.map((w) {
+                    final selected = sel?.id == w.id;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: selected
+                                ? AppColors.brand
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                        child: _tile(
+                          ctx,
+                          work: w,
+                          headline: null,
+                          confirmedCount: confirmedCountOf(w),
+                          muted: false,
+                          onTap: () => setSheetState(() => picked = w),
+                        ),
+                      ),
+                    );
+                  }),
+                  if (sel != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      '급여 조건',
+                      style: ResponsiveHelper.bodyStyle(ctx)
+                          .copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    _optionRow(
+                      ctx,
+                      label: '공고 기본 급여',
+                      amount: sel.formattedWage,
+                      value: optionTargetBase,
+                      groupValue: option,
+                      enabled: true,
+                      onChanged: (v) => setSheetState(() => option = v),
+                    ),
+                    _optionRow(
+                      ctx,
+                      label: '기존 지원 급여 유지',
+                      amount: FormatHelper.formatWage(sourceWage),
+                      value: optionMatchSourceWage,
+                      groupValue: option,
+                      enabled: matchEnabled,
+                      disabledReason: !canManageWage
+                          ? '개별 급여 제안 권한이 필요합니다.'
+                          : (!sameType
+                              ? '기존 지원은 ${_typeLabel(sourceWageType)}이고, '
+                                  '제안할 업무는 ${_typeLabel(sel.wageType)}라 '
+                                  '급여 기준을 그대로 승계할 수 없습니다.'
+                              : null),
+                      onChanged: (v) => setSheetState(() => option = v),
+                    ),
+                    if (option == optionMatchSourceWage) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.infoBg,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '이 근로자에게만 적용되는 제안 급여입니다.\n'
+                          '공고의 기본 급여는 변경되지 않습니다.',
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: AppColors.infoDeep),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.brand,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () => Navigator.pop(
+                            ctx, (wdId: sel.id, option: option)),
+                        child: const Text('다음',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  static String _typeLabel(String? wageType) => wageType == 'daily'
+      ? '일급제'
+      : (wageType == 'hourly' ? '시급제' : '다른 급여 기준');
+
+  /// 급여 조건 한 줄. 고를 수 없으면 **숨기지 않고** 이유를 적는다.
+  static Widget _optionRow(
+    BuildContext ctx, {
+    required String label,
+    required String amount,
+    required String value,
+    required String groupValue,
+    required bool enabled,
+    required ValueChanged<String> onChanged,
+    String? disabledReason,
+  }) {
+    final fg = enabled ? AppColors.grey800 : AppColors.grey400;
+    return Opacity(
+      opacity: enabled ? 1 : 0.7,
+      child: InkWell(
+        onTap: enabled ? () => onChanged(value) : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '$workerName님에게 다른 업무 제안',
-                style: ResponsiveHelper.subtitleStyle(sheetCtx)
-                    .copyWith(fontWeight: FontWeight.bold),
+              Icon(
+                groupValue == value
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                size: ResponsiveHelper.iconSize(ctx, 20),
+                color: enabled
+                    ? (groupValue == value
+                        ? AppColors.brand
+                        : AppColors.grey400)
+                    : AppColors.grey300,
               ),
-              const SizedBox(height: 4),
-              Text(
-                '제안을 보내면 근로자가 조건을 보고 직접 선택합니다.\n'
-                '지금 지원은 그대로 유지되고, 근로자가 제안을 수락할 때만 정리됩니다.',
-                style: ResponsiveHelper.smallStyle(sheetCtx,
-                    color: AppColors.grey600),
-              ),
-              const SizedBox(height: 12),
-              if (currentWork != null)
-                _tile(
-                  sheetCtx,
-                  work: currentWork,
-                  headline: '지금 지원한 업무',
-                  confirmedCount: confirmedCountOf(currentWork),
-                  muted: true,
-                  onTap: null,
-                ),
-              const SizedBox(height: 12),
-              Text(
-                '제안할 업무 선택',
-                style: ResponsiveHelper.bodyStyle(sheetCtx)
-                    .copyWith(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              ...candidates.map((w) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _tile(
-                      sheetCtx,
-                      work: w,
-                      headline: null,
-                      confirmedCount: confirmedCountOf(w),
-                      muted: false,
-                      onTap: () => Navigator.pop(sheetCtx, w.id),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(label,
+                              style:
+                                  ResponsiveHelper.bodyStyle(ctx, color: fg)),
+                        ),
+                        Text(
+                          amount,
+                          style: ResponsiveHelper.bodyStyle(ctx, color: fg)
+                              .copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ],
                     ),
-                  )),
+                    if (!enabled && disabledReason != null) ...[
+                      const SizedBox(height: 2),
+                      Text(disabledReason,
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: AppColors.grey500)),
+                    ],
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -118,12 +305,19 @@ class AlternativeWorkOfferSheet {
     required String workerName,
     required String sourceApplicationId,
     required WorkDetailModel target,
+    required String option,
+    required int sourceWage,
   }) async {
+    final isMatch = option == optionMatchSourceWage;
+    final offeredText =
+        isMatch ? FormatHelper.formatWage(sourceWage) : target.formattedWage;
     final ok = await DialogHelper.showConfirm(
       context,
       title: '업무 제안 보내기',
       message: '$workerName님에게 ‘${target.workType}’ 업무를 제안합니다.\n'
-          '${target.startTime}~${target.endTime} · ${target.formattedWage}\n\n'
+          '${target.startTime}~${target.endTime} · $offeredText'
+          '${isMatch ? ' (기존 지원 급여 유지)' : ''}\n\n'
+          '${isMatch ? '이 급여는 이 근로자에게만 적용되며 공고의 기본 급여는 변경되지 않습니다.\n\n' : ''}'
           '근로자가 수락하면 그때 이 업무로 확정되고, 기존 지원은 자동으로 '
           '정리됩니다. 거절하면 기존 지원은 대기 상태 그대로입니다.',
       confirmText: '제안 보내기',
@@ -137,10 +331,8 @@ class AlternativeWorkOfferSheet {
       await callable.call({
         'sourceApplicationId': sourceApplicationId,
         'targetWdId': target.id,
-        // [R5.3B PART F] Core v1은 제안 업무의 기본 조건으로만 제안한다.
-        //   원 지원의 임금을 그대로 옮기면 아무도 작성하지 않은
-        //   (wage, baseHourlyWage, wageType) 조합이 만들어진다.
-        'compensationOption': 'TARGET_BASE',
+        // 금액은 보내지 않는다 — 옵션만 보내고 값은 서버가 문서에서 읽는다.
+        'compensationOption': option,
       });
       ToastHelper.showSuccess('$workerName님에게 업무 제안을 보냈습니다.');
       return true;
@@ -152,6 +344,7 @@ class AlternativeWorkOfferSheet {
       return false;
     }
   }
+
 
   /// 업무 한 칸 — A와 B를 같은 축(시간 · 기본임금 · 휴게 · 남은 자리)으로 본다.
   ///

@@ -1,4 +1,5 @@
 import 'core/insurance_rate_model.dart';
+import 'core/work_detail_data.dart';
 
 /// 업무 상세 입력 데이터 클래스
 class WorkDetailInput {
@@ -18,6 +19,10 @@ class WorkDetailInput {
   /// 일급제 수당 기초 시급 — 연장·야간·휴일수당 계산 기준
   /// null이면 최저시급 적용
   final int? baseHourlyWage;
+
+  /// [R5.3C.1] 통상시급을 누가 정했는가 — MANUAL | AUTO.
+  /// null이면 [baseHourlyWage] 존재 여부로 파생한다.
+  final String? baseHourlyWageMode;
 
   /// 급여 지급 유형: 'same_day' | 'next_day' | 'weekly' | 'monthly'
   final String? payScheduleType;
@@ -47,6 +52,7 @@ class WorkDetailInput {
     this.nightIncluded = false,
     this.breakMinutes = 0,
     this.baseHourlyWage,
+    this.baseHourlyWageMode,
     this.payScheduleType,
     this.payScheduleDay,
     this.payScheduleTime,
@@ -79,6 +85,11 @@ class WorkDetailInput {
       if (nightIncluded) 'nightIncluded': true,
       if (breakMinutes > 0) 'breakMinutes': breakMinutes,
       if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+      // [R5.3C.1] 값이 없어도 mode는 쓴다 — AUTO도 명시적 약속이다.
+      'baseHourlyWageMode': baseHourlyWageMode ??
+          (baseHourlyWage != null
+              ? WorkDetailData.baseHourlyManual
+              : WorkDetailData.baseHourlyAuto),
       if (payScheduleType != null) 'payScheduleType': payScheduleType,
       if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
       if (payScheduleTime != null) 'payScheduleTime': payScheduleTime,

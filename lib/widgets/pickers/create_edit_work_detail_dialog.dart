@@ -2691,6 +2691,10 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
         'nightIncluded': _nightIncluded,
         'breakMinutes': _breakMinutes,
         'baseHourlyWage': editBaseHourly,
+        // [R5.3C.1] 통상시급을 누가 정했는지 함께 남긴다 — 값의 부재도 선언이다.
+        'baseHourlyWageMode': editBaseHourly != null
+            ? WorkDetailData.baseHourlyManual
+            : WorkDetailData.baseHourlyAuto,
         'payScheduleType': _payScheduleType,
         if (_payScheduleDay != null) 'payScheduleDay': _payScheduleDay,
         if (_payScheduleTime != null) 'payScheduleTime': _payScheduleTime,
@@ -2832,6 +2836,9 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
           nightIncluded: _nightIncluded,
           breakMinutes: _breakMinutes,
           baseHourlyWage: addBaseHourly,
+          baseHourlyWageMode: addBaseHourly != null
+              ? WorkDetailData.baseHourlyManual
+              : WorkDetailData.baseHourlyAuto,
           payScheduleType: _payScheduleType,
           payScheduleDay: _payScheduleDay,
           payScheduleTime: _payScheduleTime,

@@ -318,8 +318,12 @@ void main() {
       final body = _flat(_codeOf(_bodyOf(_src(_helperPath),
           'static Map<String, dynamic>? resolve(')));
       expect(body.contains('final promised = app.promisedCompensation;'), true);
-      expect(body.contains('return {...live, ...promised};'), true,
-          reason: '약속이 현재 값을 덮는 방향이어야 한다');
+      // [R5.3C.1] 병합 방향은 그대로다. 다만 AUTO 약속(키 없음)에서 live 값이
+      //   살아남던 구멍을 막느라 merged를 만든 뒤 한 번 더 손본다.
+      expect(body.contains('final merged = <String, dynamic>{...live, ...promised};'),
+          true, reason: '약속이 현재 값을 덮는 방향이어야 한다');
+      expect(body.contains("merged.remove('baseHourlyWage')"), true,
+          reason: 'AUTO는 live 통상시급을 명시적으로 지운다');
       expect(body.contains('if (promised == null) return live;'), false,
           reason: '레거시를 통째로 현재 값으로 돌리지 않는다');
       expect(fresh.hasCompensationSnapshot, true);

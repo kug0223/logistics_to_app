@@ -12,6 +12,7 @@ import '../models/core/contract_template_model.dart';
 import '../models/core/employment_contract_model.dart';
 import '../models/core/notification_model.dart';
 import '../models/core/user_model.dart';
+import '../utils/work_detail_helper.dart';
 import '../models/core/work_detail_data.dart';
 import '../utils/format_helper.dart';
 import 'firestore_service.dart';
@@ -155,7 +156,10 @@ class ContractService {
       wage: promisedWage,
       wageType: promisedType ?? workDetail.wageType,
       baseHourlyWage: application.baseHourlyWage,
+      // [R5.3C.1] 약속이 AUTO면 공고의 수동값이 계약서로 흘러들지 않게 지운다.
+      //   clearBaseHourlyWage는 copyWith에서 mode도 AUTO로 맞춘다.
       clearBaseHourlyWage: application.baseHourlyWage == null,
+      baseHourlyWageMode: WorkDetailHelper.baseHourlyWageModeOf(application),
       breakMinutes: application.breakMinutes,
       nightAllowanceApplied: application.nightAllowanceApplied,
       nightIncluded: application.nightIncluded,

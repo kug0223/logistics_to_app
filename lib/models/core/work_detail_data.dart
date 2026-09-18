@@ -42,6 +42,40 @@ class WorkDetailData {
   /// null이면 최저시급 적용
   final int? baseHourlyWage;
 
+  /// [CROSS-DOMAIN-R5.3C.1] 통상시급을 **누가 정했는가**.
+  ///
+  ///   MANUAL — 관리자가 직접 입력했다. 금액과 독립된 정책값이므로
+  ///            다른 조건이 바뀌어도 그대로 둔다.
+  ///   AUTO   — 자동계산에 맡겼다. `wage ÷ 소정근무시간`(최저임금 하한)으로
+  ///            급여 확정 시점에 파생한다. 숫자를 저장하지 않는다.
+  ///
+  /// 숫자만으로는 이 둘을 구분할 수 없고, 값을 보고 추정해서도 안 된다.
+  /// 그래서 신규 저장은 mode를 명시한다. 기존 데이터는
+  /// [resolveBaseHourlyWageMode]가 canonical writer history에서 확인된
+  /// invariant로 해석한다 — 값 자체가 아니라 **writer가 하나뿐**이라는 사실에서.
+  final String? baseHourlyWageMode;
+
+  static const String baseHourlyManual = 'MANUAL';
+  static const String baseHourlyAuto = 'AUTO';
+
+  /// 저장된 map에서 통상시급 mode를 해석한다. **유일한 판정 지점.**
+  ///
+  /// mode 필드가 있으면 그것이 canonical이다. 없으면(R5.3C.1 이전 데이터)
+  /// `baseHourlyWage`의 **존재 여부**로 해석한다:
+  ///
+  ///   이 필드에 non-null을 쓴 writer는 전 히스토리에서 관리자 입력
+  ///   (`int.tryParse(<컨트롤러>)`) 하나뿐이고, 파생값이 저장된 적은 없다.
+  ///   DEV 실측으로도 저장값 == 파생값인 행은 0건이고 46건 전부 파생값보다
+  ///   작다(파생이었다면 불가능하다 — 파생에는 최저임금 하한이 있다).
+  ///
+  /// 자동채움 writer가 새로 들어오면 이 invariant가 소급해서 깨진다.
+  /// `compensation_snapshot_authority_test`가 그것을 먼저 잡는다.
+  static String resolveBaseHourlyWageMode(Map<String, dynamic> map) {
+    final stored = map['baseHourlyWageMode'] as String?;
+    if (stored == baseHourlyManual || stored == baseHourlyAuto) return stored!;
+    return map['baseHourlyWage'] != null ? baseHourlyManual : baseHourlyAuto;
+  }
+
   /// 주휴수당 포함 여부
   /// true: 시급/일급에 주휴수당 이미 포함 (별도 계산 불필요)
   /// false: 주휴 조건 충족 시 급여 확정 시 별도 확인 필요
@@ -96,6 +130,7 @@ class WorkDetailData {
     this.nightIncluded = false,
     this.breakMinutes = 0,
     this.baseHourlyWage,
+    this.baseHourlyWageMode,
     this.weeklyHolidayIncluded = false,
     this.scheduledDaysPerWeek,
     this.payScheduleType,
@@ -132,6 +167,7 @@ class WorkDetailData {
       nightIncluded: map['nightIncluded'] as bool? ?? false,
       breakMinutes: (map['breakMinutes'] as num?)?.toInt() ?? 0,
       baseHourlyWage: (map['baseHourlyWage'] as num?)?.toInt(),
+      baseHourlyWageMode: resolveBaseHourlyWageMode(map),
       weeklyHolidayIncluded: map['weeklyHolidayIncluded'] as bool? ?? false,
       scheduledDaysPerWeek: (map['scheduledDaysPerWeek'] as num?)?.toInt(),
       payScheduleType: map['payScheduleType'] as String?,
@@ -167,6 +203,10 @@ class WorkDetailData {
     if (nightIncluded) 'nightIncluded': true,
     if (breakMinutes > 0) 'breakMinutes': breakMinutes,
     if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+    // [R5.3C.1] mode는 값이 없어도 쓴다 — AUTO도 하나의 명시적 약속이다.
+    //   값의 부재를 "의견 없음"으로 두면 나중에 공고에 추가된 값이 스며든다.
+    'baseHourlyWageMode': baseHourlyWageMode ??
+        (baseHourlyWage != null ? baseHourlyManual : baseHourlyAuto),
     if (weeklyHolidayIncluded) 'weeklyHolidayIncluded': true,
     if (scheduledDaysPerWeek != null) 'scheduledDaysPerWeek': scheduledDaysPerWeek,
     if (payScheduleType != null) 'payScheduleType': payScheduleType,
@@ -202,6 +242,7 @@ class WorkDetailData {
     int? breakMinutes,
     int? baseHourlyWage,
     bool clearBaseHourlyWage = false,
+    String? baseHourlyWageMode,
     bool? weeklyHolidayIncluded,
     int? scheduledDaysPerWeek,
     bool clearScheduledDaysPerWeek = false,
@@ -241,6 +282,10 @@ class WorkDetailData {
       nightIncluded: nightIncluded ?? this.nightIncluded,
       breakMinutes: breakMinutes ?? this.breakMinutes,
       baseHourlyWage: clearBaseHourlyWage ? null : (baseHourlyWage ?? this.baseHourlyWage),
+      // 값을 지우는 것은 곧 "자동계산에 맡긴다"는 선언이다.
+      baseHourlyWageMode: clearBaseHourlyWage
+          ? baseHourlyAuto
+          : (baseHourlyWageMode ?? this.baseHourlyWageMode),
       weeklyHolidayIncluded: weeklyHolidayIncluded ?? this.weeklyHolidayIncluded,
       scheduledDaysPerWeek: clearScheduledDaysPerWeek ? null : (scheduledDaysPerWeek ?? this.scheduledDaysPerWeek),
       payScheduleType: clearPayScheduleType ? null : (payScheduleType ?? this.payScheduleType),

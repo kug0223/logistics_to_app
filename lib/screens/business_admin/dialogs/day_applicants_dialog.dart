@@ -3354,15 +3354,19 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         .length;
 
     setState(() => _isProcessing = false);
-    final selectedWdId = await AlternativeWorkOfferSheet.pickTarget(
+    // [R5.3C.1] 개별 급여 제안은 canManageWage가 따로 필요하다 — 서버도 같다.
+    final picked = await AlternativeWorkOfferSheet.pickOffer(
       context,
       workerName: workerName,
       currentWork: current,
       candidates: candidates,
       confirmedCountOf: confirmedOf,
+      sourceWage: app.wage,
+      sourceWageType: app.wageType,
+      canManageWage: _canForSelectedBiz((p) => p.canManageWage),
     );
-    if (selectedWdId == null || !mounted) return;
-    final target = candidates.firstWhere((w) => w.id == selectedWdId);
+    if (picked == null || !mounted) return;
+    final target = candidates.firstWhere((w) => w.id == picked.wdId);
 
     setState(() => _isProcessing = true);
     try {
@@ -3371,6 +3375,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         workerName: workerName,
         sourceApplicationId: app.id,
         target: target,
+        option: picked.option,
+        sourceWage: app.wage,
       );
       if (!sent || !mounted) return;
       await _load();

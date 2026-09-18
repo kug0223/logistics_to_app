@@ -1361,6 +1361,20 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
             ),
             if (isOffer) ...[
+              // [CROSS-DOMAIN-R5.3C.1] 실제 수락할 조건이 primary다.
+              //   공고 기본급은 경쟁하는 또 하나의 진실로 띄우지 않는다 —
+              //   근로자가 답할 수 없는 "왜 나는 다른가"를 만들지 않는다.
+              if (app.hasIndividualCompensation) ...[
+                const SizedBox(height: 2),
+                Text(
+                  '${app.formattedWage} · 회원님께 제안된 급여입니다',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.brand,
+                  ),
+                ),
+              ],
               const SizedBox(height: 2),
               Text(
                 '수락하면 기존 지원'
@@ -1854,7 +1868,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 size: 18, color: AppColors.grey400),
             const SizedBox(height: 6),
             _offerComparisonRow(
-              label: '제안받은 업무',
+              label: offerApp.hasIndividualCompensation
+                  ? '제안받은 업무 · 회원님께 제안된 급여'
+                  : '제안받은 업무',
               workType: offerApp.selectedWorkType,
               timeText: '${offerApp.startTime} ~ ${offerApp.endTime}',
               wageText: offerApp.formattedWage,
