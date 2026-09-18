@@ -40,6 +40,172 @@ const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 const PENDING_STATUSES = ["PENDING", "INVITED"];
 
 // ═══════════════════════════════════════════════════════════
+// [R5.3E.1] 실제 근무 개시 경계 — 단일 정의
+//
+//   확정을 되돌리는 writer가 여럿이다(확정취소·리컨펌 거절·계약 무효화·
+//   좌석 반납). 그 중 어느 것도 "이 사람이 이미 근무했는가"를 서버에서
+//   묻지 않았다. 화면은 물었다 — attendance_firestore.loadHasWorkedMap이
+//   그 판정을 갖고 있고 확정취소 버튼을 숨긴다. 그래서 막혀 있는 것처럼
+//   보였지만, 같은 callable을 직접 부르면 이미 출근한 사람의 확정이
+//   취소되고 좌석이 반납된다. UI가 숨기는 것은 authority가 아니다.
+//
+//   판정은 attendance row의 존재가 아니다. row는 NO_SHOW로도 만들어지고
+//   absent로도 남는다 — 둘 다 "근무하지 않았다"는 기록이다. 순서가 중요하다:
+//     1) status가 absent/NO_SHOW면 실근무 아님 (다른 무엇을 보기 전에)
+//     2) checkIn이 있으면 실근무 시작
+//     3) wageStatus가 calculated/confirmed/transferred면 실근무 (정산 개시)
+//
+//   1번이 2·3번보다 먼저다. callableBatchSetNoShow가 NO_SHOW에
+//   wageStatus:"confirmed" + finalWage:0을 쓰기 때문이다. 순서를 바꾸면
+//   모든 NO_SHOW가 "근무함"으로 판정되어 R5.1 대체충원 경로가 통째로
+//   막힌다. 화면 쪽 사본(loadHasWorkedMap)은 status를 checkIn에만 걸고
+//   wageConfirmed를 OR로 두므로 NO_SHOW를 "근무함"으로 본다 — 버튼을
+//   더 숨기는 쪽이라 화면에서는 안전하지만, 서버 권위 판정으로는 틀렸다.
+//
+//   키는 applicationId다. 화면 사본의 키는 uid+날짜여서, 같은 날 같은
+//   사업장에서 두 건을 가진 사람은 한 건만 근무해도 두 건 다 잠긴다.
+// ═══════════════════════════════════════════════════════════
+
+/** attendance.status 중 "근무하지 않았다"는 뜻의 terminal 기록. */
+const ATTENDANCE_NON_WORK_STATUSES = ["absent", "NO_SHOW"];
+
+/** 정산이 개시된 wageStatus — 이후 일반 확정취소는 허용하지 않는다. */
+const WAGE_SETTLEMENT_STARTED_STATUSES = ["calculated", "confirmed", "transferred"];
+
+type SrvActualWorkVerdict = {
+  started: boolean;
+  /** CHECKED_IN | WAGE_SETTLED | null */
+  reason: string | null;
+  attendanceId: string | null;
+};
+
+const SRV_NO_ACTUAL_WORK: SrvActualWorkVerdict =
+  {started: false, reason: null, attendanceId: null};
+
+/**
+ * attendance 문서 하나가 실근무 개시를 뜻하는지 판정한다 (순수 함수).
+ *
+ * @param {admin.firestore.DocumentData | undefined} attData attendance 데이터
+ * @return {string | null} 실근무면 사유 코드, 아니면 null
+ */
+function srvActualWorkReasonOf(
+  attData: admin.firestore.DocumentData | undefined
+): string | null {
+  if (!attData) return null;
+  const st = (attData["status"] as string | undefined) ?? "";
+  // (1) 비근무 terminal 기록이 최우선 — NO_SHOW의 wageStatus:"confirmed"보다 먼저.
+  if (ATTENDANCE_NON_WORK_STATUSES.includes(st)) return null;
+  // (2) 출근 시각이 있으면 실근무 개시.
+  if (attData["checkIn"] != null) return "CHECKED_IN";
+  // (3) 정산이 시작됐으면 실근무로 본다.
+  const ws = (attData["wageStatus"] as string | undefined) ?? "";
+  if (WAGE_SETTLEMENT_STARTED_STATUSES.includes(ws)) return "WAGE_SETTLED";
+  return null;
+}
+
+/**
+ * 한 Application의 실근무 개시 여부를 판정할 때 읽어야 할 attendance ref 목록.
+ *
+ * attendance docId는 `{applicationId}_{yyyyMMdd}`로 결정적이다. 그래서
+ * 쿼리 결과(이미 있는 row)에 더해 "근무일"과 "오늘"의 결정적 id를 함께
+ * 돌려준다 — pre-query 이후 새로 생긴 체크인을 transaction이 읽을 수 있어야
+ * cancel ‖ check-in race에서 승자가 정해진다(쿼리는 TX 안에서 쓸 수 없다).
+ *
+ * @param {string} applicationId 지원서 문서 ID
+ * @param {admin.firestore.DocumentData} appData 지원서 데이터
+ * @return {Promise<FirebaseFirestore.DocumentReference[]>} 읽어야 할 ref들
+ */
+async function srvActualWorkAttendanceRefs(
+  applicationId: string,
+  appData: admin.firestore.DocumentData
+): Promise<FirebaseFirestore.DocumentReference[]> {
+  const KST = 9 * 60 * 60 * 1000;
+  const kstDateStr = (ms: number) => {
+    const d = new Date(ms + KST);
+    return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}` +
+      `${String(d.getUTCDate()).padStart(2, "0")}`;
+  };
+
+  const byId = new Map<string, FirebaseFirestore.DocumentReference>();
+
+  // 결정적 id — 근무일 + 오늘(장기 근무의 당일 체크인).
+  const wd = appData["workDate"] as admin.firestore.Timestamp | undefined;
+  const deterministic = [
+    ...(wd ? [`${applicationId}_${kstDateStr(wd.toMillis())}`] : []),
+    `${applicationId}_${kstDateStr(Date.now())}`,
+  ];
+  for (const id of deterministic) {
+    byId.set(id, db.collection("attendance").doc(id));
+  }
+
+  // 이미 존재하는 row — legacy docId·수동 생성 건을 포함한다.
+  const snap = await db.collection("attendance")
+    .where("applicationId", "==", applicationId)
+    .limit(20)
+    .get();
+  for (const doc of snap.docs) byId.set(doc.id, doc.ref);
+
+  return [...byId.values()];
+}
+
+/**
+ * [R5.3E.1] 이미 실제 근무가 시작된 지원서인가 — 서버 권위 판정.
+ *
+ * transaction 밖의 pre-check용이다. 실제 차단은 이 판정을 transaction
+ * 안에서 다시 확인하는 곳(srvAssertNoActualWorkInTx)이 담당한다.
+ *
+ * @param {string} applicationId 지원서 문서 ID
+ * @param {admin.firestore.DocumentData} appData 지원서 데이터
+ * @return {Promise<SrvActualWorkVerdict>} 판정 결과
+ */
+async function srvHasActualWorkStarted(
+  applicationId: string,
+  appData: admin.firestore.DocumentData
+): Promise<SrvActualWorkVerdict> {
+  const refs = await srvActualWorkAttendanceRefs(applicationId, appData);
+  if (refs.length === 0) return SRV_NO_ACTUAL_WORK;
+  const snaps = await db.getAll(...refs);
+  for (const snap of snaps) {
+    if (!snap.exists) continue;
+    const reason = srvActualWorkReasonOf(snap.data());
+    if (reason) return {started: true, reason, attendanceId: snap.id};
+  }
+  return SRV_NO_ACTUAL_WORK;
+}
+
+/**
+ * transaction 안에서 실근무 개시 여부를 재확인하고, 시작됐으면 throw한다.
+ *
+ * refs를 transaction이 읽으므로 cancel ‖ check-in은 같은 문서를 두고
+ * 직렬화된다 — checked-in + canceled 동시 성립이 불가능해진다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 실행 중인 transaction
+ * @param {FirebaseFirestore.DocumentReference[]} refs 읽을 attendance ref들
+ * @param {string} message 차단 시 사용자에게 보일 문구
+ * @return {Promise<void>}
+ */
+async function srvAssertNoActualWorkInTx(
+  tx: FirebaseFirestore.Transaction,
+  refs: FirebaseFirestore.DocumentReference[],
+  message: string
+): Promise<void> {
+  if (refs.length === 0) return;
+  const snaps = await Promise.all(refs.map((r) => tx.get(r)));
+  for (const snap of snaps) {
+    if (!snap.exists) continue;
+    const reason = srvActualWorkReasonOf(snap.data());
+    if (reason) {
+      throw new HttpsError("failed-precondition", message);
+    }
+  }
+}
+
+/** 실근무 개시 이후 일반 확정취소를 막을 때 쓰는 단일 문구. */
+const ACTUAL_WORK_BLOCK_MESSAGE =
+  "이미 근무가 시작된 건은 확정을 취소할 수 없습니다. " +
+  "근태 수정 또는 급여 처리 화면에서 처리해주세요.";
+
+// ═══════════════════════════════════════════════════════════
 // 🔑 비밀번호 재설정 코드 발송
 // ═══════════════════════════════════════════════════════════
 
@@ -7264,6 +7430,37 @@ async function voidContractAtomicLifecycle(
     allPersonalGrantRefs.push(...refs);
   }
 
+  // [R5.3E.1] 계약 무효화가 실근무 사실을 뒤집지 못하게 한다.
+  //
+  //   이 helper는 계약만 voided로 바꾸는 것이 아니라 연결된 CONFIRMED
+  //   Application까지 CANCELED로 만든다. 그런데 attendance를 한 번도 읽지
+  //   않았다 — 이미 출근했거나 급여가 확정된 사람도 pending_* 계약 하나를
+  //   무효화하면 확정이 사라졌다. 계약 권한(canManageContract)이 근태 사실을
+  //   되돌리는 셈이다.
+  //
+  //   completed 계약은 애초에 void 불가이므로(아래 TX), 여기서 닫히는 것은
+  //   pending_employer / pending_worker 경로다. 부분 처리(계약만 void,
+  //   Application 유지)를 고르지 않는다 — 근무 기록은 있는데 계약이 무효인
+  //   상태를 새로 만들게 된다. 되돌리는 길은 근태·급여 정정 flow다.
+  const voidWorkRefs: FirebaseFirestore.DocumentReference[] = [];
+  if (appRefs.length > 0) {
+    const preAppSnaps = await db.getAll(...appRefs);
+    for (const appSnap of preAppSnaps) {
+      if (!appSnap.exists) continue;
+      const appData = appSnap.data()!;
+      if (!CONFIRMED_STATUSES.includes((appData["status"] as string | undefined) ?? "")) continue;
+      const verdict = await srvHasActualWorkStarted(appSnap.id, appData);
+      if (verdict.started) {
+        throw new HttpsError(
+          "failed-precondition",
+          "이미 근무가 시작된 근로자의 계약서는 무효화할 수 없습니다. " +
+          "근태 수정 또는 급여 처리 화면에서 처리해주세요."
+        );
+      }
+      voidWorkRefs.push(...await srvActualWorkAttendanceRefs(appSnap.id, appData));
+    }
+  }
+
   // Firestore TX — reads 먼저, writes 나중
   type TxResult = {alreadyVoided: true} | {alreadyVoided: false};
   const txResult: TxResult = await db.runTransaction(async (tx) => {
@@ -7282,6 +7479,13 @@ async function voidContractAtomicLifecycle(
     if (contractStatus === "completed") {
       throw new HttpsError("failed-precondition", "쌍방 서명이 완료된 계약서는 무효화할 수 없습니다.");
     }
+
+    // [R5.3E.1] contract void ‖ check-in canonical winner — cancel과 동일 규칙.
+    await srvAssertNoActualWorkInTx(
+      tx, voidWorkRefs,
+      "이미 근무가 시작된 근로자의 계약서는 무효화할 수 없습니다. " +
+      "근태 수정 또는 급여 처리 화면에서 처리해주세요."
+    );
 
     // ── APPLICATION 교차검증 (ANY INVALID → 전체 TX abort) ──
     for (const appSnap of freshApps) {
@@ -15240,6 +15444,17 @@ export const callableCancelConfirmedApplication = onCall(
     const userRefForCancelTx = (noShowEquivalent && cancelPenaltyResolved)
       ? db.collection("users").doc(workerUid) : null;
 
+    // [R5.3E.1] 실근무 개시 이후 일반 확정취소 차단 — 서버 권위 판정.
+    //   화면(loadHasWorkedMap)만 막고 있던 경계를 여기로 옮긴다. pre-check는
+    //   빠른 거절용이고, 진짜 차단은 아래 transaction 안의 재확인이다.
+    const cancelWorkRefs = await srvActualWorkAttendanceRefs(applicationId, appData);
+    {
+      const preVerdict = await srvHasActualWorkStarted(applicationId, appData);
+      if (preVerdict.started) {
+        throw new HttpsError("failed-precondition", ACTUAL_WORK_BLOCK_MESSAGE);
+      }
+    }
+
     // [Fix-A] capacity decrement refs — cancel TX 내에서 서버 원자적 감소 (client 후속 callableDecrementSlotConfirmed 불필요)
     const cancelCapToId = appData.toId as string | undefined;
     const cancelCapSlotId = (appData.slotId as string | undefined) ?? null;
@@ -15268,6 +15483,13 @@ export const callableCancelConfirmedApplication = onCall(
 
       const freshStatus = (freshSnap.data()?.status as string | undefined) ?? "";
       if (!CONFIRMED_STATUSES.includes(freshStatus)) return; // 이미 취소됨 — 멱등
+
+      // [R5.3E.1] cancel ‖ check-in canonical winner.
+      //   attendance ref를 이 transaction이 읽으므로, check-in이 먼저 commit되면
+      //   이 transaction은 재시도되고 여기서 차단된다. 반대로 이쪽이 먼저
+      //   commit되면 check-in은 CANCELED를 보고 거절된다. 두 결과가 동시에
+      //   성립하는 경로가 없다.
+      await srvAssertNoActualWorkInTx(tx, cancelWorkRefs, ACTUAL_WORK_BLOCK_MESSAGE);
 
       // penalty 적용 여부 결정 (idempotency: noShowPenaltyAppliedAt fresh 재확인)
       const alreadyPenalized = !!freshSnap.data()?.noShowPenaltyAppliedAt;
@@ -15544,6 +15766,15 @@ export const callableRespondToReconfirm = onCall(
     }
 
     // ─── declined: 취소 처리 ───────────────────────
+    // [R5.3E.1] 리컨펌 거절도 확정취소다 — 실근무 개시 이후에는 같은 경계가 적용된다.
+    const reconfWorkRefs = await srvActualWorkAttendanceRefs(applicationId, appData);
+    {
+      const preVerdict = await srvHasActualWorkStarted(applicationId, appData);
+      if (preVerdict.started) {
+        throw new HttpsError("failed-precondition", ACTUAL_WORK_BLOCK_MESSAGE);
+      }
+    }
+
     // [Fix-A] capacity decrement refs — reconfirm TX 내에서 서버 원자적 감소
     const reconfCapWdId = appData.wdId as string | undefined;
     const reconfCapToRef = toId ? db.collection("tos").doc(toId) : null;
@@ -15559,6 +15790,9 @@ export const callableRespondToReconfirm = onCall(
       ]);
       const freshStatus = freshSnap.data()?.status as string | undefined;
       if (!freshStatus || !["CONFIRMED", "CONTRACT_PENDING"].includes(freshStatus)) return;
+
+      // [R5.3E.1] reconfirm-decline ‖ check-in canonical winner (cancel과 동일 규칙)
+      await srvAssertNoActualWorkInTx(tx, reconfWorkRefs, ACTUAL_WORK_BLOCK_MESSAGE);
 
       // 취소 상태로 변경 (confirmedDecrementedAt 포함 — 구버전 client 후속 CF 멱등 처리)
       tx.update(appRef, {
@@ -21278,6 +21512,27 @@ export const callableReleaseNoshowSeat = onCall(
       throw new HttpsError("failed-precondition", "NO_SHOW 출근 기록이 없는 지원서입니다.");
     }
 
+    // [R5.3E.1] 실제로 출근한 사람의 자리를 반납하지 않는다.
+    //
+    //   좌석 반납은 status를 바꾸지 않고 정원만 되돌린다 — 실근무자에게
+    //   적용되면 그 사람은 여전히 CONFIRMED인데 자리는 비어 있어 대체
+    //   인력이 들어오고, 같은 자리에 두 명이 근무한 기록이 남는다.
+    //
+    //   NO_SHOW 기록 요구가 이미 대부분을 막는다(callableBatchSetNoShow는
+    //   checkIn이 있는 문서를 skip한다). 그래도 판정을 여기 명시한다 —
+    //   NO_SHOW 기록의 존재는 "다른 row에 실근무가 없다"는 뜻이 아니고,
+    //   무엇보다 이 경계의 정의가 writer마다 달라지면 안 된다.
+    const releaseWorkRefs = await srvActualWorkAttendanceRefs(applicationId, appData);
+    {
+      const preVerdict = await srvHasActualWorkStarted(applicationId, appData);
+      if (preVerdict.started) {
+        throw new HttpsError(
+          "failed-precondition",
+          "이미 근무가 시작된 건은 좌석을 반납할 수 없습니다."
+        );
+      }
+    }
+
     // ── Step 4: 참조 준비 ────────────────────────────────────
     const releaseToId = appData.toId as string | undefined;
     const releaseSlotId = (appData.slotId as string | undefined) ?? null;
@@ -21330,6 +21585,12 @@ export const callableReleaseNoshowSeat = onCall(
         releaseToRef ? tx.get(releaseToRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
         releaseSlotRef ? tx.get(releaseSlotRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
       ]);
+
+      // [R5.3E.1] release ‖ check-in canonical winner — cancel과 동일 규칙.
+      await srvAssertNoActualWorkInTx(
+        tx, releaseWorkRefs,
+        "이미 근무가 시작된 건은 좌석을 반납할 수 없습니다."
+      );
 
       const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -22265,6 +22526,14 @@ export const callableBatchCheckIn = onCall(
               if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
                   appVerifySnap.data()!.businessId !== businessId) {
                 console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
+                return false;
+              }
+              // [R5.3E.1] 확정 상태 검증 — 취소된 지원서에 새 출근 기록을 만들지 않는다.
+              //   cancel ‖ check-in에서 취소가 먼저 이긴 경우 현재 상태 기준으로 처리한다.
+              //   (기존 row를 고치는 attendanceId 경로는 근태 정정 flow이므로 대상 아님)
+              const batchCiStatus = (appVerifySnap.data()!.status as string | undefined) ?? "";
+              if (!CONFIRMED_STATUSES.includes(batchCiStatus)) {
+                console.warn(`출근 처리 건너뜀 — 확정 상태가 아님 (${applicationId}): ${batchCiStatus}`);
                 return false;
               }
               // [5A.1-P1-WF-01] 미래 날짜 신규 출근 기록 생성 차단
@@ -25547,9 +25816,18 @@ export const callableCheckIn = onCall(
     const ref = db.collection("attendance").doc(docId);
 
     // 4. 트랜잭션: 중복 체크인 방지 + 반올림 계산 (now 트랜잭션 내부 — 재시도 시 갱신)
+    // [R5.3E.1] Application 상태를 TX 안에서 다시 읽는다.
+    //   위 status 검증은 TX 밖의 pre-read라 확정취소와 겹치면 둘 다 성공할 수
+    //   있었다(취소됨 + 출근함). TX가 appRef를 읽으면 취소가 먼저 commit된
+    //   경우 이 TX가 재시도되어 현재 상태(CANCELED) 기준으로 거절된다.
+    const checkInAppRef = db.collection("applications").doc(applicationId);
     await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
+      const [snap, freshAppSnap] = await Promise.all([tx.get(ref), tx.get(checkInAppRef)]);
       if (snap.exists) throw new HttpsError("already-exists", "오늘 이미 출근하셨습니다.");
+      const freshAppStatus = (freshAppSnap.data()?.status as string | undefined) ?? "";
+      if (!confirmedStatuses.includes(freshAppStatus)) {
+        throw new HttpsError("failed-precondition", "확정된 지원만 출근할 수 있습니다.");
+      }
 
       // [B1-FIX] now를 트랜잭션 내부에서 획득 — 재시도 시 시각 갱신
       const now = new Date();
