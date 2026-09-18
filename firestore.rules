@@ -378,6 +378,23 @@ service cloud.firestore {
                          //   idCardImageUrl: legacy 경로 동일 위험
                          //   제출/변경은 callableMarkIdCardVerified(storagePath) CF 경유 필수
                          'idCardImagePath', 'idCardImageUrl',
+                         // [BLOCKER-BANKBOOK-PATH-INJECTION-SIGNED-URL]
+                         //   bankbookImagePath/Url이 이 목록에 없어서 클라이언트가 직접 쓸 수 있었다.
+                         //   결과는 두 가지였다:
+                         //     1) 파일 없이 문자열만 심어도 hasBankbookDocument가 true가 되어
+                         //        지원 prerequisite(서버 gate 포함)가 통과됐다.
+                         //     2) callableGetBankbookSignedUrl이 그 경로를 그대로 서명했다 —
+                         //        타인 신분증 경로를 심으면 관리자가 통장사본인 줄 알고 받는다.
+                         //   제출은 callableMarkBankbookVerified(storagePath) CF 경유 필수.
+                         'bankbookImagePath', 'bankbookImageUrl',
+                         // [DOCUMENT-VERIFICATION-INTEGRITY-R0]
+                         //   문서 상태와 제출 근거 — 서버가 증거로부터 계산한다.
+                         //   클라이언트가 상태 문자열을 직접 쓰면 '기기 확인 통과'와
+                         //   '사람이 확인함'의 구분이 그 자리에서 무너진다.
+                         'idCardDocumentState', 'idCardSelfCheck', 'idCardSubmittedAt',
+                         'idCardReviewedBy', 'idCardReviewedAt', 'idCardReviewNote',
+                         'bankbookDocumentState', 'bankbookSelfCheck',
+                         'bankbookReviewedBy', 'bankbookReviewedAt', 'bankbookReviewNote',
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -489,6 +506,12 @@ service cloud.firestore {
                        request.resource.data.get('bankVerificationStatus', null) == null &&
                        request.resource.data.get('bankbookUploadedAt', null) == null &&
                        request.resource.data.get('contactPhone', null) == null &&
+                       // [BLOCKER-BANKBOOK-PATH-INJECTION-SIGNED-URL] 가입 시점 주입 차단
+                       request.resource.data.get('bankbookImagePath', null) == null &&
+                       request.resource.data.get('bankbookImageUrl', null) == null &&
+                       // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 문서 상태는 CF만 만든다
+                       request.resource.data.get('idCardDocumentState', null) == null &&
+                       request.resource.data.get('bankbookDocumentState', null) == null &&
                        // [HIGH-U3] termsConsentAt/termsConsent: CF callableRecordTermsConsent 전용
                        //   법적 타임스탬프 위조 차단 (Trust Boundary Charter)
                        request.resource.data.get('termsConsentAt', null) == null &&

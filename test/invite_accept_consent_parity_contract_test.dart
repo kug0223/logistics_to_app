@@ -304,10 +304,15 @@ void main() {
         '"신분증 등록이 필요합니다."',
         '"통장 정보 등록이 필요합니다."',
         '"통장사본 등록이 필요합니다."',
-        '"신분증 인증 후 지원할 수 있습니다."',
       ]) {
         expect(apply.contains(m), true, reason: m);
       }
+      // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 단기 신분증 gate는 **조건**으로 고정한다.
+      //   예전에는 문구('신분증 인증 후 지원할 수 있습니다')로 셌는데, 그 문장은
+      //   사실과 달랐다 — isIdVerified가 뜻한 것은 업로드였다. 문구는 이제
+      //   반려·재등록 상태에 따라 갈리고, 지켜야 할 것은 게이트 자체다.
+      expect(apply.contains('slotId && userData["isIdVerified"] !== true'), true,
+          reason: '단기(슬롯) 공고의 신분증 gate는 그대로여야 한다');
     });
 
     test('확정 경로의 grant 조건이 그대로다 (헬퍼로 이동만)', () {

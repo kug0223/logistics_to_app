@@ -74,6 +74,10 @@ class UserModel {
   //   단기(슬롯 있는) 공고 지원 시 서버 gate로 사용됨 (callableApplyToTO).
   //   장기(슬롯 없는) 공고에는 이 gate가 적용되지 않는다.
   final bool isIdVerified;
+
+  /// [R0] 서버가 기록한 제출 문서 상태. 클라이언트는 읽기만 한다.
+  final String? _rawIdCardDocumentState;
+  final String? _rawBankbookDocumentState;
   
   // ── 전화번호 시스템 ──
   /// PASS 인증 시 통신사에서 확인된 전화번호 (= 기존 phone 역할 승계)
@@ -222,6 +226,8 @@ class UserModel {
     this.idCardImagePath,
     this.idCardVerifiedAt,
     this.isIdVerified = false,
+    String? idCardDocumentState,
+    String? bankbookDocumentState,
     this.bankName,
     this.accountNumber,
     this.accountHolder,
@@ -273,7 +279,9 @@ class UserModel {
        managedBusinessIds = managedBusinessIds ??
            (businessId != null ? [businessId] : const []),
        subAdminBusinessIds = subAdminBusinessIds ?? const [],
-       preferredJobRegions = preferredJobRegions ?? const [];
+       preferredJobRegions = preferredJobRegions ?? const [],
+       _rawIdCardDocumentState = idCardDocumentState,
+       _rawBankbookDocumentState = bankbookDocumentState;
 
 
   // ── 편의 메서드 ──
@@ -365,6 +373,39 @@ class UserModel {
       (bankName != null && bankName!.isNotEmpty) &&
       (accountNumber != null && accountNumber!.isNotEmpty) &&
       (accountHolder != null && accountHolder!.isNotEmpty);
+
+  // ── [DOCUMENT-VERIFICATION-INTEGRITY-R0] 제출 문서의 상태 ────────────────
+  //
+  //   `isIdVerified`는 "본인 경로에 파일이 존재한다"만 뜻해 왔는데, 화면은
+  //   '✓ 등록완료'로 말했다. 그 사이에 무엇이 있었는지 — 기기 확인이
+  //   통과했는지, 사용자가 불일치 경고를 넘겼는지 — 가 기록되지 않았다.
+  //
+  //   서버가 정한 상태를 그대로 읽는다. 여기서 다시 계산하지 않는다.
+  //   모르는 값은 `submitted`로 떨어진다 — 없음을 통과로 읽지 않는다.
+
+  /// 서버가 기록한 신분증 상태 문자열. 없으면 null (구 데이터).
+  String? get idCardDocumentState => _rawIdCardDocumentState;
+
+  /// 서버가 기록한 통장사본 상태 문자열. 없으면 null (구 데이터).
+  String? get bankbookDocumentState => _rawBankbookDocumentState;
+
+  /// 사람이 반려했거나 재등록을 요구한 문서인가 — 화면이 막아야 할 상태.
+  bool get idCardNeedsReupload =>
+      _rawIdCardDocumentState == 'MANUAL_REJECTED' ||
+      _rawIdCardDocumentState == 'REUPLOAD_REQUIRED';
+
+  bool get bankbookNeedsReupload =>
+      _rawBankbookDocumentState == 'MANUAL_REJECTED' ||
+      _rawBankbookDocumentState == 'REUPLOAD_REQUIRED';
+
+  /// 사람이 봐야 하는 상태인가.
+  bool get idCardAwaitsReview =>
+      _rawIdCardDocumentState == 'SELF_CHECK_OVERRIDDEN' ||
+      _rawIdCardDocumentState == 'MANUAL_REVIEW_REQUIRED';
+
+  bool get bankbookAwaitsReview =>
+      _rawBankbookDocumentState == 'SELF_CHECK_OVERRIDDEN' ||
+      _rawBankbookDocumentState == 'MANUAL_REVIEW_REQUIRED';
 
   /// 통장사본 제출 여부 (bankbookImagePath 또는 bankbookImageUrl 중 하나 이상 존재).
   /// V3 이후: bankbookImagePath 우선. V3 이전 사용자: bankbookImageUrl 폴백.
@@ -492,6 +533,8 @@ class UserModel {
       idCardImagePath: map['idCardImagePath'],
       idCardVerifiedAt: _parseDateTime(map['idCardVerifiedAt']),
       isIdVerified: map['isIdVerified'] ?? false,
+      idCardDocumentState: map['idCardDocumentState'] as String?,
+      bankbookDocumentState: map['bankbookDocumentState'] as String?,
       bankName: map['bankName'],
       accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],

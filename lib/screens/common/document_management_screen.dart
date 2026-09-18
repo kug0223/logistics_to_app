@@ -817,13 +817,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       // 주민번호 앞자리 계산: birthDate + gender (내국인 residentNumber는 저장 안 됨)
       final residentNumber = _buildExpectedResidentNumber(user);
 
-      final imagePath = await DocumentUploadHelper.pickAndVerifyIdCard(
+      final picked = await DocumentUploadHelper.pickAndVerifyIdCard(
         context,
         user.name,
         expectedResidentNumber: residentNumber,
       );
 
-      if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화
+      if (picked == null || !mounted) return; // finally가 _isLoading 초기화
+      final imagePath = picked.path;
 
       final oldUrl = user.idCardImageUrl;
       final oldPath = user.idCardImagePath;
@@ -847,10 +848,12 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       // 2. CF로 신분증 등록 — 경로 소유권 검증 후 isIdVerified=true 설정
       //    [BUG-ID-01] storagePath 직접 전달 — URL 파싱 불필요, permanent URL 생성 0건
       //    [PRODUCT-POLICY] callableMarkIdCardVerified가 경로 검증 완료 후 isIdVerified=true를 설정한다.
+      //    [DOCUMENT-VERIFICATION-INTEGRITY-R0] 기기 확인 **근거**를 함께 보낸다.
+      //      판정이 아니다 — 서버가 이 근거로 문서 상태를 정한다.
       newIdCardPath = storagePath; // CF 호출 전 Storage orphan 추적
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkIdCardVerified')
-          .call({'storagePath': storagePath});
+          .call({'storagePath': storagePath, 'selfCheck': picked.selfCheck});
       newIdCardPath = null; // CF 성공 — Storage 정리 불필요
 
       // 3. 기존 이미지 삭제 (best-effort)
@@ -1029,6 +1032,66 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     }
   }
 
+  // ── [DOCUMENT-VERIFICATION-INTEGRITY-R0] 문서 상태 표시 ─────────────────
+  //
+  //   금지: 업로드됨을 '확인 완료'처럼 보이게 하는 문구.
+  //   '확인 완료'는 사람이 확인한 상태(MANUAL_APPROVED) 하나뿐이다.
+
+  ({String label, Color color, IconData icon}) _idCardStatus(UserModel user) =>
+      _docStatus(user.idCardDocumentState);
+
+  ({String label, Color color, IconData icon}) _bankbookStatus(UserModel user) =>
+      _docStatus(user.bankbookDocumentState);
+
+  ({String label, Color color, IconData icon}) _docStatus(String? state) {
+    switch (state) {
+      case 'MANUAL_APPROVED':
+        return (
+          label: '확인 완료',
+          color: const Color(0xFF22C55E),
+          icon: Icons.check_circle_rounded
+        );
+      case 'MANUAL_REJECTED':
+      case 'REUPLOAD_REQUIRED':
+        return (
+          label: '다시 등록 필요',
+          color: AppColors.error,
+          icon: Icons.error_outline
+        );
+      case 'SELF_CHECK_OVERRIDDEN':
+      case 'MANUAL_REVIEW_REQUIRED':
+        return (
+          label: '관리자 확인 중',
+          color: AppColors.warning,
+          icon: Icons.hourglass_top
+        );
+      case 'SELF_CHECK_PASSED':
+        return (
+          label: '제출 완료',
+          color: AppColors.infoDark,
+          icon: Icons.task_alt
+        );
+      default:
+        // 상태가 없는 기존 제출물. 통과로 읽지 않는다 — 제출됐다고만 말한다.
+        return (
+          label: '제출 완료',
+          color: AppColors.infoDark,
+          icon: Icons.task_alt
+        );
+    }
+  }
+
+  Widget _docStatusChip(
+      BuildContext context, ({String label, Color color, IconData icon}) s) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(s.icon, color: s.color, size: 18),
+      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+      Text(s.label,
+          style: ResponsiveHelper.smallStyle(context,
+              color: s.color, fontWeight: FontWeight.w600)),
+    ]);
+  }
+
   /// 📄 신원 확인 카드 — 단층 구조 (Nested Card 금지)
   /// 아이템 행 + 구분선 + CTA 버튼으로만 구성
   ///
@@ -1087,17 +1150,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   ],
                 ),
               ),
-              // 미등록 > / ✓ 등록완료
+              // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 상태를 그대로 말한다.
+              //
+              //   예전에는 파일이 있기만 하면 '✓ 등록완료'였다. 인식이
+              //   실패했든, 이름이 달랐든, 사용자가 경고를 넘겼든 화면은
+              //   똑같이 초록 체크를 보여줬다 — 그것이 제보된 현상이다.
+              //   '확인 완료'는 사람이 확인한 경우에만 쓴다.
               if (hasIdCard)
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.check_circle_rounded,
-                      color: Color(0xFF22C55E), size: 18),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Text('등록완료',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: const Color(0xFF22C55E),
-                          fontWeight: FontWeight.w600)),
-                ])
+                _docStatusChip(context, _idCardStatus(user))
               else
                 Row(mainAxisSize: MainAxisSize.min, children: [
                   Text('미등록',
@@ -1233,16 +1293,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 color: AppColors.errorFaded, fontWeight: FontWeight.w600)),
       ]);
     } else if (hasBankAccount && hasBankbook) {
-      // B+: V3 완료 상태 — verificationStatus 미설정이지만 계좌+통장사본 등록 완료
-      statusBadge = Row(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.check_circle_rounded,
-            color: Color(0xFF22C55E), size: 18),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text('등록완료',
-            style: ResponsiveHelper.smallStyle(context,
-                color: const Color(0xFF22C55E),
-                fontWeight: FontWeight.w600)),
-      ]);
+      // B+: 계좌 + 통장사본 제출 완료.
+      //   [DOCUMENT-VERIFICATION-INTEGRITY-R0] 여기가 '등록완료' 초록 체크였다.
+      //   제출은 확인이 아니다 — 서버가 기록한 상태를 그대로 말한다.
+      statusBadge = _docStatusChip(context, _bankbookStatus(user));
     } else if (hasBankAccount) {
       // B: 계좌만 있고 통장사본 없음 — '미등록' 표시 금지 (BANKBOOK-UX-01 수정)
       statusBadge = Text('계좌 등록됨',
@@ -1522,14 +1576,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     try {
       // [V3 FOREIGN HOLDER] 외국인: user.name 기반 예금주 비교 skip (legalName 불일치 오탐)
       // 내국인: user.name 기반 SOFT 이름 검증 유지
-      final imagePath = await DocumentUploadHelper.pickAndVerifyBankbook(
+      final picked = await DocumentUploadHelper.pickAndVerifyBankbook(
         context,
         user.isForeign ? null : user.name,
         expectedAccountNumber: (user.accountNumber?.isEmpty ?? true) ? null : user.accountNumber,
         // expectedBankName 미사용: 스크린샷 내 은행명 표기가 다양해 오탐 가능성 높음
       );
 
-      if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화
+      if (picked == null || !mounted) return; // finally가 _isLoading 초기화
+      final imagePath = picked.path;
 
       final oldUrl = user.bankbookImageUrl;
 
@@ -1548,9 +1603,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       }
 
       // 2. CF로 isBankbookVerified/bankbookVerifiedAt 설정 — Admin SDK 경유로 직접 쓰기 차단 준수
+      //    [DOCUMENT-VERIFICATION-INTEGRITY-R0] storagePath 직통 + 기기 확인 근거.
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkBankbookVerified')
-          .call({'imageUrl': newUrl});
+          .call({
+        'imageUrl': newUrl,
+        'storagePath': storagePath,
+        'selfCheck': picked.selfCheck,
+      });
       newUrl = null; // CF 성공 — Storage 정리 불필요
 
       // 3. 기존 이미지 삭제 (best-effort)

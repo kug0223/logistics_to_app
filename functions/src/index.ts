@@ -206,6 +206,110 @@ const ACTUAL_WORK_BLOCK_MESSAGE =
   "근태 수정 또는 급여 처리 화면에서 처리해주세요.";
 
 // ═══════════════════════════════════════════════════════════
+// [DOCUMENT-VERIFICATION-INTEGRITY-R0] 제출 문서의 상태
+//
+//   `isIdVerified`는 이름이 말하는 것을 한 적이 없다. 그 값이 뜻한 것은
+//   "본인 Storage 경로에 파일이 존재한다" 하나였고, 화면은 그것을
+//   '✓ 등록완료'로, 서버 오류는 '신분증 인증 후 지원할 수 있습니다'로
+//   말해 왔다. OCR 판정은 전부 기기 안에서 끝나고 서버로 오지 않았다 —
+//   사용자가 불일치 경고에서 '그대로 등록'을 눌렀는지조차 기록이 없었다.
+//
+//   그래서 상태를 쪼갠다. 다만 **AUTO_VERIFIED라는 이름은 쓰지 않는다.**
+//   기기 안에서 도는 OCR은 보안 통제가 될 수 없다 — 클라이언트가 무엇을
+//   보내든 서버는 그것을 독립적으로 확인할 방법이 없다. 그 값에 '검증됨'
+//   이라는 이름을 붙이면 지금 고치는 conflation을 이름만 바꿔 다시 만든다.
+//
+//   대신 **누가 말한 것인지**를 상태에 담는다:
+//
+//     SUBMITTED             제출됨. 판정 근거 없음(구버전 클라이언트 포함).
+//     SELF_CHECK_PASSED     기기 확인이 일치했다고 **클라이언트가 주장**함.
+//     SELF_CHECK_OVERRIDDEN 불일치·인식실패인데 사용자가 그대로 제출함.
+//     MANUAL_REVIEW_REQUIRED 사람이 봐야 한다.
+//     MANUAL_APPROVED       사람이 확인했다. 유일하게 권위 있는 통과.
+//     MANUAL_REJECTED       사람이 반려했다.
+//     REUPLOAD_REQUIRED     다시 올려야 한다.
+//
+//   클라이언트는 상태 문자열을 보내지 않는다. **증거**만 보내고 상태는
+//   서버가 정한다. 그래야 새 상태가 생겨도 매핑이 한 곳에 남는다.
+// ═══════════════════════════════════════════════════════════
+
+const DOC_SUBMITTED = "SUBMITTED";
+const DOC_SELF_CHECK_PASSED = "SELF_CHECK_PASSED";
+const DOC_SELF_CHECK_OVERRIDDEN = "SELF_CHECK_OVERRIDDEN";
+const DOC_MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED";
+const DOC_MANUAL_APPROVED = "MANUAL_APPROVED";
+const DOC_MANUAL_REJECTED = "MANUAL_REJECTED";
+const DOC_REUPLOAD_REQUIRED = "REUPLOAD_REQUIRED";
+
+/** 클라이언트가 보내는 **증거**. 판정이 아니다. */
+type SrvDocSelfCheck = {
+  /** 기기 OCR이 이름을 찾았는가 */
+  nameMatched?: unknown;
+  /** 기기 OCR이 식별번호(주민번호 앞7자리·계좌번호)를 찾았는가 */
+  identifierMatched?: unknown;
+  /** OCR 자체가 실패했는가(타임아웃·예외) */
+  ocrFailed?: unknown;
+  /** 경고를 보고도 사용자가 그대로 제출했는가 */
+  overridden?: unknown;
+};
+
+/**
+ * 제출 증거에서 문서 상태를 정한다 — **서버가 유일한 매핑 지점**이다.
+ *
+ * 값이 없으면(구버전 클라이언트) SUBMITTED다. 없는 것을 통과로 읽지 않는다.
+ *
+ * @param {SrvDocSelfCheck | undefined} raw 클라이언트가 보낸 증거
+ * @return {object} 상태(state)와 정규화된 증거(evidence)
+ */
+function srvComputeDocumentState(
+  raw: SrvDocSelfCheck | undefined
+): {state: string; evidence: Record<string, boolean> | null} {
+  if (!raw || typeof raw !== "object") {
+    return {state: DOC_SUBMITTED, evidence: null};
+  }
+  const b = (v: unknown) => v === true;
+  const evidence = {
+    nameMatched: b(raw.nameMatched),
+    identifierMatched: b(raw.identifierMatched),
+    ocrFailed: b(raw.ocrFailed),
+    overridden: b(raw.overridden),
+  };
+  // 사용자가 경고를 넘겼거나 OCR이 실패했으면, 일치 여부와 무관하게 override다.
+  if (evidence.overridden || evidence.ocrFailed) {
+    return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence};
+  }
+  if (evidence.nameMatched && evidence.identifierMatched) {
+    return {state: DOC_SELF_CHECK_PASSED, evidence};
+  }
+  // 일부만 맞았다 — 통과로 올리지 않는다.
+  return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence};
+}
+
+/**
+ * Storage 경로가 그 사용자의 것인지.
+ *
+ * [BLOCKER-BANKBOOK-PATH-INJECTION-SIGNED-URL]
+ *   `bankbookImagePath`는 rules 어디에도 없어 클라이언트가 직접 쓸 수 있었고,
+ *   Signed URL 발급은 저장된 경로를 그대로 서명했다. 근로자가 그 값을 다른
+ *   사람의 신분증 경로로 바꾸면, 관리자는 통장사본인 줄 알고 그 이미지를
+ *   받는다. 감사 로그에도 통장사본 열람으로 남는다.
+ *
+ *   rules를 막는 것만으로는 부족하다 — 이미 심어진 값이 그대로 남는다.
+ *   읽는 쪽에서 매번 확인한다.
+ *
+ * @param {string | undefined} path Storage 경로
+ * @param {string} ownerUid 그 문서의 주인
+ * @return {boolean} 소유 경로면 true
+ */
+function srvIsOwnedStoragePath(
+  path: string | undefined, ownerUid: string
+): boolean {
+  if (!path || typeof path !== "string") return false;
+  if (path.includes("..")) return false;
+  return path.startsWith(`users/${ownerUid}/`);
+}
+
+// ═══════════════════════════════════════════════════════════
 // 🔑 비밀번호 재설정 코드 발송
 // ═══════════════════════════════════════════════════════════
 
@@ -7909,7 +8013,9 @@ export const callableMarkIdCardVerified = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {imageUrl, storagePath: directPath} = request.data as {imageUrl?: string; storagePath?: string};
+    const {imageUrl, storagePath: directPath, selfCheck} = request.data as {
+      imageUrl?: string; storagePath?: string; selfCheck?: SrvDocSelfCheck;
+    };
 
     let storagePath: string;
 
@@ -7962,12 +8068,33 @@ export const callableMarkIdCardVerified = onCall(
     // Storage 경로 소유권 검증(callerUid 일치) + 파일 실존 검증을 통과한 업로드가
     // prerequisite를 충족한다. isIdVerified는 "SUPER_ADMIN 심사 완료"가 아니라
     // "USER가 자신의 허용된 Storage 경로에 신분증을 정상 업로드했다"는 상태다.
+    //
+    // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 그 뜻을 이제 별도 필드가 말한다.
+    //   isIdVerified는 legacy alias로 남긴다 — 이 값을 읽는 곳이 지원·수락·
+    //   Home·배지에 흩어져 있고, 의미가 바뀌지 않았으므로 건드리지 않는다.
+    //   달라지는 것은 그 옆에 **무슨 근거로 제출됐는지**가 함께 남는다는 점이다.
+    //
+    // [BLOCKER-DOCUMENT-REUPLOAD-VERIFICATION-STALENESS]
+    //   재업로드는 이전 판정을 물려받지 않는다. 사람이 승인한 문서를 바꿔치고
+    //   그 승인을 그대로 들고 가는 경로를 남기지 않는다 — 관리자 결정 필드를
+    //   여기서 명시적으로 지운다(값이 없으면 지우기는 no-op이다).
+    const idDoc = srvComputeDocumentState(selfCheck);
     await db.collection("users").doc(callerUid).update({
       idCardImageUrl: admin.firestore.FieldValue.delete(), // 기존 permanent URL 제거
       idCardImagePath: storagePath,    // [BUG-ID-01] authoritative Storage path
       isIdVerified: true,              // 업로드 완료 = 단기공고 지원 prerequisite 충족
       idCardVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      idCardDocumentState: idDoc.state,
+      idCardSelfCheck: idDoc.evidence,
+      idCardSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // 재업로드 — 이전 사람 결정 무효화
+      idCardReviewedBy: admin.firestore.FieldValue.delete(),
+      idCardReviewedAt: admin.firestore.FieldValue.delete(),
+      idCardReviewNote: admin.firestore.FieldValue.delete(),
     });
+    console.info(
+      `[markIdCardVerified] uid=${callerUid} state=${idDoc.state} ` +
+      `evidence=${idDoc.evidence ? "present" : "none"}`);
 
     // [FIX-1] 신분증 업로드 시 누락된 auto-grant 소급 생성
     // 확정 시점에 신분증 없어서 Grant 생성이 건너뛰어진 Application에 대해 보완 생성.
@@ -8153,36 +8280,202 @@ export const callableMarkBankbookVerified = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {imageUrl} = request.data as {imageUrl?: string};
+    // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 신분증 경로와 같은 입력을 받는다.
+    //   storagePath 직통이 canonical이고 imageUrl은 legacy 호환이다 —
+    //   permanent download URL을 새로 만들지 않기 위해서다.
+    const {imageUrl, storagePath: bbDirectPath, selfCheck} = request.data as {
+      imageUrl?: string; storagePath?: string; selfCheck?: SrvDocSelfCheck;
+    };
 
-    if (!imageUrl || typeof imageUrl !== "string" || imageUrl.length > 2048) {
-      throw new HttpsError("invalid-argument", "imageUrl이 필요합니다.");
+    let storagePath: string;
+    if (bbDirectPath && typeof bbDirectPath === "string" &&
+        bbDirectPath.length > 0 && bbDirectPath.length <= 500) {
+      storagePath = bbDirectPath;
+    } else if (imageUrl && typeof imageUrl === "string" &&
+      imageUrl.length <= 2048) {
+      // [M-01-FIX] includes()는 쿼리 파라미터/프래그먼트에도 매칭 → 경로 우회 가능
+      //   → /o/{encoded_path} 부분만 추출 후 startsWith로 정확히 검증
+      const pathMatch = imageUrl.match(/\/o\/([^?#]+)/);
+      if (!pathMatch) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 Storage URL 형식입니다.");
+      }
+      storagePath = decodeURIComponent(pathMatch[1]);
+    } else {
+      throw new HttpsError(
+        "invalid-argument", "storagePath 또는 imageUrl이 필요합니다.");
     }
-    // [M-01-FIX] includes()는 쿼리 파라미터/프래그먼트에도 매칭 → 경로 우회 가능
-    //   → /o/{encoded_path} 부분만 추출 후 startsWith로 정확히 검증
-    const pathMatch = imageUrl.match(/\/o\/([^?#]+)/);
-    if (!pathMatch) {
-      throw new HttpsError("invalid-argument", "유효하지 않은 Storage URL 형식입니다.");
-    }
-    const storagePath = decodeURIComponent(pathMatch[1]);
-    if (!storagePath.startsWith(`users/${callerUid}/`)) {
+    if (!srvIsOwnedStoragePath(storagePath, callerUid)) {
       throw new HttpsError("permission-denied", "본인 통장사본 이미지만 등록 가능합니다.");
     }
     // Storage 파일 실제 존재 검증 — 존재하지 않는 URL로 isBankbookVerified 설정 차단
-    const [fileExists] = await admin.storage().bucket().file(storagePath).exists();
+    const [fileExists] =
+      await admin.storage().bucket().file(storagePath).exists();
     if (!fileExists) {
       throw new HttpsError("not-found", "Storage에 해당 통장사본 파일이 존재하지 않습니다.");
     }
 
+    // [BLOCKER-DOCUMENT-REUPLOAD-VERIFICATION-STALENESS] 신분증과 같은 규칙.
+    const bbDoc = srvComputeDocumentState(selfCheck);
     await db.collection("users").doc(callerUid).update({
-      bankbookImageUrl: imageUrl,
+      // legacy 소비자가 남아 있어 URL은 넘어온 경우에만 갱신한다.
+      ...(imageUrl ? {bankbookImageUrl: imageUrl} : {}),
       // [V3] Storage 경로 저장 — callableGetBankbookSignedUrl Signed URL 발급 기반
       bankbookImagePath: storagePath,
       // [Phase 6] bankVerificationStatus / isBankbookVerified 제거 — V3에서 불필요
       bankbookUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+      bankbookDocumentState: bbDoc.state,
+      bankbookSelfCheck: bbDoc.evidence,
+      bankbookReviewedBy: admin.firestore.FieldValue.delete(),
+      bankbookReviewedAt: admin.firestore.FieldValue.delete(),
+      bankbookReviewNote: admin.firestore.FieldValue.delete(),
     });
+    console.info(
+      `[markBankbookVerified] uid=${callerUid} state=${bbDoc.state} ` +
+      `evidence=${bbDoc.evidence ? "present" : "none"}`);
 
     return {success: true};
+  }
+);
+
+// ── callableReviewUserDocument ────────────────────────────
+// [DOCUMENT-VERIFICATION-INTEGRITY-R0] 제출 문서에 대한 **사람의 판정**.
+//
+//   기기 OCR은 보안 통제가 아니다 — 서버가 독립적으로 확인할 방법이 없다.
+//   그래서 권위 있는 통과는 이 경로 하나뿐이다. 그 사실을 상태 이름이
+//   말한다: SELF_CHECK_PASSED는 "클라이언트가 그렇게 주장함"이고
+//   MANUAL_APPROVED만 "사람이 확인함"이다.
+//
+//   [CLAUDE.md] `callableAdminVerifyIdCard` 같은 **사전 승인 게이트**를
+//   만들지 않는다는 기존 정책과 충돌하지 않는다. 이것은 지원 자격을 막는
+//   게이트가 아니라, 이미 제출된 문서를 사후에 검토하는 경로다 —
+//   승인 없이도 지원은 지금과 똑같이 가능하다. 반려만 차단으로 이어진다.
+//
+// Input:  { targetUserId, documentType: "ID_CARD"|"BANKBOOK",
+//           decision: "APPROVE"|"REJECT"|"REQUEST_REUPLOAD", note? }
+// Output: { success: true, state }
+export const callableReviewUserDocument = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const reviewerUid = request.auth.uid;
+    const {targetUserId, documentType, decision, note} = request.data as {
+      targetUserId?: string; documentType?: string;
+      decision?: string; note?: string;
+    };
+    if (!targetUserId || typeof targetUserId !== "string") {
+      throw new HttpsError("invalid-argument", "targetUserId가 필요합니다.");
+    }
+    if (documentType !== "ID_CARD" && documentType !== "BANKBOOK") {
+      throw new HttpsError("invalid-argument", "지원하지 않는 문서 유형입니다.");
+    }
+    const DECISIONS = ["APPROVE", "REJECT", "REQUEST_REUPLOAD"];
+    if (typeof decision !== "string" || !DECISIONS.includes(decision)) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 검토 결과입니다.");
+    }
+    if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
+      throw new HttpsError("invalid-argument", "사유는 500자 이하여야 합니다.");
+    }
+    // 민감 문서를 보는 판단이므로 SUPER_ADMIN 전용이다.
+    const reviewerSnap = await db.collection("users").doc(reviewerUid).get();
+    if ((reviewerSnap.data()?.role as string | undefined) !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "문서 검토 권한이 없습니다.");
+    }
+
+    const nextState = decision === "APPROVE" ? DOC_MANUAL_APPROVED :
+      (decision === "REJECT" ? DOC_MANUAL_REJECTED : DOC_REUPLOAD_REQUIRED);
+    const prefix = documentType === "ID_CARD" ? "idCard" : "bankbook";
+    const targetRef = db.collection("users").doc(targetUserId);
+
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(targetRef);
+      if (!fresh.exists) {
+        throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+      }
+      const d = fresh.data() ?? {};
+      // 제출된 문서가 있어야 검토할 수 있다.
+      const hasDoc = documentType === "ID_CARD" ?
+        (d["idCardImagePath"] != null || d["idCardImageUrl"] != null) :
+        (d["bankbookImagePath"] != null || d["bankbookImageUrl"] != null);
+      if (!hasDoc) {
+        throw new HttpsError("failed-precondition", "제출된 문서가 없습니다.");
+      }
+      const patch: Record<string, unknown> = {
+        [`${prefix}DocumentState`]: nextState,
+        [`${prefix}ReviewedBy`]: reviewerUid,
+        [`${prefix}ReviewedAt`]: admin.firestore.FieldValue.serverTimestamp(),
+        [`${prefix}ReviewNote`]: note ?? null,
+      };
+      // 반려·재등록 요구는 legacy prerequisite도 함께 내린다 —
+      // 상태만 바꾸고 지원이 계속 가능하면 반려가 아무 뜻도 갖지 못한다.
+      if (documentType === "ID_CARD" && nextState !== DOC_MANUAL_APPROVED) {
+        patch["isIdVerified"] = false;
+      }
+      tx.update(targetRef, patch);
+    });
+
+    // 근로자 알림 — 다음에 할 일을 말한다.
+    const label = documentType === "ID_CARD" ? "신분증" : "통장사본";
+    const body = nextState === DOC_MANUAL_APPROVED ?
+      `${label} 확인이 완료되었습니다.` :
+      (nextState === DOC_MANUAL_REJECTED ?
+        `${label} 확인이 반려되었습니다. 다시 등록해주세요.` :
+        `${label}을(를) 다시 등록해주세요.`);
+    db.collection("users").doc(targetUserId).collection("notifications").add({
+      userId: targetUserId,
+      type: "documentReviewed",
+      title: `${label} 확인 결과`,
+      body: note && note.length > 0 ? `${body}\n사유: ${note}` : body,
+      data: {documentType, action: "documentManagement"},
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      readAt: null,
+    }).catch((e) => console.error("[reviewUserDocument] 알림 실패:", e));
+
+    return {success: true, state: nextState};
+  }
+);
+
+// ── callableGetDocumentsPendingReview ─────────────────────
+// [DOCUMENT-VERIFICATION-INTEGRITY-R0] 사람이 봐야 할 제출 문서 목록.
+//   기기 확인이 통과하지 못한 채 제출된 것들이다.
+export const callableGetDocumentsPendingReview = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const snap = await db.collection("users").doc(request.auth.uid).get();
+    if ((snap.data()?.role as string | undefined) !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "문서 검토 권한이 없습니다.");
+    }
+    const NEEDS_REVIEW =
+      [DOC_SELF_CHECK_OVERRIDDEN, DOC_MANUAL_REVIEW_REQUIRED];
+    const [idSnap, bbSnap] = await Promise.all([
+      db.collection("users")
+        .where("idCardDocumentState", "in", NEEDS_REVIEW).limit(100).get(),
+      db.collection("users")
+        .where("bankbookDocumentState", "in", NEEDS_REVIEW).limit(100).get(),
+    ]);
+    const row = (d: admin.firestore.QueryDocumentSnapshot, type: string) => {
+      const isId = type === "ID_CARD";
+      return {
+        uid: d.id,
+        name: (d.get("koreanName") ?? d.get("legalName") ??
+          d.get("name") ?? "") as string,
+        isForeign: d.get("isForeign") === true,
+        documentType: type,
+        state: d.get(isId ? "idCardDocumentState" : "bankbookDocumentState"),
+        selfCheck:
+          d.get(isId ? "idCardSelfCheck" : "bankbookSelfCheck") ?? null,
+        submittedAtMs:
+          (d.get("idCardSubmittedAt") as admin.firestore.Timestamp | undefined)
+            ?.toMillis() ?? null,
+      };
+    };
+    return {
+      items: [
+        ...idSnap.docs.map((d) => row(d, "ID_CARD")),
+        ...bbSnap.docs.map((d) => row(d, "BANKBOOK")),
+      ],
+    };
   }
 );
 
@@ -13898,6 +14191,7 @@ export const callableGetIdCardSignedUrl = onCall(
     const targetData = targetDoc.data()!;
 
     // idCardImagePath 우선, 없으면 idCardImageUrl에서 경로 파싱 (기존 데이터 호환)
+    // eslint-disable-next-line prefer-const
     let storagePath = targetData.idCardImagePath as string | undefined;
     if (!storagePath) {
       const downloadUrl = targetData.idCardImageUrl as string | undefined;
@@ -13912,6 +14206,16 @@ export const callableGetIdCardSignedUrl = onCall(
       } catch {
         throw new HttpsError("internal", "신분증 Storage 경로를 파싱할 수 없습니다.");
       }
+    }
+
+    // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 저장된 경로가 그 사람의 것인지
+    //   서명 **직전에** 확인한다. 이 필드는 rules로도 막혀 있지만, 읽는 쪽에서
+    //   보지 않으면 과거에 심어진 값이 그대로 서명된다.
+    if (!srvIsOwnedStoragePath(storagePath, targetUserId)) {
+      console.error(
+        `[callableGetIdCardSignedUrl] 경로 소유자 불일치 — target=${targetUserId}`);
+      throw new HttpsError(
+        "failed-precondition", "신분증 파일 경로가 올바르지 않습니다. 다시 등록해주세요.");
     }
 
     // 1시간 만료 Signed URL 생성
@@ -14108,6 +14412,20 @@ export const callableGetBankbookSignedUrl = onCall(
       } catch {
         throw new HttpsError("internal", "통장사본 Storage 경로를 파싱할 수 없습니다.");
       }
+    }
+
+    // [BLOCKER-BANKBOOK-PATH-INJECTION-SIGNED-URL]
+    //   `bankbookImagePath`는 rules 어디에도 없어 클라이언트가 직접 쓸 수 있었고,
+    //   여기서는 그 값을 그대로 서명했다. 근로자가 경로를 타인의 신분증으로
+    //   바꾸면 관리자는 통장사본인 줄 알고 그 이미지를 받고, 감사 로그에도
+    //   통장사본 열람으로 남는다. rules를 막아도 이미 심어진 값은 남으므로
+    //   서명 직전에 매번 확인한다.
+    if (!srvIsOwnedStoragePath(storagePath, appUid)) {
+      console.error(
+        `[callableGetBankbookSignedUrl] 경로 소유자 불일치 — target=${appUid}`);
+      throw new HttpsError(
+        "failed-precondition",
+        "통장사본 파일 경로가 올바르지 않습니다. 근로자에게 재등록을 요청해주세요.");
     }
 
     // 8. Storage 파일 존재 확인 + Signed URL 생성
@@ -26802,8 +27120,21 @@ export const callableApplyToTO = onCall(
     // [PRODUCT-POLICY] 단기(슬롯 있는) 공고는 신분증 업로드 완료(isIdVerified=true)가 필수.
     // isIdVerified = SUPER_ADMIN 심사 결과가 아닌, USER 본인의 신분증 업로드 완료 상태.
     // 장기(슬롯 없는) 공고에는 이 gate가 적용되지 않는다.
+    //
+    // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 문구가 사실과 달랐다.
+    //   '신분증 인증 후'라고 말했지만 이 값이 뜻한 것은 업로드였고, 실제로
+    //   막힌 이유(반려·재등록 요구)도 같은 문장으로 나왔다. 무엇을 해야
+    //   하는지 말하지 않는 차단 문구는 사용자를 같은 자리에 세워 둔다.
     if (slotId && userData["isIdVerified"] !== true) {
-      throw new HttpsError("failed-precondition", "신분증 인증 후 지원할 수 있습니다.");
+      const idState = userData["idCardDocumentState"] as string | undefined;
+      throw new HttpsError(
+        "failed-precondition",
+        idState === DOC_MANUAL_REJECTED ?
+          "신분증 확인이 반려되었습니다. 서류 관리에서 다시 등록해주세요." :
+          (idState === DOC_REUPLOAD_REQUIRED ?
+            "신분증을 다시 등록해야 지원할 수 있습니다." :
+            "신분증을 등록해야 지원할 수 있습니다.")
+      );
     }
     const restrictedUntilTs = userData["restrictedUntil"] as admin.firestore.Timestamp | undefined;
     if (restrictedUntilTs && restrictedUntilTs.toDate() > new Date()) {

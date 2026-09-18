@@ -13,6 +13,42 @@ import 'toast_helper.dart';
 /// - 회원가입 화면
 /// - 설정 > 내 정보 화면
 /// - 프로필 수정 화면
+/// [DOCUMENT-VERIFICATION-INTEGRITY-R0] 문서 선택 결과 — 경로 + **근거**.
+///
+/// 판정(`verified`)이 아니라 관찰한 사실만 담는다. 상태는 서버가 정한다.
+class DocumentPickResult {
+  /// 업로드할 임시 파일 경로. 호출자가 업로드 후 삭제 책임을 진다.
+  final String path;
+
+  /// 기기 OCR이 기대한 이름을 찾았는가.
+  final bool nameMatched;
+
+  /// 기기 OCR이 기대한 식별번호(주민번호 앞7자리·계좌번호)를 찾았는가.
+  final bool identifierMatched;
+
+  /// OCR 자체가 실패했는가 (타임아웃·예외·인식 불가).
+  final bool ocrFailed;
+
+  /// 경고를 보고도 사용자가 그대로 제출했는가.
+  final bool overridden;
+
+  const DocumentPickResult({
+    required this.path,
+    this.nameMatched = false,
+    this.identifierMatched = false,
+    this.ocrFailed = false,
+    this.overridden = false,
+  });
+
+  /// CF로 보낼 근거 payload. 서버가 이 값으로 상태를 계산한다.
+  Map<String, dynamic> get selfCheck => {
+        'nameMatched': nameMatched,
+        'identifierMatched': identifierMatched,
+        'ocrFailed': ocrFailed,
+        'overridden': overridden,
+      };
+}
+
 class DocumentUploadHelper {
   /// 🔄 로딩 다이얼로그 표시
   static void _showLoadingDialog(BuildContext context, String message) {
@@ -42,17 +78,27 @@ class DocumentUploadHelper {
     );
   }
 
-  /// 📸 신분증 업로드 + OCR 검증
+  /// 📸 신분증 업로드 + 기기 확인
   ///
   /// [context]: BuildContext
   /// [expectedName]: 검증할 이름
   /// [expectedResidentNumber]: 검증할 주민번호 앞7자리 (예: "990101-1")
   ///
-  /// Returns: 업로드 성공 시 이미지 경로, 실패/취소 시 null
+  /// Returns: 진행할 경우 (경로 + 기기 확인 근거), 취소 시 null
+  ///
+  /// [DOCUMENT-VERIFICATION-INTEGRITY-R0] 이 함수는 **판정하지 않는다.**
+  ///
+  ///   기기 안에서 도는 OCR은 보안 통제가 될 수 없다 — 서버가 그 결과를
+  ///   독립적으로 확인할 방법이 없기 때문이다. 그래서 여기서 나오는 것은
+  ///   결론이 아니라 **근거**이고, 서버가 그 근거로 상태를 정한다.
+  ///
+  ///   예전에는 이 함수가 경로만 돌려줬다. 그래서 사용자가 불일치 경고에서
+  ///   '계속'을 눌렀는지, OCR이 아예 실패했는지가 서버에 도달하지 않았고,
+  ///   무엇을 올렸든 결과가 똑같이 `isIdVerified = true`였다.
   ///
   /// ⚠️ 호출자 책임: 반환된 경로 파일을 업로드 완료 후 delete()로 삭제해야 한다.
   ///    null 반환 시에는 이 함수 내부에서 이미 삭제 처리됨.
-  static Future<String?> pickAndVerifyIdCard(
+  static Future<DocumentPickResult?> pickAndVerifyIdCard(
     BuildContext context,
     String expectedName, {
     String? expectedResidentNumber,
@@ -136,7 +182,9 @@ class DocumentUploadHelper {
           );
         } else if (action == null) {
           // 그대로 등록 — image 유지, 호출자가 업로드 후 delete() 책임
-          return image.path;
+          //   [R0] 막지 않는다. 다만 **인식이 실패했다는 사실**을 들고 간다.
+          return DocumentPickResult(
+            path: image.path, ocrFailed: true, overridden: true);
         } else {
           // 취소
           await image.delete();
@@ -162,7 +210,12 @@ class DocumentUploadHelper {
           confidence: result['confidence'],
         );
 
-        return image.path; // 호출자가 업로드 후 delete() 책임
+        // [R0] 여기서도 '검증됨'이라고 말하지 않는다 — 기기가 본 것만 전한다.
+        return DocumentPickResult(
+          path: image.path,
+          nameMatched: result['isNameValid'] == true,
+          identifierMatched: result['isResidentNumberValid'] == true,
+        );
 
       } else {
         String reason = '';
@@ -198,7 +251,13 @@ class DocumentUploadHelper {
           await image.delete();
           return null;
         }
-        return image.path; // 호출자가 업로드 후 delete() 책임
+        // [R0] 불일치인데 사용자가 진행했다 — 그 사실이 서버에 남아야 한다.
+        return DocumentPickResult(
+          path: image.path,
+          nameMatched: result['isNameValid'] == true,
+          identifierMatched: result['isResidentNumberValid'] == true,
+          overridden: true,
+        );
       }
 
     } catch (e) {
@@ -216,7 +275,7 @@ class DocumentUploadHelper {
   ///
   /// ⚠️ 호출자 책임: 반환된 경로 파일을 업로드 완료 후 delete()로 삭제해야 한다.
   ///    null 반환 시에는 이 함수 내부에서 이미 삭제 처리됨.
-  static Future<String?> pickAndVerifyBankbook(
+  static Future<DocumentPickResult?> pickAndVerifyBankbook(
     BuildContext context,
     String? expectedName, {
     String? expectedAccountNumber,
@@ -303,7 +362,8 @@ class DocumentUploadHelper {
           );
         } else if (action == null) {
           // 그대로 등록 — image 유지, 호출자가 업로드 후 delete() 책임
-          return image.path;
+          return DocumentPickResult(
+            path: image.path, ocrFailed: true, overridden: true);
         } else {
           // 취소
           await image.delete();
@@ -332,7 +392,15 @@ class DocumentUploadHelper {
           confidence: result['confidence'],
         );
 
-        return image.path; // 호출자가 업로드 후 delete() 책임
+        // [R0] 예금주 검증을 skip한 경우(외국인)는 '일치'가 아니다 —
+        //   expectedName이 없으면 확인한 것이 없다. 근거를 부풀리지 않는다.
+        return DocumentPickResult(
+          path: image.path,
+          nameMatched: expectedName != null && result['isNameValid'] == true,
+          identifierMatched: expectedAccountNumber != null &&
+              expectedAccountNumber.isNotEmpty &&
+              result['isAccountValid'] == true,
+        );
 
       } else {
         String reason = '';
@@ -381,7 +449,15 @@ class DocumentUploadHelper {
           await image.delete();
           return null;
         }
-        return image.path; // 호출자가 업로드 후 delete() 책임
+        // [R0] 불일치인데 사용자가 진행했다 — 그 사실이 서버에 남아야 한다.
+        return DocumentPickResult(
+          path: image.path,
+          nameMatched: expectedName != null && result['isNameValid'] == true,
+          identifierMatched: expectedAccountNumber != null &&
+              expectedAccountNumber.isNotEmpty &&
+              result['isAccountValid'] == true,
+          overridden: true,
+        );
       }
 
     } catch (e) {
