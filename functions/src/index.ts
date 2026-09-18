@@ -28102,6 +28102,55 @@ export const callableOfferAlternativeWork = onCall(
     // ── 6. 대상 자연키와 기존 관계 ────────────────────────────────────────
     const targetAppId = `${offerToId}_${offerSlotId}_${targetWdId}_${offerUid}`;
     const targetRef = db.collection("applications").doc(targetAppId);
+
+    /**
+     * [CROSS-DOMAIN-R5.3B.1] 근로자 알림 쓰기 — **커밋된** offerId로만 쓴다.
+     *
+     *   retry-stable identity는 Application 자연키
+     *   `{toId}_{slotId}_{wdId}_{uid}`다. offerId는 그 문서에 한 번 적히고
+     *   다시 계산되지 않는 값이라 알림 문서 id도 재시도에서 같아진다.
+     *   (offerId 안의 timestamp 자체가 결정적인 것이 아니다 — 재시도 때는
+     *    새로 만들지 않고 저장된 값을 읽어 쓰기 때문에 같아지는 것이다.)
+     *
+     *   `.create()`이므로 같은 id로 두 번 만들어지지 않고, 이미 있으면
+     *   ALREADY_EXISTS(code 6)로 조용히 끝난다.
+     */
+    const writeOfferedNotification = async (
+      committedOfferId: string
+    ): Promise<"created" | "exists" | "failed"> => {
+      try {
+        await db.collection("users").doc(offerUid).collection("notifications")
+          .doc(`work_reassignment_offered_${committedOfferId}`)
+          .create({
+            userId: offerUid,
+            type: "workReassignmentOffered",
+            title: "다른 업무 제안이 도착했어요",
+            body: `${(srcData.businessName as string | undefined) ?? ""}에서 ` +
+              `'${targetWD["workType"] as string}' 업무를 제안했습니다. ` +
+              "조건을 확인하고 수락해주세요.",
+            data: {
+              offerId: committedOfferId,
+              applicationId: targetAppId,
+              targetApplicationId: targetAppId,
+              sourceApplicationId,
+              businessId: offerBizId,
+              toId: offerToId,
+              slotId: offerSlotId,
+              targetWdId,
+              action: "alternativeWorkOffer",
+            },
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            readAt: null,
+          });
+        return "created";
+      } catch (err) {
+        if ((err as {code?: number})?.code === 6) return "exists";
+        console.error("[callableOfferAlternativeWork] 알림 실패:", err);
+        return "failed";
+      }
+    };
+
     const targetExisting = await targetRef.get();
     if (targetExisting.exists) {
       const tStatus = (targetExisting.data()?.status as string | undefined) ?? "";
@@ -28110,8 +28159,40 @@ export const callableOfferAlternativeWork = onCall(
           "already-exists", "이미 이 업무에 직접 지원한 근로자입니다.");
       }
       if (tStatus === "INVITED") {
-        throw new HttpsError(
-          "already-exists", "이미 이 업무를 제안했습니다.");
+        // [CROSS-DOMAIN-R5.3B.1] 같은 제안을 다시 보내는 것은 **재시도**다.
+        //
+        //   알림 쓰기는 좌석 트랜잭션 밖이라 실패할 수 있다(POST_COMMIT).
+        //   그런데 이전에는 두 번째 호출이 전부 already-exists로 막혀서,
+        //   알림이 한 번 유실되면 근로자는 제안을 영영 알 수 없는데
+        //   Application과 대기 카운터는 그대로 잡혀 있었다.
+        //   R5.2A의 신분증 grant와 같은 분류로 다룬다:
+        //   POST_COMMIT_IDEMPOTENT_RECONCILABLE — 재시도가 곧 복구다.
+        //
+        //   상태는 아무것도 바꾸지 않는다. 카운터도 건드리지 않는다.
+        //   저장된 offerId를 그대로 쓰므로 알림 identity도 같다.
+        const tExisting = targetExisting.data() ?? {};
+        const tOfferId = tExisting["offerId"] as string | undefined;
+        const sameLiveOffer =
+          tExisting["offerKind"] === "ALTERNATIVE_WORK" &&
+          tExisting["sourceApplicationId"] === sourceApplicationId &&
+          !!tOfferId;
+        if (!sameLiveOffer) {
+          // 일반 초대이거나 다른 지원서에서 나온 제안 — 재시도가 아니다.
+          throw new HttpsError(
+            "already-exists", "이미 이 업무를 제안했습니다.");
+        }
+        const repaired = await writeOfferedNotification(tOfferId);
+        console.info(
+          `[offerAlternativeWork] 멱등 재호출 — 알림 ${repaired}: ` +
+          `target=${targetAppId}, offerId=${tOfferId}`
+        );
+        return {
+          success: true,
+          offerId: tOfferId,
+          targetApplicationId: targetAppId,
+          alreadyOffered: true,
+          notificationRepaired: repaired === "created",
+        };
       }
       if (tStatus === "CONFIRMED" || tStatus === "CONTRACT_PENDING") {
         throw new HttpsError(
@@ -28220,40 +28301,18 @@ export const callableOfferAlternativeWork = onCall(
       });
     });
 
-    // ── 9. 근로자 알림 — offerId가 곧 알림 identity다 ─────────────────────
-    //   같은 제안의 재시도는 같은 문서라 두 번 생기지 않고,
+    // ── 9. 근로자 알림 — 커밋된 offerId가 곧 알림 identity다 ──────────────
     //   정당한 재제안은 새 offerId를 받아 별도 알림이 된다.
-    db.collection("users").doc(offerUid).collection("notifications")
-      .doc(`work_reassignment_offered_${offerId}`)
-      .create({
-        userId: offerUid,
-        type: "workReassignmentOffered",
-        title: "다른 업무 제안이 도착했어요",
-        body: `${(srcData.businessName as string | undefined) ?? ""}에서 ` +
-          `'${targetWD["workType"] as string}' 업무를 제안했습니다. ` +
-          "조건을 확인하고 수락해주세요.",
-        data: {
-          offerId,
-          applicationId: targetAppId,
-          targetApplicationId: targetAppId,
-          sourceApplicationId,
-          businessId: offerBizId,
-          toId: offerToId,
-          slotId: offerSlotId,
-          targetWdId,
-          action: "alternativeWorkOffer",
-        },
-        isRead: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        readAt: null,
-      })
-      .catch((err: unknown) => {
-        if ((err as {code?: number})?.code !== 6) {
-          console.error("[callableOfferAlternativeWork] 알림 실패:", err);
-        }
-      });
+    //   실패해도 제안은 되돌리지 않는다(POST_COMMIT) — 같은 호출을 다시
+    //   보내면 위의 멱등 분기가 같은 identity로 알림을 복구한다.
+    const notifResult = await writeOfferedNotification(offerId);
 
-    return {success: true, offerId, targetApplicationId: targetAppId};
+    return {
+      success: true,
+      offerId,
+      targetApplicationId: targetAppId,
+      notificationDelivered: notifResult !== "failed",
+    };
   }
 );
 

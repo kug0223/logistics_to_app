@@ -182,8 +182,12 @@ void main() {
       expect(
           offer.contains('const offerId = `\${targetAppId}_\${offerTime.toMillis()}`;'),
           true);
+      // [R5.3B.1] 알림 identity는 **커밋된** offerId로만 만든다. 재시도는
+      //   새로 계산하지 않고 저장된 값을 읽어 쓰므로 같은 문서가 된다 —
+      //   timestamp 자체가 결정적인 것이 아니다.
       expect(
-          offer.contains('.doc(`work_reassignment_offered_\${offerId}`) .create({'),
+          offer.contains('.doc(`work_reassignment_offered_'
+              '\${committedOfferId}`) .create({'),
           true,
           reason: '같은 제안의 재시도는 같은 알림 문서라 두 번 생기지 않는다');
     });
@@ -649,6 +653,136 @@ void main() {
               'g.pendingApps.map((a) => a.uid).toSet().length >= shortage;'),
           true,
           reason: '한 사람이 A·B 두 건이어도 메울 수 있는 자리는 하나다');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [R5.3B.1] PART O — 알림 identity / dedupe
+  // ══════════════════════════════════════════════════════════════════
+
+  group('제안 재시도는 복구다 (POST_COMMIT_IDEMPOTENT_RECONCILABLE)', () {
+    test('알림 쓰기가 커밋된 offerId만 쓴다', () {
+      expect(
+          offer.contains('const writeOfferedNotification = async ( '
+              'committedOfferId: string ): '
+              'Promise<"created" | "exists" | "failed"> => {'),
+          true);
+      expect(
+          offer.contains('.doc(`work_reassignment_offered_'
+              '\${committedOfferId}`) .create({'),
+          true,
+          reason: '.create()이므로 같은 id로 두 번 만들어지지 않는다');
+    });
+
+    test('retry-stable identity는 Application 자연키다', () {
+      // 재시도는 offerId를 새로 만들지 않고 **저장된 값을 읽어** 쓴다.
+      // offerId 안의 timestamp 자체가 결정적인 것이 아니다.
+      expect(
+          offer.contains("const tOfferId = tExisting[\"offerId\"] as string | undefined;"),
+          true);
+      expect(offer.contains('const repaired = await writeOfferedNotification(tOfferId);'),
+          true);
+    });
+
+    test('같은 source의 살아 있는 제안만 멱등 재시도로 본다', () {
+      expect(
+          offer.contains('const sameLiveOffer = '
+              'tExisting["offerKind"] === "ALTERNATIVE_WORK" && '
+              'tExisting["sourceApplicationId"] === sourceApplicationId && '
+              '!!tOfferId;'),
+          true);
+      expect(
+          offer.contains('if (!sameLiveOffer) { throw new HttpsError( '
+              '"already-exists", "이미 이 업무를 제안했습니다.");'),
+          true,
+          reason: '일반 초대나 다른 출처는 재시도가 아니다');
+    });
+
+    test('멱등 분기는 상태도 카운터도 건드리지 않는다', () {
+      final branch = offer.substring(
+          offer.indexOf('const sameLiveOffer'),
+          offer.indexOf('alreadyOffered: true,'));
+      for (final w in ['increment(', 'tx.update', 'offerTx', 'status:']) {
+        expect(branch.contains(w), false, reason: '멱등 분기에서 $w');
+      }
+    });
+
+    test('멱등 응답이 같은 offerId를 돌려준다', () {
+      expect(
+          offer.contains('return { success: true, offerId: tOfferId, '
+              'targetApplicationId: targetAppId, alreadyOffered: true,'),
+          true);
+    });
+
+    test('정상 경로도 알림 결과를 숨기지 않는다', () {
+      expect(
+          offer.contains('const notifResult = await writeOfferedNotification(offerId);'),
+          true);
+      expect(offer.contains('notificationDelivered: notifResult !== "failed",'), true,
+          reason: '실패를 성공처럼 반환하지 않는다');
+    });
+  });
+
+  group('알림 payload는 상태를 싣지 않는다', () {
+    test('offered payload에 7개 식별자가 있다', () {
+      final block = offer.substring(
+          offer.indexOf('type: "workReassignmentOffered"'),
+          offer.indexOf('action: "alternativeWorkOffer",'));
+      for (final f in [
+        'offerId: committedOfferId,', 'applicationId: targetAppId,',
+        'targetApplicationId: targetAppId,', 'sourceApplicationId,',
+        'businessId: offerBizId,', 'toId: offerToId,',
+        'slotId: offerSlotId,', 'targetWdId,',
+      ]) {
+        expect(block.contains(f), true, reason: 'payload 누락: $f');
+      }
+      // 상태를 실으면 dispatcher가 그것을 믿게 된다 — 지금 읽어야 한다.
+      expect(block.contains('status:'), false);
+      expect(block.contains('actionable'), false);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [R5.3B.1] 공고 상세의 수락도 같은 문턱을 쓴다
+  // ══════════════════════════════════════════════════════════════════
+
+  group('두 수락 경로가 같은 payload를 보낸다', () {
+    final posting = _load('lib/screens/common/job_posting_screen.dart');
+
+    test('상세 화면도 서류 전제조건을 본다', () {
+      expect(
+          posting.contains('if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {'),
+          true);
+    });
+
+    test('상세 화면도 이 건에 대한 동의를 받는다', () {
+      expect(posting.contains('DocumentAccessConsent.card(app.businessName),'), true);
+      expect(
+          posting.contains("'documentAccessConsentGiven': true, "
+              "'documentAccessConsentVersion': DocumentAccessConsent.version,"),
+          true,
+          reason: 'R5.2 이후 applicationId만 보내면 서버가 거부한다');
+    });
+
+    test('상세 화면도 제안과 초대를 구분해 말한다', () {
+      expect(
+          posting.contains("title: isOffer ? '다른 업무 제안 수락' : '초대 수락',"), true);
+      expect(posting.contains('은 자동으로 정리됩니다.'), true);
+      expect(
+          posting.contains("? '제안 수락' : '초대 수락'),"), true,
+          reason: 'CTA 라벨도 사실을 말한다');
+    });
+
+    test('원 지원서를 못 찾으면 비교만 생략한다', () {
+      final mine = _load(_myApps);
+      expect(
+          mine.contains('final one = await _firestoreService '
+              '.getApplicationOnce(offerApp.sourceApplicationId!); '
+              'if (one != null && one.uid == uid) sourceApp = one;'),
+          true,
+          reason: '첫 페이지 밖의 A도 비교에 쓴다');
+      expect(mine.contains("debugPrint('⚠️ [R5.3B.1] 원 지원서 조회 실패: \$e');"), true,
+          reason: '읽지 못한 것을 없다고 말하지 않는다');
     });
   });
 

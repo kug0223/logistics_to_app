@@ -37,6 +37,7 @@ import '../../widgets/maps/full_map_dialog.dart';
 import '../../widgets/dialogs/apply/multi_apply_confirm_sheet.dart';
 import '../../widgets/dialogs/apply/longterm_apply_sheet.dart';
 import '../../widgets/dialogs/apply/apply_summary_section.dart';
+import '../../widgets/dialogs/apply/document_access_consent.dart';
 import '../../theme/app_colors.dart';
 import '../user/apply_prerequisites_screen.dart';
 import 'document_management_screen.dart';
@@ -2826,7 +2827,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       textStyle: ResponsiveHelper.bodyStyle(context)
                           .copyWith(fontWeight: FontWeight.w600),
                     ),
-                    child: Text(_isAcceptingInvite ? '처리 중...' : '초대 수락'),
+                    child: Text(_isAcceptingInvite ? '처리 중...'
+                        // [R5.3B.1] 제안은 초대가 아니다 — 기존 지원을 대신한다.
+                        : (widget.myApplication?.isAlternativeWorkOffer ?? false)
+                            ? '제안 수락' : '초대 수락'),
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -2961,7 +2965,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     textStyle: ResponsiveHelper.bodyStyle(context)
                         .copyWith(fontWeight: FontWeight.bold),
                   ),
-                  child: Text(_isAcceptingInvite ? '처리 중...' : '초대 수락'),
+                  child: Text(_isAcceptingInvite ? '처리 중...'
+                        // [R5.3B.1] 제안은 초대가 아니다 — 기존 지원을 대신한다.
+                        : (widget.myApplication?.isAlternativeWorkOffer ?? false)
+                            ? '제안 수락' : '초대 수락'),
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -3070,22 +3077,72 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   Future<void> _acceptInviteFromDetail() async {
     if (_isAcceptingInvite) return;
-    final confirmed = await DialogHelper.showConfirm(
+    final app = widget.myApplication!;
+
+    // [CROSS-DOMAIN-R5.3B.1] 이 화면의 수락은 R5.2 이후 **항상 실패**하고 있었다.
+    //
+    //   R5.2가 수락을 직접 지원과 같은 문턱에 올리면서(서류 준비 + 이 건에
+    //   대한 동의) 내 지원내역 화면만 고쳤다. 공고 상세의 수락 버튼은
+    //   applicationId만 보내 서버가 invalid-argument로 되돌려보냈다.
+    //   DEV 실측: 400 "소득신고·급여처리 목적 서류 접근에 동의해야…"
+    //
+    //   같은 commitment를 만드는 버튼이므로 같은 조건을 쓴다.
+    final isOffer = app.isAlternativeWorkOffer;
+    final user = context.read<UserProvider>().currentUser;
+    if (user == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
+    final isFlex = _to?.isFlexType ?? true;
+    if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {
+      ToastHelper.showWarning('근무 확정을 위해 서류 등록이 필요합니다.');
+      final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: isFlex);
+      if (!ok || !mounted) return;
+    }
+
+    final confirmed = await DialogHelper.showCustom<bool>(
       context,
-      title: '초대 수락',
-      message: '이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
-      confirmText: '수락',
-      cancelText: '취소',
-      icon: Icons.check_circle_outline,
-      confirmColor: AppColors.success,
+      title: isOffer ? '다른 업무 제안 수락' : '초대 수락',
+      icon: isOffer ? Icons.swap_horiz : Icons.check_circle_outline,
+      iconColor: AppColors.success,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            isOffer
+                // 제안은 초대와 결과가 다르다 — 기존 지원이 접힌다는 것을 먼저 말한다.
+                ? '제안받은 업무로 확정되고, 기존 지원'
+                    '${app.sourceWorkType != null ? "(${app.sourceWorkType})" : ""}'
+                    '은 자동으로 정리됩니다.\n취소 이력이나 불이익은 남지 않아요.'
+                : '이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
+          ),
+          const SizedBox(height: 12),
+          DocumentAccessConsent.card(app.businessName),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(isOffer ? '동의하고 제안 수락' : '동의하고 초대 수락',
+              style: const TextStyle(color: Colors.white)),
+        ),
+      ],
     );
-    if (!confirmed || !mounted) return;
+    if (confirmed != true || !mounted) return;
 
     setState(() => _isAcceptingInvite = true);
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableAcceptTOInvitation');
-      await callable.call({'applicationId': widget.myApplication!.id});
+      // 내 지원내역 경로와 **같은** payload — 두 곳이 다른 것을 보내면 안 된다.
+      await callable.call({
+        'applicationId': app.id,
+        'documentAccessConsentGiven': true,
+        'documentAccessConsentVersion': DocumentAccessConsent.version,
+      });
       if (!mounted) return;
       ToastHelper.showSuccess('초대를 수락했습니다!');
       Navigator.pop(context, true);

@@ -1813,6 +1813,20 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           break;
         }
       }
+      if (sourceApp == null) {
+        // [CROSS-DOMAIN-R5.3B.1] 목록은 페이지 단위라 A가 첫 페이지 밖일 수 있다.
+        //   비교를 보여줄 수 없으면 근로자는 무엇을 포기하는지 모르고 고른다.
+        //   그 한 건만 읽고, **본인 소유일 때만** 쓴다.
+        try {
+          final one = await _firestoreService
+              .getApplicationOnce(offerApp.sourceApplicationId!);
+          if (one != null && one.uid == uid) sourceApp = one;
+        } catch (e) {
+          // 읽지 못한 것은 '기존 지원이 없다'가 아니다 — 비교만 생략한다.
+          debugPrint('⚠️ [R5.3B.1] 원 지원서 조회 실패: $e');
+        }
+        if (!mounted) return;
+      }
     }
 
     final confirmed = await DialogHelper.showCustom<bool>(
