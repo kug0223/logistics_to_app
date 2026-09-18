@@ -45,6 +45,9 @@ import 'document_management_screen.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../contract/contract_sign_screen.dart';
+// [CROSS-DOMAIN-R5.3D] 통합 초대 상세 — promise / context / acceptability 분리
+import '../../models/ui/invitation_projection.dart';
+import '../../widgets/user/invitation_promise_card.dart';
 
 enum TODetailMode {
   applicant,
@@ -83,7 +86,10 @@ class JobPostingScreen extends StatefulWidget {
     this.workDetailStats,
     this.myApplication,
     this.myContract,
-  }) : assert(toId != null || to != null, 'toId 또는 to 중 하나는 필수입니다');
+  }) : assert(toId != null || to != null || myApplication != null,
+            // [R5.3D] 공고를 특정할 수 없어도 초대 자체는 열 수 있어야 한다 —
+            //   약속은 Application에 있고, 공고는 설명일 뿐이다.
+            'toId / to / myApplication 중 하나는 필수입니다');
 
   @override
   State<JobPostingScreen> createState() => _JobPostingScreenState();
@@ -293,6 +299,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     super.initState();
     _selectedSlotDate = widget.slotDate;
     _loadData();
+    // [R5.3D] 공고 로딩과 독립적으로 원 지원을 읽는다 — 공고가 없어도
+    //   제안 비교 맥락은 보여줄 수 있어야 한다.
+    _loadOfferSource();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _userProvider = context.read<UserProvider>();
@@ -321,6 +330,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         _to = widget.to;
         _workDetails = widget.workDetails ?? [];
         _business = widget.business;
+      } else if ((widget.toId ?? '').isEmpty) {
+        // [R5.3D] 공고를 특정할 식별자가 없다 — 초대 조건만 보여준다.
+        //   '없는 초대'로 만들지 않는다.
+        _to = null;
+        _loadFailed = true;
       } else {
         // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 것과 없는 것을 구분해서 받는다.
         final loaded = await _firestoreService.getTOOrFailure(widget.toId!);
@@ -430,6 +444,54 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     }
   }
 
+  // ── [CROSS-DOMAIN-R5.3D] 통합 초대 projection ──────────────────────────
+
+  /// 원 지원(A) — '다른 업무 제안'일 때만 비교 맥락으로 쓴다.
+  /// 읽지 못하면 null이고, 그때는 비교만 생략한다(없다고 말하지 않는다).
+  ApplicationModel? _offerSourceApplication;
+
+  /// 이 화면이 **초대 상세**로 동작해야 하는가, 그렇다면 무엇을 보여주는가.
+  ///
+  /// INVITED가 아니면 null — 일반 공고 상세는 지금 동작 그대로다.
+  /// 두 개의 동등한 상세 화면을 만들지 않기 위해 같은 화면에 층을 얹는다.
+  InvitationProjection? _invitationProjection({required bool postingLoaded}) {
+    final app = widget.myApplication;
+    if (app == null || app.status != AppStatus.invited) return null;
+    return InvitationProjection.of(
+      application: app,
+      postingLoaded: postingLoaded,
+      // 공고를 읽었을 때만 차이를 계산한다 — 못 읽은 것을 '달라졌다'고 하지 않는다.
+      liveWorkDetail: postingLoaded ? _liveWorkDetailForApplication(app) : null,
+    );
+  }
+
+  /// 약속과 비교할 **현재** workDetail. wdId가 canonical이고, 없으면 비교하지 않는다.
+  WorkDetailModel? _liveWorkDetailForApplication(ApplicationModel app) {
+    for (final w in _workDetails) {
+      if (app.wdId != null && app.wdId!.isNotEmpty && w.wdId == app.wdId) {
+        return w;
+      }
+    }
+    return null;
+  }
+
+  /// 제안이면 원 지원을 한 건만 읽어 둔다 — 비교 맥락용.
+  Future<void> _loadOfferSource() async {
+    final app = widget.myApplication;
+    final srcId = app?.sourceApplicationId;
+    if (app == null || !app.isAlternativeWorkOffer || srcId == null) return;
+    try {
+      final one = await _firestoreService.getApplicationOnce(srcId);
+      if (!mounted) return;
+      // 본인 소유일 때만 쓴다 — 남의 지원서가 화면에 오지 않게.
+      if (one != null && one.uid == app.uid) {
+        setState(() => _offerSourceApplication = one);
+      }
+    } catch (e) {
+      debugPrint('⚠️ [R5.3D] 원 지원서 조회 실패: $e');
+    }
+  }
+
   // ── Build ─────────────────────────────────────
 
   @override
@@ -439,7 +501,17 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       body: _isLoading
           ? const LoadingWidget(message: '공고 정보를 불러오는 중...')
           : _to == null
-              ? _buildErrorState(context)
+              // [CROSS-DOMAIN-R5.3D] 공고를 못 읽었다고 초대가 없어지지 않는다.
+              //   약속은 Application에 남아 있고, 근로자는 그 조건을 보고
+              //   답할 수 있어야 한다. context만 없는 것이다 — UNKNOWN ≠ EMPTY.
+              ? (_invitationProjection(postingLoaded: false) != null
+                  ? InvitationFallbackDetail(
+                      projection: _invitationProjection(postingLoaded: false)!,
+                      sourceApplication: _offerSourceApplication,
+                      actions: _buildBottomBar(context),
+                      onRetryPosting: _loadData,
+                    )
+                  : _buildErrorState(context))
               : CustomScrollView(
                   slivers: [
                     _buildGalleryAppBar(context),
@@ -448,6 +520,16 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _buildPostingHeader(context),
+                          // [CROSS-DOMAIN-R5.3D] 초대라면 **수락하면 적용될
+                          //   조건**을 공고 목록보다 먼저 보여준다.
+                          //   아래 업무 목록은 공고의 현재 값이고 설명이다 —
+                          //   결정의 근거가 되는 숫자는 이 카드 하나뿐이다.
+                          if (_invitationProjection(postingLoaded: true) != null)
+                            InvitationPromiseCard(
+                              projection:
+                                  _invitationProjection(postingLoaded: true)!,
+                              sourceApplication: _offerSourceApplication,
+                            ),
                           // 내 지원에서 진입 시: Application 상태 카드
                           if (widget.myApplication != null)
                             _buildMyApplicationSection(context),
@@ -482,6 +564,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     ),
                   ],
                 ),
+      // 공고를 못 읽은 초대는 위 fallback이 자체 CTA를 갖는다.
       bottomNavigationBar:
           _isLoading || _to == null ? null : _buildBottomBar(context),
     );
@@ -2952,8 +3035,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
             children: [
               Expanded(
                 flex: 2,
+                // [CROSS-DOMAIN-R5.3D] 정보 접근과 수락 가능 여부를 분리한다.
+                //   FULL/CLOSED/UNKNOWN이어도 초대 조건은 위에 그대로 보이고,
+                //   여기 버튼만 잠긴다. 이유는 promise 카드가 말한다.
                 child: ElevatedButton(
-                  onPressed: (_isAcceptingInvite || _isDecliningInvite)
+                  onPressed: (_isAcceptingInvite || _isDecliningInvite ||
+                          !(_invitationProjection(postingLoaded: _to != null)
+                                  ?.canAccept ??
+                              true))
                       ? null : _acceptInviteFromDetail,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.brand,

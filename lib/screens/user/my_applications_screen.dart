@@ -294,13 +294,31 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     if (!mounted) return;
     final to = hit.to;
+    final app = hit.application;
+    // [CROSS-DOMAIN-R5.3D] 공고가 사라졌다고 **초대까지** 없어지지 않는다.
+    //   약속은 Application에 남아 있고 근로자는 그 조건을 보고 답할 수 있어야
+    //   한다. 상세 화면이 공고 없이도 초대 조건을 보여주는 fallback을 갖는다.
+    //   초대가 아닌 건은 지금처럼 목록의 삭제 카드가 canonical 표현이다.
     if (to == null || to.isSoftDeleted) {
-      // 공고가 사라진 건은 목록의 삭제 카드가 canonical 표현이다.
-      ToastHelper.showWarning('해당 공고가 삭제되어 상세를 열 수 없습니다.');
+      if (app.status != 'INVITED') {
+        ToastHelper.showWarning('해당 공고가 삭제되어 상세를 열 수 없습니다.');
+        return;
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => JobPostingScreen(
+            toId: app.toId,
+            myApplication: app,
+            myContract: _contractMap[app.id],
+          ),
+        ),
+      ).then((changed) {
+        if (changed == true && mounted) _loadApplications();
+      });
       return;
     }
     // 카드 탭과 **같은** 목적지 — 새 상세 화면을 만들지 않는다.
-    final app = hit.application;
     await Navigator.push(
       context,
       MaterialPageRoute(
