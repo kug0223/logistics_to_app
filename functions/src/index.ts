@@ -9128,6 +9128,50 @@ function srvMatchWorkDetail(
   return {};
 }
 
+/**
+ * [CROSS-DOMAIN-R5.3C.2] 한 근무 단위에 대한 **관계**를 찾는다.
+ *
+ * canonical business identity는 `{uid, toId, slotId, wdId}` tuple이다.
+ * 문서 id는 저장 구현일 뿐이고, 실제로 writer마다 다르다:
+ *
+ *   직접 지원 → `{toId}_{slotId}_{workDetailId}_{uid}`  (composite: workType_start_end)
+ *   초대·제안 → `{toId}_{slotId}_{wdId}_{uid}`
+ *
+ * 그래서 문서 id 하나로 중복을 보면 지나간다. DEV 실측으로 확인된 결함이다:
+ * 같은 사람이 같은 업무에 Application 2건, `pendingCount 2` — 한 사람이
+ * 두 번 세어졌다.
+ *
+ * id를 통일하는 migration은 하지 않는다. 기존 알림·계약·근태가 전부
+ * 그 id를 참조하기 때문이다. 대신 **새 writer가 관계로 찾아** 이미 있는
+ * 문서에 수렴하게 한다. legacy row도 이 조회로 잡힌다.
+ *
+ * @param {string} uid 근로자
+ * @param {string} toId 공고
+ * @param {string|undefined} slotId 근무일 슬롯(장기 공고는 없음)
+ * @param {string|undefined} wdId 업무 canonical id
+ * @param {string|undefined} excludeDocId 자기 자신으로 쓸 문서 id
+ * @return {Promise<FirebaseFirestore.QueryDocumentSnapshot[]>} 같은 관계의 문서들
+ */
+async function srvFindRelationApplications(
+  uid: string,
+  toId: string,
+  slotId: string | undefined,
+  wdId: string | undefined,
+  excludeDocId?: string
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  // wdId가 없으면 근무 단위를 특정할 수 없다 — 관계로 묶지 않는다.
+  //   같은 업무명(workType)만 보고 합치면 시간대가 다른 별개 근무가 하나로
+  //   뭉쳐 정상 지원이 막힌다.
+  if (!wdId) return [];
+  let q: FirebaseFirestore.Query = db.collection("applications")
+    .where("uid", "==", uid)
+    .where("toId", "==", toId);
+  if (slotId) q = q.where("slotId", "==", slotId);
+  const snap = await q.limit(50).get();
+  return snap.docs.filter(
+    (d) => d.get("wdId") === wdId && d.id !== excludeDocId);
+}
+
 /** [R5.3C.1] 통상시급 mode 값 — Dart `WorkDetailData.baseHourly*`와 같은 문자열. */
 const BASE_HOURLY_MANUAL = "MANUAL";
 const BASE_HOURLY_AUTO = "AUTO";
@@ -26616,13 +26660,46 @@ export const callableApplyToTO = onCall(
       ? serverWageType
       : (VALID_WAGE_TYPES.includes(wageType) ? wageType : "hourly");
 
+    // [CROSS-DOMAIN-R5.3C.2] 법정 최저임금은 **약속을 만드는 자리**에서 본다.
+    //   R5.3C.1에서는 개별 급여 제안에만 있었다. 그런데 근로자에게 가는 약속은
+    //   직접 지원·초대에서도 똑같이 만들어지고, 최저임금은 해마다 바뀐다 —
+    //   작년에 올린 공고가 올해 근무일에는 미달일 수 있다. 그래서 공고 작성
+    //   시점이 아니라 **근무일 기준**으로 본다. 판정식은 급여 확정과 같다.
+    {
+      const applyKstYear = new Date(
+        workDate.toMillis() + 9 * 60 * 60 * 1000).getUTCFullYear();
+      const applyMinWage = await srvLoadMinimumWage(applyKstYear);
+      const applyViolation = srvValidateMinimumWagePromise({
+        wageType: effectiveWageType,
+        wage: effectiveWage,
+        minimumWage: applyMinWage,
+        startTime, endTime,
+        breakMinutes:
+          (compensationSnapshot.breakMinutes as number | undefined) ?? 0,
+      });
+      if (applyViolation) {
+        throw new HttpsError("failed-precondition", applyViolation);
+      }
+    }
+
     // ── 5. 복합 docId 계산 + 기존 지원서 중복/재활성화 판단 ──
     const discriminator = (workDetailId && workDetailId.length > 0) ? workDetailId : selectedWorkType;
     const complexId = slotId
       ? `${toId}_${slotId}_${discriminator}_${uid}`
       : `${toId}_${discriminator}_${uid}`;
 
-    const existingSnap = await db.collection("applications").doc(complexId).get();
+    // [CROSS-DOMAIN-R5.3C.2] 문서 id가 아니라 **관계**로 먼저 찾는다.
+    //   초대·제안이 만든 문서는 wdId를 discriminator로 쓰므로 이 complexId와
+    //   다르다. id로만 보면 같은 사람이 같은 업무에 두 줄로 남는다(DEV 실측).
+    //   이미 있는 문서를 찾으면 새로 만들지 않고 **그 문서에 수렴한다** —
+    //   기존 알림·계약·근태가 참조하는 id를 깨지 않기 위해서다.
+    const applyRelated = await srvFindRelationApplications(
+      uid, toId, slotId ?? undefined, resolvedWdId ?? undefined, complexId);
+    const applyRelation = applyRelated.length > 0 ? applyRelated[0] : null;
+    const applyDocId = applyRelation ? applyRelation.id : complexId;
+
+    const existingSnap = applyRelation ??
+      await db.collection("applications").doc(complexId).get();
     let isReactivation = false;
 
     if (existingSnap.exists) {
@@ -26633,6 +26710,17 @@ export const callableApplyToTO = onCall(
       const isTermDone =
         exData["terminationStatus"] === "APPROVED" || exData["terminationStatus"] === "AUTO_APPROVED";
       if (!isResignDone && !isTermDone) {
+        // [CROSS-DOMAIN-R5.3C.2] INVITED를 빠뜨리고 있었다.
+        //   예전에는 초대 문서가 wdId id, 지원 문서가 composite id라 서로
+        //   마주칠 일이 없었다. 이제 관계로 수렴하므로 여기서 만난다.
+        //   막지 않으면 tx.set이 초대를 **덮어쓰고** 카운터가 한 번 더 오른다
+        //   (DEV 실측: 초대 → 같은 업무 직접 지원 → 200, pendingCount +1).
+        //   초대를 받은 근무는 수락/거절로 답하는 것이지 다시 지원하는 게 아니다.
+        if (exStatus === "INVITED") {
+          throw new HttpsError(
+            "already-exists",
+            "이미 초대를 받은 근무입니다. 내 지원 내역에서 초대를 확인해주세요.");
+        }
         const activeStates = ["CONFIRMED", "CONTRACT_PENDING", "PENDING"];
         if (activeStates.includes(exStatus)) {
           throw new HttpsError("already-exists", "이미 지원한 업무입니다.");
@@ -26752,7 +26840,8 @@ export const callableApplyToTO = onCall(
     }
 
     // ── 7. 트랜잭션: 최종 재검증 + 지원서 set/update + 카운터 원자화 ──
-    const appRef = db.collection("applications").doc(complexId);
+    // [R5.3C.2] 관계가 이미 있으면 그 문서가 canonical이다.
+    const appRef = db.collection("applications").doc(applyDocId);
     const toRef = db.collection("tos").doc(toId);
     const slotRef = slotId
       ? db.collection("tos").doc(toId).collection("slots").doc(slotId)
@@ -28057,6 +28146,28 @@ export const callableInviteWorker = onCall(
       }
     }
 
+    // [CROSS-DOMAIN-R5.3C.2] 초대도 근로자에게 가는 약속이다 — 같은 문턱을 둔다.
+    //   판정식·최저임금 출처는 지원·제안·급여확정과 모두 같다.
+    if (derivedWage !== undefined && derivedWageType !== undefined) {
+      const invSnapshot = buildCompensationSnapshot(inviteMatchedWD);
+      const invMinWage = await srvLoadMinimumWage(
+        new Date(new Date(workDate).getTime() + 9 * 60 * 60 * 1000)
+          .getUTCFullYear());
+      const invViolation = srvValidateMinimumWagePromise({
+        wageType: derivedWageType,
+        wage: derivedWage,
+        minimumWage: invMinWage,
+        startTime: (inviteMatchedWD?.["startTime"] as string | undefined) ??
+          workDetailStartTime ?? "09:00",
+        endTime: (inviteMatchedWD?.["endTime"] as string | undefined) ??
+          workDetailEndTime ?? "18:00",
+        breakMinutes: (invSnapshot.breakMinutes as number | undefined) ?? 0,
+      });
+      if (invViolation) {
+        throw new HttpsError("failed-precondition", invViolation);
+      }
+    }
+
     // ── 7. INVITED 지원서 생성 ───────────────────────────────────────────────
     const inviteTime = admin.firestore.Timestamp.now();
     const expiresAt  = admin.firestore.Timestamp.fromMillis(
@@ -28129,7 +28240,17 @@ export const callableInviteWorker = onCall(
     const inviteComplexId = slotId
       ? `${toId}_${slotId}_${inviteDiscriminator}_${targetUid}`
       : `${toId}_${inviteDiscriminator}_${targetUid}`;
-    const newAppRef = db.collection("applications").doc(inviteComplexId);
+    // [CROSS-DOMAIN-R5.3C.2] 위 6번 중복 검사는 PENDING을 보지 않는다 —
+    //   다른 업무에 지원 중인 사람에게 초대를 보내는 것은 정상이기 때문이다.
+    //   그런데 **같은 업무**에 직접 지원(PENDING)한 사람은 문서 id가 달라
+    //   (composite) 이 자리에서도 걸리지 않았다. 결과는 한 사람 / 한 업무에
+    //   문서 2건, pendingCount 2 — DEV 실측으로 확인했다.
+    //   관계로 찾아 이미 있는 문서에 수렴한다. id는 바꾸지 않는다.
+    const inviteRelated = await srvFindRelationApplications(
+      targetUid, toId, slotId, inviteResolvedWdId, inviteComplexId);
+    const inviteRelation = inviteRelated.length > 0 ? inviteRelated[0] : null;
+    const newAppRef = db.collection("applications")
+      .doc(inviteRelation ? inviteRelation.id : inviteComplexId);
 
     // [Phase 8.1E.2A] INVITED는 pendingCount에 포함 — Application 생성과 카운터를 atomic하게 커밋
     // [R2] batch → transaction: 같은 문서를 동시에 만들려는 두 호출 중 하나만 통과한다.
@@ -28422,14 +28543,9 @@ export const callableOfferAlternativeWork = onCall(
     //   그래서 targetRef만 보면 "이미 직접 지원한 근로자" 가드가 지나간다 —
     //   같은 사람이 같은 업무에 두 줄로 남고 대기 카운터도 두 번 센다.
     //   id가 아니라 **관계**(uid+toId+slotId+wdId)로 찾는다.
-    const offerRelSnap = await db.collection("applications")
-      .where("uid", "==", offerUid)
-      .where("toId", "==", offerToId)
-      .where("slotId", "==", offerSlotId)
-      .limit(50)
-      .get();
-    const offerAltKeyed = offerRelSnap.docs.find(
-      (d) => d.id !== targetAppId && d.get("wdId") === targetWdId);
+    const offerRelated = await srvFindRelationApplications(
+      offerUid, offerToId, offerSlotId, targetWdId, targetAppId);
+    const offerAltKeyed = offerRelated.length > 0 ? offerRelated[0] : undefined;
 
     const targetSelf = await targetRef.get();
     const targetExisting = targetSelf.exists ? targetSelf : offerAltKeyed;

@@ -478,9 +478,10 @@ void main() {
 
     test('제안은 문서 id가 아니라 관계로 중복을 본다', () {
       // 직접 지원은 composite, 초대·제안은 wdId를 discriminator로 쓴다.
+      // [R5.3C.2] 관계 조회는 공용 helper로 옮겼다 — 세 writer가 같은 규칙을 쓴다.
       expect(
-          offer.contains('const offerAltKeyed = offerRelSnap.docs.find( '
-              '(d) => d.id !== targetAppId && d.get("wdId") === targetWdId);'),
+          offer.contains('const offerRelated = await srvFindRelationApplications( '
+              'offerUid, offerToId, offerSlotId, targetWdId, targetAppId);'),
           true);
       expect(offer.contains('const freshAlt = await offerTx.get(offerAltKeyed.ref);'),
           true, reason: '트랜잭션 읽기 집합에 넣어야 경합에 안전하다');

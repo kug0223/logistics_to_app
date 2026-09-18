@@ -230,8 +230,13 @@ void main() {
             '`\${toId}_\${slotId}_\${inviteDiscriminator}_\${targetUid}`'),
         isTrue,
       );
+      // [R5.3C.2] 자연키 규칙은 그대로다. 다만 같은 관계가 다른 discriminator로
+      //   이미 저장돼 있으면(직접 지원은 composite를 쓴다) 그 문서에 수렴한다 —
+      //   새 문서를 만들면 한 사람이 같은 업무에 두 줄로 남는다.
+      expect(invite.contains('db.collection("applications")'), isTrue);
       expect(
-        invite.contains('db.collection("applications").doc(inviteComplexId)'),
+        invite.contains(
+            '.doc(inviteRelation ? inviteRelation.id : inviteComplexId);'),
         isTrue,
       );
     });
