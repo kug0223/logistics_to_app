@@ -195,14 +195,22 @@ void main() {
           true);
     });
 
-    test('확정 경로와 수락 경로가 같은 헬퍼를 쓴다', () {
-      // [CROSS-DOMAIN-R5.2A] 각 경로에 멱등 재호출 복구 지점이 더해져 4곳이다.
-      expect('await ensureIdCardGrantForConfirmedApplication('
-          .allMatches(cf).length, 4,
-          reason: '확정 2(정상+멱등) + 수락 2(정상+멱등)');
-      expect(_flat(_callableBody(rawCf, 'callableConfirmApplication'))
-          .contains('await ensureIdCardGrantForConfirmedApplication('), true);
-      expect(accept.contains('await ensureIdCardGrantForConfirmedApplication('), true);
+    // [CROSS-DOMAIN-R5.3E.2] 호출 수(4)로 고정하던 것을 경로 이름으로 바꾼다.
+    //   그 숫자는 "확정을 만드는 경로가 전부 grant를 만든다"의 대리값이었고,
+    //   경로가 정당하게 늘면(확정 재배치 수락) 계약은 같은데 숫자만 틀렸다.
+    test('확정을 만드는 모든 경로가 같은 grant 헬퍼를 쓴다', () {
+      for (final w in const [
+        'callableConfirmApplication',
+        'callableAcceptTOInvitation',
+        'callableAcceptConfirmedReassignment',
+      ]) {
+        expect(
+          _flat(_callableBody(rawCf, w))
+              .contains('ensureIdCardGrantForConfirmedApplication('),
+          true,
+          reason: '$w 에서 빠지면 그 경로로 확정된 근로자만 신분증 접근이 끊긴다',
+        );
+      }
     });
 
     test('결정적 id와 멱등 조건이 헬퍼 안에 있다', () {

@@ -276,10 +276,21 @@ void main() {
           'documentAccessConsentAt: confirmedAt,'), true);
     });
 
-    test('두 경로가 같은 grant 헬퍼를 쓴다', () {
-      expect('await ensureIdCardGrantForConfirmedApplication('
-          .allMatches(cf).length, 4,
-          reason: '확정 2(정상+멱등) + 수락 2(정상+멱등)');
+    // [CROSS-DOMAIN-R5.3E.2] 호출 수 대신 경로 이름으로 확인한다.
+    //   확정을 만드는 경로가 늘어도(확정 재배치 수락) 계약은 같다.
+    test('확정을 만드는 모든 경로가 같은 grant 헬퍼를 쓴다', () {
+      for (final w in const [
+        'callableConfirmApplication',
+        'callableAcceptTOInvitation',
+        'callableAcceptConfirmedReassignment',
+      ]) {
+        final a = cf.indexOf('export const $w = onCall(');
+        expect(a >= 0, true, reason: '$w 를 찾지 못함');
+        final b = cf.indexOf('export const ', a + 20);
+        final body = cf.substring(a, b < 0 ? cf.length : b);
+        expect(body.contains('ensureIdCardGrantForConfirmedApplication('), true,
+            reason: '$w 에서 grant가 빠지면 그 경로만 신분증 접근이 끊긴다');
+      }
     });
   });
 }

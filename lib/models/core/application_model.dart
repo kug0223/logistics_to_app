@@ -654,10 +654,24 @@ class ApplicationModel {
   bool get isReassignedAway =>
       status == 'AUTO_CANCELED' && cancelReason == 'REASSIGNMENT_ACCEPTED';
 
+  /// [R5.3E.2] 이 **확정**(A)이 업무 변경 수락으로 접힌 것인가.
+  ///
+  /// R5.3B의 [isReassignedAway]와 사건이 다르다. 저쪽은 대기 중인 지원이
+  /// 접힌 것이고, 이쪽은 **이미 확정된 근무**가 다른 업무로 옮겨간 것이다.
+  /// 이력에서 둘을 구분할 수 있어야 "확정까지 갔다가 옮겼다"가 보인다.
+  /// 판정은 서버가 쓴 cancelReason 하나로만 한다.
+  bool get isConfirmedReassignedAway =>
+      status == 'AUTO_CANCELED' &&
+      cancelReason == 'CONFIRMED_REASSIGNMENT_ACCEPTED';
+
+  /// 재배치(대기·확정 어느 쪽이든)로 접힌 관계인가 — 배지·뱃지 분기용.
+  bool get isAnyReassignedAway => isReassignedAway || isConfirmedReassignedAway;
+
   /// 상태 한글 표시
   String get statusText {
-    // [R5.3B] 제안 수락으로 접힌 지원은 '자동 취소됨'이 아니다.
+    // [R5.3B/R5.3E.2] 제안 수락으로 접힌 관계는 '자동 취소됨'이 아니다.
     //   근로자 이력에 남는 문장이므로 사건을 정확히 말한다.
+    if (isConfirmedReassignedAway) return '다른 업무로 변경 확정';
     if (isReassignedAway) return '다른 업무로 확정됨';
     switch (status) {
       case 'PENDING':           return '대기 중';

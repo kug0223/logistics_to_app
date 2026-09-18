@@ -101,11 +101,24 @@ void main() {
   });
 
   group('좌석·겹침 판정은 서버 트랜잭션 안에 있다', () {
-    test('세 seat-commit writer가 같은 overlap 계약을 쓴다', () {
-      expect('srvCollectSeatCommitOverlap(tx,'.allMatches(fnsFlat).length, 3,
-          reason: 'approve · confirm · invite accept 셋 다 — 하나라도 빠지면 '
-              '그 경로에서만 겹침이 남는다');
-      expect('srvApplySeatCommitOverlap(tx,'.allMatches(fnsFlat).length, 3);
+    // [CROSS-DOMAIN-R5.3E.2] 호출 수 대신 writer 이름으로 확인한다.
+    //   숫자는 "전부 쓴다"의 대리값이었고, writer가 정당하게 늘면
+    //   계약은 그대로인데 테스트만 깨졌다.
+    test('모든 seat-commit writer가 같은 overlap 계약을 쓴다', () {
+      for (final w in const [
+        'callableApproveApplicationForReview',
+        'callableConfirmApplication',
+        'callableAcceptTOInvitation',
+        'callableAcceptConfirmedReassignment',
+      ]) {
+        final a = fnsFlat.indexOf('export const $w = onCall(');
+        expect(a >= 0, true, reason: '$w 를 찾지 못함');
+        final b = fnsFlat.indexOf('export const ', a + 20);
+        final body = fnsFlat.substring(a, b < 0 ? fnsFlat.length : b);
+        expect(body.contains('srvCollectSeatCommitOverlap(tx,'), true,
+            reason: '$w 가 빠지면 그 경로에서만 겹침이 남는다');
+        expect(body.contains('srvApplySeatCommitOverlap(tx,'), true, reason: w);
+      }
     });
 
     test('정원 검증이 트랜잭션 안에서 fresh하게 이뤄진다', () {

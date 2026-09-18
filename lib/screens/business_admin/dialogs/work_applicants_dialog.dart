@@ -23,6 +23,9 @@ import '../../../utils/dialog_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../widgets/dialogs/alternative_work_offer_sheet.dart';
+import '../../../widgets/dialogs/confirmed_reassignment_sheet.dart';
+import '../../../models/core/confirmed_reassignment_proposal.dart';
+import '../../../services/confirmed_reassignment_service.dart';
 import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../common/settings_screen.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
@@ -118,6 +121,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 있는 확정자 노출 방지
   // key = userId, value = 슬롯 날짜(or 주간)에 checkIn/급여확정 기록 존재 여부
   Map<String, bool> _hasWorkedMap = {};
+  /// [R5.3E.2] 이 사업장의 진행 중인 근무 변경 제안.
+  List<ConfirmedReassignmentProposal> _reassignProposals = const [];
 
   // [BIZCTX-PATCH] target business 기준 권한 판정.
   // [POSTING-V2-03B.1] 생성자 snapshot(targetPermissions)을 canonical로 쓰지 않는다.
@@ -224,6 +229,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     _loadApplicants().then((_) {
       if (mounted) _updateLocalStats(markChanged: false);
     });
+    // [R5.3E.2] 진행 중인 변경 제안 — 확정 행의 CTA가 '변경 확인 대기'로
+    //   바뀌려면 이 목록이 필요하다. 지원자 로드와 독립이므로 따로 시작한다.
+    _loadReassignProposals();
   }
 
   VoidCallback? _releasePermsWatch;
@@ -1603,6 +1611,38 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           ],
                           ),
                         ),
+                        // [CROSS-DOMAIN-R5.3E.2] 확정 근로자 업무 변경 제안.
+                        //
+                        //   제안을 보냈다고 근무가 바뀌지 않는다. 그래서 이 줄은
+                        //   확정 뱃지·스케줄을 건드리지 않고, 보낸 뒤에는
+                        //   '변경 확인 대기'로만 바뀐다 — B로 확정된 것처럼
+                        //   보이면 관리자가 실제 인력 상황을 잘못 읽는다.
+                        if (!widget.toItem.to.isLongTerm &&
+                            _canManageTo() &&
+                            _canProposeReassignment(app)) ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: _pendingReassignmentOf(app) != null
+                                ? _buildActionButton(
+                                    context,
+                                    label: '변경 확인 대기',
+                                    icon: Icons.hourglass_top,
+                                    bgColor: AppColors.warningBg,
+                                    textColor: AppColors.warning,
+                                    onTap: () => _cancelReassignment(app),
+                                  )
+                                : _buildActionButton(
+                                    context,
+                                    label: '근무 변경 제안',
+                                    icon: Icons.swap_horiz,
+                                    bgColor: AppColors.infoBg,
+                                    textColor: AppColors.info,
+                                    onTap: () =>
+                                        _showConfirmedReassignmentSheet(item),
+                                  ),
+                          ),
+                        ],
                       ],
 
                       // 대기 중 액션 버튼 (파트변경 / 거절 / 승인)
@@ -2096,6 +2136,105 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 단기 근무자 전용 — 장기는 이미 UI에서 '고정근무 관리' 버튼으로 분기됨
   bool _canCancelConfirmation(ApplicationModel app) {
     return _hasWorkedMap[app.uid] != true;
+  }
+
+  // ── [CROSS-DOMAIN-R5.3E.2] 확정 근무 변경 제안 ────────────────────────────
+
+  /// 이 확정자에게 변경을 제안할 수 있는가 — 서버 조건의 화면 사본이다.
+  ///
+  /// 서버가 다시 전부 판정한다(계약·근태·정원·마감). 여기서는 눌러도 반드시
+  /// 거절될 것만 미리 감춘다: 이미 근무했거나, 옮길 업무 자체가 없을 때.
+  bool _canProposeReassignment(ApplicationModel app) {
+    if (app.status != 'CONFIRMED') return false;
+    if (_hasWorkedMap[app.uid] == true) return false;
+    return _offerableWorkDetails(app).isNotEmpty;
+  }
+
+  ConfirmedReassignmentProposal? _pendingReassignmentOf(ApplicationModel app) {
+    for (final p in _reassignProposals) {
+      if (p.sourceApplicationId == app.id && p.isActionable) return p;
+    }
+    return null;
+  }
+
+  Future<void> _loadReassignProposals() async {
+    final bizId = widget.toItem.to.businessId;
+    if (bizId.isEmpty) return;
+    try {
+      final list = await ConfirmedReassignmentService.instance
+          .proposalsByBusiness(bizId);
+      if (!mounted) return;
+      setState(() => _reassignProposals = list);
+    } catch (e) {
+      // 읽기 실패를 "제안 없음"으로 바꾸지 않는다 — 이전 목록을 유지한다.
+      debugPrint('[R5.3E.2] 변경 제안 목록 조회 실패: $e');
+    }
+  }
+
+  Future<void> _showConfirmedReassignmentSheet(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+    final workerName = user?.name ?? '근로자';
+    final candidates = _offerableWorkDetails(app);
+    if (candidates.isEmpty) {
+      ToastHelper.showWarning('변경할 수 있는 다른 업무가 없습니다.');
+      return;
+    }
+    final picked = await AlternativeWorkOfferSheet.pickOffer(
+      context,
+      workerName: workerName,
+      currentWork: _getWorkForApp(app),
+      candidates: candidates,
+      confirmedCountOf: _confirmedCountForWork,
+      sourceWage: app.wage,
+      sourceWageType: app.wageType,
+      canManageWage: _permissionFor((p) => p.canManageWage),
+      sourceIsConfirmed: true,
+    );
+    if (picked == null || !mounted) return;
+    final target = candidates.firstWhere((w) => w.id == picked.wdId);
+
+    final ok = await DialogHelper.showConfirm(
+      context,
+      title: '근무 변경 제안',
+      message: '$workerName님에게 ‘${target.workType}’ 업무로 변경을 제안합니다.\n'
+          '${target.startTime}~${target.endTime}\n\n'
+          '제안을 보내도 지금 확정된 근무는 그대로 유지됩니다. '
+          '근로자가 수락한 순간에만 변경이 반영되고, '
+          '기존 조건을 유지하면 아무것도 바뀌지 않습니다.',
+      confirmText: '제안 보내기',
+      cancelText: '취소',
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      final pid = await ConfirmedReassignmentService.instance.propose(
+        sourceApplicationId: app.id,
+        targetWdId: target.id,
+        compensationOption: picked.option,
+      );
+      if (pid == null || !mounted) return;
+      ToastHelper.showSuccess('변경 제안을 보냈습니다. 근로자 확인을 기다립니다.');
+      await _loadReassignProposals();
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _cancelReassignment(ApplicationModel app) async {
+    final p = _pendingReassignmentOf(app);
+    if (p == null || _isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
+      final done = await ConfirmedReassignmentSheet.confirmCancel(context, p);
+      if (!done || !mounted) return;
+      ToastHelper.showSuccess('변경 제안을 철회했습니다.');
+      await _loadReassignProposals();
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
   }
 
   /// 확정취소 (단기)

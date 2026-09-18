@@ -1420,6 +1420,28 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // [CROSS-DOMAIN-R5.3E.2] 확정 근무 변경 제안
+    //
+    //   제안은 "아직 아무것도 바뀌지 않은 상태"를 담는 문서다. 상태 하나가
+    //   근로자의 확정 근무를 다른 업무로 옮기는 트리거이므로, 쓰기는 전부
+    //   CF(Admin SDK)만 한다. 클라이언트가 status를 ACCEPTED로 쓰면
+    //   수락 트랜잭션(좌석 교대·계약·근태 검증) 전체를 건너뛰게 된다.
+    //
+    //   읽기도 CF를 거친다(callableGetMy… / …ByBiz). 목록 쿼리를 열면
+    //   request.query.filters가 list에서 null이라 소속 필터를 강제할 수 없다
+    //   — 이 프로젝트가 이미 전수 이전한 이유와 같다.
+    //
+    //   lock 문서도 같다. activeProposalId를 클라이언트가 지우면 같은 확정에
+    //   제안이 여럿 생긴다(PART S의 유일성이 lock 하나에 걸려 있다).
+    // ═══════════════════════════════════════════════════════════
+    match /confirmedReassignmentProposals/{proposalId} {
+      allow read, write: if false; // CF Admin SDK 전용
+    }
+    match /confirmedReassignmentLocks/{sourceApplicationId} {
+      allow read, write: if false; // CF Admin SDK 전용
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // idCardAccessRequests 컬렉션
     // ═══════════════════════════════════════════════════════════
     // idCardAccessRequests 컬렉션 (신분증 열람 요청)

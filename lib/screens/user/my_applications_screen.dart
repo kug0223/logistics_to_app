@@ -31,6 +31,10 @@ import 'apply_prerequisites_screen.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
+import '../../utils/responsive_helper.dart';
+import '../../models/core/confirmed_reassignment_proposal.dart';
+import '../../services/confirmed_reassignment_service.dart';
+import '../../widgets/dialogs/confirmed_reassignment_sheet.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Presentation-layer enums — DB status / ApplicationModel 변경 없음
@@ -103,6 +107,8 @@ class MyApplicationsScreen extends StatefulWidget {
 }
 
 class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
+  /// [R5.3E.2] 나에게 온 진행 중인 근무 변경 제안.
+  List<ConfirmedReassignmentProposal> _reassignProposals = const [];
   // ─── 포맷터 캐싱 ──────────────────────────────────────────────────────────
   // [R1.2] 근무 날짜(workDate)는 FormatHelper의 KST 변환을 쓴다 — 여기에
   //   DateFormat을 다시 만들지 않는다. _mdhmFmt는 초대 만료 '시각'용이다.
@@ -161,6 +167,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadApplications();
+      // [R5.3E.2] 지원서 목록과 독립이다 — 제안은 별도 entity이고,
+      //   Application 목록에는 나타나지 않는다(아직 좌석을 잡지 않았다).
+      _loadReassignProposals();
     });
   }
 
@@ -887,6 +896,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 // ── 4행: 급여 ─────────────────────────────────────────
                 _buildWageRow(app),
 
+                // [CROSS-DOMAIN-R5.3E.2] 이 확정에 근무 변경 제안이 와 있는가.
+                //   확정 표시는 그대로 둔다 — 아직 바뀐 것이 없기 때문이다.
+                //   제안은 카드 아래에 별도 줄로 붙는다.
+                _buildReassignmentBanner(app),
+
                 // ── 장기 공고 전용 섹션 ───────────────────────────────
                 if (app.isLongTermApplication &&
                     AppStatus.confirmedStatuses.contains(app.status)) ...[
@@ -1598,6 +1612,76 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           color: AppColors.grey600,
           bgColor: AppColors.grey200,
         );
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // [CROSS-DOMAIN-R5.3E.2] 확정 근무 변경 제안
+  //
+  //   제안이 왔다고 이 카드의 확정 표시가 바뀌지는 않는다. 근로자가 고르기
+  //   전까지 근무는 지금 조건 그대로이고, 카드가 먼저 바뀌면 "이미 변경됐다"로
+  //   읽힌다. 그래서 확정 정보는 손대지 않고 아래에 한 줄을 더한다.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildReassignmentBanner(ApplicationModel app) {
+    final p = _reassignProposals
+        .where((e) => e.sourceApplicationId == app.id && e.isActionable)
+        .firstOrNull;
+    if (p == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        onTap: () => _openReassignmentSheet(p),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: AppColors.infoBg,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.swap_horiz,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: AppColors.infoDark),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '근무 변경 제안이 왔어요 · 확인 전까지 지금 근무 그대로예요',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.infoDark),
+                ),
+              ),
+              Icon(Icons.chevron_right,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: AppColors.infoDark),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openReassignmentSheet(ConfirmedReassignmentProposal p) async {
+    final decision = await ConfirmedReassignmentSheet.decide(context, p);
+    if (!mounted || decision == ReassignmentDecision.dismissed) return;
+    ToastHelper.showSuccess(decision == ReassignmentDecision.changed
+        ? '변경된 근무로 확정됐습니다.'
+        : '기존 근무 조건을 유지합니다.');
+    await _loadReassignProposals();
+    if (!mounted) return;
+    await _loadApplications();
+  }
+
+  Future<void> _loadReassignProposals() async {
+    try {
+      final list = await ConfirmedReassignmentService.instance.myProposals();
+      if (!mounted) return;
+      setState(() => _reassignProposals = list);
+    } catch (e) {
+      // 못 읽은 것을 "제안 없음"으로 바꾸지 않는다 — 직전 목록을 유지한다.
+      debugPrint('[R5.3E.2] 변경 제안 조회 실패: $e');
     }
   }
 

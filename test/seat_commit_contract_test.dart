@@ -45,6 +45,15 @@ String _after(String source, String signature, [int chars = 2000]) {
   return source.substring(a, end > source.length ? source.length : end);
 }
 
+/// callable 하나의 본문 — 다음 `\n);` 까지.
+String _callableBodyOf(String source, String name) {
+  final a = source.indexOf('export const $name = onCall(');
+  if (a == -1) throw StateError('$name 을 찾지 못함');
+  final b = source.indexOf('\n);', a);
+  if (b == -1) throw StateError('$name 본문 끝을 찾지 못함');
+  return source.substring(a, b);
+}
+
 String _tsSliceOf(String source, String from, String to) {
   final a = source.indexOf(from);
   if (a == -1) throw StateError('$from 를 찾지 못함');
@@ -139,14 +148,31 @@ void main() {
   // 2. 세 writer가 그 한 벌을 쓴다
   // ═════════════════════════════════════════════════════════════
   group('R2.1-02 three-writer convergence', () {
-    test('02-a 세 writer 모두 수집 helper를 호출한다', () {
-      final n = RegExp(r'srvCollectSeatCommitOverlap\(tx, \{').allMatches(cf).length;
-      expect(n, 3, reason: '호출 수가 3이 아니면 어느 한 경로가 빠졌거나 중복이다');
+    // [CROSS-DOMAIN-R5.3E.2] 이전에는 호출 수를 3으로 고정했다.
+    //   그 숫자는 "모든 seat-commit writer가 같은 계약을 쓴다"의 대리값이었고,
+    //   writer가 정당하게 늘면(확정 재배치 수락) 계약은 그대로인데 테스트만
+    //   깨졌다. 세는 대신 **이름을 대고** 확인한다 — 빠뜨린 writer는 여전히
+    //   잡히고, 새 writer를 더할 때는 여기에 이름을 추가하게 된다.
+    const seatCommitWriters = [
+      'callableApproveApplicationForReview',
+      'callableConfirmApplication',
+      'callableAcceptTOInvitation',
+      'callableAcceptConfirmedReassignment',
+    ];
+
+    test('02-a 모든 seat-commit writer가 수집 helper를 호출한다', () {
+      for (final w in seatCommitWriters) {
+        expect(_callableBodyOf(cf, w).contains('srvCollectSeatCommitOverlap(tx, {'),
+            isTrue,
+            reason: '$w 가 겹침 수집을 건너뛰면 그 경로에서만 겹침이 남는다');
+      }
     });
 
-    test('02-b 세 writer 모두 적용 helper를 호출한다', () {
-      final n = RegExp(r'srvApplySeatCommitOverlap\(tx,').allMatches(cf).length;
-      expect(n, 3);
+    test('02-b 모든 seat-commit writer가 적용 helper를 호출한다', () {
+      for (final w in seatCommitWriters) {
+        expect(_callableBodyOf(cf, w).contains('srvApplySeatCommitOverlap(tx,'),
+            isTrue, reason: w);
+      }
     });
 
     test('02-c 지원 검토 승인에 겹침 계약이 들어갔다', () {

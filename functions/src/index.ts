@@ -1,4 +1,4 @@
-﻿import {onSchedule} from "firebase-functions/v2/scheduler";
+import {onSchedule} from "firebase-functions/v2/scheduler";
 import {
   onDocumentCreated,
   onDocumentUpdated,
@@ -8829,7 +8829,9 @@ export const callableCreateTO = onCall(
       throw new HttpsError("invalid-argument", "publishMode는 draft/scheduled/immediate/deferred 중 하나여야 합니다.");
     }
 
-    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!businessId) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
     // 호출자와 creatorUID 일치 검증 — 타인 명의 TO 생성 차단
     if (callerUid !== creatorUID) {
       throw new HttpsError("permission-denied", "creatorUID 불일치.");
@@ -16238,9 +16240,24 @@ async function srvCollectSeatCommitOverlap(
     applicantUid: string;
     applicationId: string;
     fd: FirebaseFirestore.DocumentData;
+    /**
+     * [CROSS-DOMAIN-R5.3E.2] 이 자리를 **비우면서** 잡는 경우의 원 약속.
+     *
+     *   확정 재배치(A→B)는 같은 사람의 확정 하나를 끝내고 다른 하나를
+     *   세우는 단일 사건이다. A와 B는 같은 날 같은 슬롯이라 시간이 겹치는
+     *   것이 정상인데, V1 규칙은 "겹치는 CONFIRMED가 있으면 자리를 만들지
+     *   않는다"이므로 A가 B를 막는다 — 자기 자신을 막는 셈이다.
+     *
+     *   그래서 **한 건**만 제외할 수 있게 한다. 이 값은 절대 클라이언트
+     *   payload에서 오지 않는다. 호출자는 서버가 만든 proposal을 fresh
+     *   read해서 (PROPOSED · 같은 uid · 같은 source · 같은 target)을 확인한
+     *   뒤에만 넘긴다. 임의 excludeApplicationId를 받는 경로를 만들면
+     *   "겹치는 확정 금지"가 호출자 선언 하나로 무력화된다.
+     */
+    excludeCommittedId?: string;
   },
 ): Promise<SeatCommitOverlapPlan> {
-  const {applicantUid, applicationId, fd} = args;
+  const {applicantUid, applicationId, fd, excludeCommittedId} = args;
 
   const startTime = (fd.startTime as string | undefined) ?? "";
   const endTime = (fd.endTime as string | undefined) ?? "";
@@ -16295,6 +16312,8 @@ async function srvCollectSeatCommitOverlap(
   // V1. 겹치는 약속이 있으면 자리를 만들지 않는다.
   for (const existing of committedSnap.docs) {
     if (existing.id === applicationId) continue;
+    // [R5.3E.2] 이 commit이 끝내는 약속은 자기 자신과 같이 취급한다.
+    if (excludeCommittedId && existing.id === excludeCommittedId) continue;
     if (!conflictsWith(existing.data())) continue;
     const eStart = (existing.data().startTime as string | undefined) ?? "";
     const eEnd = (existing.data().endTime as string | undefined) ?? "";
@@ -29958,6 +29977,1206 @@ export const callableDeclineTOInvitation = onCall(
   }
 );
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [CROSS-DOMAIN-R5.3E.2] 확정 근로자 업무 변경 제안 (A→B) — V1
+//
+//   R5.3A에서 '파트변경'을 동결한 이유는 관리자가 확정된 약속을 덮어썼기
+//   때문이다. R5.3B는 **대기 중**인 지원자에게 다른 업무를 제안하는 길을
+//   열었고, 여기서는 **이미 확정된** 근로자에게 같은 일을 한다.
+//
+//   확정은 대기와 무게가 다르다. 그래서 규칙 하나가 더 있다:
+//   제안을 보냈다고 아무것도 바뀌지 않는다. A는 CONFIRMED 그대로, 좌석도
+//   그대로, 일정도 그대로다. 근로자가 수락한 그 순간에만, 한 커밋 안에서
+//   A의 자리가 풀리고 B의 자리가 잡힌다. 거절·무시·관리자 취소는 전부
+//   "아무 일도 없었다"로 끝난다.
+//
+//   그래서 제안은 Application이 아니다. Application으로 만들면 그 순간
+//   목록·카운터·알림에 활성 관계로 섞이고, "제안했을 뿐인데 B로 확정된 것처럼
+//   보인다". 별도 entity(confirmedReassignmentProposals)에 담고, B의
+//   Application은 수락 트랜잭션에서 처음 만들어진다.
+//
+//   V1이 다루지 않는 것: 같은 wdId의 시간·급여 변경, 날짜 변경, 계약이 이미
+//   발행된 관계, 근무가 시작된 관계. 앞의 둘은 자연키가 같아 두 번째
+//   Application으로 표현할 수 없고(R5.3C.2A 관계 유일성), 뒤의 둘은 되돌릴
+//   길이 없는 사실을 건드린다(R5.3E READ / R5.3E.1).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const CR_PROPOSAL_COL = "confirmedReassignmentProposals";
+/** 같은 source에 PROPOSED가 둘 생기지 않게 하는 결정적 문서. */
+const CR_LOCK_COL = "confirmedReassignmentLocks";
+const CR_TYPE = "CONFIRMED_WORK_REASSIGNMENT";
+
+const CR_PROPOSED = "PROPOSED";
+const CR_ACCEPTED = "ACCEPTED";
+const CR_DECLINED = "DECLINED";
+const CR_CANCELED_BY_MANAGER = "CANCELED_BY_MANAGER";
+const CR_SUPERSEDED = "SUPERSEDED";
+const CR_EXPIRED = "EXPIRED";
+/**
+ * 아직 효력이 있는(= 재배치를 막는) 계약 상태.
+ * voided만 "없는 것과 같다" — 초안·서명대기·완료는 전부 관계를 묶는다.
+ */
+const CR_LIVE_CONTRACT_STATUSES = [
+  "draft", "pending_employer", "pending_worker", "completed",
+];
+
+/** V1이 허용하는 급여 조건 옵션 — R5.3C.1 allowlist 그대로. */
+const CR_COMPENSATION_OPTIONS = ["TARGET_BASE", "MATCH_SOURCE_WAGE"];
+
+/**
+ * 한 Application에 걸린 **살아 있는** 계약서 ref 목록.
+ *
+ * 트랜잭션 안에서는 쿼리를 쓸 수 없으므로 ref를 밖에서 모아 두고
+ * 트랜잭션이 `tx.get`으로 다시 읽는다. 상태 판정은 늘 fresh read 쪽이다.
+ *
+ * @param {string} applicationId 지원서 문서 ID
+ * @param {string} businessId 사업장 ID
+ * @return {Promise<FirebaseFirestore.DocumentReference[]>} 계약서 ref들
+ */
+async function srvLiveContractRefsFor(
+  applicationId: string,
+  businessId: string
+): Promise<FirebaseFirestore.DocumentReference[]> {
+  const [q1, q2] = await Promise.all([
+    db.collection("employment_contracts")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", businessId).limit(20).get(),
+    db.collection("employment_contracts")
+      .where("applicationIds", "array-contains", applicationId)
+      .where("businessId", "==", businessId).limit(20).get(),
+  ]);
+  const byId = new Map<string, FirebaseFirestore.DocumentReference>();
+  for (const doc of [...q1.docs, ...q2.docs]) {
+    if (CR_LIVE_CONTRACT_STATUSES.includes(
+      (doc.data()["status"] as string | undefined) ?? "")) {
+      byId.set(doc.id, doc.ref);
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * 제안 대상이 될 수 있는 확정인가 — 순수 판정.
+ *
+ * 계약·근태는 문서를 더 읽어야 하므로 여기서 보지 않는다. 이 함수는
+ * Application 문서 하나만으로 답할 수 있는 것을 답한다.
+ *
+ * @param {FirebaseFirestore.DocumentData} a Application 데이터
+ * @return {string | null} 불가 사유, 가능하면 null
+ */
+function srvConfirmedReassignSourceBlock(
+  a: FirebaseFirestore.DocumentData
+): string | null {
+  const st = (a["status"] as string | undefined) ?? "";
+  // CONTRACT_PENDING은 V1 대상이 아니다 — 계약 발행이 이미 시작된 관계다.
+  if (st !== "CONFIRMED") {
+    return "확정된 근무만 업무 변경을 제안할 수 있습니다.";
+  }
+  if (a["staffingReleasedAt"] != null) {
+    return "이미 자리가 반납된 근무입니다.";
+  }
+  if ((a["type"] as string | undefined) === "long_term" ||
+      (Array.isArray(a["workDays"]) &&
+        (a["workDays"] as string[]).length > 0)) {
+    return "장기 근무는 이 경로의 대상이 아닙니다.";
+  }
+  if (!a["toId"] || !a["slotId"] || !a["wdId"] || !a["workDate"]) {
+    return "이 근무는 업무 변경을 제안할 수 없습니다. (근무 단위 정보 없음)";
+  }
+  return null;
+}
+
+/**
+ * 근로자 화면·관리자 화면이 함께 읽는 제안 요약.
+ * payload에 금액·상태를 truth로 싣지 않는다 — 화면은 늘 fresh read한다.
+ *
+ * @param {string} id proposal 문서 ID
+ * @param {FirebaseFirestore.DocumentData} p proposal 데이터
+ * @return {Record<string, unknown>} 화면이 읽는 요약
+ */
+function srvCrProposalView(
+  id: string, p: FirebaseFirestore.DocumentData
+): Record<string, unknown> {
+  const tsMs = (v: unknown) =>
+    (v as admin.firestore.Timestamp | undefined)?.toMillis() ?? null;
+  return {
+    proposalId: id,
+    type: p["type"],
+    status: p["status"],
+    uid: p["uid"],
+    businessId: p["businessId"],
+    businessName: p["businessName"] ?? "",
+    sourceApplicationId: p["sourceApplicationId"],
+    sourcePromise: p["sourcePromiseSnapshot"] ?? null,
+    targetToId: p["targetToId"],
+    targetSlotId: p["targetSlotId"],
+    targetWdId: p["targetWdId"],
+    targetPromise: p["targetPromiseSnapshot"] ?? null,
+    compensationOption: p["compensationOption"],
+    createdBy: p["createdBy"],
+    createdAtMs: tsMs(p["createdAt"]),
+    expiresAtMs: tsMs(p["expiresAt"]),
+    decidedAtMs: tsMs(p["decidedAt"]),
+    supersededReason: p["supersededReason"] ?? null,
+    resultApplicationId: p["resultApplicationId"] ?? null,
+  };
+}
+
+/**
+ * 제안 관련 알림 — 결정적 id로 한 번만 쓴다.
+ *
+ * payload에는 identity와 이동에 필요한 맥락만 넣는다. 금액·상태는 싣지
+ * 않는다 — 알림은 오래 남고, 남은 값은 곧 낡은 truth가 된다(R5.3D.1).
+ *
+ * @param {string} toUid 수신자
+ * @param {string} docId 결정적 알림 문서 id
+ * @param {Record<string, unknown>} body 알림 본문
+ * @return {Promise<"created"|"exists"|"failed">} 결과
+ */
+async function srvWriteCrNotification(
+  toUid: string, docId: string, body: Record<string, unknown>
+): Promise<"created" | "exists" | "failed"> {
+  try {
+    await db.collection("users").doc(toUid).collection("notifications")
+      .doc(docId).create({
+        userId: toUid,
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        readAt: null,
+        ...body,
+      });
+    return "created";
+  } catch (err) {
+    if ((err as {code?: number})?.code === 6) return "exists";
+    console.error("[confirmedReassignment] 알림 실패:", err);
+    return "failed";
+  }
+}
+
+// ── callableProposeConfirmedReassignment ────────────────────────────────────
+// 확정된 근로자에게 같은 날 다른 업무(B)를 제안한다.
+//
+// Input : { sourceApplicationId, targetWdId, compensationOption }
+// Output: { success, proposalId, targetWdId }
+export const callableProposeConfirmedReassignment = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {sourceApplicationId, targetWdId, compensationOption} =
+      request.data as {
+        sourceApplicationId?: string;
+        targetWdId?: string;
+        compensationOption?: string;
+      };
+    if (!sourceApplicationId || typeof sourceApplicationId !== "string") {
+      throw new HttpsError("invalid-argument", "sourceApplicationId가 필요합니다.");
+    }
+    if (!targetWdId || typeof targetWdId !== "string") {
+      throw new HttpsError("invalid-argument", "targetWdId가 필요합니다.");
+    }
+    if (typeof compensationOption !== "string" ||
+        !CR_COMPENSATION_OPTIONS.includes(compensationOption)) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 급여 조건 옵션입니다.");
+    }
+    const crIsMatch = compensationOption === "MATCH_SOURCE_WAGE";
+
+    // ── 1. source A ─────────────────────────────────────────────────────────
+    const crSrcRef = db.collection("applications").doc(sourceApplicationId);
+    const crSrcSnap = await crSrcRef.get();
+    if (!crSrcSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const crSrcData = crSrcSnap.data()!;
+    const crBizId = crSrcData.businessId as string | undefined;
+    const crToId = crSrcData.toId as string | undefined;
+    const crSlotId = crSrcData.slotId as string | undefined;
+    const crUid = crSrcData.uid as string | undefined;
+    const crSrcWdId = crSrcData.wdId as string | undefined;
+    if (!crBizId || !crToId || !crSlotId || !crUid) {
+      throw new HttpsError(
+        "failed-precondition", "이 근무는 업무 변경을 제안할 수 없습니다.");
+    }
+
+    // ── 2. 권한 — 확정된 인력을 다루는 행위다 ───────────────────────────────
+    //   canManageTo만으로는 부족하다. 공고를 만드는 일과 이미 확정된 사람의
+    //   근무를 바꾸는 일은 다른 권한이고, 후자는 근태·급여로 이어진다.
+    //   개별 급여 승계는 R5.3C.1과 같은 이유로 canManageWage를 더 요구한다.
+    const {callerData: crCallerData} = await assertBizAdmin(callerUid, crBizId);
+    const crCallerRole = crCallerData?.role as string | undefined;
+    if (crCallerRole !== "BUSINESS_ADMIN" && crCallerRole !== "SUPER_ADMIN") {
+      const crMemberSnap = await db.collection("businesses").doc(crBizId)
+        .collection("members").doc(callerUid).get();
+      const crPerms =
+        (crMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (crPerms.canManageTo !== true) {
+        throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+      }
+      if (crPerms.canManageWorkers !== true) {
+        throw new HttpsError("permission-denied", "근로자 관리 권한이 없습니다.");
+      }
+      if (crIsMatch && crPerms.canManageWage !== true) {
+        throw new HttpsError(
+          "permission-denied", "개별 급여 제안 권한이 필요합니다.");
+      }
+    }
+
+    // ── 3. source eligibility ───────────────────────────────────────────────
+    const crSrcBlock = srvConfirmedReassignSourceBlock(crSrcData);
+    if (crSrcBlock) throw new HttpsError("failed-precondition", crSrcBlock);
+    if (crSrcWdId === targetWdId) {
+      throw new HttpsError("failed-precondition", "이미 확정된 업무입니다.");
+    }
+
+    // 계약이 있으면 V1 대상이 아니다 — 계약을 유지한 채 조건만 바꾸는 길이
+    // 아직 없다(R5.3E READ의 H2/H3/H4). 계약이 없는 관계만 다룬다.
+    const crSrcContracts =
+      await srvLiveContractRefsFor(sourceApplicationId, crBizId);
+    if (crSrcContracts.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "이미 근로계약서가 발행된 근무입니다. 계약을 먼저 정리해주세요."
+      );
+    }
+
+    // 근무가 시작됐으면 변경이 아니라 근태·급여 정정의 영역이다(R5.3E.1).
+    {
+      const crWorkVerdict =
+        await srvHasActualWorkStarted(sourceApplicationId, crSrcData);
+      if (crWorkVerdict.started) {
+        throw new HttpsError(
+          "failed-precondition",
+          "이미 근무가 시작된 건은 업무를 변경할 수 없습니다."
+        );
+      }
+    }
+
+    // ── 4. target B — 같은 공고·같은 근무일의 다른 wdId ─────────────────────
+    const crToRef = db.collection("tos").doc(crToId);
+    const crSlotRef = crToRef.collection("slots").doc(crSlotId);
+    const [crToSnap, crSlotSnap] =
+      await Promise.all([crToRef.get(), crSlotRef.get()]);
+    if (!crToSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    if (!crSlotSnap.exists) {
+      throw new HttpsError("not-found", "근무일을 찾을 수 없습니다.");
+    }
+    const crToData = crToSnap.data() ?? {};
+    const crSlotData = crSlotSnap.data() ?? {};
+    if (crToData.businessId !== crBizId) {
+      throw new HttpsError("permission-denied", "공고가 해당 사업장에 속하지 않습니다.");
+    }
+    if (crToData.isDeleted === true) {
+      throw new HttpsError("failed-precondition", "삭제된 공고입니다.");
+    }
+    if (["CLOSED", "POSTING_EXPIRED", "DELETED"]
+      .includes((crToData.status as string | undefined) ?? "")) {
+      throw new HttpsError("failed-precondition", "마감된 공고에는 제안할 수 없습니다.");
+    }
+    if (crSlotData.isManualClosed === true || crSlotData.status === "closed") {
+      throw new HttpsError("failed-precondition", "마감된 근무일에는 제안할 수 없습니다.");
+    }
+
+    const crWdList =
+      (crSlotData.workDetails as Record<string, unknown>[] | undefined) ?? [];
+    // identity는 wdId 하나다 — 같은 workType 이름이 여럿일 수 있다.
+    const crTargetWD = crWdList.find((w) => w["wdId"] === targetWdId);
+    if (!crTargetWD) {
+      throw new HttpsError("not-found", "제안할 업무를 찾을 수 없습니다.");
+    }
+    if (crTargetWD["isManualClosed"] === true ||
+        crTargetWD["closedAt"] != null) {
+      throw new HttpsError("failed-precondition", "모집이 종료된 업무입니다.");
+    }
+    const crTargetCounts = getWorkDetailCount(
+      crSlotData as Record<string, unknown>, crTargetWD);
+    const crTargetRequired =
+      (crTargetWD["requiredCount"] as number | undefined) ?? 0;
+    if (crTargetRequired > 0 &&
+        crTargetCounts.confirmedCount >= crTargetRequired) {
+      throw new HttpsError("failed-precondition", "제안할 업무의 정원이 이미 찼습니다.");
+    }
+
+    // ── 5. 대상 근로자 상태 ─────────────────────────────────────────────────
+    const crTargetUserSnap = await db.collection("users").doc(crUid).get();
+    if (!crTargetUserSnap.exists) {
+      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    const crTargetUser = crTargetUserSnap.data() ?? {};
+    if (crTargetUser.isBlacklisted === true) {
+      throw new HttpsError("failed-precondition", "제재 중인 근로자에게는 제안할 수 없습니다.");
+    }
+    const crAcctStatus =
+      (crTargetUser.accountStatus as string | undefined) ?? "active";
+    if (crAcctStatus !== "active") {
+      throw new HttpsError("failed-precondition", "비활성 계정의 근로자에게는 제안할 수 없습니다.");
+    }
+
+    // ── 6. 관계 유일성 — B 자리에 이미 관계가 있으면 제안하지 않는다 ────────
+    const crTargetAppId = `${crToId}_${crSlotId}_${targetWdId}_${crUid}`;
+    const crRelated = await srvFindRelationApplications(
+      crUid, crToId, crSlotId, targetWdId, crTargetAppId);
+    const crTargetSelf =
+      await db.collection("applications").doc(crTargetAppId).get();
+    const crExisting = crTargetSelf.exists ? crTargetSelf :
+      (crRelated.length > 0 ? crRelated[0] : null);
+    const CR_REUSABLE = ["REJECTED", "CANCELED", "AUTO_CANCELED", "EXPIRED"];
+    if (crExisting && crExisting.exists) {
+      const eStatus = (crExisting.data()?.status as string | undefined) ?? "";
+      if (!CR_REUSABLE.includes(eStatus)) {
+        throw new HttpsError(
+          "already-exists", "이미 이 업무에 대한 관계가 있는 근로자입니다.");
+      }
+    }
+
+    // ── 7. 제안 조건 — 근로조건은 언제나 B다 ────────────────────────────────
+    //   실제로 하는 일이 B이기 때문이다. 시간·휴게·야간·공제를 A에서 옮기면
+    //   근로자가 잃는 것이 생긴다(R5.3C.1과 같은 규칙).
+    const crTargetBaseWage = crTargetWD["wage"] as number | undefined;
+    const crWageType = crTargetWD["wageType"] as string | undefined;
+    const crOfferedSnapshot = buildCompensationSnapshot(crTargetWD);
+    const crTargetBaseSnapshot = {...crOfferedSnapshot};
+    let crOfferedWage = crTargetBaseWage;
+
+    if (crIsMatch) {
+      // 여기서 MATCH_SOURCE_WAGE는 "지금 확정된 A의 약정급여를 유지한다"는 뜻이다.
+      const crSrcWageType = crSrcData.wageType as string | undefined;
+      if (!crSrcWageType || !crWageType || crSrcWageType !== crWageType) {
+        throw new HttpsError(
+          "failed-precondition",
+          "기존 근무와 제안 업무의 급여 기준(시급/일급)이 달라 " +
+          "기존 급여를 그대로 승계할 수 없습니다."
+        );
+      }
+      const crSrcWage = crSrcData.wage;
+      if (typeof crSrcWage !== "number" || crSrcWage <= 0) {
+        throw new HttpsError(
+          "failed-precondition", "기존 근무의 급여 정보를 확인할 수 없습니다.");
+      }
+      crOfferedWage = crSrcWage;
+      // 통상시급 provenance — MANUAL은 정책값이라 유지, AUTO는 새 금액에서 파생.
+      if (srvResolveBaseHourlyWageMode(crTargetWD) === BASE_HOURLY_AUTO) {
+        delete crOfferedSnapshot.baseHourlyWage;
+        crOfferedSnapshot.baseHourlyWageMode = BASE_HOURLY_AUTO;
+      }
+    }
+
+    // 최저임금은 제안 **전에** 본다 — 수락·근무 뒤에 처음 거부되지 않게.
+    {
+      const crWorkDateTs =
+        crSrcData.workDate as admin.firestore.Timestamp | undefined;
+      const crYear = new Date(
+        (crWorkDateTs?.toMillis() ?? Date.now()) + 9 * 60 * 60 * 1000
+      ).getUTCFullYear();
+      const crMinWage = await srvLoadMinimumWage(crYear);
+      const crViolation = srvValidateMinimumWagePromise({
+        wageType: crWageType ?? "hourly",
+        wage: crOfferedWage ?? 0,
+        minimumWage: crMinWage,
+        startTime: (crTargetWD["startTime"] as string | undefined) ?? "09:00",
+        endTime: (crTargetWD["endTime"] as string | undefined) ?? "18:00",
+        breakMinutes:
+          (crOfferedSnapshot.breakMinutes as number | undefined) ?? 0,
+      });
+      if (crViolation) throw new HttpsError("failed-precondition", crViolation);
+    }
+
+    // ── 8. 유효기간 — 근무 시작 이후의 제안은 의미가 없다 ───────────────────
+    //   시간이 지났다는 사실만으로 상태를 바꾸지 않는다. 저장해 두고
+    //   수락 시점에 명시적으로 판정한다(스케줄러 없음).
+    const crNow = admin.firestore.Timestamp.now();
+    const crWorkDateMs =
+      (crSrcData.workDate as admin.firestore.Timestamp).toMillis();
+    const crSrcStart = (crSrcData.startTime as string | undefined) ?? "00:00";
+    const [crSh, crSm] = crSrcStart.split(":").map(Number);
+    const crWorkStartMs = crWorkDateMs +
+      ((Number.isFinite(crSh) ? crSh : 0) * 60 +
+        (Number.isFinite(crSm) ? crSm : 0)) * 60000;
+    const crExpiresAt = admin.firestore.Timestamp.fromMillis(
+      Math.min(crNow.toMillis() + 24 * 60 * 60 * 1000, crWorkStartMs));
+    if (crExpiresAt.toMillis() <= crNow.toMillis()) {
+      throw new HttpsError(
+        "failed-precondition", "근무 시작 시각이 지나 업무를 변경할 수 없습니다.");
+    }
+
+    const crProposalId = `${sourceApplicationId}__${crNow.toMillis()}`;
+    const crProposalRef = db.collection(CR_PROPOSAL_COL).doc(crProposalId);
+    const crLockRef = db.collection(CR_LOCK_COL).doc(sourceApplicationId);
+
+    const crSourcePromise = {
+      applicationId: sourceApplicationId,
+      wdId: crSrcWdId ?? null,
+      workType: (crSrcData.selectedWorkType as string | undefined) ?? null,
+      startTime: (crSrcData.startTime as string | undefined) ?? null,
+      endTime: (crSrcData.endTime as string | undefined) ?? null,
+      wage: (crSrcData.wage as number | undefined) ?? null,
+      wageType: (crSrcData.wageType as string | undefined) ?? null,
+      breakMinutes: (crSrcData.breakMinutes as number | undefined) ?? null,
+      baseHourlyWage: (crSrcData.baseHourlyWage as number | undefined) ?? null,
+      baseHourlyWageMode: srvResolveBaseHourlyWageMode(crSrcData),
+    };
+    const crTargetPromise = {
+      wdId: targetWdId,
+      workType: (crTargetWD["workType"] as string | undefined) ?? null,
+      startTime: (crTargetWD["startTime"] as string | undefined) ?? null,
+      endTime: (crTargetWD["endTime"] as string | undefined) ?? null,
+      wage: crOfferedWage ?? null,
+      wageType: crWageType ?? null,
+      ...crOfferedSnapshot,
+    };
+
+    const crProposalData: Record<string, unknown> = {
+      type: CR_TYPE,
+      status: CR_PROPOSED,
+      uid: crUid,
+      businessId: crBizId,
+      businessName: (crSrcData.businessName as string | undefined) ?? "",
+      toTitle: (crToData.title as string | undefined) ?? "",
+      sourceApplicationId,
+      sourceWdId: crSrcWdId ?? null,
+      sourceWorkType:
+        (crSrcData.selectedWorkType as string | undefined) ?? null,
+      sourcePromiseSnapshot: crSourcePromise,
+      targetToId: crToId,
+      targetSlotId: crSlotId,
+      targetWdId,
+      targetApplicationId: crTargetAppId,
+      targetPromiseSnapshot: crTargetPromise,
+      // [R5.3C.1] 감사 chain — "왜 B 업무인데 이 금액인가"를 복원할 수 있어야 한다.
+      compensationOption,
+      baseCompensationSnapshotAtProposal: {
+        ...crTargetBaseSnapshot,
+        wage: crTargetBaseWage ?? null,
+        wageType: crWageType ?? null,
+      },
+      compensationSource: crIsMatch ?
+        "CONFIRMED_REASSIGNMENT_MATCH_SOURCE" :
+        "CONFIRMED_REASSIGNMENT_TARGET_BASE",
+      workDate: crSrcData.workDate,
+      createdBy: callerUid,
+      createdAt: crNow,
+      expiresAt: crExpiresAt,
+      decidedAt: null,
+      resultApplicationId: null,
+      // append-only. 덮어쓰지 않는다.
+      history: [{
+        status: CR_PROPOSED, at: crNow, by: callerUid, action: "PROPOSED",
+      }],
+    };
+
+    // ── 9. 생성 — lock으로 같은 source에 PROPOSED 하나만 ────────────────────
+    //   쿼리로 "PROPOSED가 있나" 보는 것은 uniqueness가 아니다(R5.3C.2A).
+    //   결정적 문서 하나를 두고 트랜잭션이 경합하게 한다.
+    await db.runTransaction(async (crTx) => {
+      const [lockSnap, freshSrc] = await Promise.all([
+        crTx.get(crLockRef), crTx.get(crSrcRef),
+      ]);
+      const activeId = lockSnap.exists ?
+        (lockSnap.data()?.activeProposalId as string | undefined) : undefined;
+      if (activeId) {
+        const activeSnap = await crTx.get(
+          db.collection(CR_PROPOSAL_COL).doc(activeId));
+        const activeStatus = activeSnap.exists ?
+          ((activeSnap.data()?.status as string | undefined) ?? "") : "";
+        if (activeStatus === CR_PROPOSED) {
+          throw new HttpsError(
+            "already-exists",
+            "이 근무에 이미 진행 중인 업무 변경 제안이 있습니다."
+          );
+        }
+        // terminal이면 lock은 비어 있는 것과 같다 — 다음 제안이 가져간다.
+      }
+      // source가 그 사이 바뀌었으면 만들지 않는다.
+      if (!freshSrc.exists) {
+        throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      }
+      const freshBlock =
+        srvConfirmedReassignSourceBlock(freshSrc.data() ?? {});
+      if (freshBlock) throw new HttpsError("failed-precondition", freshBlock);
+
+      crTx.set(crProposalRef, crProposalData);
+      crTx.set(crLockRef, {
+        activeProposalId: crProposalId,
+        uid: crUid,
+        businessId: crBizId,
+        sourceApplicationId,
+        updatedAt: crNow,
+      });
+    });
+
+    // ── 10. 근로자 알림 — POST_COMMIT_IDEMPOTENT_RECONCILABLE ───────────────
+    await srvWriteCrNotification(crUid, `cr_proposed_${crProposalId}`, {
+      type: "confirmedReassignmentProposed",
+      title: "근무 변경 제안이 도착했어요",
+      body: `${(crSrcData.businessName as string | undefined) ?? "사업장"}에서 ` +
+        `'${(crTargetWD["workType"] as string | undefined) ?? "다른"}' 업무로 ` +
+        "변경을 제안했습니다. 조건을 확인해주세요.",
+      data: {
+        proposalId: crProposalId,
+        sourceApplicationId,
+        businessId: crBizId,
+        toId: crToId,
+        slotId: crSlotId,
+        targetWdId,
+        action: "confirmedReassignmentDetail",
+      },
+    });
+
+    return {success: true, proposalId: crProposalId, targetWdId};
+  }
+);
+
+/**
+ * 제안을 terminal로 정리하고 lock을 푼다.
+ * 모든 종료 경로(수락·거절·철회·무효)가 같은 모양을 쓴다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 실행 중인 transaction
+ * @param {FirebaseFirestore.DocumentReference} proposalRef 제안 문서
+ * @param {FirebaseFirestore.DocumentReference} lockRef 유일성 lock 문서
+ * @param {object} args 종료 상태·주체·사유
+ * @return {void}
+ */
+function srvCloseCrProposal(
+  tx: FirebaseFirestore.Transaction,
+  proposalRef: FirebaseFirestore.DocumentReference,
+  lockRef: FirebaseFirestore.DocumentReference,
+  args: {
+    status: string; by: string; action: string; at: admin.firestore.Timestamp;
+    reason?: string; resultApplicationId?: string;
+  }
+): void {
+  const patch: Record<string, unknown> = {
+    status: args.status,
+    decidedAt: args.at,
+    history: admin.firestore.FieldValue.arrayUnion({
+      status: args.status, at: args.at, by: args.by, action: args.action,
+      ...(args.reason ? {reason: args.reason} : {}),
+    }),
+  };
+  if (args.reason) patch.supersededReason = args.reason;
+  if (args.resultApplicationId) {
+    patch.resultApplicationId = args.resultApplicationId;
+  }
+  tx.update(proposalRef, patch);
+  tx.set(lockRef, {activeProposalId: null, updatedAt: args.at}, {merge: true});
+}
+
+// ── callableAcceptConfirmedReassignment ─────────────────────────────────────
+// 근로자가 업무 변경을 수락한다. 이 호출이 성공한 순간에만 A가 풀리고 B가 선다.
+//
+// Input : { proposalId, documentAccessConsentGiven,
+//           documentAccessConsentVersion }
+// Output: { success, targetApplicationId }
+export const callableAcceptConfirmedReassignment = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      proposalId,
+      documentAccessConsentGiven: crDocConsentRaw,
+      documentAccessConsentVersion: crDocVersionRaw,
+    } = request.data as {
+      proposalId?: string;
+      documentAccessConsentGiven?: boolean;
+      documentAccessConsentVersion?: string;
+    };
+    if (!proposalId || typeof proposalId !== "string") {
+      throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
+    }
+    const crDocConsent = crDocConsentRaw === true;
+    const crConsentVersion =
+      resolveDocumentAccessConsentVersion(crDocVersionRaw, crDocConsent);
+
+    const acProposalRef = db.collection(CR_PROPOSAL_COL).doc(proposalId);
+    const acProposalSnap = await acProposalRef.get();
+    if (!acProposalSnap.exists) {
+      throw new HttpsError("not-found", "변경 제안을 찾을 수 없습니다.");
+    }
+    const acP = acProposalSnap.data()!;
+    if ((acP.uid as string | undefined) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 제안만 수락할 수 있습니다.");
+    }
+    if ((acP.type as string | undefined) !== CR_TYPE) {
+      throw new HttpsError("failed-precondition", "지원하지 않는 제안 유형입니다.");
+    }
+    const acStatus = (acP.status as string | undefined) ?? "";
+    if (acStatus === CR_ACCEPTED) {
+      return {
+        success: true, alreadyAccepted: true,
+        targetApplicationId:
+          (acP.resultApplicationId as string | undefined) ?? null,
+      };
+    }
+    if (acStatus !== CR_PROPOSED) {
+      throw new HttpsError(
+        "failed-precondition", "이미 종료된 제안입니다.");
+    }
+
+    const acSourceId = acP.sourceApplicationId as string;
+    const acToId = acP.targetToId as string;
+    const acSlotId = acP.targetSlotId as string;
+    const acWdId = acP.targetWdId as string;
+    const acBizId = acP.businessId as string;
+    const acTargetAppId = acP.targetApplicationId as string;
+    const acTargetPromise =
+      (acP.targetPromiseSnapshot ?? {}) as Record<string, unknown>;
+
+    const acSrcRef = db.collection("applications").doc(acSourceId);
+    const acTargetRef = db.collection("applications").doc(acTargetAppId);
+    const acLockRef = db.collection(CR_LOCK_COL).doc(acSourceId);
+    const acToRef = db.collection("tos").doc(acToId);
+    const acSlotRef = acToRef.collection("slots").doc(acSlotId);
+
+    // 트랜잭션 안에서는 쿼리를 쓸 수 없다 — 읽을 문서 ref를 미리 모은다.
+    const acSrcPre = await acSrcRef.get();
+    const acSrcPreData = acSrcPre.data();
+    if (!acSrcPre.exists || !acSrcPreData) {
+      throw new HttpsError("failed-precondition", "기존 근무를 찾을 수 없습니다.");
+    }
+    const acWorkRefs =
+      await srvActualWorkAttendanceRefs(acSourceId, acSrcPreData);
+    const acContractRefs = await srvLiveContractRefsFor(acSourceId, acBizId);
+    // 같은 업무에 다른 discriminator로 저장된 관계 (R5.3C.1과 같은 이유)
+    const acAltRelated = await srvFindRelationApplications(
+      callerUid, acToId, acSlotId, acWdId, acTargetAppId);
+    const acAltRef = acAltRelated.length > 0 ? acAltRelated[0].ref : null;
+
+    const acNow = admin.firestore.Timestamp.now();
+    const CR_REUSABLE_TARGET =
+      ["REJECTED", "CANCELED", "AUTO_CANCELED", "EXPIRED"];
+
+    /**
+     * 트랜잭션 결과. 수락이 성립하지 못한 경우에도 **제안은 정리한다** —
+     * PROPOSED로 남겨 두면 근로자에게 계속 누를 수 있는 버튼으로 보인다.
+     * 정리 write가 커밋돼야 하므로 throw하지 않고 결과로 돌려준 뒤
+     * 트랜잭션 밖에서 판단한다.
+     */
+    type AcOutcome =
+      | {ok: true}
+      | {ok: false; code: string; message: string};
+
+    const acResult: AcOutcome = await db.runTransaction(async (tx) => {
+      // ── READS ─────────────────────────────────────────────────────────
+      const [freshP, freshSrc, freshTarget, freshTo, freshSlot, freshUser] =
+        await Promise.all([
+          tx.get(acProposalRef), tx.get(acSrcRef), tx.get(acTargetRef),
+          tx.get(acToRef), tx.get(acSlotRef),
+          tx.get(db.collection("users").doc(callerUid)),
+        ]);
+      const freshAlt = acAltRef ? await tx.get(acAltRef) : null;
+      const freshContracts = acContractRefs.length > 0 ?
+        await Promise.all(acContractRefs.map((r) => tx.get(r))) : [];
+
+      // 제안 자체 — accept ‖ cancel/decline은 여기서 갈린다.
+      if (!freshP.exists) {
+        throw new HttpsError("not-found", "변경 제안을 찾을 수 없습니다.");
+      }
+      const p = freshP.data()!;
+      if ((p.status as string | undefined) !== CR_PROPOSED) {
+        throw new HttpsError("failed-precondition", "이미 종료된 제안입니다.");
+      }
+      // 유효기간 — 시간 경과를 여기서 **명시적으로** 상태로 바꾼다.
+      const pExpires = p.expiresAt as admin.firestore.Timestamp | undefined;
+      if (pExpires && pExpires.toMillis() <= acNow.toMillis()) {
+        srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+          status: CR_EXPIRED, by: callerUid,
+          action: "EXPIRED_AT_ACCEPT", at: acNow,
+        });
+        return {ok: false, code: "EXPIRED",
+          message: "변경 가능 시간이 지나 기존 근무가 유지됩니다."};
+      }
+
+      // ── source A ──────────────────────────────────────────────────────
+      if (!freshSrc.exists) {
+        srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+          status: CR_SUPERSEDED, by: callerUid, action: "SOURCE_GONE",
+          at: acNow, reason: "SOURCE_GONE"});
+        return {ok: false, code: "SOURCE_GONE",
+          message: "기존 근무 정보를 찾을 수 없습니다."};
+      }
+      const srcData = freshSrc.data()!;
+      const srcBlock = srvConfirmedReassignSourceBlock(srcData);
+      if (srcBlock) {
+        // [PART P] source가 다른 경로로 끝났다 — 두 terminal 사유를 섞지 않는다.
+        srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+          status: CR_SUPERSEDED, by: callerUid, action: "SOURCE_CHANGED",
+          at: acNow, reason: "SOURCE_NOT_ELIGIBLE"});
+        return {ok: false, code: "SOURCE_CHANGED", message: srcBlock};
+      }
+
+      // [PART Q] 근무가 시작됐으면 check-in이 이긴다 — R5.3E.1과 같은 판정.
+      for (const wr of acWorkRefs) {
+        const ws = await tx.get(wr);
+        if (!ws.exists) continue;
+        if (srvActualWorkReasonOf(ws.data())) {
+          srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+            status: CR_SUPERSEDED, by: callerUid, action: "WORK_STARTED",
+            at: acNow, reason: "ACTUAL_WORK_STARTED"});
+          return {ok: false, code: "WORK_STARTED",
+            message: "이미 근무가 시작되어 기존 근무가 유지됩니다."};
+        }
+      }
+
+      // [PART B/V7] 계약이 생겼으면 V1 범위를 벗어난다.
+      for (const cs of freshContracts) {
+        if (!cs.exists) continue;
+        if (CR_LIVE_CONTRACT_STATUSES.includes(
+          (cs.data()?.["status"] as string | undefined) ?? "")) {
+          srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+            status: CR_SUPERSEDED, by: callerUid, action: "CONTRACT_ISSUED",
+            at: acNow, reason: "CONTRACT_ISSUED"});
+          return {ok: false, code: "CONTRACT_ISSUED",
+            message: "근로계약서가 발행되어 기존 근무가 유지됩니다."};
+        }
+      }
+
+      // ── 근로자 자격 — 확정과 같은 문턱을 다시 넘는다 ───────────────────
+      if (!freshUser.exists) {
+        throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
+      }
+      const u = freshUser.data() ?? {};
+      if ((u.accountStatus as string | undefined) !== "active") {
+        throw new HttpsError("failed-precondition", "비활성 계정으로는 수락할 수 없습니다.");
+      }
+      if (u.isBlacklisted === true) {
+        throw new HttpsError("permission-denied", "계정이 제한되어 수락할 수 없습니다.");
+      }
+      const uRestricted =
+        u.restrictedUntil as admin.firestore.Timestamp | undefined;
+      if (uRestricted && uRestricted.toDate() > new Date()) {
+        throw new HttpsError("failed-precondition", "현재 제재 중에는 수락할 수 없습니다.");
+      }
+      if (u.isForeign !== true && !u.passVerifiedAt) {
+        throw new HttpsError("failed-precondition", "본인인증 후 수락할 수 있습니다.");
+      }
+      if (u.isIdVerified !== true) {
+        throw new HttpsError("failed-precondition", "신분증 인증 후 수락할 수 있습니다.");
+      }
+      if (!u.bankName || !u.accountNumber || !u.accountHolder) {
+        throw new HttpsError("failed-precondition", "통장 정보 등록이 필요합니다.");
+      }
+      if (!u.bankbookImagePath && !u.bankbookImageUrl) {
+        throw new HttpsError("failed-precondition", "통장사본 등록이 필요합니다.");
+      }
+      // B는 **새 Application**이다 — A의 동의를 가져다 쓰지 않는다.
+      if (!crDocConsent) {
+        throw new HttpsError(
+          "invalid-argument",
+          "소득신고·급여처리 목적 서류 접근에 동의해야 변경을 수락할 수 있습니다."
+        );
+      }
+
+      // ── target B — 공고·슬롯·업무·정원 fresh recheck ───────────────────
+      const unavailable = (action: string, reason: string) => {
+        srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+          status: CR_SUPERSEDED, by: callerUid, action, at: acNow, reason});
+        return {ok: false as const, code: "TARGET_UNAVAILABLE",
+          message: "현재 변경할 자리가 없어 기존 근무가 유지됩니다."};
+      };
+      if (!freshTo.exists) {
+        return unavailable("TARGET_TO_GONE", "TARGET_TO_GONE");
+      }
+      const toData = freshTo.data() ?? {};
+      if (toData.isDeleted === true ||
+          ["CLOSED", "POSTING_EXPIRED", "DELETED"]
+            .includes((toData.status as string | undefined) ?? "")) {
+        return unavailable("TARGET_TO_CLOSED", "TARGET_TO_CLOSED");
+      }
+      if (!freshSlot.exists) {
+        return unavailable("TARGET_SLOT_GONE", "TARGET_SLOT_GONE");
+      }
+      const slotData = freshSlot.data() ?? {};
+      if (slotData.isManualClosed === true || slotData.status === "closed") {
+        return unavailable("TARGET_SLOT_CLOSED", "TARGET_SLOT_CLOSED");
+      }
+      const wdList =
+        (slotData.workDetails as Record<string, unknown>[] | undefined) ?? [];
+      const targetWd = wdList.find((w) => w["wdId"] === acWdId);
+      if (!targetWd) return unavailable("TARGET_WD_GONE", "TARGET_WD_GONE");
+      if (targetWd["isManualClosed"] === true || targetWd["closedAt"] != null) {
+        return unavailable("TARGET_WD_CLOSED", "TARGET_WD_CLOSED");
+      }
+      // [PART O] 정원은 지금 값으로 다시 본다.
+      //   A는 다른 wdId의 자리를 들고 있으므로 B의 정원에는 포함되지 않는다.
+      const wdCount = getWorkDetailCount(
+        slotData as Record<string, unknown>, targetWd);
+      const wdRequired = (targetWd["requiredCount"] as number | undefined) ?? 0;
+      if (wdRequired > 0 && wdCount.confirmedCount >= wdRequired) {
+        return unavailable("TARGET_FULL", "TARGET_FULL");
+      }
+
+      // 관계 유일성 — B 자리에 살아 있는 관계가 생겼으면 만들지 않는다.
+      for (const snap of [freshTarget, freshAlt]) {
+        if (!snap || !snap.exists) continue;
+        const s = (snap.data()?.status as string | undefined) ?? "";
+        if (!CR_REUSABLE_TARGET.includes(s)) {
+          return unavailable(
+            "TARGET_RELATION_EXISTS", "TARGET_RELATION_EXISTS");
+        }
+      }
+
+      // ── 겹침 — A만 제외한다 ────────────────────────────────────────────
+      //   제외 대상은 서버가 읽은 proposal의 sourceApplicationId 하나다.
+      const targetFd: FirebaseFirestore.DocumentData = {
+        startTime: acTargetPromise["startTime"],
+        endTime: acTargetPromise["endTime"],
+        businessName: (p.businessName as string | undefined) ?? "",
+        workDate: srcData.workDate,
+      };
+      const overlapPlan = await srvCollectSeatCommitOverlap(tx, {
+        applicantUid: callerUid,
+        applicationId: acTargetAppId,
+        fd: targetFd,
+        excludeCommittedId: acSourceId,
+      });
+
+      // ── WRITES ────────────────────────────────────────────────────────
+      srvApplySeatCommitOverlap(tx, overlapPlan,
+        {applicationId: acTargetAppId, nowTs: acNow});
+
+      // A 종료 — 근로자가 마음을 바꾼 것이 아니다.
+      //   reliability 패널티 없음. 화면 문구는 '다른 업무로 변경 확정'이고,
+      //   그 판정 근거가 cancelReason 하나다(R5.3B와 같은 계열, 다른 값).
+      tx.update(acSrcRef, {
+        status: "AUTO_CANCELED",
+        canceledAt: acNow,
+        cancelReason: "CONFIRMED_REASSIGNMENT_ACCEPTED",
+        staffingReleasedAt: acNow,
+        staffingReleaseReason: "CONFIRMED_REASSIGNMENT",
+        reassignedToApplicationId: acTargetAppId,
+        reassignedAt: acNow,
+        reassignmentProposalId: proposalId,
+        confirmedDecrementedAt: acNow,
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "AUTO_CANCELED", at: acNow, by: "SYSTEM",
+          action: "CONFIRMED_REASSIGNMENT_ACCEPTED",
+          reason: "CONFIRMED_REASSIGNMENT_ACCEPTED",
+          reassignedToApplicationId: acTargetAppId,
+          proposalId,
+        }),
+      });
+
+      // B 생성 — 약속은 proposal에 얼려둔 것 그대로다.
+      //   근로자가 본 조건과 저장되는 조건이 같아야 한다. 여기서 공고를
+      //   다시 읽어 값을 만들면 그 사이 공고가 바뀐 만큼 약속이 달라진다.
+      const bDoc: Record<string, unknown> = {
+        toId: acToId,
+        businessId: acBizId,
+        businessName: (p.businessName as string | undefined) ?? "",
+        toTitle: (p.toTitle as string | undefined) ?? "",
+        uid: callerUid,
+        applicantName: (srcData.applicantName as string | undefined) ??
+          await srvResolveApplicantName(srcData, callerUid),
+        status: "CONFIRMED",
+        type: "short",
+        slotId: acSlotId,
+        wdId: acWdId,
+        workDetailId: acWdId,
+        selectedWorkType: acTargetPromise["workType"],
+        startTime: acTargetPromise["startTime"],
+        endTime: acTargetPromise["endTime"],
+        workDate: srcData.workDate,
+        ...(acTargetPromise["wage"] != null ?
+          {wage: acTargetPromise["wage"]} : {}),
+        ...(acTargetPromise["wageType"] != null ?
+          {wageType: acTargetPromise["wageType"]} : {}),
+        ...(acTargetPromise["baseHourlyWage"] != null ?
+          {baseHourlyWage: acTargetPromise["baseHourlyWage"]} : {}),
+        baseHourlyWageMode:
+          acTargetPromise["baseHourlyWageMode"] ?? BASE_HOURLY_AUTO,
+        breakMinutes: acTargetPromise["breakMinutes"] ?? 0,
+        nightAllowanceApplied: acTargetPromise["nightAllowanceApplied"] ?? true,
+        nightIncluded: acTargetPromise["nightIncluded"] ?? false,
+        ...(acTargetPromise["taxDeductionType"] != null ?
+          {taxDeductionType: acTargetPromise["taxDeductionType"]} : {}),
+        appliedAt: acNow,
+        confirmedAt: acNow,
+        invitedBy: p.createdBy,
+        // 이 관계가 어디서 왔는지 — 서버가 적고 서버만 읽는다.
+        offerKind: CR_TYPE,
+        reassignmentProposalId: proposalId,
+        sourceApplicationId: acSourceId,
+        sourceWdId: (p.sourceWdId as string | undefined) ?? null,
+        sourceWorkType: (p.sourceWorkType as string | undefined) ?? null,
+        compensationOption: p.compensationOption,
+        compensationSource: p.compensationSource,
+        baseCompensationSnapshotAtOffer: p.baseCompensationSnapshotAtProposal,
+        offeredCompensationSnapshot: acTargetPromise,
+        documentAccessConsentGiven: true,
+        documentAccessConsentAt: acNow,
+        idCardConsentGiven: true,
+        idCardConsentAt: acNow,
+        ...(crConsentVersion !== null ?
+          {documentAccessConsentVersion: crConsentVersion} : {}),
+        statusHistory: [{
+          status: "CONFIRMED", at: acNow, by: callerUid,
+          action: "CONFIRMED_REASSIGNMENT_ACCEPTED",
+          proposalId, sourceApplicationId: acSourceId,
+        }],
+      };
+      tx.set(acTargetRef, bDoc);
+
+      // 카운터 — A의 자리가 B로 옮겨간다.
+      //   집계(totalConfirmed / slot.confirmedCount)는 -1 +1로 순증 0이라
+      //   쓰지 않는다. workDetailCounts는 어디서도 재계산되지 않는
+      //   canonical counter이므로 여기서 직접 옮긴다.
+      const srcWdIdForCount = srcData.wdId as string | undefined;
+      const slotUpdate: Record<string, unknown> = {
+        [`workDetailCounts.${acWdId}.confirmedCount`]:
+          admin.firestore.FieldValue.increment(1),
+      };
+      if (srcWdIdForCount && srcWdIdForCount !== acWdId) {
+        slotUpdate[`workDetailCounts.${srcWdIdForCount}.confirmedCount`] =
+          admin.firestore.FieldValue.increment(-1);
+      }
+      tx.update(acSlotRef, slotUpdate);
+
+      srvCloseCrProposal(tx, acProposalRef, acLockRef, {
+        status: CR_ACCEPTED, by: callerUid, action: "ACCEPTED",
+        at: acNow, resultApplicationId: acTargetAppId,
+      });
+      return {ok: true};
+    });
+
+    if (!acResult.ok) {
+      // 제안 정리는 위에서 이미 커밋됐다 — 여기서는 결과만 알린다.
+      await srvWriteCrNotification(
+        (acP.createdBy as string | undefined) ?? "",
+        `cr_superseded_${proposalId}`,
+        {
+          type: "confirmedReassignmentSuperseded",
+          title: "업무 변경 제안이 진행되지 못했습니다",
+          body: "조건이 변경되어 기존 근무가 그대로 유지됩니다.",
+          data: {
+            proposalId, sourceApplicationId: acSourceId,
+            businessId: acBizId, reasonCode: acResult.code,
+            action: "applicationDetail",
+          },
+        }
+      ).catch(() => undefined);
+      throw new HttpsError("failed-precondition", acResult.message);
+    }
+
+    // ── POST_COMMIT_IDEMPOTENT_RECONCILABLE ─────────────────────────────
+    //   A에 남아 있을 수 있는 미완 계약서를 정리한다. 커밋 직전에 생긴
+    //   계약은 트랜잭션 읽기 집합에 없을 수 있다 — 여기서 수렴시킨다.
+    //   계약서만 무효화한다(voidContractAtomicLifecycle을 쓰지 않는다 —
+    //   그 경로는 Application까지 CANCELED로 만든다).
+    try {
+      const residual = await srvLiveContractRefsFor(acSourceId, acBizId);
+      if (residual.length > 0) {
+        const cBatch = db.batch();
+        for (const ref of residual) {
+          cBatch.update(ref, {
+            status: "voided",
+            contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+            voidReason: "CONFIRMED_REASSIGNMENT_ACCEPTED",
+          });
+        }
+        await cBatch.commit();
+        console.info(
+          "[confirmedReassignment] 잔여 계약 " +
+          `${residual.length}건 voided: src=${acSourceId}`);
+      }
+    } catch (e) {
+      console.warn("[confirmedReassignment] 잔여 계약 정리 실패 (수락은 완료됨):", e);
+    }
+
+    // 관리자 알림
+    const acAcceptorName =
+      await srvResolveApplicantName(acSrcPreData, callerUid);
+    await srvWriteCrNotification(
+      (acP.createdBy as string | undefined) ?? "",
+      `cr_accepted_${proposalId}`,
+      {
+        type: "confirmedReassignmentAccepted",
+        title: "업무 변경을 수락했습니다",
+        body: `${acAcceptorName}님이 ` +
+          "제안한 업무로 변경을 수락했습니다.",
+        data: {
+          proposalId, applicationId: acTargetAppId,
+          sourceApplicationId: acSourceId, businessId: acBizId,
+          toId: acToId, slotId: acSlotId, wdId: acWdId,
+          action: "applicationDetail",
+        },
+      }
+    ).catch(() => undefined);
+
+    // 신분증 grant — 확정 경로와 같은 헬퍼 (POST_COMMIT)
+    try {
+      await ensureIdCardGrantForConfirmedApplication(
+        acTargetAppId,
+        {
+          uid: callerUid, status: "CONFIRMED",
+          workDate: acSrcPreData.workDate,
+          documentAccessConsentGiven: true, idCardConsentGiven: true,
+          ...(crConsentVersion !== null ?
+            {documentAccessConsentVersion: crConsentVersion} : {}),
+        },
+        acBizId, (acP.businessName as string | undefined) ?? "", callerUid
+      );
+    } catch (e) {
+      console.warn("[confirmedReassignment] ID-CONSENT grant 실패 (수락은 완료됨):", e);
+    }
+
+    return {success: true, targetApplicationId: acTargetAppId};
+  }
+);
+
+// ── callableDeclineConfirmedReassignment ────────────────────────────────────
+// 근로자가 '기존 조건 유지'를 고른다. A는 아무것도 바뀌지 않는다.
+export const callableDeclineConfirmedReassignment = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {proposalId} = request.data as {proposalId?: string};
+    if (!proposalId || typeof proposalId !== "string") {
+      throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
+    }
+    const dcRef = db.collection(CR_PROPOSAL_COL).doc(proposalId);
+    const dcSnap = await dcRef.get();
+    if (!dcSnap.exists) throw new HttpsError("not-found", "변경 제안을 찾을 수 없습니다.");
+    const dcP = dcSnap.data()!;
+    if ((dcP.uid as string | undefined) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 제안만 처리할 수 있습니다.");
+    }
+    const dcSourceId = dcP.sourceApplicationId as string;
+    const dcLockRef = db.collection(CR_LOCK_COL).doc(dcSourceId);
+    const dcNow = admin.firestore.Timestamp.now();
+
+    const dcDone = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(dcRef);
+      const st = (fresh.data()?.status as string | undefined) ?? "";
+      if (st === CR_DECLINED) return false; // 멱등
+      if (st !== CR_PROPOSED) {
+        throw new HttpsError("failed-precondition", "이미 종료된 제안입니다.");
+      }
+      srvCloseCrProposal(tx, dcRef, dcLockRef, {
+        status: CR_DECLINED, by: callerUid, action: "DECLINED", at: dcNow,
+      });
+      return true;
+    });
+
+    // A는 손대지 않는다 — 확인용으로 다시 읽지도 않는다. 쓴 것이 없기 때문이다.
+    if (dcDone) {
+      await srvWriteCrNotification(
+        (dcP.createdBy as string | undefined) ?? "",
+        `cr_declined_${proposalId}`,
+        {
+          type: "confirmedReassignmentDeclined",
+          title: "업무 변경 제안이 거절됐습니다",
+          body: "근로자가 기존 근무 조건을 유지하기로 했습니다.",
+          data: {
+            proposalId, applicationId: dcSourceId,
+            sourceApplicationId: dcSourceId,
+            businessId: dcP.businessId, action: "applicationDetail",
+          },
+        }
+      ).catch(() => undefined);
+    }
+    return {success: true};
+  }
+);
+
+// ── callableCancelConfirmedReassignment ─────────────────────────────────────
+// 관리자가 PROPOSED 상태의 제안을 철회한다.
+export const callableCancelConfirmedReassignment = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {proposalId} = request.data as {proposalId?: string};
+    if (!proposalId || typeof proposalId !== "string") {
+      throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
+    }
+    const ccRef = db.collection(CR_PROPOSAL_COL).doc(proposalId);
+    const ccSnap = await ccRef.get();
+    if (!ccSnap.exists) throw new HttpsError("not-found", "변경 제안을 찾을 수 없습니다.");
+    const ccP = ccSnap.data()!;
+    const ccBizId = ccP.businessId as string;
+    const {callerData: ccCallerData} = await assertBizAdmin(callerUid, ccBizId);
+    const ccRole = ccCallerData?.role as string | undefined;
+    if (ccRole !== "BUSINESS_ADMIN" && ccRole !== "SUPER_ADMIN") {
+      const ccMember = await db.collection("businesses").doc(ccBizId)
+        .collection("members").doc(callerUid).get();
+      const ccPerms =
+        (ccMember.data()?.permissions as Record<string, boolean>) ?? {};
+      if (ccPerms.canManageTo !== true || ccPerms.canManageWorkers !== true) {
+        throw new HttpsError("permission-denied", "제안을 철회할 권한이 없습니다.");
+      }
+    }
+    const ccSourceId = ccP.sourceApplicationId as string;
+    const ccLockRef = db.collection(CR_LOCK_COL).doc(ccSourceId);
+    const ccNow = admin.firestore.Timestamp.now();
+
+    const ccDone = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(ccRef);
+      const st = (fresh.data()?.status as string | undefined) ?? "";
+      if (st === CR_CANCELED_BY_MANAGER) return false; // 멱등
+      if (st !== CR_PROPOSED) {
+        // accept가 먼저 커밋됐다면 여기서 진다 — 되돌리지 않는다.
+        throw new HttpsError("failed-precondition", "이미 종료된 제안입니다.");
+      }
+      srvCloseCrProposal(tx, ccRef, ccLockRef, {
+        status: CR_CANCELED_BY_MANAGER, by: callerUid,
+        action: "CANCELED_BY_MANAGER", at: ccNow,
+      });
+      return true;
+    });
+
+    if (ccDone) {
+      await srvWriteCrNotification(
+        (ccP.uid as string | undefined) ?? "",
+        `cr_canceled_${proposalId}`,
+        {
+          type: "confirmedReassignmentCanceled",
+          title: "업무 변경 제안이 철회됐습니다",
+          body: "기존 근무가 그대로 유지됩니다.",
+          data: {
+            proposalId, applicationId: ccSourceId,
+            sourceApplicationId: ccSourceId,
+            businessId: ccBizId, action: "mySchedule",
+          },
+        }
+      ).catch(() => undefined);
+    }
+    return {success: true};
+  }
+);
+
+// ── 조회 ────────────────────────────────────────────────────────────────────
+// 목록은 CF를 거친다 — list 쿼리를 클라이언트에 열지 않는다(Charter).
+
+export const callableGetMyConfirmedReassignmentProposals = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const snap = await db.collection(CR_PROPOSAL_COL)
+      .where("uid", "==", request.auth.uid)
+      .where("status", "==", CR_PROPOSED)
+      .limit(50).get();
+    return {proposals: snap.docs.map((d) => srvCrProposalView(d.id, d.data()))};
+  }
+);
+
+export const callableGetConfirmedReassignmentProposalsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, includeTerminal} = request.data as {
+      businessId?: string; includeTerminal?: boolean;
+    };
+    if (!businessId) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    await assertBizAdmin(request.auth.uid, businessId);
+    let q: admin.firestore.Query = db.collection(CR_PROPOSAL_COL)
+      .where("businessId", "==", businessId);
+    if (includeTerminal !== true) q = q.where("status", "==", CR_PROPOSED);
+    const snap = await q.limit(200).get();
+    return {proposals: snap.docs.map((d) => srvCrProposalView(d.id, d.data()))};
+  }
+);
+
 // ─── V1 Group Ranking Helpers ─────────────────────────────────────────────────
 // [R3-B] callableGetAvailableWorkers 전용 — 운영 callable 내부에서 호출, client 미노출.
 // RANKING_QUALITY_SCORE = NONE  /  OPAQUE_SCORE = NO
@@ -34325,7 +35544,9 @@ export const callableLeaveAsSubAdmin = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
     const {businessId} = request.data as {businessId: string};
-    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!businessId) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
 
     const userRef  = db.collection("users").doc(callerUid);
     const memberRef = db.collection("businesses").doc(businessId)
@@ -34579,7 +35800,9 @@ export const callableAdminDirectInterimSettlement = onCall(
       netAmount: number;
     };
 
-    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!businessId) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
     if (!workerId)   throw new HttpsError("invalid-argument", "workerId가 필요합니다.");
     if (!applicationId) throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     if (!Array.isArray(attendanceIds) || attendanceIds.length === 0) {
@@ -34734,7 +35957,9 @@ export const callableRecalcToTotalRequired = onCall(
 
     const {businessId, toId} = request.data as {businessId: string; toId: string};
 
-    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!businessId) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
     if (!toId)       throw new HttpsError("invalid-argument", "toId가 필요합니다.");
 
     // 권한 검증

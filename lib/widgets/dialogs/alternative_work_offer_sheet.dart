@@ -58,6 +58,14 @@ class AlternativeWorkOfferSheet {
   /// 권한이 있을 때만 고를 수 있다. 고를 수 없을 때도 **숨기지 않고**
   /// 이유를 적는다 — 권한이나 조건의 부재를 "그런 기능이 없음"으로 보이게
   /// 하지 않기 위해서다. 그리고 그 경우에도 업무 제안 자체는 막지 않는다.
+  /// [CROSS-DOMAIN-R5.3E.2] 이 시트는 두 사건에 쓰인다.
+  ///
+  ///   대기 지원자(A=PENDING)  — 다른 업무 제안
+  ///   확정 근로자(A=CONFIRMED) — 근무 변경 제안
+  ///
+  /// 고르는 일은 같고 **무게가 다르다**. 확정 쪽은 이미 선 약속을 바꾸자는
+  /// 제안이라 문구가 달라야 한다. 그래도 시트를 두 벌로 만들지 않는다 —
+  /// 그러면 한쪽 문구만 고쳐지고 두 화면이 서로 다른 말을 하게 된다.
   static Future<({String wdId, String option})?> pickOffer(
     BuildContext context, {
     required String workerName,
@@ -67,6 +75,7 @@ class AlternativeWorkOfferSheet {
     required int sourceWage,
     required String? sourceWageType,
     required bool canManageWage,
+    bool sourceIsConfirmed = false,
   }) {
     WorkDetailModel? picked;
     String option = optionTargetBase;
@@ -93,14 +102,19 @@ class AlternativeWorkOfferSheet {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$workerName님에게 다른 업무 제안',
+                    sourceIsConfirmed
+                        ? '$workerName님에게 근무 변경 제안'
+                        : '$workerName님에게 다른 업무 제안',
                     style: ResponsiveHelper.subtitleStyle(ctx)
                         .copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '제안을 보내면 근로자가 조건을 보고 직접 선택합니다.\n'
-                    '지금 지원은 그대로 유지되고, 근로자가 제안을 수락할 때만 정리됩니다.',
+                    sourceIsConfirmed
+                        ? '제안을 보내도 지금 확정된 근무는 그대로입니다.\n'
+                            '근로자가 수락한 순간에만 변경이 반영됩니다.'
+                        : '제안을 보내면 근로자가 조건을 보고 직접 선택합니다.\n'
+                            '지금 지원은 그대로 유지되고, 근로자가 제안을 수락할 때만 정리됩니다.',
                     style: ResponsiveHelper.smallStyle(ctx,
                         color: AppColors.grey600),
                   ),
@@ -109,14 +123,15 @@ class AlternativeWorkOfferSheet {
                     _tile(
                       ctx,
                       work: currentWork,
-                      headline: '지금 지원한 업무',
+                      headline:
+                          sourceIsConfirmed ? '지금 확정된 근무' : '지금 지원한 업무',
                       confirmedCount: confirmedCountOf(currentWork),
                       muted: true,
                       onTap: null,
                     ),
                   const SizedBox(height: 12),
                   Text(
-                    '제안할 업무 선택',
+                    sourceIsConfirmed ? '변경할 업무 선택' : '제안할 업무 선택',
                     style: ResponsiveHelper.bodyStyle(ctx)
                         .copyWith(fontWeight: FontWeight.bold),
                   ),
@@ -165,7 +180,7 @@ class AlternativeWorkOfferSheet {
                     ),
                     _optionRow(
                       ctx,
-                      label: '기존 지원 급여 유지',
+                      label: sourceIsConfirmed ? '기존 확정 급여 유지' : '기존 지원 급여 유지',
                       amount: FormatHelper.formatWage(sourceWage),
                       value: optionMatchSourceWage,
                       groupValue: option,
@@ -173,8 +188,10 @@ class AlternativeWorkOfferSheet {
                       disabledReason: !canManageWage
                           ? '개별 급여 제안 권한이 필요합니다.'
                           : (!sameType
-                              ? '기존 지원은 ${_typeLabel(sourceWageType)}이고, '
-                                  '제안할 업무는 ${_typeLabel(sel.wageType)}라 '
+                              ? '${sourceIsConfirmed ? '기존 근무는' : '기존 지원은'} '
+                                  '${_typeLabel(sourceWageType)}이고, '
+                                  '${sourceIsConfirmed ? '변경할' : '제안할'} 업무는 '
+                                  '${_typeLabel(sel.wageType)}라 '
                                   '급여 기준을 그대로 승계할 수 없습니다.'
                               : null),
                       onChanged: (v) => setSheetState(() => option = v),
