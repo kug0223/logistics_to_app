@@ -539,7 +539,9 @@ void main() {
       expect(s.contains('label: offerApp.hasIndividualCompensation'), true,
           reason: '개별 급여면 그 사실을 라벨이 말한다');
       expect(s.contains("'제안받은 업무'"), true);
-      expect(s.contains('취소 이력이나 불이익은 남지 않아요.'), true);
+      // [R5.3D.1] 이력은 남는다 — 사라지는 것은 불이익이다.
+      expect(s.contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
+      expect(s.contains('취소 이력이나 불이익은 남지 않아요'), false);
     });
 
     test('동의는 이 건에 대해 지금 받는다', () {
@@ -784,7 +786,7 @@ void main() {
     test('상세 화면도 제안과 초대를 구분해 말한다', () {
       expect(
           posting.contains("title: isOffer ? '다른 업무 제안 수락' : '초대 수락',"), true);
-      expect(posting.contains('은 자동으로 정리됩니다.'), true);
+      expect(posting.contains("은 '다른 업무로 확정됨'으로 정리됩니다."), true);
       expect(
           posting.contains("? '제안 수락' : '초대 수락'),"), true,
           reason: 'CTA 라벨도 사실을 말한다');

@@ -133,9 +133,14 @@ class InvitationPromiseCard extends StatelessWidget {
                         .copyWith(decoration: TextDecoration.lineThrough),
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  // [CROSS-DOMAIN-R5.3D.1] 이력은 **남는다** — 사실대로 말한다.
+                  //   A는 AUTO_CANCELED / REASSIGNMENT_ACCEPTED로 기록되고
+                  //   reassignedToApplicationId로 B와 연결된다.
+                  //   없어지는 것은 기록이 아니라 **불이익**이다:
+                  //   신뢰도·노쇼·취소 누적 어디에도 들어가지 않는다.
                   Text(
-                    '수락하면 기존 지원은 자동으로 정리됩니다.\n'
-                    '취소 이력이나 불이익은 남지 않아요.',
+                    "수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리되며,\n"
+                    '취소·노쇼 불이익은 적용되지 않습니다.',
                     style: ResponsiveHelper.tinyStyle(context,
                         color: AppColors.grey600),
                   ),

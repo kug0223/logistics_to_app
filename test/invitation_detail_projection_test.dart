@@ -257,12 +257,14 @@ void main() {
   group('상세 화면이 promise를 primary로 놓는다', () {
     final s = _load(_screen);
 
-    test('promise 카드가 공고 업무 목록보다 먼저 온다', () {
+    test('promise 카드가 현재 모집 정보보다 먼저 온다', () {
+      // [R5.3D.1] 현재 모집 정보는 보조 공개로 내려갔다. 그래도 순서는 지킨다.
       final card = s.indexOf('InvitationPromiseCard(');
-      final work = s.indexOf('_buildWorkSection(context),');
+      final disclosure = s.indexOf('_buildCurrentRecruitingDisclosure(context),');
       expect(card, greaterThan(-1));
-      expect(card < work, true,
-          reason: '결정의 근거가 되는 숫자가 공고 목록보다 뒤에 오면 안 된다');
+      expect(disclosure, greaterThan(-1));
+      expect(card < disclosure, true,
+          reason: '결정의 근거가 되는 숫자가 현재 모집 정보보다 뒤에 오면 안 된다');
     });
 
     test('INVITED가 아니면 일반 공고 상세 그대로다', () {
@@ -333,7 +335,7 @@ void main() {
 
     test('제안이면 기존 지원을 맥락으로만 보여준다', () {
       expect(c.contains("'기존 지원',"), true);
-      expect(c.contains('수락하면 기존 지원은 자동으로 정리됩니다.'), true);
+      expect(c.contains("수락하면 기존 지원은 '다른 업무로 확정됨'으로 정리되며,"), true);
       // A는 두 번째 수락 대상이 아니다 — 버튼이 붙지 않는다.
       expect(c.contains('sourceApplication!.id'), false);
     });
@@ -370,6 +372,138 @@ void main() {
       expect(n.contains('case NotificationType.toInvite:'), true);
       expect(n.contains('case NotificationType.workReassignmentOffered:'), true);
       expect(_load(_fcm).contains("case 'workReassignmentOffered':"), true);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [R5.3D.1] competing truth — 현재 모집 정보를 나란히 놓지 않는다
+  // ══════════════════════════════════════════════════════════════════
+
+  group('초대 상세에 현재 공고 금액이 peer card로 남지 않는다', () {
+    final s = _load(_screen);
+
+    test('초대일 때는 공고 업무 목록이 결정 흐름에서 빠진다', () {
+      expect(s.contains('if (!_isInvitationDetail) ...['), true);
+      expect(s.contains('] else _buildCurrentRecruitingDisclosure(context),'), true);
+    });
+
+    test('보조 공개는 기본으로 접혀 있다', () {
+      expect(s.contains('initiallyExpanded: false,'), true);
+    });
+
+    test('이름이 decision truth가 아님을 말한다', () {
+      expect(s.contains("'이 사업장의 현재 모집 정보',"), true);
+      expect(s.contains("'초대 조건과는 별개입니다.',"), true);
+    });
+
+    test('날짜 선택기도 결정 흐름에서 빠진다', () {
+      // 초대는 특정 날짜 건이다 — 다른 날짜를 고르는 화면이 아니다.
+      final disclosure = s.substring(s.indexOf('_buildCurrentRecruitingDisclosure(BuildContext'));
+      expect(disclosure.contains('_buildDatePicker(context)'), true,
+          reason: '지우지 않고 보조 영역으로 내린다');
+    });
+
+    test('초대 판정은 상태 하나로 한다', () {
+      expect(
+          s.contains('bool get _isInvitationDetail { final app = widget.myApplication; '
+              'return app != null && app.status == AppStatus.invited; }'),
+          true);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [R5.3D.1] 제안 수락 후 기존 지원 — 이력은 남는다
+  // ══════════════════════════════════════════════════════════════════
+
+  group('사실과 다른 문구를 쓰지 않는다', () {
+    test('"취소 이력이 남지 않는다"고 말하지 않는다', () {
+      // A는 AUTO_CANCELED / REASSIGNMENT_ACCEPTED로 **기록된다**.
+      // 없어지는 것은 기록이 아니라 불이익이다.
+      for (final p in [_card, _screen, _myApps]) {
+        expect(_load(p).contains('취소 이력이나 불이익은 남지 않아요'), false,
+            reason: '사실과 다른 문구: $p');
+      }
+    });
+
+    test('무엇으로 정리되는지와 무엇이 면제되는지를 말한다', () {
+      final c = _load(_card);
+      expect(c.contains("'다른 업무로 확정됨'으로 정리되며"), true);
+      expect(c.contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
+    });
+
+    test('두 수락 다이얼로그도 같은 문구를 쓴다', () {
+      expect(_load(_screen).contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
+      expect(_load(_myApps).contains('취소·노쇼 불이익은 적용되지 않습니다.'), true);
+    });
+  });
+
+  group('source A는 이력에서 취소로 보이지 않는다', () {
+    test('내 지원 배지가 다른 업무로 확정됨이다', () {
+      expect(
+          _load(_myApps).contains("if (app?.isReassignedAway ?? false) { "
+              "return const _StatusInfo( label: '다른 업무로 확정됨',"),
+          true);
+    });
+
+    test('상세 화면 배지도 같다', () {
+      expect(
+          _load(_screen).contains("if (app.isReassignedAway) { "
+              "badgeLabel = '다른 업무로 확정됨';"),
+          true);
+    });
+
+    test('상세 설명도 취소라고 하지 않는다', () {
+      final s = _load(_screen);
+      expect(s.contains("case 'REASSIGNMENT_ACCEPTED':"), true);
+      expect(s.contains('제안받은 다른 업무로 확정되어'), true);
+    });
+
+    test('판정은 cancelReason 하나로 한다', () {
+      expect(
+          _load('lib/models/core/application_model.dart')
+              .contains("bool get isReassignedAway => status == 'AUTO_CANCELED' "
+                  "&& cancelReason == 'REASSIGNMENT_ACCEPTED';"),
+          true);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [R5.3D.1] 마감이 카운터 재계산에 되돌려지지 않는다
+  // ══════════════════════════════════════════════════════════════════
+
+  group('사람이 정한 상태를 집계가 덮어쓰지 않는다', () {
+    final cf = _load('functions/src/index.ts');
+
+    test('status 갱신이 트랜잭션으로 분리돼 있다', () {
+      expect(cf.contains('async function srvSyncToStatusSafely('), true);
+      expect(cf.contains('const fresh = await tx.get(toRef);'), true);
+    });
+
+    test('커밋 시점의 status로 판정한다', () {
+      // 집계 시작 때 읽은 스냅샷으로 판정하면, 그 사이의 마감이 되돌아간다.
+      expect(
+          cf.contains('const cur = (fresh.data()?.status as string | undefined) ?? ""; '
+              'if (IMMUTABLE_TO_STATUSES.includes(cur)) return;'),
+          true);
+    });
+
+    test('배치에서 status를 빼냈다', () {
+      final batch = cf.substring(
+          cf.indexOf('const writeBatch = db.batch();'),
+          cf.indexOf('await writeBatch.commit();'));
+      expect(batch.contains('status:'), false,
+          reason: '배치는 카운터만 쓴다 — status는 트랜잭션이 정한다');
+    });
+
+    test('슬롯 status도 같은 규칙이다', () {
+      expect(
+          cf.contains('if (d["isManualClosed"] === true || d["status"] === "closed") return;'),
+          true);
+      expect(cf.contains('const freshSlot = await tx.get(slotRef);'), true);
+    });
+
+    test('status 교정 실패가 카운터를 되돌리지 않는다', () {
+      expect(cf.contains('[syncTOStats] status 교정 실패'), true);
     });
   });
 

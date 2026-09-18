@@ -12896,6 +12896,54 @@ export const syncTOStats = onDocumentWritten(
  *   flex TO의 workTypeCounts(슬롯 문서)와 달리 slotAppsRef가 없으므로 appsRef(toId 기준)로 집계.
  *   인덱스: applications[toId + selectedWorkType + status] 필요.
  */
+/** [R5.3D.1] 상태 재계산이 건드리면 안 되는 상태 — 사람이 정한 것들. */
+const IMMUTABLE_TO_STATUSES = ["CLOSED", "EXPIRED", "SCHEDULED", "DRAFT"];
+
+/**
+ * [CROSS-DOMAIN-R5.3D.1] TO status 재계산 — **커밋 시점의 상태로** 판정한다.
+ *
+ * 이전에는 집계 시작 때 읽은 스냅샷의 status로 `IMMUTABLE_TO_STATUSES`를
+ * 판정하고, 그 결론을 뒤에 batch로 썼다. 그 사이에 관리자가 공고를 마감하면
+ * 배치가 마감을 **ACTIVE로 되돌렸다**.
+ *
+ *   관리자가 마감 → 같은 순간 누군가 지원·취소 → 트리거가 옛 ACTIVE를 읽음
+ *   → 집계 → `status: ACTIVE` 커밋 → **마감이 조용히 풀린다**
+ *
+ * DEV 실측: `status: CLOSED` 쓰기 직후 읽으면 `ACTIVE`가 나왔고, 마감된
+ * 공고에 제안이 200으로 통과했다(6회 중 2회).
+ *
+ * 카운터는 절대값이라 늦게 써도 수렴하지만 status는 **사람이 내린 결정**이다.
+ * 그래서 이것만 트랜잭션으로 옮겨, 커밋하는 순간의 status를 다시 보고
+ * 그때도 재계산 대상일 때만 쓴다.
+ *
+ * @param {FirebaseFirestore.DocumentReference} toRef 공고
+ * @param {number} totalRequired 필요 인원
+ * @param {number} confirmedCnt 확정 좌석 수
+ * @return {Promise<void>}
+ */
+async function srvSyncToStatusSafely(
+  toRef: FirebaseFirestore.DocumentReference,
+  totalRequired: number,
+  confirmedCnt: number
+): Promise<void> {
+  try {
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(toRef);
+      if (!fresh.exists) return;
+      const cur = (fresh.data()?.status as string | undefined) ?? "";
+      // 지금 이 순간 사람이 정한 상태라면 손대지 않는다.
+      if (IMMUTABLE_TO_STATUSES.includes(cur)) return;
+      const next =
+        totalRequired > 0 && confirmedCnt >= totalRequired ? "FULL" : "ACTIVE";
+      if (cur === next) return;
+      tx.update(toRef, {status: next});
+    });
+  } catch (e) {
+    // 상태 교정 실패가 카운터 재계산을 되돌리지 않는다 — 다음 쓰기가 다시 본다.
+    console.warn(`[syncTOStats] status 교정 실패 — ${toRef.id}:`, e);
+  }
+}
+
 async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const toRef = db.collection("tos").doc(toId);
 
@@ -12907,7 +12955,6 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   }
 
   const appsRef = db.collection("applications").where("toId", "==", toId);
-  const IMMUTABLE_TO_STATUSES = ["CLOSED", "EXPIRED", "SCHEDULED", "DRAFT"];
 
   // [SYSTEM-INTEGRATION-CROSS-SLICE-1A] 占有 중인 좌석을 센다.
   //
@@ -12981,17 +13028,13 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
 
     const confirmedCnt = seats.to;
     const totalRequired = (toData?.totalRequired as number) ?? 0;
-    const toStatus = toData?.status as string | undefined;
-    const toStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(toStatus ?? "")
-      ? {status: totalRequired > 0 && confirmedCnt >= totalRequired ? "FULL" : "ACTIVE"}
-      : {};
     await toRef.update({
       totalConfirmed: confirmedCnt,
       totalPending: pendingSnap.data().count,
       statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       ...workTypeConfirmedUpdate,
-      ...toStatusUpdate,
     });
+    await srvSyncToStatusSafely(toRef, totalRequired, confirmedCnt);
     return;
   }
 
@@ -13019,36 +13062,44 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       Array<{workType?: string; requiredCount?: number}> | undefined) ?? [];
   const required = workDetails.reduce((acc, d) => acc + (d.requiredCount ?? 0), 0);
   const newStatus = required > 0 && confirmedCount >= required ? "full" : "open";
-  // [BUG-E-01 수정] 수동 마감 슬롯 여부 사전 확인 — status를 덮어쓰지 않기 위해
-  const isManualClosed = slotDoc.data()?.isManualClosed === true;
-  const currentSlotStatus = slotDoc.data()?.status as string | undefined;
-
   // [Phase 8.1E.5] workTypeCountsUpdate 제거 — workTypeCounts 더 이상 재계산하지 않음
 
   const flexToData = toSnap.data();
   const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
-  const flexToStatus = flexToData?.status as string | undefined;
   const flexConfirmedCnt = seats.to;
-  const flexToStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(flexToStatus ?? "")
-    ? {status: flexTotalRequired > 0 && flexConfirmedCnt >= flexTotalRequired ? "FULL" : "ACTIVE"}
-    : {};
   const writeBatch = db.batch();
   writeBatch.update(toRef, {
     totalConfirmed: flexConfirmedCnt,
     totalPending: toPendingSnap.data().count,
     statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    ...flexToStatusUpdate,
   });
   if (slotDoc.exists) {
     writeBatch.update(slotRef, {
       confirmedCount,
       pendingCount: slotPendingSnap.data().count,
-      // [BUG-E-01 수정] 수동 마감(isManualClosed) 또는 closed 슬롯은 status 덮어쓰기 금지
-      // Flutter _recalculateSlotStatus(dart 2175줄)와 동일한 가드 — CF에만 누락되어 있었음
-      ...(isManualClosed || currentSlotStatus === "closed" ? {} : {status: newStatus}),
     });
   }
   await writeBatch.commit();
+  // [CROSS-DOMAIN-R5.3D.1] TO status는 커밋 시점 상태로 판정한다.
+  await srvSyncToStatusSafely(toRef, flexTotalRequired, flexConfirmedCnt);
+  // [CROSS-DOMAIN-R5.3D.1] 슬롯 status도 TO와 같은 이유로 트랜잭션에서 정한다.
+  //   [BUG-E-01]의 수동 마감 가드가 **집계 시작 때 읽은** slotDoc 기준이라,
+  //   그 사이에 관리자가 마감하면 배치가 open으로 되돌렸다.
+  if (slotDoc.exists) {
+    try {
+      await db.runTransaction(async (tx) => {
+        const freshSlot = await tx.get(slotRef);
+        if (!freshSlot.exists) return;
+        const d = freshSlot.data() ?? {};
+        // 지금 이 순간 사람이 마감한 슬롯이면 손대지 않는다.
+        if (d["isManualClosed"] === true || d["status"] === "closed") return;
+        if (d["status"] === newStatus) return;
+        tx.update(slotRef, {status: newStatus});
+      });
+    } catch (e) {
+      console.warn("[syncTOStats] slot status 교정 실패:", slotId, e);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

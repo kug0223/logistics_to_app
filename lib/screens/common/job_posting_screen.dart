@@ -450,6 +450,58 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   /// 읽지 못하면 null이고, 그때는 비교만 생략한다(없다고 말하지 않는다).
   ApplicationModel? _offerSourceApplication;
 
+  /// [R5.3D.1] 이 화면이 초대 상세로 동작하는가.
+  ///
+  /// 이 값이 true면 공고의 현재 모집 정보는 **결정 흐름에서 빠진다**.
+  /// 초대는 이미 정해진 조건에 답하는 일이고, 공고를 탐색하는 일이 아니다.
+  bool get _isInvitationDetail {
+    final app = widget.myApplication;
+    return app != null && app.status == AppStatus.invited;
+  }
+
+  /// [R5.3D.1] 현재 모집 정보 — **보조 공개**.
+  ///
+  /// 지우지 않는다. 근로자가 이 사업장이 지금 무엇을 모집하는지 궁금할 수
+  /// 있고, 그건 정당한 질문이다. 다만 그 숫자가 "내가 수락할 조건"과
+  /// 같은 자리에 있으면 안 된다 — 기본은 접혀 있고 이름이 다르다.
+  Widget _buildCurrentRecruitingDisclosure(BuildContext context) {
+    final s = ResponsiveHelper.spacing(context, 16);
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      color: Colors.white,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: EdgeInsets.symmetric(horizontal: s),
+          childrenPadding: EdgeInsets.zero,
+          leading: Icon(Icons.storefront_outlined,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: AppColors.grey500),
+          title: Text(
+            '이 사업장의 현재 모집 정보',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            '초대 조건과는 별개입니다.',
+            style:
+                ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+          ),
+          children: [
+            if (_to!.isFlexType && _slotLoadError)
+              _buildSlotLoadErrorMessage(context)
+            else if (_to!.isFlexType && _allSlots.isNotEmpty)
+              _buildDatePicker(context)
+            else if (_to!.isFlexType && _allSlots.isEmpty)
+              _buildNoSlotsMessage(context),
+            _buildWorkSection(context),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 이 화면이 **초대 상세**로 동작해야 하는가, 그렇다면 무엇을 보여주는가.
   ///
   /// INVITED가 아니면 null — 일반 공고 상세는 지금 동작 그대로다.
@@ -521,9 +573,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         children: [
                           _buildPostingHeader(context),
                           // [CROSS-DOMAIN-R5.3D] 초대라면 **수락하면 적용될
-                          //   조건**을 공고 목록보다 먼저 보여준다.
-                          //   아래 업무 목록은 공고의 현재 값이고 설명이다 —
-                          //   결정의 근거가 되는 숫자는 이 카드 하나뿐이다.
+                          //   조건**이 결정의 유일한 근거다.
                           if (_invitationProjection(postingLoaded: true) != null)
                             InvitationPromiseCard(
                               projection:
@@ -533,15 +583,30 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                           // 내 지원에서 진입 시: Application 상태 카드
                           if (widget.myApplication != null)
                             _buildMyApplicationSection(context),
-                          // [POSTING-V2-03C.1] 불러오기 실패가 '날짜 없음'과
-                          //   같은 화면이 되지 않도록 먼저 가른다.
-                          if (_to!.isFlexType && _slotLoadError)
-                            _buildSlotLoadErrorMessage(context)
-                          else if (_to!.isFlexType && _allSlots.isNotEmpty)
-                            _buildDatePicker(context)
-                          else if (_to!.isFlexType && _allSlots.isEmpty)
-                            _buildNoSlotsMessage(context),
-                          _buildWorkSection(context),
+                          // [CROSS-DOMAIN-R5.3D.1] 초대 상세에서는 공고의
+                          //   **현재 모집 정보**를 promise와 나란히 놓지 않는다.
+                          //
+                          //   promise 카드에서 120,000원을 본 사람이 바로 아래
+                          //   같은 업무의 공고 현재 금액을 동등한 카드로 다시
+                          //   보면, 어느 쪽이 적용되는지 알 수 없다. 초대 대상이
+                          //   아닌 다른 모집 업무도 이 결정과 관계가 없다.
+                          //   날짜 선택기도 마찬가지다 — 초대는 특정 날짜 건이다.
+                          //
+                          //   지우지는 않는다. 접힌 보조 영역으로 내리고
+                          //   "현재 모집 정보"라고 이름 붙여 decision truth가
+                          //   아님을 분명히 한다.
+                          if (!_isInvitationDetail) ...[
+                            // [POSTING-V2-03C.1] 불러오기 실패가 '날짜 없음'과
+                            //   같은 화면이 되지 않도록 먼저 가른다.
+                            if (_to!.isFlexType && _slotLoadError)
+                              _buildSlotLoadErrorMessage(context)
+                            else if (_to!.isFlexType && _allSlots.isNotEmpty)
+                              _buildDatePicker(context)
+                            else if (_to!.isFlexType && _allSlots.isEmpty)
+                              _buildNoSlotsMessage(context),
+                            _buildWorkSection(context),
+                          ] else
+                            _buildCurrentRecruitingDisclosure(context),
                           // 내 지원 일정 — 단기/장기 공통, 업무 목록 바로 아래
                           Padding(
                             padding: EdgeInsets.symmetric(
@@ -2737,9 +2802,17 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         mainMessage = _cancelDetailText(app.cancelReason);
 
       case AppStatus.autoCanceled:
-        badgeLabel  = '자동 취소';
-        badgeColor  = AppColors.grey600;
-        badgeBgColor = AppColors.grey100;
+        // [CROSS-DOMAIN-R5.3D.1] 제안을 받아들여 접힌 지원은 취소가 아니다.
+        //   판정은 cancelReason 하나로 한다(ApplicationModel.isReassignedAway).
+        if (app.isReassignedAway) {
+          badgeLabel  = '다른 업무로 확정됨';
+          badgeColor  = AppColors.successDark;
+          badgeBgColor = AppColors.successBg;
+        } else {
+          badgeLabel  = '자동 취소';
+          badgeColor  = AppColors.grey600;
+          badgeBgColor = AppColors.grey100;
+        }
         mainMessage = _autoCancelDetailText(app.cancelReason);
 
       case AppStatus.invited:
@@ -3109,6 +3182,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         return '모집이 마감되어 지원이 자동으로 취소되었어요.';
       case 'TO_DELETED':
         return '공고가 삭제되어 지원이 자동으로 취소되었어요.';
+      // [R5.3D.1] 제안 수락의 결과 — 이력은 남지만 취소가 아니다.
+      case 'REASSIGNMENT_ACCEPTED':
+        return '제안받은 다른 업무로 확정되어\n이 지원은 정리되었어요.\n'
+            '취소·노쇼 불이익은 적용되지 않습니다.';
       default:
         return '지원이 자동으로 취소되었어요.';
     }
@@ -3200,7 +3277,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 // 제안은 초대와 결과가 다르다 — 기존 지원이 접힌다는 것을 먼저 말한다.
                 ? '제안받은 업무로 확정되고, 기존 지원'
                     '${app.sourceWorkType != null ? "(${app.sourceWorkType})" : ""}'
-                    '은 자동으로 정리됩니다.\n취소 이력이나 불이익은 남지 않아요.'
+                    // [R5.3D.1] 이력은 남는다 — 사라지는 것은 불이익이다.
+                    "은 '다른 업무로 확정됨'으로 정리됩니다.\n"
+                    '취소·노쇼 불이익은 적용되지 않습니다.'
                 : '이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
           ),
           const SizedBox(height: 12),

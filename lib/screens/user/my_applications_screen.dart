@@ -1565,6 +1565,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           bgColor: AppColors.grey100,
         );
       case AppStatus.autoCanceled:
+        // [CROSS-DOMAIN-R5.3D.1] 제안을 받아들여 접힌 지원은 취소가 아니다.
+        //   generic '자동 취소' 배지로 보이면 근로자 이력에 없는 사건이
+        //   있는 것처럼 읽힌다 — 판정은 cancelReason 하나로 한다.
+        if (app?.isReassignedAway ?? false) {
+          return const _StatusInfo(
+            label: '다른 업무로 확정됨',
+            color: AppColors.successDark,
+            bgColor: AppColors.successBg,
+          );
+        }
         return const _StatusInfo(
           label: '자동 취소',
           color: AppColors.grey600,
@@ -1896,9 +1906,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               muted: false,
             ),
             const SizedBox(height: 12),
+            // [R5.3D.1] 이력은 남는다 — 사라지는 것은 불이익이다.
             const Text(
-              '제안받은 업무로 확정되고, 기존 지원은 자동으로 정리됩니다.\n'
-              '취소 이력이나 불이익은 남지 않아요.',
+              "제안받은 업무로 확정되고, 기존 지원은 '다른 업무로 확정됨'으로\n"
+              '정리됩니다. 취소·노쇼 불이익은 적용되지 않습니다.',
               style: TextStyle(fontSize: 13),
             ),
           ] else
