@@ -88,8 +88,9 @@ void main() {
     });
 
     test('기존 문서에 수렴한다 — 새 id를 만들지 않는다', () {
-      expect(
-          apply.contains('const applyDocId = applyRelation ? applyRelation.id : complexId;'),
+      // [R5.3C.2A] 신규 관계는 canonical wdId id를 쓰지만, 기존 문서가 있으면
+      //   언제나 그 id가 이긴다. 자세한 형태는 아래 concurrency group이 고정한다.
+      expect(apply.contains('const applyDocId = applyRelation ? applyRelation.id :'),
           true);
       expect(
           apply.contains('const appRef = db.collection("applications").doc(applyDocId);'),
@@ -118,6 +119,76 @@ void main() {
 
     test('제안도 관계를 트랜잭션 읽기 집합에 넣는다', () {
       expect(offer.contains('const freshAlt = await offerTx.get(offerAltKeyed.ref);'),
+          true);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [R5.3C.2A] 빈 관계의 동시성 — 관계 조회는 lock이 아니다
+  // ══════════════════════════════════════════════════════════════════
+
+  group('신규 관계는 세 writer가 같은 ref에서 경합한다', () {
+    test('관계 조회가 트랜잭션 밖이라는 것을 전제로 설계한다', () {
+      // 조회는 uniqueness lock이 될 수 없다 — 둘이 동시에 "없음"을 본다.
+      // 그래서 신규 문서 ref 자체를 같게 만들어 Firestore가 직렬화하게 한다.
+      final at = apply.indexOf('srvFindRelationApplications(');
+      final tx = apply.indexOf('await db.runTransaction');
+      expect(at < tx, true);
+    });
+
+    test('신규 short-term docId는 wdId canonical이다', () {
+      expect(
+          apply.contains('const canonicalNewId = (slotId && resolvedWdId) ? '
+              '`\${toId}_\${slotId}_\${resolvedWdId}_\${uid}` : complexId;'),
+          true);
+      expect(
+          apply.contains('const applyDocId = applyRelation ? applyRelation.id : '
+              '((applyLegacySnap && applyLegacySnap.exists) ? complexId : canonicalNewId);'),
+          true,
+          reason: '기존 문서가 있으면 그 id를 쓰고, 없을 때만 canonical을 만든다');
+    });
+
+    test('초대·제안도 같은 canonical 형태를 쓴다', () {
+      expect(
+          invite.contains('`\${toId}_\${slotId}_\${inviteDiscriminator}_\${targetUid}`'),
+          true);
+      expect(invite.contains('const inviteDiscriminator = '
+          '(inviteResolvedWdId && inviteResolvedWdId.length > 0) ? '
+          'inviteResolvedWdId :'), true);
+      expect(
+          offer.contains('const targetAppId = '
+              '`\${offerToId}_\${offerSlotId}_\${targetWdId}_\${offerUid}`;'),
+          true);
+    });
+
+    test('세 writer 모두 쓰기 전에 그 ref를 읽는다', () {
+      // 읽지 않으면 트랜잭션이 경합을 감지하지 못한다.
+      expect(apply.contains('const existingInTx = await tx.get(appRef);'), true);
+      expect(invite.contains('const existing = await invTx.get(newAppRef);'), true);
+      expect(offer.contains('const fresh = await offerTx.get(targetRef);'), true);
+    });
+
+    test('트랜잭션 안에서도 INVITED를 덮어쓰지 않는다', () {
+      // 경합에서 초대가 먼저 커밋한 경우가 여기로 온다.
+      final txBody = apply.substring(apply.indexOf('const existingInTx'));
+      expect(
+          txBody.contains('if (exS === "INVITED") { throw new HttpsError( '
+              '"already-exists",'),
+          true);
+    });
+
+    test('legacy 문서가 있으면 canonical을 새로 만들지 않는다', () {
+      expect(
+          apply.contains('const applyLegacySnap = applyRelation ? null : '
+              'await db.collection("applications").doc(complexId).get();'),
+          true);
+    });
+
+    test('composite 식별자는 필드로 계속 보존된다', () {
+      // docId만 바뀌고 workDetailId 필드는 그대로다 — 기존 소비자 호환.
+      expect(
+          apply.contains('if (workDetailId && workDetailId.length > 0) '
+              'setData["workDetailId"] = workDetailId;'),
           true);
     });
   });

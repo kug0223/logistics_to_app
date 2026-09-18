@@ -26696,10 +26696,29 @@ export const callableApplyToTO = onCall(
     const applyRelated = await srvFindRelationApplications(
       uid, toId, slotId ?? undefined, resolvedWdId ?? undefined, complexId);
     const applyRelation = applyRelated.length > 0 ? applyRelated[0] : null;
-    const applyDocId = applyRelation ? applyRelation.id : complexId;
-
-    const existingSnap = applyRelation ??
+    // wdId가 없던 시절의 문서는 관계 조회로 잡히지 않는다 — id로 한 번 더 본다.
+    const applyLegacySnap = applyRelation ? null :
       await db.collection("applications").doc(complexId).get();
+
+    // [CROSS-DOMAIN-R5.3C.2A] **관계가 아직 없을 때**가 진짜 경합 지점이다.
+    //
+    //   관계 조회는 트랜잭션 밖이라 uniqueness lock이 아니다. 빈 관계에서
+    //   지원과 초대가 동시에 들어오면 둘 다 "없음"을 보고 각자 문서를 만든다.
+    //   그동안 지원은 composite id, 초대·제안은 wdId id를 써서 **서로 다른
+    //   ref**였다 — 트랜잭션이 경합할 대상 자체가 없었다.
+    //
+    //   그래서 신규 short-term 관계는 세 writer가 **같은 canonical ref**를
+    //   쓴다. 그러면 각 트랜잭션이 그 ref를 읽고 쓰므로 Firestore가 직렬화하고
+    //   진 쪽은 재시도에서 이긴 문서를 보게 된다.
+    //
+    //   기존 문서의 id는 바꾸지 않는다 — 알림·계약·근태가 참조한다.
+    //   (application docId를 파싱하는 소비자는 없다 — 전수 확인)
+    const canonicalNewId = (slotId && resolvedWdId) ?
+      `${toId}_${slotId}_${resolvedWdId}_${uid}` : complexId;
+    const applyDocId = applyRelation ? applyRelation.id :
+      ((applyLegacySnap && applyLegacySnap.exists) ? complexId : canonicalNewId);
+
+    const existingSnap = applyRelation ?? applyLegacySnap!;
     let isReactivation = false;
 
     if (existingSnap.exists) {
@@ -26857,6 +26876,14 @@ export const callableApplyToTO = onCall(
         const isResignDone = exD["resignStatus"] === "APPROVED" || exD["resignStatus"] === "AUTO_APPROVED";
         const isTermDone = exD["terminationStatus"] === "APPROVED" || exD["terminationStatus"] === "AUTO_APPROVED";
         if (!isResignDone && !isTermDone) {
+          // [R5.3C.2A] 트랜잭션 **안**에서도 INVITED를 막는다.
+          //   경합에서 초대가 먼저 커밋한 경우가 여기로 온다. 막지 않으면
+          //   진 쪽이 초대를 PENDING으로 덮어쓴다 — silent overwrite다.
+          if (exS === "INVITED") {
+            throw new HttpsError(
+              "already-exists",
+              "이미 초대를 받은 근무입니다. 내 지원 내역에서 초대를 확인해주세요.");
+          }
           if (["CONFIRMED", "CONTRACT_PENDING", "PENDING"].includes(exS)) {
             throw new HttpsError("already-exists", "이미 지원한 업무입니다.");
           }
