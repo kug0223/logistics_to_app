@@ -285,6 +285,244 @@ function srvComputeDocumentState(
   return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence};
 }
 
+// ═══════════════════════════════════════════════════════════
+// [DOCUMENT-VERIFICATION-INTEGRITY-R1.2] 사업장의 지원자 서류 검토
+//
+//   R0는 "누가 말한 상태인지"를 갈랐다. 여기서는 **누가 실제로 봤는지**를
+//   담는다. 둘은 다른 개념이다:
+//
+//     user document state   제출물 자체에 대한 시스템 1차 점검
+//     business review       이 사업장이 이 사람의 서류를 보고 내린 판단
+//
+//   섞으면 한 사업장의 판단이 다른 사업장으로 새고, 반대로 플랫폼이 모든
+//   지원자를 사전 승인하는 구조가 된다 — 둘 다 하지 않기로 한 것이다.
+//
+//   검토의 scope는 지원서가 아니라 **사업장 × 근로자 × 문서 버전**이다.
+//   같은 사람이 같은 사업장에 세 번 지원했다고 같은 신분증을 세 번 볼
+//   이유가 없다. 대신 문서가 바뀌면 그 판단은 즉시 낡는다 — 그 판정을
+//   fan-out mutation이 아니라 `reviewedVersion == currentVersion` 비교로
+//   한다. 되돌아온 재계산이 사람의 최신 결정을 덮어쓰지 않는다.
+// ═══════════════════════════════════════════════════════════
+
+const BIZ_DOC_REVIEW_COL = "businessApplicantDocumentReviews";
+const DOC_CORRECTION_COL = "documentCorrectionRequests";
+
+const REVIEW_NOT_REVIEWED = "NOT_REVIEWED";
+const REVIEW_OK = "REVIEWED_OK";
+const REVIEW_REUPLOAD_REQUIRED = "REUPLOAD_REQUIRED";
+const REVIEW_DECISIONS = [REVIEW_OK, REVIEW_REUPLOAD_REQUIRED];
+
+const CORRECTION_OPEN = "OPEN";
+const CORRECTION_RESUBMITTED = "RESUBMITTED";
+const CORRECTION_RESOLVED = "RESOLVED";
+// CANCELED는 이번 패치에서 도달 경로가 없어 상수를 두지 않는다.
+//   관리자 요청 철회를 넣을 때 함께 추가한다 — 닿지 않는 값을 미리
+//   선언해 두면 있는 기능처럼 읽힌다.
+/** 아직 근로자 행동이 남아 있는 요청 — 중복 생성을 막는 기준. */
+const CORRECTION_LIVE = [CORRECTION_OPEN, CORRECTION_RESUBMITTED];
+
+const DOC_TYPE_ID = "ID";
+const DOC_TYPE_BANKBOOK = "BANKBOOK";
+
+/** 지원 검토 목적 열람까지 포함하는 동의 버전. */
+const DOCUMENT_ACCESS_CONSENT_V3 = "2026-09-18-v3";
+
+/** 검토 대상이 될 수 있는 지원 상태 — 직접 지원과 초대 모두. */
+const APPLICANT_REVIEW_STATUSES = ["PENDING", "INVITED"];
+
+/**
+ * 문서·계좌의 현재 버전.
+ *
+ * 경로 문자열에 검토를 묶지 않는다. 같은 경로에 다른 바이트를 덮어쓰거나
+ * 계좌 내용만 바뀌는 경우 경로는 그대로이기 때문이다. 서버 writer가
+ * 올리는 정수 하나를 canonical identity로 쓴다.
+ *
+ * @param {FirebaseFirestore.DocumentData} u users 문서 데이터
+ * @return {object} id/bankbook/account 현재 버전
+ */
+function srvDocumentVersionsOf(
+  u: FirebaseFirestore.DocumentData
+): {id: number; bankbook: number; account: number} {
+  const n = (v: unknown) => (typeof v === "number" && v >= 0 ? v : 0);
+  return {
+    id: n(u["idDocumentVersion"]),
+    bankbook: n(u["bankbookDocumentVersion"]),
+    account: n(u["bankAccountVersion"]),
+  };
+}
+
+/**
+ * business × worker 검토 문서의 결정적 id.
+ *
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerUid 근로자 UID
+ * @return {string} 문서 ID
+ */
+function srvBizReviewId(businessId: string, workerUid: string): string {
+  return `${businessId}_${workerUid}`;
+}
+
+type SrvReviewReadiness = {
+  ready: boolean;
+  idDecision: string;
+  bankDecision: string;
+  /** 낡음 판정 — 검토는 있었는데 그 뒤 문서가 바뀐 경우 */
+  idStale: boolean;
+  bankStale: boolean;
+  reason: string | null;
+};
+
+/**
+ * 현재 문서 버전 기준으로 검토가 유효한지 — **유일한 판정 지점**.
+ *
+ * 낡음(stale)과 미검토(not reviewed)를 구분한다. 화면이 "다시 확인해주세요"와
+ * "아직 확인 전입니다"를 다르게 말해야 하고, 둘 다 통과는 아니다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} review 검토 문서
+ * @param {object} cur 현재 버전 (id/bankbook/account)
+ * @return {SrvReviewReadiness} 판정
+ */
+function srvResolveReviewReadiness(
+  review: FirebaseFirestore.DocumentData | undefined,
+  cur: {id: number; bankbook: number; account: number}
+): SrvReviewReadiness {
+  const idDec =
+    (review?.["idDecision"] as string | undefined) ?? REVIEW_NOT_REVIEWED;
+  const bankDec =
+    (review?.["bankDecision"] as string | undefined) ?? REVIEW_NOT_REVIEWED;
+  const rIdV =
+    (review?.["reviewedIdDocumentVersion"] as number | undefined) ?? -1;
+  const rBbV =
+    (review?.["reviewedBankbookDocumentVersion"] as number | undefined) ?? -1;
+  const rAcV =
+    (review?.["reviewedBankAccountVersion"] as number | undefined) ?? -1;
+
+  const idStale = idDec !== REVIEW_NOT_REVIEWED && rIdV !== cur.id;
+  const bankStale = bankDec !== REVIEW_NOT_REVIEWED &&
+    (rBbV !== cur.bankbook || rAcV !== cur.account);
+
+  const idOk = idDec === REVIEW_OK && !idStale;
+  const bankOk = bankDec === REVIEW_OK && !bankStale;
+
+  let reason: string | null = null;
+  if (!idOk) {
+    reason = idStale ? "신분증이 변경되어 다시 확인해야 합니다." :
+      (idDec === REVIEW_REUPLOAD_REQUIRED ?
+        "신분증 재등록을 요청한 상태입니다." : "신분증 확인이 필요합니다.");
+  } else if (!bankOk) {
+    reason = bankStale ? "급여계좌 또는 통장사본이 변경되어 다시 확인해야 합니다." :
+      (bankDec === REVIEW_REUPLOAD_REQUIRED ?
+        "통장사본 재등록을 요청한 상태입니다." : "급여계좌·통장사본 확인이 필요합니다.");
+  }
+
+  return {
+    ready: idOk && bankOk,
+    idDecision: idDec, bankDecision: bankDec,
+    idStale, bankStale, reason,
+  };
+}
+
+/**
+ * 이 호출자가 지원자 서류를 볼 수 있는가 — canManageTo AND canManageWage.
+ *
+ * 둘 다 필요하다. canManageTo는 "이 사람을 채용 검토할 자격"이고
+ * canManageWage는 "민감 급여서류에 접근할 자격"이다. 하나만으로 열면
+ * 업무 권한자 전원에게 통장이 보이거나, 채용과 무관한 급여 담당자가
+ * 지원자 신분증을 보게 된다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 사업장
+ * @return {Promise<boolean>} 열람 자격 여부
+ */
+async function srvCanReviewApplicantDocuments(
+  callerUid: string, businessId: string
+): Promise<boolean> {
+  const [bizSnap, userSnap] = await Promise.all([
+    db.collection("businesses").doc(businessId).get(),
+    db.collection("users").doc(callerUid).get(),
+  ]);
+  if (!bizSnap.exists) return false;
+  const biz = bizSnap.data() ?? {};
+  const role = userSnap.data()?.["role"] as string | undefined;
+  const adminIds = (biz["adminIds"] as string[] | undefined) ?? [];
+  // 사업장 소유자·관리자는 두 권한을 모두 가진 것으로 본다.
+  if (role === "BUSINESS_ADMIN" &&
+      (biz["ownerId"] === callerUid || adminIds.includes(callerUid))) {
+    return true;
+  }
+  if (role === "SUPER_ADMIN") return true;
+  const member = await db.collection("businesses").doc(businessId)
+    .collection("members").doc(callerUid).get();
+  const perms = (member.data()?.["permissions"] as Record<string, boolean>) ?? {};
+  return perms.canManageTo === true && perms.canManageWage === true;
+}
+
+/**
+ * 지원 검토 목적 열람이 지금 이 지원서에서 허용되는가.
+ *
+ * 동의는 **지원서 단위**다. 같은 사업장에 다른 동의된 지원서가 있어도
+ * 이 지원서의 동의를 대신하지 못한다 — 검토 재사용(business×worker)과
+ * 동의(application scope)는 다른 축이다.
+ *
+ * @param {FirebaseFirestore.DocumentData} appData 지원서
+ * @param {string} businessId 요청한 사업장
+ * @param {string} targetUid 대상 근로자
+ * @return {string | null} 불가 사유, 가능하면 null
+ */
+function srvApplicantReviewAccessBlock(
+  appData: FirebaseFirestore.DocumentData,
+  businessId: string,
+  targetUid: string
+): string | null {
+  if (appData["businessId"] !== businessId) return "지원서를 찾을 수 없습니다.";
+  if (appData["uid"] !== targetUid) return "지원서를 찾을 수 없습니다.";
+  const st = (appData["status"] as string | undefined) ?? "";
+  if (!APPLICANT_REVIEW_STATUSES.includes(st)) {
+    return "검토 중인 지원서가 아닙니다.";
+  }
+  if (appData["documentAccessConsentGiven"] !== true) {
+    return "근로자가 서류 접근에 동의하지 않았습니다.";
+  }
+  // v2 이하는 "근무 확정 시 소득신고·급여처리 목적"만 동의했다.
+  // 검토 목적 열람은 그 문구 밖이므로 조용히 승격하지 않는다.
+  if (appData["documentAccessConsentVersion"] !== DOCUMENT_ACCESS_CONSENT_V3) {
+    return "근로자의 서류 열람 동의(최신 버전)가 필요합니다.";
+  }
+  return null;
+}
+
+/**
+ * 재업로드가 열린 보완 요청을 RESUBMITTED로 넘긴다.
+ *
+ * 요청을 닫지는 않는다 — 관리자가 새 문서를 확인해야 RESOLVED다.
+ * 근로자 Task에서는 내려가고, 관리자에게는 재확인 대상으로 남는다.
+ *
+ * @param {string} workerUid 근로자
+ * @param {string} documentType ID | BANKBOOK
+ * @return {Promise<void>}
+ */
+async function srvMarkCorrectionsResubmitted(
+  workerUid: string, documentType: string
+): Promise<void> {
+  try {
+    const open = await db.collection(DOC_CORRECTION_COL)
+      .where("workerUid", "==", workerUid)
+      .where("documentType", "==", documentType)
+      .where("status", "==", CORRECTION_OPEN).limit(20).get();
+    if (open.empty) return;
+    const b = db.batch();
+    for (const d of open.docs) {
+      b.update(d.ref, {
+        status: CORRECTION_RESUBMITTED,
+        resubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    await b.commit();
+  } catch (e) {
+    console.warn("[srvMarkCorrectionsResubmitted] 실패 (제출은 완료됨):", e);
+  }
+}
+
 /**
  * Storage 경로가 그 사용자의 것인지.
  *
@@ -8087,6 +8325,9 @@ export const callableMarkIdCardVerified = onCall(
       idCardDocumentState: idDoc.state,
       idCardSelfCheck: idDoc.evidence,
       idCardSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // [R1.2] 문서 버전 — 사업장 검토가 이 값으로 낡음을 판정한다.
+      //   경로가 같아도 바이트가 바뀌면 다른 문서다.
+      idDocumentVersion: admin.firestore.FieldValue.increment(1),
       // 재업로드 — 이전 사람 결정 무효화
       idCardReviewedBy: admin.firestore.FieldValue.delete(),
       idCardReviewedAt: admin.firestore.FieldValue.delete(),
@@ -8095,6 +8336,8 @@ export const callableMarkIdCardVerified = onCall(
     console.info(
       `[markIdCardVerified] uid=${callerUid} state=${idDoc.state} ` +
       `evidence=${idDoc.evidence ? "present" : "none"}`);
+    // [R1.2] 보완 요청이 열려 있었다면 제출로 넘긴다 (POST_COMMIT).
+    await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_ID);
 
     // [FIX-1] 신분증 업로드 시 누락된 auto-grant 소급 생성
     // 확정 시점에 신분증 없어서 Grant 생성이 건너뛰어진 Application에 대해 보완 생성.
@@ -8325,6 +8568,8 @@ export const callableMarkBankbookVerified = onCall(
       bankbookUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
       bankbookDocumentState: bbDoc.state,
       bankbookSelfCheck: bbDoc.evidence,
+      // [R1.2] 통장사본 버전 — 재업로드가 곧 재확인 사유다.
+      bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
       bankbookReviewedBy: admin.firestore.FieldValue.delete(),
       bankbookReviewedAt: admin.firestore.FieldValue.delete(),
       bankbookReviewNote: admin.firestore.FieldValue.delete(),
@@ -8332,6 +8577,7 @@ export const callableMarkBankbookVerified = onCall(
     console.info(
       `[markBankbookVerified] uid=${callerUid} state=${bbDoc.state} ` +
       `evidence=${bbDoc.evidence ? "present" : "none"}`);
+    await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_BANKBOOK);
 
     return {success: true};
   }
@@ -8432,6 +8678,490 @@ export const callableReviewUserDocument = onCall(
     }).catch((e) => console.error("[reviewUserDocument] 알림 실패:", e));
 
     return {success: true, state: nextState};
+  }
+);
+
+// ── callableGetApplicantDocumentReview ──────────────────────
+// [R1.2] 지원자 검토 화면이 읽는 단일 projection.
+//
+//   화면이 상태를 스스로 계산하지 않는다. 낡음(stale)과 미검토를 구분하는
+//   판정은 서버 helper 하나에만 있고, 화면은 그 결과를 그린다.
+//
+// Input:  { applicationId, businessId }
+// Output: { review, versions, readiness, openCorrections, bank? }
+export const callableGetApplicantDocumentReview = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, businessId} = request.data as {
+      applicationId?: string; businessId?: string;
+    };
+    if (!applicationId || !businessId) {
+      throw new HttpsError(
+        "invalid-argument", "applicationId와 businessId가 필요합니다.");
+    }
+    await assertBizAdmin(callerUid, businessId);
+
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+    if (appData["businessId"] !== businessId) {
+      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    }
+    const workerUid = appData["uid"] as string;
+
+    // [PART F] 민감정보는 자격이 있는 호출자에게만 나간다. UI 숨김으로 끝내지
+    //   않는다 — DTO에 실리면 이미 나간 것이다.
+    const canSeeDocs =
+      await srvCanReviewApplicantDocuments(callerUid, businessId);
+
+    const [userSnap, reviewSnap, corrSnap] = await Promise.all([
+      db.collection("users").doc(workerUid).get(),
+      db.collection(BIZ_DOC_REVIEW_COL)
+        .doc(srvBizReviewId(businessId, workerUid)).get(),
+      db.collection(DOC_CORRECTION_COL)
+        .where("businessId", "==", businessId)
+        .where("workerUid", "==", workerUid)
+        .where("status", "in", CORRECTION_LIVE)
+        .limit(10).get(),
+    ]);
+    const u = userSnap.data() ?? {};
+    const versions = srvDocumentVersionsOf(u);
+    const readiness = srvResolveReviewReadiness(reviewSnap.data(), versions);
+
+    const consentBlock =
+      srvApplicantReviewAccessBlock(appData, businessId, workerUid);
+
+    return {
+      workerUid,
+      canReviewDocuments: canSeeDocs,
+      // 동의가 없으면 그 사실을 말한다 — 화면이 '서류 없음'으로 읽지 않게.
+      consentBlock,
+      versions,
+      readiness: {
+        ready: readiness.ready,
+        idDecision: readiness.idDecision,
+        bankDecision: readiness.bankDecision,
+        idStale: readiness.idStale,
+        bankStale: readiness.bankStale,
+        reason: readiness.reason,
+      },
+      review: reviewSnap.exists ? {
+        reviewedBy: reviewSnap.get("reviewedBy") ?? null,
+        reviewedAtMs:
+          (reviewSnap.get("reviewedAt") as
+            admin.firestore.Timestamp | undefined)?.toMillis() ?? null,
+        reviewNote: reviewSnap.get("reviewNote") ?? null,
+      } : null,
+      openCorrections: corrSnap.docs.map((d) => ({
+        requestId: d.id,
+        documentType: d.get("documentType"),
+        status: d.get("status"),
+        reasonCode: d.get("reasonCode") ?? null,
+      })),
+      documents: {
+        hasIdCard: (u["idCardImagePath"] ?? u["idCardImageUrl"]) != null,
+        hasBankbook: (u["bankbookImagePath"] ?? u["bankbookImageUrl"]) != null,
+        idCardDocumentState: u["idCardDocumentState"] ?? null,
+        bankbookDocumentState: u["bankbookDocumentState"] ?? null,
+      },
+      // [AUDIT-X7] 계좌 원문은 자격이 있을 때만. 없으면 **키 자체를 넣지 않는다.**
+      ...(canSeeDocs ? {
+        bank: {
+          bankName: u["bankName"] ?? null,
+          accountNumber: u["accountNumber"] ?? null,
+          accountHolder: u["accountHolder"] ?? null,
+        },
+      } : {}),
+    };
+  }
+);
+
+// ── callableGetApplicantDocumentUrl ─────────────────────────
+// [R1.2] PENDING 지원자의 신분증·통장사본 열람.
+//
+//   경로를 클라이언트에서 받지 않는다. applicationId로 문맥을 확정하고
+//   서버가 저장된 canonical 경로를 읽는다.
+export const callableGetApplicantDocumentUrl = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, businessId, targetUid, documentType} =
+      request.data as {
+        applicationId?: string; businessId?: string;
+        targetUid?: string; documentType?: string;
+      };
+    if (!applicationId || !businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "요청 정보가 부족합니다.");
+    }
+    if (documentType !== DOC_TYPE_ID && documentType !== DOC_TYPE_BANKBOOK) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 문서 유형입니다.");
+    }
+    // 인가를 문서 조회보다 먼저 끝낸다 — 존재 여부가 응답으로 새지 않게.
+    await assertBizAdmin(callerUid, businessId);
+    if (!await srvCanReviewApplicantDocuments(callerUid, businessId)) {
+      throw new HttpsError(
+        "permission-denied", "지원자 서류를 열람할 권한이 없습니다.");
+    }
+
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const block =
+      srvApplicantReviewAccessBlock(appSnap.data()!, businessId, targetUid);
+    if (block) throw new HttpsError("permission-denied", block);
+
+    const workerSnap = await db.collection("users").doc(targetUid).get();
+    if (!workerSnap.exists) {
+      throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+    }
+    const w = workerSnap.data()!;
+    const storagePath = documentType === DOC_TYPE_ID ?
+      (w["idCardImagePath"] as string | undefined) :
+      (w["bankbookImagePath"] as string | undefined);
+    if (!storagePath) {
+      throw new HttpsError("not-found", "등록된 서류가 없습니다.");
+    }
+    // [R0] 심어진 경로가 서명되지 않게 — 읽는 쪽에서 매번 본다.
+    if (!srvIsOwnedStoragePath(storagePath, targetUid)) {
+      throw new HttpsError(
+        "failed-precondition", "서류 파일 경로가 올바르지 않습니다.");
+    }
+    const file = admin.storage().bucket().file(storagePath);
+    const [exists] = await file.exists();
+    if (!exists) throw new HttpsError("not-found", "서류 파일을 찾을 수 없습니다.");
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read", expires: Date.now() + 60 * 60 * 1000,
+    });
+
+    const versions = srvDocumentVersionsOf(w);
+    await db.collection("applicant_document_access_logs").add({
+      viewerId: callerUid, targetUserId: targetUid, businessId,
+      applicationId, documentType, purpose: "APPLICANT_REVIEW",
+      documentVersion:
+        documentType === DOC_TYPE_ID ? versions.id : versions.bankbook,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch((e) => console.error("[applicantDocumentUrl] 감사 로그 실패:", e));
+
+    return {
+      signedUrl,
+      documentVersion:
+        documentType === DOC_TYPE_ID ? versions.id : versions.bankbook,
+    };
+  }
+);
+
+// ── callableReviewApplicantDocument ─────────────────────────
+// [R1.2] 사업장이 지원자 서류를 확인했다고 기록한다.
+//
+//   이것은 진위 보증이 아니다 — 이 사업장이 봤다는 사실이다. 그래서 문구도
+//   '서류 확인 완료'이지 '본인인증 완료'가 아니다.
+//
+//   expectedVersion을 받아 fresh compare한다. 관리자가 화면을 열어둔 사이
+//   근로자가 다시 올렸으면, 관리자가 본 것은 지금 문서가 아니다.
+export const callableReviewApplicantDocument = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      applicationId, businessId, targetUid, documentType,
+      decision, expectedVersion, expectedAccountVersion, note,
+    } = request.data as {
+      applicationId?: string; businessId?: string; targetUid?: string;
+      documentType?: string; decision?: string;
+      expectedVersion?: number; expectedAccountVersion?: number; note?: string;
+    };
+    if (!applicationId || !businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "요청 정보가 부족합니다.");
+    }
+    if (documentType !== DOC_TYPE_ID && documentType !== DOC_TYPE_BANKBOOK) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 문서 유형입니다.");
+    }
+    if (typeof decision !== "string" || !REVIEW_DECISIONS.includes(decision)) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 검토 결과입니다.");
+    }
+    if (typeof expectedVersion !== "number") {
+      throw new HttpsError("invalid-argument", "expectedVersion이 필요합니다.");
+    }
+    if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
+      throw new HttpsError("invalid-argument", "메모는 500자 이하여야 합니다.");
+    }
+    await assertBizAdmin(callerUid, businessId);
+    if (!await srvCanReviewApplicantDocuments(callerUid, businessId)) {
+      throw new HttpsError("permission-denied", "지원자 서류를 검토할 권한이 없습니다.");
+    }
+
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const block =
+      srvApplicantReviewAccessBlock(appSnap.data()!, businessId, targetUid);
+    if (block) throw new HttpsError("permission-denied", block);
+
+    const reviewRef = db.collection(BIZ_DOC_REVIEW_COL)
+      .doc(srvBizReviewId(businessId, targetUid));
+    const workerRef = db.collection("users").doc(targetUid);
+    const now = admin.firestore.Timestamp.now();
+    const isId = documentType === DOC_TYPE_ID;
+
+    await db.runTransaction(async (tx) => {
+      const [freshWorker, freshReview] =
+        await Promise.all([tx.get(workerRef), tx.get(reviewRef)]);
+      if (!freshWorker.exists) {
+        throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+      }
+      const cur = srvDocumentVersionsOf(freshWorker.data()!);
+      const curVersion = isId ? cur.id : cur.bankbook;
+      if (curVersion !== expectedVersion) {
+        throw new HttpsError(
+          "aborted",
+          "서류가 변경되었습니다. 최신 서류를 다시 확인해주세요.");
+      }
+      // 계좌는 통장사본과 함께 판정한다 — 둘 중 하나만 바뀌어도 낡는다.
+      if (!isId && typeof expectedAccountVersion === "number" &&
+          cur.account !== expectedAccountVersion) {
+        throw new HttpsError(
+          "aborted",
+          "급여계좌가 변경되었습니다. 최신 정보를 다시 확인해주세요.");
+      }
+
+      const patch: Record<string, unknown> = {
+        businessId, workerUid: targetUid,
+        reviewedBy: callerUid, reviewedAt: now,
+        reviewNote: note ?? null,
+        updatedAt: now,
+        lastSourceApplicationId: applicationId,
+      };
+      if (isId) {
+        patch["idDecision"] = decision;
+        patch["reviewedIdDocumentVersion"] = cur.id;
+      } else {
+        patch["bankDecision"] = decision;
+        patch["reviewedBankbookDocumentVersion"] = cur.bankbook;
+        patch["reviewedBankAccountVersion"] = cur.account;
+      }
+      if (!freshReview.exists) {
+        // 반대쪽 축은 손대지 않는다 — 명시적 NOT_REVIEWED로 시작한다.
+        patch[isId ? "bankDecision" : "idDecision"] = REVIEW_NOT_REVIEWED;
+        patch["createdAt"] = now;
+      }
+      tx.set(reviewRef, patch, {merge: true});
+    });
+
+    // 확인 완료면 해당 문서의 열린 보완 요청을 정리한다.
+    if (decision === REVIEW_OK) {
+      const open = await db.collection(DOC_CORRECTION_COL)
+        .where("businessId", "==", businessId)
+        .where("workerUid", "==", targetUid)
+        .where("documentType", "==", documentType)
+        .where("status", "in", CORRECTION_LIVE).limit(5).get();
+      if (!open.empty) {
+        const b = db.batch();
+        for (const d of open.docs) {
+          b.update(d.ref, {status: CORRECTION_RESOLVED, resolvedAt: now});
+        }
+        await b.commit();
+      }
+    }
+    return {success: true};
+  }
+);
+
+// ── callableRequestDocumentCorrection ───────────────────────
+// [R1.2] 관리자가 "다시 등록해주세요"를 보낸다.
+//
+//   이것은 거절이 아니다. 지원서는 PENDING 그대로고, 신뢰도에 아무 영향이
+//   없다. 알림은 이 요청의 부수효과일 뿐이고, 근로자 할 일은 이 문서가
+//   OPEN인지로 정해진다 — 알림을 읽었다고 할 일이 끝나지 않는다.
+export const callableRequestDocumentCorrection = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      applicationId, businessId, targetUid, documentType, reasonCode, note,
+    } = request.data as {
+        applicationId?: string; businessId?: string; targetUid?: string;
+        documentType?: string; reasonCode?: string; note?: string;
+      };
+    if (!applicationId || !businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "요청 정보가 부족합니다.");
+    }
+    if (documentType !== DOC_TYPE_ID && documentType !== DOC_TYPE_BANKBOOK) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 문서 유형입니다.");
+    }
+    const REASONS =
+      ["BLURRY", "UNREADABLE", "MISMATCH", "WRONG_DOCUMENT", "OTHER"];
+    if (typeof reasonCode !== "string" || !REASONS.includes(reasonCode)) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 사유입니다.");
+    }
+    if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
+      throw new HttpsError("invalid-argument", "사유는 500자 이하여야 합니다.");
+    }
+    await assertBizAdmin(callerUid, businessId);
+    if (!await srvCanReviewApplicantDocuments(callerUid, businessId)) {
+      throw new HttpsError("permission-denied", "서류 보완을 요청할 권한이 없습니다.");
+    }
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const block =
+      srvApplicantReviewAccessBlock(appSnap.data()!, businessId, targetUid);
+    if (block) throw new HttpsError("permission-denied", block);
+
+    const workerSnap = await db.collection("users").doc(targetUid).get();
+    const versions = srvDocumentVersionsOf(workerSnap.data() ?? {});
+    const atRequest =
+      documentType === DOC_TYPE_ID ? versions.id : versions.bankbook;
+
+    // 같은 (사업장·근로자·문서)에 열린 요청은 하나다.
+    //   결정적 id로 경합시킨다 — 쿼리로 "있나" 보는 것은 uniqueness가 아니다.
+    const reqId = `${businessId}_${targetUid}_${documentType}`;
+    const reqRef = db.collection(DOC_CORRECTION_COL).doc(reqId);
+    const now = admin.firestore.Timestamp.now();
+    const created = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(reqRef);
+      if (fresh.exists &&
+          CORRECTION_LIVE.includes((fresh.get("status") as string) ?? "")) {
+        return false; // 이미 열려 있다 — 멱등
+      }
+      tx.set(reqRef, {
+        businessId, workerUid: targetUid, documentType,
+        status: CORRECTION_OPEN,
+        reasonCode, reasonNote: note ?? null,
+        requestedBy: callerUid, requestedAt: now,
+        sourceApplicationId: applicationId,
+        documentVersionAtRequest: atRequest,
+        resolvedAt: null,
+      });
+      return true;
+    });
+
+    // 검토 상태도 함께 내린다 — 보완을 요청했는데 확인 완료로 남아 있으면 안 된다.
+    const reviewRef = db.collection(BIZ_DOC_REVIEW_COL)
+      .doc(srvBizReviewId(businessId, targetUid));
+    await reviewRef.set({
+      businessId, workerUid: targetUid,
+      [documentType === DOC_TYPE_ID ? "idDecision" : "bankDecision"]:
+        REVIEW_REUPLOAD_REQUIRED,
+      reviewedBy: callerUid, reviewedAt: now, updatedAt: now,
+    }, {merge: true});
+
+    if (created) {
+      const label = documentType === DOC_TYPE_ID ? "신분증" : "통장사본";
+      const bizName =
+        (appSnap.get("businessName") as string | undefined) ?? "사업장";
+      db.collection("users").doc(targetUid).collection("notifications")
+        .doc(`doc_correction_${reqId}_${now.toMillis()}`)
+        .create({
+          userId: targetUid,
+          type: "documentReuploadRequested",
+          title: `${label}을(를) 다시 등록해주세요`,
+          body: `${bizName}에서 ${label} 재등록을 요청했습니다.`,
+          data: {
+            applicationId, businessId, documentType, requestId: reqId,
+            action: "documentManagement",
+          },
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          readAt: null,
+        }).catch((e) => {
+          if ((e as {code?: number})?.code !== 6) {
+            console.error("[requestDocumentCorrection] 알림 실패:", e);
+          }
+        });
+    }
+    return {success: true, requestId: reqId, alreadyOpen: !created};
+  }
+);
+
+// ── callableGetMyDocumentCorrections ────────────────────────
+// [R1.2] 근로자 Home Task의 source — 알림이 아니라 이 상태다.
+export const callableGetMyDocumentCorrections = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const snap = await db.collection(DOC_CORRECTION_COL)
+      .where("workerUid", "==", request.auth.uid)
+      .where("status", "==", CORRECTION_OPEN)
+      .limit(20).get();
+    // 사업장명은 요청 문서에 없다 — 화면 문맥용으로만 붙인다.
+    const bizIds = [...new Set(snap.docs.map((d) => d.get("businessId") as string))];
+    const bizNames = new Map<string, string>();
+    await Promise.all(bizIds.map(async (id) => {
+      const b = await db.collection("businesses").doc(id).get();
+      bizNames.set(id, (b.get("name") as string | undefined) ?? "");
+    }));
+    return {
+      requests: snap.docs.map((d) => ({
+        requestId: d.id,
+        businessId: d.get("businessId"),
+        businessName: bizNames.get(d.get("businessId") as string) ?? "",
+        documentType: d.get("documentType"),
+        reasonCode: d.get("reasonCode") ?? null,
+        reasonNote: d.get("reasonNote") ?? null,
+        requestedAtMs:
+          (d.get("requestedAt") as admin.firestore.Timestamp | undefined)
+            ?.toMillis() ?? null,
+      })),
+    };
+  }
+);
+
+// ── callableGiveApplicationDocumentConsent ──────────────────
+// [R1.2] 기존 지원서에 대한 최신 서류 열람 동의.
+//
+//   v2 지원서를 v3로 조용히 올리지 않는다. 근로자가 새 문구를 보고 다시
+//   동의해야 하고, 그 동의는 **그 지원서 하나**에만 적용된다.
+//   지원서를 새로 내게 만들지는 않는다 — 좌석과 이력이 그대로 유지된다.
+export const callableGiveApplicationDocumentConsent = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, documentAccessConsentVersion} = request.data as {
+      applicationId?: string; documentAccessConsentVersion?: string;
+    };
+    if (!applicationId) {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+    if (documentAccessConsentVersion !== DOCUMENT_ACCESS_CONSENT_V3) {
+      throw new HttpsError(
+        "invalid-argument",
+        "지원하지 않는 서류 접근 동의 버전입니다. 앱을 최신 버전으로 업데이트해주세요.");
+    }
+    const ref = db.collection("applications").doc(applicationId);
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(ref);
+      if (!fresh.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      if (fresh.get("uid") !== callerUid) {
+        throw new HttpsError("permission-denied", "본인의 지원서만 처리할 수 있습니다.");
+      }
+      const st = (fresh.get("status") as string | undefined) ?? "";
+      // 이미 끝난 관계에 동의를 덧붙이지 않는다.
+      if (!APPLICANT_REVIEW_STATUSES.includes(st) &&
+          !CONFIRMED_STATUSES.includes(st)) {
+        throw new HttpsError("failed-precondition", "처리할 수 없는 지원 상태입니다.");
+      }
+      const now = admin.firestore.Timestamp.now();
+      tx.update(ref, {
+        documentAccessConsentGiven: true,
+        documentAccessConsentAt: now,
+        documentAccessConsentVersion: DOCUMENT_ACCESS_CONSENT_V3,
+        idCardConsentGiven: true,
+        idCardConsentAt: now,
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: st, at: now, by: callerUid,
+          action: "DOCUMENT_ACCESS_CONSENT_UPDATED",
+          reason: DOCUMENT_ACCESS_CONSENT_V3,
+        }),
+      });
+    });
+    return {success: true};
   }
 );
 
@@ -8625,6 +9355,12 @@ export const callableUpdateBankAccount = onCall(
       bankbookImagePath: admin.firestore.FieldValue.delete(), // [V3] 구 통장사본 경로 초기화
       bankReviewedAt: admin.firestore.FieldValue.delete(),   // [TD-03] 이전 계좌 검토 기록 stale 제거
       bankReviewedBy: admin.firestore.FieldValue.delete(),   // [TD-03]
+      // [R1.2] 계좌 버전 — 통장사본 경로가 함께 비워지므로 사업장의 계좌 검토는
+      //   이 값 하나로 낡는다. 지급 직전 guard가 같은 값을 본다.
+      bankAccountVersion: admin.firestore.FieldValue.increment(1),
+      bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
+      bankbookDocumentState: admin.firestore.FieldValue.delete(),
+      bankbookSelfCheck: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -13800,6 +14536,9 @@ const DOCUMENT_ACCESS_CONSENT_V2 = "2026-09-12-v2";
 const SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS = [
   DOCUMENT_ACCESS_CONSENT_V1,
   DOCUMENT_ACCESS_CONSENT_V2,
+  // [R1.2] 지원 검토 목적 열람까지 포함한 문구. v2 이하를 조용히
+  //   이 버전으로 올리지 않는다 — 사용자가 본 문구가 곧 기록이다.
+  DOCUMENT_ACCESS_CONSENT_V3,
 ];
 
 /**
@@ -15494,7 +16233,8 @@ export const callableApplyNoShowPenalty = onCall(
     const {applicationId} = request.data as {applicationId: string};
     if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
 
-    const appSnap = await db.collection("applications").doc(applicationId).get();
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
     if (!appSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
     const appData = appSnap.data()!;
     const userId = appData.uid as string;
@@ -16249,7 +16989,8 @@ export const callableDecrementSlotConfirmed = onCall(
 
     // 1. application 문서로 소유자·TO 일치 검증
     //    — 임의 toId/slotId 전달해 타인 슬롯 confirmedCount 감소하는 공격 차단
-    const appSnap = await db.collection("applications").doc(applicationId).get();
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
     if (!appSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
     const appData = appSnap.data()!;
 
@@ -22321,9 +23062,38 @@ export const callableConfirmFinalWage = onCall(
         accountNumber?: string;
         accountHolder?: string;
       }> = {};
+      // [BLOCKER-BANK-REVIEW-PAYMENT-SNAPSHOT-CONTINUITY]
+      //
+      //   지원 검토에서 계좌 A를 확인하고 확정했는데, 그 뒤 근로자가 B로
+      //   바꾸면 여기서 조용히 B가 스냅샷됐다. 검토한 계좌와 지급 계좌가
+      //   다른데 아무도 모른다 — 돈이 나가는 자리에서 가장 나쁜 종류의 침묵이다.
+      //
+      //   그래서 스냅샷 직전에 이 사업장의 현재 검토를 fresh read한다.
+      //   바뀐 것이 없으면 지원 검토 때의 판단을 그대로 재사용한다 —
+      //   이것이 "급여 단계에서 다시 처음부터 확인하지 않는다"의 실현이다.
+      //   바뀌었으면 스냅샷을 만들지 않는다. 금액은 그대로 두고 확인만 요구한다.
+      const bankReviewOkByUid = new Map<string, boolean>();
+      {
+        const uids = userSnaps.filter((s) => s.exists).map((s) => s.id);
+        const reviewSnaps = uids.length > 0 ?
+          await db.getAll(...uids.map((uid) =>
+            db.collection(BIZ_DOC_REVIEW_COL).doc(srvBizReviewId(businessId, uid)))) :
+          [];
+        uids.forEach((uid, i) => {
+          const userDoc = userSnaps.find((s) => s.id === uid);
+          const versions = srvDocumentVersionsOf(userDoc?.data() ?? {});
+          const readiness =
+            srvResolveReviewReadiness(reviewSnaps[i]?.data(), versions);
+          bankReviewOkByUid.set(
+            uid, readiness.bankDecision === REVIEW_OK && !readiness.bankStale);
+        });
+      }
+
       userSnaps.forEach((s) => {
         if (!s.exists) return;
         const d = s.data()!;
+        // 검토가 낡았으면 계좌를 싣지 않는다 — 아래에서 스냅샷 자체가 막힌다.
+        if (bankReviewOkByUid.get(s.id) !== true) return;
         userBankMap[s.id] = {
           bankName: d.bankName as string | undefined,
           accountNumber: d.accountNumber as string | undefined, // AES 암호문 그대로
@@ -22453,6 +23223,16 @@ export const callableConfirmFinalWage = onCall(
             const accountSnap = attendanceSnapMap[id];
             // [V3] V3 방식으로 처리한 Attendance임을 항상 마킹 (계좌 존재 여부 무관)
             updateData["wageAccountSnapshotVersion"] = 1;
+            // [R1.2] 계좌 검토가 낡아 스냅샷을 만들지 못한 경우를 **말한다**.
+            //   급여 금액은 그대로 확정된다 — 일한 사실은 바뀌지 않았다.
+            //   이체만 막히고(4필드 미충족), 관리자에게 할 일로 남는다.
+            //   Money Error ≠ Zero.
+            if (!accountSnap) {
+              updateData["wageAccountReviewRequired"] = true;
+            } else {
+              updateData["wageAccountReviewRequired"] =
+                admin.firestore.FieldValue.delete();
+            }
             if (accountSnap) {
               const hasFullAccount = !!(
                 accountSnap.wageAccountBankName &&
@@ -23374,6 +24154,49 @@ export const callableConfirmApplication = onCall(
     // uid 없는 지원서는 schedule lock 구성 불가 — 사전 차단
     if (!applicantUid) throw new HttpsError("invalid-argument", "지원서에 uid 정보가 없습니다.");
 
+    // [DOCUMENT-VERIFICATION-INTEGRITY-R1.2] 서류 검토가 확정의 전제다.
+    //
+    //   경고만 띄우고 확정을 허용하면 "미검토 확정 → 근무 → 급여 → 그때 처음
+    //   서류 확인"이라는 중복 업무가 그대로 남는다. 이 제품의 목표는 지원
+    //   검토 한 번으로 급여 준비까지 끝내는 것이므로 hard gate로 둔다.
+    //
+    //   확정하는 사람이 서류를 본 사람일 필요는 없다(PART R). 검사하는 것은
+    //   호출자의 권한이 아니라 **이 사업장의 현재 검토가 유효한가**이다.
+    //   관리자 A(canManageWage 보유)가 확인하고 서브관리자 B(canManageTo만)가
+    //   확정하는 흐름이 정상이다.
+    //
+    //   이미 CONTRACT_PENDING인 재시도 경로는 이 검사를 다시 하지 않는다 —
+    //   좌석은 이미 잡혔고, 여기서 막으면 복구가 불가능해진다.
+    let confirmReviewProvenance: Record<string, unknown> | null = null;
+    const confirmReviewGate = async (): Promise<void> => {
+      const [workerSnap, reviewSnap] = await Promise.all([
+        db.collection("users").doc(applicantUid).get(),
+        db.collection(BIZ_DOC_REVIEW_COL)
+          .doc(srvBizReviewId(businessId, applicantUid)).get(),
+      ]);
+      const versions = srvDocumentVersionsOf(workerSnap.data() ?? {});
+      const readiness = srvResolveReviewReadiness(reviewSnap.data(), versions);
+      if (!readiness.ready) {
+        throw new HttpsError(
+          "failed-precondition",
+          `${readiness.reason ?? "지원자 서류 확인이 필요합니다."} ` +
+          "지원자 상세에서 서류를 확인한 뒤 확정해주세요."
+        );
+      }
+      // [AUDIT-X11] 어떤 서류·계좌를 본 뒤 확정했는지 재구성 가능해야 한다.
+      confirmReviewProvenance = {
+        documentReviewBusinessId: businessId,
+        documentReviewIdVersion: versions.id,
+        documentReviewBankbookVersion: versions.bankbook,
+        documentReviewBankAccountVersion: versions.account,
+        documentReviewedBy: reviewSnap.get("reviewedBy") ?? null,
+        documentReviewedAt: reviewSnap.get("reviewedAt") ?? null,
+      };
+    };
+    if ((appDataPre.status as string | undefined) === "PENDING") {
+      await confirmReviewGate();
+    }
+
     let alreadyConfirmed = false;
     // [6.1A] batch2 실패 후 CONTRACT_PENDING 상태에서 재호출 시 batch2 재시도 경로
     let isContractPendingRetry = false;
@@ -23719,6 +24542,7 @@ export const callableConfirmApplication = onCall(
     };
     const batchUpdate: Record<string, unknown> = {
       statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
+      ...(confirmReviewProvenance ?? {}),
     };
     if (message) batchUpdate.confirmMessage = message;
     if (computedWorkEndDate) batchUpdate.workEndDate = computedWorkEndDate;
@@ -25464,7 +26288,8 @@ export const callableIncrementSlotPending = onCall(
     if (delta !== 1 && delta !== -1) throw new HttpsError("invalid-argument", "delta는 ±1만 허용됩니다.");
 
     // applicationId 소유권 + toId 교차검증 + workType 추출 (트랜잭션 외부 — 트랜잭션 내 read 최소화)
-    const appSnap = await db.collection("applications").doc(applicationId).get();
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
     if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
     const appData = appSnap.data()!;
 
@@ -33145,7 +33970,8 @@ export const callableCleanupApplicationData = onCall(
     }
 
     // 지원서 조회
-    const appSnap = await db.collection("applications").doc(applicationId).get();
+    const appSnap =
+      await db.collection("applications").doc(applicationId).get();
     if (!appSnap.exists) {
       return { cleaned: 0 }; // 이미 없으면 정리할 것도 없음
     }

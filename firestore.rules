@@ -395,6 +395,11 @@ service cloud.firestore {
                          'idCardReviewedBy', 'idCardReviewedAt', 'idCardReviewNote',
                          'bankbookDocumentState', 'bankbookSelfCheck',
                          'bankbookReviewedBy', 'bankbookReviewedAt', 'bankbookReviewNote',
+                         // [DOCUMENT-VERIFICATION-INTEGRITY-R1.2] 문서·계좌 버전.
+                         //   사업장 검토가 이 값으로 낡음을 판정한다. 클라이언트가
+                         //   되돌리면 이미 바뀐 서류가 '확인 완료'로 남는다.
+                         'idDocumentVersion', 'bankbookDocumentVersion',
+                         'bankAccountVersion',
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -1457,6 +1462,26 @@ service cloud.firestore {
     //   lock 문서도 같다. activeProposalId를 클라이언트가 지우면 같은 확정에
     //   제안이 여럿 생긴다(PART S의 유일성이 lock 하나에 걸려 있다).
     // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // [DOCUMENT-VERIFICATION-INTEGRITY-R1.2]
+    //
+    //   사업장의 지원자 서류 검토와 보완 요청. 둘 다 확정 가능 여부를
+    //   직접 정하므로(확정 hard gate가 검토를 읽는다) 클라이언트가 쓰면
+    //   서류를 보지 않고 확정할 수 있게 된다.
+    //
+    //   읽기도 CF를 거친다 — 검토 문서에는 어느 사업장이 어떤 근로자의
+    //   서류를 봤는지가 담기고, 목록 쿼리를 열면 소속 필터를 강제할 수 없다.
+    // ═══════════════════════════════════════════════════════════
+    match /businessApplicantDocumentReviews/{reviewId} {
+      allow read, write: if false; // CF Admin SDK 전용
+    }
+    match /documentCorrectionRequests/{requestId} {
+      allow read, write: if false; // CF Admin SDK 전용
+    }
+    match /applicant_document_access_logs/{logId} {
+      allow read, write: if false; // 감사 로그 — CF Admin SDK 전용
+    }
+
     match /confirmedReassignmentProposals/{proposalId} {
       allow read, write: if false; // CF Admin SDK 전용
     }

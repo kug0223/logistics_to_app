@@ -35,6 +35,7 @@ import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../services/applicant_document_review_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
@@ -118,6 +119,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   bool _idCardSignedUrlLoading = false;
   // [V3 BANKBOOK-SECURE-ACCESS] 통장사본 Signed URL 상태 (1시간 만료, 매 열람 시 재발급)
   bool _bankbookLoading = false;
+  // [R1.2] 지원자 서류 검토 상태 — 서버가 계산한 값을 그대로 담는다.
+  ApplicantDocumentReview? _docReview;
+  bool _docReviewLoading = false;
   bool? _hasAttendance;  // 출퇴근 기록 여부 (null=로딩중, true=있음, false=없음)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
@@ -190,6 +194,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             : Future.value(null),
       ]);
 
+      // [R1.2] 확정 전 지원자에게만 — 확정자는 기존 경로를 그대로 쓴다.
+      if (!widget.isConfirmed) {
+        unawaited(_loadApplicantDocumentReview());
+      }
+
       _businessHistory = results[0] as Map<String, dynamic>?;
       _recentReviews = (results[1] as List).whereType<MonthlyReviewModel>().toList();
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
@@ -224,6 +233,137 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
     }
+  }
+
+  // ── [R1.2] 지원자 서류 검토 핸들러 ──────────────────────────────────────
+
+  Future<void> _loadApplicantDocumentReview() async {
+    final app = widget.application;
+    final bizId = app?.businessId ?? widget.businessId;
+    if (app == null || bizId == null || bizId.isEmpty) return;
+    if (mounted) setState(() => _docReviewLoading = true);
+    try {
+      final r = await ApplicantDocumentReviewService.instance
+          .load(applicationId: app.id, businessId: bizId);
+      if (!mounted) return;
+      setState(() {
+        _docReview = r;
+        _docReviewLoading = false;
+      });
+    } catch (e) {
+      debugPrint('[R1.2] 서류 검토 상태 로드 실패: $e');
+      if (!mounted) return;
+      // 실패를 '서류 없음'으로 바꾸지 않는다 — null로 두고 화면이 그렇게 말한다.
+      setState(() => _docReviewLoading = false);
+    }
+  }
+
+  Future<void> _viewApplicantDocument({required bool isId}) async {
+    final app = widget.application;
+    final bizId = app?.businessId ?? widget.businessId;
+    final r = _docReview;
+    if (app == null || bizId == null || r == null) return;
+    final url = await ApplicantDocumentReviewService.instance.documentUrl(
+      applicationId: app.id,
+      businessId: bizId,
+      targetUid: r.workerUid,
+      documentType: isId ? 'ID' : 'BANKBOOK',
+    );
+    if (url == null || !mounted) return;
+    await ImageHelper.showFullScreenViewer(
+      context,
+      imageUrl: url,
+      title: isId ? '신분증' : '통장사본',
+    );
+  }
+
+  Future<void> _reviewApplicantDocument(
+      {required bool isId, required bool ok}) async {
+    final app = widget.application;
+    final bizId = app?.businessId ?? widget.businessId;
+    final r = _docReview;
+    if (app == null || bizId == null || r == null) return;
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: isId ? '신분증 확인 완료' : '계좌·통장 확인 완료',
+      message: isId
+          ? '등록된 신분증을 확인했습니다.\n'
+              '이것은 서류 확인 기록이며 정부기관 진위 확인이 아닙니다.'
+          : '등록된 급여계좌와 통장사본을 확인했습니다.\n'
+              '확인한 계좌가 급여 지급에 그대로 사용됩니다.',
+      confirmText: '확인 완료',
+      cancelText: '취소',
+    );
+    if (confirmed != true || !mounted) return;
+    final done = await ApplicantDocumentReviewService.instance.review(
+      applicationId: app.id,
+      businessId: bizId,
+      targetUid: r.workerUid,
+      documentType: isId ? 'ID' : 'BANKBOOK',
+      decision: 'REVIEWED_OK',
+      expectedVersion: isId ? r.idVersion : r.bankbookVersion,
+      expectedAccountVersion: isId ? null : r.accountVersion,
+    );
+    if (!mounted) return;
+    if (done) ToastHelper.showSuccess('확인 완료로 기록했습니다.');
+    await _loadApplicantDocumentReview();
+  }
+
+  Future<void> _requestApplicantCorrection({required bool isId}) async {
+    final app = widget.application;
+    final bizId = app?.businessId ?? widget.businessId;
+    final r = _docReview;
+    if (app == null || bizId == null || r == null) return;
+    const reasons = <String, String>{
+      'BLURRY': '이미지가 흐려요',
+      'UNREADABLE': '정보를 확인할 수 없어요',
+      'MISMATCH': '등록정보와 달라요',
+      'WRONG_DOCUMENT': '다른 서류가 등록되어 있어요',
+      'OTHER': '기타',
+    };
+    final picked = await DialogHelper.showSheet<String>(
+      context,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: Text(
+                isId ? '신분증 재등록 요청' : '통장사본 재등록 요청',
+                style: ResponsiveHelper.subtitleStyle(ctx)
+                    .copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                '지원은 그대로 유지됩니다. 근로자에게 다시 등록해달라고 알립니다.',
+                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
+              ),
+            ),
+            ...reasons.entries.map((e) => ListTile(
+                  title: Text(e.value, style: ResponsiveHelper.bodyStyle(ctx)),
+                  onTap: () => Navigator.pop(ctx, e.key),
+                )),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final done = await ApplicantDocumentReviewService.instance.requestCorrection(
+      applicationId: app.id,
+      businessId: bizId,
+      targetUid: r.workerUid,
+      documentType: isId ? 'ID' : 'BANKBOOK',
+      reasonCode: picked,
+    );
+    if (!mounted) return;
+    if (done) ToastHelper.showSuccess('재등록을 요청했습니다.');
+    await _loadApplicantDocumentReview();
   }
 
   Future<void> _loadIdCardSignedUrl() async {
@@ -411,6 +551,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                             _buildSelfIntro(context),
                           ] else ...[
+                            // [DOCUMENT-VERIFICATION-INTEGRITY-R1.2]
+                            //   확정 전에 서류를 한 화면에서 확인한다.
+                            //   확정 뒤에 처음 보면 "확정 → 서류 불량 →
+                            //   확정취소"가 정상 경로가 되어 버린다.
+                            _buildApplicantDocumentReviewSection(context),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                             _buildWorkStats(context),
                             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
                             _buildBusinessHistory(context),
@@ -1046,6 +1192,140 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ),
         ],
       ),
+    );
+  }
+
+  // ── [DOCUMENT-VERIFICATION-INTEGRITY-R1.2] 지원자 서류 확인 ──────────────
+  //
+  //   신분증과 통장사본을 한 섹션에 둔다. 두 화면으로 갈라 두면 관리자가
+  //   하나만 보고 확정하고, 나머지는 급여 단계에서 처음 발견된다.
+  //
+  //   판정은 전부 서버가 준 값이다 — 여기서 낡음을 다시 계산하지 않는다.
+
+  Widget _buildApplicantDocumentReviewSection(BuildContext context) {
+    final app = widget.application;
+    final bizId = app?.businessId ?? widget.businessId;
+    if (app == null || bizId == null || bizId.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final r = _docReview;
+    return _buildSection(
+      context,
+      title: '서류 확인',
+      icon: Icons.assignment_ind_outlined,
+      child: _docReviewLoading
+          ? Padding(
+              padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12)),
+              child: const Center(
+                  child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))),
+            )
+          : r == null
+              // 실패를 '서류 없음'으로 말하지 않는다.
+              ? Text('서류 상태를 불러오지 못했습니다. 다시 시도해주세요.',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.grey600))
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (r.consentBlock != null) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.warningBg,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(r.consentBlock!,
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.warningDark)),
+                      ),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                    ] else if (!r.canReviewDocuments) ...[
+                      Text('서류를 확인하려면 TO 관리와 급여 관리 권한이 모두 필요합니다.',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey600)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                    ],
+                    _docRow(context, r, isId: true),
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 10)),
+                      child: const Divider(height: 1, thickness: 0.5),
+                    ),
+                    _docRow(context, r, isId: false),
+                    if (!r.ready && r.reason != null) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                      Text(r.reason!,
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.warningDark)),
+                    ],
+                  ],
+                ),
+    );
+  }
+
+  Widget _docRow(BuildContext context, ApplicantDocumentReview r,
+      {required bool isId}) {
+    final has = isId ? r.hasIdCard : r.hasBankbook;
+    final ok = r.okFor(isId: isId);
+    final canAct = r.canReviewDocuments && r.consentBlock == null && has;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(isId ? '신분증' : '급여계좌 · 통장사본',
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.w600)),
+            ),
+            Text(
+              has ? r.labelFor(isId: isId) : '미등록',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: !has
+                      ? AppColors.grey500
+                      : (ok ? AppColors.successDark : AppColors.warningDark),
+                  fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        // 계좌 원문은 자격이 있을 때만 서버가 준다. 없으면 여기에도 없다.
+        if (!isId && r.bankName != null) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text('${r.bankName} · ${r.accountNumber ?? '-'} · ${r.accountHolder ?? '-'}',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey600)),
+        ],
+        if (canAct) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Row(children: [
+            OutlinedButton(
+              onPressed: () => _viewApplicantDocument(isId: isId),
+              child: Text(isId ? '신분증 보기' : '통장사본 보기',
+                  style: ResponsiveHelper.smallStyle(context)),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            if (!ok)
+              ElevatedButton(
+                onPressed: () => _reviewApplicantDocument(isId: isId, ok: true),
+                child: Text('확인 완료',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: Colors.white)),
+              ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => _requestApplicantCorrection(isId: isId),
+              child: Text('다시 등록 요청',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.errorFaded)),
+            ),
+          ]),
+        ],
+      ],
     );
   }
 

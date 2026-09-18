@@ -263,8 +263,11 @@ void main() {
       expect(myApps.contains('DocumentAccessConsent.card(item.application.businessName),'),
           true);
       // 문구·버전의 단일 소유자는 그대로다.
+      //   [R1.2] 버전 문자열을 여기서 다시 고정하지 않는다 — 그러면 문구를
+      //   개정할 때마다 관계없는 테스트가 깨지고, 고정하려던 불변식
+      //   (복제하지 않고 canonical 카드를 쓴다)은 그대로다.
       final c = _load(_consent);
-      expect(c.contains("static const String version = '2026-09-12-v2';"), true);
+      expect(c.contains('static const String version ='), true);
     });
 
     test('CTA가 동의를 명시한다', () {

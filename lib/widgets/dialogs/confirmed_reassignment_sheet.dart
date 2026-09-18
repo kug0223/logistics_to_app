@@ -18,6 +18,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import 'apply/document_access_consent.dart';
 
 /// 근로자 결정 결과.
 enum ReassignmentDecision { kept, changed, dismissed }
@@ -26,7 +27,10 @@ class ConfirmedReassignmentSheet {
   const ConfirmedReassignmentSheet._();
 
   /// 서버 동의 문구 버전 — 지원·초대 수락과 같은 값을 쓴다.
-  static const String consentVersion = '2026-09-12-v2';
+  ///
+  /// [R1.2] 문자열을 복제하지 않는다. 버전과 문구는 한 곳에서만 올라간다 —
+  /// 복제해 두면 문구를 고칠 때 한쪽만 바뀌어 기록이 거짓이 된다.
+  static String get consentVersion => DocumentAccessConsent.version;
 
   /// 근로자에게 변경 제안을 보여주고 결정을 받는다.
   static Future<ReassignmentDecision> decide(

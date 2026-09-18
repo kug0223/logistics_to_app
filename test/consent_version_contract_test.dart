@@ -21,6 +21,9 @@ import 'package:flutter_test/flutter_test.dart';
 const _indexPath = 'functions/src/index.ts';
 const _v1 = '2026-08-21-v1';
 const _v2 = '2026-09-12-v2';
+// [R1.2] 채용 검토 목적 열람을 명시한 문구. v2 이하는 '근무 확정 시
+//   소득신고·급여처리 목적'만 동의했으므로 자동 승격하지 않는다.
+const _v3 = '2026-09-18-v3';
 
 /// 지원 요청을 서버로 보내는 모든 UI 경로.
 /// 각 경로는 고지 카드를 표시해야 한다 — 표시 없이 버전만 기록되면 안 된다.
@@ -67,7 +70,7 @@ class UnsupportedConsentVersion implements Exception {}
 
 String? resolveVersion(String? raw, {required bool clientSentDocConsent}) {
   if (raw == null) return clientSentDocConsent ? _v1 : null;
-  if (raw != _v1 && raw != _v2) throw UnsupportedConsentVersion();
+  if (raw != _v1 && raw != _v2 && raw != _v3) throw UnsupportedConsentVersion();
   return raw;
 }
 
@@ -88,16 +91,22 @@ void main() {
       expect(resolveVersion(_v2, clientSentDocConsent: true), _v2);
     });
 
-    test('클라이언트 상수가 v2다', () {
-      expect(DocumentAccessConsent.version, _v2);
+    // [R1.2] 버전 문자열 자체를 고정하지 않는다. 고정할 것은
+    //   '클라이언트가 보내는 버전과 서버 allowlist의 최신이 같다'이다.
+    test('클라이언트 상수가 서버가 아는 최신 버전이다', () {
+      expect(DocumentAccessConsent.version, _v3);
+      final cf = _src(_indexPath);
+      expect(cf.contains('DOCUMENT_ACCESS_CONSENT_V3 = "$_v3"'), isTrue);
     });
 
     test('표시 문구와 버전이 같은 파일에 있다 — drift 방지', () {
       final consent =
           _src('lib/widgets/dialogs/apply/document_access_consent.dart');
-      expect(consent.contains("static const String version = '$_v2'"), isTrue);
-      expect(consent.contains('마지막 근무일로부터 7일 후 자동 종료됩니다'), isTrue);
+      expect(consent.contains("static const String version = '$_v3'"), isTrue);
+      expect(consent.contains('마지막 근무일로부터 7일 후'), isTrue);
       expect(consent.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
+      // [R1.2] 새 목적이 문구에 실제로 적혀 있어야 버전이 의미를 갖는다.
+      expect(consent.contains('지원자 확인 및 채용 검토'), isTrue);
     });
 
     test('클라이언트가 그 상수를 그대로 전송한다', () {

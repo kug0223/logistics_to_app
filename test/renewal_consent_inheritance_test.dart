@@ -238,7 +238,7 @@ void main() {
       final consent = File(
         'lib/widgets/dialogs/apply/document_access_consent.dart',
       ).readAsStringSync();
-      expect(consent.contains('마지막 근무일로부터 7일 후 자동 종료됩니다'), isTrue);
+      expect(consent.contains('마지막 근무일로부터 7일 후'), isTrue);
       expect(consent.contains('급여처리 관계가 유효한 동안'), isTrue);
       expect(consent.contains('갱신된 근무관계에도 승계됩니다'), isTrue);
       expect(consent.contains('확정일로부터 7일간'), isFalse,
