@@ -31170,14 +31170,19 @@ export const callableAcceptTOInvitation = onCall(
         throw new HttpsError("failed-precondition", "현재 플랫폼 제재 중에는 초대를 수락할 수 없습니다.");
       }
 
-      // [CROSS-DOMAIN-R5.2] 서류 준비·동의는 좌석을 잡기 **전에** 본다.
+      // [CROSS-DOMAIN-R5.2] 신원 확인과 동의는 좌석을 잡기 **전에** 본다.
       //
-      //   초대 수락은 직접 지원과 똑같이 CONFIRMED·좌석·계약 의무를 만든다.
-      //   그런데 이 경로에는 계정 상태 검사만 있었다. 그 결과 신분증·계좌·
-      //   통장사본이 없어도 좌석이 잡히고, 동의가 없어 통장사본 Signed URL은
-      //   거부되는데 관리자 Home에는 "계약 미발송" 할 일이 생겼다.
-      //   조건은 callableApplyToTO와 같은 것을 쓴다 — 두 경로가 같은
-      //   commitment를 만들기 때문이다.
+      //   초대 수락은 직접 확정과 똑같이 CONFIRMED·좌석·계약 의무를 만든다.
+      //   그런데 이 경로에는 계정 상태 검사만 있었다. 그 결과 신분증이 없어도
+      //   좌석이 잡히고, 동의가 없어 서류 열람은 거부되는데 관리자 Home에는
+      //   "계약 미발송" 할 일이 생겼다.
+      //
+      //   [PII-DOC-R1.5.1] 여기 있던 계좌·통장 요구는 제거했다.
+      //   근무 확정은 **근무에 대한 약속**이고 계좌는 그 약속이 끝난 뒤 돈이
+      //   나가는 방법이다. 직접 확정은 계좌가 없어도 되는데 초대 수락만
+      //   막히면, 같은 사람이 같은 근무에 같은 약속을 맺는 사건이 어느 버튼을
+      //   눌렀느냐에 따라 다른 규칙을 따르게 된다. 계좌 준비 상태는
+      //   R1.6 Payroll Readiness가 지급 직전에 판단한다.
       //
       //   실패하면 여기서 끝난다: INVITED 그대로, 좌석·카운터·계약·grant 변화 0.
       //   서류를 채우고 **같은 초대로 다시 수락**할 수 있다(마이그레이션 불필요).
@@ -31201,13 +31206,10 @@ export const callableAcceptTOInvitation = onCall(
       if (appData.slotId && freshUserData.isIdVerified !== true) {
         throw new HttpsError("failed-precondition", "신분증 인증 후 초대를 수락할 수 있습니다.");
       }
-      if (!freshUserData.bankName || !freshUserData.accountNumber ||
-          !freshUserData.accountHolder) {
-        throw new HttpsError("failed-precondition", "통장 정보 등록이 필요합니다.");
-      }
-      if (!freshUserData.bankbookImagePath && !freshUserData.bankbookImageUrl) {
-        throw new HttpsError("failed-precondition", "통장사본 등록이 필요합니다.");
-      }
+      // [PII-DOC-R1.5.1] 계좌·통장사본 요구를 여기서 제거했다.
+      //   (bankName / accountNumber / accountHolder / bankbookImagePath)
+      //   지급 준비는 근무 확정의 조건이 아니다 — R1.6이 지급 직전에 본다.
+      //
       // 이 Application에 대한 동의를 지금 받는다 —
       // 다른 Application의 동의를 가져다 쓰지 않는다.
       if (!acceptDocConsentGiven) {

@@ -247,6 +247,115 @@ void main() {
     });
   });
 
+  // ═══════════════════════════════════════════════════════════
+  // [PII-DOC-R1.5.1] 초대 수락 parity
+  //
+  //   R1.5는 확정 게이트를 신분 확인으로 좁혔지만, 초대 수락에는 그보다
+  //   앞선 계좌·통장 prerequisite가 남아 있었다. 그래서 같은 신규 약속이
+  //   어느 버튼을 눌렀느냐에 따라 다른 규칙을 따랐다.
+  // ═══════════════════════════════════════════════════════════
+  group('R1.5.1 — 초대 수락에 지급 prerequisite가 없다', () {
+    final accept = _codeOf(_sliceOf(rawCf,
+        'export const callableAcceptTOInvitation = onCall(', '\n);'));
+
+    test('26 T1 — 계좌·통장 요구가 사라졌다', () {
+      for (final gone in [
+        'freshUserData.bankName',
+        'freshUserData.accountNumber',
+        'freshUserData.accountHolder',
+        'freshUserData.bankbookImagePath',
+        'freshUserData.bankbookImageUrl',
+        '통장 정보 등록이 필요합니다',
+        '통장사본 등록이 필요합니다',
+      ]) {
+        expect(accept, isNot(contains(gone)),
+            reason: '$gone — 지급 준비는 근무 확정의 조건이 아니다');
+      }
+    });
+
+    test('27 지급 관련 상태도 읽지 않는다', () {
+      for (final gone in [
+        'bankVerificationStatus', 'isBankbookVerified',
+        'bankbookDocumentState', 'bankbookMatchStatus', 'bankDecision',
+        'wageAccount',
+      ]) {
+        expect(accept, isNot(contains(gone)), reason: gone);
+      }
+    });
+
+    test('28 T2 — 신원 prerequisite는 그대로 유지된다', () {
+      // 제거한 것은 지급 축이지 신원 축이 아니다.
+      expect(accept, contains('srvIsForeignIdentity(freshUserData)'));
+      expect(accept, contains('freshUserData.passVerifiedAt'));
+      expect(accept, contains('freshUserData.idCardImagePath'));
+      expect(accept, contains('freshUserData.isIdVerified !== true'));
+      expect(accept, contains('srvResolveMatchingReadiness(freshUserData,'));
+    });
+
+    test('29 general integrity 검사도 그대로다', () {
+      for (final kept in [
+        'accountStatus', 'restrictedUntil', 'isBlacklisted',
+        'acceptDocConsentGiven', 'srvCollectSeatCommitOverlap',
+      ]) {
+        expect(accept, contains(kept), reason: kept);
+      }
+    });
+
+    test('30 T3·T4 — 두 경로가 같은 판정 하나만 쓴다', () {
+      // 확정 게이트와 초대 게이트가 같은 helper를 부르므로 BANK MISSING /
+      // BANK MISMATCH에서 결과가 갈릴 수 없다.
+      final gate = _flat(_codeOf(
+          _sliceOf(rawCf, 'const confirmReviewGate =', '};')));
+      expect(gate, contains('srvResolveMatchingReadiness('));
+      expect(_flat(accept), contains('srvResolveMatchingReadiness('));
+      // 그리고 그 helper는 통장을 읽지 않는다 (위 02에서 고정).
+    });
+
+    test('31 T9 — 경계는 그대로: 재배치·서명·갱신은 재검증하지 않는다', () {
+      for (final entry in [
+        'export const callableAcceptConfirmedReassignment = onCall(',
+        'export const callableFinalizeWorkerSignature = onCall(',
+      ]) {
+        final body = _codeOf(_sliceOf(rawCf, entry, '\n);'));
+        expect(body, isNot(contains('srvResolveMatchingReadiness')),
+            reason: '$entry — 기존 확정의 이동·완성이다');
+      }
+      final renewal = _codeOf(
+          _sliceOf(rawCf, 'async function processContractRenewalChecks(', '\n}'));
+      expect(renewal, isNot(contains('srvResolveMatchingReadiness')));
+    });
+
+    test('32 T8 — 급여 CF semantics 무변경', () {
+      final wage = _flat(_codeOf(_sliceOf(rawCf,
+          'export const callableConfirmFinalWage = onCall(',
+          'export const callableCancelFinalConfirmation')));
+      expect(wage, contains('srvResolveReviewReadiness('));
+      expect(wage, isNot(contains('srvResolveMatchingReadiness')));
+    });
+
+    test('33 지원 prerequisite는 건드리지 않았다', () {
+      // [FOLLOWUP_PRODUCT_DECISION] 지원 단계는 여전히 계좌·통장을 요구한다.
+      //   이번 Phase 범위 밖이므로 그대로 두고 기록만 한다.
+      final apply = _codeOf(_sliceOf(rawCf,
+          'export const callableApplyToTO = onCall(', '\n);'));
+      expect(apply, contains('통장 정보 등록이 필요합니다'));
+      expect(apply, contains('통장사본 등록이 필요합니다'));
+    });
+
+    test('34 클라이언트도 초대 수락을 계좌로 막지 않는다', () {
+      final s = _src('lib/screens/common/job_posting_screen.dart');
+      // 계좌 문구는 **지원** 차단 사유 계산에만 쓰인다.
+      final block = _sliceOf(s, 'String? newReason;', 'if (newReason !=');
+      expect(block, contains('통장 정보 등록이 필요합니다'));
+      // 초대 수락 CTA는 좌석·상태 projection만 본다.
+      final cta = _flat(_codeOf(_sliceOf(s,
+          '// INVITED → "초대 수락" / "거절" sticky 버튼', '_declineInviteFromDetail')));
+      expect(cta, contains('canAccept'));
+      expect(cta, isNot(contains('_applyBlockReason')));
+      expect(cta, isNot(contains('hasBankbookDocument')));
+    });
+  });
+
   group('문구', () {
     test('25 자동 일치를 "인증 완료"라 하지 않는다', () {
       final dto = _codeOf(_src(_dtoPath));

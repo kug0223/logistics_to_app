@@ -72,19 +72,23 @@ void main() {
   // ── PART C/D. 수락 시 readiness 재검증 ────────────────────────────
 
   group('초대 수락은 좌석 전에 서류를 본다', () {
-    test('통장사본을 요구한다', () {
-      expect(
-          accept.contains('if (!freshUserData.bankbookImagePath && '
-              '!freshUserData.bankbookImageUrl) { throw new HttpsError('
-              '"failed-precondition", "통장사본 등록이 필요합니다."); }'),
-          true);
+    // [PII-DOC-R1.5.1] 아래 두 테스트는 원래 "통장사본을 요구한다" /
+    //   "계좌 3필드를 요구한다"였다. R1.5가 직접 확정의 게이트를 신분 확인으로
+    //   좁혔을 때 초대 수락만 옛 지급 prerequisite를 들고 남았고, 그래서 같은
+    //   사람이 어느 버튼을 눌렀느냐로 결과가 갈렸다. 이 group이 지키려던 것은
+    //   "좌석을 잡기 전에 확인한다"이지 "계좌를 확인한다"가 아니므로,
+    //   요구 대상을 신분 축으로 옮기고 지급 요구가 없음을 고정한다.
+    test('통장사본을 요구하지 않는다', () {
+      expect(accept.contains('통장사본 등록이 필요합니다'), false,
+          reason: '지급 준비는 근무 확정의 조건이 아니다 — R1.6이 지급 직전에 본다');
+      expect(accept.contains('freshUserData.bankbookImagePath'), false);
     });
 
-    test('계좌 3필드를 요구한다', () {
-      expect(
-          accept.contains('if (!freshUserData.bankName || '
-              '!freshUserData.accountNumber || !freshUserData.accountHolder) {'),
-          true);
+    test('계좌 3필드를 요구하지 않는다', () {
+      expect(accept.contains('통장 정보 등록이 필요합니다'), false);
+      expect(accept.contains('freshUserData.bankName'), false);
+      expect(accept.contains('freshUserData.accountNumber'), false);
+      expect(accept.contains('freshUserData.accountHolder'), false);
     });
 
     test('신분증을 요구하고, 슬롯 공고는 인증 완료까지 요구한다', () {
@@ -108,11 +112,15 @@ void main() {
     });
 
     test('이 검사가 좌석 커밋보다 먼저다', () {
-      final readiness = accept.indexOf('"통장사본 등록이 필요합니다."');
+      // [PII-DOC-R1.5.1] 기준점을 통장사본에서 신분 확인으로 옮겼다.
+      final readiness = accept.indexOf('"신분증 등록이 필요합니다."');
+      final matching = accept.indexOf('srvResolveMatchingReadiness(freshUserData,');
       final seat = accept.indexOf('totalConfirmed: admin.firestore.FieldValue.increment(1)');
       expect(readiness, greaterThan(-1));
+      expect(matching, greaterThan(-1));
       expect(seat, greaterThan(-1));
-      expect(readiness < seat, true, reason: '서류가 없는데 좌석을 먼저 잡지 않는다');
+      expect(readiness < seat, true, reason: '신분이 확인되지 않았는데 좌석을 먼저 잡지 않는다');
+      expect(matching < seat, true);
     });
 
     test('트랜잭션 안에서 현재 사용자 문서를 다시 읽는다', () {

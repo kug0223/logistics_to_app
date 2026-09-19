@@ -230,8 +230,10 @@ void main() {
     });
 
     test('서류 readiness 게이트가 정원·마감 판정보다 먼저다', () {
-      // 서류가 없으면 정원 계산까지 가지도 않는다 — 실측 순서와 같다.
-      final doc = accept.indexOf('"통장사본 등록이 필요합니다."');
+      // [PII-DOC-R1.5.1] 기준점을 통장사본에서 신분증으로 옮겼다.
+      //   통장 요구 자체가 수락 경로에서 제거됐고, 이 테스트가 지키는 것은
+      //   "서류를 안 본 채 정원을 계산하지 않는다"는 순서다.
+      final doc = accept.indexOf('"신분증 등록이 필요합니다."');
       final cap = accept.indexOf('슬롯 정원이 초과되어 초대를 수락할 수 없습니다');
       expect(doc, greaterThan(-1));
       expect(cap, greaterThan(-1));
@@ -260,13 +262,20 @@ void main() {
 
   group('R5.2 parity 패치는 유지된다', () {
     test('수락 시 서류·동의 게이트가 그대로다', () {
+      // [PII-DOC-R1.5.1] 지급 축(통장·계좌) 두 줄은 여기서 제거됐다.
+      //   R5.2가 세운 parity 자체는 유지된다 — 초대 수락이 확정과 같은
+      //   신분 게이트와 같은 동의 게이트를 지난다는 것.
       for (final m in [
-        '"통장사본 등록이 필요합니다."',
         '"신분증 등록이 필요합니다."',
-        '"통장 정보 등록이 필요합니다."',
         '소득신고·급여처리 목적 서류 접근에 동의해야',
       ]) {
         expect(accept.contains(m), true, reason: m);
+      }
+      for (final gone in [
+        '"통장사본 등록이 필요합니다."',
+        '"통장 정보 등록이 필요합니다."',
+      ]) {
+        expect(accept.contains(gone), false, reason: gone);
       }
     });
 
