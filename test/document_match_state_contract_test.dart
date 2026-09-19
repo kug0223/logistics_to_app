@@ -284,12 +284,16 @@ void main() {
       expect(readiness, contains('bankDec === REVIEW_OK && !bankStale'));
     });
 
-    test('24 급여 확정도 같은 helper를 그대로 쓴다', () {
+    test('24 급여 확정은 canonical match를 resolver 통해서만 본다', () {
+      // [PII-DOC-R1.6] R1.4 시점에는 "급여가 match state를 아직 읽지
+      //   않는다"를 고정했다. R1.6이 그 연결이다 — 단 원시 필드를 직접
+      //   읽지 않고 srvResolveBankbookMatch를 거친 판정만 쓴다.
       final confirm = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableConfirmFinalWage = onCall(',
           'export const callableCancelFinalConfirmation')));
-      expect(confirm, contains('srvResolveReviewReadiness('));
-      expect(confirm, isNot(contains('MatchStatus')));
+      expect(confirm, contains('srvResolvePayrollReadiness('));
+      expect(confirm, isNot(contains('bankbookMatchStatus')),
+          reason: '원시 필드를 직접 읽지 않는다 — 버전 비교를 건너뛰게 된다');
     });
 
     test('25 확정 게이트가 canonical match를 읽는다 (R1.5에서 연결)', () {

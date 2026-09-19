@@ -230,7 +230,8 @@ void main() {
       final wage = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableConfirmFinalWage = onCall(',
           'export const callableCancelFinalConfirmation')));
-      expect(wage, contains('srvResolveReviewReadiness('));
+      // [PII-DOC-R1.6] 급여가 쓰는 판정이 Payroll Readiness로 바뀌었다.
+      expect(wage, contains('srvResolvePayrollReadiness('));
     });
 
     test('21 계좌 presence 판정처가 늘어나지 않았다', () {
@@ -253,6 +254,9 @@ void main() {
           owners.toSet(),
           equals({
             'srvMissingApplicantPayoutRegistration',
+            // [PII-DOC-R1.6] 지급 시점 판정이 추가됐다. 지원 판정과
+            //   별개의 helper이고, 둘 다 자기 질문에만 답한다.
+            'srvResolvePayrollReadiness',
             'callableUpdateBankAccount',
           }),
           reason: '실제 발견: ${owners.toSet()}');

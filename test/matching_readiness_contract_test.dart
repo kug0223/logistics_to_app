@@ -200,10 +200,12 @@ void main() {
       final wage = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableConfirmFinalWage = onCall(',
           'export const callableCancelFinalConfirmation')));
-      expect(wage, contains('srvResolveReviewReadiness('));
+      // [PII-DOC-R1.6] 급여는 이제 Payroll Readiness를 쓴다. 이 테스트가
+      //   지키는 것은 **신분 판정이 급여를 열지 않는다**이고 그대로다.
+      expect(wage, contains('srvResolvePayrollReadiness('));
       expect(wage, isNot(contains('srvResolveMatchingReadiness')),
           reason: '자동 신분 MATCHED가 급여를 새로 열면 안 된다');
-      expect(wage, contains('bankReviewOkByUid'));
+      expect(wage, contains('payReadinessByUid'));
       expect(wage, contains('wageAccountReviewRequired'));
     });
 
@@ -336,7 +338,7 @@ void main() {
       final wage = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableConfirmFinalWage = onCall(',
           'export const callableCancelFinalConfirmation')));
-      expect(wage, contains('srvResolveReviewReadiness('));
+      expect(wage, contains('srvResolvePayrollReadiness('));
       expect(wage, isNot(contains('srvResolveMatchingReadiness')));
     });
 

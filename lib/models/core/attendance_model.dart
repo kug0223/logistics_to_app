@@ -132,11 +132,24 @@ class AttendanceModel {
   /// 기록이다"**라는 뜻이다. 둘을 같은 칸에 넣으면 legacy를 정상처럼 다루게 된다.
   final int? wageAccountSnapshotVersion;
 
-  /// [R1.2] 사업장의 계좌 검토가 낡아 스냅샷을 만들지 못했다는 서버의 표시.
+  /// [R1.2] 지급 계좌 스냅샷을 만들지 못했다는 서버의 표시.
   /// 금액은 확정됐고 이체만 막힌 상태다 — ERROR ≠ ZERO.
   final bool? wageAccountReviewRequired;
 
-  // [PII-DOC-R0.1] 위 두 필드는 **읽기 전용 투영**이다. toMap()에 넣지 않는다:
+  /// [PII-DOC-R1.6] 왜 못 만들었는가. bool 하나로는 무엇을 해야 하는지
+  /// 말할 수 없다 — 계좌가 없는 것과 통장사본이 안 맞는 것은 다른 일이다.
+  /// 값은 [PayrollReadinessReason]의 상수.
+  final String? wageAccountReadinessReason;
+
+  /// [PII-DOC-R1.6] 이 스냅샷이 **어느 시점의 어느 계좌**를 근거로 만들어졌는가.
+  /// 이체 직전에 현재 버전과 비교해 낡음을 판정한다.
+  final int? wageAccountSourceBankAccountVersion;
+  final int? wageAccountSourceBankbookDocumentVersion;
+
+  /// 'AUTO_MATCH' | 'MANUAL_REVIEW' — 자동 판정과 사람 검토를 섞지 않는다.
+  final String? wagePaymentReadinessSource;
+
+  // [PII-DOC-R0.1] 위 필드들은 **읽기 전용 투영**이다. toMap()에 넣지 않는다:
   //   firestore.rules가 confirmed 이후 이 키들의 클라이언트 변경을 DENY하므로,
   //   toMap()에 실리면 정상적인 클라이언트 쓰기 경로가 규칙에 걸려 죽는다.
   //   writer는 callableConfirmFinalWage 하나뿐이고, 그게 맞다.
@@ -199,6 +212,10 @@ class AttendanceModel {
     this.wageAccountVerifiedAt,
     this.wageAccountSnapshotVersion,
     this.wageAccountReviewRequired,
+    this.wageAccountReadinessReason,
+    this.wageAccountSourceBankAccountVersion,
+    this.wageAccountSourceBankbookDocumentVersion,
+    this.wagePaymentReadinessSource,
   });
 
   // ── 표시용 "HH:mm" getter ───────────────────────────────────
@@ -354,6 +371,12 @@ class AttendanceModel {
       wageAccountVerifiedAt:           parseTimestampNullable(map['wageAccountVerifiedAt']),
       wageAccountSnapshotVersion:      (map['wageAccountSnapshotVersion'] as num?)?.toInt(),
       wageAccountReviewRequired:       map['wageAccountReviewRequired']       as bool?,
+      wageAccountReadinessReason:      map['wageAccountReadinessReason']      as String?,
+      wageAccountSourceBankAccountVersion:
+          (map['wageAccountSourceBankAccountVersion'] as num?)?.toInt(),
+      wageAccountSourceBankbookDocumentVersion:
+          (map['wageAccountSourceBankbookDocumentVersion'] as num?)?.toInt(),
+      wagePaymentReadinessSource:      map['wagePaymentReadinessSource']      as String?,
     );
   }
 

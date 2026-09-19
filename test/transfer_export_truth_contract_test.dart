@@ -469,7 +469,9 @@ void main() {
 
       expect(confirm, contains('updateData["wageAccountSnapshotVersion"] = 1'));
       expect(confirm, contains('wageAccountSnapshotAt'));
-      expect(confirm, contains('bankReviewOkByUid'));
+      // [PII-DOC-R1.6] 준비 판정 맵의 이름이 바뀌었다(수동 검토 전용 →
+      //   Payroll Readiness). 지키는 것은 "재확정이 스냅샷을 다시 만든다"다.
+      expect(confirm, contains('payReadinessByUid'));
     });
 
     test('36 단건 경로가 제외를 성공으로 읽지 않는다', () {
@@ -518,7 +520,7 @@ void main() {
           rawCf, 'export const callableConfirmFinalWage = onCall(',
           'export const callableCancelFinalConfirmation')));
 
-      expect(confirm, contains('bankReviewOkByUid'));
+      expect(confirm, contains('payReadinessByUid'));
       expect(confirm, contains('wageAccountReviewRequired'));
     });
   });

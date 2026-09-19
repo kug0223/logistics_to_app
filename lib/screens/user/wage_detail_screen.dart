@@ -6,6 +6,8 @@ import '../../models/core/wage_detail_model.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/transfer_export_plan.dart';
+import '../common/document_management_screen.dart';
 
 /// 급여 상세 화면
 ///
@@ -53,6 +55,13 @@ class WageDetailScreen extends StatelessWidget {
       case AttendanceModel.wageTransferred:
         return (label: '이체 처리 완료', color: AppColors.successDark);
       case AttendanceModel.wageConfirmed:
+        // [PII-DOC-R1.6] 지급정보가 준비되지 않아 이체가 막힌 건을
+        //   '지급 예정'이라고 말하지 않는다. 그 문구는 기다리면 된다는
+        //   뜻인데, 실제로는 근로자가 무언가를 해야 풀린다. 금액은
+        //   그대로 확정돼 있다 — 사라진 것은 없다.
+        if (att.wageAccountReviewRequired == true) {
+          return (label: '지급정보 확인 필요', color: AppColors.warning);
+        }
         return (label: '지급 예정', color: AppColors.brand);
       case AttendanceModel.wageCalculated:
         return (label: '급여 계산 완료', color: AppColors.success);
@@ -358,6 +367,54 @@ class WageDetailScreen extends StatelessWidget {
                     ),
                   ],
                 ),
+                // [PII-DOC-R1.6] 막혀 있다면 무엇을 해야 풀리는지 말한다.
+                //   예전에는 이체가 막힌 건도 '지급 예정'으로만 보였다.
+                //   근로자는 자기 급여가 멈춰 있다는 것도, 그것을 푸는 사람이
+                //   자기라는 것도 알 수 없었다.
+                if (att?.wageAccountReviewRequired == true) ...[
+                  SizedBox(height: 12 * s),
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.all(12 * s),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: AppColors.warning.withValues(alpha: 0.25)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          PayrollReadinessReason.labelOf(
+                              att!.wageAccountReadinessReason),
+                          style: AppTextStyles.statusBadge(
+                              color: AppColors.warning),
+                        ),
+                        SizedBox(height: 4 * s),
+                        Text(
+                          '${PayrollReadinessReason.workerActionOf(att.wageAccountReadinessReason)}'
+                          '\n급여 금액은 그대로 확정되어 있습니다.',
+                          style: AppTextStyles.meta(),
+                        ),
+                        SizedBox(height: 8 * s),
+                        TextButton(
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                                builder: (_) => const DocumentManagementScreen()),
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('서류 관리로 이동'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 // TODO(급여상세-V3): 금융 API 연결 후 AttendanceModel.paidAt 필드 추가,
                 // wageTransferred 상태일 때 지급일 행 표시
                 //   지급일      2026.07.31

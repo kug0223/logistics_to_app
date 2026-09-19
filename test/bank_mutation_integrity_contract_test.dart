@@ -205,11 +205,13 @@ void main() {
     });
 
     test('15 검토 freshness 는 여전히 버전 비교로 판정한다', () {
-      expect(wage, contains('srvResolveReviewReadiness('));
-      final rr = _codeOf(
-          _sliceOf(rawCf, 'function srvResolveReviewReadiness(', '\n}'));
-      expect(rr, contains('rBbV !== cur.bankbook'));
-      expect(rr, contains('rAcV !== cur.account'));
+      // [PII-DOC-R1.6] 급여가 부르는 helper 이름이 바뀌었다. 지키는 것은
+      //   "검토가 낡았는지를 버전으로 판정한다"이고 그 규칙은 그대로다.
+      expect(wage, contains('srvResolvePayrollReadiness('));
+      final pr = _codeOf(
+          _sliceOf(rawCf, 'function srvResolvePayrollReadiness(', '\n}'));
+      expect(pr, contains('rBbV !== versions.bankbook'));
+      expect(pr, contains('rAcV !== versions.account'));
     });
 
     test('16 W2·§16 — 이체는 그대로 fail-closed', () {

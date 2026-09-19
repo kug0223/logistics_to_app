@@ -77,6 +77,11 @@ class TransferBlockCode {
   static const String notPayable = 'notPayable';
   static const String notConfirmed = 'notConfirmed';
   static const String settlementLocked = 'settlementLocked';
+  // [PII-DOC-R1.6] 확정 이후 계좌가 바뀐 건. 스냅샷은 완전하지만 그 계좌는
+  //   근로자가 더는 쓰지 않는 계좌일 수 있다.
+  static const String stalePaymentSnapshot = 'stalePaymentSnapshot';
+  // 스냅샷은 있으나 어느 계좌를 근거로 만들었는지 기록이 없는 건(R1.6 이전).
+  static const String snapshotProvenanceUnknown = 'snapshotProvenanceUnknown';
 
   /// 서버 사유 토큰 → 화면 문구. 모르는 토큰은 **추측하지 않는다**.
   static String labelOf(String code) => switch (code) {
@@ -88,6 +93,8 @@ class TransferBlockCode {
         notPayable => kNotApplicableLabel,
         notConfirmed => '급여가 확정되지 않음',
         settlementLocked => '승인된 중간정산에 포함됨',
+        stalePaymentSnapshot => '확정 이후 계좌가 변경됨',
+        snapshotProvenanceUnknown => '계좌 기록 근거 확인 불가',
         _ => '확인 필요',
       };
 
@@ -99,7 +106,52 @@ class TransferBlockCode {
         notPayable => '지급 대상이 아니어서 이체하지 않습니다.',
         notConfirmed => '급여를 먼저 확정해주세요.',
         settlementLocked => '중간정산을 처리하거나 승인을 취소한 뒤 다시 시도해주세요.',
+        stalePaymentSnapshot =>
+          '근로자가 급여계좌를 변경했습니다. 지급 계좌를 최신으로 갱신한 뒤 이체해주세요. '
+              '급여 금액은 그대로 유지됩니다.',
+        snapshotProvenanceUnknown =>
+          '지급 계좌를 최신으로 갱신한 뒤 이체해주세요. 급여 금액은 그대로 유지됩니다.',
         _ => '급여 내역을 확인해주세요.',
+      };
+}
+
+/// [PII-DOC-R1.6] 지급 준비 판정 사유 — 서버 `wageAccountReadinessReason`.
+///
+///   `wageAccountReviewRequired`는 bool 하나라서 "무엇을 해야 하는가"를
+///   말하지 못한다. 계좌가 없는 것과 통장사본이 안 맞는 것은 다른 일이다.
+class PayrollReadinessReason {
+  PayrollReadinessReason._();
+
+  static const String missingBankAccount = 'MISSING_BANK_ACCOUNT';
+  static const String missingBankbook = 'MISSING_BANKBOOK';
+  static const String bankMismatch = 'BANK_MISMATCH';
+  static const String bankOcrUncertain = 'BANK_OCR_UNCERTAIN';
+  static const String bankUnassessed = 'BANK_UNASSESSED';
+  static const String staleAutoMatch = 'STALE_AUTO_MATCH';
+  static const String staleManualReview = 'STALE_MANUAL_REVIEW';
+
+  /// 관리자에게 보여줄 문구.
+  static String labelOf(String? code) => switch (code) {
+        missingBankAccount => '급여계좌 미등록',
+        missingBankbook => '통장사본 미등록',
+        bankMismatch => '계좌와 통장사본 불일치',
+        bankOcrUncertain => '통장사본 확인 필요',
+        bankUnassessed => '통장사본 확인 필요',
+        staleAutoMatch => '급여계좌 변경 — 재확인 필요',
+        staleManualReview => '급여계좌 변경 — 재확인 필요',
+        _ => '급여계좌 확인 필요',
+      };
+
+  /// **근로자**가 할 일. 이 사유들의 행동 주체는 대부분 근로자다.
+  static String workerActionOf(String? code) => switch (code) {
+        missingBankAccount => '급여계좌를 등록해주세요.',
+        missingBankbook => '통장사본을 등록해주세요.',
+        bankMismatch => '등록한 계좌와 통장사본이 다릅니다. 다시 등록해주세요.',
+        bankOcrUncertain => '통장사본을 다시 등록해주세요.',
+        bankUnassessed => '통장사본을 다시 등록해주세요.',
+        staleAutoMatch => '변경한 계좌의 통장사본을 등록해주세요.',
+        staleManualReview => '변경한 계좌의 통장사본을 등록해주세요.',
+        _ => '서류 관리에서 급여정보를 확인해주세요.',
       };
 }
 

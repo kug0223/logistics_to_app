@@ -244,14 +244,22 @@ void main() {
   });
 
   group('R1.2-07 — 지급 계좌 연속성', () {
-    test('스냅샷 전에 현재 검토를 읽는다', () {
-      expect(confirmWage, contains('srvResolveReviewReadiness('));
-      expect(confirmWage,
-          contains('readiness.bankDecision === REVIEW_OK && !readiness.bankStale'));
+    // [PII-DOC-R1.6] 이 두 테스트는 "사업장의 **수동 검토**가 통과여야
+    //   계좌를 싣는다"를 고정했다. 그 규칙 때문에 아무 문제 없는 근로자도
+    //   급여 때마다 누군가 통장사본을 열어봐야 했다. R1.6이 판정을
+    //   Payroll Readiness로 옮겼고, 자동 판정이 현재 계좌·현재 통장사본에
+    //   대해 MATCHED면 사람 검토 없이 통과한다. 사람 검토는 fallback이다.
+    //   이 group이 지키려던 것은 "스냅샷 전에 현재 상태를 다시 본다"이고,
+    //   그 부분은 그대로다.
+    test('스냅샷 전에 현재 지급 준비 상태를 읽는다', () {
+      expect(confirmWage, contains('srvResolvePayrollReadiness('));
+      expect(confirmWage, contains('srvBizReviewId(businessId, uid)'),
+          reason: '사람 fallback은 이 사업장 검토만 본다');
     });
 
-    test('검토가 낡으면 계좌를 싣지 않는다', () {
-      expect(confirmWage, contains('if (bankReviewOkByUid.get(s.id) !== true) return;'));
+    test('준비되지 않았으면 계좌를 싣지 않는다', () {
+      expect(confirmWage,
+          contains("if (payReadinessByUid.get(s.id)?.ready !== true) return;"));
     });
 
     test('금액을 0으로 만들지 않고 재확인으로 표시한다', () {

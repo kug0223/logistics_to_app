@@ -100,6 +100,7 @@ void main() {
           owners.toSet(),
           equals({
             'srvMissingApplicantPayoutRegistration', // onboarding 판정
+            'srvResolvePayrollReadiness', // [R1.6] 지급 시점 판정
             'callableUpdateBankAccount', // 계좌 등록 자체의 입력 검증
           }),
           reason: '실제 발견: ${owners.toSet()}');
@@ -288,7 +289,11 @@ void main() {
       expect(xfer, isNot(contains('srvResolveMatchingReadiness')));
     });
 
-    test('24 §17 — 급여 동작은 이번에 바뀌지 않았다', () {
+    test('24 급여는 지급 시점의 판정을 따로 쓴다', () {
+      // [PII-DOC-R1.6] 원래는 "급여가 srvResolveReviewReadiness를 그대로
+      //   쓴다"를 고정했다. R1.6이 지급 판정을 srvResolvePayrollReadiness로
+      //   옮겼다. 이 테스트가 지키는 것은 **지원 단계 판정을 급여가
+      //   빌려 쓰지 않는다**이고, 그 부분은 그대로다.
       final xfer = _codeOf(
           _sliceOf(rawCf, 'function srvWageAccountBlockReason(', '\n}'));
       for (final f in ['wageAccountBankName', 'wageAccountNumberEncrypted',
@@ -298,7 +303,7 @@ void main() {
       final wage = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableConfirmFinalWage = onCall(',
           'export const callableCancelFinalConfirmation')));
-      expect(wage, contains('srvResolveReviewReadiness('));
+      expect(wage, contains('srvResolvePayrollReadiness('));
       expect(wage, isNot(contains('srvMissingApplicantPayoutRegistration')));
     });
 

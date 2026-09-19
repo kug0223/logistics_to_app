@@ -853,6 +853,156 @@ function srvResolveMatchingReadiness(
   };
 }
 
+// ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.6] PAYROLL READINESS
+//
+//   "지금 이 사람에게 돈을 보낼 지급정보가 준비돼 있는가"에 답한다.
+//
+//   ── 앞의 두 readiness와 다른 점 ────────────────────────────
+//
+//   Applicant Onboarding  지원 전에 기본자료를 등록했는가 (한 번)
+//   Matching              이 근무를 확정해도 되는가 (신분)
+//   Payroll               **지금** 이 지급정보가 유효한가
+//
+//   지원 당시 등록을 마쳤다는 사실은 지급 시점의 유효성이 아니다.
+//   그 사이 계좌가 바뀌었거나 지워졌을 수 있다. 그래서 여기서는
+//   현재 값과 현재 버전을 다시 본다.
+//
+//   ── 신분과 무관하다 ────────────────────────────────────────
+//
+//   이미 수행된 근무에 대한 임금을 신분증 OCR 상태 때문에 미지급으로
+//   만들지 않는다. 이 helper는 idCard* 를 읽지 않는다.
+//   세무 신원(taxIdentity)은 별개의 단계다.
+//
+//   ── 정상 근로자에게 사람 검수를 요구하지 않는다 ──────────────
+//
+//   예전 급여 확정은 사업장의 수동 검토(bankDecision == REVIEWED_OK)가
+//   있어야만 계좌를 스냅샷했다. 그래서 아무 문제 없는 근로자도 급여 때마다
+//   누군가 통장사본을 열어봐야 했다. 현재 통장사본이 현재 계좌와 맞는다는
+//   자동 판정이 있으면 그것으로 충분하다. 사람 검토는 자동이 못 하는
+//   경우의 fallback으로 남는다.
+//
+//   ── assurance를 올리지 않는다 ──────────────────────────────
+//
+//   READY_AUTO의 근거는 여전히 CLIENT_OCR / CLIENT_EVIDENCE다.
+//   금융기관이 계좌를 확인했다는 뜻이 아니다.
+// ═══════════════════════════════════════════════════════════
+
+const PR_READY_AUTO = "READY_AUTO";
+const PR_READY_MANUAL = "READY_MANUAL";
+const PR_MISSING_BANK_ACCOUNT = "MISSING_BANK_ACCOUNT";
+const PR_MISSING_BANKBOOK = "MISSING_BANKBOOK";
+const PR_BANK_MISMATCH = "BANK_MISMATCH";
+const PR_BANK_OCR_UNCERTAIN = "BANK_OCR_UNCERTAIN";
+const PR_BANK_UNASSESSED = "BANK_UNASSESSED";
+const PR_STALE_AUTO_MATCH = "STALE_AUTO_MATCH";
+const PR_STALE_MANUAL_REVIEW = "STALE_MANUAL_REVIEW";
+
+/** 스냅샷을 만든 근거. */
+const PAY_SOURCE_AUTO = "AUTO_MATCH";
+const PAY_SOURCE_MANUAL = "MANUAL_REVIEW";
+
+/** 지급 준비 판정 — `ready=false` 하나로 원인을 뭉개지 않는다. */
+type SrvPayrollReadiness = {
+  ready: boolean;
+  /** READY_AUTO | READY_MANUAL | MISSING_* | BANK_* | STALE_* */
+  state: string;
+  /** 사용자에게 보여줄 사유. ready면 null. */
+  reason: string | null;
+  /** ready일 때 어떤 근거로 통과했는가. AUTO_MATCH | MANUAL_REVIEW | null */
+  source: string | null;
+  /** 이 판정이 대상으로 삼은 현재 버전 — 스냅샷 provenance로 기록한다. */
+  accountVersion: number;
+  bankbookVersion: number;
+  /** 감사용 */
+  autoMatchStatus: string;
+  autoMatchStale: boolean;
+  manualDecision: string;
+  manualStale: boolean;
+};
+
+/**
+ * 지금 이 근로자에게 지급할 수 있는 계좌 상태인가.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} userData 근로자 users 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} review 이 **사업장**의 검토 문서.
+ *   수동 fallback은 businessId × workerUid × 현재 버전 범위를 벗어나지 않는다 —
+ *   A 사업장의 검토를 B 사업장이 가져다 쓰지 않는다.
+ * @return {SrvPayrollReadiness} 판정
+ */
+function srvResolvePayrollReadiness(
+  userData: FirebaseFirestore.DocumentData | undefined,
+  review: FirebaseFirestore.DocumentData | undefined
+): SrvPayrollReadiness {
+  const u = userData ?? {};
+  const auto = srvResolveBankbookMatch(userData);
+  const versions = srvDocumentVersionsOf(u);
+
+  const manualDec =
+    (review?.["bankDecision"] as string | undefined) ?? REVIEW_NOT_REVIEWED;
+  const rBbV =
+    (review?.["reviewedBankbookDocumentVersion"] as number | undefined) ?? -1;
+  const rAcV =
+    (review?.["reviewedBankAccountVersion"] as number | undefined) ?? -1;
+  const manualStale = manualDec !== REVIEW_NOT_REVIEWED &&
+    (rBbV !== versions.bankbook || rAcV !== versions.account);
+  const manualOk = manualDec === REVIEW_OK && !manualStale;
+
+  const base = {
+    accountVersion: versions.account,
+    bankbookVersion: versions.bankbook,
+    autoMatchStatus: auto.status,
+    autoMatchStale: auto.isStale,
+    manualDecision: manualDec,
+    manualStale,
+  };
+  const no = (state: string, reason: string) =>
+    ({...base, ready: false, state, reason, source: null});
+
+  // 보낼 곳이 없으면 그 다음은 볼 것도 없다. 사람 검토 기록만으로
+  // 없는 계좌를 준비 완료로 만들지 않는다.
+  if (!u["bankName"] || !u["accountNumber"] || !u["accountHolder"]) {
+    return no(PR_MISSING_BANK_ACCOUNT, "급여계좌가 등록되어 있지 않습니다.");
+  }
+  if (auto.status === DOC_MATCH_MISSING) {
+    return no(PR_MISSING_BANKBOOK, "통장사본이 등록되어 있지 않습니다.");
+  }
+
+  // 자동 통과 — 현재 통장사본 × 현재 계좌에 대한 판정일 때만이다.
+  //   낡으면 resolver가 이미 UNASSESSED로 돌려주므로 여기서 버전을 다시
+  //   보지 않는다. 정상 근로자는 여기서 끝난다 — 사람 검수 없이.
+  if (auto.status === DOC_MATCH_MATCHED) {
+    return {...base, ready: true, state: PR_READY_AUTO, reason: null,
+      source: PAY_SOURCE_AUTO};
+  }
+
+  // 사람이 원본과 현재 계좌를 직접 본 결과는 자동 판정보다 강하다.
+  //   단 이것이 bankbookMatchStatus를 MATCHED로 덮어쓰지는 않는다 —
+  //   자동 근거와 사람 근거는 각자의 기록으로 남는다.
+  if (manualOk) {
+    return {...base, ready: true, state: PR_READY_MANUAL, reason: null,
+      source: PAY_SOURCE_MANUAL};
+  }
+
+  if (auto.status === DOC_MATCH_MISMATCH) {
+    return no(PR_BANK_MISMATCH,
+      "등록한 계좌와 통장사본이 일치하지 않습니다. 통장사본을 다시 등록해주세요.");
+  }
+  if (auto.status === DOC_MATCH_OCR_UNCERTAIN) {
+    return no(PR_BANK_OCR_UNCERTAIN,
+      "통장사본을 자동으로 확인하지 못했습니다. 통장사본 확인이 필요합니다.");
+  }
+  if (auto.isStale) {
+    return no(PR_STALE_AUTO_MATCH,
+      "급여계좌 또는 통장사본이 변경되어 다시 확인해야 합니다.");
+  }
+  if (manualStale) {
+    return no(PR_STALE_MANUAL_REVIEW,
+      "급여계좌 또는 통장사본이 변경되어 다시 확인해야 합니다.");
+  }
+  return no(PR_BANK_UNASSESSED, "통장사본 확인이 필요합니다.");
+}
+
 /**
  * 이 호출자가 지원자 서류를 볼 수 있는가 — canManageTo AND canManageWage.
  *
@@ -23670,6 +23820,10 @@ export const callableConfirmFinalWage = onCall(
       wageAccountHolder?: string;
       // [Phase 6] wageAccountVerificationStatus 제거 — V3 스냅샷 4필드 완전성으로 이체 판단
     }> = {};
+    // [PII-DOC-R1.6] 준비되지 않은 이유를 급여 기록에 남기기 위한 맵.
+    //   ready=false 하나로 원인을 뭉개면 관리자도 근로자도 무엇을 해야 할지
+    //   알 수 없다.
+    const attendanceReadinessMap: Record<string, SrvPayrollReadiness> = {};
     {
       // attendanceIds 배치 조회로 userId 수집 (최대 100건 — 위에서 제한)
       const attSnaps = await Promise.all(
@@ -23699,7 +23853,14 @@ export const callableConfirmFinalWage = onCall(
       //   바뀐 것이 없으면 지원 검토 때의 판단을 그대로 재사용한다 —
       //   이것이 "급여 단계에서 다시 처음부터 확인하지 않는다"의 실현이다.
       //   바뀌었으면 스냅샷을 만들지 않는다. 금액은 그대로 두고 확인만 요구한다.
-      const bankReviewOkByUid = new Map<string, boolean>();
+      // [PII-DOC-R1.6] 여기서 묻는 것은 Payroll Readiness다.
+      //
+      //   예전에는 사업장의 **수동 검토**가 REVIEWED_OK일 때만 계좌를
+      //   실었다. 그래서 아무 문제 없는 근로자도 급여 때마다 누군가
+      //   통장사본을 열어봐야 했다. 이제 현재 통장사본이 현재 계좌와
+      //   맞는다는 자동 판정이 있으면 그것으로 통과한다. 사람 검토는
+      //   자동이 못 하는 경우의 fallback으로 남는다.
+      const payReadinessByUid = new Map<string, SrvPayrollReadiness>();
       {
         const uids = userSnaps.filter((s) => s.exists).map((s) => s.id);
         const reviewSnaps = uids.length > 0 ?
@@ -23708,19 +23869,16 @@ export const callableConfirmFinalWage = onCall(
           [];
         uids.forEach((uid, i) => {
           const userDoc = userSnaps.find((s) => s.id === uid);
-          const versions = srvDocumentVersionsOf(userDoc?.data() ?? {});
-          const readiness =
-            srvResolveReviewReadiness(reviewSnaps[i]?.data(), versions);
-          bankReviewOkByUid.set(
-            uid, readiness.bankDecision === REVIEW_OK && !readiness.bankStale);
+          payReadinessByUid.set(uid, srvResolvePayrollReadiness(
+            userDoc?.data(), reviewSnaps[i]?.data()));
         });
       }
 
       userSnaps.forEach((s) => {
         if (!s.exists) return;
         const d = s.data()!;
-        // 검토가 낡았으면 계좌를 싣지 않는다 — 아래에서 스냅샷 자체가 막힌다.
-        if (bankReviewOkByUid.get(s.id) !== true) return;
+        // 준비되지 않았으면 계좌를 싣지 않는다 — 아래에서 스냅샷 자체가 막힌다.
+        if (payReadinessByUid.get(s.id)?.ready !== true) return;
         userBankMap[s.id] = {
           bankName: d.bankName as string | undefined,
           accountNumber: d.accountNumber as string | undefined, // AES 암호문 그대로
@@ -23731,7 +23889,10 @@ export const callableConfirmFinalWage = onCall(
       // attendanceId → 스냅샷 매핑
       attSnaps.forEach((s) => {
         const userId = s.data()?.userId as string | undefined;
-        if (!userId || !userBankMap[userId]) return;
+        if (!userId) return;
+        const pr = payReadinessByUid.get(userId);
+        if (pr) attendanceReadinessMap[s.id] = pr;
+        if (!userBankMap[userId]) return;
         const ub = userBankMap[userId];
         attendanceSnapMap[s.id] = {
           wageAccountBankName: ub.bankName,
@@ -23848,6 +24009,7 @@ export const callableConfirmFinalWage = onCall(
             //   version=1 + snapshot 필드 누락 → invariant error → 이체 불가 (legacy fallthrough 금지)
             //   version 없음                    → legacy compatibility (bankGate 기존 로직 사용)
             const accountSnap = attendanceSnapMap[id];
+            const payReadiness = attendanceReadinessMap[id];
             // [V3] V3 방식으로 처리한 Attendance임을 항상 마킹 (계좌 존재 여부 무관)
             updateData["wageAccountSnapshotVersion"] = 1;
             const hasFullAccount = !!(
@@ -23867,22 +24029,43 @@ export const callableConfirmFinalWage = onCall(
             //   계좌 없음은 검토 통과가 아니다.
             if (!hasFullAccount) {
               updateData["wageAccountReviewRequired"] = true;
+              // [PII-DOC-R1.6 §31] bool 하나로 MISSING·MISMATCH·STALE을
+              //   같은 말로 만들지 않는다. 무엇을 해야 하는지가 달라진다.
+              updateData["wageAccountReadinessReason"] =
+                payReadiness?.state ?? "UNKNOWN";
+              // [§13] 준비되지 않았는데 이전 스냅샷이 남아 이체가 열리면 안 된다.
+              //   재확정·취소 후 재확정 경로에서 실제로 남을 수 있다.
+              for (const k of [
+                "wageAccountBankName", "wageAccountNumberEncrypted",
+                "wageAccountHolder", "wageAccountSnapshotAt",
+                "wageAccountSourceBankAccountVersion",
+                "wageAccountSourceBankbookDocumentVersion",
+                "wagePaymentReadinessSource",
+              ]) {
+                updateData[k] = admin.firestore.FieldValue.delete();
+              }
             } else {
               updateData["wageAccountReviewRequired"] =
                 admin.firestore.FieldValue.delete();
-            }
-            if (accountSnap) {
-              if (accountSnap.wageAccountBankName)
-                updateData["wageAccountBankName"] = accountSnap.wageAccountBankName;
-              if (accountSnap.wageAccountNumberEncrypted)
-                updateData["wageAccountNumberEncrypted"] = accountSnap.wageAccountNumberEncrypted;
-              if (accountSnap.wageAccountHolder)
-                updateData["wageAccountHolder"] = accountSnap.wageAccountHolder;
-              // [Phase 6] wageAccountVerificationStatus 스냅샷 제거 — 이체 판단은 4필드 완전성으로만
-              if (hasFullAccount) {
-                // 3개 필드 완전한 경우에만 스냅샷 시각 기록
-                updateData["wageAccountSnapshotAt"] = admin.firestore.FieldValue.serverTimestamp();
-              }
+              updateData["wageAccountReadinessReason"] =
+                admin.firestore.FieldValue.delete();
+              const snapOk = accountSnap ?? {};
+              updateData["wageAccountBankName"] = snapOk.wageAccountBankName;
+              updateData["wageAccountNumberEncrypted"] =
+                snapOk.wageAccountNumberEncrypted;
+              updateData["wageAccountHolder"] = snapOk.wageAccountHolder;
+              updateData["wageAccountSnapshotAt"] =
+                admin.firestore.FieldValue.serverTimestamp();
+              // [PII-DOC-R1.6 §12] 이 스냅샷이 **어느 시점의 어느 계좌**를
+              //   근거로 만들어졌는지 남긴다. 이체 직전에 이 값으로 낡음을
+              //   판정한다 — 확정 뒤 계좌가 바뀌면 옛 계좌로 조용히 보내지
+              //   않기 위해서다.
+              updateData["wageAccountSourceBankAccountVersion"] =
+                payReadiness?.accountVersion ?? 0;
+              updateData["wageAccountSourceBankbookDocumentVersion"] =
+                payReadiness?.bankbookVersion ?? 0;
+              updateData["wagePaymentReadinessSource"] =
+                payReadiness?.source ?? PAY_SOURCE_AUTO;
             }
 
             tx.update(ref, updateData);
@@ -25703,6 +25886,42 @@ const XFER_OTHER_BUSINESS = "otherBusiness";
 const XFER_NOT_PAYABLE = "notPayable";
 const XFER_NOT_CONFIRMED = "notConfirmed";
 const XFER_SETTLEMENT_LOCKED = "settlementLocked";
+// [PII-DOC-R1.6] 확정 뒤 계좌가 바뀌었다 — 옛 계좌로 조용히 보내지 않는다.
+const XFER_STALE_PAYMENT_SNAPSHOT = "stalePaymentSnapshot";
+// 스냅샷은 있으나 어느 계좌를 근거로 만들었는지 기록이 없다(R1.6 이전 확정).
+const XFER_SNAPSHOT_PROVENANCE_UNKNOWN = "snapshotProvenanceUnknown";
+
+/**
+ * [PII-DOC-R1.6 §17] 이 스냅샷이 **지금도** 근로자의 계좌를 가리키는가.
+ *
+ *   돈이 나가는 계좌는 여전히 attendance 스냅샷이다. 현재 User 계좌를
+ *   이체 원본으로 쓰지 않는다. 여기서 현재 값을 읽는 것은 오직
+ *   "이 스냅샷이 낡았는가"를 판정하기 위해서다.
+ *
+ *   근거 버전이 없는 건은 낡았는지 알 수 없다. 알 수 없음을 통과로
+ *   바꾸지 않는다 — 스냅샷을 새로 붙인 뒤 보낸다.
+ *
+ * @param {FirebaseFirestore.DocumentData} att attendance 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} user 근로자 users 문서
+ * @return {string | null} 차단 사유. 최신이면 null.
+ */
+function srvWageSnapshotStaleReason(
+  att: FirebaseFirestore.DocumentData,
+  user: FirebaseFirestore.DocumentData | undefined
+): string | null {
+  const srcAcc =
+    att["wageAccountSourceBankAccountVersion"] as number | undefined;
+  const srcBb =
+    att["wageAccountSourceBankbookDocumentVersion"] as number | undefined;
+  if (typeof srcAcc !== "number" || typeof srcBb !== "number") {
+    return XFER_SNAPSHOT_PROVENANCE_UNKNOWN;
+  }
+  const cur = srvDocumentVersionsOf(user ?? {});
+  if (srcAcc !== cur.account || srcBb !== cur.bankbook) {
+    return XFER_STALE_PAYMENT_SNAPSHOT;
+  }
+  return null;
+}
 
 /**
  * [PII-DOC-R0.2 / INV] 이 급여 건이 지급 가능한 계좌 스냅샷을 갖고 있는가.
@@ -25731,6 +25950,124 @@ function srvWageAccountBlockReason(
   }
   return null;
 }
+
+// ── callableRefreshWagePaymentSnapshot ────────────────────────
+// [PII-DOC-R1.6 §20] 확정된 급여의 **지급 스냅샷만** 현재 계좌로 다시 붙인다.
+//
+//   계좌 문제로 지급이 막힌 급여를 되살리는 정상 경로다. 지급계좌가
+//   바뀌었다는 이유로 급여 확정을 취소하고 임금을 다시 계산하게 만들지
+//   않는다 — 일한 사실과 그 대가는 계좌와 무관하게 이미 정해졌다.
+//
+//   바꾸는 것: 계좌 스냅샷 4필드, 근거 버전, 근거 종류, 차단 표시.
+//   바꾸지 않는 것: 금액, 근태, 시간, 급여 계산, wageStatus.
+export const callableRefreshWagePaymentSnapshot = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, attendanceIds} = request.data as {
+      businessId?: string; attendanceIds?: string[];
+    };
+    if (!businessId || !Array.isArray(attendanceIds) ||
+        attendanceIds.length === 0) {
+      throw new HttpsError(
+        "invalid-argument", "businessId와 attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 100) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 100건까지 처리 가능합니다.");
+    }
+    // [§26] 급여 스냅샷은 canManageWage 권한이다 — 업무·근로자 권한으로 열지 않는다.
+    const {callerData: rfCaller} = await assertBizAdmin(callerUid, businessId);
+    const rfRole = rfCaller?.role as string | undefined;
+    if (rfRole !== "BUSINESS_ADMIN" && rfRole !== "SUPER_ADMIN") {
+      const m = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!perms.canManageWage) {
+        throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+      }
+    }
+
+    const refreshed: string[] = [];
+    const skipped: Record<string, string> = {};
+
+    // 근로자별 판정은 한 번만 — 같은 사람의 여러 건에 같은 답을 쓴다.
+    const attSnaps = await Promise.all(attendanceIds.map((id) =>
+      db.collection("attendance").doc(id).get()));
+    const uids = Array.from(new Set(attSnaps.filter((s) => s.exists)
+      .map((s) => s.data()?.userId as string | undefined)
+      .filter((u): u is string => typeof u === "string" && u.length > 0)));
+    const [userSnaps, reviewSnaps] = await Promise.all([
+      uids.length > 0 ?
+        db.getAll(...uids.map((u) => db.collection("users").doc(u))) : [],
+      uids.length > 0 ?
+        db.getAll(...uids.map((u) => db.collection(BIZ_DOC_REVIEW_COL)
+          .doc(srvBizReviewId(businessId, u)))) : [],
+    ]);
+    const readinessByUid = new Map<string, SrvPayrollReadiness>();
+    const userDataByUid = new Map<string, FirebaseFirestore.DocumentData>();
+    uids.forEach((uid, i) => {
+      const ud = userSnaps[i]?.data();
+      if (ud) userDataByUid.set(uid, ud);
+      readinessByUid.set(uid,
+        srvResolvePayrollReadiness(ud, reviewSnaps[i]?.data()));
+    });
+
+    for (let i = 0; i < attendanceIds.length; i++) {
+      const id = attendanceIds[i];
+      const snap = attSnaps[i];
+      if (!snap.exists) {
+        skipped[id] = XFER_NOT_FOUND;
+        continue;
+      }
+      const d = snap.data() ?? {};
+      if (d.businessId !== businessId) {
+        skipped[id] = XFER_OTHER_BUSINESS; continue;
+      }
+      // [§19] 이미 보낸 돈은 과거 사실이다 — 계좌가 바뀌었다고 다시 열지 않는다.
+      if (d.wageStatus === "transferred") {
+        skipped[id] = "alreadyTransferred"; continue;
+      }
+      if (d.wageStatus !== "confirmed") {
+        skipped[id] = XFER_NOT_CONFIRMED; continue;
+      }
+      if (d.activeInterimSettlementId) {
+        skipped[id] = XFER_SETTLEMENT_LOCKED; continue;
+      }
+      const uid = d.userId as string | undefined;
+      const pr = uid ? readinessByUid.get(uid) : undefined;
+      if (!uid || !pr) {
+        skipped[id] = "unknownWorker";
+        continue;
+      }
+      if (!pr.ready) {
+        skipped[id] = pr.state;
+        continue;
+      }
+
+      const ud = userDataByUid.get(uid) ?? {};
+      await db.collection("attendance").doc(id).update({
+        wageAccountSnapshotVersion: 1,
+        wageAccountBankName: ud["bankName"],
+        wageAccountNumberEncrypted: ud["accountNumber"],
+        wageAccountHolder: ud["accountHolder"],
+        wageAccountSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
+        wageAccountSourceBankAccountVersion: pr.accountVersion,
+        wageAccountSourceBankbookDocumentVersion: pr.bankbookVersion,
+        wagePaymentReadinessSource: pr.source,
+        wageAccountReviewRequired: admin.firestore.FieldValue.delete(),
+        wageAccountReadinessReason: admin.firestore.FieldValue.delete(),
+        wageAccountRefreshedBy: callerUid,
+        wageAccountRefreshedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      refreshed.push(id);
+    }
+
+    // [PARTIAL ≠ SUCCESS] 처리된 건과 건너뛴 건을 사유와 함께 그대로 돌려준다.
+    return {success: true, refreshed, skipped};
+  }
+);
 
 export const callableMarkTransferredBatch = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -25811,6 +26148,21 @@ export const callableMarkTransferredBatch = onCall(
       const snaps = await Promise.all(
         attendanceIds.map(id => tx.get(db.collection("attendance").doc(id)))
       );
+      // [PII-DOC-R1.6] 스냅샷 낡음 판정용 현재 버전 — 쓰기 전에 모두 읽는다.
+      //   같은 트랜잭션 안에서 읽어야 판정과 이체 사이에 계좌가 바뀌지 않는다.
+      const xferUserIds = Array.from(new Set(
+        snaps.filter((s) => s.exists)
+          .map((s) => s.data()?.userId as string | undefined)
+          .filter((u): u is string => typeof u === "string" && u.length > 0)
+      ));
+      const xferUserSnaps = xferUserIds.length > 0 ?
+        await Promise.all(xferUserIds.map((uid) =>
+          tx.get(db.collection("users").doc(uid)))) : [];
+      const xferUserById = new Map<string, FirebaseFirestore.DocumentData>();
+      xferUserSnaps.forEach((s, i) => {
+        const ud = s.data();
+        if (ud) xferUserById.set(xferUserIds[i], ud);
+      });
 
       for (let i = 0; i < attendanceIds.length; i++) {
         const id = attendanceIds[i];
@@ -25888,6 +26240,20 @@ export const callableMarkTransferredBatch = onCall(
           console.error(
             `[markTransferredBatch] 이체 불가 ${id}: ${blockReason}`);
           blocked[id] = blockReason;
+          skipped.push(id);
+          continue;
+        }
+
+        // [PII-DOC-R1.6 §16] 확정 이후 계좌가 바뀌었는지 지금 본다.
+        //   9/10에 A 계좌로 확정하고 9/12에 B로 바꾼 뒤 9/13에 이체하면,
+        //   스냅샷은 여전히 A다. 4필드는 완전하므로 위 판정은 통과한다.
+        //   그 상태로 보내면 근로자가 더는 쓰지 않는 계좌로 돈이 간다.
+        const staleReason = srvWageSnapshotStaleReason(
+          data, xferUserById.get(data.userId as string));
+        if (staleReason) {
+          console.error(
+            `[markTransferredBatch] 이체 불가 ${id}: ${staleReason}`);
+          blocked[id] = staleReason;
           skipped.push(id);
           continue;
         }
