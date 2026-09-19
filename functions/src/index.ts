@@ -26239,6 +26239,257 @@ export const callableGetPayrollReadinessBatch = onCall(
   }
 );
 
+// ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.6.1A] 지급 문맥의 통장사본 수동 확인
+//
+//   BANK_OCR_UNCERTAIN / BANK_UNASSESSED 는 R1.6 정책상 권한자가 원본을
+//   보고 통과시킬 수 있는 상태다. 그런데 기존 수동 검토 경로는 전부
+//   **지원서(applicationId)** 를 요구한다. 근무가 끝나 지원서가 과거가 된
+//   뒤에는 그 문을 열 수 없어서, 정상 fallback이 있는데도 급여가 멈췄다.
+//
+//   그래서 지급 문맥 전용 입구를 좁게 낸다. 검토 truth 자체는 기존
+//   businessApplicantDocumentReviews 를 그대로 쓴다 — 같은 사실을 두
+//   군데에 적지 않는다.
+//
+//   인가는 지원서 상태가 아니라 **실제 급여 관계**로 한다:
+//   이 사업장에 이 근로자의 근태 기록이 있는가.
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 이 호출자가 이 사업장에서 지급 서류를 다룰 수 있는가 — canManageWage.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 사업장
+ * @return {Promise<void>} 권한 없으면 throw
+ */
+async function srvAssertPayrollDocumentAccess(
+  callerUid: string, businessId: string
+): Promise<void> {
+  const {callerData} = await assertBizAdmin(callerUid, businessId);
+  const role = callerData?.role as string | undefined;
+  if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") return;
+  const m = await db.collection("businesses").doc(businessId)
+    .collection("members").doc(callerUid).get();
+  const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+  if (perms.canManageWage !== true) {
+    throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+  }
+}
+
+/**
+ * 이 사업장과 이 근로자 사이에 실제 급여 관계가 있는가.
+ *
+ *   지원서 상태를 묻지 않는다 — 근무가 끝나면 지원서는 과거가 되지만
+ *   지급할 임금은 남는다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} workerUid 근로자
+ * @return {Promise<boolean>} 근태 기록 존재 여부
+ */
+async function srvHasPayrollRelationship(
+  businessId: string, workerUid: string
+): Promise<boolean> {
+  const s = await db.collection("attendance")
+    .where("businessId", "==", businessId)
+    .where("userId", "==", workerUid)
+    .limit(1).get();
+  return !s.empty;
+}
+
+// ── callableGetPayrollBankbookUrl ─────────────────────────────
+// [§8·§9] 관리자가 **명시적으로 확인을 누를 때만** 원본을 연다.
+//   급여 화면이 평소에 원본 URL을 들고 있지 않는다.
+export const callableGetPayrollBankbookUrl = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, targetUid, expectedBankbookVersion} = request.data as {
+      businessId?: string; targetUid?: string;
+      expectedBankbookVersion?: number;
+    };
+    if (!businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
+    }
+    await srvAssertPayrollDocumentAccess(callerUid, businessId);
+    if (!await srvHasPayrollRelationship(businessId, targetUid)) {
+      throw new HttpsError("not-found", "이 사업장의 급여 대상이 아닙니다.");
+    }
+    const workerDoc = await db.collection("users").doc(targetUid).get();
+    if (!workerDoc.exists) {
+      throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+    }
+    const w = workerDoc.data()!;
+    const cur = srvDocumentVersionsOf(w);
+    // [§8] 요청한 버전이 현재 버전일 때만 연다. 화면이 낡은 문서를
+    //   보면서 현재 문서를 판단하는 일이 없게 한다.
+    if (typeof expectedBankbookVersion === "number" &&
+        expectedBankbookVersion !== cur.bankbook) {
+      throw new HttpsError(
+        "aborted", "통장사본이 변경되었습니다. 목록을 새로고침해주세요.");
+    }
+    const storagePath = w["bankbookImagePath"] as string | undefined;
+    if (!storagePath) {
+      throw new HttpsError("not-found", "통장사본이 등록되지 않았습니다.");
+    }
+    if (!srvIsOwnedStoragePath(storagePath, targetUid)) {
+      console.error(
+        `[getPayrollBankbookUrl] 경로 소유자 불일치 — target=${targetUid}`);
+      throw new HttpsError("failed-precondition",
+        "통장사본 파일 경로가 올바르지 않습니다. 근로자에게 재등록을 요청해주세요.");
+    }
+    const file = admin.storage().bucket().file(storagePath);
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "통장사본 파일이 Storage에 존재하지 않습니다.");
+    }
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read", expires: Date.now() + 60 * 60 * 1000,
+    });
+    await db.collection("bankbook_access_logs").add({
+      viewerId: callerUid, targetUserId: targetUid,
+      businessId, purpose: "PAYROLL_REVIEW",
+      bankbookDocumentVersion: cur.bankbook,
+      action: "view_bankbook_image",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {signedUrl, bankbookDocumentVersion: cur.bankbook};
+  }
+);
+
+// ── callableReviewPayrollBankDocument ─────────────────────────
+// [§4·§5·§13·§14] 지급 문맥의 통장사본 판정. 검토 truth 는 기존 컬렉션.
+export const callableReviewPayrollBankDocument = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      businessId, targetUid, decision, note,
+      expectedBankbookVersion, expectedAccountVersion,
+    } = request.data as {
+      businessId?: string; targetUid?: string; decision?: string;
+      note?: string;
+      expectedBankbookVersion?: number; expectedAccountVersion?: number;
+    };
+    if (!businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
+    }
+    // [§13] 기존 canonical decision 만 쓴다 — 새 상태를 만들지 않는다.
+    if (typeof decision !== "string" || !REVIEW_DECISIONS.includes(decision)) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 검토 결과입니다.");
+    }
+    if (typeof expectedBankbookVersion !== "number" ||
+        typeof expectedAccountVersion !== "number") {
+      throw new HttpsError(
+        "invalid-argument", "검토 대상 버전이 필요합니다.");
+    }
+    if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
+      throw new HttpsError("invalid-argument", "메모는 500자 이하여야 합니다.");
+    }
+    await srvAssertPayrollDocumentAccess(callerUid, businessId);
+    if (!await srvHasPayrollRelationship(businessId, targetUid)) {
+      throw new HttpsError("not-found", "이 사업장의 급여 대상이 아닙니다.");
+    }
+
+    const reviewRef = db.collection(BIZ_DOC_REVIEW_COL)
+      .doc(srvBizReviewId(businessId, targetUid));
+    const workerRef = db.collection("users").doc(targetUid);
+    const now = admin.firestore.Timestamp.now();
+
+    // [§18] 화면을 연 뒤 근로자가 계좌·통장사본을 바꿨으면 이 판정은
+    //   더 이상 현재 문서에 대한 것이 아니다. 낡은 판정을 현재로
+    //   기록하지 않는다.
+    const versions = await db.runTransaction(async (tx) => {
+      const [fw, fr] = await Promise.all([
+        tx.get(workerRef), tx.get(reviewRef)]);
+      if (!fw.exists) {
+        throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+      }
+      const cur = srvDocumentVersionsOf(fw.data()!);
+      if (cur.bankbook !== expectedBankbookVersion ||
+          cur.account !== expectedAccountVersion) {
+        throw new HttpsError("aborted",
+          "급여계좌 또는 통장사본이 변경되었습니다. 최신 정보를 다시 확인해주세요.");
+      }
+      const patch: Record<string, unknown> = {
+        businessId, workerUid: targetUid,
+        bankDecision: decision,
+        reviewedBankbookDocumentVersion: cur.bankbook,
+        reviewedBankAccountVersion: cur.account,
+        reviewedBy: callerUid, reviewedAt: now,
+        reviewNote: note ?? null,
+        updatedAt: now,
+        lastReviewContext: "PAYROLL",
+      };
+      if (!fr.exists) {
+        // 반대쪽 축은 손대지 않는다.
+        patch["idDecision"] = REVIEW_NOT_REVIEWED;
+        patch["createdAt"] = now;
+      }
+      tx.set(reviewRef, patch, {merge: true});
+      return cur;
+    });
+
+    // [§14] 자동 판정(bankbookMatchStatus)은 건드리지 않는다.
+    //   사람이 통과시켰다는 사실과 기기가 읽은 결과는 다른 기록이다.
+
+    let correctionOpened = false;
+    if (decision === REVIEW_REUPLOAD_REQUIRED) {
+      // [§15] 관리자 판정이 막다른 길이 되지 않게 한다 — 근로자 할 일로.
+      const reqId = srvPayrollCorrectionId(
+        businessId, targetUid, versions.account, versions.bankbook);
+      const ref = db.collection(DOC_CORRECTION_COL).doc(reqId);
+      correctionOpened = await db.runTransaction(async (tx) => {
+        const fresh = await tx.get(ref);
+        if (fresh.exists &&
+            CORRECTION_LIVE.includes((fresh.get("status") as string) ?? "")) {
+          return false;
+        }
+        tx.set(ref, {
+          businessId, workerUid: targetUid,
+          documentType: DOC_TYPE_BANKBOOK,
+          sourceDomain: CORRECTION_DOMAIN_PAYROLL,
+          status: CORRECTION_OPEN,
+          payrollReadinessState: PR_BANK_UNASSESSED,
+          reasonCode: "OTHER",
+          reasonNote: note ?? "통장사본을 다시 등록해주세요.",
+          requestedBy: callerUid, requestedAt: now,
+          documentVersionAtRequest: versions.bankbook,
+          bankAccountVersionAtRequest: versions.account,
+          resolvedAt: null,
+        });
+        return true;
+      });
+    } else {
+      // 확인 완료면 이 근로자의 열린 지급 보완 요청을 닫는다.
+      try {
+        const open = await db.collection(DOC_CORRECTION_COL)
+          .where("businessId", "==", businessId)
+          .where("workerUid", "==", targetUid)
+          .where("status", "==", CORRECTION_OPEN).limit(10).get();
+        const b = db.batch();
+        let n = 0;
+        open.docs.forEach((d) => {
+          if (d.get("sourceDomain") !== CORRECTION_DOMAIN_PAYROLL) return;
+          b.update(d.ref, {status: CORRECTION_RESOLVED, resolvedAt: now});
+          n++;
+        });
+        if (n > 0) await b.commit();
+      } catch (e) {
+        console.error("[reviewPayrollBankDocument] 보완 요청 정리 실패:", e);
+      }
+    }
+
+    return {
+      success: true,
+      reviewedBankbookDocumentVersion: versions.bankbook,
+      reviewedBankAccountVersion: versions.account,
+      correctionOpened,
+    };
+  }
+);
+
 // ── callableRefreshWagePaymentSnapshot ────────────────────────
 // [PII-DOC-R1.6 §20] 확정된 급여의 **지급 스냅샷만** 현재 계좌로 다시 붙인다.
 //

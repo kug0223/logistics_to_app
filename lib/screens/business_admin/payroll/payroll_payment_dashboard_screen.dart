@@ -44,6 +44,7 @@ import '../../payroll/payslip_period_helper.dart';
 import '../../../services/member_service.dart';             // [BIZCTX-01A]
 import '../../../models/core/business_member_model.dart';  // [BIZCTX-01A] MemberPermissions
 import '../../../services/payroll_readiness_service.dart'; // [PII-DOC-R1.6.1]
+import 'package:cloud_functions/cloud_functions.dart';      // [PII-DOC-R1.6.1A]
 
 class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String businessId;
@@ -475,17 +476,93 @@ class _PayrollPaymentDashboardScreenState
   }
 
   /// 갱신 CTA를 못 쓰는 경우 대신 보여줄 상태 문구. 없으면 null.
+  ///
+  ///   [PII-DOC-R1.6.1A] 권한자가 원본을 보고 풀 수 있는 상태는 여기서
+  ///   빠진다 — 그쪽은 문구가 아니라 실행 가능한 CTA를 받는다.
   String? _payrollWaitLabel(List<AttendanceModel> recs) {
     if (recs.isEmpty) return null;
     final uid = recs.first.userId;
     if (_readinessUnknown.contains(uid)) return '지급 준비 상태 조회 실패';
     final info = _readiness[uid];
     if (info == null || info.ready) return null;
+    if (_needsManualReview(recs)) return null;
     return switch (info.actor) {
       PayrollActor.worker => '근로자 정보 보완 대기',
       PayrollActor.workerOrReview => '통장사본 확인 필요',
       _ => null,
     };
+  }
+
+  /// [PII-DOC-R1.6.1A §10] 권한자가 원본을 보고 판단할 수 있는가.
+  ///
+  ///   자동 판정이 못 읽었거나 사람 검토가 낡은 경우다. 이 화면에
+  ///   들어온 이상 canManageWage는 이미 확인됐다(진입 게이트).
+  bool _needsManualReview(List<AttendanceModel> recs) {
+    if (recs.isEmpty) return false;
+    if (recs.every((r) => r.wageStatus == AttendanceModel.wageTransferred)) {
+      return false; // [§20] 이미 보낸 돈은 다시 열지 않는다
+    }
+    final uid = recs.first.userId;
+    if (_readinessUnknown.contains(uid)) return false;
+    final info = _readiness[uid];
+    return info != null && !info.ready && info.needsManualReview;
+  }
+
+  /// [§9·§11] 관리자가 명시적으로 눌렀을 때만 원본을 열고 판정을 받는다.
+  Future<void> _reviewBankDocument(List<AttendanceModel> recs) async {
+    if (recs.isEmpty) return;
+    final uid = recs.first.userId;
+    final info = _readiness[uid];
+    if (info == null) return;
+    final name = _userBankCache[uid]?['name'] ?? '이름 없음';
+
+    String? url;
+    try {
+      url = await PayrollReadinessService.bankbookUrl(
+        businessId: widget.businessId,
+        targetUid: uid,
+        expectedBankbookVersion: info.bankbookVersion,
+      );
+    } catch (e) {
+      debugPrint('❌ 통장사본 열람 실패: $e');
+      if (mounted) ToastHelper.showError('통장사본을 열지 못했습니다');
+      return;
+    }
+    if (!mounted || url.isEmpty) return;
+
+    final decision = await DialogHelper.showSheet<String>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => _PayrollBankReviewSheet(
+        workerName: name,
+        imageUrl: url!,
+        readiness: info,
+      ),
+    );
+    if (decision == null || !mounted) return;
+
+    try {
+      final r = await PayrollReadinessService.reviewBankDocument(
+        businessId: widget.businessId,
+        targetUid: uid,
+        decision: decision,
+        expectedBankbookVersion: info.bankbookVersion,
+        expectedAccountVersion: info.accountVersion,
+      );
+      if (!mounted) return;
+      ToastHelper.showSuccess(r.correctionOpened
+          ? '근로자에게 통장사본 재등록을 요청했습니다'
+          : '확인 완료했습니다. 지급정보를 갱신하면 이체할 수 있어요');
+      await _loadAllOutstanding();
+    } catch (e) {
+      if (!mounted) return;
+      // 화면을 연 뒤 근로자가 서류를 바꾼 경우 — 낡은 판정은 기록되지 않는다.
+      final msg = e is FirebaseFunctionsException && e.code == 'aborted'
+          ? (e.message ?? '서류가 변경되었습니다. 다시 확인해주세요.')
+          : '검토 결과를 저장하지 못했습니다';
+      ToastHelper.showError(msg);
+      debugPrint('❌ 통장사본 검토 실패: $e');
+    }
   }
 
   /// [§6] 스냅샷만 갱신한다. 금액·근태는 그대로다.
@@ -1780,6 +1857,9 @@ class _PayrollPaymentDashboardScreenState
                       onRefreshSnapshot: _needsSnapshotRefresh(recs)
                           ? () => _refreshSnapshots(recs)
                           : null,
+                      onReviewBankDocument: _needsManualReview(recs)
+                          ? () => _reviewBankDocument(recs)
+                          : null,
                       waitLabel: _payrollWaitLabel(recs),
                     ));
                   },
@@ -2029,6 +2109,10 @@ class _PayrollPaymentDashboardScreenState
                       onRefreshSnapshot: !_batchMode && _needsSnapshotRefresh(recs)
                           ? () => _refreshSnapshots(recs)
                           : null,
+                      onReviewBankDocument:
+                          !_batchMode && _needsManualReview(recs)
+                              ? () => _reviewBankDocument(recs)
+                              : null,
                       waitLabel: !_batchMode ? _payrollWaitLabel(recs) : null,
                     ));
                   },
@@ -2446,6 +2530,9 @@ class _WorkerPayCard extends StatelessWidget {
   /// [PII-DOC-R1.6.1] 스냅샷만 갱신하면 이체 가능한 경우에만 non-null.
   final VoidCallback? onRefreshSnapshot;
 
+  /// [PII-DOC-R1.6.1A] 권한자가 원본을 보고 판단할 수 있을 때만 non-null.
+  final VoidCallback? onReviewBankDocument;
+
   /// 관리자가 풀 수 없는 경우 보여줄 상태 문구.
   final String? waitLabel;
 
@@ -2469,6 +2556,7 @@ class _WorkerPayCard extends StatelessWidget {
     this.onMarkTransferred,
     this.onCardTap,
     this.onRefreshSnapshot,
+    this.onReviewBankDocument,
     this.waitLabel,
   });
 
@@ -2642,10 +2730,32 @@ class _WorkerPayCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 6),
+                            // [PII-DOC-R1.6.1A §10] 자동이 못 읽은 통장사본 —
+                            //   권한자가 원본을 보고 판단할 수 있다.
+                            //   '계좌 인증'이 아니라 '통장사본 확인'이다.
+                            if (!isTransferred && !isBatchMode &&
+                                onReviewBankDocument != null)
+                              SizedBox(
+                                height: 28,
+                                child: OutlinedButton(
+                                  onPressed: onReviewBankDocument,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.infoDark,
+                                    side: const BorderSide(
+                                        color: AppColors.infoDark),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    textStyle: ResponsiveHelper.tinyStyle(context,
+                                        fontWeight: FontWeight.w600),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(6)),
+                                  ),
+                                  child: const Text('통장사본 확인'),
+                                ),
+                              )
                             // [PII-DOC-R1.6.1 §5] 지급정보는 멀쩡한데
                             //   스냅샷만 낡은 건 — 관리자가 풀 수 있다.
                             //   '급여 다시 확정'이 아니라 '지급정보 갱신'이다.
-                            if (!isTransferred && !isBatchMode &&
+                            else if (!isTransferred && !isBatchMode &&
                                 onRefreshSnapshot != null)
                               SizedBox(
                                 height: 28,
@@ -3990,6 +4100,117 @@ class _TransferNoteDialogState extends State<_TransferNoteDialog> {
           child: const Text('확인'),
         ),
       ],
+    );
+  }
+}
+
+/// [PII-DOC-R1.6.1A] 지급 문맥의 통장사본 확인 시트.
+///
+///   여기서 하는 판단은 "이 통장사본이 지금 등록된 계좌의 것인가" 하나다.
+///   지원자 확정도, 공고 상태도, 신분증도 이 자리에 오지 않는다.
+///
+///   금융기관이 계좌를 검증했다는 뜻이 아니다 — 사람이 원본을 봤다는
+///   기록일 뿐이고, 자동 판정(bankbookMatchStatus)은 그대로 남는다.
+class _PayrollBankReviewSheet extends StatelessWidget {
+  const _PayrollBankReviewSheet({
+    required this.workerName,
+    required this.imageUrl,
+    required this.readiness,
+  });
+
+  final String workerName;
+  final String imageUrl;
+  final PayrollReadinessInfo readiness;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('$workerName님 통장사본 확인',
+                style: ResponsiveHelper.subtitleStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text(
+              readiness.reason ?? '자동으로 확인하지 못했습니다.',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey500),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              '등록된 계좌와 같은 계좌인지 확인해주세요. '
+              '계좌 v${readiness.accountVersion} · 통장사본 v${readiness.bankbookVersion}',
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: AppColors.grey400),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.42),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: InteractiveViewer(
+                  child: Image.network(imageUrl, fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Container(
+                            height: 160,
+                            alignment: Alignment.center,
+                            color: AppColors.grey100,
+                            child: Text('이미지를 불러오지 못했습니다',
+                                style: ResponsiveHelper.smallStyle(context,
+                                    color: AppColors.grey500)),
+                          )),
+                ),
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () =>
+                        Navigator.pop(context, 'REUPLOAD_REQUIRED'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.errorFaded,
+                      side: const BorderSide(color: AppColors.errorFaded),
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 13)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('다시 등록 요청'),
+                  ),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, 'REVIEWED_OK'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.infoDark,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 13)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('확인 완료'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

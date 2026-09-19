@@ -58,6 +58,16 @@ class PayrollReadinessInfo {
         reason: m['reason'] as String?,
       );
 
+  /// [PII-DOC-R1.6.1A] 권한자가 원본을 보고 통과시킬 수 있는 상태인가.
+  ///
+  ///   자동이 판단하지 못한 경우다 — 근로자가 다시 올려도 되고
+  ///   권한자가 원본을 봐도 된다. 계좌·통장사본이 아예 없는 경우는
+  ///   여기 들어가지 않는다(볼 문서가 없다).
+  bool get needsManualReview =>
+      state == 'BANK_OCR_UNCERTAIN' ||
+      state == 'BANK_UNASSESSED' ||
+      state == 'STALE_MANUAL_REVIEW';
+
   /// 이 급여 기록의 지급 스냅샷이 **지금** 기준으로 낡았는가.
   ///
   ///   근거 버전이 없으면 낡았는지 알 수 없다 — 갱신 대상으로 본다.
@@ -123,6 +133,49 @@ class PayrollReadinessService {
       debugPrint('❌ 지급 준비 조회 실패: $e');
       return PayrollReadinessBatch.failed;
     }
+  }
+
+  /// [PII-DOC-R1.6.1A] 지급 문맥에서 통장사본 원본을 연다.
+  ///
+  ///   관리자가 명시적으로 확인을 누를 때만 호출한다 — 급여 화면이
+  ///   평소에 원본 URL을 들고 있지 않는다.
+  static Future<String> bankbookUrl({
+    required String businessId,
+    required String targetUid,
+    required int expectedBankbookVersion,
+  }) async {
+    final res = await _fn
+        .httpsCallable('callableGetPayrollBankbookUrl')
+        .call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'targetUid': targetUid,
+      'expectedBankbookVersion': expectedBankbookVersion,
+    });
+    return (res.data['signedUrl'] ?? '') as String;
+  }
+
+  /// 지급 문맥의 통장사본 판정. 기존 canonical decision 만 쓴다.
+  ///
+  /// [decision] 'REVIEWED_OK' | 'REUPLOAD_REQUIRED'
+  static Future<({bool correctionOpened})> reviewBankDocument({
+    required String businessId,
+    required String targetUid,
+    required String decision,
+    required int expectedBankbookVersion,
+    required int expectedAccountVersion,
+    String? note,
+  }) async {
+    final res = await _fn
+        .httpsCallable('callableReviewPayrollBankDocument')
+        .call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'targetUid': targetUid,
+      'decision': decision,
+      'expectedBankbookVersion': expectedBankbookVersion,
+      'expectedAccountVersion': expectedAccountVersion,
+      if (note != null) 'note': note,
+    });
+    return (correctionOpened: res.data['correctionOpened'] == true);
   }
 
   /// 확정된 급여의 지급 스냅샷만 현재 계좌로 갱신한다.
