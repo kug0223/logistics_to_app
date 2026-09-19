@@ -211,27 +211,22 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08A 범위 제한', () {
     test('auto-grant 생성 로직이 그대로다', () {
-      // [CROSS-DOMAIN-R5.2] 생성 로직이 공용 헬퍼로 옮겨졌다 — 초대 수락
-      //   경로가 같은 계약을 쓰기 위해서다. 조건·id·상태는 그대로다.
-      final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
+      // [PII-B4-R1] 원래는 helper 존재·pre_consent 기록을 고정했다.
+      //   확정이 만들던 신분증 auto-grant 자체가 제거됐다.
+      //   확정은 근무 약속이지 신분증 열람 사유가 아니다.
+      //   지금의 계약은 test/tax_identity_review_contract_test.dart.
       final all = _codeOf(source);
-      expect(all.contains(r'`auto_${applicationId}`'), isTrue);
-      expect(all.contains('grantSource: "pre_consent",'), isTrue);
-      expect(all.contains('status: "approved",'), isTrue);
+      expect(all.contains('ensureIdCardGrantForConfirmedApplication'), isFalse);
+      expect(all.contains('grantSource: "pre_consent",'), isFalse);
     });
 
     test('7일 duration이 그대로다', () {
-      // [DS-08B.4] 리터럴이 ID_CARD_ACCESS_WINDOW_MS 상수로 이동했다.
-      // 기준점만 바뀌었고 7일이라는 길이는 유지된다.
-      expect(
-        _codeOf(source).contains(
-            'const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000'),
-        isTrue,
-      );
-      final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
-      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs('), isTrue);
+      // [PII-B4-R1] 7일 창은 확정 auto-grant의 것이었다.
+      //   확정이 만들던 신분증 auto-grant 자체가 제거됐다.
+      //   확정은 근무 약속이지 신분증 열람 사유가 아니다.
+      //   지금의 계약은 test/tax_identity_review_contract_test.dart.
+      final all = _codeOf(source);
+      expect(all.contains('ensureIdCardGrantForConfirmedApplication'), isFalse);
     });
 
     test('통장사본 권한 로직은 건드리지 않았다', () {

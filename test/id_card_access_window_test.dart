@@ -283,8 +283,13 @@ void main() {
     });
 
     test('DS08B4-22 v1 갱신은 새 auto-grant를 만들지 않는다', () {
-      expect(autoRenewal.contains('isDocumentAccessConsentV2(freshData)'), isTrue);
-      expect(signFinalize.contains('isDocumentAccessConsentV2(signAppData)'), isTrue);
+      // [PII-B4-R1] 이제 v1/v2 구분 없이 아무 auto-grant도 만들지 않는다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
+      expect(signFinalize.contains('idCardAccessRequests'), isFalse);
     });
   });
 
@@ -293,34 +298,39 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08B4 공식 배선', () {
     test('헬퍼가 v2에서만 마지막 근무일을 본다', () {
-      final helper = _between(
-        code,
-        'function calcPreConsentIdCardExpiryMs(',
-        'function shortenedPreConsentExpiry(',
-      );
-      expect(helper.contains('isDocumentAccessConsentV2(appData)'), isTrue);
-      expect(helper.contains('actualResignDate'), isTrue);
-      expect(helper.contains('workEndDate'), isTrue);
-      expect(helper.contains('workDate'), isTrue);
-      expect(helper.contains('Math.max(confirmedAtMs, lastWorkMs)'), isTrue);
+      // [PII-B4-R1] 만료 공식 자체가 사라졌다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(code.contains('calcPreConsentIdCardExpiryMs'), isFalse);
+      expect(code.contains('isDocumentAccessConsentV2'), isFalse);
     });
 
     test('확정 경로가 헬퍼를 쓴다', () {
-      // [CROSS-DOMAIN-R5.2] 만료 계산은 공용 grant 헬퍼 안으로 들어갔다.
-      //   확정 경로가 그 헬퍼를 거치므로 같은 공식을 쓴다.
-      expect(confirmApp.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
-      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs(appData,'), isTrue);
+      // [PII-B4-R1] 확정 경로에서 grant 생성이 사라졌다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(confirmApp.contains('idCardAccessRequests'), isFalse);
     });
 
     test('DS08B4-30~32 늦은 업로드 소급 생성도 같은 헬퍼를 쓴다', () {
-      expect(markIdCard.contains('calcPreConsentIdCardExpiryMs('), isTrue);
-      expect(markIdCard.contains('if (expiresAtMs <= nowMs1) continue'), isTrue,
-          reason: '이미 창이 지났으면 생성하지 않는다 (수동 요청 fallback)');
+      // [PII-B4-R1] 늦은 업로드의 소급 생성 경로도 제거됐다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(markIdCard.contains('idCardAccessRequests'), isFalse);
     });
 
     test('소급 생성이 업로드 시각 기준 7일을 새로 계산하지 않는다', () {
-      expect(markIdCard.contains('confirmedAt.toMillis()'), isTrue);
-      expect(markIdCard.contains('const sevenDaysMs'), isFalse);
+      // [PII-B4-R1] 소급 생성 자체가 없으므로 만료 계산도 없다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(markIdCard.contains('idCardAccessRequests'), isFalse);
     });
   });
 
@@ -444,10 +454,13 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08B4-60~65 갱신 auto-grant', () {
     test('DS08B4-60 자동 갱신은 CONFIRMED TX에서 grant를 만든다', () {
+      // [PII-B4-R1] CONFIRMED 전이는 그대로, grant 생성만 사라졌다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
       expect(autoRenewal.contains('status: "CONFIRMED"'), isTrue);
-      expect(autoRenewal.contains('grantSource: "pre_consent"'), isTrue);
-      expect(autoRenewal.contains('renewalHasIdCard'), isTrue);
-      expect(autoRenewal.contains('renewalConsentGiven'), isTrue);
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
 
     test('DS08B4-61 수동 갱신 생성 시점에는 grant가 없다', () {
@@ -457,33 +470,52 @@ void main() {
     });
 
     test('DS08B4-62 서명 완료 전환에서 grant를 만든다', () {
-      expect(signFinalize.contains('grantSource: "pre_consent"'), isTrue);
-      expect(signFinalize.contains('signerHasIdCard'), isTrue);
-      expect(signFinalize.contains('signGrantAlreadyActive'), isTrue,
-          reason: '이미 approved면 덮어쓰지 않는다');
+      // [PII-B4-R1] 계약 서명 전환에서도 grant를 만들지 않는다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(signFinalize.contains('idCardAccessRequests'), isFalse);
     });
 
     test('DS08B4-63 v1 갱신은 제외된다', () {
-      expect(autoRenewal.contains('isDocumentAccessConsentV2(freshData)'), isTrue);
-      expect(signFinalize.contains('isDocumentAccessConsentV2(signAppData)'), isTrue);
+      // [PII-B4-R1] 동의 버전과 무관하게 grant를 만들지 않는다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
+      expect(signFinalize.contains('idCardAccessRequests'), isFalse);
     });
 
     test('DS08B4-64 consent 없으면 만들지 않는다', () {
-      expect(autoRenewal.contains('freshData.documentAccessConsentGiven === true'),
-          isTrue);
-      expect(signFinalize.contains('"documentAccessConsentGiven"] === true'), isTrue);
+      // [PII-B4-R1] 동의 유무와 무관하게 grant를 만들지 않는다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
+      expect(signFinalize.contains('idCardAccessRequests'), isFalse);
     });
 
     test('DS08B4-65 새 application id로 만든다 — old grant 재사용 없음', () {
-      expect(autoRenewal.contains(r'auto_${newAppRef.id}'), isTrue);
-      expect(autoRenewal.contains(r'auto_${doc.id}'), isFalse);
-      expect(signFinalize.contains(r'auto_${id}'), isTrue);
+      // [PII-B4-R1] 새 grant도 옛 grant도 만들지 않는다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
 
     test('갱신 grant 만료는 새 근무 기간으로 계산된다', () {
+      // [PII-B4-R1] 만료를 계산할 grant가 없다. 갱신 기간 자체는 그대로 계산된다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
       expect(autoRenewal.contains('Timestamp.fromDate(newStartDate)'), isTrue);
       expect(autoRenewal.contains('Timestamp.fromDate(newEndDate)'), isTrue);
-      expect(signFinalize.contains('calcPreConsentIdCardExpiryMs(signAppData'), isTrue);
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
   });
 

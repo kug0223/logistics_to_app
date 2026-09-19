@@ -205,61 +205,64 @@ void main() {
 
   group('신분증 grant는 한 곳에서 만든다', () {
     test('공용 헬퍼가 있다', () {
-      expect(
-          cf.contains('async function ensureIdCardGrantForConfirmedApplication('),
-          true);
+      // [PII-B4-R1] 공용 grant 헬퍼가 제거됐다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(cf.contains('ensureIdCardGrantForConfirmedApplication'),
+          isFalse);
     });
 
     // [CROSS-DOMAIN-R5.3E.2] 호출 수(4)로 고정하던 것을 경로 이름으로 바꾼다.
     //   그 숫자는 "확정을 만드는 경로가 전부 grant를 만든다"의 대리값이었고,
     //   경로가 정당하게 늘면(확정 재배치 수락) 계약은 같은데 숫자만 틀렸다.
     test('확정을 만드는 모든 경로가 같은 grant 헬퍼를 쓴다', () {
-      for (final w in const [
-        'callableConfirmApplication',
-        'callableAcceptTOInvitation',
-        'callableAcceptConfirmedReassignment',
-      ]) {
-        expect(
-          _flat(_callableBody(rawCf, w))
-              .contains('ensureIdCardGrantForConfirmedApplication('),
-          true,
-          reason: '$w 에서 빠지면 그 경로로 확정된 근로자만 신분증 접근이 끊긴다',
-        );
+      // [PII-B4-R1] 모든 확정 경로에서 grant 생성이 사라졌다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      for (final n in ['callableConfirmApplication',
+        'callableAcceptTOInvitation']) {
+        expect(_flat(_callableBody(rawCf, n))
+            .contains('idCardAccessRequests'), false, reason: n);
       }
     });
 
     test('결정적 id와 멱등 조건이 헬퍼 안에 있다', () {
-      final i = cf.indexOf('async function ensureIdCardGrantForConfirmedApplication(');
-      final body = cf.substring(i, i + 3200);
-      expect(body.contains('.doc(`auto_\${applicationId}`)'), true);
-      expect(
-          body.contains('if (existingGrant.exists && '
-              'existingGrant.data()?.status === "approved") { return "skipped"; }'),
-          true,
-          reason: '재시도가 grant를 덮어쓰지 않는다');
-      expect(body.contains('grantSource: "pre_consent",'), true);
-      expect(body.contains('requesterId: `business:\${businessId}`,'), true);
-      expect(body.contains('calcPreConsentIdCardExpiryMs('), true,
-          reason: '만료 정책도 한 곳에서');
+      // [PII-B4-R1] 공용 grant 헬퍼가 제거됐다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(cf.contains('ensureIdCardGrantForConfirmedApplication'),
+          isFalse);
     });
 
     test('동의·신분증이 없으면 grant를 만들지 않는다', () {
-      final i = cf.indexOf('async function ensureIdCardGrantForConfirmedApplication(');
-      final body = cf.substring(i, i + 3200);
-      expect(body.contains('if (!consentGiven) return "no_consent";'), true);
-      expect(body.contains('if (!hasIdCard) return "no_id_card";'), true);
+      // [PII-B4-R1] 공용 grant 헬퍼가 제거됐다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(cf.contains('ensureIdCardGrantForConfirmedApplication'),
+          isFalse);
     });
 
     test('grant 실패가 확정을 되돌리지 않는다 (POST_COMMIT)', () {
-      // 두 호출부 모두 try/catch로 감싸고 확정 결과를 유지한다.
-      expect(accept.contains('console.warn("[acceptTOInvitation] ID-CONSENT '
-          'auto-grant 생성 실패 (수락은 완료됨):", e);'), true);
-      expect(cf.contains('console.warn("[confirmApplication] ID-CONSENT '
-          'auto-grant 생성 실패 (확정은 완료됨):", e);'), true);
+      // [PII-B4-R1] 되돌릴 grant 자체가 없다. 확정 mutation 은 그대로다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(_flat(_callableBody(rawCf, 'callableConfirmApplication'))
+          .contains('FieldValue.increment(1)'), true);
     });
 
     test('실패분을 메우는 소급 경로가 남아 있다 (RECONCILABLE)', () {
-      expect(cf.contains('grantSource: "pre_consent_retroactive"'), true);
+      // [PII-B4-R1] 메울 grant 가 없으므로 소급 경로도 제거됐다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(cf.contains('pre_consent_retroactive'), isFalse);
     });
   });
 
@@ -338,9 +341,13 @@ void main() {
     });
 
     test('확정 경로의 grant 조건이 그대로다 (헬퍼로 이동만)', () {
-      final confirm = _flat(_callableBody(rawCf, 'callableConfirmApplication'));
-      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication( applicationId, '
-          'appDataPre, businessId, businessName ?? "", uid);'), true);
+      // [PII-B4-R1] 확정의 grant 조건 자체가 사라졌다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(_flat(_callableBody(rawCf, 'callableConfirmApplication'))
+          .contains('idCardAccessRequests'), false);
     });
   });
 }

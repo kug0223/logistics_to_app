@@ -171,23 +171,21 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08B5-04~05 access formula 무변경', () {
     test('v1은 confirmedAt + 7일 그대로', () {
-      final helper = _between(
-        code,
-        'function calcPreConsentIdCardExpiryMs(',
-        'function shortenedPreConsentExpiry(',
-      );
-      expect(helper.contains('return confirmedAtMs + ID_CARD_ACCESS_WINDOW_MS'),
-          isTrue);
+      // [PII-B4-R1] 만료 공식 자체가 사라졌다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs'), isFalse);
+      expect(_codeOf(source).contains('isDocumentAccessConsentV2'), isFalse);
     });
 
     test('v2는 max(confirmedAt, lastWorkDate) + 7일 그대로', () {
-      final helper = _between(
-        code,
-        'function calcPreConsentIdCardExpiryMs(',
-        'function shortenedPreConsentExpiry(',
-      );
-      expect(helper.contains('Math.max(confirmedAtMs, lastWorkMs)'), isTrue);
-      expect(helper.contains('isDocumentAccessConsentV2(appData)'), isTrue);
+      // [PII-B4-R1] 만료 공식 자체가 사라졌다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs'), isFalse);
+      expect(_codeOf(source).contains('isDocumentAccessConsentV2'), isFalse);
     });
 
     test('7일 duration 무변경', () {
@@ -293,15 +291,15 @@ void main() {
 
   group('DS08B5 범위 제한', () {
     test('auto-grant·조기퇴사·갱신 grant 로직 무변경', () {
-      // [CROSS-DOMAIN-R5.2] grant 생성 로직이 공용 헬퍼로 옮겨졌다 —
-      //   초대 수락 경로가 같은 계약을 쓰기 위해서다. 조건 자체는 그대로다.
-      final confirm =
-          _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
-      final helper = _codeOf(source);
-      expect(helper.contains('grantSource: "pre_consent",'), isTrue);
-      expect(helper.contains('calcPreConsentIdCardExpiryMs(appData,'), isTrue);
-      expect(code.contains('shortenedPreConsentExpiry('), isTrue);
+      // [PII-B4-R1] auto-grant 축만 제거됐다. 동의 버전 계약 자체는 그대로다.
+      //   확정이 만들던 신분증 auto-grant 자체가 제거됐다.
+      //   확정은 근무 약속이지 신분증 열람 사유가 아니다.
+      //   지금의 계약은 test/tax_identity_review_contract_test.dart.
+      final all = _codeOf(source);
+      expect(all.contains('ensureIdCardGrantForConfirmedApplication'), isFalse);
+      expect(all.contains('grantSource: "pre_consent",'), isFalse);
+      // 조기 종료 단축 helper 는 legacy grant 정리용으로 남는다.
+      expect(all.contains('shortenedPreConsentExpiry'), isTrue);
     });
 
     test('권한 축 무변경', () {

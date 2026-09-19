@@ -4,7 +4,6 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -25,10 +24,8 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
-import '../../utils/id_card_helper.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../../utils/image_helper.dart';
-import '../../utils/encryption_helper.dart';
 import 'monthly_review_dialog.dart';
 import 'styled_dialog.dart';
 import '../../models/core/monthly_review_model.dart';
@@ -36,6 +33,7 @@ import '../../models/core/review_request_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../services/applicant_document_review_service.dart';
+import '../../services/tax_identity_review_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
@@ -100,7 +98,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   final FirestoreService _firestoreService = FirestoreService();
   bool _isLoading = true;
   bool _hasChanges = false;  // ⭐ 변경사항 추적 플래그 추가
-  bool _showResidentNumber = false;
+  // [PII-B4-R1] 주민번호 표시 토글 제거 — generic 화면에서 전체값을
+  //   보여주지 않는다. 세무 대조는 전용 확인 시트에서 한다.
   
   // 추가 데이터
   Map<String, dynamic>? _businessHistory;
@@ -114,9 +113,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // 다이얼로그가 열린 상태에서 신분증 열람 권한이 만료/철회되어도 UI에 반영되지 않는 문제.
   // 60초마다 Firestore 재조회로 만료(시간 경과)·철회(상태 변경) 모두 감지한다.
   Timer? _accessRefreshTimer;
-  // ID-1 보안: 직접 URL 대신 CF 발급 1시간 만료 Signed URL 캐시
-  String? _idCardSignedUrl;
-  bool _idCardSignedUrlLoading = false;
+  // [PII-B4-R1] 신분증 Signed URL 캐시 제거 — 다이얼로그가 원본을 들고
+  //   있지 않는다. 확인 시트가 열릴 때만 발급받아 그 안에서만 쓴다.
+  // 세무 identity 확인 상태 (사업장 × 근로자 × 현재 값)
+  TaxIdentityReview? _taxReview;
+  bool _taxReviewLoading = false;
   // [V3 BANKBOOK-SECURE-ACCESS] 통장사본 Signed URL 상태 (1시간 만료, 매 열람 시 재발급)
   bool _bankbookLoading = false;
   // [R1.2] 지원자 서류 검토 상태 — 서버가 계산한 값을 그대로 담는다.
@@ -187,11 +188,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ? ContractService().getByApplication(app.id, businessId: app.businessId)
             : Future.value(null),
 
-        // 7: 신분증 Signed URL 선제 발급 (확정자만, silent=true — checkIdCardAccess와 병렬)
-        //    CF 내부에서 권한 재검증. 권한 없으면 null 반환(토스트 없음). 권한 있으면 즉시 표시 가능
-        widget.isConfirmed
-            ? _firestoreService.getIdCardSignedUrl(widget.user.uid, silent: true)
-            : Future.value(null),
+        // 7: [PII-B4-R1] 신분증 Signed URL 선제 발급 제거.
+        //    다이얼로그를 여는 것은 원본을 볼 이유가 아니다.
+        Future<String?>.value(null),
       ]);
 
       // [R1.2] 확정 전 지원자에게만 — 확정자는 기존 경로를 그대로 쓴다.
@@ -206,21 +205,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _workTime = results[4] as String?;
       _hasWrittenReview = results[5] as bool?;
       _contract = results[6] as EmploymentContractModel?;
-      final preloadedSignedUrl = results[7] as String?;
 
       // [M-10 수정 2026-07-17] Future.wait 완료 후 mounted 체크
       //   dispose 중 Future.wait가 완료되면 타이머가 생성되어 _WorkerDetailDialogState GC 불가 → 메모리 누수
       if (!mounted) return;
-      if (_idCardAccess?.isValidAccess == true) {
-        _startAccessRefreshTimer();
-        if (preloadedSignedUrl != null) {
-          // checkIdCardAccess와 병렬로 이미 발급된 URL — 추가 CF 호출 없이 즉시 사용
-          _idCardSignedUrl = preloadedSignedUrl;
-        } else {
-          // 선제 호출이 null이면 (Signed URL 없음·신분증 미등록 등) 재시도
-          _loadIdCardSignedUrl();
-        }
-      }
+      if (_idCardAccess?.isValidAccess == true) _startAccessRefreshTimer();
+      // [PII-B4-R1 §22] 다이얼로그를 여는 것만으로 원본을 요청하지 않는다.
+      //   확인 상태만 읽는다 — 이미지는 관리자가 누를 때 발급된다.
+      if (widget.isConfirmed) unawaited(_loadTaxIdentityReview());
 
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
@@ -366,16 +358,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     await _loadApplicantDocumentReview();
   }
 
-  Future<void> _loadIdCardSignedUrl() async {
-    if (!mounted) return;
-    setState(() => _idCardSignedUrlLoading = true);
-    final url = await _firestoreService.getIdCardSignedUrl(widget.user.uid);
-    if (!mounted) return;
-    setState(() {
-      _idCardSignedUrl = url;
-      _idCardSignedUrlLoading = false;
-    });
-  }
+  // [PII-B4-R1] _loadIdCardSignedUrl 제거 — 다이얼로그가 원본을 들고
+  //   있지 않는다. 확인 시트가 열릴 때만 발급받는다.
 
   /// [V3 BANKBOOK-SECURE-ACCESS] 통장사본 열람
   /// - 매 호출 시 CF callableGetBankbookSignedUrl로 1시간 Signed URL 발급
@@ -750,37 +734,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
   }
 
-  // H-8: 주민번호 복사 시 감사 로그 기록 (개인정보보호법 접근 기록)
-  // [GAP-ID-02] 클라이언트 Firestore 직접 write → CF 서버 사이드 기록으로 전환.
-  //   악의적 관리자가 로그를 생략하거나 위변조하는 경로 제거.
-  //   주민번호 원문은 CF에서도 기록하지 않음 (WHO/WHOSE/WHERE/WHEN만).
-  // [SEC-LOG-COPY] 로그 실패 시 false 반환 → 호출자가 복사 차단
-  Future<bool> _logResidentNumberCopy() async {
-    try {
-      final userProv = context.read<UserProvider>();
-      final managedIds = userProv.currentUser?.managedBusinessIds;
-      final bizId = widget.businessId ??
-          widget.toItem?.to.businessId ??
-          userProv.effectiveBusinessId ??
-          (managedIds != null && managedIds.isNotEmpty ? managedIds.first : '');
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableLogResidentNumberCopy')
-          .call({'targetUserId': widget.user.uid, 'businessId': bizId});
-      return true;
-    } catch (e) {
-      debugPrint('⚠️ [H-8] 주민번호 복사 감사 로그 기록 실패: $e');
-      if (mounted) ToastHelper.showError('감사 로그 기록 실패로 복사가 중단되었습니다.');
-      return false;
-    }
-  }
-
-  String _formatResidentNumber(String raw) {
-    final cleaned = raw.replaceAll('-', '');
-    if (cleaned.length >= 13) {
-      return '${cleaned.substring(0, 6)}-${cleaned.substring(6)}';
-    }
-    return raw;
-  }
+  // [PII-B4-R1] 주민번호 복사 감사 로그·포맷터 제거 — 복사 기능 자체가
+  //   없어졌다. 대조만 필요하면 복사는 필요하지 않다(§25).
 
   String _getStatusLabel(String status) {
     switch (status) {
@@ -1610,339 +1565,127 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
+  /// [PII-B4-R1] 세무 identity 확인 상태.
+  ///
+  ///   이 섹션이 답하는 질문은 하나다 — 소득신고에 쓸 등록 정보가
+  ///   지금 제출된 신분증과 맞는가. 다이얼로그를 여는 것만으로 원본이
+  ///   열리지 않는다(§22). 관리자가 [신분증 확인]을 누를 때만 연다.
   Widget _buildIdCardContent(BuildContext context) {
-    // 승인된 상태
-    if (_idCardAccess != null && _idCardAccess!.isValidAccess) {
-      return Column(
-        children: [
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              color: AppColors.successBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.verified, color: AppColors.success, size: ResponsiveHelper.iconSize(context, 20)),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '열람 승인됨',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.successDark,
-                        ),
-                      ),
-                      Text(
-                        '${_idCardAccess!.remainingDays ?? 0}일 후 만료',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.success),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          _idCardSignedUrlLoading
-                ? Container(
-                    height: ResponsiveHelper.spacing(context, 150),
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: AppColors.grey100,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Center(child: LoadingWidget()),
-                  )
-                : _idCardSignedUrl != null
-                    ? GestureDetector(
-                        onTap: () => ImageHelper.showFullScreenViewer(
-                          context,
-                          imageUrl: _idCardSignedUrl,
-                          title: '신분증',
-                          // [BUG-ID-01] cacheKey 제거 + noCache:true — disk cache 없이 memory-only
-                          noCache: true,
-                        ),
-                        child: Stack(
-                          children: [
-                            Container(
-                              height: ResponsiveHelper.spacing(context, 150),
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                color: AppColors.grey100,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                // [BUG-ID-01] CachedNetworkImage → Image.network
-                                //   신분증은 persistent disk cache 금지 — memory-only 렌더링.
-                                //   CachedNetworkImage(cacheKey: 'id_card_uid')는 Signed URL
-                                //   만료 후에도 disk에 이미지가 잔류하는 보안 위험이 있음.
-                                child: Image.network(
-                                  _idCardSignedUrl!,
-                                  cacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
-                                  fit: BoxFit.contain,
-                                  loadingBuilder: (context, child, progress) {
-                                    if (progress == null) return child;
-                                    return const LoadingWidget();
-                                  },
-                                  errorBuilder: (context, error, stackTrace) => Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.image_not_supported, color: AppColors.grey400),
-                                        const SizedBox(height: 4),
-                                        TextButton(
-                                          onPressed: _loadIdCardSignedUrl,
-                                          child: const Text('다시 시도'),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              right: 8,
-                              bottom: 8,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Icon(
-                                  Icons.zoom_in,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : Container(
-                        height: ResponsiveHelper.spacing(context, 150),
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: AppColors.grey100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.image_not_supported, color: AppColors.grey400),
-                              const SizedBox(height: 8),
-                              TextButton(
-                                onPressed: _loadIdCardSignedUrl,
-                                child: const Text('이미지 로드'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-          // 주민번호 텍스트 표시 — 이미지만으로 확인이 어려운 경우 보조
-          if (widget.user.residentNumber != null) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.grey50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.grey200),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.badge_outlined, color: AppColors.grey500, size: ResponsiveHelper.iconSize(context, 18)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '주민등록번호',
-                          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                        ),
-                        Text(
-                          _showResidentNumber
-                              ? _formatResidentNumber(widget.user.residentNumber!)
-                              : EncryptionHelper.maskResidentNumber(widget.user.residentNumber),
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      _showResidentNumber ? Icons.visibility_off : Icons.visibility,
-                      color: AppColors.grey500,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                    ),
-                    tooltip: _showResidentNumber ? '번호 숨기기' : '전체 보기',
-                    onPressed: () => setState(() => _showResidentNumber = !_showResidentNumber),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  IconButton(
-                    icon: Icon(Icons.copy, color: AppColors.info, size: ResponsiveHelper.iconSize(context, 20)),
-                    tooltip: '번호 복사',
-                    onPressed: () async {
-                      final logged = await _logResidentNumberCopy();
-                      if (!logged || !mounted) return;
-                      await Clipboard.setData(ClipboardData(text: widget.user.residentNumber!.replaceAll('-', '')));
-                      if (!mounted) return;
-                      ToastHelper.showSuccess('주민번호가 복사되었습니다.');
-                    },
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      );
+    final r = _taxReview;
+    if (_taxReviewLoading && r == null) {
+      return const Center(child: LoadingWidget());
     }
-    
-    // 만료/거절 상태 — 재요청 가능
-    final access = _idCardAccess;
-    if (access != null &&
-        (access.status == IdCardAccessStatus.expired ||
-         (access.status == IdCardAccessStatus.approved && access.isExpired) ||
-         access.status == IdCardAccessStatus.rejected)) {
-      final isExpiredState = access.status != IdCardAccessStatus.rejected;
-      return Container(
-        width: double.infinity,
-        padding: ResponsiveHelper.cardPadding(context),
-        decoration: BoxDecoration(
-          color: isExpiredState ? AppColors.warningBg : AppColors.errorBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: (isExpiredState ? AppColors.warning : AppColors.error).withValues(alpha: 0.3),
-          ),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              isExpiredState ? Icons.timer_off : Icons.block,
-              size: ResponsiveHelper.iconSize(context, 32),
-              color: isExpiredState ? AppColors.warningDark : AppColors.errorDark,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              isExpiredState ? '열람 권한이 만료됐습니다' : '열람 요청이 거절됐습니다',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-                color: isExpiredState ? AppColors.warningDark : AppColors.errorDark,
-              ),
-            ),
-            if (!isExpiredState && access.rejectionReason != null) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                access.rejectionReason!,
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.errorDark),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            SizedBox(
-              width: double.infinity,
-              child: _buildDialogButton(
-                label: '다시 요청하기',
-                icon: Icons.refresh,
-                bgColor: AppColors.infoBg,
-                textColor: AppColors.infoDark,
-                onTap: () => _showIdCardAccessRequestDialog(),
-              ),
-            ),
-          ],
-        ),
-      );
+    if (r == null) {
+      return Text('확인 상태를 불러오지 못했습니다. 다시 시도해주세요.',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500));
+    }
+    if (!r.hasIdDocument) {
+      return Text('신분증이 등록되어 있지 않습니다.',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500));
     }
 
-    // 요청중 상태
-    if (_idCardAccess != null && _idCardAccess!.isPending) {
-      return Container(
-        width: double.infinity,
-        padding: ResponsiveHelper.cardPadding(context),
-        decoration: BoxDecoration(
-          color: AppColors.warningBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
-        ),
-        child: Column(
+    final ok = r.state == TaxReviewState.reviewedOk;
+    final color = ok ? AppColors.successDark : AppColors.warning;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            Icon(Icons.hourglass_top, size: ResponsiveHelper.iconSize(context, 32), color: AppColors.warning),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '열람 요청중',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-                color: AppColors.warningDark,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              '근무자의 승인을 기다리고 있습니다',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.warning),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '요청일: ${DateFormat('MM/dd HH:mm').format(_idCardAccess!.requestedAt)}',
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-            ),
+            Icon(ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                size: 18, color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(r.state.label,
+                style: ResponsiveHelper.smallStyle(context,
+                    color: color, fontWeight: FontWeight.w700)),
           ],
         ),
-      );
-    }
-
-    // 미요청 상태
-    return Container(
-      width: double.infinity,
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        children: [
-          Icon(Icons.lock, size: ResponsiveHelper.iconSize(context, 32), color: AppColors.grey400),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            '신분증 열람 권한이 없습니다',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-          ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        Text(r.state.description,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)),
+        if (ok && r.reviewedAt != null) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '열람 요청 시 근무자의 승인이 필요합니다',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-            textAlign: TextAlign.center,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          SizedBox(
-            width: double.infinity,
-            child: _buildDialogButton(
-              label: '열람 요청',
-              icon: Icons.send_outlined,
-              bgColor: AppColors.infoBg,
-              textColor: AppColors.infoDark,
-              onTap: () => _showIdCardAccessRequestDialog(),
-            ),
-          ),
+          Text('마지막 확인 ${FormatHelper.formatDateDot(r.reviewedAt!)}',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
         ],
-      ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        SizedBox(
+          width: double.infinity,
+          child: _buildDialogButton(
+            label: ok ? '다시 보기' : '신분증 확인',
+            icon: Icons.badge_outlined,
+            bgColor: AppColors.infoBg,
+            textColor: AppColors.infoDark,
+            onTap: _openTaxIdentityReview,
+          ),
+        ),
+      ],
     );
+  }
+
+  /// [§22·§23] 명시적 요청 시에만 원본을 열고, 등록 정보와 나란히 보여준다.
+  Future<void> _openTaxIdentityReview() async {
+    final r = _taxReview;
+    final bizId = widget.application?.businessId ?? widget.businessId;
+    if (r == null || bizId == null || bizId.isEmpty) return;
+
+    String url;
+    try {
+      url = await TaxIdentityReviewService.idCardUrl(
+        businessId: bizId,
+        targetUid: widget.user.uid,
+        expectedIdDocumentVersion: r.idDocumentVersion,
+      );
+    } catch (e) {
+      debugPrint('❌ 신분증 열람 실패: $e');
+      if (mounted) {
+        ToastHelper.showError(e is FirebaseFunctionsException && e.code == 'aborted'
+            ? (e.message ?? '신분증이 변경되었습니다. 다시 시도해주세요.')
+            : '신분증을 열지 못했습니다');
+      }
+      return;
+    }
+    if (!mounted || url.isEmpty) return;
+
+    final decision = await DialogHelper.showSheet<String>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => _TaxIdentityReviewSheet(review: r, imageUrl: url),
+    );
+    if (decision == null || !mounted) return;
+
+    try {
+      final res = await TaxIdentityReviewService.submit(
+        businessId: bizId,
+        targetUid: widget.user.uid,
+        decision: decision,
+        expectedIdDocumentVersion: r.idDocumentVersion,
+        expectedTaxIdentityFingerprint: r.taxIdentityFingerprint,
+      );
+      if (!mounted) return;
+      ToastHelper.showSuccess(res.correctionOpened
+          ? '근로자에게 정보 수정을 요청했습니다'
+          : '확인 완료했습니다');
+      await _loadTaxIdentityReview();
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError(e is FirebaseFunctionsException && e.code == 'aborted'
+          ? (e.message ?? '정보가 변경되었습니다. 다시 확인해주세요.')
+          : '확인 결과를 저장하지 못했습니다');
+      debugPrint('❌ 세무 identity 확인 저장 실패: $e');
+    }
+  }
+
+  Future<void> _loadTaxIdentityReview() async {
+    final bizId = widget.application?.businessId ?? widget.businessId;
+    if (bizId == null || bizId.isEmpty) return;
+    if (mounted) setState(() => _taxReviewLoading = true);
+    final r = await TaxIdentityReviewService.load(
+        businessId: bizId, targetUid: widget.user.uid);
+    if (!mounted) return;
+    setState(() {
+      _taxReview = r;
+      _taxReviewLoading = false;
+    });
   }
 
   /// 공통 섹션 빌더
@@ -2435,74 +2178,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   /// 신분증 열람 요청 다이얼로그
-  Future<void> _showIdCardAccessRequestDialog() async {
-    if (_isLoading) return;
-    final userProvider = context.read<UserProvider>();
-    // [SEC-01] 신분증 요청은 급여 담당 권한자만 가능
-    if (userProvider.checkCurrentBusiness((p) => p.canManageWage) != PermissionCheck.allowed) {
-      ToastHelper.showWarning('신분증 열람 요청 권한이 없습니다.');
-      return;
-    }
-    final currentUser = userProvider.currentUser;
-    if (currentUser == null) {
-      ToastHelper.showError('로그인이 필요합니다');
-      return;
-    }
-
-    setState(() => _isLoading = true);
-    try {
-      final businessId = widget.businessId ?? widget.toItem?.to.businessId;
-      final business = businessId != null
-          ? await _firestoreService.getBusinessById(businessId)
-          : null;
-
-      if (!mounted) return;
-
-      final successCount = await IdCardHelper.showBatchRequestDialog(
-        context: context,
-        firestoreService: _firestoreService,
-        requester: {
-          'uid': currentUser.uid,
-          'name': currentUser.name,
-        },
-        business: {
-          'id': businessId ?? '',
-          'name': business?.name ?? '',
-        },
-        targets: [
-          {
-            'uid': widget.user.uid,
-            'name': widget.user.name,
-            'applicationId': widget.application?.id ?? '',
-          },
-        ],
-      );
-
-      if (successCount > 0 && mounted) {
-        setState(() {
-          _hasChanges = true;
-          _idCardAccess = IdCardAccessRequestModel(
-            id: '',
-            requesterId: currentUser.uid,
-            requesterName: currentUser.name,
-            requesterBusinessId: businessId ?? '',
-            requesterBusinessName: business?.name ?? '',
-            targetUserId: widget.user.uid,
-            targetUserName: widget.user.name,
-            reason: IdCardAccessReason.other,
-            status: IdCardAccessStatus.pending,
-            requestedAt: DateTime.now(),
-          );
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ 신분증 열람 요청 실패: $e');
-      if (mounted) ToastHelper.showError('신분증 열람 요청 중 오류가 발생했습니다');
-    } finally {
-      if (mounted && _isLoading) setState(() => _isLoading = false);
-    }
-  }
+  // [PII-B4-R1] 근로자 상세의 개별 신분증 열람 요청 진입점 제거.
+  //   이 화면의 신분증 섹션은 이제 세무 identity 확인 하나만 다룬다.
+  //   근로자 승인 기반 수동 요청은 지원자 목록의 일괄 요청 경로에 남아 있다.
 
   /// 확정 취소 (CONFIRMED / CONTRACT_PENDING 모두 처리)
   Future<void> _cancelConfirmation() async {
@@ -2906,5 +2584,150 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         ),
       );
     });
+  }
+}
+/// [PII-B4-R1 §23] 세무 identity 대조 시트.
+///
+///   여기서 하는 판단은 하나다 — 소득신고에 쓸 등록 정보가 지금 제출된
+///   신분증과 맞는가. 확정·공고·급여는 이 자리에 오지 않는다.
+///
+///   사람이 두 값을 비교했다는 기록이지 정부기관의 진위 인증이 아니다.
+class _TaxIdentityReviewSheet extends StatelessWidget {
+  const _TaxIdentityReviewSheet({
+    required this.review,
+    required this.imageUrl,
+  });
+
+  final TaxIdentityReview review;
+  final String imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <({String label, String value})>[
+      (label: '등록 성명', value: review.officialName ?? '-'),
+      if ((review.koreanName ?? '').isNotEmpty)
+        (label: '한국 이름', value: review.koreanName!),
+      (
+        label: '생년월일',
+        value: review.birthDate != null
+            ? FormatHelper.formatDateDot(review.birthDate!)
+            : '-'
+      ),
+    ];
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(context, 12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('신분증 정보 확인',
+                style: ResponsiveHelper.subtitleStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text('아래 등록 정보가 신분증과 같은지 확인해주세요.',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey500)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: AppColors.grey50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.grey200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final r in rows) ...[
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: ResponsiveHelper.spacing(context, 72),
+                          child: Text(r.label,
+                              style: ResponsiveHelper.tinyStyle(context,
+                                  color: AppColors.grey500)),
+                        ),
+                        Expanded(
+                          child: Text(r.value,
+                              style: ResponsiveHelper.smallStyle(context,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                    ),
+                    if (r != rows.last)
+                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.38),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: InteractiveViewer(
+                  // 신분증은 disk cache 금지 — memory-only 렌더링.
+                  child: Image.network(imageUrl, fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Container(
+                            height: 160,
+                            alignment: Alignment.center,
+                            color: AppColors.grey100,
+                            child: Text('이미지를 불러오지 못했습니다',
+                                style: ResponsiveHelper.smallStyle(context,
+                                    color: AppColors.grey500)),
+                          )),
+                ),
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () =>
+                        Navigator.pop(context, 'REUPLOAD_REQUIRED'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.errorFaded,
+                      side: const BorderSide(color: AppColors.errorFaded),
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 13)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('정보 수정 요청'),
+                  ),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, 'REVIEWED_OK'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.infoDark,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 13)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('확인 완료'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

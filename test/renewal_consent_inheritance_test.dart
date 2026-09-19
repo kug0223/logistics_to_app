@@ -189,21 +189,12 @@ void main() {
     });
 
     test('버전을 쓰는 곳은 지원 경로뿐이다', () {
-      // [DS-08B.4] 리터럴 → DOCUMENT_ACCESS_CONSENT_V2 상수로 이동.
-      // 갱신은 원본 값을 승계할 뿐 버전을 새로 기록하지 않는다.
-      final code = _codeOf(source);
-      final writes =
-          'documentAccessConsentVersion'.allMatches(code).length;
-      final inherits = RegExp(
-        r'documentAccessConsentVersion:\s*\n?\s*freshData\.documentAccessConsentVersion',
-      ).allMatches(code).length;
-      final constWrites =
-          'DOCUMENT_ACCESS_CONSENT_V2'.allMatches(code).length;
-      expect(inherits, 3,
-          reason: '자동·수동 갱신 승계 2곳 + 자동 갱신 grant 만료 계산 입력 1곳');
-      expect(constWrites, greaterThanOrEqualTo(2),
-          reason: 'callableApplyToTO 신규·재지원 2곳이 상수로 기록');
-      expect(writes, greaterThan(0));
+      // [PII-B4-R1] 버전을 읽던 grant 분기가 사라졌다. 지원 경로 기록은 그대로다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(_codeOf(source).contains('documentAccessConsentVersion'), isTrue);
+      expect(_codeOf(source).contains('isDocumentAccessConsentV2'), isFalse);
     });
   });
 
@@ -212,9 +203,11 @@ void main() {
     // DS-08B.4에서 v2 동의 승계 건에 한해 생성하도록 열었고,
     // v1/legacy cohort는 여전히 생성하지 않는다.
     test('자동 갱신은 v2 동의일 때만 grant를 만든다', () {
-      expect(autoRenewal.contains('isDocumentAccessConsentV2(freshData)'), isTrue,
-          reason: 'v1/legacy에 새 접근 창을 열면 안 된다');
-      expect(autoRenewal.contains('grantSource: "pre_consent"'), isTrue);
+      // [PII-B4-R1] 자동 갱신도 grant 를 만들지 않는다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
 
     test('수동 갱신은 CONTRACT_PENDING 생성 시점에 grant를 만들지 않는다', () {
@@ -224,10 +217,13 @@ void main() {
     });
 
     test('auto-grant 생성은 확정 callable에도 그대로 있다', () {
-      // [CROSS-DOMAIN-R5.2] 공용 헬퍼 경유로 바뀌었다 — 초대 수락도 같은 것을 쓴다.
-      final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
-      expect(_codeOf(source).contains('grantSource: "pre_consent",'), isTrue);
+      // [PII-B4-R1] 갱신·확정 양쪽의 auto-grant가 모두 제거됐다.
+      //   확정이 만들던 신분증 auto-grant 자체가 제거됐다.
+      //   확정은 근무 약속이지 신분증 열람 사유가 아니다.
+      //   지금의 계약은 test/tax_identity_review_contract_test.dart.
+      final all = _codeOf(source);
+      expect(all.contains('ensureIdCardGrantForConfirmedApplication'), isFalse);
+      expect(all.contains('grantSource: "pre_consent",'), isFalse);
     });
   });
 
@@ -324,14 +320,12 @@ void main() {
     });
 
     test('7일 duration이 그대로다', () {
-      // [DS-08B.4] 리터럴이 ID_CARD_ACCESS_WINDOW_MS 상수로 이동했다.
-      // 바뀐 것은 기준점이고 7일이라는 길이는 유지된다.
-      final code = _codeOf(source);
-      expect(code.contains('const ID_CARD_ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000'),
-          isTrue);
-      final confirm = _codeOf(_callableBody(source, 'callableConfirmApplication'));
-      expect(confirm.contains('ensureIdCardGrantForConfirmedApplication('), isTrue);
-      expect(_codeOf(source).contains('calcPreConsentIdCardExpiryMs('), isTrue);
+      // [PII-B4-R1] 7일 창은 확정 auto-grant의 것이었다.
+      //   확정이 만들던 신분증 auto-grant 자체가 제거됐다.
+      //   확정은 근무 약속이지 신분증 열람 사유가 아니다.
+      //   지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(_codeOf(source).contains('ensureIdCardGrantForConfirmedApplication'),
+          isFalse);
     });
   });
 }

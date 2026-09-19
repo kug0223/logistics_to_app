@@ -1004,6 +1004,159 @@ function srvResolvePayrollReadiness(
 }
 
 // ═══════════════════════════════════════════════════════════
+// [PII-B4-R1] 세무 identity 육안 확인
+//
+//   관리자가 신분증 원본을 보는 유일한 실제 이유는 이것이다:
+//   소득신고·원천징수에 쓸 **등록된 성명·생년월일 등 세무 identity**가
+//   지금 제출된 신분증과 맞는지 눈으로 대조하는 것.
+//
+//   ── 확정은 그 이유가 아니다 ────────────────────────────────
+//
+//   근무가 확정됐다는 사실은 "앞으로 확인이 필요해질 수 있는 관계"를
+//   뜻할 뿐, "지금 원본을 볼 이유"가 아니다. 그래서 확정이
+//   무조건 열람 권한을 만들던 구조를 없앴다.
+//
+//   ── 이것은 진위 인증이 아니다 ──────────────────────────────
+//
+//   사람이 두 값을 비교했다는 기록이다. 정부기관이 신분증의 진위를
+//   확인했다는 뜻이 아니므로 "인증 완료"라고 부르지 않는다.
+//
+//   ── 왜 시간 만료가 아닌가 ──────────────────────────────────
+//
+//   신분증과 세무 identity가 그대로인데 30일이 지났다는 이유로 같은
+//   사람을 다시 들여다보게 하는 것은 확인이 아니라 반복이다.
+//   다시 볼 이유는 **내용이 바뀌었을 때** 생긴다.
+// ═══════════════════════════════════════════════════════════
+
+const TAX_REVIEW_PURPOSE = "TAX_IDENTITY_REVIEW";
+
+const TAX_REVIEW_UNREVIEWED = "UNREVIEWED";
+const TAX_REVIEW_OK = "REVIEWED_OK";
+const TAX_REVIEW_REUPLOAD = "REUPLOAD_REQUIRED";
+const TAX_REVIEW_STALE = "STALE";
+
+/**
+ * 세무 identity의 현재 지문.
+ *
+ *   `taxIdentityVersion`이라는 canonical counter는 존재하지 않고,
+ *   이름·생년월일은 근로자가 직접 고칠 수 있다(rules 미차단). 그래서
+ *   카운터를 서버 writer로만 유지하면 그 변경을 놓친다.
+ *   대신 **값 자체에서 파생한 지문**을 쓴다 — 누가 바꾸든 값이 달라지면
+ *   지문이 달라진다. 가짜 버전을 만들지 않는다.
+ *
+ *   주민등록번호는 랜덤 IV로 암호화돼 같은 값도 매번 다른 암호문이 된다.
+ *   그 암호문을 넣으면 무관한 쓰기마다 검토가 낡아 버리므로 **존재 여부**만
+ *   담는다. (신규 수집을 하지 않는 legacy 필드다.)
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} u users 문서
+ * @return {string} sha256 hex
+ */
+function srvTaxIdentityFingerprint(
+  u: FirebaseFirestore.DocumentData | undefined
+): string {
+  const d = u ?? {};
+  const legal = (d["legalName"] as string | undefined) ?? "";
+  const name = (d["name"] as string | undefined) ?? "";
+  const official = legal.length > 0 ? legal : name;
+  const birth = d["birthDate"] as admin.firestore.Timestamp | undefined;
+  const parts = [
+    official.trim(),
+    ((d["koreanName"] as string | undefined) ?? "").trim(),
+    String(birth?.toMillis?.() ?? ""),
+    (d["gender"] as string | undefined) ?? "",
+    (d["foreignIdentityFingerprint"] as string | undefined) ?? "",
+    d["residentNumber"] ? "R1" : "R0",
+  ];
+  return crypto.createHash("sha256")
+    .update(parts.join(" ")).digest("hex");
+}
+
+/** 세무 identity 검토 판정 결과. */
+type SrvTaxIdentityReview = {
+  /** UNREVIEWED | REVIEWED_OK | REUPLOAD_REQUIRED | STALE */
+  state: string;
+  /** 현재 기준 유효한 확인인가. */
+  valid: boolean;
+  reviewedAt: number | null;
+  reviewedBy: string | null;
+  /** 지금 검토 대상이 되는 값들 — 제출 시 그대로 돌려받아 대조한다. */
+  currentIdDocumentVersion: number;
+  currentTaxFingerprint: string;
+};
+
+/**
+ * 이 사업장이 이 근로자의 세무 identity를 확인했는가.
+ *
+ *   Application이 아니라 **사업장 × 근로자 × 현재 신분증 × 현재 세무
+ *   identity**에 대한 사실이다. 같은 사업장에 다시 지원하거나 다른 날짜에
+ *   또 일해도, 값이 그대로면 다시 보지 않는다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} userData 근로자 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} review 이 사업장의 검토 문서
+ * @return {SrvTaxIdentityReview} 판정
+ */
+function srvResolveTaxIdentityReview(
+  userData: FirebaseFirestore.DocumentData | undefined,
+  review: FirebaseFirestore.DocumentData | undefined
+): SrvTaxIdentityReview {
+  const curIdV = srvDocumentVersionsOf(userData ?? {}).id;
+  const curFp = srvTaxIdentityFingerprint(userData);
+  const base = {
+    currentIdDocumentVersion: curIdV,
+    currentTaxFingerprint: curFp,
+    reviewedAt:
+      (review?.["taxIdentityReviewedAt"] as admin.firestore.Timestamp |
+        undefined)?.toMillis?.() ?? null,
+    reviewedBy: (review?.["taxIdentityReviewedBy"] as string | undefined) ?? null,
+  };
+  const decision =
+    (review?.["taxIdentityDecision"] as string | undefined) ?? null;
+  if (!decision) {
+    // [§6·§42] 과거에 일했다는 사실은 확인했다는 뜻이 아니다.
+    //   근무 이력으로 REVIEWED_OK를 추정하지 않는다.
+    return {...base, state: TAX_REVIEW_UNREVIEWED, valid: false};
+  }
+  const rIdV =
+    (review?.["reviewedTaxIdDocumentVersion"] as number | undefined) ?? -1;
+  const rFp =
+    (review?.["reviewedTaxIdentityFingerprint"] as string | undefined) ?? "";
+  if (rIdV !== curIdV || rFp !== curFp) {
+    // 신분증이 바뀌었거나 세무 identity가 바뀌었다 — 그때 본 것은 지금 것이 아니다.
+    return {...base, state: TAX_REVIEW_STALE, valid: false};
+  }
+  if (decision === TAX_REVIEW_REUPLOAD) {
+    return {...base, state: TAX_REVIEW_REUPLOAD, valid: false};
+  }
+  if (decision === TAX_REVIEW_OK) {
+    return {...base, state: TAX_REVIEW_OK, valid: true};
+  }
+  return {...base, state: TAX_REVIEW_UNREVIEWED, valid: false};
+}
+
+/**
+ * 이 사업장과 이 근로자 사이에 실제 관계가 있는가 (지원 또는 근무).
+ *
+ *   지원서 상태를 묻지 않는다 — 검토 사실은 Application 상태와 별개다(§31).
+ *
+ * @param {string} businessId 사업장
+ * @param {string} workerUid 근로자
+ * @return {Promise<boolean>} 관계 존재 여부
+ */
+async function srvHasBusinessWorkerRelationship(
+  businessId: string, workerUid: string
+): Promise<boolean> {
+  const [apps, atts] = await Promise.all([
+    db.collection("applications")
+      .where("businessId", "==", businessId)
+      .where("uid", "==", workerUid).limit(1).get(),
+    db.collection("attendance")
+      .where("businessId", "==", businessId)
+      .where("userId", "==", workerUid).limit(1).get(),
+  ]);
+  return !apps.empty || !atts.empty;
+}
+
+// ═══════════════════════════════════════════════════════════
 // [PII-DOC-R1.6.1] 누가 이 문제를 풀 수 있는가
 //
 //   지급이 막힌 이유가 다르면 풀 사람도 다르다. 모두를 "확인 필요"로
@@ -1068,6 +1221,8 @@ const PAYROLL_CORRECTION_STATES = [
 /** 보완 요청이 어느 문맥에서 나왔는가. */
 const CORRECTION_DOMAIN_APPLICATION = "APPLICATION";
 const CORRECTION_DOMAIN_PAYROLL = "PAYROLL";
+/** [PII-B4-R1] 세무 identity 대조에서 불일치가 나온 경우. */
+const CORRECTION_DOMAIN_TAX = "TAX_IDENTITY";
 
 /**
  * [§9] 같은 사업장·근로자·현재 버전에 대해 요청은 하나다.
@@ -5624,17 +5779,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       const newAppRef = db.collection("applications").doc();
       const renewNotifRef = db.collection("users").doc(app.uid as string).collection("notifications").doc();
 
-      // [DS-08B.4] 갱신 근무관계용 신분증 auto-grant.
-      // 신분증 등록 여부는 경합 대상이 아니므로 TX 밖에서 미리 읽는다.
-      const renewalWorkerSnap = await db
-        .collection("users").doc(app.uid as string).get();
-      const renewalWorkerData = renewalWorkerSnap.data();
-      const renewalHasIdCard =
-        (renewalWorkerData?.idCardImagePath ?? null) !== null ||
-        (renewalWorkerData?.idCardImageUrl ?? null) !== null;
-      // 문서 id는 새 application 기준 — auto_{oldApplicationId} 재사용 금지.
-      const renewalGrantRef = db
-        .collection("idCardAccessRequests").doc(`auto_${newAppRef.id}`);
+      // [PII-B4-R1] 갱신 근무관계용 신분증 auto-grant 제거.
+      //   갱신도 근무 약속이지 신분증 열람 사유가 아니다.
 
       let schedulerCommitted = false;
       await db.runTransaction(async (tx) => {
@@ -5794,44 +5940,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         // TODO: RENEWED 상태 추가 후 이전 application status 전환 필요 (Flutter+CF 동시 배포 필요)
         tx.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
 
-        // [DS-08B.4] 갱신 auto-grant — v2 동의를 승계한 경우에만 생성한다.
-        // v1/legacy는 고지한 범위(확정+7일)를 새 근무관계로 확장하지 않는다.
-        //   → 해당 cohort는 기존대로 수동 요청 fallback을 쓴다.
-        // 접근 창은 새 application의 기간으로 계산한다(원본 기간이 아니다).
-        const renewalConsentGiven =
-          freshData.idCardConsentGiven === true ||
-          freshData.documentAccessConsentGiven === true;
-        if (renewalHasIdCard && renewalConsentGiven &&
-            isDocumentAccessConsentV2(freshData)) {
-          const renewalExpiresAt = admin.firestore.Timestamp.fromMillis(
-            calcPreConsentIdCardExpiryMs(
-              {
-                documentAccessConsentVersion:
-                  freshData.documentAccessConsentVersion,
-                workDate: Timestamp.fromDate(newStartDate),
-                workEndDate: Timestamp.fromDate(newEndDate),
-              },
-              now.toMillis()
-            )
-          );
-          tx.set(renewalGrantRef, {
-            requesterId: `business:${app.businessId}`,
-            requesterName: app.businessName ?? "",
-            requesterBusinessId: app.businessId,
-            requesterBusinessName: app.businessName ?? "",
-            targetUserId: app.uid,
-            targetUserName:
-              (renewalWorkerData?.name as string | undefined) ??
-              (app.applicantName as string | undefined) ?? "",
-            reason: "incomeTax",
-            status: "approved",
-            grantSource: "pre_consent",
-            requestedAt: now,
-            respondedAt: now,
-            expiresAt: renewalExpiresAt,
-            applicationId: newAppRef.id,
-          });
-        }
+        // [PII-B4-R1] 갱신 auto-grant 생성 블록 제거.
+        //   세무 identity 대조가 필요하면 관리자가 명시적으로 요청한다.
         schedulerCommitted = true;
       }); // TX 전체 원자적 처리 — 새 application + 계약서 + 알림 + 기존 상태 변경
       return schedulerCommitted ? "ok" : "skip";
@@ -8075,14 +8185,8 @@ export const callableFinalizeWorkerSignature = onCall(
     // 트랜잭션 재시도 시 동일 타임스탬프 보장 (Timestamp.now()는 재시도마다 달라짐)
     const signedAt = admin.firestore.Timestamp.now();
 
-    // [DS-08B.4] 서명자(=근무자) 신분증 등록 여부 — auto-grant 생성 조건.
-    // 경합 대상이 아니므로 TX 밖에서 미리 읽는다.
-    const signerSnap = await db.collection("users").doc(uid).get();
-    const signerData = signerSnap.data();
-    const signerHasIdCard =
-      (signerData?.idCardImagePath ?? null) !== null ||
-      (signerData?.idCardImageUrl ?? null) !== null;
-    const signerName = signerData?.name as string | undefined;
+    // [PII-B4-R1] 서명자 신분증 등록 여부 조회 제거 — auto-grant가 없어져
+    //   더 이상 필요하지 않다.
 
     try {
       await db.runTransaction(async (tx) => {
@@ -8123,13 +8227,8 @@ export const callableFinalizeWorkerSignature = onCall(
         // [TX-READ-BEFORE-WRITE] Firestore 트랜잭션 규칙: 모든 읽기는 쓰기 전에 완료해야 함.
         // appSnaps를 contractRef 쓰기 이전에 일괄 읽어 규칙 준수.
         const appSnaps = await Promise.all(appRefs.map((ref) => tx.get(ref)));
-        // [DS-08B.4] CONTRACT_PENDING → CONFIRMED 전환 시 신분증 auto-grant 생성.
-        // 수동 계약 갱신이 CONFIRMED에 도달하는 유일한 경로가 여기다.
-        // 멱등성: 이미 approved grant가 있으면 덮어쓰지 않는다.
-        const signGrantRefs = applicationIds.map((id) =>
-          db.collection("idCardAccessRequests").doc(`auto_${id}`));
-        const signGrantSnaps = await Promise.all(
-          signGrantRefs.map((ref) => tx.get(ref)));
+        // [PII-B4-R1] 계약 갱신 CONFIRMED 전환 시 신분증 auto-grant 생성
+        //   블록을 제거했다. 확정은 열람 권한이 아니다.
 
         // ── 모든 읽기 완료 후 쓰기 시작 ──────────────────────────────
         // employment_contracts 완료 처리
@@ -8160,43 +8259,10 @@ export const callableFinalizeWorkerSignature = onCall(
               }),
             });
 
-            // [DS-08B.4] v2 동의 + 신분증 등록 + grant 미보유일 때만 생성.
-            // v1/legacy는 고지 범위를 확장하지 않는다 → 수동 요청 fallback.
-            const signConsentGiven =
-              appData?.["idCardConsentGiven"] === true ||
-              appData?.["documentAccessConsentGiven"] === true;
-            const signGrantExisting = signGrantSnaps[i];
-            const signGrantAlreadyActive =
-              signGrantExisting.exists &&
-              signGrantExisting.data()?.status === "approved";
-            // appData 존재는 위 조건에서 확인됨 (?. 접근이라 narrowing 안 됨)
-            const signAppData = appData as FirebaseFirestore.DocumentData;
-            const signGrantNeeded =
-              signerHasIdCard && signConsentGiven && !signGrantAlreadyActive;
-            if (signGrantNeeded && isDocumentAccessConsentV2(signAppData)) {
-              const signBizId = appData?.["businessId"] as string | undefined;
-              const signBizName =
-                (appData?.["businessName"] as string | undefined) ?? "";
-              tx.set(signGrantRefs[i], {
-                requesterId: `business:${signBizId ?? ""}`,
-                requesterName: signBizName,
-                requesterBusinessId: signBizId ?? "",
-                requesterBusinessName: signBizName,
-                targetUserId: uid,
-                targetUserName:
-                  signerName ??
-                  (appData?.["applicantName"] as string | undefined) ?? "",
-                reason: "incomeTax",
-                status: "approved",
-                grantSource: "pre_consent",
-                requestedAt: signedAt,
-                respondedAt: signedAt,
-                expiresAt: admin.firestore.Timestamp.fromMillis(
-                  calcPreConsentIdCardExpiryMs(signAppData, signedAt.toMillis())
-                ),
-                applicationId: applicationIds[i],
-              });
-            }
+            // [PII-B4-R1] 신분증 auto-grant 생성 제거.
+            //   계약 서명으로 CONFIRMED가 되는 것도 근무 약속이지
+            //   신분증 원본을 볼 이유가 아니다. 세무 identity 대조가
+            //   필요하면 관리자가 명시적으로 요청한다.
           }
         }
       });
@@ -9120,90 +9186,12 @@ export const callableMarkIdCardVerified = onCall(
     // [R1.2] 보완 요청이 열려 있었다면 제출로 넘긴다 (POST_COMMIT).
     await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_ID);
 
-    // [FIX-1] 신분증 업로드 시 누락된 auto-grant 소급 생성
-    // 확정 시점에 신분증 없어서 Grant 생성이 건너뛰어진 Application에 대해 보완 생성.
-    // 업로드 시각 기준으로 새 7일을 계산하지 않는다 — 원래 접근 창을 그대로 쓴다.
-    // [DS-08B.4] 접근 창은 확정 경로와 동일한 동의 버전별 공식을 사용한다.
-    //   v2 → max(confirmedAt, 마지막 근무일) + 7일 / v1·legacy → confirmedAt + 7일
-    // 이미 그 창이 지난 Application은 Grant를 만들지 않는다(수동 요청 fallback).
-    try {
-      const nowMs1 = Date.now();
-
-      // uid 단일 equality 쿼리 (composite index 의존 없음) — 클라이언트 side에서 추가 필터링
-      const allUserAppsSnap = await db.collection("applications")
-        .where("uid", "==", callerUid)
-        .get();
-
-      // 소급 생성 대상 수집: (idCardConsentGiven OR documentAccessConsentGiven) + active confirmed status + 접근기간 미만료
-      const retroGrantTargets: Array<{
-        appId: string;
-        expiresAt: admin.firestore.Timestamp;
-        appData: FirebaseFirestore.DocumentData;
-      }> = [];
-      for (const appDoc of allUserAppsSnap.docs) {
-        const appData = appDoc.data();
-        // [DOCUMENT-CONSENT] documentAccessConsentGiven도 신분증 Grant 근거로 인정 (V3 호환)
-        if (appData["idCardConsentGiven"] !== true && appData["documentAccessConsentGiven"] !== true) continue;
-        const status1 = appData["status"] as string | undefined;
-        if (status1 !== "CONFIRMED" && status1 !== "CONTRACT_PENDING") continue;
-        const confirmedAt = appData["confirmedAt"] as admin.firestore.Timestamp | null;
-        if (!confirmedAt) continue; // confirmedAt 없으면 skip
-        const expiresAtMs = calcPreConsentIdCardExpiryMs(
-          appData, confirmedAt.toMillis());
-        if (expiresAtMs <= nowMs1) continue; // 접근 가능 기간 이미 만료 → Grant 생성 안 함
-        retroGrantTargets.push({
-          appId: appDoc.id,
-          expiresAt: admin.firestore.Timestamp.fromMillis(expiresAtMs),
-          appData,
-        });
-      }
-
-      if (retroGrantTargets.length > 0) {
-        // 기존 Grant 존재 여부 bulk read (set 대상 결정용)
-        const retroGrantSnaps = await Promise.all(
-          retroGrantTargets.map(({appId}) =>
-            db.collection("idCardAccessRequests").doc(`auto_${appId}`).get()
-          )
-        );
-
-        const retroBatch = db.batch();
-        let retroCount = 0;
-        for (let ri = 0; ri < retroGrantTargets.length; ri++) {
-          const {appId, expiresAt, appData} = retroGrantTargets[ri];
-          const existingGrant = retroGrantSnaps[ri];
-          // 이미 approved Grant가 있으면 overwrite 금지
-          if (existingGrant.exists && existingGrant.data()?.status === "approved") continue;
-          // Grant 없거나 revoked 상태인 경우 → 소급 생성 (set으로 완전 교체)
-          const grantRef1 = db.collection("idCardAccessRequests").doc(`auto_${appId}`);
-          const businessId1 = appData["businessId"] as string | undefined;
-          const businessName1 = appData["businessName"] as string | undefined;
-          const workerName1 = (appData["userName"] ?? appData["workerName"]) as string | undefined;
-          retroBatch.set(grantRef1, {
-            requesterId: `business:${businessId1 ?? ""}`,
-            requesterName: businessName1 ?? "",
-            requesterBusinessId: businessId1 ?? "",
-            requesterBusinessName: businessName1 ?? "",
-            targetUserId: callerUid,
-            targetUserName: workerName1 ?? "",
-            reason: "incomeTax",
-            status: "approved",
-            grantSource: "pre_consent_retroactive", // 구분자: 소급 생성 (확정 시 신분증 없었음)
-            requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-            respondedAt: admin.firestore.FieldValue.serverTimestamp(),
-            expiresAt, // 원래 confirmedAt + 7일 기준 유지
-            applicationId: appId,
-          });
-          retroCount++;
-        }
-        if (retroCount > 0) {
-          await retroBatch.commit();
-          console.info(`[markIdCardVerified] ID-CONSENT retroactive grant ${retroCount}개 생성 (uid=${callerUid})`);
-        }
-      }
-    } catch (e) {
-      // retroactive grant 실패는 신분증 등록 자체에 영향 없음 (non-fatal)
-      console.warn("[markIdCardVerified] ID-CONSENT retroactive grant 생성 실패 (무시):", e);
-    }
+    // [PII-B4-R1] 신분증 업로드 시 auto-grant 소급 생성 제거.
+    //
+    //   확정 당시 신분증이 없어 grant가 비었던 건을 나중에 메우는 경로였다.
+    //   메울 grant 자체가 없어졌다 — 확정은 열람 권한을 만들지 않는다.
+    //   새 신분증은 idDocumentVersion을 올리므로, 기존 세무 identity 확인은
+    //   읽는 쪽에서 자동으로 STALE이 된다.
 
     return {success: true};
   }
@@ -15501,69 +15489,10 @@ function resolveDocumentAccessConsentVersion(
   return raw;
 }
 
-/**
- * 새 접근 창 문구(v2)에 동의한 지원서인지.
- * @param {FirebaseFirestore.DocumentData} appData application 문서 데이터
- * @return {boolean} v2 동의 여부
- */
-function isDocumentAccessConsentV2(
-  appData: FirebaseFirestore.DocumentData
-): boolean {
-  return appData["documentAccessConsentVersion"] === DOCUMENT_ACCESS_CONSENT_V2;
-}
+// [PII-B4-R1] isDocumentAccessConsentV2 제거 — v2 한정 grant 분기가 없어졌다.
 
-/**
- * pre_consent auto-grant의 expiresAt(ms).
- *
- * lastWorkDate = actualResignDate ?? workEndDate ?? workDate
- *   단기는 workDate가 곧 종료일, 장기는 workEndDate,
- *   조기 종료가 확정된 뒤에는 actualResignDate가 우선한다.
- * max(confirmedAt, lastWorkDate)를 쓰는 이유: 소급·당일 확정에서
- *   창이 현행(확정+7일)보다 짧아지지 않도록 하한을 둔다.
- *
- * @param {FirebaseFirestore.DocumentData} appData application 문서 데이터
- * @param {number} confirmedAtMs 확정 시각(ms). serverTimestamp가 아직
- *   확정되지 않은 신규 확정 경로에서는 호출자가 현재 시각을 전달한다.
- * @return {number} 접근 창 종료 시각(ms)
- */
-function calcPreConsentIdCardExpiryMs(
-  appData: FirebaseFirestore.DocumentData,
-  confirmedAtMs: number
-): number {
-  if (!isDocumentAccessConsentV2(appData)) {
-    return confirmedAtMs + ID_CARD_ACCESS_WINDOW_MS;
-  }
-  const lastWork =
-    (appData["actualResignDate"] as admin.firestore.Timestamp | undefined) ??
-    (appData["workEndDate"] as admin.firestore.Timestamp | undefined) ??
-    (appData["workDate"] as admin.firestore.Timestamp | undefined);
-  const lastWorkMs = lastWork?.toMillis?.() ?? confirmedAtMs;
-  return Math.max(confirmedAtMs, lastWorkMs) + ID_CARD_ACCESS_WINDOW_MS;
-}
+// [PII-B4-R1] calcPreConsentIdCardExpiryMs 제거 — 만들 grant가 없다.
 
-/**
- * [CROSS-DOMAIN-R5.2] 확정된 Application 하나에 대한 신분증 pre-consent grant.
- *
- * 직접 지원 확정(callableConfirmApplication)과 초대 수락
- * (callableAcceptTOInvitation)은 같은 "근무 확정" 이벤트다. 그런데 grant는
- * 확정 경로에만 있었다 — 초대로 확정된 근로자는 같은 동의를 했는데도
- * 신분증 열람 권한이 서지 않았다. 조건을 두 벌로 베끼지 않도록 여기 한 곳에
- * 둔다.
- *
- * **쓰기 위치**: 좌석 트랜잭션 **밖**이다(POST_COMMIT). 확정 자체를 grant
- * 실패로 되돌리지 않는다는 기존 정책을 그대로 따른다. 대신
- *   · 문서 id가 `auto_${applicationId}`로 결정적이라 재시도가 중복을 만들지 않고,
- *   · 이미 approved면 덮어쓰지 않으며,
- *   · 실패해도 `callableMarkIdCardVerified`의 소급 생성 경로가 나중에 메운다.
- *
- * @param {string} applicationId 확정된 지원서 id
- * @param {FirebaseFirestore.DocumentData} appData 그 지원서 데이터(동의·날짜 판정용)
- * @param {string} businessId 대상 사업장
- * @param {string} businessName 사업장명(알림 문구용)
- * @param {string} workerUid 근로자 uid
- * @return {Promise<"created" | "skipped" | "no_consent" | "no_id_card">}
- *   무엇을 했는지 — 호출부 로깅용.
- */
 /**
  * [CROSS-DOMAIN-R5.3B] 알림 문장에 쓸 근로자 이름.
  *
@@ -15604,67 +15533,12 @@ async function srvResolveApplicantName(
   return "근로자";
 }
 
-async function ensureIdCardGrantForConfirmedApplication(
-  applicationId: string,
-  appData: FirebaseFirestore.DocumentData,
-  businessId: string,
-  businessName: string,
-  workerUid: string
-): Promise<"created" | "skipped" | "no_consent" | "no_id_card"> {
-  const consentGiven =
-    appData["idCardConsentGiven"] === true ||
-    appData["documentAccessConsentGiven"] === true;
-  if (!consentGiven) return "no_consent";
-
-  const workerSnap = await db.collection("users").doc(workerUid).get();
-  const workerData = workerSnap.data();
-  const hasIdCard =
-    (workerData?.idCardImagePath ?? null) !== null ||
-    (workerData?.idCardImageUrl ?? null) !== null;
-  if (!hasIdCard) return "no_id_card";
-
-  const grantRef = db.collection("idCardAccessRequests").doc(`auto_${applicationId}`);
-  const existingGrant = await grantRef.get();
-  if (existingGrant.exists && existingGrant.data()?.status === "approved") {
-    return "skipped";
-  }
-
-  const workerName =
-    (workerData?.name as string | undefined) ??
-    (appData["applicantName"] as string | undefined) ?? "";
-  const expiresAt = admin.firestore.Timestamp.fromMillis(
-    calcPreConsentIdCardExpiryMs(appData, admin.firestore.Timestamp.now().toMillis())
-  );
-  await grantRef.set({
-    requesterId: `business:${businessId}`,
-    requesterName: businessName,
-    requesterBusinessId: businessId,
-    requesterBusinessName: businessName,
-    targetUserId: workerUid,
-    targetUserName: workerName,
-    reason: "incomeTax",
-    status: "approved",
-    grantSource: "pre_consent",
-    requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-    respondedAt: admin.firestore.FieldValue.serverTimestamp(),
-    expiresAt,
-    applicationId,
-  });
-
-  const expiresKST = new Date(expiresAt.toMillis() + 9 * 60 * 60 * 1000);
-  const expireStr = `${expiresKST.getUTCMonth() + 1}월 ${expiresKST.getUTCDate()}일`;
-  await db.collection("users").doc(workerUid).collection("notifications").add({
-    userId: workerUid,
-    type: "idCardConsentGranted",
-    title: "신분증 열람 권한 활성화",
-    body: `[${businessName}] 근무 확정으로 소득신고용 신분증 열람 권한이 활성화되었습니다. ${expireStr}까지 열람할 수 있습니다.`,
-    data: {applicationId, businessId, screen: "applicationDetail"},
-    isRead: false,
-    category: "personal",
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-  return "created";
-}
+// [PII-B4-R1] ensureIdCardGrantForConfirmedApplication 제거.
+//
+//   확정 이벤트가 신분증 열람 권한을 만들던 helper다. 확정은 근무 약속이고,
+//   신분증 원본이 필요한 목적은 세무 identity 대조 하나뿐이라는 것이
+//   PII-B4-R0에서 확인됐다. 그 목적은 이제 관리자가 명시적으로 요청할 때
+//   callableGetTaxIdentityIdCardUrl 이 현재 문서 버전에 묶어 연다.
 
 /**
  * 조기 종료 확정 시 pre_consent auto-grant 만료를 단축한 값.
@@ -15791,6 +15665,22 @@ export const callableGetIdCardSignedUrl = onCall(
       }
 
       if (accessSnap.empty) {
+        throw new HttpsError(
+          "permission-denied",
+          "신분증 열람 권한이 없거나 만료되었습니다."
+        );
+      }
+
+      // [PII-B4-R1 §14] 확정이 자동으로 만들던 generic grant는 더 이상
+      //   열람 근거가 아니다. 남아 있는 legacy 문서를 현재 권한으로
+      //   인정하지 않는다 — 대규모 migration 없이 읽는 쪽에서 닫는다.
+      //
+      //   근로자가 직접 승인한 수동 요청(grantSource 없음)과
+      //   SUPER_ADMIN 경로는 그대로 유효하다.
+      const legacySource =
+        accessSnap.docs[0].data().grantSource as string | undefined;
+      if (typeof legacySource === "string" &&
+          legacySource.startsWith("pre_consent")) {
         throw new HttpsError(
           "permission-denied",
           "신분증 열람 권한이 없거나 만료되었습니다."
@@ -16596,7 +16486,11 @@ export const callableGetUsersBatch = onCall(
     // — 이 CF는 이미 isAdmin/isSubAdmin/isSuperAdmin 검증 통과 후에만 실행됨
     const SENSITIVE_FIELDS = new Set([
       "ci", "residentNumber", "foreignIdNumber",
-      "idCardImageUrl", "signatureBase64", "sealBase64", "bankbookImageUrl",
+      // [PII-B4-R1 §44] 원본 경로도 generic DTO 에 싣지 않는다.
+      //   Storage는 소유자만 읽을 수 있지만, 경로 자체가 문서 존재와
+      //   명명 규칙을 드러낸다. 원본 접근은 전용 callable 만 한다.
+      "idCardImageUrl", "idCardImagePath",
+      "signatureBase64", "sealBase64", "bankbookImageUrl",
       "fcmToken", "fcmTokens",
       "passwordHistory",  // 비밀번호 해시 이력 — 오프라인 딕셔너리 공격에 활용 가능
       "ciHash",           // CI 해시 — 개인식별정보
@@ -16677,7 +16571,11 @@ export const callableGetAllUsers = onCall(
 
     const SENSITIVE_FIELDS = new Set([
       "ci", "residentNumber", "foreignIdNumber",
-      "idCardImageUrl", "signatureBase64", "sealBase64", "bankbookImageUrl",
+      // [PII-B4-R1 §44] 원본 경로도 generic DTO 에 싣지 않는다.
+      //   Storage는 소유자만 읽을 수 있지만, 경로 자체가 문서 존재와
+      //   명명 규칙을 드러낸다. 원본 접근은 전용 callable 만 한다.
+      "idCardImageUrl", "idCardImagePath",
+      "signatureBase64", "sealBase64", "bankbookImageUrl",
       "fcmToken", "fcmTokens",
       "passwordHistory", "ciHash", "phoneHash", "accountNumber",
     ]);
@@ -25435,23 +25333,8 @@ export const callableConfirmApplication = onCall(
     if (alreadyConfirmed) {
       // [CROSS-DOMAIN-R5.2A] 멱등 재호출이 **복구 경로**다.
       //
-      //   grant 쓰기는 좌석 트랜잭션 밖이라(POST_COMMIT), 좌석은 커밋됐는데
-      //   grant만 실패한 상태가 남을 수 있다. 예전에는 이 early return이
-      //   헬퍼보다 앞서 있어서, 다시 눌러도 grant를 만들 기회가 없었다 —
-      //   근로자가 신분증을 다시 올리기 전까지 영영 비어 있었다.
-      //   여기서 같은 헬퍼를 한 번 더 호출한다. 이미 있으면 skip이고,
-      //   좌석·카운터·상태는 건드리지 않는다.
-      try {
-        await ensureIdCardGrantForConfirmedApplication(
-          applicationId,
-          appDataPre,
-          businessId,
-          (appDataPre.businessName as string | undefined) ?? "",
-          (appDataPre.uid as string | undefined) ?? ""
-        );
-      } catch (e) {
-        console.warn("[confirmApplication] 멱등 재호출 grant 복구 실패:", e);
-      }
+      //   [PII-B4-R1] 여기 있던 신분증 grant 복구 호출은 제거했다.
+      //   확정은 더 이상 신분증 열람 권한을 만들지 않는다.
       return {success: true, alreadyConfirmed: true};
     }
 
@@ -25755,25 +25638,18 @@ export const callableConfirmApplication = onCall(
       }
     }
 
-    // ── 8. [ID-CONSENT / DOCUMENT-CONSENT] 사전동의 Auto-Grant 생성 ──
-    // [CROSS-DOMAIN-R5.2] 조건·id·만료·멱등성은 공용 헬퍼가 소유한다.
-    //   초대 수락 경로가 같은 계약을 쓰기 위해서다 — 두 벌로 베끼지 않는다.
-    //   여기는 좌석 트랜잭션 **밖**이다(POST_COMMIT): grant 실패로 확정을
-    //   되돌리지 않는다. 결정적 id로 재시도가 안전하고, 실패분은
-    //   callableMarkIdCardVerified의 소급 생성이 나중에 메운다.
-    try {
-      const grantResult = await ensureIdCardGrantForConfirmedApplication(
-        applicationId, appDataPre, businessId, businessName ?? "", uid);
-      if (grantResult === "created") {
-        console.info(
-          "[confirmApplication] ID-CONSENT auto-grant 생성: " +
-          `app=${applicationId}, worker=${uid}, biz=${businessId}`
-        );
-      }
-    } catch (e) {
-      // Grant 생성 실패는 확정 자체를 롤백하지 않음 (fire-and-forget)
-      console.warn("[confirmApplication] ID-CONSENT auto-grant 생성 실패 (확정은 완료됨):", e);
-    }
+    // ── 8. [PII-B4-R1] 신분증 사전동의 Auto-Grant 제거 ──────────────
+    //
+    //   확정은 "이 사람과 일하기로 했다"는 사실이지 "지금 이 사람의
+    //   신분증 원본을 볼 이유가 있다"는 뜻이 아니었다. 그런데도 확정마다
+    //   7일짜리 열람 권한이 자동으로 섰고, 근로자 상세를 여는 것만으로
+    //   원본이 발급됐다.
+    //
+    //   원본이 실제로 필요한 목적은 하나다 — 등록된 세무 identity와
+    //   현재 신분증을 대조하는 것. 그 목적은 관리자가 명시적으로 요청할
+    //   때 callableGetTaxIdentityIdCardUrl 이 현재 문서 버전에 묶어 연다.
+    //
+    //   좌석·카운터·계약·근태·급여는 이 제거의 영향을 받지 않는다.
 
     const workDateTsForReturn = appDataPre.workDate as admin.firestore.Timestamp | undefined;
     const desiredStartTs = appDataPre.desiredStartDate as admin.firestore.Timestamp | undefined;
@@ -26322,6 +26198,271 @@ async function srvAssertCurrentPayrollPurpose(
   if (q.empty) throw deny();
   return q.docs[0].id;
 }
+
+// ── 세무 identity 검토 — 권한/관계 공통 가드 ───────────────────
+/**
+ * [PII-B4-R1 §26·§27] 이 호출자가 이 사업장에서 세무 identity를 다룰 수 있는가.
+ *
+ *   canonical business authority를 쓴다. `users.businessId`는 legacy hint다 —
+ *   소유자는 그 필드가 비어 있어서, 그 값만 보던 기존 경로에서는 자기
+ *   사업장 근로자인데도 403이 났다(R0 실측).
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 사업장
+ * @return {Promise<void>} 권한 없으면 throw
+ */
+async function srvAssertTaxIdentityAuthority(
+  callerUid: string, businessId: string
+): Promise<void> {
+  const {callerData} = await assertBizAdmin(callerUid, businessId);
+  const role = callerData?.role as string | undefined;
+  if (role === "SUPER_ADMIN") return;
+  const bizSnap = await db.collection("businesses").doc(businessId).get();
+  const biz = bizSnap.data() ?? {};
+  const ownerId = biz["ownerId"] as string | undefined;
+  const adminIds = (biz["adminIds"] as string[] | undefined) ?? [];
+  if (ownerId === callerUid || adminIds.includes(callerUid)) return;
+  const m = await db.collection("businesses").doc(businessId)
+    .collection("members").doc(callerUid).get();
+  const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+  if (perms.canManageWage !== true) {
+    throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+  }
+}
+
+// ── callableGetTaxIdentityReview ──────────────────────────────
+// [§32] 지원서마다 새 검토 상태를 만들지 않는다 — 사업장×근로자 하나를 읽는다.
+export const callableGetTaxIdentityReview = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, targetUid} = request.data as {
+      businessId?: string; targetUid?: string;
+    };
+    if (!businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
+    }
+    await srvAssertTaxIdentityAuthority(callerUid, businessId);
+    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
+      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    }
+    const [u, r] = await Promise.all([
+      db.collection("users").doc(targetUid).get(),
+      db.collection(BIZ_DOC_REVIEW_COL)
+        .doc(srvBizReviewId(businessId, targetUid)).get(),
+    ]);
+    if (!u.exists) throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+    const ud = u.data()!;
+    const tr = srvResolveTaxIdentityReview(ud, r.data());
+    return {
+      state: tr.state,
+      valid: tr.valid,
+      reviewedAtMs: tr.reviewedAt,
+      idDocumentVersion: tr.currentIdDocumentVersion,
+      taxIdentityFingerprint: tr.currentTaxFingerprint,
+      hasIdDocument:
+        (ud["idCardImagePath"] ?? ud["idCardImageUrl"] ?? null) !== null,
+      // 대조 대상 — 원본 이미지는 여기서 주지 않는다(§22).
+      officialName:
+        ((ud["legalName"] as string | undefined) ?? "").length > 0 ?
+          ud["legalName"] : (ud["name"] ?? null),
+      koreanName: ud["koreanName"] ?? null,
+      birthDateMs:
+        (ud["birthDate"] as admin.firestore.Timestamp | undefined)
+          ?.toMillis?.() ?? null,
+    };
+  }
+);
+
+// ── callableGetTaxIdentityIdCardUrl ───────────────────────────
+// [§22·§36] 관리자가 **명시적으로 확인을 누를 때만** 원본을 연다.
+//   그리고 지금 화면이 보고 있는 그 문서일 때만 연다.
+export const callableGetTaxIdentityIdCardUrl = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, targetUid, expectedIdDocumentVersion} =
+      request.data as {
+        businessId?: string; targetUid?: string;
+        expectedIdDocumentVersion?: number;
+      };
+    if (!businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
+    }
+    await srvAssertTaxIdentityAuthority(callerUid, businessId);
+    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
+      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    }
+    const u = await db.collection("users").doc(targetUid).get();
+    if (!u.exists) throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+    const ud = u.data()!;
+    const curIdV = srvDocumentVersionsOf(ud).id;
+    if (typeof expectedIdDocumentVersion === "number" &&
+        expectedIdDocumentVersion !== curIdV) {
+      throw new HttpsError(
+        "aborted", "신분증이 변경되었습니다. 화면을 새로고침해주세요.");
+    }
+    const storagePath = ud["idCardImagePath"] as string | undefined;
+    if (!storagePath) {
+      throw new HttpsError("not-found", "신분증이 등록되지 않았습니다.");
+    }
+    if (!srvIsOwnedStoragePath(storagePath, targetUid)) {
+      console.error(
+        `[getTaxIdentityIdCardUrl] 경로 소유자 불일치 — target=${targetUid}`);
+      throw new HttpsError("failed-precondition",
+        "신분증 파일 경로가 올바르지 않습니다. 근로자에게 재등록을 요청해주세요.");
+    }
+    const file = admin.storage().bucket().file(storagePath);
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "신분증 파일이 Storage에 존재하지 않습니다.");
+    }
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read", expires: Date.now() + 60 * 60 * 1000,
+    });
+    // [§37] 누가·어느 사업장에서·누구의·무슨 목적으로·어느 문서를 봤는지.
+    await db.collection("id_card_copy_logs").add({
+      viewerId: callerUid, targetUserId: targetUid,
+      businessId, purpose: TAX_REVIEW_PURPOSE,
+      idDocumentVersion: curIdV,
+      action: "view_id_card_image",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {signedUrl, idDocumentVersion: curIdV};
+  }
+);
+
+// ── callableReviewTaxIdentity ─────────────────────────────────
+// [§28·§29·§34·§35] 확인 결과를 현재 값 tuple에 묶어 기록한다.
+export const callableReviewTaxIdentity = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      businessId, targetUid, decision, note,
+      expectedIdDocumentVersion, expectedTaxIdentityFingerprint,
+    } = request.data as {
+      businessId?: string; targetUid?: string; decision?: string;
+      note?: string;
+      expectedIdDocumentVersion?: number;
+      expectedTaxIdentityFingerprint?: string;
+    };
+    if (!businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
+    }
+    if (decision !== TAX_REVIEW_OK && decision !== TAX_REVIEW_REUPLOAD) {
+      throw new HttpsError("invalid-argument", "지원하지 않는 검토 결과입니다.");
+    }
+    if (typeof expectedIdDocumentVersion !== "number" ||
+        typeof expectedTaxIdentityFingerprint !== "string") {
+      throw new HttpsError("invalid-argument", "검토 대상 정보가 필요합니다.");
+    }
+    if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
+      throw new HttpsError("invalid-argument", "메모는 500자 이하여야 합니다.");
+    }
+    await srvAssertTaxIdentityAuthority(callerUid, businessId);
+    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
+      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    }
+
+    const reviewRef = db.collection(BIZ_DOC_REVIEW_COL)
+      .doc(srvBizReviewId(businessId, targetUid));
+    const workerRef = db.collection("users").doc(targetUid);
+    const now = admin.firestore.Timestamp.now();
+
+    // [§34·§35] 화면을 연 뒤 신분증이나 세무 identity가 바뀌었으면 이 확인은
+    //   더 이상 현재 값에 대한 것이 아니다. 낡은 확인을 현재로 남기지 않는다.
+    const bound = await db.runTransaction(async (tx) => {
+      const [fw, fr] = await Promise.all([
+        tx.get(workerRef), tx.get(reviewRef)]);
+      if (!fw.exists) {
+        throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
+      }
+      const wd = fw.data()!;
+      const curIdV = srvDocumentVersionsOf(wd).id;
+      const curFp = srvTaxIdentityFingerprint(wd);
+      if (curIdV !== expectedIdDocumentVersion ||
+          curFp !== expectedTaxIdentityFingerprint) {
+        throw new HttpsError("aborted",
+          "신분증 또는 등록 정보가 변경되었습니다. 다시 확인해주세요.");
+      }
+      const patch: Record<string, unknown> = {
+        businessId, workerUid: targetUid,
+        taxIdentityDecision: decision,
+        reviewedTaxIdDocumentVersion: curIdV,
+        reviewedTaxIdentityFingerprint: curFp,
+        taxIdentityReviewedBy: callerUid,
+        taxIdentityReviewedAt: now,
+        taxIdentityReviewPurpose: TAX_REVIEW_PURPOSE,
+        taxIdentityReviewNote: note ?? null,
+        updatedAt: now,
+      };
+      if (!fr.exists) {
+        // 다른 축(지원자 서류 검토)은 건드리지 않는다.
+        patch["idDecision"] = REVIEW_NOT_REVIEWED;
+        patch["bankDecision"] = REVIEW_NOT_REVIEWED;
+        patch["createdAt"] = now;
+      }
+      tx.set(reviewRef, patch, {merge: true});
+      return {idV: curIdV, fp: curFp};
+    });
+
+    // [§30] 불일치면 근로자가 고칠 일로 넘긴다 — 지원 취소나 페널티가 아니다.
+    let correctionOpened = false;
+    if (decision === TAX_REVIEW_REUPLOAD) {
+      const reqId = `${businessId}_${targetUid}_${DOC_TYPE_ID}` +
+        `_${CORRECTION_DOMAIN_TAX}_v${bound.idV}`;
+      const ref = db.collection(DOC_CORRECTION_COL).doc(reqId);
+      correctionOpened = await db.runTransaction(async (tx) => {
+        const fresh = await tx.get(ref);
+        if (fresh.exists &&
+            CORRECTION_LIVE.includes((fresh.get("status") as string) ?? "")) {
+          return false;
+        }
+        tx.set(ref, {
+          businessId, workerUid: targetUid,
+          documentType: DOC_TYPE_ID,
+          sourceDomain: CORRECTION_DOMAIN_TAX,
+          status: CORRECTION_OPEN,
+          reasonCode: "MISMATCH",
+          reasonNote: note ?? "등록 정보와 신분증 정보가 일치하지 않습니다.",
+          requestedBy: callerUid, requestedAt: now,
+          documentVersionAtRequest: bound.idV,
+          resolvedAt: null,
+        });
+        return true;
+      });
+    } else {
+      // 확인 완료면 이 사업장의 열린 세무 보완 요청을 닫는다.
+      try {
+        const open = await db.collection(DOC_CORRECTION_COL)
+          .where("businessId", "==", businessId)
+          .where("workerUid", "==", targetUid)
+          .where("status", "==", CORRECTION_OPEN).limit(10).get();
+        const b = db.batch();
+        let n = 0;
+        open.docs.forEach((d) => {
+          if (d.get("sourceDomain") !== CORRECTION_DOMAIN_TAX) return;
+          b.update(d.ref, {status: CORRECTION_RESOLVED, resolvedAt: now});
+          n++;
+        });
+        if (n > 0) await b.commit();
+      } catch (e) {
+        console.error("[reviewTaxIdentity] 보완 요청 정리 실패:", e);
+      }
+    }
+
+    return {
+      success: true,
+      state: decision,
+      idDocumentVersion: bound.idV,
+      correctionOpened,
+    };
+  }
+);
 
 // ── callableGetPayrollBankbookUrl ─────────────────────────────
 // [§8·§9] 관리자가 **명시적으로 확인을 누를 때만** 원본을 연다.
@@ -32057,19 +32198,7 @@ export const callableAcceptTOInvitation = onCall(
     // ── 2. 상태 검증 ─────────────────────────────────────────────────────────
     const currentStatus = appData.status as string | undefined;
     if (currentStatus === "CONFIRMED") {
-      // [CROSS-DOMAIN-R5.2A] 확정 경로와 같은 이유로, 멱등 재호출이 복구 경로다.
-      //   grant가 이미 있으면 skip. 좌석·카운터·상태는 손대지 않는다.
-      try {
-        await ensureIdCardGrantForConfirmedApplication(
-          applicationId,
-          appData,
-          (appData.businessId as string | undefined) ?? "",
-          (appData.businessName as string | undefined) ?? "",
-          callerUid
-        );
-      } catch (e) {
-        console.warn("[acceptTOInvitation] 멱등 재호출 grant 복구 실패:", e);
-      }
+      // [PII-B4-R1] 신분증 grant 복구 호출 제거 — 확정은 열람 권한이 아니다.
       return {success: true, alreadyConfirmed: true};
     }
     if (currentStatus === "EXPIRED") {
@@ -32664,29 +32793,8 @@ export const callableAcceptTOInvitation = onCall(
       }
     } catch (_) { /* 알림 실패는 수락 결과에 영향 없음 */ }
 
-    // [CROSS-DOMAIN-R5.2] 신분증 pre-consent grant — 확정 경로와 **같은 헬퍼**.
-    //   초대로 확정된 근로자도 같은 동의를 했으므로 같은 접근 창을 얻는다.
-    //   좌석 트랜잭션 밖이다(POST_COMMIT): grant 실패로 확정을 되돌리지
-    //   않는다. 결정적 id라 재시도가 중복을 만들지 않고, 실패분은
-    //   callableMarkIdCardVerified의 소급 생성이 나중에 메운다.
-    try {
-      const acceptGrantResult = await ensureIdCardGrantForConfirmedApplication(
-        applicationId,
-        // 방금 트랜잭션이 세운 동의 값을 그대로 반영해 판정한다.
-        {...appData, documentAccessConsentGiven: true, idCardConsentGiven: true},
-        (appData.businessId as string | undefined) ?? "",
-        (appData.businessName as string | undefined) ?? "",
-        callerUid
-      );
-      if (acceptGrantResult === "created") {
-        console.info(
-          "[acceptTOInvitation] ID-CONSENT auto-grant 생성: " +
-          `app=${applicationId}, worker=${callerUid}`
-        );
-      }
-    } catch (e) {
-      console.warn("[acceptTOInvitation] ID-CONSENT auto-grant 생성 실패 (수락은 완료됨):", e);
-    }
+    // [PII-B4-R1] 신분증 pre-consent grant 제거 — 확정 경로와 같다.
+    //   수락은 근무 약속이지 신분증 열람 사유가 아니다.
 
     return {success: true};
   }
@@ -33864,22 +33972,8 @@ export const callableAcceptConfirmedReassignment = onCall(
       }
     ).catch(() => undefined);
 
-    // 신분증 grant — 확정 경로와 같은 헬퍼 (POST_COMMIT)
-    try {
-      await ensureIdCardGrantForConfirmedApplication(
-        acTargetAppId,
-        {
-          uid: callerUid, status: "CONFIRMED",
-          workDate: acSrcPreData.workDate,
-          documentAccessConsentGiven: true, idCardConsentGiven: true,
-          ...(crConsentVersion !== null ?
-            {documentAccessConsentVersion: crConsentVersion} : {}),
-        },
-        acBizId, (acP.businessName as string | undefined) ?? "", callerUid
-      );
-    } catch (e) {
-      console.warn("[confirmedReassignment] ID-CONSENT grant 실패 (수락은 완료됨):", e);
-    }
+    // [PII-B4-R1] 신분증 grant 제거 — 재배치도 확정과 같다.
+    //   기존 약속을 옮기는 일이 신분증 열람 사유가 되지 않는다.
 
     return {success: true, targetApplicationId: acTargetAppId};
   }

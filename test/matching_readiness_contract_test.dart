@@ -242,10 +242,12 @@ void main() {
     });
 
     test('24 CONFIRMED auto-grant는 이번에 건드리지 않았다 (PII-B4 유지)', () {
-      expect(cf, contains('async function ensureIdCardGrantForConfirmedApplication('));
-      final grant = _flat(_codeOf(_sliceOf(rawCf,
-          'async function ensureIdCardGrantForConfirmedApplication(', '\n}')));
-      expect(grant, isNot(contains('MatchStatus')));
+      // [PII-B4-R1] PII-B4-R1 이 이 auto-grant 를 제거했다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(cf, isNot(contains('ensureIdCardGrantForConfirmedApplication')));
     });
   });
 

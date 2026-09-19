@@ -63,24 +63,21 @@ void main() {
 
   group('멱등 재호출이 grant 복구 경로다', () {
     test('수락 경로 — 멱등 반환 전에 헬퍼를 부른다', () {
-      final at = accept.indexOf('if (currentStatus === "CONFIRMED") {');
-      final helper = accept.indexOf(
-          'await ensureIdCardGrantForConfirmedApplication(', at);
-      final ret = accept.indexOf('return {success: true, alreadyConfirmed: true};', at);
-      expect(at, greaterThan(-1));
-      expect(helper, greaterThan(at));
-      expect(helper < ret, true,
-          reason: '반환이 헬퍼보다 앞서면 복구할 기회가 없다');
+      // [PII-B4-R1] 멱등 복구 대상인 grant가 없다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(accept.contains('idCardAccessRequests'), false);
     });
 
     test('확정 경로 — 멱등 반환 전에 헬퍼를 부른다', () {
-      final at = confirm.indexOf('if (alreadyConfirmed) {');
-      final helper = confirm.indexOf(
-          'await ensureIdCardGrantForConfirmedApplication(', at);
-      final ret = confirm.indexOf('return {success: true, alreadyConfirmed: true};', at);
-      expect(at, greaterThan(-1));
-      expect(helper, greaterThan(at));
-      expect(helper < ret, true);
+      // [PII-B4-R1] 멱등 복구 대상인 grant가 없다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(confirm.contains('idCardAccessRequests'), false);
     });
 
     test('복구 호출이 좌석·상태를 건드리지 않는다', () {
@@ -96,19 +93,22 @@ void main() {
     });
 
     test('복구 실패가 멱등 응답을 막지 않는다', () {
-      expect(accept.contains('console.warn("[acceptTOInvitation] '
-          '멱등 재호출 grant 복구 실패:", e);'), true);
-      expect(confirm.contains('console.warn("[confirmApplication] '
-          '멱등 재호출 grant 복구 실패:", e);'), true);
+      // [PII-B4-R1] 복구할 것이 없다. 멱등 응답은 그대로다.
+      //   확정·초대수락·재배치·계약서명·자동갱신이 만들던 신분증
+      //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
+      //   열람 사유가 아니다. 지금의 계약은
+      //   test/tax_identity_review_contract_test.dart.
+      expect(confirm.contains('alreadyConfirmed: true'), true);
+      expect(accept.contains('alreadyConfirmed: true'), true);
     });
 
     test('헬퍼가 이미 있는 grant를 덮어쓰지 않는다', () {
-      final i = cf.indexOf('async function ensureIdCardGrantForConfirmedApplication(');
-      final body = cf.substring(i, i + 3200);
-      expect(
-          body.contains('if (existingGrant.exists && '
-              'existingGrant.data()?.status === "approved") { return "skipped"; }'),
-          true);
+      // [PII-B4-R1] 공용 grant 헬퍼가 제거됐다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(cf.contains('ensureIdCardGrantForConfirmedApplication'),
+          isFalse);
     });
 
     test('polling·scheduler를 새로 만들지 않았다', () {
@@ -288,18 +288,12 @@ void main() {
     // [CROSS-DOMAIN-R5.3E.2] 호출 수 대신 경로 이름으로 확인한다.
     //   확정을 만드는 경로가 늘어도(확정 재배치 수락) 계약은 같다.
     test('확정을 만드는 모든 경로가 같은 grant 헬퍼를 쓴다', () {
-      for (final w in const [
-        'callableConfirmApplication',
-        'callableAcceptTOInvitation',
-        'callableAcceptConfirmedReassignment',
-      ]) {
-        final a = cf.indexOf('export const $w = onCall(');
-        expect(a >= 0, true, reason: '$w 를 찾지 못함');
-        final b = cf.indexOf('export const ', a + 20);
-        final body = cf.substring(a, b < 0 ? cf.length : b);
-        expect(body.contains('ensureIdCardGrantForConfirmedApplication('), true,
-            reason: '$w 에서 grant가 빠지면 그 경로만 신분증 접근이 끊긴다');
-      }
+      // [PII-B4-R1] 공용 grant 헬퍼가 제거됐다.
+      //   확정 auto-grant 와 그 만료 공식(calcPreConsentIdCardExpiryMs,
+      //   isDocumentAccessConsentV2)이 함께 제거됐다. 계산할 접근 창이
+      //   없다. 지금의 계약은 test/tax_identity_review_contract_test.dart.
+      expect(cf.contains('ensureIdCardGrantForConfirmedApplication'),
+          isFalse);
     });
   });
 }
