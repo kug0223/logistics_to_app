@@ -9764,6 +9764,18 @@ export const callableDeleteBankInfo = onCall(
 
     // 1. Firestore 먼저 업데이트 (실패 시 Storage 건드리지 않음 — 설계 원칙 준수)
     // [BATCH-1B Policy 5] 계좌 삭제 시 BATCH-1A/1B 신규 인증 필드도 함께 초기화
+    //
+    // [PII-DOC-R1.5.5] 삭제는 계좌와 통장사본 **둘 다** 바꾸는 mutation이다.
+    //
+    //   그런데 이 경로만 버전을 올리지 않았다. 사업장의 검토 기록은
+    //   버전 비교로 낡음을 판정하므로, 계좌가 사라졌는데도 예전
+    //   REVIEWED_OK가 최신으로 남았다. 그 결과 급여 확정이 "검토 통과"
+    //   경로를 타고 wageAccountReviewRequired를 **지워** 버렸다 —
+    //   지급할 계좌가 없다는 사실이 아무 데도 남지 않는 침묵이었다.
+    //
+    //   callableUpdateBankAccount와 같은 semantics로 맞춘다: 두 버전을
+    //   함께 올리고, 그 계좌·그 통장사본에 매달린 상태를 같이 정리한다.
+    //   단일 update()는 문서 단위 원자 쓰기다.
     await db.collection("users").doc(callerUid).update({
       bankName: admin.firestore.FieldValue.delete(),
       accountNumber: admin.firestore.FieldValue.delete(),
@@ -9773,6 +9785,19 @@ export const callableDeleteBankInfo = onCall(
       bankVerificationStatus: admin.firestore.FieldValue.delete(), // [Phase 6] legacy data 정리용으로만 유지
       bankbookUploadedAt: admin.firestore.FieldValue.delete(),
       bankVerifiedAt: admin.firestore.FieldValue.delete(),
+      bankVerifiedBy: admin.firestore.FieldValue.delete(),
+      // [R1.5.5] 두 canonical state가 모두 바뀌었다 — 검토는 낡았다.
+      bankAccountVersion: admin.firestore.FieldValue.increment(1),
+      bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
+      // [R1.5.5] 없는 문서에 대한 검토 상태를 남기지 않는다.
+      //   남겨 두면 SUPER_ADMIN 검토 큐에 열 수 없는 행이 생긴다.
+      bankbookDocumentState: admin.firestore.FieldValue.delete(),
+      bankbookSelfCheck: admin.firestore.FieldValue.delete(),
+      bankbookReviewedBy: admin.firestore.FieldValue.delete(),
+      bankbookReviewedAt: admin.firestore.FieldValue.delete(),
+      bankbookReviewNote: admin.firestore.FieldValue.delete(),
+      bankReviewedAt: admin.firestore.FieldValue.delete(),
+      bankReviewedBy: admin.firestore.FieldValue.delete(),
       // [PII-DOC-R1.4] 문서·계좌가 사라졌으면 그에 대한 판정도 사라진다.
       bankbookMatchStatus: admin.firestore.FieldValue.delete(),
       bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
@@ -9780,6 +9805,7 @@ export const callableDeleteBankInfo = onCall(
       bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
       bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
       bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     // 2. Storage 삭제 best-effort (Firestore 성공 후)
@@ -23824,22 +23850,28 @@ export const callableConfirmFinalWage = onCall(
             const accountSnap = attendanceSnapMap[id];
             // [V3] V3 방식으로 처리한 Attendance임을 항상 마킹 (계좌 존재 여부 무관)
             updateData["wageAccountSnapshotVersion"] = 1;
+            const hasFullAccount = !!(
+              accountSnap?.wageAccountBankName &&
+              accountSnap?.wageAccountNumberEncrypted &&
+              accountSnap?.wageAccountHolder
+            );
             // [R1.2] 계좌 검토가 낡아 스냅샷을 만들지 못한 경우를 **말한다**.
             //   급여 금액은 그대로 확정된다 — 일한 사실은 바뀌지 않았다.
             //   이체만 막히고(4필드 미충족), 관리자에게 할 일로 남는다.
             //   Money Error ≠ Zero.
-            if (!accountSnap) {
+            //
+            // [PII-DOC-R1.5.5] 조건을 "스냅샷 객체가 있는가"에서
+            //   "계좌가 실제로 다 있는가"로 바꿨다.
+            //   근로자가 계좌를 지우면 이 map에 **빈 객체**가 들어왔고,
+            //   그것이 truthy라서 "검토 통과"로 읽혀 할 일 표시가 지워졌다.
+            //   계좌 없음은 검토 통과가 아니다.
+            if (!hasFullAccount) {
               updateData["wageAccountReviewRequired"] = true;
             } else {
               updateData["wageAccountReviewRequired"] =
                 admin.firestore.FieldValue.delete();
             }
             if (accountSnap) {
-              const hasFullAccount = !!(
-                accountSnap.wageAccountBankName &&
-                accountSnap.wageAccountNumberEncrypted &&
-                accountSnap.wageAccountHolder
-              );
               if (accountSnap.wageAccountBankName)
                 updateData["wageAccountBankName"] = accountSnap.wageAccountBankName;
               if (accountSnap.wageAccountNumberEncrypted)

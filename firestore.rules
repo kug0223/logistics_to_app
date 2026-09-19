@@ -306,7 +306,30 @@ service cloud.firestore {
                          // [HIGH-1 수정 2026-07-15] SEC-03 코멘트 명시 필드 차단 목록 누락
                          //   callableReportLate / callableAdjustTrustScore / applyRestartProgram CF 전용
                          //   슈퍼어드민 클라이언트가 lateCount 초기화 시 TrustScore 패널티 이력 삭제 효과 발생
-                         'lateCount', 'recentLateCount', 'lateDates', 'totalWorkDays', 'lastRestartAt'
+                         'lateCount', 'recentLateCount', 'lateDates', 'totalWorkDays', 'lastRestartAt',
+                         // [PII-DOC-R1.5.5] 급여계좌·통장사본 canonical state.
+                         //   운영 권한이 있다는 것과 canonical state를 직접
+                         //   고쳐도 된다는 것은 다른 이야기다. 이 필드들은
+                         //   버전으로 검토 freshness를 지탱하므로, 클라이언트
+                         //   SDK에서 직접 쓰면 버전을 되돌려 낡은 검토를
+                         //   최신으로 되살릴 수 있다. 운영 조치는 callable로.
+                         'bankName', 'accountNumber', 'accountHolder',
+                         'bankbookImagePath', 'bankbookImageUrl',
+                         'bankAccountVersion', 'bankbookDocumentVersion',
+                         'idDocumentVersion',
+                         'bankVerificationStatus', 'bankbookUploadedAt',
+                         'bankVerifiedAt', 'bankVerifiedBy',
+                         'bankReviewedAt', 'bankReviewedBy',
+                         'bankbookDocumentState', 'bankbookSelfCheck',
+                         'bankbookReviewedBy', 'bankbookReviewedAt', 'bankbookReviewNote',
+                         'idCardDocumentState', 'idCardSelfCheck',
+                         'bankbookMatchStatus', 'bankbookMatchEvidenceSource',
+                         'bankbookMatchAssurance', 'bankbookMatchDocumentVersion',
+                         'bankbookMatchAccountVersion', 'bankbookMatchEvaluatedAt',
+                         'idCardMatchStatus', 'idCardMatchEvidenceSource',
+                         'idCardMatchAssurance', 'idCardMatchDocumentVersion',
+                         'idCardMatchEvaluatedAt',
+                         'isIdVerified', 'idCardImagePath', 'idCardImageUrl'
                        ]);
 
       // 본인 문서 수정 (role·isBlacklisted·subAdminBusinessIds·businessId·신뢰도 관련 필드 변경 차단)
@@ -529,6 +552,17 @@ service cloud.firestore {
                        // [PII-DOC-R1.4] 가입 시점에 자동 정합성을 주장할 수 없다
                        request.resource.data.get('idCardMatchStatus', null) == null &&
                        request.resource.data.get('bankbookMatchStatus', null) == null &&
+                       // [PII-DOC-R1.5.5] 버전은 canonical callable만 올린다.
+                       //   가입 시 큰 값을 주입하면 이후 검토가 영원히 최신으로
+                       //   보이거나, 반대로 낡은 것처럼 보이게 만들 수 있다.
+                       request.resource.data.get('bankAccountVersion', null) == null &&
+                       request.resource.data.get('bankbookDocumentVersion', null) == null &&
+                       request.resource.data.get('idDocumentVersion', null) == null &&
+                       request.resource.data.get('bankbookMatchDocumentVersion', null) == null &&
+                       request.resource.data.get('bankbookMatchAccountVersion', null) == null &&
+                       request.resource.data.get('idCardMatchDocumentVersion', null) == null &&
+                       request.resource.data.get('bankbookSelfCheck', null) == null &&
+                       request.resource.data.get('idCardSelfCheck', null) == null &&
                        // [HIGH-U3] termsConsentAt/termsConsent: CF callableRecordTermsConsent 전용
                        //   법적 타임스탬프 위조 차단 (Trust Boundary Charter)
                        request.resource.data.get('termsConsentAt', null) == null &&

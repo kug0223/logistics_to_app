@@ -1225,67 +1225,25 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   /// 완료 조건: 계좌정보(은행+계좌번호) + 통장사본 모두 있어야 등록완료
   ///
   /// 6-상태 분기 (verificationStatus 우선, 없으면 문서 존재 여부로 판단):
-  ///   E (확인 필요): bankVerificationStatus == 'mismatch' — 재등록 필요
-  ///   D (확인 완료): bankVerificationStatus == 'verified'
-  ///   C (제출 완료): bankVerificationStatus == 'review_required'
-  ///              [PRODUCT-POLICY] "확인 중" 아님. 정상 제출 완료 상태. 지원 가능.
-  ///   B+ (V3 완료): hasBankAccount && hasBankbookDocument && verificationStatus==null
-  ///              [V3] bankVerificationStatus 폐기 후 신규 등록 계좌의 완료 상태
-  ///   B (계좌만)  : hasBankAccount && !hasBankbookDocument
-  ///   A (미등록)  : !hasBankAccount
+  ///   B+ (등록 완료): hasBankAccount && hasBankbookDocument
+  ///   B (계좌만)   : hasBankAccount && !hasBankbookDocument
+  ///   A (미등록)   : !hasBankAccount
   ///
-  /// ⚠️ 홈 '지원 준비 0/2 1/2 2/2' 완료 카운터 기준:
-  ///    UserModel.hasWageDocumentsReady (hasBankAccount && hasBankbook && !mismatch)
-  ///    → B+ / C / D 모두 준비 완료로 카운트됨
+  /// [PII-DOC-R1.5.5] bankVerificationStatus 기반 3분기('확인 완료' /
+  ///   '제출 완료' / '확인 필요')를 제거했다. 그 필드에는 값을 쓰는 서버
+  ///   코드가 하나도 없다(남은 것은 legacy 정리용 delete뿐). 아무도 만들지
+  ///   않는 값으로 "확인 완료"라고 말하면 하지 않은 확인을 했다고 하는 것이고,
+  ///   "확인 필요"라고 말하면 해결할 수 없는 할 일을 주는 것이다.
+  ///   남는 것은 사실뿐이다 — 등록됐는가.
+  ///   지급 가능 여부의 canonical 판정은 R1.6 Payroll Readiness가 맡는다.
   Widget _buildBankInfoSection(UserModel user) {
     // [V3 FOREIGN HOLDER] user.hasBankAccount getter 사용 — accountHolder 포함
     final hasBankAccount = user.hasBankAccount;
     final hasBankbook = user.hasBankbookDocument;
-    // bankVerificationStatus: null | 'review_required' | 'verified' | 'mismatch'
-    // CF Admin SDK가 제어하는 신뢰 필드 — 클라이언트 직접 쓰기 금지 (Firestore Rules RC 적용)
-    final verificationStatus = user.bankVerificationStatus;
-
-    // ── 상태 분기 ─────────────────────────────────────────────────
-    // [V3] bankVerificationStatus 폐기 → null도 완료 상태일 수 있음 (B+ 상태).
-    // 레거시 계정 호환성을 위해 기존 status 값도 처리.
-    final bool isVerified       = verificationStatus == 'verified';
-    final bool isReviewRequired = verificationStatus == 'review_required';
-    final bool isMismatch       = verificationStatus == 'mismatch';
 
     // ── 우측 상태 뱃지 ────────────────────────────────────────────
     final Widget statusBadge;
-    if (isVerified) {
-      // D: 확인 완료
-      statusBadge = Row(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.check_circle_rounded,
-            color: Color(0xFF22C55E), size: 18),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text('확인 완료',
-            style: ResponsiveHelper.smallStyle(context,
-                color: const Color(0xFF22C55E), fontWeight: FontWeight.w600)),
-      ]);
-    } else if (isReviewRequired) {
-      // C: 제출 완료 — [PRODUCT-POLICY] review_required = 정상 제출 상태 → 지원 가능
-      // "확인 중"(amber ⏳)으로 표시하면 섹션 헤더 초록 ✓와 시각적 충돌 발생
-      statusBadge = Row(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.check_circle_rounded,
-            color: Color(0xFF3B82F6), size: 18),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text('제출 완료',
-            style: ResponsiveHelper.smallStyle(context,
-                color: const Color(0xFF3B82F6), fontWeight: FontWeight.w600)),
-      ]);
-    } else if (isMismatch) {
-      // E: 확인 필요 (error)
-      statusBadge = Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.error_outline_rounded,
-            color: AppColors.errorFaded, size: 16),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text('확인 필요',
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.errorFaded, fontWeight: FontWeight.w600)),
-      ]);
-    } else if (hasBankAccount && hasBankbook) {
+    if (hasBankAccount && hasBankbook) {
       // B+: 계좌 + 통장사본 제출 완료.
       //   [DOCUMENT-VERIFICATION-INTEGRITY-R0] 여기가 '등록완료' 초록 체크였다.
       //   제출은 확인이 아니다 — 서버가 기록한 상태를 그대로 말한다.
@@ -1309,15 +1267,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     // accountNumber는 AES-CBC 암호화 저장 → 복호화 불가 → 전체 노출 금지
     // bankName은 평문 저장 → 표시 가능
     final String subText;
-    if (isMismatch) {
-      subText = '계좌정보를 확인하고 다시 제출해주세요';
-    } else if (isReviewRequired) {
-      // [PRODUCT-POLICY] "확인하고 있어요" → 기다려야 하는 인상 제거
-      // verified와 동일하게 은행명 표시 (준비 완료 상태)
-      subText = user.bankName ?? '급여 계좌 등록됨';
-    } else if (isVerified) {
-      subText = user.bankName ?? '급여 계좌';
-    } else if (hasBankAccount && hasBankbook) {
+    if (hasBankAccount && hasBankbook) {
       // B+: V3 완료 — 은행명만 표시 (통장사본 포함 등록 완료)
       subText = user.bankName ?? '급여 계좌 등록됨';
     } else if (hasBankAccount) {
@@ -1362,9 +1312,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                             .copyWith(fontWeight: FontWeight.w600)),
                     Text(subText,
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: isMismatch
-                                ? AppColors.errorFaded
-                                : AppColors.grey500)),
+                            color: AppColors.grey500)),
                   ],
                 ),
               ),
@@ -1382,88 +1330,12 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           ),
 
           // ── CTA ────────────────────────────────────────────────────
-          if (isVerified)
-            // D: 확인 완료 — 수정 / 삭제
-            Row(
-              children: [
-                TextButton(
-                  onPressed: _isLoading ? null : _showBankEditDialog,
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.grey600,
-                  ),
-                  child: Text('수정하기',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey600,
-                          fontWeight: FontWeight.w500)),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: _isLoading ? null : _deleteBankInfo,
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.errorFaded,
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.delete_outline, size: 13),
-                    const SizedBox(width: 3),
-                    Text('삭제',
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.errorFaded,
-                            fontWeight: FontWeight.w500)),
-                  ]),
-                ),
-              ],
-            )
-          else if (isMismatch)
-            // E: 확인 필요 — 계좌정보 수정 유도
-            _flatPrimaryButton(
-              text: '계좌정보 수정하기',
-              onPressed: _isLoading ? null : _showBankEditDialog,
-              icon: Icons.edit_outlined,
-            )
-          else if (isReviewRequired)
-            // C: 제출 완료 — [PRODUCT-POLICY] 안내 없이 선택적 재제출/계좌 수정 옵션만 제공
-            // "검토 후 확인 여부를 안내해 드릴게요" 같이 기다리는 인상을 주는 텍스트 제거
-            //   재제출: callableMarkBankbookVerified 재호출 → 새 이미지로 review_required 유지 (안전)
-            //   계좌 수정: callableUpdateBankAccount → 계좌 변경 + 상태 초기화 (안전)
-            Row(
-              children: [
-                TextButton(
-                  onPressed: _isLoading ? null : _uploadBankbookImage,
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.grey600,
-                  ),
-                  child: Text('통장사본 다시 제출',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey600,
-                          fontWeight: FontWeight.w500)),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: _isLoading ? null : _showBankEditDialog,
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: AppColors.grey600,
-                  ),
-                  child: Text('계좌 수정',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey600,
-                          fontWeight: FontWeight.w500)),
-                ),
-              ],
-            )
-          else if (hasBankAccount && hasBankbook)
-            // B+: V3 완료 상태 — 계좌 변경 / 전체 삭제 경량 행 (큰 CTA 제거)
+          // [PII-DOC-R1.5.5] isVerified / isMismatch / isReviewRequired
+          //   세 분기를 제거했다. 모두 bankVerificationStatus 값에 걸려
+          //   있었고 그 값을 만드는 서버 코드가 없어 도달 불가였다.
+          //   isVerified 분기의 CTA는 아래 등록 완료 분기와 동일했다.
+          if (hasBankAccount && hasBankbook)
+            // 등록 완료 — 계좌 변경 / 전체 삭제 경량 행
             Row(
               children: [
                 TextButton(
