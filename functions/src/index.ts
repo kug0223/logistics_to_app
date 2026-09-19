@@ -26277,23 +26277,50 @@ async function srvAssertPayrollDocumentAccess(
 }
 
 /**
- * 이 사업장과 이 근로자 사이에 실제 급여 관계가 있는가.
+ * [PII-DOC-R1.6.1B] 지금 이 근로자의 지급 서류를 볼 **이유**가 있는가.
  *
- *   지원서 상태를 묻지 않는다 — 근무가 끝나면 지원서는 과거가 되지만
- *   지급할 임금은 남는다.
+ *   R1.6.1A는 "이 사업장에 이 근로자의 근태가 하나라도 있는가"만 물었다.
+ *   그러면 작년에 하루 일하고 급여도 이미 받아 간 사람의 **현재** 통장사본을
+ *   그 사업장 급여 담당자가 언제든 열 수 있다. 권한은 맞지만 이유가 없다.
+ *
+ *   민감문서 접근은 권한만으로 서지 않는다 — 목적이 함께 있어야 한다.
+ *   여기서 목적은 하나다: **지금 지급해야 할 임금이 남아 있다.**
+ *
+ *   이미 이체된 급여는 과거 사실이고, 그 사실은 attendance의 지급 스냅샷이
+ *   이미 갖고 있다. 과거를 확인하려고 현재 문서를 열 이유가 없다.
  *
  * @param {string} businessId 사업장
  * @param {string} workerUid 근로자
- * @return {Promise<boolean>} 근태 기록 존재 여부
+ * @param {string | undefined} attendanceId 호출자가 지목한 급여 건.
+ *   주어지면 **그 건**이 목적을 만족하는지 본다. 화면이 보고 있는 행과
+ *   서버가 허용하는 이유가 같은 것을 가리키게 하기 위해서다.
+ * @return {Promise<string | null>} 목적을 만든 급여 건 id. 없으면 throw.
  */
-async function srvHasPayrollRelationship(
-  businessId: string, workerUid: string
-): Promise<boolean> {
-  const s = await db.collection("attendance")
+async function srvAssertCurrentPayrollPurpose(
+  businessId: string, workerUid: string, attendanceId?: string
+): Promise<string | null> {
+  const deny = () => new HttpsError(
+    "permission-denied",
+    "지금 지급할 급여가 없어 지급 서류를 확인할 수 없습니다.");
+
+  if (attendanceId) {
+    const s = await db.collection("attendance").doc(attendanceId).get();
+    const d = s.data();
+    // 존재 여부가 응답으로 새지 않게 같은 답을 준다.
+    if (!s.exists || !d) throw deny();
+    if (d.businessId !== businessId || d.userId !== workerUid) throw deny();
+    // [§6·§7] 이미 보낸 급여는 목적이 되지 않는다.
+    if (d.wageStatus !== "confirmed") throw deny();
+    return s.id;
+  }
+
+  const q = await db.collection("attendance")
     .where("businessId", "==", businessId)
     .where("userId", "==", workerUid)
+    .where("wageStatus", "==", "confirmed")
     .limit(1).get();
-  return !s.empty;
+  if (q.empty) throw deny();
+  return q.docs[0].id;
 }
 
 // ── callableGetPayrollBankbookUrl ─────────────────────────────
@@ -26304,17 +26331,18 @@ export const callableGetPayrollBankbookUrl = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {businessId, targetUid, expectedBankbookVersion} = request.data as {
-      businessId?: string; targetUid?: string;
-      expectedBankbookVersion?: number;
-    };
+    const {businessId, targetUid, expectedBankbookVersion, attendanceId} =
+      request.data as {
+        businessId?: string; targetUid?: string;
+        expectedBankbookVersion?: number; attendanceId?: string;
+      };
     if (!businessId || !targetUid) {
       throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
     }
     await srvAssertPayrollDocumentAccess(callerUid, businessId);
-    if (!await srvHasPayrollRelationship(businessId, targetUid)) {
-      throw new HttpsError("not-found", "이 사업장의 급여 대상이 아닙니다.");
-    }
+    // [§4·§5] 권한 다음에 **목적**을 본다.
+    const purposeAttId =
+      await srvAssertCurrentPayrollPurpose(businessId, targetUid, attendanceId);
     const workerDoc = await db.collection("users").doc(targetUid).get();
     if (!workerDoc.exists) {
       throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
@@ -26346,9 +26374,12 @@ export const callableGetPayrollBankbookUrl = onCall(
     const [signedUrl] = await file.getSignedUrl({
       action: "read", expires: Date.now() + 60 * 60 * 1000,
     });
+    // [§13] 무엇 때문에 열었는지까지 남긴다 — 목적 없는 열람을 나중에
+    //   구분할 수 있어야 한다.
     await db.collection("bankbook_access_logs").add({
       viewerId: callerUid, targetUserId: targetUid,
       businessId, purpose: "PAYROLL_REVIEW",
+      attendanceId: purposeAttId,
       bankbookDocumentVersion: cur.bankbook,
       action: "view_bankbook_image",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -26365,11 +26396,11 @@ export const callableReviewPayrollBankDocument = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
     const {
-      businessId, targetUid, decision, note,
+      businessId, targetUid, decision, note, attendanceId,
       expectedBankbookVersion, expectedAccountVersion,
     } = request.data as {
       businessId?: string; targetUid?: string; decision?: string;
-      note?: string;
+      note?: string; attendanceId?: string;
       expectedBankbookVersion?: number; expectedAccountVersion?: number;
     };
     if (!businessId || !targetUid) {
@@ -26388,9 +26419,13 @@ export const callableReviewPayrollBankDocument = onCall(
       throw new HttpsError("invalid-argument", "메모는 500자 이하여야 합니다.");
     }
     await srvAssertPayrollDocumentAccess(callerUid, businessId);
-    if (!await srvHasPayrollRelationship(businessId, targetUid)) {
-      throw new HttpsError("not-found", "이 사업장의 급여 대상이 아닙니다.");
-    }
+    // [§14] 원본 열람과 **같은 목적 조건**을 쓴다. 보는 문은 좁고
+    //   쓰는 문은 넓으면 좁힌 의미가 없다.
+    //
+    // [§15] 화면을 연 뒤 그 급여가 이체됐다면 목적이 사라진 것이다.
+    //   이미 보낸 급여에 대해 지금 새 수동 검토를 현재 판정으로 만들지
+    //   않는다 — 여기서 걸린다.
+    await srvAssertCurrentPayrollPurpose(businessId, targetUid, attendanceId);
 
     const reviewRef = db.collection(BIZ_DOC_REVIEW_COL)
       .doc(srvBizReviewId(businessId, targetUid));

@@ -45,8 +45,8 @@ void main() {
       'export const callableGetPayrollBankbookUrl = onCall(', '\n);'));
   final authz = _codeOf(_sliceOf(rawCf,
       'async function srvAssertPayrollDocumentAccess(', '\n}'));
-  final rel = _codeOf(_sliceOf(rawCf,
-      'async function srvHasPayrollRelationship(', '\n}'));
+  final purpose = _codeOf(_sliceOf(rawCf,
+      'async function srvAssertCurrentPayrollPurpose(', '\n}'));
   final dash = _src(_dashPath);
   final svc = _src(_svcPath);
 
@@ -92,11 +92,11 @@ void main() {
     });
 
     test('06 인가는 실제 급여 관계로 한다', () {
-      expect(rel, contains('collection("attendance")'));
-      expect(rel, contains('"businessId", "==", businessId'));
-      expect(rel, contains('"userId", "==", workerUid'));
-      expect(review, contains('srvHasPayrollRelationship(businessId, targetUid)'));
-      expect(url, contains('srvHasPayrollRelationship(businessId, targetUid)'));
+      expect(purpose, contains('collection("attendance")'));
+      expect(purpose, contains('"businessId", "==", businessId'));
+      expect(purpose, contains('"userId", "==", workerUid'));
+      expect(review, contains('srvAssertCurrentPayrollPurpose('));
+      expect(url, contains('srvAssertCurrentPayrollPurpose('));
     });
 
     test('07 §5 — 검토 truth 컬렉션을 새로 만들지 않았다', () {
@@ -255,6 +255,79 @@ void main() {
       expect(xfer, contains('srvWageAccountBlockReason('));
       expect(xfer, contains('srvWageSnapshotStaleReason('));
       expect(xfer, isNot(contains('u["bankName"]')));
+    });
+  });
+
+  // ── PS. 목적 범위 [PII-DOC-R1.6.1B] ─────────────────────────────
+  //
+  //   권한은 필요조건이지 충분조건이 아니다. 과거에 하루 일하고 급여도
+  //   받아 간 사람의 **현재** 통장사본을 언제든 열 수 있으면, 권한이
+  //   맞아도 볼 이유가 없는 것을 본 것이다.
+  group('PS — 접근에는 현재 지급 목적이 필요하다', () {
+    test('27 P2·§6 — 과거 근태 존재만으로 열리지 않는다', () {
+      // 목적 판정이 반드시 지급 상태를 본다.
+      expect(purpose, contains('"wageStatus", "==", "confirmed"'));
+      expect(purpose, contains('d.wageStatus !== "confirmed"'));
+      // 옛 helper(상태 무관)는 사라졌다.
+      expect(rawCf, isNot(contains('srvHasPayrollRelationship')));
+    });
+
+    test('28 §7 — 이체 완료 건은 목적이 되지 않는다', () {
+      // confirmed 만 통과하므로 transferred 는 자동으로 제외된다.
+      expect(purpose, isNot(contains('"transferred"')));
+      expect(_flat(purpose), contains('if (d.wageStatus !== "confirmed") throw deny();'));
+    });
+
+    test('29 §8 — 화면이 보는 행과 서버가 허용하는 이유가 같다', () {
+      expect(purpose, contains('attendanceId'));
+      expect(purpose, contains('d.businessId !== businessId || d.userId !== workerUid'));
+      final f = _codeOf(
+          _sliceOf(dash, 'Future<void> _reviewBankDocument(', '\n  }'));
+      expect(f, contains('attendanceId: target.id'));
+      expect(f, contains('AttendanceModel.wageConfirmed'));
+    });
+
+    test('30 §14 — 열람과 판정이 같은 목적 helper 를 쓴다', () {
+      expect(url, contains('srvAssertCurrentPayrollPurpose(businessId, targetUid, attendanceId)'));
+      expect(review, contains('srvAssertCurrentPayrollPurpose(businessId, targetUid, attendanceId)'));
+    });
+
+    test('31 P4·§16 — 다른 사업장 건은 목적이 되지 않는다', () {
+      expect(purpose, contains('d.businessId !== businessId'));
+    });
+
+    test('32 §9 — 권한을 먼저 보고 목적을 나중에 본다', () {
+      for (final body in [url, review]) {
+        final a = body.indexOf('srvAssertPayrollDocumentAccess(');
+        final b = body.indexOf('srvAssertCurrentPayrollPurpose(');
+        expect(a, greaterThan(-1));
+        expect(b, greaterThan(a),
+            reason: '권한 없는 호출자에게 목적 존재 여부를 알려주지 않는다');
+      }
+    });
+
+    test('33 §6 — 존재 여부가 응답으로 새지 않는다', () {
+      // 없는 건 · 남의 건 · 이체된 건이 모두 같은 답을 받는다.
+      expect(purpose, contains('const deny = ()'));
+      final denies = RegExp(r'throw deny\(\)').allMatches(purpose).length;
+      expect(denies, greaterThanOrEqualTo(4));
+    });
+
+    test('34 §13 — 감사 로그가 목적 건을 남긴다', () {
+      expect(url, contains('attendanceId: purposeAttId'));
+      expect(url, contains('purpose: "PAYROLL_REVIEW"'));
+    });
+
+    test('35 §12 — Signed URL 은 여전히 1시간이다', () {
+      expect(url, contains('60 * 60 * 1000'));
+      expect(url, isNot(contains('makePublic')));
+    });
+
+    test('36 §20 — 정상 미지급 회복 경로는 막히지 않는다', () {
+      // 미지급 confirmed 가 있으면 목적이 성립한다.
+      expect(purpose, contains('q.docs[0].id'));
+      expect(purpose, isNot(contains('isIdVerified')));
+      expect(purpose, isNot(contains('applicationId')));
     });
   });
 }

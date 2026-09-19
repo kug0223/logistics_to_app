@@ -139,10 +139,13 @@ class PayrollReadinessService {
   ///
   ///   관리자가 명시적으로 확인을 누를 때만 호출한다 — 급여 화면이
   ///   평소에 원본 URL을 들고 있지 않는다.
+  /// [attendanceId] 지금 보고 있는 미지급 급여 건. 서버가 **그 건**으로
+  ///   목적을 확인한다 — 화면이 보는 행과 서버가 허용하는 이유를 같게 한다.
   static Future<String> bankbookUrl({
     required String businessId,
     required String targetUid,
     required int expectedBankbookVersion,
+    String? attendanceId,
   }) async {
     final res = await _fn
         .httpsCallable('callableGetPayrollBankbookUrl')
@@ -150,6 +153,7 @@ class PayrollReadinessService {
       'businessId': businessId,
       'targetUid': targetUid,
       'expectedBankbookVersion': expectedBankbookVersion,
+      if (attendanceId != null) 'attendanceId': attendanceId,
     });
     return (res.data['signedUrl'] ?? '') as String;
   }
@@ -163,6 +167,7 @@ class PayrollReadinessService {
     required String decision,
     required int expectedBankbookVersion,
     required int expectedAccountVersion,
+    String? attendanceId,
     String? note,
   }) async {
     final res = await _fn
@@ -173,6 +178,7 @@ class PayrollReadinessService {
       'decision': decision,
       'expectedBankbookVersion': expectedBankbookVersion,
       'expectedAccountVersion': expectedAccountVersion,
+      if (attendanceId != null) 'attendanceId': attendanceId,
       if (note != null) 'note': note,
     });
     return (correctionOpened: res.data['correctionOpened'] == true);

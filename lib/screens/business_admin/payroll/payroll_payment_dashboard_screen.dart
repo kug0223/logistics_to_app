@@ -515,6 +515,13 @@ class _PayrollPaymentDashboardScreenState
     final info = _readiness[uid];
     if (info == null) return;
     final name = _userBankCache[uid]?['name'] ?? '이름 없음';
+    // [PII-DOC-R1.6.1B] 지금 보고 있는 **미지급** 건을 목적으로 지목한다.
+    //   이미 이체된 건만 남았으면 서버가 원본을 열어주지 않는다.
+    final unpaid = recs
+        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
+        .toList();
+    if (unpaid.isEmpty) return;
+    final target = unpaid.first;
 
     String? url;
     try {
@@ -522,6 +529,7 @@ class _PayrollPaymentDashboardScreenState
         businessId: widget.businessId,
         targetUid: uid,
         expectedBankbookVersion: info.bankbookVersion,
+        attendanceId: target.id,
       );
     } catch (e) {
       debugPrint('❌ 통장사본 열람 실패: $e');
@@ -548,6 +556,7 @@ class _PayrollPaymentDashboardScreenState
         decision: decision,
         expectedBankbookVersion: info.bankbookVersion,
         expectedAccountVersion: info.accountVersion,
+        attendanceId: target.id,
       );
       if (!mounted) return;
       ToastHelper.showSuccess(r.correctionOpened
