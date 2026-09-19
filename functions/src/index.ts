@@ -548,6 +548,48 @@ function srvIsOwnedStoragePath(
 }
 
 // ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.1] 외국인 신원 판별 — canonical predicate
+//
+//   같은 사람의 국적 판정이 mutation마다 달라서는 안 된다. 그런데 실제로
+//   달랐다: 지원은 identity evidence로 파생해 정상이었고, 초대 수락과
+//   근무 변경 수락은 `users.isForeign`을 읽었다.
+//
+//   `users.isForeign`은 **writer가 존재하지 않는 필드다.** lib/ 에도
+//   functions/ 에도 쓰는 곳이 없다. 항상 undefined이므로 저 두 게이트에서
+//   외국인은 늘 내국인으로 분류됐고, 외국인에게는 없는 passVerifiedAt을
+//   요구받아 초대를 수락할 수 없었다. 지원은 되는데 초대는 안 되는 비대칭이
+//   여기서 나왔다.
+//
+//   고치는 방법은 그 필드를 채우는 것이 아니라 **읽지 않는 것**이다.
+//   국적은 별도로 선언되는 사실이 아니라 이미 가진 신원 증거의 결과다:
+//
+//     foreignIdentityFingerprint  V3 외국인 (callableFinalizeForeignIdentity)
+//     foreignIdNumber             레거시 외국인 (signUp sentinel)
+//
+//   빈 문자열은 "있음"이 아니다 — 기존 `??` 형태는 빈 fingerprint를 외국인으로
+//   읽었다. 길이를 함께 본다.
+//
+//   ※ `callableRecordTermsConsent`의 active 전환은 이 helper를 쓰지 않는다.
+//     거기서 묻는 것은 "외국인인가"가 아니라 "V3 가입이 끝났는가"이고,
+//     그건 fingerprint 하나로만 답할 수 있는 다른 질문이다.
+// ═══════════════════════════════════════════════════════════
+/**
+ * 이 사용자가 외국인 신원으로 가입했는가.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} userData users 문서
+ * @return {boolean} 외국인이면 true
+ */
+function srvIsForeignIdentity(
+  userData: FirebaseFirestore.DocumentData | undefined
+): boolean {
+  if (!userData) return false;
+  const fp = userData["foreignIdentityFingerprint"];
+  const legacy = userData["foreignIdNumber"];
+  return (typeof fp === "string" && fp.length > 0) ||
+    (typeof legacy === "string" && legacy.length > 0);
+}
+
+// ═══════════════════════════════════════════════════════════
 // 🔑 비밀번호 재설정 코드 발송
 // ═══════════════════════════════════════════════════════════
 
@@ -9190,7 +9232,8 @@ export const callableGetDocumentsPendingReview = onCall(
         uid: d.id,
         name: (d.get("koreanName") ?? d.get("legalName") ??
           d.get("name") ?? "") as string,
-        isForeign: d.get("isForeign") === true,
+        // [PII-DOC-R1.1] users.isForeign은 writer가 없는 필드였다 — 항상 false였다.
+        isForeign: srvIsForeignIdentity(d.data()),
         documentType: type,
         state: d.get(isId ? "idCardDocumentState" : "bankbookDocumentState"),
         selfCheck:
@@ -9318,7 +9361,7 @@ export const callableUpdateBankAccount = onCall(
     }
 
     // [V3 FOREIGN HOLDER] isForeign 분기 — accountHolder 결정
-    const isForeign = !!(userData.foreignIdentityFingerprint || userData.foreignIdNumber);
+    const isForeign = srvIsForeignIdentity(userData);
     let accountHolder: string;
     if (isForeign) {
       // 외국인: 클라이언트 전달값 사용 (통장에 표시된 예금주명)
@@ -12523,7 +12566,7 @@ export const callableSendOtpForPasswordReset = onCall(
     const uid = userDoc.id;
 
     // 2. 외국인 여부 확인 — foreignIdentityFingerprint(신규) 또는 foreignIdNumber(레거시) 존재 기준
-    if (!(userData["foreignIdentityFingerprint"] ?? userData["foreignIdNumber"])) {
+    if (!srvIsForeignIdentity(userData)) {
       // 내국인은 PASS 인증 경로 사용 — account enumeration 방지를 위해 동일 메시지
       await new Promise<void>((r) => setTimeout(r, 300));
       throw new HttpsError("permission-denied", GENERIC_ERR);
@@ -13324,7 +13367,7 @@ export const adminResetForeignPassword = onCall(
     }
     // [특이사항] 내국인은 PASS CI 기반 비밀번호 찾기 사용 — 이 CF는 외국인 전용
     // foreignIdentityFingerprint(신규) 또는 foreignIdNumber(레거시) 존재 기준
-    if (!(userData.foreignIdentityFingerprint ?? userData.foreignIdNumber)) {
+    if (!srvIsForeignIdentity(userData)) {
       throw new HttpsError("failed-precondition", "내국인 사용자는 이 기능을 사용할 수 없습니다.");
     }
     // [LOW-01] active 상태가 아닌 계정 비밀번호 초기화 차단 — rejected 계정 재활성화 오용 방지
@@ -28028,8 +28071,8 @@ export const callableApplyToTO = onCall(
         "회원가입 절차를 완료해주세요."
       );
     }
-    // 외국인 여부 판별 — 신규 fingerprint 우선, 레거시 foreignIdNumber 폴백
-    const isForeignApplicant = !!(userData["foreignIdentityFingerprint"] ?? userData["foreignIdNumber"]);
+    // [PII-DOC-R1.1] 외국인 여부 판별 — 초대 수락·재배치 수락과 같은 helper.
+    const isForeignApplicant = srvIsForeignIdentity(userData);
     // 내국인: passVerifiedAt 없으면 지원 불가 (Restricted State)
     if (!isForeignApplicant && !userData["passVerifiedAt"]) {
       throw new HttpsError(
@@ -30664,7 +30707,10 @@ export const callableAcceptTOInvitation = onCall(
         throw new HttpsError(
           "permission-denied", `계정이 제한되어 초대를 수락할 수 없습니다. (사유: ${blReason})`);
       }
-      const acceptIsForeign = freshUserData.isForeign === true;
+      // [PII-DOC-R1.1] writer 없는 users.isForeign 대신 신원 증거에서 파생한다.
+      //   지원(callableApplyToTO)과 같은 판정을 써야 "지원은 되는데 초대는
+      //   안 되는" 비대칭이 생기지 않는다.
+      const acceptIsForeign = srvIsForeignIdentity(freshUserData);
       if (!acceptIsForeign && !freshUserData.passVerifiedAt) {
         throw new HttpsError("failed-precondition", "본인인증 후 초대를 수락할 수 있습니다.");
       }
@@ -31995,7 +32041,8 @@ export const callableAcceptConfirmedReassignment = onCall(
       if (uRestricted && uRestricted.toDate() > new Date()) {
         throw new HttpsError("failed-precondition", "현재 제재 중에는 수락할 수 없습니다.");
       }
-      if (u.isForeign !== true && !u.passVerifiedAt) {
+      // [PII-DOC-R1.1] 지원·초대 수락과 같은 canonical predicate.
+      if (!srvIsForeignIdentity(u) && !u.passVerifiedAt) {
         throw new HttpsError("failed-precondition", "본인인증 후 수락할 수 있습니다.");
       }
       if (u.isIdVerified !== true) {
