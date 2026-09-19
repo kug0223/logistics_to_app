@@ -173,21 +173,28 @@ void main() {
     });
 
     test('불일치 강행 경로가 overridden을 들고 간다', () {
-      // [PII-DOC-R1.2] 신분증은 "무시한 불일치가 있을 때만" 강행으로 기록한다
-      //   (idHasMismatch). 인식 실패만 있었던 제출에 없는 잘못을 붙이지 않는다.
-      //   통장은 기존대로 overridden: true — 판정 로직은 R1.3 몫이다.
+      // [PII-DOC-R1.2] 신분증은 "무시한 불일치가 있을 때만" 강행으로 기록한다.
+      // [PII-DOC-R1.3] 통장도 같은 규칙이 됐다 — 못 읽었거나 대조 기준이 없던
+      //   제출에 없는 잘못을 붙이지 않는다. 고정하려던 것("사용자가 무시하고
+      //   진행한 사실이 서버에 남는다")은 그대로다.
       expect(pick, contains('overridden: idHasMismatch'));
-      expect('overridden: true,'.allMatches(pick).length,
-          greaterThanOrEqualTo(1),
-          reason: '통장 경고 분기 + OCR 실패 분기');
+      expect(pick, contains('overridden: bkHadMismatch'));
+      // OCR 자체가 실패한 제출은 여전히 무조건 강행으로 남는다.
+      expect('overridden: true'.allMatches(pick).length,
+          greaterThanOrEqualTo(2),
+          reason: '신분증·통장 OCR 실패 분기');
     });
 
     test('예금주 검증을 skip한 경우를 일치로 부풀리지 않는다', () {
-      // [PII-DOC-R1.2] 부풀리지 않는 것에서 한 걸음 더 간다 —
-      //   확인한 것이 없으면 '불일치'도 아니고 UNASSESSED다.
-      expect(pick, contains('final bkName = expectedName == null'));
-      expect(pick, contains('? DocFieldOutcome.unassessed'));
-      expect(pick, contains('final bkIdent = !bkHasExpectedAcc'));
+      // [PII-DOC-R1.2] 확인한 것이 없으면 '불일치'도 아니고 UNASSESSED다.
+      // [PII-DOC-R1.3] 그 판정이 화면에서 OCR helper로 옮겨갔다 —
+      //   화면과 서버가 같은 값을 보게 하기 위해서다. 불변식은 그대로.
+      final ocr = _flat(_codeOf(_src('lib/utils/ocr_verification_helper.dart')));
+      expect(ocr, contains('if (expectedName == null || expectedName.isEmpty) {'));
+      expect(ocr, contains('holderOutcome = DocFieldOutcome.unassessed;'));
+      // 화면은 그 결과를 읽기만 한다.
+      expect(pick, contains("result['holderOutcome'] as DocFieldOutcome?"));
+      expect(pick, contains("result['accountOutcome'] as DocFieldOutcome?"));
     });
 
     test('호출부가 근거를 CF로 보낸다', () {

@@ -160,7 +160,7 @@ void main() {
 
     // BANK-01
     // 정상 케이스: 예금주 키워드 탐색(Step 1) 성공, 계좌번호 키워드 탐색 성공
-    test('BANK-01: 정상 예금주 + 계좌번호 + 은행명 — isValid true', () {
+    test('BANK-01: 정상 예금주 + 계좌번호 + 은행명 — 문서 일치', () {
       const raw = '''
 국민은행
 예금주: 홍길동
@@ -173,7 +173,10 @@ void main() {
         expectedBankName: '국민은행',
       );
 
-      expect(result['isValid'], isTrue);
+      // [PII-DOC-R1.3] 'isValid'는 이름이 금융 인증으로 오해될 여지가 있어
+      //   'isDocumentConsistent'로 좁혔다. 판정 자체는 더 엄격해졌다 —
+      //   예전에는 예금주만 맞으면 true였고, 이제 계좌번호 일치가 필수다.
+      expect(result['isDocumentConsistent'], isTrue);
       expect(result['isNameValid'], isTrue,
           reason: '"홍길동" 이 전체 OCR 텍스트에 포함됨');
       expect(result['isAccountValid'], isTrue,
@@ -257,7 +260,8 @@ void main() {
 
       expect(result['isAccountValid'], isTrue,
           reason: 'any-match 가 "288-910548-10807" 을 발견');
-      expect(result['isValid'], isTrue);
+      // [PII-DOC-R1.3] 계좌 MATCHED + 예금주 MATCHED → 문서 일치
+      expect(result['isDocumentConsistent'], isTrue);
     });
 
     // BANK-05 (신규)

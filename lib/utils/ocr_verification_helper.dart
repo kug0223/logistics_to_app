@@ -228,7 +228,11 @@ class OcrVerificationHelper {
     } catch (e) {
       if (kDebugMode) debugPrint('❌ [통장사본 OCR] 실패: $e');
       return {
-        'isValid': false,
+        'isDocumentConsistent': false,
+        // OCR 자체가 실패했다 — 판정한 것이 없다.
+        'holderOutcome': DocFieldOutcome.unassessed,
+        'accountOutcome': DocFieldOutcome.unassessed,
+        'bankOutcome': DocFieldOutcome.unassessed,
         'isNameValid': false,
         'isAccountValid': false,
         'isBankValid': false,
@@ -264,7 +268,8 @@ class OcrVerificationHelper {
   }) {
     // ✅ 예금주명 추출 (label-based: Step 1 키워드 / Step 2 첫줄 / Step 3 블록)
     // Step 4 전체 텍스트 fallback 제거 — [OCR-P1-001 FIX]
-    String? extractedName = _extractAccountHolder(rawText, recognizedText);
+    final holderRead = _extractAccountHolder(rawText, recognizedText);
+    final String? extractedName = holderRead.name;
 
     // ✅ 은행명 추출
     String? extractedBankName = _extractBankName(rawText);
@@ -272,24 +277,45 @@ class OcrVerificationHelper {
     // ✅ 검증
     final cleanedOcr = _cleanText(rawText);
 
-    // 1. 예금주명 검증 (전체 텍스트에서 이름 포함 여부)
-    // [V3 FOREIGN HOLDER] expectedName == null → 이름 검증 skip (외국인 통장 오탐 방지)
-    final isNameValid = expectedName == null ||
-        cleanedOcr.contains(_cleanText(expectedName));
+    // 1. 예금주 — [PII-DOC-R1.3 / PD-2] 명백한 불일치만 실패로 본다.
+    //
+    //   OCR로 사람 이름을 안정적으로 읽어내는 것은 어렵고, 외국인 영문/한글
+    //   표기 차이를 음차로 억지 일치시키지도 않는다. 그래서 예금주는
+    //   **supporting evidence**다 — 일치하면 힘을 보태고, 못 읽으면 그것으로
+    //   전체를 실패시키지 않으며, 명백히 다를 때만 불일치다.
+    //
+    //   MISMATCH 판정은 보수적으로 한다: 예금주 칸을 읽어냈고, 그 값이 다르고,
+    //   기대 이름이 문서 **어디에도** 없을 때만. label 기반 추출이 엉뚱한 줄을
+    //   잡았을 수 있으므로 문서 전체를 한 번 더 본다.
+    final DocFieldOutcome holderOutcome;
+    if (expectedName == null || expectedName.isEmpty) {
+      holderOutcome = DocFieldOutcome.unassessed;
+    } else if (cleanedOcr.contains(_cleanText(expectedName))) {
+      holderOutcome = DocFieldOutcome.matched;
+    } else if (holderRead.labeled &&
+        extractedName != null && extractedName.isNotEmpty) {
+      // 라벨 옆에서 읽은 이름이 기대와 다르다 — 이건 근거 있는 불일치다.
+      holderOutcome = DocFieldOutcome.mismatch;
+    } else {
+      // 못 읽었거나, 추측으로 집어온 값뿐이다 — 다르다고 말하지 않는다.
+      holderOutcome = DocFieldOutcome.unreadable;
+    }
+    final isNameValid = holderOutcome == DocFieldOutcome.matched;
     if (kDebugMode) {
-      if (expectedName == null) {
-        debugPrint('📄 [통장사본 OCR] 예금주 검증 skip (expectedName null)');
-      } else {
-        debugPrint('📄 [통장사본 OCR] 예금주 검증: ${isNameValid ? "✅" : "❌"}');
-      }
+      debugPrint('📄 [통장사본 OCR] 예금주: ${holderOutcome.wire}');
     }
 
     // 2. 계좌번호 검증 — [OCR-P1-002 FIX] any-match 방식
     // expectedAccountNumber 기준으로 OCR 후보 전체를 스캔하여 일치 여부 확인.
     // 이전 버전(firstMatch)의 문제:
     //   전화번호 등 패턴이 먼저 나타나면 오인식 → false-negative.
-    bool isAccountValid = true;
+    // [PII-DOC-R1.3 / INV-1] 비교하지 않은 계좌번호를 일치로 만들지 않는다.
+    //   여기 있던 `bool isAccountValid = true;`가 신분증의 R1-B3와 같은 함정이었다.
+    DocFieldOutcome accountOutcome = DocFieldOutcome.unassessed;
     String? extractedAccountNumber;
+    // 문서에서 **계좌번호처럼 보이는 것**을 하나라도 읽었는가.
+    //   읽은 게 있는데 다르면 MISMATCH, 아무것도 못 읽었으면 UNREADABLE이다.
+    bool sawAccountCandidate = false;
 
     if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
       final cleanedExpectedAccount =
@@ -304,8 +330,10 @@ class OcrVerificationHelper {
           if (match != null) {
             final candidate =
                 (match.group(0) ?? '').replaceAll(RegExp(r'\D'), '');
+            // 숫자열을 읽어냈다는 사실 자체를 기록한다 (일치 여부와 별개).
+            if (candidate.isNotEmpty) sawAccountCandidate = true;
             if (candidate == cleanedExpectedAccount) {
-              isAccountValid = true;
+              accountOutcome = DocFieldOutcome.matched;
               extractedAccountNumber = match.group(0)?.replaceAll(' ', '');
               foundByKeyword = true;
               break;
@@ -327,8 +355,9 @@ class OcrVerificationHelper {
             final g2 = match.group(2) ?? '';
             final g3 = match.group(3) ?? '';
             final candidate = '$g1$g2$g3';
+            if (candidate.isNotEmpty) sawAccountCandidate = true;
             if (candidate == cleanedExpectedAccount) {
-              isAccountValid = true;
+              accountOutcome = DocFieldOutcome.matched;
               extractedAccountNumber = '$g1-$g2-$g3';
               anyMatch = true;
               break;
@@ -337,53 +366,68 @@ class OcrVerificationHelper {
           if (anyMatch) break;
         }
         if (!anyMatch) {
-          isAccountValid = false;
+          // [PII-DOC-R1.3 / §4] 못 읽은 것과 다른 것을 구분한다.
+          //   계좌번호처럼 보이는 숫자열을 하나도 못 찾았다면 "다르다"고
+          //   말할 근거가 없다 — 사진이 흐렸을 뿐일 수 있다.
+          accountOutcome = sawAccountCandidate
+              ? DocFieldOutcome.mismatch
+              : DocFieldOutcome.unreadable;
           extractedAccountNumber = null;
         }
       }
 
       if (kDebugMode) {
-        debugPrint(
-            '📄 [통장사본 OCR] 계좌번호 검증: ${isAccountValid ? "✅" : "❌"}');
+        debugPrint('📄 [통장사본 OCR] 계좌번호: ${accountOutcome.wire}');
       }
     }
+    final isAccountValid = accountOutcome == DocFieldOutcome.matched;
 
-    // 3. 은행명 검증 (선택)
-    bool isBankValid = true;
-    if (expectedBankName != null && expectedBankName.isNotEmpty) {
+    // 3. 은행명 — [PD-3] supporting evidence. 성공 조건에 넣지 않는다.
+    //   현재 은행명 인식 범위가 저축은행·신협·증권사 CMA 등에서 불완전하다.
+    final DocFieldOutcome bankOutcome;
+    if (expectedBankName == null || expectedBankName.isEmpty) {
+      bankOutcome = DocFieldOutcome.unassessed;
+    } else {
       final cleanedExpectedBank = _cleanText(expectedBankName);
       final cleanedExtractedBank = _cleanText(extractedBankName ?? '');
-      isBankValid = cleanedOcr.contains(cleanedExpectedBank) ||
+      final found = cleanedOcr.contains(cleanedExpectedBank) ||
           cleanedExtractedBank.contains(cleanedExpectedBank);
-      if (kDebugMode) {
-        debugPrint('📄 [통장사본 OCR] 은행명 검증: ${isBankValid ? "✅" : "❌"}');
-      }
+      bankOutcome = found
+          ? DocFieldOutcome.matched
+          : (extractedBankName == null
+              ? DocFieldOutcome.unreadable
+              : DocFieldOutcome.mismatch);
     }
+    final isBankValid = bankOutcome != DocFieldOutcome.mismatch;
 
-    // 종합 검증
-    final isValid = isNameValid; // 예금주명은 필수
+    // ── 종합 판정 ────────────────────────────────────────────────
+    // [PII-DOC-R1.3 / INV-2] 점수 평균이 정오를 정하지 않는다.
+    //
+    //   이전 규칙은 `isValid = isNameValid`였고, 실제 성공 여부는
+    //   `confidence >= 0.6`이 결정했다. 계좌번호가 달라도 분모가 커지면
+    //   (예: 은행명을 expected에 추가하면 2/3 = 0.67) 다시 성공이 됐다.
+    //   지금 걸리지 않는 것은 호출부가 은행명을 안 넘기기 때문일 뿐,
+    //   구조가 막고 있던 게 아니다.
+    //
+    //   이름을 좁힌다: 이것은 "문서가 입력값과 일치한다"이지
+    //   은행 실명인증도 계좌 소유 확인도 아니다. (INV-5)
+    final isDocumentConsistent = accountOutcome == DocFieldOutcome.matched &&
+        holderOutcome != DocFieldOutcome.mismatch;
 
-    // 신뢰도 계산
-    double confidence = 0.0;
-    int validCount = 0;
-    int totalCount = 1; // 예금주명은 필수
-
-    if (isNameValid) validCount++;
-
-    if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
-      totalCount++;
-      if (isAccountValid) validCount++;
+    // confidence는 UI 참고용으로만 남긴다 — 판정에 쓰지 않는다.
+    int assessed = 0, agreed = 0;
+    for (final o in [holderOutcome, accountOutcome, bankOutcome]) {
+      if (o == DocFieldOutcome.unassessed) continue;
+      assessed++;
+      if (o == DocFieldOutcome.matched) agreed++;
     }
-
-    if (expectedBankName != null && expectedBankName.isNotEmpty) {
-      totalCount++;
-      if (isBankValid) validCount++;
-    }
-
-    confidence = validCount / totalCount;
+    final confidence = assessed == 0 ? 0.0 : agreed / assessed;
 
     return {
-      'isValid': isValid,
+      'isDocumentConsistent': isDocumentConsistent,
+      'holderOutcome': holderOutcome,
+      'accountOutcome': accountOutcome,
+      'bankOutcome': bankOutcome,
       'isNameValid': isNameValid,
       'isAccountValid': isAccountValid,
       'isBankValid': isBankValid,
@@ -429,7 +473,7 @@ class OcrVerificationHelper {
   /// Step 3(블록 스캔)도 RecognizedText 없이는 생략됨.
   @visibleForTesting
   static String? extractAccountHolderForTesting(String rawText) =>
-      _extractAccountHolder(rawText);
+      _extractAccountHolder(rawText).name;
 
   /// 💳 통장사본 예금주명만 검증 (기존 호환용)
   static Future<Map<String, dynamic>> verifyBankbookName(
@@ -446,11 +490,17 @@ class OcrVerificationHelper {
   ///   수정 후: label-based 추출(Step 1/2/3)만 실행. 근거 없는 경우 null.
   ///
   /// [recognizedText] ML Kit 블록 스캔용 (Step 3). null이면 Step 3 생략.
-  static String? _extractAccountHolder(String rawText,
+  /// [PII-DOC-R1.3] 이름과 함께 **얼마나 믿을 만하게 찾았는지**를 돌려준다.
+  ///
+  ///   `labeled == true`는 '예금주'/'계좌주' 라벨 옆에서 읽었다는 뜻이다.
+  ///   Step 2(첫 줄)·Step 3(단독 블록)은 추측이다 — 실제로 "국민은행"처럼
+  ///   2~5자 한글 은행명을 예금주로 집어 온다. 그 추측으로 MISMATCH를
+  ///   선언하면 멀쩡한 통장을 "예금주가 다릅니다"로 돌려보내게 된다. (INV-3)
+  static ({String? name, bool labeled}) _extractAccountHolder(String rawText,
       [RecognizedText? recognizedText]) {
     final lines = rawText.split('\n');
 
-    // 1. "예금주" 키워드 근처에서 찾기
+    // 1. "예금주" 키워드 근처에서 찾기 — 유일하게 근거가 있는 경로
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
       if (line.contains('예금주') || line.contains('계좌주')) {
@@ -460,8 +510,15 @@ class OcrVerificationHelper {
           final afterColon = line.substring(colonIndex + 1).trim();
           final nameMatch = RegExp(r'[가-힣]{2,5}').firstMatch(afterColon);
           if (nameMatch != null) {
-            return nameMatch.group(0);
+            return (name: nameMatch.group(0), labeled: true);
           }
+        }
+
+        // 라벨 뒤에 바로 이름이 오는 경우 (예: "예금주 홍길동")
+        final inline = RegExp(r'(?:예금주|계좌주)\s*[:：]?\s*([가-힣]{2,5})')
+            .firstMatch(line);
+        if (inline != null) {
+          return (name: inline.group(1), labeled: true);
         }
 
         // 다음 줄에서 이름 찾기
@@ -469,21 +526,21 @@ class OcrVerificationHelper {
           final nextLine = lines[i + 1].trim();
           final nameMatch = RegExp(r'^[가-힣]{2,5}$').firstMatch(nextLine);
           if (nameMatch != null) {
-            return nameMatch.group(0);
+            return (name: nameMatch.group(0), labeled: true);
           }
         }
       }
     }
 
-    // 2. 첫 번째 줄이 한글 이름(2-5자)인 경우
+    // 2. 첫 번째 줄이 한글 이름(2-5자)인 경우 — **추측**
     if (lines.isNotEmpty) {
       final firstLine = lines[0].trim();
       if (RegExp(r'^[가-힣]{2,5}$').hasMatch(firstLine)) {
-        return firstLine;
+        return (name: firstLine, labeled: false);
       }
     }
 
-    // 3. 블록 단위로 스캔 - 단독 한글 이름 찾기 (RecognizedText 있을 때만)
+    // 3. 블록 단위로 스캔 - 단독 한글 이름 찾기 — **추측**
     if (recognizedText != null) {
       for (TextBlock block in recognizedText.blocks) {
         final text = block.text.trim();
@@ -494,7 +551,7 @@ class OcrVerificationHelper {
               !text.contains('은행') &&
               !text.contains('과목') &&
               !text.contains('통장')) {
-            return text;
+            return (name: text, labeled: false);
           }
         }
       }
@@ -503,8 +560,7 @@ class OcrVerificationHelper {
     // Step 4 제거 — [OCR-P1-001 FIX]
     // 전체 텍스트에서 2~5자 한글을 추측하는 fallback 제거.
     // 제외 키워드 목록이 불완전하여 "보통예금", "잔액확인", "고객센터" 등 오인식.
-    // label-based 추출(Step 1/2/3)로만 반환. 근거 없는 경우 null.
-    return null;
+    return (name: null, labeled: false);
   }
 
   /// ✅ 은행명 추출

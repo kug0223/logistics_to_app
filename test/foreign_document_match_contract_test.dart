@@ -281,10 +281,13 @@ void main() {
       expect(cf, isNot(contains('matchAssurance')));
     });
 
-    test('25 통장 판정 로직은 R1.3 몫 — 이번에 바꾸지 않았다', () {
+    test('25 통장 판정 로직은 R1.3에서 바뀌었다', () {
+      // R1.2 시점에는 'final isValid = isNameValid;'가 남아 있는 것이
+      //   "아직 손대지 않았다"의 표시였다. R1.3이 그 자리를 처리했다.
       final ocr = _codeOf(_src(_ocrPath));
-      expect(ocr, contains('final isValid = isNameValid;'),
-          reason: '통장 isValid는 R1.3에서 다룬다');
+      expect(ocr, isNot(contains('final isValid = isNameValid;')));
+      expect(ocr, contains('final isDocumentConsistent ='),
+          reason: '계좌번호 MATCHED가 필수 조건이 됐다');
     });
   });
 }

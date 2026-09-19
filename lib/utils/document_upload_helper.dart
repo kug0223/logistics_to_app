@@ -387,7 +387,10 @@ class DocumentUploadHelper {
           const Duration(seconds: 30),
           onTimeout: () => {
             'error': '통장사본 인식 시간이 초과되었습니다. 다시 시도해 주세요.',
-            'isValid': false,
+            'isDocumentConsistent': false,
+            'holderOutcome': DocFieldOutcome.unassessed,
+            'accountOutcome': DocFieldOutcome.unassessed,
+            'bankOutcome': DocFieldOutcome.unassessed,
             'confidence': 0.0,
             'isNameValid': false,
             'isAccountValid': false,
@@ -442,28 +445,17 @@ class DocumentUploadHelper {
         }
       }
 
-      // [PII-DOC-R1.2] 통장도 같은 어휘로 근거를 남긴다 — 기대값이 없으면
-      //   '불일치'가 아니라 UNASSESSED다. 예전에는 외국인(예금주 비교 skip)과
-      //   계좌 미등록 상태가 `false`로 내려가 "확인했는데 달랐다"처럼 보였다.
-      //
-      //   ※ 통장의 **판정 로직**(isValid·confidence·필수 필드)은 이번 Phase
-      //     범위가 아니다 — R1.3에서 다룬다. 여기서는 의미 손실만 막는다.
-      final bkName = expectedName == null || expectedName.isEmpty
-          ? DocFieldOutcome.unassessed
-          : (result['isNameValid'] == true
-              ? DocFieldOutcome.matched
-              : DocFieldOutcome.mismatch);
-      final bkHasExpectedAcc =
-          expectedAccountNumber != null && expectedAccountNumber.isNotEmpty;
-      final bkIdent = !bkHasExpectedAcc
-          ? DocFieldOutcome.unassessed
-          : (result['isAccountValid'] == true
-              ? DocFieldOutcome.matched
-              : ((result['extractedAccountNumber'] as String?) == null
-                  ? DocFieldOutcome.unreadable
-                  : DocFieldOutcome.mismatch));
+      // [PII-DOC-R1.3] 판정은 OCR helper가 이미 내렸다 — 여기서 다시 계산하지 않는다.
+      //   화면 분기와 서버로 가는 근거가 **같은 값**을 본다. (INV-4)
+      final bkName =
+          (result['holderOutcome'] as DocFieldOutcome?) ?? DocFieldOutcome.unassessed;
+      final bkIdent =
+          (result['accountOutcome'] as DocFieldOutcome?) ?? DocFieldOutcome.unassessed;
+      final bkBank =
+          (result['bankOutcome'] as DocFieldOutcome?) ?? DocFieldOutcome.unassessed;
 
-      if (result['isValid'] && result['confidence'] >= 0.6) {
+      // 계좌번호가 일치해야만 성공이다. confidence는 여기 관여하지 않는다. (INV-2)
+      if (result['isDocumentConsistent'] == true) {
         String extractedInfo = '예금주: $expectedName';
         if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
           extractedInfo += '\n계좌번호: $expectedAccountNumber';
@@ -492,22 +484,30 @@ class DocumentUploadHelper {
         );
 
       } else {
+        // [PII-DOC-R1.3 / §14] 불일치 / 인식 실패 / 비교 기준 없음을
+        //   각각 다른 문장으로 말한다. 사용자가 할 일이 다르기 때문이다.
         String reason = '';
 
-        if (!result['isNameValid']) {
-          reason += '• 예금주명이 일치하지 않습니다\n';
-        }
-        if (expectedAccountNumber != null &&
-            expectedAccountNumber.isNotEmpty &&
-            !result['isAccountValid']) {
-          reason += '• 계좌번호가 일치하지 않습니다\n';
+        if (bkIdent == DocFieldOutcome.mismatch) {
+          reason += '• 입력한 계좌번호와 통장사본의 계좌번호가 일치하지 않습니다\n';
           reason += '  입력: $expectedAccountNumber\n';
           reason += '  인식: ${result['extractedAccountNumber'] as String? ?? '확인 불가'}\n';
+        } else if (bkIdent == DocFieldOutcome.unreadable) {
+          reason += '• 통장사본에서 계좌번호를 정확히 읽지 못했습니다\n';
+          reason += '  계좌번호가 선명하게 보이도록 다시 등록해주세요\n';
+        } else if (bkIdent == DocFieldOutcome.unassessed) {
+          // 사용자 잘못이 아니다 — 대조할 기준이 없었을 뿐이다.
+          reason += '• 등록된 계좌번호가 없어 통장사본과 대조하지 못했습니다\n';
+          reason += '  급여계좌를 먼저 등록하면 자동으로 확인됩니다\n';
         }
-        if (expectedBankName != null &&
-            expectedBankName.isNotEmpty &&
-            !result['isBankValid']) {
-          reason += '• 은행명이 일치하지 않습니다\n';
+
+        if (bkName == DocFieldOutcome.mismatch) {
+          reason += '• 등록된 이름과 통장사본의 예금주명이 일치하지 않습니다\n';
+          reason += '  본인 명의 계좌인지 확인해주세요\n';
+        }
+        // 예금주를 못 읽었거나 비교 기준이 없는 것은 실패 사유로 말하지 않는다. (INV-3)
+        if (bkBank == DocFieldOutcome.mismatch) {
+          reason += '• 통장사본의 은행명이 선택한 은행과 다릅니다\n';
         }
 
         reason += '\n사진이 선명하게 보이도록 다시 촬영해주세요';
@@ -539,11 +539,16 @@ class DocumentUploadHelper {
           return null;
         }
         // [R0] 불일치인데 사용자가 진행했다 — 그 사실이 서버에 남아야 한다.
+        //   [R1.3] 신분증과 같은 규칙: 사용자가 무시한 **불일치**가 있을 때만
+        //   강행이다. 못 읽었거나 대조 기준이 없었던 제출에 없는 잘못을 붙이지 않는다.
+        final bkHadMismatch = bkIdent == DocFieldOutcome.mismatch ||
+            bkName == DocFieldOutcome.mismatch ||
+            bkBank == DocFieldOutcome.mismatch;
         return DocumentPickResult(
           path: image.path,
           nameOutcome: bkName,
           identifierOutcome: bkIdent,
-          overridden: true,
+          overridden: bkHadMismatch,
         );
       }
 
