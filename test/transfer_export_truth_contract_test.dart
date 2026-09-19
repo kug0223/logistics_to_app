@@ -342,6 +342,171 @@ void main() {
     });
   });
 
+  // ═══════════════════════════════════════════════════════════
+  // [PII-DOC-R0.2] TRANSFERABLE IFF canonical snapshot
+  //
+  //   R0.1은 Excel을 스냅샷에 맞췄지만 이체 CF의 legacy 분기는 그대로
+  //   통과시키고 있었다. 같은 급여 건에 Export=NOT READY / Transfer=ALLOWED
+  //   라는 두 개의 답이 남아 있었고, 느슨한 쪽이 돈이 나가는 쪽이었다.
+  // ═══════════════════════════════════════════════════════════
+  group('R0.2 — legacy transfer fail-close', () {
+    final xferBody = _codeOf(_sliceOf(
+        rawCf, 'export const callableMarkTransferredBatch = onCall(',
+        '// ─── callableCancelTransfer'));
+
+    test('28 판정이 한 곳에만 있다 (helper)', () {
+      final helper = _flat(_codeOf(_sliceOf(
+          rawCf, 'function srvWageAccountBlockReason(', '\n}')));
+
+      // 순서가 클라이언트 classifyRecord와 같아야 같은 건을 같은 이름으로 부른다.
+      final iReview = helper.indexOf('wageAccountReviewRequired');
+      final iLegacy = helper.indexOf('wageAccountSnapshotVersion');
+      final iFields = helper.indexOf('wageAccountBankName');
+      expect(iReview, greaterThan(-1));
+      expect(iReview, lessThan(iLegacy), reason: '낡은 검토가 먼저다');
+      expect(iLegacy, lessThan(iFields), reason: 'legacy 판별이 4필드보다 먼저다');
+
+      // T3 — version 1인데 4필드가 비면 거절
+      for (final f in [
+        'wageAccountBankName', 'wageAccountNumberEncrypted',
+        'wageAccountHolder', 'wageAccountSnapshotAt',
+      ]) {
+        expect(helper, contains('!data["$f"]'), reason: '$f 검사 누락');
+      }
+      // T4 — 재확인 필요면 거절
+      expect(helper, contains('data["wageAccountReviewRequired"] === true'));
+      // T2 — 위를 모두 통과하면 이체 가능
+      expect(helper, contains('return null;'));
+    });
+
+    test('29 T1 — 이체 CF가 그 helper를 쓰고 legacy 통과 분기가 없다', () {
+      expect(xferBody, contains('srvWageAccountBlockReason(data)'));
+      expect(xferBody, contains('blocked[id] = blockReason'));
+      expect(xferBody, contains('skipped.push(id)'));
+
+      // 사라져야 하는 것: "legacy는 그대로 통과" 분기
+      expect(xferBody, isNot(contains('LEGACY path')));
+      expect(_flat(xferBody),
+          isNot(contains('snapVersion === 1')),
+          reason: 'V3/legacy 이분기가 남아 있으면 legacy가 다시 통과한다');
+    });
+
+    test('30 T5 — 이미 transferred인 과거 기록은 판정에 닿지 않는다', () {
+      // 멱등 통과가 차단 판정보다 **먼저** 와야 소급 차단이 생기지 않는다.
+      final iAlready = xferBody.indexOf('alreadyTransferred.push(id)');
+      final iBlock = xferBody.indexOf('srvWageAccountBlockReason(data)');
+      expect(iAlready, greaterThan(-1));
+      expect(iBlock, greaterThan(-1));
+      expect(iAlready, lessThan(iBlock),
+          reason: 'historical legacy transferred는 그대로 보존한다');
+    });
+
+    test('31 batch 계약은 PARTIAL_RESULT 그대로 — throw로 바꾸지 않았다', () {
+      // 99건 정상 + 1건 legacy에서 전체를 되돌리지 않는다.
+      expect(xferBody, contains('return {'));
+      expect(xferBody, contains('skipped,'));
+      expect(xferBody, contains('blocked,'));
+      // 차단 지점에서 HttpsError를 던지면 atomic으로 바뀐다.
+      final blockSlice = xferBody.substring(
+          xferBody.indexOf('const blockReason'));
+      expect(blockSlice.substring(0, 300), isNot(contains('HttpsError')));
+    });
+
+    test('32 제외 사유가 id 하나로 뭉뚱그려지지 않는다', () {
+      for (final code in [
+        'XFER_NOT_FOUND', 'XFER_OTHER_BUSINESS', 'XFER_NOT_PAYABLE',
+        'XFER_NOT_CONFIRMED', 'XFER_SETTLEMENT_LOCKED',
+      ]) {
+        expect(xferBody, contains('blocked[id] = $code'),
+            reason: '$code 사유가 응답에 실리지 않는다');
+      }
+    });
+
+    test('33 서버·클라이언트가 같은 단어를 쓴다', () {
+      // 같은 사실을 두 언어가 다르게 부르면 화면이 "알 수 없는 오류"로 번역한다.
+      final consts = _codeOf(_sliceOf(
+          rawCf, 'const XFER_REVIEW_REQUIRED', 'function srvWageAccountBlockReason'));
+      final dart = _codeOf(_src(_planPath));
+
+      for (final token in [
+        'reviewRequired', 'legacyNoSnapshot', 'noAccountSnapshot',
+      ]) {
+        expect(consts, contains('"$token"'), reason: '서버 토큰 $token');
+        // Dart enum 이름 + TransferBlockCode 상수 양쪽에 있어야 한다.
+        expect(dart, contains('  $token,'), reason: 'Dart enum $token');
+        expect(dart, contains("$token = '$token'"),
+            reason: 'TransferBlockCode.$token');
+      }
+    });
+
+    test('34 T6 — 마감 취소가 스냅샷 흔적을 남기지 않는다', () {
+      final cancel = _codeOf(_sliceOf(
+          rawCf, 'export const callableCancelFinalConfirmation = onCall(',
+          '// ─── callableWageCancel'));
+
+      for (final f in [
+        'wageAccountSnapshotVersion', 'wageAccountBankName',
+        'wageAccountNumberEncrypted', 'wageAccountHolder',
+        'wageAccountSnapshotAt',
+        // 재확인 표시도 스냅샷과 같은 생애를 가진다.
+        'wageAccountReviewRequired',
+      ]) {
+        expect(_flat(cancel),
+            contains('$f: admin.firestore.FieldValue.delete()'),
+            reason: '$f 가 calculated 상태에 남으면 재확정 판정을 오염시킨다');
+      }
+      // 급여 계산값·근무일·식별자는 유지 — 재확정이 새 급여를 만들지 않는다.
+      expect(cancel, contains('wageStatus: "calculated"'));
+      expect(cancel, isNot(contains('finalWage: admin.firestore.FieldValue.delete()')),
+          reason: '금액을 지우면 재확정이 같은 급여가 아니게 된다');
+      expect(cancel, isNot(contains('workDate:')));
+    });
+
+    test('35 T6 — 재확정이 V3 스냅샷을 다시 만든다', () {
+      final confirm = _flat(_codeOf(_sliceOf(
+          rawCf, 'export const callableConfirmFinalWage = onCall(',
+          'export const callableCancelFinalConfirmation')));
+
+      expect(confirm, contains('updateData["wageAccountSnapshotVersion"] = 1'));
+      expect(confirm, contains('wageAccountSnapshotAt'));
+      expect(confirm, contains('bankReviewOkByUid'));
+    });
+
+    test('36 단건 경로가 제외를 성공으로 읽지 않는다', () {
+      final svc = _codeOf(_src('lib/services/payroll_payment_service.dart'));
+
+      expect(svc, contains('class TransferBlockedException'));
+      expect(svc, contains('throw TransferBlockedException('));
+      // skipped에 있으면 반드시 예외 — 조용한 성공 금지
+      expect(svc, contains('if (!skipped.contains(attendanceId)) return;'));
+      expect(svc, contains("already.contains(attendanceId)"),
+          reason: '멱등 재시도는 실패가 아니다');
+    });
+
+    test('37 화면이 사유별로 다른 안내를 한다', () {
+      final dash = _flat(_codeOf(_src(_dashPath)));
+
+      expect(dash, contains('_explainTransferBlocks('));
+      expect(dash, contains('_explainSingleBlock('));
+      expect(dash, contains('TransferBlockCode.labelOf('));
+      expect(dash, contains('TransferBlockCode.actionOf('));
+      // 모든 제외를 한 문장으로 번역하던 옛 문구는 사라져야 한다.
+      expect(dash, isNot(contains('계좌 정보 미확인으로 이체에서 제외되었습니다')));
+      // CF 오류 문자열을 그대로 노출하지 않는다.
+      expect(dash, contains('on TransferBlockedException catch'));
+    });
+
+    test('38 사유를 모르면 성공으로 바꾸지 않는다', () {
+      final plan = _codeOf(_src(_planPath));
+      // 알 수 없는 토큰 → '확인 필요'. 조용한 통과 아님.
+      expect(plan, contains("_ => '확인 필요',"));
+
+      final dash = _flat(_codeOf(_src(_dashPath)));
+      expect(dash, contains('이체에서 제외되었습니다. 목록에서 상태를 확인해주세요.'),
+          reason: '구버전 응답이라 사유를 몰라도 제외 사실은 말해야 한다');
+    });
+  });
+
   group('R1.2 회귀 — 기존 계약이 그대로다', () {
     test('26 지원 검토 purpose와 계좌 DTO 게이트가 유지된다', () {
       expect(cf, contains('APPLICANT_REVIEW_ALLOWED'));

@@ -58,6 +58,51 @@ enum TransferBlockReason {
 /// 오류가 아니므로 "확인 필요"와 섞지 않는다.
 const String kNotApplicableLabel = '지급 대상 아님';
 
+/// [PII-DOC-R0.2] 서버가 이체를 거절할 때 쓰는 사유 토큰.
+///
+///   `callableMarkTransferredBatch`의 `blocked` 맵이 돌려주는 값이고,
+///   계좌 관련 세 개는 [TransferBlockReason]의 이름과 **글자 그대로 같다**.
+///   같은 사실을 두 언어가 다른 단어로 부르면 화면이 서버의 거절을
+///   "알 수 없는 오류"로 번역하게 된다.
+class TransferBlockCode {
+  TransferBlockCode._();
+
+  // 계좌 스냅샷 — 클라이언트 enum과 공유하는 어휘
+  static const String reviewRequired = 'reviewRequired';
+  static const String legacyNoSnapshot = 'legacyNoSnapshot';
+  static const String noAccountSnapshot = 'noAccountSnapshot';
+  // 계좌와 무관한 제외 — 사유를 하나로 뭉뚱그리지 않기 위해 함께 둔다.
+  static const String notFound = 'notFound';
+  static const String otherBusiness = 'otherBusiness';
+  static const String notPayable = 'notPayable';
+  static const String notConfirmed = 'notConfirmed';
+  static const String settlementLocked = 'settlementLocked';
+
+  /// 서버 사유 토큰 → 화면 문구. 모르는 토큰은 **추측하지 않는다**.
+  static String labelOf(String code) => switch (code) {
+        reviewRequired => TransferBlockReason.reviewRequired.label,
+        legacyNoSnapshot => TransferBlockReason.legacyNoSnapshot.label,
+        noAccountSnapshot => TransferBlockReason.noAccountSnapshot.label,
+        notFound => '급여 기록을 찾을 수 없음',
+        otherBusiness => '다른 사업장의 기록',
+        notPayable => kNotApplicableLabel,
+        notConfirmed => '급여가 확정되지 않음',
+        settlementLocked => '승인된 중간정산에 포함됨',
+        _ => '확인 필요',
+      };
+
+  /// 운영자가 다음에 할 일.
+  static String actionOf(String code) => switch (code) {
+        reviewRequired => TransferBlockReason.reviewRequired.action,
+        legacyNoSnapshot => TransferBlockReason.legacyNoSnapshot.action,
+        noAccountSnapshot => TransferBlockReason.noAccountSnapshot.action,
+        notPayable => '지급 대상이 아니어서 이체하지 않습니다.',
+        notConfirmed => '급여를 먼저 확정해주세요.',
+        settlementLocked => '중간정산을 처리하거나 승인을 취소한 뒤 다시 시도해주세요.',
+        _ => '급여 내역을 확인해주세요.',
+      };
+}
+
 extension TransferBlockReasonLabel on TransferBlockReason {
   String get label => switch (this) {
         TransferBlockReason.reviewRequired => '급여계좌 확인 필요',

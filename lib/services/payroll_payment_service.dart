@@ -103,12 +103,24 @@ class PayrollPaymentService {
       if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
       if (notifications != null) 'notifications': notifications,
     });
-    // [PAY-08] 단건 이체 시 ISR lock으로 제외된 경우 명시적 오류 반환
+    // [PII-DOC-R0.2] 단건 경로도 제외를 **성공으로 읽지 않는다.**
+    //
+    //   예전에는 여기서 lockedBySettlement만 봤다. 그래서 다른 이유로
+    //   제외된 건은 아무것도 바뀌지 않았는데 화면이 "1건 이체 완료 처리되었습니다"를
+    //   띄웠다. legacy를 fail-close하는 순간 이 침묵은 곧바로 거짓말이 된다.
     final data = result.data as Map<dynamic, dynamic>? ?? {};
-    final locked = (data['lockedBySettlement'] as List?)?.cast<String>() ?? [];
-    if (locked.contains(attendanceId)) {
-      throw Exception('해당 출근기록은 승인된 중간정산에 포함되어 있어 이체 처리할 수 없습니다. 중간정산을 먼저 처리하거나 승인을 취소해 주세요.');
-    }
+    final skipped = (data['skipped'] as List?)?.cast<String>() ?? [];
+    final already = (data['alreadyTransferred'] as List?)?.cast<String>() ?? [];
+    final blocked = (data['blocked'] as Map?) ?? {};
+
+    if (already.contains(attendanceId)) return; // 멱등 — 이미 이체됨
+    if (!skipped.contains(attendanceId)) return; // 정상 처리
+
+    final reason = blocked[attendanceId];
+    throw TransferBlockedException(
+      attendanceId: attendanceId,
+      code: reason is String ? reason : null,
+    );
   }
 
   /// 일괄 이체 완료 처리 — callableMarkTransferredBatch(최대 200건/청크) 위임
@@ -140,6 +152,8 @@ class PayrollPaymentService {
     final List<String> allLockedBySettlement = [];  // [PAY-08] ISR lock으로 skip된 ID
     // [PREDEVICE-TRANSFER-TRUTH] 이미 이체돼 있던 건 — 새로 처리한 것이 아니다.
     final List<String> allAlreadyTransferred = [];
+    // [PII-DOC-R0.2] attendanceId → 제외 사유 토큰
+    final Map<String, String> allBlocked = {};
     // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 서버 성공 응답을 받은 청크의 처리 건수 누적
     // 실패 청크는 0건으로 처리 (클라이언트에서 추정 불가)
     int confirmedCount = 0;
@@ -166,6 +180,11 @@ class PayrollPaymentService {
         final locked = (data['lockedBySettlement'] as List?)?.cast<String>() ?? [];
         allSkipped.addAll(skipped);
         allLockedBySettlement.addAll(locked);
+        // [PII-DOC-R0.2] 사유를 그대로 옮긴다 — 화면에서 다시 추측하지 않도록.
+        final blocked = (data['blocked'] as Map?) ?? {};
+        blocked.forEach((k, v) {
+          if (k is String && v is String) allBlocked[k] = v;
+        });
         // [PREDEVICE-TRANSFER-TRUTH] 서버가 실제로 바꾼 건수를 그대로 쓴다.
         //   예전에는 chunk 크기에서 skip을 뺐는데, 이미 이체돼 있던 건은
         //   skip도 아니어서 새로 처리한 것처럼 세어졌다. 같은 목록을 다시
@@ -196,6 +215,7 @@ class PayrollPaymentService {
       settlementLocked: allLockedBySettlement,
       transferredNow: confirmedCount,
       alreadyTransferred: allAlreadyTransferred,
+      blockedReasons: allBlocked,
     );
   }
 
@@ -687,6 +707,25 @@ class PartialBatchException implements Exception {
       '이체 일괄처리 실패 (${chunkErrors.length}개 청크):\n${chunkErrors.join('\n')}';
 }
 
+/// [PII-DOC-R0.2] 단건 이체가 서버에서 거절됐다.
+///
+///   기술 오류가 아니라 **관리자가 복구할 수 있는 업무 상태**다.
+///   그래서 예외 메시지를 그대로 토스트에 붙이지 않고, 화면이 [code]로
+///   무엇을 해야 하는지 안내한다.
+class TransferBlockedException implements Exception {
+  final String attendanceId;
+
+  /// 서버 사유 토큰. 구버전 서버 응답이면 null일 수 있다 — 그때도 '알 수 없음'을
+  /// '성공'으로 바꾸지는 않는다.
+  final String? code;
+
+  const TransferBlockedException({required this.attendanceId, this.code});
+
+  @override
+  String toString() =>
+      'TransferBlockedException($attendanceId, ${code ?? 'unknown'})';
+}
+
 /// [PAY-08] markTransferredBatch 처리 결과 — skip 원인 구분
 class MarkTransferResult {
   /// 계좌 정보 미확인으로 제외된 attendanceId 목록
@@ -703,15 +742,32 @@ class MarkTransferResult {
   /// 이미 이체돼 있어 아무것도 바뀌지 않은 건.
   final List<String> alreadyTransferred;
 
+  /// [PII-DOC-R0.2] attendanceId → 서버가 말한 제외 **사유** 토큰.
+  ///
+  ///   예전에는 id만 돌아와서 화면이 전부 "계좌 정보 미확인"이라는 한 문장으로
+  ///   번역했다. legacy 급여와 낡은 검토와 중간정산 lock은 각각 관리자가
+  ///   할 일이 다른데 같은 말을 듣고 있었다.
+  final Map<String, String> blockedReasons;
+
   const MarkTransferResult({
     required this.bankSkipped,
     required this.settlementLocked,
     this.transferredNow = 0,
     this.alreadyTransferred = const [],
+    this.blockedReasons = const {},
   });
 
   /// 전체 제외된 attendanceId 목록
   List<String> get allSkipped => [...bankSkipped, ...settlementLocked];
+
+  /// 사유별 건수 — 화면이 사유마다 다른 안내를 하기 위한 집계.
+  Map<String, int> get reasonCounts {
+    final m = <String, int>{};
+    for (final r in blockedReasons.values) {
+      m[r] = (m[r] ?? 0) + 1;
+    }
+    return m;
+  }
 }
 
 // ─── 이체 완료 알림 정보 ──────────────────────────────────────────

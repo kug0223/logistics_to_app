@@ -80,8 +80,16 @@ void main() {
     });
 
     test('confirmed가 아닌 건은 여전히 건너뛴다', () {
-      expect(trFlat.contains('if (ws !== "confirmed") { skipped.push(id); continue; }'),
-          true, reason: 'calculated·pending을 이체 완료로 만들면 안 된다');
+      // [PII-DOC-R0.2] 제외 지점마다 **사유**가 함께 기록되면서 한 줄이 두 줄이 됐다.
+      //   고정하려던 것은 "calculated·pending이 이체되지 않는다"이지
+      //   그 두 문장이 붙어 있다는 사실이 아니다.
+      final i = trFlat.indexOf('if (ws !== "confirmed") {');
+      expect(i > 0, true, reason: 'calculated·pending을 이체 완료로 만들면 안 된다');
+      final block = trFlat.substring(i, i + 140);
+      expect(block.contains('skipped.push(id)'), true);
+      expect(block.contains('continue;'), true);
+      expect(block.contains('blocked[id] = XFER_NOT_CONFIRMED'), true,
+          reason: '왜 제외됐는지도 함께 돌려준다');
     });
   });
 

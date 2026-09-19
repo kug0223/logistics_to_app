@@ -432,6 +432,54 @@ class _PayrollPaymentDashboardScreenState
     }
   }
 
+  /// [PII-DOC-R0.2] 이체에서 제외된 건을 **사유별로** 설명한다.
+  ///
+  ///   예전에는 제외 전부가 "계좌 정보 미확인"이라는 한 문장이었다.
+  ///   이전 방식 급여와 낡은 계좌 검토와 중간정산 lock은 관리자가 할 일이
+  ///   각각 다른데 같은 말을 듣고 있었다. CF 오류 문자열을 그대로 붙이지도
+  ///   않는다 — 기술문은 복구 방법을 말해주지 않는다.
+  Future<void> _explainTransferBlocks(MarkTransferResult result) async {
+    final counts = result.reasonCounts;
+    if (counts.isEmpty) {
+      // 구버전 서버 응답 — 사유를 모른다. 모른다는 사실을 말하지, 추측하지 않는다.
+      if (result.allSkipped.isNotEmpty && mounted) {
+        ToastHelper.showWarning(
+            '${result.allSkipped.length}건이 이체에서 제외되었습니다. 목록에서 상태를 확인해주세요.');
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    final lines = counts.entries
+        .map((e) => '• ${TransferBlockCode.labelOf(e.key)} ${e.value}건\n'
+            '  ${TransferBlockCode.actionOf(e.key)}')
+        .join('\n\n');
+
+    await DialogHelper.showAlert(
+      context,
+      title: '이체에서 제외된 건이 있습니다',
+      message: '${result.transferredNow}건은 이체 완료로 처리했습니다.\n'
+          '아래 ${result.allSkipped.length}건은 처리하지 않았습니다.\n\n$lines',
+      icon: Icons.info_outline,
+      iconColor: AppColors.warning,
+    );
+  }
+
+  /// 단건 이체가 거절됐을 때 — 같은 어휘로 설명한다.
+  Future<void> _explainSingleBlock(TransferBlockedException e) async {
+    if (!mounted) return;
+    final code = e.code;
+    await DialogHelper.showAlert(
+      context,
+      title: '이체 완료 처리를 하지 않았습니다',
+      message: code == null
+          ? '이 급여 건은 이체할 수 없는 상태입니다. 목록에서 상태를 확인해주세요.'
+          : '${TransferBlockCode.labelOf(code)}\n\n${TransferBlockCode.actionOf(code)}',
+      icon: Icons.info_outline,
+      iconColor: AppColors.warning,
+    );
+  }
+
   /// 카드에 표시할 계좌 한 줄 — 출처는 확정 시점 스냅샷이다.
   ///
   /// 스냅샷이 없으면 계좌를 지어내지 않고 **왜 없는지**를 말한다.
@@ -795,6 +843,7 @@ class _PayrollPaymentDashboardScreenState
       // [PAY-08-FIX] skip 원인별 메시지 구분 (계좌 미확인 vs 중간정산 lock)
       int skippedCount = 0;
       if (recs.length == 1) {
+        // [PII-DOC-R0.2] 거절은 예외로 올라온다 — 아래 catch에서 사유별로 설명한다.
         final r  = recs.first;
         final wd = r.wageDetail;
         await _payService.markTransferred(
@@ -818,14 +867,8 @@ class _PayrollPaymentDashboardScreenState
             records: recs, workerNameByUid: nameByUid),
         );
         skippedCount = result.allSkipped.length;
-        if (mounted) {
-          // [PAY-08] 중간정산 lock으로 제외된 건과 계좌 미확인 건을 분리해 표시
-          if (result.settlementLocked.isNotEmpty) {
-            ToastHelper.showWarning('${result.settlementLocked.length}건은 승인된 중간정산에 포함되어 제외되었습니다.');
-          }
-          if (result.bankSkipped.isNotEmpty) {
-            ToastHelper.showWarning('${result.bankSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
-          }
+        if (mounted && result.allSkipped.isNotEmpty) {
+          await _explainTransferBlocks(result);
         }
       }
       if (mounted) {
@@ -835,6 +878,11 @@ class _PayrollPaymentDashboardScreenState
         }
         _load();
       }
+    } on TransferBlockedException catch (e) {
+      // [PII-DOC-R0.2] 실패가 아니라 **하지 않은 것**이다. 기술문 대신 할 일을 말한다.
+      debugPrint('ℹ️ 이체 제외: $e');
+      await _explainSingleBlock(e);
+      if (mounted) _load();
     } catch (e) {
       debugPrint('❌ 이체 완료 처리 실패: $e');
       if (mounted) ToastHelper.showError('이체 완료 처리에 실패했습니다\n$e');
@@ -878,14 +926,8 @@ class _PayrollPaymentDashboardScreenState
         notificationInfos: buildTransferNotificationInfos(
           records: selectedRecords, workerNameByUid: nameByUid),
       );
-      if (mounted) {
-        // [PAY-08] 중간정산 lock으로 제외된 건과 계좌 미확인 건을 분리해 표시
-        if (batchResult.settlementLocked.isNotEmpty) {
-          ToastHelper.showWarning('${batchResult.settlementLocked.length}건은 승인된 중간정산에 포함되어 제외되었습니다.');
-        }
-        if (batchResult.bankSkipped.isNotEmpty) {
-          ToastHelper.showWarning('${batchResult.bankSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
-        }
+      if (mounted && batchResult.allSkipped.isNotEmpty) {
+        await _explainTransferBlocks(batchResult);
       }
       if (mounted) {
         // [PREDEVICE-TRANSFER-TRUTH] 서버가 이번에 실제로 바꾼 건수만 말한다.

@@ -149,8 +149,13 @@ void main() {
     final tr = _flat(_codeOf(_callableOf(raw, 'callableMarkTransferredBatch')));
 
     test('confirmed가 아닌 건은 건너뛴다', () {
-      expect(tr.contains('if (ws !== "confirmed") { skipped.push(id); continue; }'),
-          true, reason: 'calculated·pending을 이체 완료로 만들면 안 된다');
+      // [PII-DOC-R0.2] 제외 지점에 사유 기록이 추가돼 문장이 나뉘었다.
+      //   불변식("calculated·pending은 이체되지 않는다")은 그대로다.
+      final i = tr.indexOf('if (ws !== "confirmed") {');
+      expect(i > 0, true, reason: 'calculated·pending을 이체 완료로 만들면 안 된다');
+      final block = tr.substring(i, i + 140);
+      expect(block.contains('skipped.push(id)'), true);
+      expect(block.contains('continue;'), true);
     });
 
     test('권한은 급여 권한이다', () {

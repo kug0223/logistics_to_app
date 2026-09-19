@@ -23373,6 +23373,10 @@ export const callableCancelFinalConfirmation = onCall(
               wageAccountNumberEncrypted: admin.firestore.FieldValue.delete(),
               wageAccountHolder: admin.firestore.FieldValue.delete(),
               wageAccountSnapshotAt: admin.firestore.FieldValue.delete(),
+              // [PII-DOC-R0.2] 재확인 표시도 스냅샷과 같은 생애를 가진다.
+              //   남겨 두면 calculated 상태의 기록이 "확인 필요"를 달고 있게 되고,
+              //   재확정 시 새로 판정될 값을 미리 주장하는 셈이 된다.
+              wageAccountReviewRequired: admin.firestore.FieldValue.delete(),
               updatedAt: now,
             });
             return true;
@@ -25061,6 +25065,61 @@ interface TransferNotificationPayload {
   attendanceId?: string;
 }
 
+// ═══════════════════════════════════════════════════════════
+// [PII-DOC-R0.2] 이체 차단 사유 — 한 벌의 어휘
+//
+//   R0.1에서 Excel은 스냅샷만 보도록 고쳤지만 이 CF의 legacy 분기는
+//   그대로 통과시키고 있었다. 그래서 같은 급여 건에 대해
+//
+//     Export         = NOT READY
+//     Transfer       = ALLOWED
+//
+//   두 개의 답이 남았다. 돈이 나가는 쪽이 느슨한 쪽이었다.
+//
+//   사유 문자열은 클라이언트 `TransferBlockReason` enum의 이름과 **같다**.
+//   같은 사실을 두 언어가 다른 단어로 부르면, 화면이 서버의 거절을
+//   "알 수 없는 오류"로 번역하게 된다.
+// ═══════════════════════════════════════════════════════════
+
+/** 지급 계좌 스냅샷이 없어 이체할 수 없는 사유. 이체 가능하면 null. */
+const XFER_REVIEW_REQUIRED = "reviewRequired";
+const XFER_LEGACY_NO_SNAPSHOT = "legacyNoSnapshot";
+const XFER_NO_ACCOUNT_SNAPSHOT = "noAccountSnapshot";
+// 계좌와 무관한 제외 사유 — 사유를 하나로 뭉뚱그리지 않기 위해 함께 둔다.
+const XFER_NOT_FOUND = "notFound";
+const XFER_OTHER_BUSINESS = "otherBusiness";
+const XFER_NOT_PAYABLE = "notPayable";
+const XFER_NOT_CONFIRMED = "notConfirmed";
+const XFER_SETTLEMENT_LOCKED = "settlementLocked";
+
+/**
+ * [PII-DOC-R0.2 / INV] 이 급여 건이 지급 가능한 계좌 스냅샷을 갖고 있는가.
+ *
+ *   TRANSFERABLE IFF canonical wage account snapshot이 존재한다.
+ *
+ * 판정 순서는 클라이언트 `classifyRecord`와 같다 — 낡은 검토 → legacy →
+ * 4필드 불완전. 순서가 다르면 같은 건을 서로 다른 이름으로 부르게 된다.
+ *
+ * legacy(스냅샷 개념 이전)를 현재 User 계좌로 메우지 않는다. 그건
+ * "확정 시점 계좌"가 아니라 "지금 계좌"이고, 확정 이후 바뀌었을 수 있다.
+ *
+ * @param {FirebaseFirestore.DocumentData} data attendance 문서 데이터
+ * @return {string | null} 차단 사유. 이체 가능하면 null.
+ */
+function srvWageAccountBlockReason(
+  data: FirebaseFirestore.DocumentData
+): string | null {
+  if (data["wageAccountReviewRequired"] === true) return XFER_REVIEW_REQUIRED;
+  if (data["wageAccountSnapshotVersion"] !== 1) return XFER_LEGACY_NO_SNAPSHOT;
+  if (!data["wageAccountBankName"] ||
+      !data["wageAccountNumberEncrypted"] ||
+      !data["wageAccountHolder"] ||
+      !data["wageAccountSnapshotAt"]) {
+    return XFER_NO_ACCOUNT_SNAPSHOT;
+  }
+  return null;
+}
+
 export const callableMarkTransferredBatch = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -25110,6 +25169,10 @@ export const callableMarkTransferredBatch = onCall(
     const lockedSkipped: string[] = []; // [PAY-08] 중간정산 APPROVED lock으로 제외된 ID
     // [PREDEVICE-TRANSFER-TRUTH] 이미 이체된 건 — 성공도 실패도 아닌 멱등 통과.
     const alreadyTransferred: string[] = [];
+    // [PII-DOC-R0.2] 제외된 건의 **사유**. skipped는 id만 담아 왔기 때문에
+    //   화면이 "계좌 정보 미확인"이라는 한 문장으로 전부 번역해야 했다.
+    //   사유가 다르면 관리자가 할 일도 다르다.
+    const blocked: Record<string, string> = {};
     let processed = 0;
     // [MEDIUM-3] 실제로 transferred 상태로 전환된 attendanceId 추적 — 알림 필터링용
     // 멱등 처리(already-transferred)는 포함하지 않아 중복 알림 방지
@@ -25128,6 +25191,7 @@ export const callableMarkTransferredBatch = onCall(
       skipped.length = 0;
       lockedSkipped.length = 0; // [PAY-08]
       alreadyTransferred.length = 0;
+      for (const k of Object.keys(blocked)) delete blocked[k];
       processed = 0;
       processedAttendanceIds.clear();
       validWorkerUserIds.clear();
@@ -25141,6 +25205,7 @@ export const callableMarkTransferredBatch = onCall(
         const snap = snaps[i];
 
         if (!snap.exists) {
+          blocked[id] = XFER_NOT_FOUND;
           skipped.push(id);
           continue;
         }
@@ -25149,6 +25214,7 @@ export const callableMarkTransferredBatch = onCall(
 
         // businessId 교차 검증 — 타 사업장 기록 변조 방지
         if (data.businessId !== businessId) {
+          blocked[id] = XFER_OTHER_BUSINESS;
           skipped.push(id);
           continue;
         }
@@ -25177,12 +25243,14 @@ export const callableMarkTransferredBatch = onCall(
         const attStatus = (data.status as string | undefined) ?? "";
         const fw = (data.finalWage as number | undefined) ?? 0;
         if ((attStatus === "NO_SHOW" || attStatus === "absent") && fw === 0) {
+          blocked[id] = XFER_NOT_PAYABLE;
           skipped.push(id);
           continue;
         }
 
         // [PAY-08] 중간정산 APPROVED lock — 일반 이체 차단 (ISR 컬렉션 조회 없이 필드 체크)
         if (data.activeInterimSettlementId) {
+          blocked[id] = XFER_SETTLEMENT_LOCKED;
           lockedSkipped.push(id);
           skipped.push(id);
           continue;
@@ -25190,32 +25258,26 @@ export const callableMarkTransferredBatch = onCall(
 
         // confirmed 상태만 transferred로 전환 가능
         if (ws !== "confirmed") {
+          blocked[id] = XFER_NOT_CONFIRMED;
           skipped.push(id);
           continue;
         }
 
-        // [V3 / LEGACY 분기] wageAccountSnapshotVersion으로 경로 결정
-        //   version=1 → V3 path: 4개 필드 완전성 invariant 강제, bankGate 미적용
-        //   version 없음 → legacy path: bankGate 기존 로직 사용
-        const snapVersion = data["wageAccountSnapshotVersion"] as number | undefined;
-        if (snapVersion === 1) {
-          // [V3 TRANSFER-INVARIANT] 4개 필드(bankName/Number/Holder/snapshotAt) 완전 여부 검증
-          //   필드 누락 시 legacy fallthrough 없이 즉시 차단.
-          const missingField =
-            !data["wageAccountBankName"] ? "wageAccountBankName" :
-            !data["wageAccountNumberEncrypted"] ? "wageAccountNumberEncrypted" :
-            !data["wageAccountHolder"] ? "wageAccountHolder" :
-            !data["wageAccountSnapshotAt"] ? "wageAccountSnapshotAt" :
-            null;
-          if (missingField) {
-            console.error(`[markTransferredBatch] V3 invariant fail ${id}: ${missingField} 누락 — 이체 불가`);
-            skipped.push(id);
-            continue;
-          }
-          // V3 경로: bankGate 미적용 — 스냅샷 완전성으로만 판단
-        } else {
-          // [LEGACY path] wageAccountSnapshotVersion 없는 이전 Attendance
-          // [Phase 6] bankGate 제거 — legacy 이체 건은 V3 전환 후 별도 처리 예정. 현재는 그대로 통과.
+        // [PII-DOC-R0.2] 지급 계좌 스냅샷이 있어야 이체한다 — legacy도 예외가 아니다.
+        //
+        //   여기 있던 legacy 분기는 "V3 전환 후 별도 처리 예정"이라는 주석과
+        //   함께 그냥 통과시키고 있었다. 그 결과 Excel이 제외한 건을 이 CF가
+        //   이체완료로 바꿀 수 있었다. 같은 급여 건에 두 개의 답이 있었다는 뜻이다.
+        //
+        //   이미 transferred인 과거 legacy 기록은 위에서 멱등 통과하므로
+        //   이 판정에 닿지 않는다. 소급 차단하지 않는다.
+        const blockReason = srvWageAccountBlockReason(data);
+        if (blockReason) {
+          console.error(
+            `[markTransferredBatch] 이체 불가 ${id}: ${blockReason}`);
+          blocked[id] = blockReason;
+          skipped.push(id);
+          continue;
         }
 
         const updateData: Record<string, unknown> = {
@@ -25281,6 +25343,8 @@ export const callableMarkTransferredBatch = onCall(
       processed,
       alreadyTransferred,
       skipped,
+      // [PII-DOC-R0.2] id만이 아니라 **왜**를 함께 돌려준다.
+      blocked,
       lockedBySettlement: lockedSkipped,
     };
   }
