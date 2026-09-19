@@ -13657,18 +13657,44 @@ function computeForeignIdFingerprint(rawForeignId: string): string {
 }
 
 /**
+ * [PII-B4-R1.3A] 외국인등록번호 7번째 자리(성별·세기 코드).
+ *
+ *   5·6 = 1900년대생, 7·8 = 2000년대생. 아래 파생 로직이 쓰는 표와 같다.
+ */
+const FOREIGN_GENDER_CODES = new Set(["5", "6", "7", "8"]);
+
+/**
  * 외국인등록번호 13자리 형식 검증 (정규화 후).
- * 정규화: 하이픈 제거, 공백 제거.
+ * 정규화: 하이픈 제거 + 앞뒤 공백 제거.
  * 반환: 정규화된 13자리 문자열, 또는 null (형식 불일치)
+ *
+ * [PII-B4-R1.3A] 7번째 자리를 외국인 범위로 좁힌다.
+ *
+ *   이전 규칙은 "0이 아니면 통과"였다. 그래서 내국인 주민등록번호(1~4)가
+ *   외국인 경로를 그대로 지나갔다. 중복 차단 sentinel은 어쨌든 만들어지므로
+ *   눈에 띄지 않지만, finalize가 이 자리를 **외국인 규칙으로** 읽어
+ *   birthDate·gender를 파생한다. 1~4가 들어오면 생년월일과 성별이
+ *   조용히 틀린 값으로 users 문서에 저장된다.
+ *
+ *   이 함수에서 막는 이유: precheck와 finalize가 둘 다 여기를 첫 관문으로
+ *   쓴다. 여기서 끊으면 잘못된 번호가 users에 닿기 전에 끝난다. (§7)
+ *
+ *   9는 열지 않는다. 구 규칙 코드가 실제로 유통되는지 확인되지 않았고,
+ *   파생 표에도 9에 대한 행이 없다. 추측으로 열면 틀린 생년월일이
+ *   만들어진다 — 모르는 것은 열지 않는다. (§6)
  */
 function normalizeForeignId(rawForeignId: string): string | null {
   if (!rawForeignId || typeof rawForeignId !== "string") return null;
   const normalized = rawForeignId.replace(/-/g, "").trim();
   if (!/^\d{13}$/.test(normalized)) return null;
-  // 첫 번째 자리 = 성별코드 (외국인: 5~8 또는 내국인: 1~4), 여기서는 0이 아닌 숫자만 허용
-  if (normalized[6] === "0") return null;
+  if (!FOREIGN_GENDER_CODES.has(normalized[6])) return null;
   return normalized;
 }
+
+/** 형식 거부 사유를 사용자에게 설명하는 문구 — 두 호출부가 같은 말을 한다. */
+const FOREIGN_ID_FORMAT_MESSAGE =
+  "외국인등록번호 형식이 올바르지 않습니다. " +
+  "13자리 숫자인지, 뒷자리 첫 숫자가 5~8인지 확인해주세요.";
 
 // ── callablePrecheckForeignIdentity ──────────────────────────
 // [FOREIGN-IDENTITY-01] 외국인 가입 전 HMAC 기반 중복 체크 — 비인증, App Check 필수
@@ -13685,7 +13711,7 @@ export const callablePrecheckForeignIdentity = onCall(
     }
     const normalized = normalizeForeignId(rawForeignId ?? "");
     if (!normalized) {
-      throw new HttpsError("invalid-argument", "외국인등록번호는 13자리 숫자여야 합니다.");
+      throw new HttpsError("invalid-argument", FOREIGN_ID_FORMAT_MESSAGE);
     }
     const fingerprint = computeForeignIdFingerprint(normalized);
     const fpDocId = `${fingerprint}_${role}`;
@@ -13751,7 +13777,7 @@ export const callableFinalizeForeignIdentity = onCall(
       _diagStage = "FINALIZE_STAGE_NORMALIZE";
       const normalized = normalizeForeignId(rawForeignId ?? "");
       if (!normalized) {
-        throw new HttpsError("invalid-argument", "외국인등록번호는 13자리 숫자여야 합니다.");
+        throw new HttpsError("invalid-argument", FOREIGN_ID_FORMAT_MESSAGE);
       }
       console.info(`[finalize] ${_diagStage} OK | idLen=${normalized.length}`);
 

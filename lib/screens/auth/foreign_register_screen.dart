@@ -457,10 +457,16 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     final visaType = _visaTypeCtrl.text.trim();
     final imagePath = _imagePath;
 
-    // [DEBUG] 진입점 추적
+    // [PII-B4-R1.3A] 진입점 추적 — 식별정보를 로그 문자열로 구성하지 않는다.
+    //
+    //   이전에는 등록번호 앞 8자리와 실명이 같은 줄에 있었다. 13자리 중
+    //   마지막은 체크섬이므로 8자리를 주면 남는 것은 4자리뿐이고, 실명이
+    //   옆에 붙어 있으면 그 4자리는 사실상 지켜지지 않는다.
+    //
+    //   debugPrint는 릴리스 빌드에서 제거되지 않는다. 그래서 kDebugMode로
+    //   감싸는 것으로 끝내지 않고 **값 자체를 만들지 않는다**. (§3·§4)
     final dbgCurrentUid = FirebaseAuth.instance.currentUser?.uid;
-    final dbgMaskedId = rawId.length >= 8 ? '${rawId.substring(0, 8)}*****' : '(len=${rawId.length})';
-    debugPrint('🔷 [ForeignReg] _processRegistration 시작 | isResume=${widget.isResume} | existingAuth=${dbgCurrentUid ?? "null"} | maskedId=$dbgMaskedId | legalName=$legalName | imagePath=${imagePath != null}');
+    debugPrint('🔷 [ForeignReg] _processRegistration 시작 | isResume=${widget.isResume} | existingAuth=${dbgCurrentUid ?? "null"} | idLen=${rawId.length} | hasLegalName=${legalName.isNotEmpty} | imagePath=${imagePath != null}');
 
     // ================================================================
     // [RESUME MODE] 기존 uid 유지 — 새 Auth 계정 생성 금지
@@ -606,8 +612,8 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     final phone = _phoneCtrl.text.trim();
     final role = widget.role;
 
-    final dbgMaskedId = rawId.length >= 8 ? '${rawId.substring(0, 8)}*****' : '(len=${rawId.length})';
-    debugPrint('🔷 [ForeignReg] _commitFreshRegistration 시작 | maskedId=$dbgMaskedId');
+    // [PII-B4-R1.3A] 등록번호 앞 8자리 제거 — 길이만 남긴다. (§3)
+    debugPrint('🔷 [ForeignReg] _commitFreshRegistration 시작 | idLen=${rawId.length}');
 
     // ──────────────────────────────────────────────────────────────
     // [B.2] RETRY GUARD: 이전 시도에서 Auth/Firestore pending 이 남아있는지 확인
@@ -714,7 +720,9 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       final effectiveName = koreanName.isNotEmpty ? koreanName : legalName;
       final sentinelId = '${rawId.substring(0, 6)}-${rawId[6]}${'*' * 6}';
 
-      debugPrint('🔷 [ForeignReg commit] signUp() | sentinelId=$sentinelId');
+      // [PII-B4-R1.3A] sentinelId는 등록번호 앞 7자리에서 파생된 값이다.
+      //   Firestore에 저장되는 값이라 해도 로그로 흘릴 이유는 없다. (§3)
+      debugPrint('🔷 [ForeignReg commit] signUp() 호출');
       final success = await userProvider.signUp(
         username: _usernameCtrl.text.trim(),
         password: _passwordCtrl.text,

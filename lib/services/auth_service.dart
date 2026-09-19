@@ -711,8 +711,10 @@ class AuthService {
     // [DEBUG] CF 호출 직전 상태 확인
     final currentUid = _auth.currentUser?.uid;
     final idLen = rawForeignId.length;
-    final maskedId = idLen >= 8 ? '${rawForeignId.substring(0, 8)}*****' : '???';
-    debugPrint('🔷 [finalize] CF 호출 시작 | uid=$currentUid | idLen=$idLen | maskedId=$maskedId | legalName=$legalName | visaType=$visaType');
+    // [PII-B4-R1.3A] maskedId(앞 8자리)·legalName·visaType 제거.
+    //   진단에 필요한 것은 "번호가 왔는가 / 길이가 맞는가"이지 번호가 아니다.
+    //   debugPrint는 릴리스에서 살아남으므로 값을 만들지 않는다. (§3·§4)
+    debugPrint('🔷 [finalize] CF 호출 시작 | uid=$currentUid | idLen=$idLen | hasLegalName=${legalName != null && legalName.isNotEmpty} | hasVisaType=${visaType != null && visaType.isNotEmpty}');
     try {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableFinalizeForeignIdentity',
