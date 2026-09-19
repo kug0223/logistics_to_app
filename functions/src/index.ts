@@ -28524,21 +28524,16 @@ export const callableApplyToTO = onCall(
     if (!userData["idCardImagePath"] && !userData["idCardImageUrl"]) {
       throw new HttpsError("failed-precondition", "신분증 등록이 필요합니다.");
     }
-    // [V3 FOREIGN HOLDER] accountHolder 포함 — 미등록 시 지원 불가
-    if (!userData["bankName"] || !userData["accountNumber"] || !userData["accountHolder"]) {
-      throw new HttpsError("failed-precondition", "통장 정보 등록이 필요합니다.");
-    }
-    // [V3] bankbookImagePath(신규) OR bankbookImageUrl(레거시) 중 하나 필수
-    if (!userData["bankbookImagePath"] && !userData["bankbookImageUrl"]) {
-      throw new HttpsError("failed-precondition", "통장사본 등록이 필요합니다.");
-    }
-    // [PRODUCT-POLICY 2026-08-21] bankVerificationStatus 정책 정합성 수정
-    // bankVerificationStatus는 "신규 지원 허가 상태"가 아니라
-    // "관리자/급여처리 단계의 계좌 검토 상태"다.
+    // [PII-DOC-R1.5.2] 계좌·통장사본 요구를 여기서 제거했다.
+    //   (bankName / accountNumber / accountHolder / bankbookImagePath)
     //
-    // 상태별 지원 허가:
-    // [Phase 6] bankVerificationStatus mismatch gate 제거 — V3에서 해당 상태 값 미발급
-    // 계좌 정보 검증은 급여 이체 시 V3 스냅샷 4필드 완전성 invariant로 처리
+    //   지원은 관심 표현이다. 지급은 근무가 끝난 뒤의 일이고, 그 사이에
+    //   계좌를 채울 시간이 있다. 급여계좌가 없다는 이유로 공고에 손드는
+    //   것조차 막으면, 아직 일어나지도 않은 지급을 위해 개인정보를 먼저
+    //   내놓으라고 요구하는 것이 된다.
+    //
+    //   지급 준비는 R1.6 Payroll Readiness가 지급 직전에 본다.
+    //   급여계좌 snapshot의 canonical writer는 callableConfirmFinalWage다.
     if (userData["isBlacklisted"] === true) {
       const reason = (userData["blacklistReason"] as string | undefined) ?? "이용 정책 위반";
       throw new HttpsError("permission-denied", `이용 제한된 계정입니다.\n사유: ${reason}`);

@@ -310,13 +310,17 @@ void main() {
           true);
     });
 
-    test('지원의 서류 전제조건이 그대로다', () {
-      for (final m in [
-        '"신분증 등록이 필요합니다."',
+    test('지원의 신원 전제조건이 그대로다', () {
+      // [PII-DOC-R1.5.2] 원래는 계좌·통장사본도 함께 고정하고 있었다.
+      //   이 group이 지키려는 것은 "초대 수락을 고치면서 지원 경로를 몰래
+      //   바꾸지 않았다"이고, 지원의 지급 요구는 R1.5.2가 의도적으로
+      //   제거했다. 신원 축만 남긴다.
+      expect(apply.contains('"신분증 등록이 필요합니다."'), true);
+      for (final gone in [
         '"통장 정보 등록이 필요합니다."',
         '"통장사본 등록이 필요합니다."',
       ]) {
-        expect(apply.contains(m), true, reason: m);
+        expect(apply.contains(gone), false, reason: gone);
       }
       // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 단기 신분증 gate는 **조건**으로 고정한다.
       //   예전에는 문구('신분증 인증 후 지원할 수 있습니다')로 셌는데, 그 문장은

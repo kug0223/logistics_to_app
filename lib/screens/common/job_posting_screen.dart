@@ -228,23 +228,22 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       newReason = '신분증 등록이 필요합니다';
     } else if (_to?.jobType == TOType.flex && !user.isIdVerified) {
       newReason = '신분증 인증이 필요합니다';
-    } else if (user.bankName == null || user.bankName!.isEmpty ||
-        user.accountNumber == null || user.accountNumber!.isEmpty) {
-      newReason = '통장 정보 등록이 필요합니다';
-    } else if (!user.hasBankbookDocument) {
-      newReason = '통장사본 등록이 필요합니다';
     }
+    // [PII-DOC-R1.5.2] 계좌·통장사본 차단 사유를 여기서 뺐다.
+    //   서버가 더 이상 요구하지 않으므로 앱이 먼저 막으면 화면과 서버가
+    //   다른 말을 하게 된다. meetsApplyPrerequisites도 같이 정리했다.
     if (newReason != _applyBlockReason) {
       setState(() => _applyBlockReason = newReason);
     }
   }
 
-  /// 서류 미완료로 인한 차단 여부 — 신분증·통장 관련 사유만 해당
+  /// 서류 미완료로 인한 차단 여부 — 신분증 관련 사유만 해당
   /// 블랙리스트·페널티·본인인증 차단과 구분하여 바텀시트로 안내
+  // [PII-DOC-R1.5.2] '통장' 매칭 제거 — 통장은 더 이상 차단 사유가 아니다.
   bool get _isDocumentBlocked {
     final r = _applyBlockReason;
     if (r == null) return false;
-    return r.contains('신분증') || r.contains('통장');
+    return r.contains('신분증');
   }
 
   bool get _isEffectivelyClosed {
@@ -2156,11 +2155,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
 
-    // 홈 카드와 동일한 n/2 기준 (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
+    // (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
     final hasId = user.hasIdDocument;
-    final hasWage = user.bankName != null && user.bankName!.isNotEmpty &&
-        user.accountNumber != null && user.accountNumber!.isNotEmpty &&
-        user.hasBankbookDocument;
 
     DialogHelper.showSheet<void>(
       context,
@@ -2185,8 +2181,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     .copyWith(color: AppColors.grey500, height: 1.5)),
             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
             _buildReadinessRow(context, '신분 확인', '신분증 등록', hasId),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            _buildReadinessRow(context, '급여정보', '은행 및 통장사본 등록', hasWage),
+            // [PII-DOC-R1.5.2] 급여정보 줄을 뺐다. 이 시트는 "지원하려면
+            //   먼저 등록해주세요"라고 말하는 자리이고, 급여정보는 더 이상
+            //   지원의 조건이 아니다. 여기 남겨 두면 사실이 아닌 말이 된다.
             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
             SizedBox(
               width: double.infinity,

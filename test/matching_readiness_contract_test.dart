@@ -333,26 +333,35 @@ void main() {
       expect(wage, isNot(contains('srvResolveMatchingReadiness')));
     });
 
-    test('33 지원 prerequisite는 건드리지 않았다', () {
-      // [FOLLOWUP_PRODUCT_DECISION] 지원 단계는 여전히 계좌·통장을 요구한다.
-      //   이번 Phase 범위 밖이므로 그대로 두고 기록만 한다.
+    test('33 지원 prerequisite도 R1.5.2에서 함께 열렸다', () {
+      // R1.5.1 시점에는 지원이 아직 계좌를 요구했고 이 테스트가 그것을
+      // 고정했다. R1.5.2가 같은 논리로 지원 단계를 정리했다.
       final apply = _codeOf(_sliceOf(rawCf,
           'export const callableApplyToTO = onCall(', '\n);'));
-      expect(apply, contains('통장 정보 등록이 필요합니다'));
-      expect(apply, contains('통장사본 등록이 필요합니다'));
+      expect(apply, isNot(contains('통장 정보 등록이 필요합니다')));
+      expect(apply, isNot(contains('통장사본 등록이 필요합니다')));
     });
 
     test('34 클라이언트도 초대 수락을 계좌로 막지 않는다', () {
+      // [정정] R1.5.1에서는 CTA 빌드만 보고 "클라이언트 변경 불필요"라고 했다.
+      //   실제로는 수락 **동작**이 meetsApplyPrerequisites를 지나고, 그
+      //   게이트가 계좌를 요구하고 있었다. R1.5.2가 그 게이트를 정리했다.
+      final gate = _codeOf(_sliceOf(
+          _src('lib/screens/user/apply_prerequisites_screen.dart'),
+          'bool meetsApplyPrerequisites(', '\n}'));
+      expect(gate, isNot(contains('hasBankAccount')));
+      expect(gate, isNot(contains('hasBankbookDocument')));
+
       final s = _src('lib/screens/common/job_posting_screen.dart');
-      // 계좌 문구는 **지원** 차단 사유 계산에만 쓰인다.
-      final block = _sliceOf(s, 'String? newReason;', 'if (newReason !=');
-      expect(block, contains('통장 정보 등록이 필요합니다'));
-      // 초대 수락 CTA는 좌석·상태 projection만 본다.
+      // 수락 동작이 지나는 게이트가 바로 그 함수다.
+      final act = _flat(_codeOf(
+          _sliceOf(s, 'Future<void> _acceptInviteFromDetail(', '\n  }')));
+      expect(act, contains('meetsApplyPrerequisites('));
+      // CTA 자체는 좌석·상태 projection만 본다.
       final cta = _flat(_codeOf(_sliceOf(s,
           '// INVITED → "초대 수락" / "거절" sticky 버튼', '_declineInviteFromDetail')));
       expect(cta, contains('canAccept'));
       expect(cta, isNot(contains('_applyBlockReason')));
-      expect(cta, isNot(contains('hasBankbookDocument')));
     });
   });
 

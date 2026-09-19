@@ -53,13 +53,6 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
   bool get _idVerified => _user?.isIdVerified ?? false;
 
-  bool get _accountReady => _user?.hasBankAccount == true;
-
-  bool get _bankbookReady {
-    final u = _user;
-    return u != null && u.hasBankbookDocument;
-  }
-
   bool get _isBlacklisted => _user?.isBlacklisted ?? false;
 
   bool get _isRestricted {
@@ -77,12 +70,10 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
     if (_isBlacklisted || _isRestricted) return false;
     if (!_idCardReady) return false;
     if (widget.isFlexType && !_idVerified) return false;
-    if (!_accountReady) return false;
-    if (!_bankbookReady) return false;
     return true;
   }
 
-  int get _totalItemCount => widget.isFlexType ? 4 : 3;
+  int get _totalItemCount => widget.isFlexType ? 2 : 1;
 
   Future<void> _reCheck() async {
     if (_isLoading) return;
@@ -200,39 +191,12 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ],
 
-                  // 계좌 정보 (flex: 3번 / contract: 2번)
-                  _buildPrerequisiteCard(
-                    index: widget.isFlexType ? 3 : 2,
-                    title: '계좌 정보 등록',
-                    isReady: _accountReady,
-                    readyDescription: '계좌 정보가 등록되어 있습니다',
-                    notReadyDescription: '계좌 정보 등록이 필요합니다.',
-                    actionLabel: '서류 관리',
-                    onAction: () async {
-                      await NavigationHelper.push<void>(
-                          context, destination: const DocumentManagementScreen());
-                      if (!mounted) return;
-                      await _reCheck();
-                    },
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-                  // 통장사본 (flex: 4번 / contract: 3번)
-                  _buildPrerequisiteCard(
-                    index: widget.isFlexType ? 4 : 3,
-                    title: '통장사본 등록',
-                    isReady: _bankbookReady,
-                    readyDescription: '통장사본이 등록되어 있습니다',
-                    notReadyDescription: '통장사본 등록이 필요합니다.',
-                    actionLabel: '서류 관리',
-                    onAction: () async {
-                      await NavigationHelper.push<void>(
-                          context, destination: const DocumentManagementScreen());
-                      if (!mounted) return;
-                      await _reCheck();
-                    },
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+                  // [PII-DOC-R1.5.2] 계좌 정보·통장사본 카드를 여기서 뺐다.
+                  //   이 화면은 "지원을 막는 것"만 보여주는 자리다. 더 이상
+                  //   막지 않는 항목을 남겨 두면 안 해도 되는 일을 해야 할
+                  //   일처럼 보이게 한다. 급여정보 안내는 R1.6이 지급 준비
+                  //   시점의 화면에서 맡는다.
+                  SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
                   // 하단 버튼
                   Row(
@@ -434,9 +398,10 @@ bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
   if (isFlexType && !user.isIdVerified) {
     return false;
   }
-  if (!user.hasBankAccount) return false;
-  if (!user.hasBankbookDocument) {
-    return false;
-  }
+  // [PII-DOC-R1.5.2] 계좌·통장사본은 더 이상 지원 조건이 아니다.
+  //   서버(callableApplyToTO)에서 같은 요구를 걷어냈고, 초대 수락
+  //   (callableAcceptTOInvitation)은 R1.5.1에서 이미 걷어냈다.
+  //   이 함수는 지원과 초대 수락 양쪽의 게이트이므로, 여기에 남아 있으면
+  //   서버가 허용하는 것을 앱이 대신 막는다.
   return true;
 }
