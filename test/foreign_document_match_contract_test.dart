@@ -271,7 +271,9 @@ void main() {
           'export const callableMarkIdCardVerified = onCall(',
           'callableGetDocumentsPendingReview')));
       expect(mark, contains('isIdVerified: true'));
-      expect(mark, contains('idDocumentVersion: admin.firestore.FieldValue.increment(1)'));
+      // [PII-DOC-R1.4] 버전 증가가 increment(1) → 트랜잭션 내 직접 계산으로
+      //   바뀌었다. 올라간다는 사실은 그대로다.
+      expect(mark, contains('idDocumentVersion: nextV'));
     });
 
     test('24 확정 게이트·문서 검토는 이번에 건드리지 않았다', () {

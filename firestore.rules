@@ -400,6 +400,15 @@ service cloud.firestore {
                          //   되돌리면 이미 바뀐 서류가 '확인 완료'로 남는다.
                          'idDocumentVersion', 'bankbookDocumentVersion',
                          'bankAccountVersion',
+                         // [PII-DOC-R1.4] 자동 문서 정합성 — canonical state.
+                         //   클라이언트는 **근거**만 보낼 수 있고 상태는 서버가 정한다.
+                         //   여기를 열면 누구나 자기 서류를 MATCHED로 선언할 수 있다.
+                         'idCardMatchStatus', 'idCardMatchEvidenceSource',
+                         'idCardMatchAssurance', 'idCardMatchDocumentVersion',
+                         'idCardMatchEvaluatedAt',
+                         'bankbookMatchStatus', 'bankbookMatchEvidenceSource',
+                         'bankbookMatchAssurance', 'bankbookMatchDocumentVersion',
+                         'bankbookMatchAccountVersion', 'bankbookMatchEvaluatedAt',
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -517,6 +526,9 @@ service cloud.firestore {
                        // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 문서 상태는 CF만 만든다
                        request.resource.data.get('idCardDocumentState', null) == null &&
                        request.resource.data.get('bankbookDocumentState', null) == null &&
+                       // [PII-DOC-R1.4] 가입 시점에 자동 정합성을 주장할 수 없다
+                       request.resource.data.get('idCardMatchStatus', null) == null &&
+                       request.resource.data.get('bankbookMatchStatus', null) == null &&
                        // [HIGH-U3] termsConsentAt/termsConsent: CF callableRecordTermsConsent 전용
                        //   법적 타임스탬프 위조 차단 (Trust Boundary Charter)
                        request.resource.data.get('termsConsentAt', null) == null &&

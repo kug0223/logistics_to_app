@@ -78,6 +78,29 @@ class UserModel {
   /// [R0] 서버가 기록한 제출 문서 상태. 클라이언트는 읽기만 한다.
   final String? _rawIdCardDocumentState;
   final String? _rawBankbookDocumentState;
+
+  // ── [PII-DOC-R1.4] 자동 문서 정합성 — **서버 소유, 읽기 전용** ──
+  //
+  //   fromMap으로만 들어오고 toMap에는 넣지 않는다. firestore.rules가
+  //   클라이언트 write를 막고 있으므로 toMap에 실리면 정상적인 사용자
+  //   업데이트가 규칙에 걸려 죽는다 — R0.2에서 attendance 스냅샷 필드에
+  //   같은 함정이 있었다.
+  //
+  //   상태는 직접 비교하지 말고 utils/document_match.dart의 resolver를 쓴다.
+  //   저장된 MATCHED는 버전이 그대로일 때만 유효하다.
+  final String? idCardMatchStatus;
+  final String? idCardMatchEvidenceSource;
+  final String? idCardMatchAssurance;
+  final int? idCardMatchDocumentVersion;
+  final int? idDocumentVersion;
+
+  final String? bankbookMatchStatus;
+  final String? bankbookMatchEvidenceSource;
+  final String? bankbookMatchAssurance;
+  final int? bankbookMatchDocumentVersion;
+  final int? bankbookMatchAccountVersion;
+  final int? bankbookDocumentVersion;
+  final int? bankAccountVersion;
   
   // ── 전화번호 시스템 ──
   /// PASS 인증 시 통신사에서 확인된 전화번호 (= 기존 phone 역할 승계)
@@ -274,6 +297,19 @@ class UserModel {
     this.homeRegion,
     List<UserRegion>? preferredJobRegions,
     this.lastSelectedJobRegion,
+    // [PII-DOC-R1.4] 서버 소유 — fromMap 전용, toMap 제외
+    this.idCardMatchStatus,
+    this.idCardMatchEvidenceSource,
+    this.idCardMatchAssurance,
+    this.idCardMatchDocumentVersion,
+    this.idDocumentVersion,
+    this.bankbookMatchStatus,
+    this.bankbookMatchEvidenceSource,
+    this.bankbookMatchAssurance,
+    this.bankbookMatchDocumentVersion,
+    this.bankbookMatchAccountVersion,
+    this.bankbookDocumentVersion,
+    this.bankAccountVersion,
   }) : notifPrefs = notifPrefs ?? defaultNotifPrefs,
        favoriteToIds = favoriteToIds ?? const [],
        managedBusinessIds = managedBusinessIds ??
@@ -535,6 +571,24 @@ class UserModel {
       isIdVerified: map['isIdVerified'] ?? false,
       idCardDocumentState: map['idCardDocumentState'] as String?,
       bankbookDocumentState: map['bankbookDocumentState'] as String?,
+      // [PII-DOC-R1.4] 자동 정합성 — 읽기만 한다 (toMap 제외)
+      idCardMatchStatus: map['idCardMatchStatus'] as String?,
+      idCardMatchEvidenceSource: map['idCardMatchEvidenceSource'] as String?,
+      idCardMatchAssurance: map['idCardMatchAssurance'] as String?,
+      idCardMatchDocumentVersion:
+          (map['idCardMatchDocumentVersion'] as num?)?.toInt(),
+      idDocumentVersion: (map['idDocumentVersion'] as num?)?.toInt(),
+      bankbookMatchStatus: map['bankbookMatchStatus'] as String?,
+      bankbookMatchEvidenceSource:
+          map['bankbookMatchEvidenceSource'] as String?,
+      bankbookMatchAssurance: map['bankbookMatchAssurance'] as String?,
+      bankbookMatchDocumentVersion:
+          (map['bankbookMatchDocumentVersion'] as num?)?.toInt(),
+      bankbookMatchAccountVersion:
+          (map['bankbookMatchAccountVersion'] as num?)?.toInt(),
+      bankbookDocumentVersion:
+          (map['bankbookDocumentVersion'] as num?)?.toInt(),
+      bankAccountVersion: (map['bankAccountVersion'] as num?)?.toInt(),
       bankName: map['bankName'],
       accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],

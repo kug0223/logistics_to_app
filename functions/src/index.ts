@@ -284,6 +284,194 @@ function srvDocFieldOutcome(v: unknown): string {
     v : DOC_FIELD_UNASSESSED;
 }
 
+// ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.4] 자동 문서 정합성 — canonical business state
+//
+//   세 가지 축을 **섞지 않는다**:
+//
+//     자동 판정   idCardMatchStatus / bankbookMatchStatus   ← 여기
+//     사람 판정   businessApplicantDocumentReviews
+//     보완 요청   documentCorrectionRequests
+//
+//   기존 `*DocumentState`에는 SELF_CHECK_*(시스템)와 MANUAL_*(사람)과
+//   REUPLOAD_REQUIRED(보완)가 한 필드에 섞여 있다. 그 실수를 새 필드에
+//   복제하지 않는다 — 사람이 승인했다고 자동 MATCHED가 되지 않고,
+//   보완 요청이 열렸다고 자동 MISMATCH가 되지 않는다.
+//
+//   그리고 이 상태는 **아직 어떤 게이트도 읽지 않는다.** R1.5에서 연결한다.
+// ═══════════════════════════════════════════════════════════
+
+/** 문서 자체가 없다. */
+const DOC_MATCH_MISSING = "MISSING";
+/** 문서는 있으나 비교할 기준·근거가 부족해 판정하지 못했다. */
+const DOC_MATCH_UNASSESSED = "UNASSESSED";
+/** 필수 비교를 모두 수행했고 통과했다. */
+const DOC_MATCH_MATCHED = "MATCHED";
+/** 비교를 수행했고 명확히 달랐다. */
+const DOC_MATCH_MISMATCH = "MISMATCH";
+/** 비교 기준은 있으나 필요한 값을 읽지 못했다 — 불일치가 아니다. */
+const DOC_MATCH_OCR_UNCERTAIN = "OCR_UNCERTAIN";
+
+// 근거의 출처와 보증 수준.
+//
+//   서버는 이미지를 OCR하지 않는다. 그래서 지금 가능한 조합은 하나뿐이고,
+//   그 사실을 상태가 스스로 말한다. `SERVER_VERIFIED`는 **쓰지 않는다** —
+//   서버가 독립적으로 관측한 것이 아무것도 없기 때문이다.
+//   계좌 fingerprint를 도입해 클라이언트 추출값을 서버가 대조하더라도
+//   그것은 "server compared client-derived evidence"이지 서버 관측이 아니다.
+const MATCH_SOURCE_CLIENT_OCR = "CLIENT_OCR";
+const MATCH_ASSURANCE_CLIENT_EVIDENCE = "CLIENT_EVIDENCE";
+
+/**
+ * v2 근거에서 자동 정합성 상태를 계산한다.
+ *
+ * 우선순위 — 이 순서가 계약이다:
+ *
+ *   MISMATCH  >  OCR_UNCERTAIN  >  UNASSESSED  >  MATCHED
+ *
+ * 명백한 불일치가 이미 있으면 다른 필드를 못 읽었다는 이유로 그 사실을
+ * 숨기지 않는다. 반대로 못 읽은 것을 불일치로 올리지도 않는다.
+ *
+ * `overridden`은 읽지 않는다 — 사용자가 경고를 넘겼다는 행위 기록이지
+ * 문서가 일치하는지에 대한 사실이 아니다. 여섯 번째 상태로 만들지 않는다.
+ *
+ * @param {Record<string, unknown> | null | undefined} ev 저장된 v2 근거
+ * @param {object} opts 문서 종류별 필수 조건
+ * @param {boolean} opts.requireName 이름 일치가 MATCHED의 필수 조건인가.
+ *   신분증은 true. 통장은 false — 예금주는 supporting evidence이고
+ *   명백한 불일치일 때만 veto한다(R1.3 PD-2).
+ * @return {string} canonical match status (MISSING 제외)
+ */
+function srvEvaluateMatchStatus(
+  ev: Record<string, unknown> | null | undefined,
+  opts: {requireName: boolean}
+): string {
+  // 근거가 없거나 구버전(v1) — 판정 근거로 쓰지 않는다.
+  //   v1의 `identifierMatched: true`는 "비교해서 맞았다"일 수도
+  //   "비교할 기준이 없어 기본값이 올라왔다"일 수도 있다. (R1.2)
+  if (!ev || ev["selfCheckVersion"] !== 2) return DOC_MATCH_UNASSESSED;
+
+  const name = srvDocFieldOutcome(ev["name"]);
+  const identifier = srvDocFieldOutcome(ev["identifier"]);
+
+  // 1. 명백한 불일치 — 가장 강한 사실이다.
+  if (name === DOC_FIELD_MISMATCH || identifier === DOC_FIELD_MISMATCH) {
+    return DOC_MATCH_MISMATCH;
+  }
+  // 2. 읽지 못했다 — 다르다고 말할 근거가 없다.
+  if (ev["ocrFailed"] === true) return DOC_MATCH_OCR_UNCERTAIN;
+  if (identifier === DOC_FIELD_UNREADABLE) return DOC_MATCH_OCR_UNCERTAIN;
+  if (opts.requireName && name === DOC_FIELD_UNREADABLE) {
+    return DOC_MATCH_OCR_UNCERTAIN;
+  }
+  // 3. 비교 기준이 없었다.
+  if (identifier === DOC_FIELD_UNASSESSED) return DOC_MATCH_UNASSESSED;
+  if (opts.requireName && name === DOC_FIELD_UNASSESSED) {
+    return DOC_MATCH_UNASSESSED;
+  }
+  // 4. 필수 비교를 전부 수행했고 전부 일치했다.
+  if (identifier === DOC_FIELD_MATCHED &&
+      (!opts.requireName || name === DOC_FIELD_MATCHED)) {
+    return DOC_MATCH_MATCHED;
+  }
+  return DOC_MATCH_UNASSESSED;
+}
+
+/** 읽는 쪽이 쓰는 한 벌의 판정 결과. */
+type SrvDocMatchSnapshot = {
+  /** 지금 유효한 상태. 낡았으면 UNASSESSED다. */
+  status: string;
+  /** 저장돼 있던 상태 — 진단용. 판정에 쓰지 않는다. */
+  storedStatus: string | null;
+  evidenceSource: string | null;
+  assurance: string | null;
+  /** 평가 당시 버전과 현재 버전이 다른가. */
+  isStale: boolean;
+};
+
+const SRV_DOC_MATCH_MISSING: SrvDocMatchSnapshot = {
+  status: DOC_MATCH_MISSING, storedStatus: null,
+  evidenceSource: null, assurance: null, isStale: false,
+};
+
+/**
+ * 신분증 자동 정합성 — **읽는 시점에** 버전을 비교한다.
+ *
+ * 저장된 MATCHED를 그대로 믿지 않는다. 문서가 바뀌면 그 판정은 다른 문서에
+ * 대한 것이 된다. fan-out으로 기존 평가를 지우고 다니지 않고, 읽을 때
+ * 비교한다 — `srvResolveReviewReadiness`와 같은 원칙이다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} u users 문서
+ * @return {SrvDocMatchSnapshot} 판정 결과
+ */
+function srvResolveIdCardMatch(
+  u: FirebaseFirestore.DocumentData | undefined
+): SrvDocMatchSnapshot {
+  if (!u) return SRV_DOC_MATCH_MISSING;
+  // 문서가 없으면 다른 필드가 뭐라 하든 MISSING이다. 삭제 후 잔존 필드가
+  // MATCHED로 읽히는 경로를 여기서 끊는다.
+  const hasDoc = !!(u["idCardImagePath"] ?? u["idCardImageUrl"]);
+  if (!hasDoc) return SRV_DOC_MATCH_MISSING;
+
+  const stored = (u["idCardMatchStatus"] as string | undefined) ?? null;
+  if (!stored) {
+    // 문서는 있는데 평가 기록이 없다 — 기존 사용자가 여기 해당한다.
+    return {
+      status: DOC_MATCH_UNASSESSED, storedStatus: null,
+      evidenceSource: null, assurance: null, isStale: false,
+    };
+  }
+  const evaluatedAt = (u["idCardMatchDocumentVersion"] as number | undefined) ?? -1;
+  const current = (u["idDocumentVersion"] as number | undefined) ?? 0;
+  const isStale = evaluatedAt !== current;
+  return {
+    status: isStale ? DOC_MATCH_UNASSESSED : stored,
+    storedStatus: stored,
+    evidenceSource: (u["idCardMatchEvidenceSource"] as string | undefined) ?? null,
+    assurance: (u["idCardMatchAssurance"] as string | undefined) ?? null,
+    isStale,
+  };
+}
+
+/**
+ * 통장사본 자동 정합성.
+ *
+ * 통장은 축이 **둘**이다 — 통장사본 자체와 등록 계좌. 계좌만 바뀌어도
+ * 그 통장사본과의 대조는 더 이상 유효하지 않으므로 generic
+ * `matchedAtVersion` 하나로는 표현할 수 없다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} u users 문서
+ * @return {SrvDocMatchSnapshot} 판정 결과
+ */
+function srvResolveBankbookMatch(
+  u: FirebaseFirestore.DocumentData | undefined
+): SrvDocMatchSnapshot {
+  if (!u) return SRV_DOC_MATCH_MISSING;
+  const hasDoc = !!(u["bankbookImagePath"] ?? u["bankbookImageUrl"]);
+  if (!hasDoc) return SRV_DOC_MATCH_MISSING;
+
+  const stored = (u["bankbookMatchStatus"] as string | undefined) ?? null;
+  if (!stored) {
+    return {
+      status: DOC_MATCH_UNASSESSED, storedStatus: null,
+      evidenceSource: null, assurance: null, isStale: false,
+    };
+  }
+  const evBb = (u["bankbookMatchDocumentVersion"] as number | undefined) ?? -1;
+  const evAcc = (u["bankbookMatchAccountVersion"] as number | undefined) ?? -1;
+  const curBb = (u["bankbookDocumentVersion"] as number | undefined) ?? 0;
+  const curAcc = (u["bankAccountVersion"] as number | undefined) ?? 0;
+  const isStale = evBb !== curBb || evAcc !== curAcc;
+  return {
+    status: isStale ? DOC_MATCH_UNASSESSED : stored,
+    storedStatus: stored,
+    evidenceSource:
+      (u["bankbookMatchEvidenceSource"] as string | undefined) ?? null,
+    assurance: (u["bankbookMatchAssurance"] as string | undefined) ?? null,
+    isStale,
+  };
+}
+
 /**
  * 제출 증거에서 문서 상태를 정한다 — **서버가 유일한 매핑 지점**이다.
  *
@@ -8427,24 +8615,46 @@ export const callableMarkIdCardVerified = onCall(
     //   그 승인을 그대로 들고 가는 경로를 남기지 않는다 — 관리자 결정 필드를
     //   여기서 명시적으로 지운다(값이 없으면 지우기는 no-op이다).
     const idDoc = srvComputeDocumentState(selfCheck);
-    await db.collection("users").doc(callerUid).update({
-      idCardImageUrl: admin.firestore.FieldValue.delete(), // 기존 permanent URL 제거
-      idCardImagePath: storagePath,    // [BUG-ID-01] authoritative Storage path
-      isIdVerified: true,              // 업로드 완료 = 단기공고 지원 prerequisite 충족
-      idCardVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-      idCardDocumentState: idDoc.state,
-      idCardSelfCheck: idDoc.evidence,
-      idCardSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
-      // [R1.2] 문서 버전 — 사업장 검토가 이 값으로 낡음을 판정한다.
-      //   경로가 같아도 바이트가 바뀌면 다른 문서다.
-      idDocumentVersion: admin.firestore.FieldValue.increment(1),
-      // 재업로드 — 이전 사람 결정 무효화
-      idCardReviewedBy: admin.firestore.FieldValue.delete(),
-      idCardReviewedAt: admin.firestore.FieldValue.delete(),
-      idCardReviewNote: admin.firestore.FieldValue.delete(),
+    // [PII-DOC-R1.4] 버전과 판정을 **같은 트랜잭션**에서 쓴다.
+    //
+    //   `increment(1)`은 결과값을 알려주지 않는다. 그래서 증가 후에 따로
+    //   읽어 match 버전을 쓰면 그 사이의 재업로드가 두 값을 어긋나게 만들 수
+    //   있다 — 평가는 v2에 대한 것인데 기록은 v1을 가리키는 식으로.
+    //   버전을 직접 계산해 한 커밋에 담는다.
+    const idMatchStatus =
+      srvEvaluateMatchStatus(idDoc.evidence, {requireName: true});
+    const idUserRef = db.collection("users").doc(callerUid);
+    const idNextVersion = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(idUserRef);
+      const nextV =
+        (((snap.data() ?? {})["idDocumentVersion"] as number | undefined) ?? 0) + 1;
+      tx.update(idUserRef, {
+        idCardImageUrl: admin.firestore.FieldValue.delete(), // 기존 permanent URL 제거
+        idCardImagePath: storagePath,    // [BUG-ID-01] authoritative Storage path
+        isIdVerified: true,              // 업로드 완료 = 단기공고 지원 prerequisite 충족
+        idCardVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        idCardDocumentState: idDoc.state,
+        idCardSelfCheck: idDoc.evidence,
+        idCardSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+        // [R1.2] 문서 버전 — 사업장 검토가 이 값으로 낡음을 판정한다.
+        //   경로가 같아도 바이트가 바뀌면 다른 문서다.
+        idDocumentVersion: nextV,
+        // [R1.4] 자동 정합성 — 이 버전의 문서에 대한 판정이다.
+        idCardMatchStatus: idMatchStatus,
+        idCardMatchEvidenceSource: MATCH_SOURCE_CLIENT_OCR,
+        idCardMatchAssurance: MATCH_ASSURANCE_CLIENT_EVIDENCE,
+        idCardMatchDocumentVersion: nextV,
+        idCardMatchEvaluatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        // 재업로드 — 이전 사람 결정 무효화
+        idCardReviewedBy: admin.firestore.FieldValue.delete(),
+        idCardReviewedAt: admin.firestore.FieldValue.delete(),
+        idCardReviewNote: admin.firestore.FieldValue.delete(),
+      });
+      return nextV;
     });
     console.info(
       `[markIdCardVerified] uid=${callerUid} state=${idDoc.state} ` +
+      `match=${idMatchStatus} v=${idNextVersion} ` +
       `evidence=${idDoc.evidence ? "present" : "none"}`);
     // [R1.2] 보완 요청이 열려 있었다면 제출로 넘긴다 (POST_COMMIT).
     await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_ID);
@@ -8570,6 +8780,14 @@ export const callableDeleteIdCard = onCall(
       idCardImagePath: admin.firestore.FieldValue.delete(),
       isIdVerified: false,
       idCardVerifiedAt: admin.firestore.FieldValue.delete(),
+      // [PII-DOC-R1.4] 문서가 사라졌으면 그 문서에 대한 판정도 사라진다.
+      //   resolver가 이미지 없음을 MISSING으로 우선 처리하지만, 잔존 필드를
+      //   남겨 두면 언젠가 다른 reader가 그것을 믿게 된다.
+      idCardMatchStatus: admin.firestore.FieldValue.delete(),
+      idCardMatchEvidenceSource: admin.firestore.FieldValue.delete(),
+      idCardMatchAssurance: admin.firestore.FieldValue.delete(),
+      idCardMatchDocumentVersion: admin.firestore.FieldValue.delete(),
+      idCardMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
     });
     const idDeleteNow = admin.firestore.FieldValue.serverTimestamp();
     for (const grantDoc of activeGrantsSnap.docs) {
@@ -8669,23 +8887,44 @@ export const callableMarkBankbookVerified = onCall(
 
     // [BLOCKER-DOCUMENT-REUPLOAD-VERIFICATION-STALENESS] 신분증과 같은 규칙.
     const bbDoc = srvComputeDocumentState(selfCheck);
-    await db.collection("users").doc(callerUid).update({
-      // legacy 소비자가 남아 있어 URL은 넘어온 경우에만 갱신한다.
-      ...(imageUrl ? {bankbookImageUrl: imageUrl} : {}),
-      // [V3] Storage 경로 저장 — callableGetBankbookSignedUrl Signed URL 발급 기반
-      bankbookImagePath: storagePath,
-      // [Phase 6] bankVerificationStatus / isBankbookVerified 제거 — V3에서 불필요
-      bankbookUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
-      bankbookDocumentState: bbDoc.state,
-      bankbookSelfCheck: bbDoc.evidence,
-      // [R1.2] 통장사본 버전 — 재업로드가 곧 재확인 사유다.
-      bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
-      bankbookReviewedBy: admin.firestore.FieldValue.delete(),
-      bankbookReviewedAt: admin.firestore.FieldValue.delete(),
-      bankbookReviewNote: admin.firestore.FieldValue.delete(),
+    // [PII-DOC-R1.4] 통장은 축이 둘이다 — 통장사본 버전과 **등록 계좌 버전**.
+    //   계좌만 바뀌어도 이 통장사본과의 대조는 유효하지 않게 되므로
+    //   두 값을 함께 묶는다. 같은 트랜잭션에서 읽고 쓴다.
+    const bbMatchStatus =
+      srvEvaluateMatchStatus(bbDoc.evidence, {requireName: false});
+    const bbUserRef = db.collection("users").doc(callerUid);
+    const bbVersions = await db.runTransaction(async (tx) => {
+      const cur = (await tx.get(bbUserRef)).data() ?? {};
+      const nextBb =
+        ((cur["bankbookDocumentVersion"] as number | undefined) ?? 0) + 1;
+      const curAcc = (cur["bankAccountVersion"] as number | undefined) ?? 0;
+      tx.update(bbUserRef, {
+        // legacy 소비자가 남아 있어 URL은 넘어온 경우에만 갱신한다.
+        ...(imageUrl ? {bankbookImageUrl: imageUrl} : {}),
+        // [V3] Storage 경로 저장 — callableGetBankbookSignedUrl Signed URL 발급 기반
+        bankbookImagePath: storagePath,
+        // [Phase 6] bankVerificationStatus / isBankbookVerified 제거 — V3에서 불필요
+        bankbookUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+        bankbookDocumentState: bbDoc.state,
+        bankbookSelfCheck: bbDoc.evidence,
+        // [R1.2] 통장사본 버전 — 재업로드가 곧 재확인 사유다.
+        bankbookDocumentVersion: nextBb,
+        // [R1.4] 자동 정합성 — 이 통장사본 + 이 계좌에 대한 판정이다.
+        bankbookMatchStatus: bbMatchStatus,
+        bankbookMatchEvidenceSource: MATCH_SOURCE_CLIENT_OCR,
+        bankbookMatchAssurance: MATCH_ASSURANCE_CLIENT_EVIDENCE,
+        bankbookMatchDocumentVersion: nextBb,
+        bankbookMatchAccountVersion: curAcc,
+        bankbookMatchEvaluatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        bankbookReviewedBy: admin.firestore.FieldValue.delete(),
+        bankbookReviewedAt: admin.firestore.FieldValue.delete(),
+        bankbookReviewNote: admin.firestore.FieldValue.delete(),
+      });
+      return {bb: nextBb, acc: curAcc};
     });
     console.info(
       `[markBankbookVerified] uid=${callerUid} state=${bbDoc.state} ` +
+      `match=${bbMatchStatus} bbV=${bbVersions.bb} accV=${bbVersions.acc} ` +
       `evidence=${bbDoc.evidence ? "present" : "none"}`);
     await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_BANKBOOK);
 
@@ -8876,6 +9115,13 @@ export const callableGetApplicantDocumentReview = onCall(
         hasBankbook: (u["bankbookImagePath"] ?? u["bankbookImageUrl"]) != null,
         idCardDocumentState: u["idCardDocumentState"] ?? null,
         bankbookDocumentState: u["bankbookDocumentState"] ?? null,
+      },
+      // [PII-DOC-R1.4] 자동 정합성 — **표시 전용**이다.
+      //   이 Phase에서 어떤 게이트도 이 값을 읽지 않는다. readiness는 위의
+      //   `readiness`(사람 검토)가 그대로 결정한다. 연결은 R1.5다.
+      autoMatch: {
+        idCard: srvResolveIdCardMatch(u),
+        bankbook: srvResolveBankbookMatch(u),
       },
       // [AUDIT-X7] 계좌 원문은 자격이 있을 때만. 없으면 **키 자체를 넣지 않는다.**
       ...(canSeeDocs ? {
@@ -9346,6 +9592,13 @@ export const callableDeleteBankInfo = onCall(
       bankVerificationStatus: admin.firestore.FieldValue.delete(), // [Phase 6] legacy data 정리용으로만 유지
       bankbookUploadedAt: admin.firestore.FieldValue.delete(),
       bankVerifiedAt: admin.firestore.FieldValue.delete(),
+      // [PII-DOC-R1.4] 문서·계좌가 사라졌으면 그에 대한 판정도 사라진다.
+      bankbookMatchStatus: admin.firestore.FieldValue.delete(),
+      bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
+      bankbookMatchAssurance: admin.firestore.FieldValue.delete(),
+      bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
+      bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
+      bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
     });
 
     // 2. Storage 삭제 best-effort (Firestore 성공 후)
@@ -9472,6 +9725,14 @@ export const callableUpdateBankAccount = onCall(
       bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
       bankbookDocumentState: admin.firestore.FieldValue.delete(),
       bankbookSelfCheck: admin.firestore.FieldValue.delete(),
+      // [PII-DOC-R1.4] 계좌가 바뀌면 그 통장사본과의 대조는 더 이상 유효하지
+      //   않다. source of truth는 버전 비교지만, 남겨 둘 이유도 없다.
+      bankbookMatchStatus: admin.firestore.FieldValue.delete(),
+      bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
+      bankbookMatchAssurance: admin.firestore.FieldValue.delete(),
+      bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
+      bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
+      bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 

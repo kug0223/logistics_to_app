@@ -182,10 +182,16 @@ void main() {
     });
 
     test('문서 제출·계좌 변경이 버전을 올린다', () {
-      expect(markId,
-          contains('idDocumentVersion: admin.firestore.FieldValue.increment(1)'));
-      expect(markBank,
-          contains('bankbookDocumentVersion: admin.firestore.FieldValue.increment(1)'));
+      // [PII-DOC-R1.4] 제출 경로의 버전 증가가 increment(1)에서 트랜잭션 내
+      //   직접 계산으로 바뀌었다. increment는 결과값을 알려주지 않아 자동
+      //   정합성 판정을 **그 버전에** 묶을 수 없기 때문이다.
+      //   고정하려던 불변식("제출·계좌 변경은 버전을 올린다")은 그대로다.
+      expect(markId, contains('idDocumentVersion: nextV'));
+      expect(markId, contains('idCardMatchDocumentVersion: nextV'),
+          reason: '판정과 버전이 같은 커밋에 있어야 한다');
+      expect(markBank, contains('bankbookDocumentVersion: nextBb'));
+      expect(markBank, contains('bankbookMatchDocumentVersion: nextBb'));
+      // 계좌 변경은 증가만 하면 되므로 기존 방식 그대로다.
       expect(updateBank,
           contains('bankAccountVersion: admin.firestore.FieldValue.increment(1)'));
       expect(updateBank,
