@@ -678,6 +678,124 @@ function srvResolveReviewReadiness(
   };
 }
 
+// ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.5] 근무 확정 readiness — MATCHING READINESS
+//
+//   확정은 "이 지원자를 이 근무에 확정해도 되는가"에 답한다.
+//   급여계좌는 그 질문의 일부가 아니다 — 돈은 근무가 끝난 뒤에 나간다.
+//
+//   그래서 이 helper는 **신분 확인만** 읽는다. 통장사본이 없거나 불일치여도
+//   근무 확정을 막지 않는다. 급여 쪽 준비는 R1.6의 Payroll Readiness가
+//   별도로 판단한다. (PD-3)
+//
+//   ── 자동 통과가 뜻하는 것 ──────────────────────────────────
+//
+//   `idCardMatchStatus == MATCHED`는 근거가 `CLIENT_OCR` / `CLIENT_EVIDENCE`다.
+//   즉 "현재 등록된 신분정보와 제출 서류의 기기 추출값 사이에 알려진 불일치가
+//   없다"는 뜻이지 **정부기관이 신분증 진위를 검증했다**는 뜻이 아니다.
+//   이 게이트는 진위 인증기가 아니라 운영 판단이다 — 정상 사용자를 매번
+//   관리자 육안검토로 보내지 않기 위한 것이고, 내국인에게는 PASS 본인인증이
+//   별도로 존재한다. 그렇다고 assurance를 SERVER_VERIFIED로 올리지 않는다.
+//
+//   ── 사람 fallback을 남기는 이유 ────────────────────────────
+//
+//   OCR이 못 읽는 정상 서류, 외국인·희귀 서류, 예외 지원이 있다. 자동 판정이
+//   안 되는 사람을 확정 불가로 만들면 자동화가 오히려 길을 막는다.
+// ═══════════════════════════════════════════════════════════
+
+const MR_READY_AUTO = "READY_AUTO";
+const MR_READY_MANUAL = "READY_MANUAL";
+const MR_ID_MISSING = "ID_MISSING";
+const MR_ID_MISMATCH = "ID_MISMATCH";
+const MR_ID_OCR_UNCERTAIN = "ID_OCR_UNCERTAIN";
+const MR_ID_UNASSESSED = "ID_UNASSESSED";
+
+/** 근무 확정 readiness 판정 결과 — `ready=false` 하나로 원인을 뭉개지 않는다. */
+type SrvMatchingReadiness = {
+  ready: boolean;
+  /** READY_AUTO | READY_MANUAL | ID_* */
+  state: string;
+  /** 사용자에게 보여줄 사유. ready면 null. */
+  reason: string | null;
+  /** 감사용 — 어떤 근거로 통과/차단했는가. */
+  autoMatchStatus: string;
+  autoMatchStale: boolean;
+  manualDecision: string;
+  manualStale: boolean;
+};
+
+/**
+ * 근무 확정 가능 여부 — 신분 확인만 본다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} userData 근로자 users 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} review 이 사업장의 검토 문서
+ * @return {SrvMatchingReadiness} 판정
+ */
+function srvResolveMatchingReadiness(
+  userData: FirebaseFirestore.DocumentData | undefined,
+  review: FirebaseFirestore.DocumentData | undefined
+): SrvMatchingReadiness {
+  const auto = srvResolveIdCardMatch(userData);
+
+  const curIdV =
+    ((userData ?? {})["idDocumentVersion"] as number | undefined) ?? 0;
+  const manualDec =
+    (review?.["idDecision"] as string | undefined) ?? REVIEW_NOT_REVIEWED;
+  const rIdV =
+    (review?.["reviewedIdDocumentVersion"] as number | undefined) ?? -1;
+  const manualStale = manualDec !== REVIEW_NOT_REVIEWED && rIdV !== curIdV;
+  const manualOk = manualDec === REVIEW_OK && !manualStale;
+
+  const base = {
+    autoMatchStatus: auto.status,
+    autoMatchStale: auto.isStale,
+    manualDecision: manualDec,
+    manualStale,
+  };
+
+  // 신분증이 아예 없으면 볼 것도 없다 — 사람 검토가 남아 있어도 통과시키지
+  // 않는다. 문서 삭제는 검토 버전을 바꾸지 않으므로 여기서 먼저 막는다.
+  if (auto.status === DOC_MATCH_MISSING) {
+    return {
+      ...base, ready: false, state: MR_ID_MISSING,
+      reason: "신분증이 등록되어 있지 않습니다.",
+    };
+  }
+
+  // 자동 통과 — 판정이 현재 문서에 대한 것일 때만이다. 낡으면 resolver가
+  // 이미 UNASSESSED로 돌려주므로 여기서 다시 버전을 보지 않는다.
+  if (auto.status === DOC_MATCH_MATCHED) {
+    return {...base, ready: true, state: MR_READY_AUTO, reason: null};
+  }
+
+  // 사람이 원본을 직접 본 결과는 자동 판정보다 강하다 — 불일치로 나왔더라도
+  // 현재 문서를 확인한 REVIEWED_OK가 있으면 확정할 수 있다.
+  if (manualOk) {
+    return {...base, ready: true, state: MR_READY_MANUAL, reason: null};
+  }
+
+  if (auto.status === DOC_MATCH_MISMATCH) {
+    return {
+      ...base, ready: false, state: MR_ID_MISMATCH,
+      reason: "등록된 신원정보와 신분증이 일치하지 않습니다. " +
+        "지원자 상세에서 신분증을 확인해주세요.",
+    };
+  }
+  if (auto.status === DOC_MATCH_OCR_UNCERTAIN) {
+    return {
+      ...base, ready: false, state: MR_ID_OCR_UNCERTAIN,
+      reason: "신분증 정보를 자동으로 확인하지 못했습니다. " +
+        "지원자 상세에서 신분증을 확인해주세요.",
+    };
+  }
+  return {
+    ...base, ready: false, state: MR_ID_UNASSESSED,
+    reason: manualStale ?
+      "신분증이 변경되어 다시 확인해야 합니다." :
+      "신분증 확인이 필요합니다. 지원자 상세에서 확인해주세요.",
+  };
+}
+
 /**
  * 이 호출자가 지원자 서류를 볼 수 있는가 — canManageTo AND canManageWage.
  *
@@ -9116,13 +9234,19 @@ export const callableGetApplicantDocumentReview = onCall(
         idCardDocumentState: u["idCardDocumentState"] ?? null,
         bankbookDocumentState: u["bankbookDocumentState"] ?? null,
       },
-      // [PII-DOC-R1.4] 자동 정합성 — **표시 전용**이다.
-      //   이 Phase에서 어떤 게이트도 이 값을 읽지 않는다. readiness는 위의
-      //   `readiness`(사람 검토)가 그대로 결정한다. 연결은 R1.5다.
+      // [PII-DOC-R1.4] 자동 정합성 — 원자료.
       autoMatch: {
         idCard: srvResolveIdCardMatch(u),
         bankbook: srvResolveBankbookMatch(u),
       },
+      // [PII-DOC-R1.5] **근무 확정**이 실제로 읽는 판정.
+      //
+      //   위의 `readiness`(사람 검토 기반)는 급여 경로가 아직 쓰고 있어
+      //   의미를 바꾸지 않고 그대로 둔다. R1.6에서 payroll readiness가
+      //   따로 들어올 자리를 남긴다.
+      //
+      //   이 값은 신분 확인만 본다 — 통장사본 상태는 확정을 막지 않는다.
+      matchingReadiness: srvResolveMatchingReadiness(u, reviewSnap.data()),
       // [AUDIT-X7] 계좌 원문은 자격이 있을 때만. 없으면 **키 자체를 넣지 않는다.**
       ...(canSeeDocs ? {
         bank: {
@@ -24599,15 +24723,23 @@ export const callableConfirmApplication = onCall(
           .doc(srvBizReviewId(businessId, applicantUid)).get(),
       ]);
       const versions = srvDocumentVersionsOf(workerSnap.data() ?? {});
-      const readiness = srvResolveReviewReadiness(reviewSnap.data(), versions);
+      // [PII-DOC-R1.5] 확정은 **근무에 대한 약속**이다 — 급여계좌 상태는
+      //   이 질문의 일부가 아니다. 통장사본이 없거나 불일치여도 근무 확정은
+      //   막지 않고, 급여 준비는 R1.6의 Payroll Readiness가 따로 판단한다.
+      //
+      //   그리고 정상 사용자는 사람 검토 없이 통과한다 — 자동 정합성이
+      //   현재 문서에 대해 MATCHED면 그것으로 충분하다. 사람 검토는
+      //   자동 판정이 안 되는 경우의 fallback으로 남는다.
+      const readiness =
+        srvResolveMatchingReadiness(workerSnap.data(), reviewSnap.data());
       if (!readiness.ready) {
         throw new HttpsError(
           "failed-precondition",
-          `${readiness.reason ?? "지원자 서류 확인이 필요합니다."} ` +
-          "지원자 상세에서 서류를 확인한 뒤 확정해주세요."
-        );
+          readiness.reason ?? "지원자 신분증 확인이 필요합니다.");
       }
       // [AUDIT-X11] 어떤 서류·계좌를 본 뒤 확정했는지 재구성 가능해야 한다.
+      //   [R1.5] 통과 근거(자동/사람)도 함께 남긴다 — 나중에 "왜 통과됐나"를
+      //   물었을 때 답할 수 있어야 한다.
       confirmReviewProvenance = {
         documentReviewBusinessId: businessId,
         documentReviewIdVersion: versions.id,
@@ -24615,6 +24747,8 @@ export const callableConfirmApplication = onCall(
         documentReviewBankAccountVersion: versions.account,
         documentReviewedBy: reviewSnap.get("reviewedBy") ?? null,
         documentReviewedAt: reviewSnap.get("reviewedAt") ?? null,
+        matchingReadinessState: readiness.state,
+        matchingAutoMatchStatus: readiness.autoMatchStatus,
       };
     };
     if ((appDataPre.status as string | undefined) === "PENDING") {
@@ -31081,6 +31215,28 @@ export const callableAcceptTOInvitation = onCall(
           "invalid-argument",
           "소득신고·급여처리 목적 서류 접근에 동의해야 초대를 수락할 수 있습니다."
         );
+      }
+
+      // [PII-DOC-R1.5] 초대 수락도 **확정**이다 — 직접 확정과 같은 판정을 쓴다.
+      //
+      //   R1.2가 확정 경로에 서류 게이트를 세웠을 때 이 경로는 제외됐다
+      //   (`[FOLLOWUP-INVITE-DOCUMENT-REVIEW-PARITY]`). 그 결과 관리자가
+      //   초대하면 같은 사람이 같은 근무에 같은 약속으로 확정되는데도 서류
+      //   판정을 지나지 않았다. entry point가 게이트를 우회하면 게이트가
+      //   아니라 권고가 된다.
+      //
+      //   읽기는 쓰기보다 앞서야 하므로 좌석·카운터를 건드리기 전에 본다.
+      //   실패하면 INVITED 그대로다 — 좌석·카운터·계약·grant 변화 0.
+      const acceptReviewSnap = await tx.get(
+        db.collection(BIZ_DOC_REVIEW_COL)
+          .doc(srvBizReviewId(
+            (appData.businessId as string | undefined) ?? "", callerUid)));
+      const acceptReadiness =
+        srvResolveMatchingReadiness(freshUserData, acceptReviewSnap.data());
+      if (!acceptReadiness.ready) {
+        throw new HttpsError(
+          "failed-precondition",
+          acceptReadiness.reason ?? "신분증 확인이 필요합니다.");
       }
 
       // [6.1 INV-03] 트랜잭션 fresh read에서 selectedWorkType 추출 — 카운터 업데이트용

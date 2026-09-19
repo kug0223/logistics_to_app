@@ -156,6 +156,22 @@ class ApplicantDocumentReview {
 
   final List<String> openCorrectionTypes;
 
+  // ── [PII-DOC-R1.5] 근무 확정 readiness ──────────────────────
+  //
+  //   위의 `ready`는 사람 검토 기반 판정이고 급여 경로가 아직 쓴다.
+  //   확정 버튼이 실제로 따르는 것은 이 값이다 — 신분 확인만 본다.
+  //   통장사본 상태는 확정을 막지 않는다. (PD-3)
+
+  /// 근무 확정 가능 여부.
+  final bool matchingReady;
+
+  /// READY_AUTO | READY_MANUAL | ID_MISSING | ID_MISMATCH |
+  /// ID_OCR_UNCERTAIN | ID_UNASSESSED
+  final String matchingState;
+
+  /// 확정이 막힌 사유. [matchingReady]면 null.
+  final String? matchingReason;
+
   const ApplicantDocumentReview({
     required this.workerUid,
     required this.canReviewDocuments,
@@ -175,6 +191,9 @@ class ApplicantDocumentReview {
     required this.accountNumber,
     required this.accountHolder,
     required this.openCorrectionTypes,
+    required this.matchingReady,
+    required this.matchingState,
+    required this.matchingReason,
   });
 
   factory ApplicantDocumentReview.fromMap(Map<String, dynamic> m) {
@@ -182,6 +201,7 @@ class ApplicantDocumentReview {
     final r = Map<String, dynamic>.from((m['readiness'] as Map?) ?? {});
     final d = Map<String, dynamic>.from((m['documents'] as Map?) ?? {});
     final b = m['bank'] is Map ? Map<String, dynamic>.from(m['bank'] as Map) : null;
+    final mr = Map<String, dynamic>.from((m['matchingReadiness'] as Map?) ?? {});
     final corr = ((m['openCorrections'] as List?) ?? const [])
         .whereType<Map>()
         .map((e) => (e['documentType'] ?? '').toString())
@@ -207,8 +227,14 @@ class ApplicantDocumentReview {
       accountNumber: b?['accountNumber'] as String?,
       accountHolder: b?['accountHolder'] as String?,
       openCorrectionTypes: corr,
+      matchingReady: mr['ready'] == true,
+      matchingState: (mr['state'] as String?) ?? 'ID_UNASSESSED',
+      matchingReason: mr['reason'] as String?,
     );
   }
+
+  /// 자동 정합성으로 통과했는가 — 사람이 보지 않아도 되는 경우.
+  bool get matchedAutomatically => matchingState == 'READY_AUTO';
 
   /// 항목별 표시 상태. '확인 완료'는 사업장이 확인했다는 뜻이지
   /// 진위 보증이 아니다 — 문구를 그렇게 쓴다.
@@ -222,6 +248,10 @@ class ApplicantDocumentReview {
       case 'REUPLOAD_REQUIRED':
         return '다시 등록 요청함';
       default:
+        // [PII-DOC-R1.5] 사람이 아직 안 봤다고 해서 '확인 전'이 아니다 —
+        //   시스템이 이미 대조했고 일치하면 그 사실을 말한다.
+        //   '인증 완료'가 아니라 '정보 일치'다. 이건 진위 확인이 아니다.
+        if (isId && matchedAutomatically) return '서류 정보 일치';
         return '확인 전';
     }
   }

@@ -213,10 +213,15 @@ void main() {
   });
 
   group('R1.2-06 — 확정 게이트', () {
-    test('PENDING 확정은 현재 검토가 유효해야 한다', () {
-      expect(confirmApp, contains('srvResolveReviewReadiness(reviewSnap.data(), versions)'));
+    test('PENDING 확정은 현재 서류 판정이 유효해야 한다', () {
+      // [PII-DOC-R1.5] 게이트가 읽는 것이 "사람이 두 서류를 다 봤는가"에서
+      //   "신분 확인이 현재 유효한가"로 바뀌었다. 자동 정합성이 MATCHED면
+      //   사람 검토 없이 통과하고, 급여계좌는 확정을 막지 않는다.
+      //   고정하려던 불변식("확정은 현재 유효한 판정을 요구한다")은 그대로다.
+      expect(confirmApp,
+          contains('srvResolveMatchingReadiness(workerSnap.data(), reviewSnap.data())'));
       expect(confirmApp, contains('if (!readiness.ready)'));
-      expect(confirmApp, contains('지원자 상세에서 서류를 확인한 뒤 확정해주세요'));
+      expect(confirmApp, contains('지원자 신분증 확인이 필요합니다'));
     });
 
     test('경고만 띄우고 통과시키지 않는다', () {

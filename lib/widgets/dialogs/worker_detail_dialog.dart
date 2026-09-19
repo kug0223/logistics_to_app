@@ -1257,11 +1257,22 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       child: const Divider(height: 1, thickness: 0.5),
                     ),
                     _docRow(context, r, isId: false),
-                    if (!r.ready && r.reason != null) ...[
+                    // [PII-DOC-R1.5] 확정을 막는 사유만 경고로 말한다.
+                    //
+                    //   예전에는 신분증·통장 **둘 다** 사람이 확인해야 확정이
+                    //   됐고, 여기서 그 둘을 한 문장으로 알렸다. 이제 확정은
+                    //   신분 확인만 본다 — 급여계좌는 지급 단계의 문제이므로
+                    //   확정 버튼을 막는 사유로 표시하지 않는다.
+                    if (!r.matchingReady && r.matchingReason != null) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                      Text(r.reason!,
+                      Text(r.matchingReason!,
                           style: ResponsiveHelper.smallStyle(context,
                               color: AppColors.warningDark)),
+                    ] else if (r.matchingReady && !r.okFor(isId: false)) ...[
+                      SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                      Text('급여정보는 지급 전까지 확인하면 됩니다. 확정은 지금 할 수 있어요.',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey600)),
                     ],
                   ],
                 ),

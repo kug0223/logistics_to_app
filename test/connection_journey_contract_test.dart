@@ -353,7 +353,9 @@ void main() {
       expect(accept.contains('await db.runTransaction(async (tx)'), isTrue);
       // [CROSS-DOMAIN-R5.2] 트랜잭션 앞부분에 서류 readiness 재검증이 들어와
       //   창이 좁아졌다. 보는 성질은 그대로 — 창 크기만 맞춘다.
-      final tx = _after(accept, 'await db.runTransaction(async (tx)', 12000);
+      // [PII-DOC-R1.5] 트랜잭션 앞부분에 신분 readiness 재검증이 더 들어와
+      //   창이 한 번 더 좁아졌다. 보는 성질은 그대로 — 창 크기만 맞춘다.
+      final tx = _after(accept, 'await db.runTransaction(async (tx)', 14000);
       expect(tx.contains('getWorkDetailCount'), isTrue);
       expect(tx.contains('업무 정원이 초과되었습니다'), isTrue);
     });

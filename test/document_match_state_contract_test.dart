@@ -276,8 +276,10 @@ void main() {
     test('23 확정 게이트는 여전히 사람 검토만 읽는다', () {
       final readiness = _flat(_codeOf(
           _sliceOf(rawCf, 'function srvResolveReviewReadiness(', '\n}')));
-      expect(readiness, isNot(contains('MatchStatus')),
-          reason: '자동 MATCHED 연결은 R1.5다');
+      // [PII-DOC-R1.5] 이 helper 자체는 여전히 사람 검토만 읽는다 —
+      //   확정은 새 srvResolveMatchingReadiness로 옮겨갔고, 여기 남은 소비자는
+      //   급여 경로다(R1.6 전까지).
+      expect(readiness, isNot(contains('MatchStatus')));
       expect(readiness, contains('idDec === REVIEW_OK && !idStale'));
       expect(readiness, contains('bankDec === REVIEW_OK && !bankStale'));
     });
@@ -290,10 +292,18 @@ void main() {
       expect(confirm, isNot(contains('MatchStatus')));
     });
 
-    test('25 확정 게이트가 match status를 읽지 않는다', () {
+    test('25 확정 게이트가 canonical match를 읽는다 (R1.5에서 연결)', () {
+      // R1.4 시점에는 "아직 연결하지 않았다"가 고정 대상이었다.
+      //   R1.5가 그 연결이고, 연결 방식은 matching_readiness_contract_test가
+      //   따로 고정한다. 여기서는 급여 경로가 그대로인지만 확인한다.
       final confirmApp = _flat(_codeOf(_sliceOf(rawCf,
           'export const callableConfirmApplication = onCall(', '\n);')));
-      expect(confirmApp, isNot(contains('MatchStatus')));
+      expect(confirmApp, contains('srvResolveMatchingReadiness('));
+      final wage = _flat(_codeOf(_sliceOf(rawCf,
+          'export const callableConfirmFinalWage = onCall(',
+          'export const callableCancelFinalConfirmation')));
+      expect(wage, isNot(contains('srvResolveMatchingReadiness')),
+          reason: '급여는 아직 R1.6 전이다');
     });
 
     test('26 자동 판정은 표시 전용 DTO로만 나간다', () {
