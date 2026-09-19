@@ -783,6 +783,11 @@ class TransferRow {
 }
 
 /// 출근기록 리스트 + 사용자 계좌 정보로 이체 행 생성
+@Deprecated(
+  '[PII-DOC-R0.1 / INV-2] 이 함수는 현재 User 프로필 계좌로 이체 행을 만든다. '
+  '확정된 급여의 지급 계좌는 Attendance 스냅샷이다. '
+  'buildTransferExportPlan(transfer_export_plan.dart)을 사용할 것.',
+)
 List<TransferRow> buildTransferRows(
   List<AttendanceModel> records,
   Map<String, Map<String, String>> userBankInfo, // uid → {bankName, accountNumber, accountHolder}

@@ -76,7 +76,9 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
           if (inWindow.isEmpty) return <_ExpiringItem>[];
 
           final uids = inWindow.map((a) => a.uid).toSet().toList();
-          final userMap = await _svc.getUsersBatch(uids, businessId: bizId);
+          // [PII-DOC-R0.1 / INV-1] 계약 만료 목록 — 이름만 쓴다.
+          final userMap = await _svc.getUsersBatch(uids, businessId: bizId,
+              purpose: FirestoreService.purposeWorkerDirectory);
 
           BusinessModel? biz;
           try {

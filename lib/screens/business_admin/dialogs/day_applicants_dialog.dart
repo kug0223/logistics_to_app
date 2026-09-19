@@ -473,7 +473,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // Phase 2: Phase 3 futures가 이미 실행 중인 상태에서 병렬로 처리됨
         Map<String, int> workDetailCapacityMap = {};
         final results = await Future.wait([
-          _svc.getUsersBatch(allUids, businessId: bizId),
+          // [PII-DOC-R0.1 / INV-1] 날짜별 지원자·확정자 목록 — 계좌 불필요.
+          _svc.getUsersBatch(allUids, businessId: bizId,
+              purpose: FirestoreService.purposeWorkerDirectory),
           _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
           _loadWeeklyCount(bizId),
           _loadWorkDetailCapacities(allApps),

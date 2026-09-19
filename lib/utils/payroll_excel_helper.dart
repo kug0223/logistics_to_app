@@ -4,6 +4,10 @@
 //
 // [미이체 탭]    exportTransferList  — 은행 이체 전용 단순 시트
 // [이체현황 탭]  exportPayrollDetail — 회계/세무용 건별 상세 시트
+//
+// [PII-DOC-R0.1 / INV-2] 이체 시트의 계좌 출처는 **Attendance 스냅샷**이다.
+//   `users/{uid}`의 현재 프로필이 아니다. 판정은 `transfer_export_plan.dart`에
+//   모여 있고, 여기서는 이미 정해진 계획을 그린다.
 
 import 'dart:io';
 import 'package:excel/excel.dart' hide Border;
@@ -11,41 +15,53 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../services/payroll_payment_service.dart';
 import '../services/firestore_service.dart';
 import '../models/core/attendance_model.dart';
+import 'encryption_helper.dart';
 import 'format_helper.dart';
 import 'toast_helper.dart';
+import 'transfer_export_plan.dart';
 
 class PayrollExcelHelper {
 
   // ══════════════════════════════════════════════════════════
+  // 이체 계획 수립 — 파일을 만들기 **전에** 무엇이 나가고 무엇이 왜 빠지는지 정한다.
+  // 화면이 이 계획을 먼저 보여주고, 사용자가 확인한 뒤에 파일이 만들어진다.
+  // ══════════════════════════════════════════════════════════
+  static Future<TransferExportPlan> prepareTransferPlan({
+    required List<AttendanceModel> records,
+    required String businessId,
+  }) async {
+    final names = await _loadWorkerNames(records, businessId);
+    return buildTransferExportPlan(
+      records: records,
+      names: names,
+      decrypt: EncryptionHelper.decrypt,
+      formatDate: FormatHelper.formatDateDot,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
   // 미이체 탭 — 은행 이체 전용 시트
   // 컬럼: 이름 | 은행명 | 계좌번호 | 예금주 | 이체금액 | 메모
-  // 행 단위: 근무자별 합산 1행
+  // 행 단위: 근무자 × 확정 시점 계좌 합산 1행
+  //
+  // [INV-3] 파일에는 plan.rows만 들어간다. 화면이 말한 행 수와 같다.
   // ══════════════════════════════════════════════════════════
   static Future<void> exportTransferList({
     required BuildContext context,
-    required List<AttendanceModel> records,
+    required TransferExportPlan plan,
     required String title,
     required String filename,
-    required String businessId,
   }) async {
-    if (records.isEmpty) {
-      ToastHelper.showWarning('이체 대상이 없습니다');
+    final rows = plan.rows;
+    if (rows.isEmpty) {
+      ToastHelper.showWarning('엑셀에 포함할 이체 대상이 없습니다');
       return;
     }
-
-    final bankInfo = await _loadBankInfo(context, records, businessId);
 
     final excel = Excel.createExcel();
     excel.delete('Sheet1');
-
-    final rows = buildTransferRows(records, bankInfo);
-    if (rows.isEmpty) {
-      if (context.mounted) ToastHelper.showWarning('이체 가능한 계좌 정보가 없습니다');
-      return;
-    }
 
     final sheet = excel['이체목록'];
     _setColWidths(sheet, [12, 14, 22, 12, 12, 32]);
@@ -80,6 +96,24 @@ class PayrollExcelHelper {
     _cell(sheet, totalRow, 3, '합계', bold: true, bgHex: 'FFEAF4FF');
     _numCell(sheet, totalRow, 4, total, bold: true, bgHex: 'FFEAF4FF');
 
+    // [INV-3] 파일이 스스로 말하게 한다.
+    //   이 파일은 화면을 떠나 은행·회계 담당에게 따로 간다. 거기서는 "몇 명이
+    //   왜 빠졌는지"를 물어볼 화면이 없다. 그래서 그 사실을 파일에 적는다.
+    //   사람을 추가하는 것이 아니라 **누락을 고지**하는 것이다.
+    final excluded = plan.blockedRecords + plan.notApplicableRecords;
+    if (excluded > 0) {
+      final noteRow = totalRow + 2;
+      final parts = <String>[
+        '전체 급여 ${plan.totalRecords}건 중 ${plan.exportedRecords}건 포함',
+        if (plan.blockedRecords > 0)
+          '확인 필요 ${plan.blockedWorkers}명 · ${plan.blockedRecords}건 제외',
+        if (plan.notApplicableRecords > 0)
+          '$kNotApplicableLabel ${plan.notApplicableWorkers}명 · '
+              '${plan.notApplicableRecords}건 제외',
+      ];
+      _cell(sheet, noteRow, 0, parts.join(' / '));
+    }
+
     if (!context.mounted) return;
     await _shareExcel(context, excel, filename);
   }
@@ -103,7 +137,8 @@ class PayrollExcelHelper {
       return;
     }
 
-    final bankInfo = await _loadBankInfo(context, records, businessId);
+    // [PII-DOC-R0.1] 이 시트는 이름만 필요하다 — 계좌 컬럼이 없다.
+    final names = await _loadWorkerNames(records, businessId);
 
     final excel = Excel.createExcel();
     excel.delete('Sheet1');
@@ -132,8 +167,8 @@ class PayrollExcelHelper {
     // 이름 기준 오름차순, 같은 이름이면 근무일 오름차순
     final sorted = [...records]
       ..sort((a, b) {
-        final na = bankInfo[a.userId]?['name'] ?? a.userId;
-        final nb = bankInfo[b.userId]?['name'] ?? b.userId;
+        final na = names[a.userId] ?? '이름 확인 불가';
+        final nb = names[b.userId] ?? '이름 확인 불가';
         final nc = na.compareTo(nb);
         return nc != 0 ? nc : a.workDate.compareTo(b.workDate);
       });
@@ -145,7 +180,6 @@ class PayrollExcelHelper {
     for (int i = 0; i < sorted.length; i++) {
       final r   = sorted[i];
       final wd  = r.wageDetail;
-      final b   = bankInfo[r.userId];
       final row = 2 + i;
 
       final gross    = wd?.totalAmount            ?? 0;
@@ -163,7 +197,7 @@ class PayrollExcelHelper {
       sumEmploy  += employ;
       sumNet     += net;
 
-      _cell(sheet, row, 0,  b?['name'] ?? r.userId);
+      _cell(sheet, row, 0,  names[r.userId] ?? '이름 확인 불가');
       _cell(sheet, row, 1,  r.businessName);
       _cell(sheet, row, 2,  _payTypeLabel(wd?.payScheduleType));
       _cell(sheet, row, 3,  FormatHelper.formatDateDot(r.workDate));
@@ -194,31 +228,29 @@ class PayrollExcelHelper {
 
   // ── 공통 유틸 ───────────────────────────────────────────
 
-  static Future<Map<String, Map<String, String>>> _loadBankInfo(
-    BuildContext context,
+  /// uid → 표시 이름.
+  ///
+  /// [PII-DOC-R0.1 / INV-1] Excel이 사용자 문서에서 필요로 하는 것은 **이름뿐**이다.
+  ///   계좌는 Attendance 스냅샷에서 온다. 그래서 목적을 좁혀 호출한다 —
+  ///   계좌 3필드가 응답에 실리지 않는다.
+  ///
+  ///   조회되지 않은 uid는 여기서 지우지 않는다. 이름을 모르는 것과 대상이
+  ///   아닌 것은 다르고, 후자로 바꿔 버리면 그 사람이 파일에서 사라진다.
+  ///   판정은 `buildTransferExportPlan`이 하고, 이름이 없으면 '이름 확인 불가'로 남는다.
+  static Future<Map<String, String>> _loadWorkerNames(
     List<AttendanceModel> records,
     String businessId,
   ) async {
     final fsService = FirestoreService();
     final uidList   = records.map((r) => r.userId).toSet().toList();
-    final userMap   = await fsService.getUsersBatch(uidList, businessId: businessId);
-
-    int missingCount = 0;
-    final bankInfo = <String, Map<String, String>>{};
-    for (final uid in uidList) {
-      final user = userMap[uid];
-      if (user == null) { missingCount++; continue; }
-      bankInfo[uid] = {
-        'name':          user.name,
-        'bankName':      user.bankName      ?? '',
-        'accountNumber': user.accountNumber ?? '',
-        'accountHolder': user.accountHolder ?? user.name,
-      };
-    }
-    if (missingCount > 0 && context.mounted) {
-      ToastHelper.showWarning('$missingCount명의 계좌 정보를 불러오지 못했습니다');
-    }
-    return bankInfo;
+    final userMap   = await fsService.getUsersBatch(
+      uidList,
+      businessId: businessId,
+      purpose: FirestoreService.purposeWorkerDirectory,
+    );
+    return {
+      for (final e in userMap.entries) e.key: e.value.name,
+    };
   }
 
   static Future<void> _shareExcel(

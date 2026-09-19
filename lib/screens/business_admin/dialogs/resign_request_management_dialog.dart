@@ -47,7 +47,10 @@ class _ResignRequestManagementDialogState
     );
 
     final uniqueUids = applications.map((app) => app.uid).toSet().toList();
-    final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: widget.businessId);
+    // [PII-DOC-R0.1 / INV-1] 퇴사 요청 목록 — 이름·연락처만 쓴다.
+    final userMap = await _firestoreService.getUsersBatch(
+      uniqueUids, businessId: widget.businessId,
+      purpose: FirestoreService.purposeWorkerDirectory);
 
     final results = applications.map((app) {
       final user = userMap[app.uid];

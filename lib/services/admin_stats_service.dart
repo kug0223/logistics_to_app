@@ -597,8 +597,10 @@ class AdminStatsService {
     final nameMap = <String, String>{};
     await Future.wait(workerGrouped.entries.map((entry) async {
       try {
+        // [PII-DOC-R0.1 / INV-1] 통계 — 이름 표시만 필요하다.
         final userMap = await fsService.getUsersBatch(
-          entry.value.toList(), businessId: entry.key);
+          entry.value.toList(), businessId: entry.key,
+          purpose: FirestoreService.purposeWorkerDirectory);
         for (final e in userMap.entries) {
           // trustScore 제거 — trustScores[e.key] = e.value.trustScore 삭제
           nameMap[e.key] = e.value.name.isNotEmpty ? e.value.name : '알 수 없음';
@@ -941,9 +943,11 @@ class AdminStatsService {
     final fsService = FirestoreService();
     await Future.wait(grouped.entries.map((entry) async {
       try {
+        // [PII-DOC-R0.1 / INV-1] 통계 — 이름·성별·연락처만 쓴다.
         final userMap = await fsService.getUsersBatch(
           entry.value.toList(),
           businessId: entry.key,
+          purpose: FirestoreService.purposeWorkerDirectory,
         );
         for (final e in userMap.entries) {
           map[e.key] = UserInfo(

@@ -284,8 +284,13 @@ void main() {
     });
 
     test('05-e 클라이언트가 지원 검토 경로에서 purpose를 실제로 보낸다', () {
+      // [PII-DOC-R0.1] 큐 서비스는 canonical 상수를 쓴다 — 리터럴이 아니라.
+      //   상수 값이 서버 문자열과 같다는 것은
+      //   transfer_export_truth_contract_test 05가 따로 고정한다.
       final q = _codeOf(_src(_queueSvcPath));
-      expect(q.contains("purpose: 'applicantReview'"), isTrue);
+      expect(q.contains('purpose: FirestoreService.purposeApplicantReview'),
+          isTrue);
+      // 상세 화면은 getBusinessWorkHistory 경로 — 여기는 그대로다.
       final d = _codeOf(_src(_detailPath));
       expect(d.contains("widget.isConfirmed ? null : 'applicantReview'"), isTrue);
     });
@@ -333,11 +338,21 @@ void main() {
 
     test('06-e purpose 응답은 캐시에 섞이지 않는다', () {
       // 축약본이 캐시에 남으면 확정자 화면이 계좌 없는 사용자를 받는다.
+      //
+      // [PII-DOC-R0.1] 같은 불변식을 다른 방법으로 지킨다.
+      //   예전에는 purpose 호출이 캐시를 아예 쓰지 않았다(usesCache).
+      //   purpose가 목록 화면 전체로 퍼지면서 그 방식은 1시간 캐시를
+      //   통째로 잃는다는 뜻이 됐다. 그래서 우회 대신 **네임스페이스**로 나눈다:
+      //   키에 목적이 들어가므로 축약본과 전체본은 애초에 같은 칸에 못 들어간다.
       final s = _codeOf(_src(_fsSvcPath));
       final b = _after(s, 'getUsersBatch(', 2600);
-      expect(b.contains('final usesCache = purpose == null'), isTrue);
-      expect(b.contains('if (usesCache) {'), isTrue);
-      expect(b.contains('usesCache ? _userCache[uid] : null'), isTrue);
+      expect(b.contains("String ck(String uid) => purpose == null"), isTrue,
+          reason: '캐시 키가 목적별로 나뉘어야 한다');
+      expect(b.contains(r"'$purpose|$uid'"), isTrue);
+      expect(b.contains('_userCache[ck(uid)]'), isTrue);
+      expect(b.contains('_userCacheTimestamps[ck(uid)]'), isTrue);
+      // 전체본 키는 그대로 uid — 기존 캐시 semantics 보존.
+      expect(b.contains('purpose == null ? uid :'), isTrue);
     });
 
     test('06-f purpose 미지정 호출은 기존 semantics 그대로', () {

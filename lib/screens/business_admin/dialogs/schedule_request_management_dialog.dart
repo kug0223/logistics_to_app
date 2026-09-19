@@ -59,7 +59,10 @@ class _ScheduleRequestManagementDialogState
         .toList();
 
     final uniqueUids = workerRequests.map((r) => r.applicantUid).toSet().toList();
-    final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: widget.businessId);
+    // [PII-DOC-R0.1 / INV-1] 일정 변경 요청 목록 — 이름·연락처만 쓴다.
+    final userMap = await _firestoreService.getUsersBatch(
+      uniqueUids, businessId: widget.businessId,
+      purpose: FirestoreService.purposeWorkerDirectory);
 
     final results = workerRequests.map((request) {
       final user = userMap[request.applicantUid];

@@ -504,9 +504,11 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         byBusiness.putIfAbsent(app.businessId, () => []).add(app.uid);
       }
       final userMapResults = await Future.wait(
+        // [PII-DOC-R0.1 / INV-1] 인력 운영 뷰 — displayName만 쓴다.
         byBusiness.entries.map((e) => _firestoreService.getUsersBatch(
           e.value.toSet().toList(),
           businessId: e.key,
+          purpose: FirestoreService.purposeWorkerDirectory,
         )),
       );
       final resolvedUsers = <String, UserModel>{};

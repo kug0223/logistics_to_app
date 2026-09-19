@@ -237,8 +237,13 @@ void main() {
     });
 
     test('지원자 신원 조회도 purpose로 좁힌다', () {
+      // [PII-DOC-R0.1] 문자열 리터럴 대신 canonical 상수를 고정한다.
+      //   purpose가 두 개로 늘면서(applicantReview / workerDirectory) 호출부마다
+      //   문자열을 적는 방식은 오타 하나가 조용히 전체본 조회로 되돌아가는
+      //   경로가 됐다. 고정하려던 불변식("이 호출은 좁혀서 조회한다")은 그대로다.
       final svc = _load('lib/services/support_review_queue_service.dart');
-      expect(svc.contains("purpose: 'applicantReview',"), true,
+      expect(svc.contains('purpose: FirestoreService.purposeApplicantReview'),
+          true,
           reason: '계좌·정확한 주소 등은 서버가 응답에서 제외한다');
     });
 

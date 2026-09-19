@@ -125,6 +125,22 @@ class AttendanceModel {
   /// [BATCH-1B] SUPER_ADMIN이 snapshot 계좌를 현재 사용자 계좌와 대조 승격한 시각
   final DateTime? wageAccountVerifiedAt;
 
+  /// [PII-DOC-R0.1] V3 스냅샷 경로로 마감됐는지. `1`이면 `callableConfirmFinalWage`가
+  /// 처리한 건이고, `null`이면 그 이전(legacy) 건이다.
+  ///
+  /// 이 값이 없다는 것은 "계좌가 없다"가 아니라 **"스냅샷이라는 개념 이전의
+  /// 기록이다"**라는 뜻이다. 둘을 같은 칸에 넣으면 legacy를 정상처럼 다루게 된다.
+  final int? wageAccountSnapshotVersion;
+
+  /// [R1.2] 사업장의 계좌 검토가 낡아 스냅샷을 만들지 못했다는 서버의 표시.
+  /// 금액은 확정됐고 이체만 막힌 상태다 — ERROR ≠ ZERO.
+  final bool? wageAccountReviewRequired;
+
+  // [PII-DOC-R0.1] 위 두 필드는 **읽기 전용 투영**이다. toMap()에 넣지 않는다:
+  //   firestore.rules가 confirmed 이후 이 키들의 클라이언트 변경을 DENY하므로,
+  //   toMap()에 실리면 정상적인 클라이언트 쓰기 경로가 규칙에 걸려 죽는다.
+  //   writer는 callableConfirmFinalWage 하나뿐이고, 그게 맞다.
+
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -181,6 +197,8 @@ class AttendanceModel {
     this.wageAccountVerificationStatus,
     this.wageAccountSnapshotAt,
     this.wageAccountVerifiedAt,
+    this.wageAccountSnapshotVersion,
+    this.wageAccountReviewRequired,
   });
 
   // ── 표시용 "HH:mm" getter ───────────────────────────────────
@@ -334,6 +352,8 @@ class AttendanceModel {
       wageAccountVerificationStatus:   map['wageAccountVerificationStatus']   as String?,
       wageAccountSnapshotAt:           parseTimestampNullable(map['wageAccountSnapshotAt']),
       wageAccountVerifiedAt:           parseTimestampNullable(map['wageAccountVerifiedAt']),
+      wageAccountSnapshotVersion:      (map['wageAccountSnapshotVersion'] as num?)?.toInt(),
+      wageAccountReviewRequired:       map['wageAccountReviewRequired']       as bool?,
     );
   }
 
@@ -554,6 +574,8 @@ class AttendanceModel {
     String? wageAccountVerificationStatus,
     DateTime? wageAccountSnapshotAt,
     DateTime? wageAccountVerifiedAt,
+    int? wageAccountSnapshotVersion,
+    bool? wageAccountReviewRequired,
   }) {
     return AttendanceModel(
       id:            id            ?? this.id,
@@ -605,6 +627,8 @@ class AttendanceModel {
       wageAccountVerificationStatus: wageAccountVerificationStatus ?? this.wageAccountVerificationStatus,
       wageAccountSnapshotAt:         wageAccountSnapshotAt         ?? this.wageAccountSnapshotAt,
       wageAccountVerifiedAt:         wageAccountVerifiedAt         ?? this.wageAccountVerifiedAt,
+      wageAccountSnapshotVersion:    wageAccountSnapshotVersion    ?? this.wageAccountSnapshotVersion,
+      wageAccountReviewRequired:     wageAccountReviewRequired     ?? this.wageAccountReviewRequired,
     );
   }
 }

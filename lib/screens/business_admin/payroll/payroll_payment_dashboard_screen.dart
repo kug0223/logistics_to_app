@@ -24,6 +24,8 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/payroll_excel_helper.dart';
+import '../../../utils/transfer_export_plan.dart';
+import '../../../utils/encryption_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/calendar/carrot_style_calendar.dart';
 import '../../../utils/payment_due_date_calculator.dart';
@@ -407,25 +409,50 @@ class _PayrollPaymentDashboardScreenState
     return entries;
   }
 
+  /// [PII-DOC-R0.1 / INV-1+INV-2] 이 화면이 users 문서에서 가져오는 것은 **이름뿐**이다.
+  ///
+  ///   예전에는 여기서 현재 프로필 계좌까지 받아 카드에 `은행 계좌번호`로 그렸다.
+  ///   그런데 그 옆의 [이체 완료] 버튼은 Attendance 스냅샷 계좌로 처리한다.
+  ///   화면이 보여주는 계좌와 실제로 돈이 가는 계좌가 다를 수 있었다는 뜻이다.
+  ///   이제 카드도 스냅샷을 읽는다(_bankLineFor).
   Future<void> _loadBankInfo(Set<String> uids) async {
     final uncached = uids.where((u) => !_userBankCache.containsKey(u)).toList();
     if (uncached.isEmpty) return;
     try {
       final userMap = await _fsService.getUsersBatch(uncached,
-          businessId: widget.businessId);
+          businessId: widget.businessId,
+          purpose: FirestoreService.purposeWorkerDirectory);
       for (final uid in uncached) {
         final user = userMap[uid];
         if (user == null) continue;
-        _userBankCache[uid] = {
-          'name':                   user.name,
-          'bankName':               user.bankName      ?? '',
-          'accountNumber':          user.accountNumber ?? '',
-          'accountHolder':          user.accountHolder ?? user.name,
-        };
+        _userBankCache[uid] = {'name': user.name};
       }
     } catch (e) {
-      debugPrint('❌ 계좌 정보 배치 로드 실패: $e');
+      debugPrint('❌ 근로자 이름 배치 로드 실패: $e');
     }
+  }
+
+  /// 카드에 표시할 계좌 한 줄 — 출처는 확정 시점 스냅샷이다.
+  ///
+  /// 스냅샷이 없으면 계좌를 지어내지 않고 **왜 없는지**를 말한다.
+  /// 여러 계좌로 나뉜 경우(확정 사이에 계좌가 바뀐 경우)도 그대로 드러낸다.
+  String _bankLineFor(List<AttendanceModel> recs) {
+    final plan = buildTransferExportPlan(
+      records: recs,
+      names: const {},
+      decrypt: EncryptionHelper.decrypt,
+      formatDate: FormatHelper.formatDateDot,
+    );
+    if (plan.rows.length == 1) {
+      final r = plan.rows.first;
+      return '${r.bankName} ${EncryptionHelper.maskAccountNumber(r.accountNumber)}';
+    }
+    if (plan.rows.length > 1) {
+      return '확정 시점 계좌 ${plan.rows.length}개 — 분리 이체 필요';
+    }
+    if (plan.blocked.isNotEmpty) return plan.blocked.first.reason.label;
+    if (plan.notApplicable.isNotEmpty) return kNotApplicableLabel;
+    return '계좌 정보 없음';
   }
 
   // ══════════════════════════════════════════════════════════
@@ -946,18 +973,39 @@ class _PayrollPaymentDashboardScreenState
   }
 
   // 미이체 탭 — 은행 이체 전용 단순 시트
+  //
+  // [PII-DOC-R0.1 / INV-3] 조용히 파일을 만들지 않는다.
+  //   먼저 무엇이 나가고 무엇이 왜 빠지는지 보여준 뒤, 사용자가 그 숫자를
+  //   보고 누른다. 버튼에 적힌 행 수와 파일의 행 수는 같다.
   Future<void> _exportPendingCsv(List<AttendanceModel> pendingRecs) async {
     if (_isExporting) return;
+    setState(() => _isExporting = true);
+    TransferExportPlan? plan;
+    try {
+      plan = await PayrollExcelHelper.prepareTransferPlan(
+        records:    pendingRecs,
+        businessId: widget.businessId,
+      );
+    } catch (e) {
+      debugPrint('❌ 이체 목록 준비 실패: $e');
+      if (mounted) ToastHelper.showError('이체 목록을 준비하지 못했습니다');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+    if (plan == null || !mounted) return;
+
+    final confirmed = await _showTransferPlanSheet(plan);
+    if (confirmed != true || !mounted) return;
+
     setState(() => _isExporting = true);
     try {
       final d       = _selectedTransferDate;
       final bizName = widget.businessName ?? widget.businessId;
       await PayrollExcelHelper.exportTransferList(
-        context:    context,
-        records:    pendingRecs,
-        title:      '$bizName ${d.year}년 ${d.month}월 ${d.day}일 미이체 목록',
-        filename:   '${bizName}_${d.year}년${d.month}월${d.day}일_미이체목록.xlsx',
-        businessId: widget.businessId,
+        context:  context,
+        plan:     plan,
+        title:    '$bizName ${d.year}년 ${d.month}월 ${d.day}일 미이체 목록',
+        filename: '${bizName}_${d.year}년${d.month}월${d.day}일_미이체목록.xlsx',
       );
     } catch (e) {
       debugPrint('❌ 미이체 엑셀 내보내기 실패: $e');
@@ -965,6 +1013,127 @@ class _PayrollPaymentDashboardScreenState
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
+  }
+
+  /// 이체자료 준비 시트 — 대상 / 포함 / 확인 필요 / 지급 대상 아님.
+  ///
+  /// 확인 필요한 사람은 여기서 **이름과 사유**로 보인다. 그냥 버리지 않는다.
+  Future<bool?> _showTransferPlanSheet(TransferExportPlan plan) {
+    return DialogHelper.showSheet<bool>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final s = ResponsiveHelper.bodyStyle(ctx);
+        Widget line(String label, String value, {Color? color}) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(children: [
+                Expanded(child: Text(label, style: s.copyWith(color: AppColors.grey600))),
+                Text(value,
+                    style: s.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: color ?? AppColors.textPrimary)),
+              ]),
+            );
+
+        return SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('이체자료 준비',
+                      style: ResponsiveHelper.titleStyle(ctx)
+                          .copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 14),
+                  line('전체 대상',
+                      '${plan.totalWorkers}명 · ${plan.totalRecords}건'),
+                  line('엑셀 포함',
+                      '${plan.exportedWorkers}명 · ${plan.exportedRecords}건'
+                      ' (${plan.rowCount}행)',
+                      color: AppColors.infoDark),
+                  if (plan.blockedRecords > 0)
+                    line('확인 필요',
+                        '${plan.blockedWorkers}명 · ${plan.blockedRecords}건',
+                        color: AppColors.error),
+                  if (plan.notApplicableRecords > 0)
+                    line(kNotApplicableLabel,
+                        '${plan.notApplicableWorkers}명 · '
+                        '${plan.notApplicableRecords}건',
+                        color: AppColors.grey500),
+                  const Divider(height: 22),
+                  line('이체 금액 합계',
+                      FormatHelper.formatWage(plan.exportedTotal)),
+                  if (plan.partialWorkers > 0) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '일부 건만 포함된 근로자 ${plan.partialWorkers}명 — '
+                      '같은 사람이 포함과 확인 필요 양쪽에 있습니다.',
+                      style: ResponsiveHelper.tinyStyle(ctx,
+                          color: AppColors.grey600),
+                    ),
+                  ],
+                  if (plan.blocked.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text('확인 필요',
+                        style: s.copyWith(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    ...plan.blocked.map((b) => Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 9),
+                          decoration: BoxDecoration(
+                            color: AppColors.errorBg,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                Expanded(
+                                  child: Text(b.workerName,
+                                      style: s.copyWith(
+                                          fontWeight: FontWeight.w700)),
+                                ),
+                                Text('${b.recordCount}건',
+                                    style: ResponsiveHelper.tinyStyle(ctx,
+                                        color: AppColors.grey600)),
+                              ]),
+                              const SizedBox(height: 2),
+                              Text(b.reason.label,
+                                  style: ResponsiveHelper.smallStyle(ctx,
+                                      color: AppColors.error)),
+                              Text(b.reason.action,
+                                  style: ResponsiveHelper.tinyStyle(ctx,
+                                      color: AppColors.grey600)),
+                            ],
+                          ),
+                        )),
+                  ],
+                  const SizedBox(height: 18),
+                  ElevatedButton(
+                    onPressed: plan.hasAnything
+                        ? () => Navigator.of(ctx).pop(true)
+                        : null,
+                    child: Text(plan.hasAnything
+                        ? '${plan.rowCount}행 엑셀 다운로드'
+                        : '다운로드할 대상이 없습니다'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('닫기'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   static String? _payTypeDisplayLabel(String? type) => switch (type) {
@@ -1429,9 +1598,7 @@ class _PayrollPaymentDashboardScreenState
                     final isToday2   = _groupIsDueToday(recs);
                     final schLabel   = _scheduleLabel(recs);
                     final daysUntil  = dueDate?.difference(_today).inDays;
-                    final bankStr    = bank?['bankName'] != null
-                        ? '${bank!['bankName']} ${bank['accountNumber']}'
-                        : '계좌 정보 없음';
+                    final bankStr    = _bankLineFor(recs);
                     final workerName = bank?['name'] ?? uid;
 
                     return RepaintBoundary(child: _WorkerPayCard(
@@ -1668,9 +1835,7 @@ class _PayrollPaymentDashboardScreenState
                     final schLabel = _scheduleLabel(recs);
                     final daysUntil= dueDate?.difference(_today).inDays;
                     final allSel   = recs.every((r) => _selectedIds.contains(r.id));
-                    final bankStr  = bank?['bankName'] != null
-                        ? '${bank!['bankName']} ${bank['accountNumber']}'
-                        : '계좌 정보 없음';
+                    final bankStr  = _bankLineFor(recs);
 
                     final workerName = bank?['name'] ?? uid;
                     return RepaintBoundary(child: _WorkerPayCard(
@@ -1856,9 +2021,7 @@ class _PayrollPaymentDashboardScreenState
                             : '이체완료')
                         : isPartial
                             ? '부분이체 완료'
-                            : (bank?['bankName'] != null
-                                ? '${bank!['bankName']} ${bank['accountNumber']}'
-                                : '계좌 정보 없음');
+                            : _bankLineFor(recs);
 
                     return RepaintBoundary(child: _WorkerPayCard(
                       workerName:              bank?['name'] ?? uid,
@@ -1880,9 +2043,7 @@ class _PayrollPaymentDashboardScreenState
                             builder: (_) => _WorkerPayDetailScreen(
                               workerName: bank?['name'] ?? uid,
                               records:    recs,
-                              bankInfo:   bank?['bankName'] != null
-                                  ? '${bank!['bankName']} ${bank['accountNumber'] ?? ''}'.trim()
-                                  : null,
+                              bankInfo:   _bankLineFor(recs),
                               businessId: widget.businessId,
                             ),
                           ),

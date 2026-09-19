@@ -233,10 +233,20 @@ class FirestoreService {
   final Map<String, DateTime> _confirmedSchedulesCacheTs = {};
   static const Duration _confirmedSchedulesCacheTTL = Duration(minutes: 3);
 
-  // 사용자 정보 캐시
+  // 사용자 정보 캐시 — 키는 '{purpose}|{uid}' (전체본은 접두사 없이 uid)
   final Map<String, UserModel> _userCache = {};
   final Map<String, DateTime> _userCacheTimestamps = {};
   static const Duration _userCacheTTL = Duration(hours: 1);
+
+  // ── getUsersBatch purpose 상수 ──────────────────────────────
+  // 서버 allowlist와 짝을 이루는 값. 문자열을 호출부마다 적으면 오타 하나가
+  // 조용히 전체본 조회로 되돌아간다 — 그래서 이름을 하나만 둔다.
+
+  /// 지원 검토 — 서버가 canManageTo를 요구하고 계좌·주소를 제외한다.
+  static const String purposeApplicantReview = 'applicantReview';
+
+  /// [PII-DOC-R0.1] 목록·운영 조회 — 이름·연락처·이력까지. 계좌 없음.
+  static const String purposeWorkerDirectory = 'workerDirectory';
 
   // ═══════════════════════════════════════════════════════════
   // 캐시 관리
@@ -284,12 +294,16 @@ class FirestoreService {
   /// — 극도 민감 필드(ci, residentNumber, foreignIdNumber, idCardImageUrl,
   ///   signatureBase64, sealBase64, bankbookImageUrl)는 CF에서 제거됨
   /// [R1.2.1] [purpose]를 지정하면 서버가 그 목적에 필요한 필드만 돌려준다.
-  /// 현재 값은 `'applicantReview'` 하나 — 지원 검토 단계의 지원자 조회다.
-  /// 서버가 canManageTo를 요구하고 계좌·정확한 주소 등을 제외한다.
   ///
-  /// purpose 호출은 **캐시를 쓰지도, 채우지도 않는다.** 한 캐시에 축약본과
-  /// 전체본이 섞이면 확정자 화면이 계좌 없는 사용자를 받거나, 반대로 검토
-  /// 화면이 계좌가 실린 사용자를 받는다. 목적이 다르면 캐시도 공유하지 않는다.
+  ///   `'applicantReview'`  지원 검토 — 서버가 canManageTo를 요구하고
+  ///                        계좌·정확한 주소 등을 제외한다.
+  ///   `'workerDirectory'`  목록·운영 조회 — 추가 권한 요구 없이 payload만
+  ///                        좁힌다. 계좌 3필드가 나오지 않는다. [PII-DOC-R0.1]
+  ///   `null`               기존 전체본 — 급여 화면 등 계좌가 실제로 필요한 곳.
+  ///
+  /// 캐시는 **목적별로 나눈다.** 한 캐시에 축약본과 전체본이 섞이면 급여
+  /// 화면이 계좌 없는 사용자를 받거나, 반대로 목록 화면이 계좌가 실린
+  /// 사용자를 받는다. 목적이 다르면 서로 다른 답이고, 같은 칸에 두면 안 된다.
   Future<Map<String, UserModel>> getUsersBatch(
     List<String> uids, {
     required String businessId,
@@ -297,14 +311,16 @@ class FirestoreService {
   }) async {
     if (uids.isEmpty) return {};
 
-    final usesCache = purpose == null;
+    // 목적별 캐시 네임스페이스 — null(전체본)은 빈 접두사로 기존 키를 유지한다.
+    String ck(String uid) => purpose == null ? uid : '$purpose|$uid';
+
     final result = <String, UserModel>{};
     final uncached = <String>[];
     final now = DateTime.now();
 
     for (final uid in uids.toSet()) {
-      final cached = usesCache ? _userCache[uid] : null;
-      final ts = _userCacheTimestamps[uid];
+      final cached = _userCache[ck(uid)];
+      final ts = _userCacheTimestamps[ck(uid)];
       if (cached != null && ts != null && now.difference(ts) < _userCacheTTL) {
         result[uid] = cached;
       } else {
@@ -347,11 +363,9 @@ class FirestoreService {
         try {
           final data = _cfHydrate(Map<String, dynamic>.from(entry.value as Map));
           final user = UserModel.fromMap(data, uid);
-          // purpose 축약본은 캐시에 남기지 않는다 — 다른 목적의 화면이 주워가면 안 된다.
-          if (usesCache) {
-            _userCache[uid] = user;
-            _userCacheTimestamps[uid] = now;
-          }
+          // 목적별 네임스페이스에만 남긴다 — 다른 목적의 화면이 주워가면 안 된다.
+          _userCache[ck(uid)] = user;
+          _userCacheTimestamps[ck(uid)] = now;
           result[uid] = user;
         } catch (e) {
           debugPrint('⚠️ getUsersBatch: uid=$uid 파싱 실패 (건너뜀): $e');

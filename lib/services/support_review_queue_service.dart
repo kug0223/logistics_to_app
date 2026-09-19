@@ -116,7 +116,7 @@ class SupportReviewQueueService {
       return await _svc.getUsersBatch(
         uids,
         businessId: primaryBizId,
-        purpose: 'applicantReview',
+        purpose: FirestoreService.purposeApplicantReview,
       );
     } catch (e) {
       debugPrint('[SupportReviewQueue] 사용자 배치 로드 실패: $e');

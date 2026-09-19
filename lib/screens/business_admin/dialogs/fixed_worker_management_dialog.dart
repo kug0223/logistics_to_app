@@ -297,7 +297,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
 
       // ✅ 3. 사용자 정보 일괄 조회 (캐시 포함)
-      final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: businessId);
+      // [PII-DOC-R0.1 / INV-1] 고정 근무자 운영 목록 — 이름·나이·성별만 쓴다.
+      final userMap = await _firestoreService.getUsersBatch(
+        uniqueUids, businessId: businessId,
+        purpose: FirestoreService.purposeWorkerDirectory);
       
       // ✅ 4. 결과 매핑 (추가 조회 없음)
       final results = filtered.map((app) {

@@ -300,7 +300,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       // ✅ 2. 독립 조회 4개 동시 시작 (서로 의존성 없음)
       // hasWorkedMap은 슬롯 날짜 있을 때만 의미 있지만, 미리 시작해두면 크리티컬 패스에서 제외됨
-      final userMapFuture = _firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
+      // [PII-DOC-R0.1 / INV-1] 지원자 목록 — 이름·나이·성별·연락처·평점·이력까지.
+      //   이 화면은 계좌를 그리지 않는다. 그러니 받지도 않는다.
+      final userMapFuture = _firestoreService.getUsersBatch(
+        uniqueUids,
+        businessId: widget.toItem.to.businessId,
+        purpose: FirestoreService.purposeWorkerDirectory,
+      );
       final weeklyMapFuture = _firestoreService.getWeeklyAttendanceByBusiness(
         businessId: widget.toItem.to.businessId, weekStart: ws, weekEnd: we);
       final contractMapFuture = ContractService().getContractStatusBatch(

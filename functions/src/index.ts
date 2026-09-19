@@ -15547,9 +15547,23 @@ export const callableGetUsersBatch = onCall(
     //   다른 문제다. 급여 담당 권한을 가진 BUSINESS_ADMIN이라도 아직 확정되지
     //   않은 지원자의 계좌를 '지원 검토' 목적으로 받을 이유는 없다.
     //   purpose 미지정 = 기존 semantics 그대로 — 확정명단·급여 화면 영향 없음.
+    //
+    // [PII-DOC-R0.1 / INV-1] "workerDirectory" = 목록·운영 화면이 사람을
+    //   **식별하고 연락하기 위한** 조회다. 지원자 목록·근태 현황·퇴사/일정
+    //   요청·계약 만료 목록이 전부 여기에 속한다.
+    //
+    //   이 화면들이 쓰는 것은 이름·나이·성별·연락처·평점 정도인데, 지금까지는
+    //   같은 CF가 계좌 3필드까지 함께 실어 보냈다. UI가 그리지 않는다는 것은
+    //   데이터가 가지 않았다는 뜻이 아니다 — payload에 실리면 이미 나간 것이다.
+    //
+    //   applicantReview와 달리 **추가 권한을 요구하지 않는다.** 이 목적은
+    //   기존 membership 검증으로 충분하고, 여기서 canManageTo를 요구하면
+    //   근태·계약 담당자가 이름조차 못 읽는 regression이 된다.
+    //   좁히는 것은 permission이 아니라 payload다.
     const purpose = request.data.purpose as string | undefined;
     const isApplicantReview = purpose === "applicantReview";
-    if (purpose !== undefined && !isApplicantReview) {
+    const isWorkerDirectory = purpose === "workerDirectory";
+    if (purpose !== undefined && !isApplicantReview && !isWorkerDirectory) {
       throw new HttpsError(
         "invalid-argument", `허용되지 않는 purpose 값: ${purpose}`);
     }
@@ -15698,6 +15712,8 @@ export const callableGetUsersBatch = onCall(
         if (!callerCanManageWage && BANK_ONLY_FIELDS.has(key)) continue;
         // [R1.2.1] purpose limitation — 역할과 무관하게 적용된다.
         if (isApplicantReview && !APPLICANT_REVIEW_ALLOWED.has(key)) continue;
+        // [PII-DOC-R0.1 / INV-1] 목록·운영 조회 — 계좌는 어떤 역할에도 안 나간다.
+        if (isWorkerDirectory && !WORKER_DIRECTORY_ALLOWED.has(key)) continue;
         safeData[key] = value;
       }
       users[snap.id] = safeData;
@@ -17268,6 +17284,21 @@ const APPLICANT_REVIEW_ALLOWED = new Set([
   "averageRating", "reviewCount", "rehireRate",
   // 통근 — 시/군/구 수준
   "homeRegion", "preferredJobRegions",
+]);
+
+// [PII-DOC-R0.1 / INV-1] 목록·운영 화면의 조회 allowlist.
+//
+//   지원자 목록·근태 현황·퇴사/일정 요청·계약 만료·인력 운영 뷰가 쓰는 것은
+//   "누구인지 / 어떻게 연락하는지 / 주의할 이력이 있는지"까지다.
+//   급여계좌는 그 어느 것도 아니다.
+//
+//   두 벌을 따로 적지 않고 지원 검토 allowlist에서 파생한다 — 목록이 둘이면
+//   한쪽만 늘어나고, 늘어나는 쪽은 항상 덜 검토된 쪽이다.
+//   여기서 더하는 것은 화면이 실제로 읽는 한 가지뿐이다:
+//   subAdminBusinessIds — 지원자가 이 사업장의 관리자인지(이해충돌) 표시용.
+const WORKER_DIRECTORY_ALLOWED = new Set([
+  ...APPLICANT_REVIEW_ALLOWED,
+  "subAdminBusinessIds",
 ]);
 
 /** [R2.1] Seat Commit 겹침 계약 — 수집 결과. */
