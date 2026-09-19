@@ -42,6 +42,7 @@ import '../../widgets/calendar/app_calendar.dart';
 import '../../utils/calendar_helper.dart';
 import 'income_detail_screen.dart';
 import '../auth/pass_auth_recovery_screen.dart';
+import '../../services/payroll_correction_service.dart';
 
 // ── 지원자 홈 화면 ────────────────────────────────────────────────
 class UserHomeScreen extends StatefulWidget {
@@ -233,6 +234,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // notification 존재 여부·개수는 판단에 쓰지 않는다 — 알림을 지워도
   // 처리하지 않은 요청은 홈에서 계속 발견할 수 있어야 한다.
   PendingIdRequestSurface _idRequestSurface = PendingIdRequestSurface.empty;
+
+  /// [PII-DOC-R1.6.1] 근로자가 해결해야 할 서류 보완 — 지급이 막힌 것 포함.
+  ///
+  ///   source는 알림이 아니라 서버의 OPEN correction이다. 알림을 읽거나
+  ///   지워도, 앱을 다시 켜도 할 일은 남는다.
+  DocumentCorrectionSurface _correctionSurface =
+      DocumentCorrectionSurface.empty;
+  bool _correctionsLoaded = false;
   // 첫 조회 완료 전(LOADING)에는 아무것도 그리지 않는다.
   // 대부분의 사용자는 요청이 0건이라 skeleton을 두면 빈 자리만 깜빡인다.
   bool _idRequestsLoaded = false;
@@ -390,6 +399,17 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         _idRequestsLoaded = true;
       }
       _rebuildCaches();
+
+      // [PII-DOC-R1.6.1] 보완 요청은 홈의 숫자를 만들지 않으므로 별도로
+      //   가져오고, 실패해도 다른 영역을 오류 상태로 만들지 않는다.
+      //   단 실패를 "할 일 없음"으로 바꾸지는 않는다 — 카드를 숨길 뿐이다.
+      unawaited(PayrollCorrectionService.loadMine().then((s) {
+        if (!mounted) return;
+        setState(() {
+          _correctionSurface = s;
+          _correctionsLoaded = true;
+        });
+      }));
 
       // 지원 내역은 홈의 숫자를 만드는 축이다 — 그것만 오류 상태로 올린다.
       if (appsErr != null) {
@@ -730,6 +750,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         // Priority Card 계산에는 참여하지 않는다 (Hero 우선순위 불변).
         // 상대방이 기다리는 요청이므로 자기 서류 준비(아래)보다 위에 둔다.
         _buildIdRequestCard(context, s, up),
+        // [PII-DOC-R1.6.1] 서류 보완 할 일 — 이미 일한 급여가 막혀 있을 수
+        //   있으므로 지원 준비보다 위에 둔다.
+        _buildCorrectionTaskCard(context, s),
         // 지원 준비 Compact Card — 서류 미완료 시만 표시, 날짜 Hero 바로 위
         _buildReadinessCard(context, s, up),
         // ③ 날짜 기반 일자리 탐색 — 상시 노출 (신규/기존 회원 동일)
@@ -2125,6 +2148,98 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///
   /// 지원 준비 카드보다 강한 색을 쓰되 경고색(빨강)은 쓰지 않는다.
   /// 사용자 잘못이 아니라 상대방이 보낸 처리 대기 건이다.
+  /// [PII-DOC-R1.6.1] 서류 보완 할 일 카드.
+  ///
+  ///   source는 서버의 OPEN correction이다. 알림이 아니다 — 알림을 읽거나
+  ///   지워도 할 일은 남고, 실제로 서류가 해결돼야 사라진다.
+  ///
+  ///   지급이 막힌 건은 이미 일한 대가가 멈춰 있다는 뜻이므로 가장 먼저
+  ///   보여준다. 금액이 사라진 것은 아니라는 말도 함께 한다.
+  Widget _buildCorrectionTaskCard(BuildContext context, double s) {
+    if (!_correctionsLoaded) return const SizedBox.shrink();
+    // 조회 실패는 "할 일 없음"이 아니다 — 다만 없는 할 일을 지어내지도
+    //   않는다. 카드를 숨기고 다음 조회를 기다린다.
+    if (_correctionSurface.loadFailed) return const SizedBox.shrink();
+    final task = _correctionSurface.primary;
+    if (task == null) return const SizedBox.shrink();
+
+    final more = _correctionSurface.tasks.length - 1;
+    const accent = AppColors.warning;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute<void>(
+              builder: (_) => const DocumentManagementScreen()),
+        ),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.30)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38 * s,
+                height: 38 * s,
+                decoration:
+                    const BoxDecoration(color: accent, shape: BoxShape.circle),
+                child: Icon(Icons.assignment_late_outlined,
+                    size: 20 * s, color: Colors.white),
+              ),
+              SizedBox(width: 12 * s),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      task.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 3 * s),
+                    Text(
+                      more > 0
+                          ? '${task.subtitleFor()} · 외 $more건'
+                          : task.subtitleFor(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, color: AppColors.grey500),
+                    ),
+                    if (task.isPayroll) ...[
+                      SizedBox(height: 3 * s),
+                      Text('확정된 급여 금액은 그대로 유지돼요',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.grey400)),
+                    ],
+                  ],
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              Text('등록하기',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: accent,
+                  )),
+              Icon(Icons.chevron_right, color: accent, size: 20 * s),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildIdRequestCard(BuildContext context, double s, UserProvider up) {
     // LOADING: 첫 조회 전에는 자리 차지 없음
     if (!_idRequestsLoaded) return const SizedBox.shrink();

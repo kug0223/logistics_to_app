@@ -1003,6 +1003,142 @@ function srvResolvePayrollReadiness(
   return no(PR_BANK_UNASSESSED, "통장사본 확인이 필요합니다.");
 }
 
+// ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.6.1] 누가 이 문제를 풀 수 있는가
+//
+//   지급이 막힌 이유가 다르면 풀 사람도 다르다. 모두를 "확인 필요"로
+//   묶으면 관리자는 자기가 못 푸는 일에 버튼을 받고, 근로자는 자기가
+//   풀어야 하는 일을 모른 채 기다린다.
+// ═══════════════════════════════════════════════════════════
+
+/** 근로자가 서류를 고쳐야 풀린다. */
+const PAY_ACTOR_WORKER = "WORKER";
+/** 근로자 보완 또는 권한자 수동 확인 둘 다 가능하다. */
+const PAY_ACTOR_WORKER_OR_REVIEW = "WORKER_OR_REVIEW";
+/** 지급정보는 멀쩡하다 — 관리자가 스냅샷만 갱신하면 된다. */
+const PAY_ACTOR_MANAGER_REFRESH = "MANAGER_REFRESH";
+/** 풀 것이 없다. */
+const PAY_ACTOR_NONE = "NONE";
+
+/**
+ * 지급 준비 사유 → 행동 주체.
+ *
+ * @param {string} state srvResolvePayrollReadiness 의 state
+ * @return {string} PAY_ACTOR_*
+ */
+function srvPayrollActorFor(state: string): string {
+  if (state === PR_READY_AUTO || state === PR_READY_MANUAL) {
+    return PAY_ACTOR_NONE;
+  }
+  if (state === PR_MISSING_BANK_ACCOUNT ||
+      state === PR_MISSING_BANKBOOK ||
+      state === PR_BANK_MISMATCH) {
+    return PAY_ACTOR_WORKER;
+  }
+  // 나머지(판정 불가·낡음)는 자동이 판단하지 못한 경우다. 그것이 곧
+  //   근로자 잘못은 아니므로, 근로자가 다시 올려도 되고 권한자가 원본을
+  //   봐도 된다.
+  return PAY_ACTOR_WORKER_OR_REVIEW;
+}
+
+/**
+ * 이체 차단 사유 → 행동 주체.
+ *
+ *   스냅샷이 낡았거나 근거가 없는 것은 지급정보의 문제가 아니라
+ *   **기록의 문제**다. 근로자에게 시킬 일이 없다 — 관리자가 갱신하면 된다.
+ *   단 갱신이 되려면 현재 판정이 READY여야 하므로, 화면은 이 값과
+ *   srvPayrollActorFor 를 함께 본다.
+ *
+ * @param {string} blockCode XFER_* 토큰
+ * @return {string} PAY_ACTOR_*
+ */
+function srvPayrollActorForBlock(blockCode: string): string {
+  if (blockCode === XFER_STALE_PAYMENT_SNAPSHOT ||
+      blockCode === XFER_SNAPSHOT_PROVENANCE_UNKNOWN) {
+    return PAY_ACTOR_MANAGER_REFRESH;
+  }
+  return PAY_ACTOR_WORKER_OR_REVIEW;
+}
+
+/** 근로자가 직접 고칠 수 있는 사유만 보완 요청을 만든다. (§10) */
+const PAYROLL_CORRECTION_STATES = [
+  PR_MISSING_BANK_ACCOUNT, PR_MISSING_BANKBOOK, PR_BANK_MISMATCH,
+];
+
+/** 보완 요청이 어느 문맥에서 나왔는가. */
+const CORRECTION_DOMAIN_APPLICATION = "APPLICATION";
+const CORRECTION_DOMAIN_PAYROLL = "PAYROLL";
+
+/**
+ * [§9] 같은 사업장·근로자·현재 버전에 대해 요청은 하나다.
+ *
+ *   버전을 id에 넣는 이유: 근로자가 계좌를 바꾸면 그것은 **다른 문제**다.
+ *   옛 요청은 그대로 닫히고 새 요청이 생겨야 한다. 버전이 같으면
+ *   급여를 몇 번 확정하든 같은 문서에 멱등하게 쓰인다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} workerUid 근로자
+ * @param {number} accV 계좌 버전
+ * @param {number} bbV 통장사본 버전
+ * @return {string} 결정적 문서 id
+ */
+function srvPayrollCorrectionId(
+  businessId: string, workerUid: string, accV: number, bbV: number
+): string {
+  return `${businessId}_${workerUid}_${DOC_TYPE_BANKBOOK}` +
+    `_${CORRECTION_DOMAIN_PAYROLL}_a${accV}b${bbV}`;
+}
+
+/**
+ * 지급이 막혔고 근로자가 고칠 수 있으면 보완 요청을 연다.
+ *
+ *   급여 금액은 이미 확정됐다. 이 요청은 **지급을 풀기 위한 것**이지
+ *   근무나 임금을 되돌리기 위한 것이 아니다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} workerUid 근로자
+ * @param {SrvPayrollReadiness} pr 판정
+ * @param {string} attendanceId 출처 급여 기록
+ * @return {Promise<boolean>} 새로 열었으면 true
+ */
+async function srvEnsurePayrollCorrection(
+  businessId: string,
+  workerUid: string,
+  pr: SrvPayrollReadiness,
+  attendanceId: string
+): Promise<boolean> {
+  if (!PAYROLL_CORRECTION_STATES.includes(pr.state)) return false;
+  const reqId = srvPayrollCorrectionId(
+    businessId, workerUid, pr.accountVersion, pr.bankbookVersion);
+  const ref = db.collection(DOC_CORRECTION_COL).doc(reqId);
+  const now = admin.firestore.Timestamp.now();
+  return db.runTransaction(async (tx) => {
+    const fresh = await tx.get(ref);
+    if (fresh.exists) {
+      const st = (fresh.get("status") as string | undefined) ?? "";
+      if (CORRECTION_LIVE.includes(st)) return false; // 이미 열려 있다
+      return false; // 이미 해결된 요청을 다시 열지 않는다
+    }
+    tx.set(ref, {
+      businessId, workerUid,
+      documentType: DOC_TYPE_BANKBOOK,
+      sourceDomain: CORRECTION_DOMAIN_PAYROLL,
+      status: CORRECTION_OPEN,
+      // 근로자에게 보여줄 것은 "무엇을 해야 하는가"다.
+      payrollReadinessState: pr.state,
+      reasonCode: pr.state === PR_BANK_MISMATCH ? "MISMATCH" : "OTHER",
+      reasonNote: pr.reason,
+      requestedBy: null, // 사람이 아니라 지급 판정이 연 요청이다
+      requestedAt: now,
+      sourceAttendanceId: attendanceId,
+      documentVersionAtRequest: pr.bankbookVersion,
+      bankAccountVersionAtRequest: pr.accountVersion,
+      resolvedAt: null,
+    });
+    return true;
+  });
+}
+
 /**
  * 이 호출자가 지원자 서류를 볼 수 있는가 — canManageTo AND canManageWage.
  *
@@ -9772,23 +9908,65 @@ export const callableGetMyDocumentCorrections = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const workerUid = request.auth.uid;
     const snap = await db.collection(DOC_CORRECTION_COL)
-      .where("workerUid", "==", request.auth.uid)
+      .where("workerUid", "==", workerUid)
       .where("status", "==", CORRECTION_OPEN)
       .limit(20).get();
+
+    // [PII-DOC-R1.6.1 §13] 지급 보완 요청은 **실제로 준비가 회복됐는지**
+    //   다시 판정한 뒤에만 닫는다.
+    //
+    //   업로드에 성공했다는 사실만으로 해결됐다고 추측하지 않는다.
+    //   새 통장사본이 계좌와 안 맞을 수도 있고, 계좌만 고치고 통장사본을
+    //   안 올렸을 수도 있다. 그 경우 할 일은 사라지면 안 된다.
+    //
+    //   판정 시점이 곧 근로자가 할 일을 확인하는 시점이므로 여기서 한다.
+    const payrollDocs = snap.docs.filter((d) =>
+      d.get("sourceDomain") === CORRECTION_DOMAIN_PAYROLL);
+    const resolvedIds = new Set<string>();
+    if (payrollDocs.length > 0) {
+      try {
+        const userSnap = await db.collection("users").doc(workerUid).get();
+        const ud = userSnap.data();
+        const reviewSnaps = await db.getAll(...payrollDocs.map((d) =>
+          db.collection(BIZ_DOC_REVIEW_COL).doc(
+            srvBizReviewId(d.get("businessId") as string, workerUid))));
+        const now = admin.firestore.Timestamp.now();
+        const batch = db.batch();
+        let n = 0;
+        payrollDocs.forEach((d, i) => {
+          const pr = srvResolvePayrollReadiness(ud, reviewSnaps[i]?.data());
+          if (!pr.ready) return;
+          batch.update(d.ref, {status: CORRECTION_RESOLVED, resolvedAt: now});
+          resolvedIds.add(d.id);
+          n++;
+        });
+        if (n > 0) await batch.commit();
+      } catch (e) {
+        // 닫지 못해도 할 일이 남을 뿐이다 — 없는 할 일을 만들지는 않는다.
+        console.error("[getMyDocumentCorrections] 지급 보완 재판정 실패:", e);
+      }
+    }
+    const live = snap.docs.filter((d) => !resolvedIds.has(d.id));
+
     // 사업장명은 요청 문서에 없다 — 화면 문맥용으로만 붙인다.
-    const bizIds = [...new Set(snap.docs.map((d) => d.get("businessId") as string))];
+    const bizIds = [...new Set(live.map((d) => d.get("businessId") as string))];
     const bizNames = new Map<string, string>();
     await Promise.all(bizIds.map(async (id) => {
       const b = await db.collection("businesses").doc(id).get();
       bizNames.set(id, (b.get("name") as string | undefined) ?? "");
     }));
     return {
-      requests: snap.docs.map((d) => ({
+      requests: live.map((d) => ({
         requestId: d.id,
         businessId: d.get("businessId"),
         businessName: bizNames.get(d.get("businessId") as string) ?? "",
         documentType: d.get("documentType"),
+        // [R1.6.1] 지원 검토에서 온 것인지 지급에서 온 것인지 구분한다.
+        sourceDomain:
+          d.get("sourceDomain") ?? CORRECTION_DOMAIN_APPLICATION,
+        payrollReadinessState: d.get("payrollReadinessState") ?? null,
         reasonCode: d.get("reasonCode") ?? null,
         reasonNote: d.get("reasonNote") ?? null,
         requestedAtMs:
@@ -23824,6 +24002,8 @@ export const callableConfirmFinalWage = onCall(
     //   ready=false 하나로 원인을 뭉개면 관리자도 근로자도 무엇을 해야 할지
     //   알 수 없다.
     const attendanceReadinessMap: Record<string, SrvPayrollReadiness> = {};
+    // 마감 이후 보완 요청을 만들 때 attendanceId → userId 가 필요하다.
+    const attSnapById = new Map<string, FirebaseFirestore.DocumentData>();
     {
       // attendanceIds 배치 조회로 userId 수집 (최대 100건 — 위에서 제한)
       const attSnaps = await Promise.all(
@@ -23888,7 +24068,9 @@ export const callableConfirmFinalWage = onCall(
       });
       // attendanceId → 스냅샷 매핑
       attSnaps.forEach((s) => {
-        const userId = s.data()?.userId as string | undefined;
+        const sd = s.data();
+        if (sd) attSnapById.set(s.id, sd);
+        const userId = sd?.userId as string | undefined;
         if (!userId) return;
         const pr = payReadinessByUid.get(userId);
         if (pr) attendanceReadinessMap[s.id] = pr;
@@ -24084,7 +24266,37 @@ export const callableConfirmFinalWage = onCall(
       });
     }
 
-    return {success: true, processed: successCount, skipped};
+    // [PII-DOC-R1.6.1 §10] 지급이 막혔고 근로자가 고칠 수 있으면 보완 요청을
+    //   연다. 임금은 이미 확정됐다 — 이 요청은 **지급을 푸는 일**이지
+    //   근무나 임금을 되돌리는 일이 아니다.
+    //
+    //   실패해도 마감 결과를 바꾸지 않는다. 마감은 끝났고, 요청은 다음
+    //   마감이나 지급 화면에서 다시 열 수 있다.
+    let correctionsOpened = 0;
+    try {
+      const need = new Map<string, SrvPayrollReadiness>();
+      const srcAtt = new Map<string, string>();
+      for (const [attId, pr] of Object.entries(attendanceReadinessMap)) {
+        if (pr.ready) continue;
+        if (!PAYROLL_CORRECTION_STATES.includes(pr.state)) continue;
+        const s = attSnapById.get(attId);
+        const uid = s?.userId as string | undefined;
+        if (!uid || need.has(uid)) continue;
+        need.set(uid, pr);
+        srcAtt.set(uid, attId);
+      }
+      const opened = await Promise.all(Array.from(need.entries()).map(
+        ([uid, pr]) => srvEnsurePayrollCorrection(
+          businessId, uid, pr, srcAtt.get(uid) ?? "")));
+      correctionsOpened = opened.filter(Boolean).length;
+    } catch (e) {
+      console.error("[confirmFinalWage] 보완 요청 생성 실패(마감은 유지):", e);
+    }
+
+    return {
+      success: true, processed: successCount, skipped,
+      correctionsOpened,
+    };
   }
 );
 
@@ -25951,6 +26163,82 @@ function srvWageAccountBlockReason(
   return null;
 }
 
+// ── callableGetPayrollReadinessBatch ──────────────────────────
+// [PII-DOC-R1.6.1 §5·§18] 급여 화면이 "지금" 무엇이 가능한지 알기 위한 투영.
+//
+//   화면이 attendance 문서만 보면 확정 **당시**의 상태밖에 모른다.
+//   근로자가 그 뒤 서류를 고쳤는지는 알 수 없어서, 이미 풀린 건에
+//   "갱신하세요"라고 하거나 아직 못 푸는 건에 실행 가능한 버튼을 준다.
+//
+//   여기서 현재 판정과 **행동 주체**를 함께 돌려준다. 관리자가 못 푸는
+//   문제에 관리자 버튼을 만들지 않기 위해서다.
+export const callableGetPayrollReadinessBatch = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, workerUids} = request.data as {
+      businessId?: string; workerUids?: string[];
+    };
+    if (!businessId || !Array.isArray(workerUids)) {
+      throw new HttpsError(
+        "invalid-argument", "businessId와 workerUids가 필요합니다.");
+    }
+    if (workerUids.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200명까지 조회 가능합니다.");
+    }
+    const {callerData: prCaller} = await assertBizAdmin(callerUid, businessId);
+    const prRole = prCaller?.role as string | undefined;
+    if (prRole !== "BUSINESS_ADMIN" && prRole !== "SUPER_ADMIN") {
+      const m = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!perms.canManageWage) {
+        throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+      }
+    }
+    const uids = Array.from(new Set(workerUids.filter(
+      (u): u is string => typeof u === "string" && u.length > 0)));
+    if (uids.length === 0) return {readiness: {}, failed: []};
+
+    // [§29 ERROR ≠ ZERO] 읽지 못한 근로자를 "확인 필요"로 바꾸지 않는다.
+    //   조회 실패는 그 자체로 별도 목록이다.
+    const readiness: Record<string, unknown> = {};
+    const failed: string[] = [];
+    const results = await Promise.allSettled(uids.map(async (uid) => {
+      const [u, r] = await Promise.all([
+        db.collection("users").doc(uid).get(),
+        db.collection(BIZ_DOC_REVIEW_COL)
+          .doc(srvBizReviewId(businessId, uid)).get(),
+      ]);
+      // [§29] 없는 사용자와 "계좌를 등록하지 않은 사용자"는 다른 사실이다.
+      //   둘을 같은 칸에 넣으면 화면이 없는 사람에게 보완을 요구한다.
+      if (!u.exists) throw new Error(`user not found: ${uid}`);
+      const pr = srvResolvePayrollReadiness(u.data(), r.data());
+      return {uid, pr};
+    }));
+    results.forEach((res, i) => {
+      if (res.status !== "fulfilled") {
+        console.error(`[getPayrollReadinessBatch] ${uids[i]} 조회 실패:`,
+          res.reason);
+        failed.push(uids[i]);
+        return;
+      }
+      const {uid, pr} = res.value;
+      readiness[uid] = {
+        ready: pr.ready,
+        state: pr.state,
+        reason: pr.reason,
+        source: pr.source,
+        actor: srvPayrollActorFor(pr.state),
+        accountVersion: pr.accountVersion,
+        bankbookVersion: pr.bankbookVersion,
+      };
+    });
+    return {readiness, failed};
+  }
+);
+
 // ── callableRefreshWagePaymentSnapshot ────────────────────────
 // [PII-DOC-R1.6 §20] 확정된 급여의 **지급 스냅샷만** 현재 계좌로 다시 붙인다.
 //
@@ -26062,6 +26350,29 @@ export const callableRefreshWagePaymentSnapshot = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       refreshed.push(id);
+    }
+
+    // [PII-DOC-R1.6.1 §13] 준비가 회복된 근로자의 열린 지급 보완 요청을
+    //   닫는다. 갱신했다는 것은 그 시점 판정이 READY였다는 뜻이다.
+    try {
+      const readyUids = uids.filter((u) => readinessByUid.get(u)?.ready);
+      if (readyUids.length > 0) {
+        const open = await db.collection(DOC_CORRECTION_COL)
+          .where("businessId", "==", businessId)
+          .where("workerUid", "in", readyUids.slice(0, 30))
+          .where("status", "==", CORRECTION_OPEN).limit(60).get();
+        const now = admin.firestore.Timestamp.now();
+        const b = db.batch();
+        let n = 0;
+        open.docs.forEach((d) => {
+          if (d.get("sourceDomain") !== CORRECTION_DOMAIN_PAYROLL) return;
+          b.update(d.ref, {status: CORRECTION_RESOLVED, resolvedAt: now});
+          n++;
+        });
+        if (n > 0) await b.commit();
+      }
+    } catch (e) {
+      console.error("[refreshWagePaymentSnapshot] 보완 요청 정리 실패:", e);
     }
 
     // [PARTIAL ≠ SUCCESS] 처리된 건과 건너뛴 건을 사유와 함께 그대로 돌려준다.
@@ -26323,6 +26634,10 @@ export const callableMarkTransferredBatch = onCall(
       skipped,
       // [PII-DOC-R0.2] id만이 아니라 **왜**를 함께 돌려준다.
       blocked,
+      // [PII-DOC-R1.6.1 §16] 그리고 **누가** 풀 수 있는지도.
+      //   관리자가 못 푸는 문제에 관리자 버튼을 만들지 않기 위해서다.
+      blockedActors: Object.fromEntries(Object.entries(blocked).map(
+        ([id, code]) => [id, srvPayrollActorForBlock(code as string)])),
       lockedBySettlement: lockedSkipped,
     };
   }

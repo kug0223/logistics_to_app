@@ -43,6 +43,7 @@ import '../../../widgets/common/app_filter_chip.dart';
 import '../../payroll/payslip_period_helper.dart';
 import '../../../services/member_service.dart';             // [BIZCTX-01A]
 import '../../../models/core/business_member_model.dart';  // [BIZCTX-01A] MemberPermissions
+import '../../../services/payroll_readiness_service.dart'; // [PII-DOC-R1.6.1]
 
 class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String businessId;
@@ -140,6 +141,12 @@ class _PayrollPaymentDashboardScreenState
 
   // ── 계좌 정보 캐시
   final Map<String, Map<String, String>> _userBankCache = {};
+
+  /// [PII-DOC-R1.6.1] 근로자별 **현재** 지급 준비 상태.
+  final Map<String, PayrollReadinessInfo> _readiness = {};
+
+  /// 조회하지 못한 근로자 — "확인 필요"와 섞지 않는다.
+  Set<String> _readinessUnknown = <String>{};
   String _lastTransferNote = '';
 
   // [CROSS-DOMAIN-R5.1F.3] 이 화면이 열려 있는 동안만 대상 사업장을 구독한다.
@@ -429,6 +436,102 @@ class _PayrollPaymentDashboardScreenState
       }
     } catch (e) {
       debugPrint('❌ 근로자 이름 배치 로드 실패: $e');
+    }
+    await _loadPayrollReadiness(uids);
+  }
+
+  /// [PII-DOC-R1.6.1] 이 근로자들의 **현재** 지급 준비 상태.
+  ///
+  ///   급여 기록은 확정 당시만 안다. 근로자가 그 뒤 계좌를 고쳤는지는
+  ///   여기서만 알 수 있고, 그것을 알아야 "지급정보 갱신"을 실행 가능한
+  ///   버튼으로 보여줄지 판단할 수 있다.
+  Future<void> _loadPayrollReadiness(Set<String> uids) async {
+    if (uids.isEmpty) return;
+    final batch = await PayrollReadinessService.loadBatch(
+        businessId: widget.businessId, workerUids: uids.toList());
+    if (!mounted) return;
+    setState(() {
+      _readiness
+        ..clear()
+        ..addAll(batch.byUid);
+      // 조회하지 못한 사람을 "확인 필요"로 바꾸지 않는다 — 모른다고 둔다.
+      _readinessUnknown = batch.loadFailed
+          ? uids.toSet()
+          : batch.failedUids.toSet();
+    });
+  }
+
+  /// 이 근로자의 급여들이 스냅샷 갱신만 하면 이체 가능한 상태인가.
+  ///
+  ///   판정이 READY가 아니면 관리자가 할 수 있는 일이 없다 — 버튼을
+  ///   주지 않는다(§7·§16).
+  bool _needsSnapshotRefresh(List<AttendanceModel> recs) {
+    if (recs.isEmpty) return false;
+    final uid = recs.first.userId;
+    if (_readinessUnknown.contains(uid)) return false;
+    final info = _readiness[uid];
+    if (info == null || !info.ready) return false;
+    return recs.any(info.snapshotNeedsRefresh);
+  }
+
+  /// 갱신 CTA를 못 쓰는 경우 대신 보여줄 상태 문구. 없으면 null.
+  String? _payrollWaitLabel(List<AttendanceModel> recs) {
+    if (recs.isEmpty) return null;
+    final uid = recs.first.userId;
+    if (_readinessUnknown.contains(uid)) return '지급 준비 상태 조회 실패';
+    final info = _readiness[uid];
+    if (info == null || info.ready) return null;
+    return switch (info.actor) {
+      PayrollActor.worker => '근로자 정보 보완 대기',
+      PayrollActor.workerOrReview => '통장사본 확인 필요',
+      _ => null,
+    };
+  }
+
+  /// [§6] 스냅샷만 갱신한다. 금액·근태는 그대로다.
+  Future<void> _refreshSnapshots(List<AttendanceModel> recs) async {
+    if (_isTransferring || recs.isEmpty) return;
+    final ids = recs
+        .where((r) => _readiness[r.userId]?.snapshotNeedsRefresh(r) == true)
+        .map((r) => r.id)
+        .toList();
+    if (ids.isEmpty) return;
+    final name = _userBankCache[recs.first.userId]?['name'] ?? '이름 없음';
+    final ok = await DialogHelper.showConfirm(
+      context,
+      title: '지급정보 갱신',
+      message: '$name님의 지급 계좌를 현재 등록된 계좌로 갱신합니다.\n'
+          '급여 금액과 근무 내역은 바뀌지 않습니다.',
+      confirmText: '갱신',
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _isTransferring = true);
+    try {
+      final res = await PayrollReadinessService.refreshSnapshots(
+          businessId: widget.businessId, attendanceIds: ids);
+      if (!mounted) return;
+      if (res.refreshed.isNotEmpty) {
+        ToastHelper.showSuccess('${res.refreshed.length}건 지급정보를 갱신했습니다');
+      }
+      // [PARTIAL ≠ SUCCESS] 갱신하지 못한 건을 성공에 묻지 않는다.
+      if (res.skipped.isNotEmpty) {
+        final lines = res.skipped.entries
+            .map((e) => '• ${PayrollReadinessReason.labelOf(e.value)}')
+            .toSet()
+            .join('\n');
+        await DialogHelper.showAlert(
+          context,
+          title: '갱신하지 못한 건이 있습니다',
+          message: '${res.refreshed.length}건 갱신했습니다.\n'
+              '아래 ${res.skipped.length}건은 처리하지 않았습니다.\n\n$lines',
+        );
+      }
+      await _loadAllOutstanding();
+    } catch (e) {
+      if (mounted) ToastHelper.showError('지급정보 갱신에 실패했습니다');
+      debugPrint('❌ 스냅샷 갱신 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isTransferring = false);
     }
   }
 
@@ -1674,6 +1777,10 @@ class _PayrollPaymentDashboardScreenState
                       },
                       onSelect:          null,
                       onMarkTransferred: () => _markWorker(recs),
+                      onRefreshSnapshot: _needsSnapshotRefresh(recs)
+                          ? () => _refreshSnapshots(recs)
+                          : null,
+                      waitLabel: _payrollWaitLabel(recs),
                     ));
                   },
                 ),
@@ -1919,6 +2026,10 @@ class _PayrollPaymentDashboardScreenState
                         });
                       } : null,
                       onMarkTransferred: !_batchMode ? () => _markWorker(recs) : null,
+                      onRefreshSnapshot: !_batchMode && _needsSnapshotRefresh(recs)
+                          ? () => _refreshSnapshots(recs)
+                          : null,
+                      waitLabel: !_batchMode ? _payrollWaitLabel(recs) : null,
                     ));
                   },
                 ),
@@ -2332,6 +2443,12 @@ class _WorkerPayCard extends StatelessWidget {
   final VoidCallback? onMarkTransferred;
   final VoidCallback? onCardTap;
 
+  /// [PII-DOC-R1.6.1] 스냅샷만 갱신하면 이체 가능한 경우에만 non-null.
+  final VoidCallback? onRefreshSnapshot;
+
+  /// 관리자가 풀 수 없는 경우 보여줄 상태 문구.
+  final String? waitLabel;
+
   const _WorkerPayCard({
     required this.workerName,
     required this.bankInfo,
@@ -2351,6 +2468,8 @@ class _WorkerPayCard extends StatelessWidget {
     this.onSelect,
     this.onMarkTransferred,
     this.onCardTap,
+    this.onRefreshSnapshot,
+    this.waitLabel,
   });
 
   @override
@@ -2523,7 +2642,40 @@ class _WorkerPayCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 6),
-                            if (!isTransferred && !isBatchMode && onMarkTransferred != null)
+                            // [PII-DOC-R1.6.1 §5] 지급정보는 멀쩡한데
+                            //   스냅샷만 낡은 건 — 관리자가 풀 수 있다.
+                            //   '급여 다시 확정'이 아니라 '지급정보 갱신'이다.
+                            if (!isTransferred && !isBatchMode &&
+                                onRefreshSnapshot != null)
+                              SizedBox(
+                                height: 28,
+                                child: OutlinedButton(
+                                  onPressed: onRefreshSnapshot,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.warning,
+                                    side: const BorderSide(
+                                        color: AppColors.warning),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    textStyle: ResponsiveHelper.tinyStyle(context,
+                                        fontWeight: FontWeight.w600),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(6)),
+                                  ),
+                                  child: const Text('지급정보 갱신'),
+                                ),
+                              )
+                            // [§16] 관리자가 풀 수 없는 문제에는 버튼 대신
+                            //   상태만 보여준다. 가짜 CTA를 만들지 않는다.
+                            else if (!isTransferred && !isBatchMode &&
+                                waitLabel != null)
+                              Text(waitLabel!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: ResponsiveHelper.tinyStyle(context,
+                                      color: AppColors.grey500,
+                                      fontWeight: FontWeight.w600))
+                            else if (!isTransferred && !isBatchMode &&
+                                onMarkTransferred != null)
                               SizedBox(
                                 height: 28,
                                 child: ElevatedButton(
