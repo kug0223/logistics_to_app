@@ -231,22 +231,28 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       newReason = '신분증 등록이 필요합니다';
     } else if (_to?.jobType == TOType.flex && !user.isIdVerified) {
       newReason = '신분증 인증이 필요합니다';
+    } else if (!user.hasBankAccount) {
+      // [PII-DOC-R1.5.4] 지원자 기본자료 차단 사유 복구.
+      //   서버 srvMissingApplicantPayoutRegistration과 같은 순서·같은 문구.
+      //   예전에는 accountHolder를 빼고 봐서 예금주명만 비었을 때 버튼이
+      //   정상으로 보였다 — 이제 hasBankAccount(3필드)로 통일한다.
+      newReason = '통장 정보 등록이 필요합니다';
+    } else if (!user.hasBankbookDocument) {
+      newReason = '통장사본 등록이 필요합니다';
     }
-    // [PII-DOC-R1.5.2] 계좌·통장사본 차단 사유를 여기서 뺐다.
-    //   서버가 더 이상 요구하지 않으므로 앱이 먼저 막으면 화면과 서버가
-    //   다른 말을 하게 된다. meetsApplyPrerequisites도 같이 정리했다.
     if (newReason != _applyBlockReason) {
       setState(() => _applyBlockReason = newReason);
     }
   }
 
-  /// 서류 미완료로 인한 차단 여부 — 신분증 관련 사유만 해당
+  /// 서류 미완료로 인한 차단 여부 — 신분증·통장 관련 사유만 해당
   /// 블랙리스트·페널티·본인인증 차단과 구분하여 바텀시트로 안내
-  // [PII-DOC-R1.5.2] '통장' 매칭 제거 — 통장은 더 이상 차단 사유가 아니다.
+  // [PII-DOC-R1.5.4] '통장' 매칭 복구 — 다시 차단 사유이고, 이 사유들은
+  //   사용자가 등록으로 해결할 수 있으므로 버튼을 끄지 않고 시트로 안내한다.
   bool get _isDocumentBlocked {
     final r = _applyBlockReason;
     if (r == null) return false;
-    return r.contains('신분증');
+    return r.contains('신분증') || r.contains('통장');
   }
 
   bool get _isEffectivelyClosed {
@@ -2160,6 +2166,9 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
     // (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
     final hasId = user.hasIdDocument;
+    // [PII-DOC-R1.5.4] 급여정보 줄 복구 — 계좌 3필드 + 통장사본 등록 여부.
+    //   canonical getter를 쓴다(예전 인라인 계산은 accountHolder를 빠뜨렸다).
+    final hasWage = user.hasBankAccount && user.hasBankbookDocument;
 
     DialogHelper.showSheet<void>(
       context,
@@ -2184,9 +2193,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     .copyWith(color: AppColors.grey500, height: 1.5)),
             SizedBox(height: ResponsiveHelper.spacing(context, 20)),
             _buildReadinessRow(context, '신분 확인', '신분증 등록', hasId),
-            // [PII-DOC-R1.5.2] 급여정보 줄을 뺐다. 이 시트는 "지원하려면
-            //   먼저 등록해주세요"라고 말하는 자리이고, 급여정보는 더 이상
-            //   지원의 조건이 아니다. 여기 남겨 두면 사실이 아닌 말이 된다.
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            _buildReadinessRow(context, '급여정보', '계좌 및 통장사본 등록', hasWage),
             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
             SizedBox(
               width: double.infinity,

@@ -679,6 +679,63 @@ function srvResolveReviewReadiness(
 }
 
 // ═══════════════════════════════════════════════════════════
+// [PII-DOC-R1.5.4] APPLICANT ONBOARDING READINESS
+//
+//   "지원하기 전에 기본자료 준비가 됐는가"에 답한다.
+//
+//   ALfit은 가입을 가볍게 두는 대신, 실제로 공고에 손을 들기 전에
+//   운영에 필요한 자료를 갖추게 한다. 근태에서 급여까지 플랫폼이
+//   이어지므로, 관리자가 채용을 결정한 뒤에 서류를 다시 요청하며
+//   시간을 쓰는 상황을 만들지 않기 위해서다.
+//
+//   ── 이 판정이 아닌 것 ──────────────────────────────────────
+//
+//   MATCHING READINESS   — 이 사람을 이 근무에 확정해도 되는가
+//   PAYROLL READINESS    — 지금 이 급여를 지급해도 되는 최신 상태인가
+//
+//   셋은 서로 다른 질문이고 합치지 않는다. 지원 전에 한 번 등록했다는
+//   사실은 지급 시점에 그 정보가 유효하다는 뜻이 아니다 (R1.6).
+//
+//   ── 등록 ≠ 검수 ────────────────────────────────────────────
+//
+//   묻는 것은 **등록 여부**뿐이다. 관리자가 사람 눈으로 확인했는지,
+//   OCR 판정이 MATCHED인지는 묻지 않는다. 정상 사용자를 지원 전에
+//   관리자 수동검수 큐에 세우지 않는다.
+//   MISMATCH / OCR_UNCERTAIN으로 지원을 막는 것은 별도 정책 판단과
+//   legacy 영향 조사가 필요한 일이므로 여기서 하지 않는다.
+// ═══════════════════════════════════════════════════════════
+
+const ONB_MISSING_BANK_ACCOUNT = "MISSING_BANK_ACCOUNT";
+const ONB_MISSING_BANKBOOK = "MISSING_BANKBOOK";
+
+/**
+ * 지원자 기본자료(급여계좌·통장사본) 등록 여부.
+ *
+ * 신원 축(PASS·외국인 신원·신분증)은 호출자가 각자의 문구로 이미 검사한다.
+ * 이 helper는 R1.5.2에서 빠졌던 지급자료 등록 축만 canonical하게 판정한다.
+ *
+ * @return 누락 사유 코드. 모두 등록돼 있으면 null.
+ */
+function srvMissingApplicantPayoutRegistration(
+  u: FirebaseFirestore.DocumentData | undefined
+): string | null {
+  const d = u ?? {};
+  if (!d["bankName"] || !d["accountNumber"] || !d["accountHolder"]) {
+    return ONB_MISSING_BANK_ACCOUNT;
+  }
+  if (!d["bankbookImagePath"] && !d["bankbookImageUrl"]) {
+    return ONB_MISSING_BANKBOOK;
+  }
+  return null;
+}
+
+/** 누락 사유 → 사용자 문구. `action`은 지원/수락 등 문맥. */
+function srvPayoutRegistrationMessage(code: string): string {
+  return code === ONB_MISSING_BANKBOOK ?
+    "통장사본 등록이 필요합니다." : "통장 정보 등록이 필요합니다.";
+}
+
+// ═══════════════════════════════════════════════════════════
 // [PII-DOC-R1.5] 근무 확정 readiness — MATCHING READINESS
 //
 //   확정은 "이 지원자를 이 근무에 확정해도 되는가"에 답한다.
@@ -28524,16 +28581,19 @@ export const callableApplyToTO = onCall(
     if (!userData["idCardImagePath"] && !userData["idCardImageUrl"]) {
       throw new HttpsError("failed-precondition", "신분증 등록이 필요합니다.");
     }
-    // [PII-DOC-R1.5.2] 계좌·통장사본 요구를 여기서 제거했다.
-    //   (bankName / accountNumber / accountHolder / bankbookImagePath)
+    // [PII-DOC-R1.5.4] 지원자 기본자료 등록 — APPLICANT ONBOARDING READINESS.
     //
-    //   지원은 관심 표현이다. 지급은 근무가 끝난 뒤의 일이고, 그 사이에
-    //   계좌를 채울 시간이 있다. 급여계좌가 없다는 이유로 공고에 손드는
-    //   것조차 막으면, 아직 일어나지도 않은 지급을 위해 개인정보를 먼저
-    //   내놓으라고 요구하는 것이 된다.
+    //   R1.5.2에서 "지원 = 관심"이라는 이유로 이 요구를 뺐지만, 그것은
+    //   제품정책을 잘못 읽은 것이었다. ALfit은 가입을 가볍게 두는 대신
+    //   지원 전에 기본자료를 갖추게 하고, 그래서 관리자가 채용을 정한 뒤
+    //   서류를 다시 요청하지 않는다.
     //
-    //   지급 준비는 R1.6 Payroll Readiness가 지급 직전에 본다.
-    //   급여계좌 snapshot의 canonical writer는 callableConfirmFinalWage다.
+    //   묻는 것은 등록 여부뿐이다 — 관리자 검수도, OCR MATCHED도 아니다.
+    const applyOnbMissing = srvMissingApplicantPayoutRegistration(userData);
+    if (applyOnbMissing) {
+      throw new HttpsError(
+        "failed-precondition", srvPayoutRegistrationMessage(applyOnbMissing));
+    }
     if (userData["isBlacklisted"] === true) {
       const reason = (userData["blacklistReason"] as string | undefined) ?? "이용 정책 위반";
       throw new HttpsError("permission-denied", `이용 제한된 계정입니다.\n사유: ${reason}`);
@@ -31172,12 +31232,11 @@ export const callableAcceptTOInvitation = onCall(
       //   좌석이 잡히고, 동의가 없어 서류 열람은 거부되는데 관리자 Home에는
       //   "계약 미발송" 할 일이 생겼다.
       //
-      //   [PII-DOC-R1.5.1] 여기 있던 계좌·통장 요구는 제거했다.
-      //   근무 확정은 **근무에 대한 약속**이고 계좌는 그 약속이 끝난 뒤 돈이
-      //   나가는 방법이다. 직접 확정은 계좌가 없어도 되는데 초대 수락만
-      //   막히면, 같은 사람이 같은 근무에 같은 약속을 맺는 사건이 어느 버튼을
-      //   눌렀느냐에 따라 다른 규칙을 따르게 된다. 계좌 준비 상태는
-      //   R1.6 Payroll Readiness가 지급 직전에 판단한다.
+      //   [PII-DOC-R1.5.4] 지원자 기본자료도 여기서 본다.
+      //   관리자가 만든 초대는 지원 경로를 거치지 않으므로, 이 문을 열어
+      //   두면 onboarding을 통과한 적 없는 사람이 CONFIRMED가 된다.
+      //   지원과 같은 contract를 쓴다 — 우회로를 만들지 않는다.
+      //   이것은 Payroll Readiness가 아니라 Applicant Onboarding Readiness다.
       //
       //   실패하면 여기서 끝난다: INVITED 그대로, 좌석·카운터·계약·grant 변화 0.
       //   서류를 채우고 **같은 초대로 다시 수락**할 수 있다(마이그레이션 불필요).
@@ -31201,9 +31260,16 @@ export const callableAcceptTOInvitation = onCall(
       if (appData.slotId && freshUserData.isIdVerified !== true) {
         throw new HttpsError("failed-precondition", "신분증 인증 후 초대를 수락할 수 있습니다.");
       }
-      // [PII-DOC-R1.5.1] 계좌·통장사본 요구를 여기서 제거했다.
-      //   (bankName / accountNumber / accountHolder / bankbookImagePath)
-      //   지급 준비는 근무 확정의 조건이 아니다 — R1.6이 지급 직전에 본다.
+      // [PII-DOC-R1.5.4] 지원과 같은 canonical onboarding contract.
+      //   실패하면 여기서 끝난다: INVITED 그대로, 좌석·카운터·계약·grant 변화 0.
+      //   서류를 채우고 **같은 초대로 다시 수락**할 수 있다.
+      const acceptOnbMissing =
+        srvMissingApplicantPayoutRegistration(freshUserData);
+      if (acceptOnbMissing) {
+        throw new HttpsError(
+          "failed-precondition",
+          srvPayoutRegistrationMessage(acceptOnbMissing));
+      }
       //
       // 이 Application에 대한 동의를 지금 받는다 —
       // 다른 Application의 동의를 가져다 쓰지 않는다.

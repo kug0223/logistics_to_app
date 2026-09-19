@@ -254,26 +254,33 @@ void main() {
   //   앞선 계좌·통장 prerequisite가 남아 있었다. 그래서 같은 신규 약속이
   //   어느 버튼을 눌렀느냐에 따라 다른 규칙을 따랐다.
   // ═══════════════════════════════════════════════════════════
-  group('R1.5.1 — 초대 수락에 지급 prerequisite가 없다', () {
+  // [PII-DOC-R1.5.4] 이 group 은 R1.5.1 의 "초대 수락에 지급 prerequisite
+  //   없음"을 고정하고 있었다. 그 근거였던 R1.5.2 의 "지원 = payment 무관"
+  //   전제가 제품정책 오류로 철회되어, 초대 수락은 지원과 같은 Applicant
+  //   Onboarding Readiness 를 다시 요구한다.
+  //   이 group 이 지키는 것은 원래부터 **두 경로가 같은 규칙을 쓴다**였고
+  //   그 부분은 그대로다. onboarding 계약 본문은
+  //   test/applicant_onboarding_readiness_contract_test.dart.
+  group('초대 수락과 직접 확정이 같은 규칙을 쓴다', () {
     final accept = _codeOf(_sliceOf(rawCf,
         'export const callableAcceptTOInvitation = onCall(', '\n);'));
 
-    test('26 T1 — 계좌·통장 요구가 사라졌다', () {
-      for (final gone in [
+    test('26 계좌 presence 를 직접 보지 않고 canonical helper 를 쓴다', () {
+      for (final direct in [
         'freshUserData.bankName',
         'freshUserData.accountNumber',
         'freshUserData.accountHolder',
         'freshUserData.bankbookImagePath',
         'freshUserData.bankbookImageUrl',
-        '통장 정보 등록이 필요합니다',
-        '통장사본 등록이 필요합니다',
       ]) {
-        expect(accept, isNot(contains(gone)),
-            reason: '$gone — 지급 준비는 근무 확정의 조건이 아니다');
+        expect(accept, isNot(contains(direct)),
+            reason: '$direct — 지원과 같은 판정처를 써야 비대칭이 안 생긴다');
       }
+      expect(accept,
+          contains('srvMissingApplicantPayoutRegistration(freshUserData)'));
     });
 
-    test('27 지급 관련 상태도 읽지 않는다', () {
+    test('27 검수·판정 상태는 여전히 읽지 않는다', () {
       for (final gone in [
         'bankVerificationStatus', 'isBankbookVerified',
         'bankbookDocumentState', 'bankbookMatchStatus', 'bankDecision',
@@ -333,35 +340,30 @@ void main() {
       expect(wage, isNot(contains('srvResolveMatchingReadiness')));
     });
 
-    test('33 지원 prerequisite도 R1.5.2에서 함께 열렸다', () {
-      // R1.5.1 시점에는 지원이 아직 계좌를 요구했고 이 테스트가 그것을
-      // 고정했다. R1.5.2가 같은 논리로 지원 단계를 정리했다.
+    test('33 지원과 초대 수락이 같은 onboarding contract 를 쓴다', () {
       final apply = _codeOf(_sliceOf(rawCf,
           'export const callableApplyToTO = onCall(', '\n);'));
-      expect(apply, isNot(contains('통장 정보 등록이 필요합니다')));
-      expect(apply, isNot(contains('통장사본 등록이 필요합니다')));
+      expect(apply, contains('srvMissingApplicantPayoutRegistration(userData)'));
+      expect(accept,
+          contains('srvMissingApplicantPayoutRegistration(freshUserData)'));
     });
 
-    test('34 클라이언트도 초대 수락을 계좌로 막지 않는다', () {
-      // [정정] R1.5.1에서는 CTA 빌드만 보고 "클라이언트 변경 불필요"라고 했다.
-      //   실제로는 수락 **동작**이 meetsApplyPrerequisites를 지나고, 그
-      //   게이트가 계좌를 요구하고 있었다. R1.5.2가 그 게이트를 정리했다.
+    test('34 클라이언트도 두 경로가 같은 게이트를 지난다', () {
+      // R1.5.1 은 CTA 빌드만 보고 "클라이언트 변경 불필요"라고 판단했는데,
+      // 수락 **동작**이 meetsApplyPrerequisites 를 지난다는 것을 놓쳤다.
+      // 그 함수가 지원과 초대 수락 공통 게이트라는 사실이 여기서 중요하다.
       final gate = _codeOf(_sliceOf(
           _src('lib/screens/user/apply_prerequisites_screen.dart'),
           'bool meetsApplyPrerequisites(', '\n}'));
-      expect(gate, isNot(contains('hasBankAccount')));
-      expect(gate, isNot(contains('hasBankbookDocument')));
+      expect(gate, contains('hasBankAccount'));
+      expect(gate, contains('hasBankbookDocument'));
 
       final s = _src('lib/screens/common/job_posting_screen.dart');
-      // 수락 동작이 지나는 게이트가 바로 그 함수다.
       final act = _flat(_codeOf(
           _sliceOf(s, 'Future<void> _acceptInviteFromDetail(', '\n  }')));
       expect(act, contains('meetsApplyPrerequisites('));
-      // CTA 자체는 좌석·상태 projection만 본다.
-      final cta = _flat(_codeOf(_sliceOf(s,
-          '// INVITED → "초대 수락" / "거절" sticky 버튼', '_declineInviteFromDetail')));
-      expect(cta, contains('canAccept'));
-      expect(cta, isNot(contains('_applyBlockReason')));
+      expect(_src('lib/screens/user/my_applications_screen.dart'),
+          contains('meetsApplyPrerequisites('));
     });
   });
 

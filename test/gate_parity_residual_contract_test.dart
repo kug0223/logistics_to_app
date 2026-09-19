@@ -146,10 +146,13 @@ void main() {
       expect(home, isNot(contains('급여계좌 정보를 다시 확인해주세요')));
     });
 
-    test('12 H3 — 지원 준비 카드가 급여정보를 읽지 않는다', () {
+    test('12 H3 — 지원 준비 카드가 검수 상태를 읽지 않는다', () {
+      // [PII-DOC-R1.5.4] 원래는 "급여정보를 읽지 않는다"였다. 급여정보
+      //   등록은 실제 지원 조건으로 복구됐으므로 카드가 읽는 것이 맞다.
+      //   이 테스트가 지키는 것은 **검수 상태로 할 일을 만들지 않는다**이다.
       for (final f in [
-        'hasWageDocumentsReady', 'hasBankAccount', 'hasBankbookDocument',
-        'bankVerificationStatus', '급여계좌', '통장',
+        'hasWageDocumentsReady', 'bankVerificationStatus', 'bankDecision',
+        'bankbookMatchStatus',
       ]) {
         expect(_codeOf(card), isNot(contains(f)), reason: f);
       }
@@ -157,7 +160,8 @@ void main() {
 
     test('13 지원 전에 실제로 필요한 것만 남았다', () {
       expect(_codeOf(card), contains('user.hasIdDocument'));
-      expect(card, contains('신분증을 등록하면 지원할 수 있어요'));
+      expect(_codeOf(card),
+          contains('user.hasBankAccount && user.hasBankbookDocument'));
     });
   });
 
@@ -189,21 +193,25 @@ void main() {
     });
   });
 
-  // ── JN. 단계별 journey 계약 (§13) ───────────────────────────────
-  group('JN — 지원·확정·재배치는 payment-independent, 급여만 요구', () {
-    test('17 지원 = 관심 — payment 불필요', () {
-      for (final f in _payFields) {
-        expect(apply, isNot(contains('userData["$f"]')), reason: f);
-      }
+  // ── JN. 단계별 journey 계약 ─────────────────────────────────────
+  //
+  // [PII-DOC-R1.5.4] 17·18 은 원래 "지원·확정도 payment-independent"를
+  //   고정했다. 그 전제가 철회되어 지원·초대 수락은 onboarding 등록을
+  //   요구하는 쪽으로 돌아갔다. 상세 계약은
+  //   test/applicant_onboarding_readiness_contract_test.dart.
+  //   이 group 에 남는 것은 **재배치는 여전히 payment-independent**라는
+  //   R1.5.3 의 결론과 급여 경계다.
+  group('JN — 재배치는 payment-independent, 급여만 payment 요구', () {
+    test('17 지원 = onboarding 등록 필요', () {
+      expect(apply, contains('srvMissingApplicantPayoutRegistration(userData)'));
     });
 
-    test('18 확정·초대수락 = 약속 — payment 불필요', () {
+    test('18 초대 수락 = 같은 onboarding contract + Matching Readiness', () {
       final accept = _codeOf(_sliceOf(rawCf,
           'export const callableAcceptTOInvitation = onCall(', '\n);'));
       expect(accept, contains('srvResolveMatchingReadiness('));
-      for (final f in _payFields) {
-        expect(accept, isNot(contains('freshUserData.$f')), reason: f);
-      }
+      expect(accept,
+          contains('srvMissingApplicantPayoutRegistration(freshUserData)'));
     });
 
     test('19 재배치 = 기존 약속 변경 — payment 불필요', () {
@@ -225,8 +233,9 @@ void main() {
       expect(wage, contains('srvResolveReviewReadiness('));
     });
 
-    test('21 서버 전역에서 급여 밖의 계좌 요구가 남지 않았다', () {
-      // callableUpdateBankAccount(계좌 등록 자체)만 계좌를 요구할 수 있다.
+    test('21 계좌 presence 판정처가 늘어나지 않았다', () {
+      // [PII-DOC-R1.5.4] onboarding 판정 helper 하나가 추가됐다.
+      //   지원·초대 수락은 그 helper 를 부를 뿐 직접 필드를 보지 않는다.
       final owners = <String>[];
       final lines = _codeOf(rawCf).split('\n');
       var cur = '<top>';
@@ -240,7 +249,12 @@ void main() {
           owners.add(cur);
         }
       }
-      expect(owners.toSet(), equals({'callableUpdateBankAccount'}),
+      expect(
+          owners.toSet(),
+          equals({
+            'srvMissingApplicantPayoutRegistration',
+            'callableUpdateBankAccount',
+          }),
           reason: '실제 발견: ${owners.toSet()}');
     });
   });

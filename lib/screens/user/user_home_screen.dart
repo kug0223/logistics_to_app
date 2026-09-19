@@ -2196,15 +2196,16 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   // ── 온보딩 배너 ─────────────────────────────────────────────
-  /// 지원 준비 Compact Card
+  /// 지원 준비 Compact Card — APPLICANT ONBOARDING READINESS
   ///
-  /// [PII-DOC-R1.5.3] 지원 전에 실제로 해야 하는 일만 남긴다 — 신분증 등록.
+  /// [PII-DOC-R1.5.4] ① 신분 확인 · ② 급여정보 두 항목으로 복구.
   ///
-  ///   예전에는 ① 신분 확인 · ② 급여정보 두 칸짜리였고 "급여계좌를
-  ///   등록하면 지원 준비가 완료돼요"라고 말했다. R1.5.2 이후 지원은
-  ///   급여정보와 무관하므로 그 문장은 사실이 아니게 됐다. 지금 하지
-  ///   않아도 되는 일을 지원 준비 Task로 두면 없는 문턱을 만든다.
-  ///   급여정보 안내는 R1.6이 지급 준비 시점의 화면에서 맡는다.
+  ///   ALfit은 가입을 가볍게 두는 대신 지원 전에 기본자료를 갖추게 한다.
+  ///   그래서 이 둘은 실제로 지원을 막는 항목이고, Home에 있어야 한다.
+  ///
+  ///   묻는 것은 등록 여부뿐이다 — 관리자 검수 상태(writer 없는
+  ///   bankVerificationStatus)는 읽지 않는다. 지급 시점의 유효성은
+  ///   R1.6 Payroll Readiness가 따로 판단한다.
   ///
   /// 날짜 Hero보다 시각적 우선순위가 낮은 Compact 스타일.
   /// 탭 → DocumentManagementScreen (내 서류 관리)
@@ -2212,11 +2213,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final user = up.currentUser;
     if (user == null) return const SizedBox.shrink();
 
-    // 신분 확인: 신분증 이미지 등록 여부 (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
+    // ① 신분 확인: 신분증 이미지 등록 여부 (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
     final hasId = user.hasIdDocument;
-    if (hasId) return const SizedBox.shrink();
+    // ② 급여정보: 계좌 3필드 + 통장사본 등록 여부 (presence only)
+    final hasWage = user.hasBankAccount && user.hasBankbookDocument;
 
-    const subText = '신분증을 등록하면 지원할 수 있어요';
+    final completed = (hasId ? 1 : 0) + (hasWage ? 1 : 0);
+    if (completed == 2) return const SizedBox.shrink();
+
+    // 남은 것이 둘이면 둘 다 말한다 — 하나만 하면 끝나는 것처럼 말하지 않는다.
+    final String subText;
+    if (!hasId && !hasWage) {
+      subText = '지원 전에 신분증과 급여정보를 등록해주세요';
+    } else if (hasId) {
+      subText = '계좌와 통장사본을 등록하면 지원 준비가 완료돼요';
+    } else {
+      subText = '신분증을 등록하면 지원 준비가 완료돼요';
+    }
     final theme = Theme.of(context);
 
     // ── 디자인: Warning이 아닌 Progress Status ──────────────────────
@@ -2260,14 +2273,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 1줄: "지원 준비"
-                    // [PII-DOC-R1.5.3] 항목이 하나뿐이라 진행 카운터를 뺐다.
-                    Text('지원 준비',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        )),
+                    // 1줄: "지원 준비  0/2"
+                    Row(children: [
+                      Text('지원 준비',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          )),
+                      SizedBox(width: 6 * s),
+                      Text('$completed / 2',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            // ALfit Blue — Warning Orange 사용 금지
+                            color: theme.primaryColor,
+                          )),
+                    ]),
                     SizedBox(height: 3 * s),
                     // 2줄: 안내 문구
                     Text(subText,
@@ -2275,7 +2297,19 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           fontSize: 13,
                           color: AppColors.grey500,
                         )),
-                    // [PII-DOC-R1.5.3] 2단계 progress bar 제거 — 단계가 하나다.
+                    // 1/2 상태에서만: 얇은 progress bar (카드 크기 변화 없음)
+                    if (completed == 1) ...[
+                      SizedBox(height: 6 * s),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: LinearProgressIndicator(
+                          value: 0.5,
+                          minHeight: 3,
+                          backgroundColor: theme.primaryColor.withValues(alpha: 0.12),
+                          valueColor: AlwaysStoppedAnimation<Color>(theme.primaryColor),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

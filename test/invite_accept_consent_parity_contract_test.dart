@@ -78,17 +78,24 @@ void main() {
     //   사람이 어느 버튼을 눌렀느냐로 결과가 갈렸다. 이 group이 지키려던 것은
     //   "좌석을 잡기 전에 확인한다"이지 "계좌를 확인한다"가 아니므로,
     //   요구 대상을 신분 축으로 옮기고 지급 요구가 없음을 고정한다.
-    test('통장사본을 요구하지 않는다', () {
-      expect(accept.contains('통장사본 등록이 필요합니다'), false,
-          reason: '지급 준비는 근무 확정의 조건이 아니다 — R1.6이 지급 직전에 본다');
-      expect(accept.contains('freshUserData.bankbookImagePath'), false);
+    // [PII-DOC-R1.5.4] 이 두 테스트는 원래 계좌·통장사본을 요구한다는
+    //   사실을 인라인 조건문으로 고정했고, R1.5.1 이 요구를 없애면서
+    //   반대로 뒤집었다. 지금은 요구가 돌아왔지만 인라인이 아니라 지원과
+    //   공유하는 canonical helper 로 판정한다.
+    test('통장사본을 요구한다 — canonical helper 경유', () {
+      expect(accept.contains('srvMissingApplicantPayoutRegistration'), true);
+      expect(accept.contains('freshUserData.bankbookImagePath'), false,
+          reason: '지원과 다른 자리에서 같은 질문에 답하지 않는다');
     });
 
-    test('계좌 3필드를 요구하지 않는다', () {
-      expect(accept.contains('통장 정보 등록이 필요합니다'), false);
+    test('계좌 3필드를 요구한다 — 같은 helper', () {
+      final at = rawCf.indexOf('function srvMissingApplicantPayoutRegistration(');
+      expect(at, greaterThan(-1));
+      final onb = _flat(rawCf.substring(at, rawCf.indexOf('\n}', at)));
+      for (final f in ['bankName', 'accountNumber', 'accountHolder']) {
+        expect(onb.contains(f), true, reason: f);
+      }
       expect(accept.contains('freshUserData.bankName'), false);
-      expect(accept.contains('freshUserData.accountNumber'), false);
-      expect(accept.contains('freshUserData.accountHolder'), false);
     });
 
     test('신분증을 요구하고, 슬롯 공고는 인증 완료까지 요구한다', () {
