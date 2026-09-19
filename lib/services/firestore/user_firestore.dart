@@ -86,6 +86,9 @@ extension UserFirestore on FirestoreService {
     'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
     'rejectedBy', 'rejectedAt',
     'ci', 'ciHash', 'passVerifiedAt',
+    // [PII-B4-R1.1] 주민등록번호 — 세무 identity 확인의 근거값.
+    //   클라이언트 재저장이 곧 재암호화이고, 재암호화는 근거 없는 STALE 이다.
+    'residentNumber',
     'averageRating', 'reviewCount', 'rehireRate', 'totalWorkHours',
     'passwordHistory', 'badges',
     'termsConsentAt', 'termsConsent',

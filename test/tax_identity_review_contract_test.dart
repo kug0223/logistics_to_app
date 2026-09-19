@@ -169,6 +169,46 @@ void main() {
       expect(fp, isNot(contains('applicationId')));
     });
 
+    // ── [PII-B4-R1.1] 주민등록번호 값 정확성 ──────────────────
+    test('15a F2·F4·F5 — 주민번호 **값**이 지문에 들어간다', () {
+      // R1에서는 존재 여부만 담아서 A→B 변경이 감지되지 않았다.
+      expect(fp, contains('d["residentNumber"]'));
+      expect(fp, isNot(contains('"R1" : "R0"')),
+          reason: '있음/없음 두 가지로 뭉개지 않는다');
+      expect(fp, contains('"R:ABSENT"'), reason: '없음도 하나의 값이다');
+      expect(fp, contains('"R:" + (d["residentNumber"] as string)'));
+    });
+
+    test('15b §4·§5 — 서버가 계산한다. 클라이언트 지문을 받지 않는다', () {
+      // 제출은 받은 지문을 **비교에만** 쓰고, 저장은 서버 계산값이다.
+      expect(review, contains('const curFp = srvTaxIdentityFingerprint(wd)'));
+      expect(review, contains('reviewedTaxIdentityFingerprint: curFp'));
+      expect(review,
+          isNot(contains('reviewedTaxIdentityFingerprint: expectedTaxIdentityFingerprint')));
+    });
+
+    test('15c §3·§12 — 재암호화로 인한 false STALE 을 구조로 막는다', () {
+      // 서버에 ENCRYPT_KEY 가 없어 평문 HMAC 이 불가능하다. 대신 암호문을
+      // 쓰되, 클라이언트가 그 필드를 다시 쓸 수 없게 해 재암호화를 없앤다.
+      final rules = _src('firestore.rules');
+      final ownerBlock = _sliceOf(rules,
+          'allow update: if isLoggedIn() &&', 'allow delete:');
+      expect(ownerBlock, contains("'residentNumber'"));
+      final uf = _src('lib/services/firestore/user_firestore.dart');
+      final guard = _sliceOf(uf, '_protectedUserFields = {', '};');
+      expect(guard, contains("'residentNumber'"));
+    });
+
+    test('15d §9 — 평문이 로그·응답으로 새지 않는다', () {
+      final get = _codeOf(_sliceOf(rawCf,
+          'export const callableGetTaxIdentityReview = onCall(', '\n);'));
+      expect(get, isNot(contains('residentNumber')));
+      expect(review, isNot(contains('residentNumber')));
+      expect(urlCf, isNot(contains('residentNumber')));
+      // 지문은 해시 결과만 밖으로 나간다.
+      expect(fp, contains('digest("hex")'));
+    });
+
     test('16 다른 축(지원자 서류 검토)을 건드리지 않는다', () {
       expect(review, isNot(contains('idDecision: REVIEW_OK')));
       expect(review, contains('patch["idDecision"] = REVIEW_NOT_REVIEWED'));

@@ -213,7 +213,12 @@ void main() {
     test('21 계좌 fingerprint·서버 암호화 도입 없음', () {
       final cf = _codeOf(_src(_cfPath));
       expect(cf, isNot(contains('accountNumberFingerprint')));
-      expect(cf, isNot(contains('ENCRYPT_KEY')));
+      // [PII-B4-R1.1] 원래는 'ENCRYPT_KEY' 문자열 자체를 금지했는데,
+      //   "서버에 ENCRYPT_KEY가 없어 복호화할 수 없다"는 설명 주석이
+      //   그 문자열을 포함한다. 지켜야 할 것은 **키를 서버로 들여오지
+      //   않는 것**이므로 실제 사용 형태로 고정한다.
+      expect(cf, isNot(contains('process.env.ENCRYPT_KEY')));
+      expect(cf, isNot(contains('defineSecret("ENCRYPT_KEY")')));
       expect(pick, isNot(contains('fingerprint')));
     });
 

@@ -1044,9 +1044,21 @@ const TAX_REVIEW_STALE = "STALE";
  *   대신 **값 자체에서 파생한 지문**을 쓴다 — 누가 바꾸든 값이 달라지면
  *   지문이 달라진다. 가짜 버전을 만들지 않는다.
  *
- *   주민등록번호는 랜덤 IV로 암호화돼 같은 값도 매번 다른 암호문이 된다.
- *   그 암호문을 넣으면 무관한 쓰기마다 검토가 낡아 버리므로 **존재 여부**만
- *   담는다. (신규 수집을 하지 않는 legacy 필드다.)
+ *   ── 주민등록번호 [PII-B4-R1.1] ──────────────────────────────
+ *
+ *   R1에서는 **존재 여부**만 담았다. 그래서 값이 A에서 B로 바뀌어도
+ *   이전 확인이 현재로 남았다 — 확인한 것과 신고할 것이 달라지는데
+ *   아무도 몰랐다.
+ *
+ *   서버에는 ENCRYPT_KEY가 없어 복호화할 수 없다(설계상 이동 금지).
+ *   평문을 HMAC할 수 없으므로 **저장된 암호문 자체**를 넣는다.
+ *   AES-CBC + 랜덤 IV라 같은 평문을 다시 암호화하면 암호문이 달라지지만,
+ *   이 필드는 가입 시 한 번만 쓰이고 그 뒤 클라이언트가 쓸 수 없도록
+ *   막아 두었다(rules + user_firestore 차단). 재암호화가 일어나지 않으므로
+ *   저장된 암호문은 그 사용자의 값에 대해 안정적이다.
+ *
+ *   외국인은 foreignIdentityFingerprint가 이미 서버 HMAC(결정적)이라
+ *   같은 역할을 한다.
  *
  * @param {FirebaseFirestore.DocumentData | undefined} u users 문서
  * @return {string} sha256 hex
@@ -1065,7 +1077,10 @@ function srvTaxIdentityFingerprint(
     String(birth?.toMillis?.() ?? ""),
     (d["gender"] as string | undefined) ?? "",
     (d["foreignIdentityFingerprint"] as string | undefined) ?? "",
-    d["residentNumber"] ? "R1" : "R0",
+    // 값이 바뀌면 지문이 바뀐다. 없으면 없음으로 구분된다 — 값 A와 값 B가
+    // 같은 지문이 되는 일도, 있음과 없음이 섞이는 일도 없다.
+    typeof d["residentNumber"] === "string" && d["residentNumber"].length > 0 ?
+      "R:" + (d["residentNumber"] as string) : "R:ABSENT",
   ];
   return crypto.createHash("sha256")
     .update(parts.join(" ")).digest("hex");

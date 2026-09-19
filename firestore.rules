@@ -357,6 +357,11 @@ service cloud.firestore {
                          'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
                          'rejectedBy', 'rejectedAt',
                          'ci', 'ciHash', 'passVerifiedAt',
+                         // [PII-B4-R1.1] 주민등록번호 — 값이 세무 identity
+                         //   확인의 근거다. 클라이언트가 다시 쓰면 같은 값도
+                         //   랜덤 IV 때문에 암호문이 달라져 확인이 근거 없이
+                         //   낡는다. 신규 수집도 하지 않는 legacy 필드다.
+                         'residentNumber',
                          // [SEC-107] CF onReviewCreated/updateUserReviewStats 전용 필드 차단
                          //   클라이언트가 직접 위조 시 배지 자격 조건 우회·신뢰도 통계 오염 가능
                          'averageRating', 'reviewCount', 'rehireRate', 'totalWorkHours',
