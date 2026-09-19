@@ -650,11 +650,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     //
     // review_required를 "승인 대기"로 표시하지 않는다.
     // 지원 준비 완료 기준 = callableApplyToTO mismatch gate와 동일 논리.
-    final bankStatus     = user.bankVerificationStatus;
-    final isBankMismatch = bankStatus == 'mismatch';
+    // [PII-DOC-R1.5.3] bankVerificationStatus == 'mismatch' 분기를 뺐다.
+    //   이 값을 쓰는 곳이 서버에 하나도 없다(남은 것은 FieldValue.delete뿐).
+    //   아무도 만들지 않는 상태로 빨간 배지를 띄우면, 사용자는 해결할 수
+    //   없는 할 일을 받게 된다.
     // Canonical 기준: UserModel.hasWageDocumentsReady와 동일
     // (hasBankAccount && hasBankbookDocument)
-    final isBankReadyForApply = user.hasWageDocumentsReady;
+    final isPayoutDocsReady = user.hasWageDocumentsReady;
     // 미사용 변수 방지: 이 함수에서 isBankVerified/isBankReviewRequired는
     // _buildBankInfoSection 내부에서 별도 계산하므로 여기서 선언하지 않는다.
 
@@ -686,14 +688,12 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 18)),
 
         // ② 급여정보 준비 섹션
-        // [PRODUCT-POLICY] isComplete = 제출 완료 (review_required 포함), mismatch = isError
-        // isPending 미전달: review_required는 지원자 기준 완료 → 앰버 ⏳ 대신 초록 ✓
+        // [PRODUCT-POLICY] isComplete = 제출 완료
         _buildReadinessSectionLabel(
           step: 2,
           title: '급여정보 준비',
           description: '근무 후 급여 지급을 위해 필요해요',
-          isComplete: isBankReadyForApply,
-          isError: isBankMismatch,
+          isComplete: isPayoutDocsReady,
         ),
 
         SizedBox(height: ResponsiveHelper.spacing(context, 10)),

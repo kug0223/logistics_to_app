@@ -222,7 +222,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     } else if (user.isRestricted) {
       final remainDays = user.restrictedUntil!.difference(DateTime.now()).inDays + 1;
       newReason = '무단 결근 페널티 ($remainDays일 제한)';
-    } else if (!user.isPassVerified) {
+    } else if (!user.isForeign && !user.isPassVerified) {
+      // [PII-DOC-R1.5.3] 내국인만 PASS 필수 — 서버(srvIsForeignIdentity)와
+      //   meetsApplyPrerequisites가 쓰는 조건과 같다. 예전에는 국적 구분 없이
+      //   막아서, 외국인은 서버가 허용하는 공고에서 버튼이 꺼져 있었다.
       newReason = '본인인증이 필요합니다';
     } else if (!user.hasIdDocument) {
       newReason = '신분증 등록이 필요합니다';

@@ -32547,12 +32547,14 @@ export const callableAcceptConfirmedReassignment = onCall(
       if (u.isIdVerified !== true) {
         throw new HttpsError("failed-precondition", "신분증 인증 후 수락할 수 있습니다.");
       }
-      if (!u.bankName || !u.accountNumber || !u.accountHolder) {
-        throw new HttpsError("failed-precondition", "통장 정보 등록이 필요합니다.");
-      }
-      if (!u.bankbookImagePath && !u.bankbookImageUrl) {
-        throw new HttpsError("failed-precondition", "통장사본 등록이 필요합니다.");
-      }
+      // [PII-DOC-R1.5.3] 계좌·통장사본 요구를 여기서 제거했다.
+      //   (bankName / accountNumber / accountHolder / bankbookImagePath)
+      //
+      //   재배치 수락은 이미 성립한 약속을 옮기는 일이다. 지원·확정·초대
+      //   수락이 모두 지급과 무관해진 뒤에도 이 문턱만 남아 있어서, 계좌
+      //   없이 확정된 근로자가 관리자의 변경 제안에 응할 수 없었다.
+      //   되돌릴 수 없는 것은 A 좌석을 내놓는 일이지 지급 준비가 아니다.
+      //   지급 준비는 R1.6이 지급 직전에 본다.
       // B는 **새 Application**이다 — A의 동의를 가져다 쓰지 않는다.
       if (!crDocConsent) {
         throw new HttpsError(

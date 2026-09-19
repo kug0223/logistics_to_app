@@ -249,15 +249,14 @@ void main() {
 
   // ── §16 경계 기록 ────────────────────────────────────────────────
   group('경계 — 이번 Phase 가 건드리지 않은 곳', () {
-    test('21 재배치 수락은 아직 계좌를 요구한다 (FOLLOWUP 기록)', () {
-      // [FOLLOWUP-REASSIGNMENT-PAYROLL-PREREQUISITE]
-      //   계좌 없이 CONFIRMED 가 된 근로자는 재배치 제안을 수락할 수 없다.
-      //   §3 scope 밖이므로 이번에 고치지 않고 이 테스트로 사실만 고정한다.
-      //   R1.6 에서 같은 논리로 정리한다.
+    test('21 재배치 수락도 R1.5.3 에서 함께 열렸다', () {
+      // R1.5.2 시점에는 [FOLLOWUP-REASSIGNMENT-PAYROLL-PREREQUISITE] 로
+      // 남겨 두고 사실만 고정했다. R1.5.3 이 같은 논리로 닫았다.
+      // 상세 계약은 test/gate_parity_residual_contract_test.dart.
       final re = _codeOf(_sliceOf(rawCf,
           'export const callableAcceptConfirmedReassignment = onCall(', '\n);'));
-      expect(re, contains('통장 정보 등록이 필요합니다'));
-      expect(re, contains('통장사본 등록이 필요합니다'));
+      expect(re, isNot(contains('통장 정보 등록이 필요합니다')));
+      expect(re, isNot(contains('통장사본 등록이 필요합니다')));
     });
 
     test('22 신분증 지원 prerequisite 는 그대로다 (§4)', () {
