@@ -112,21 +112,35 @@ void main() {
     });
 
     test('OCR 실패·override는 통과로 올라가지 않는다', () {
+      // [PII-DOC-R1.2] evidence가 bool 네 개에서 항목별 결과로 바뀌었다.
+      //   고정하려던 불변식("강행·인식실패는 통과가 아니다")은 그대로다.
       expect(
         computeState,
-        contains('if (evidence.overridden || evidence.ocrFailed) { '
+        contains('if (overridden || ocrFailed) { '
             'return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence}; }'),
       );
     });
 
     test('부분 일치도 통과가 아니다', () {
+      // [PII-DOC-R1.2] "부분 일치"가 두 갈래로 나뉘었다:
+      //   실제로 비교해서 다른 것 → OVERRIDDEN
+      //   비교 자체를 못 한 것     → SUBMITTED (불일치가 아니다)
+      //   어느 쪽도 PASSED가 아니라는 것이 원래 불변식이고, 그건 그대로다.
+      expect(
+          computeState,
+          contains('if (nameOutcome === DOC_FIELD_MISMATCH || '
+              'identifierOutcome === DOC_FIELD_MISMATCH) { '
+              'return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence}; }'));
+      expect(
+          computeState,
+          contains('if (nameOutcome === DOC_FIELD_MATCHED && '
+              'identifierOutcome === DOC_FIELD_MATCHED)'),
+          reason: '둘 다 MATCHED일 때만 통과');
       final iPassed = computeState.indexOf('DOC_SELF_CHECK_PASSED');
-      final iTail = computeState.lastIndexOf('DOC_SELF_CHECK_OVERRIDDEN');
+      final iTail = computeState.lastIndexOf('DOC_SUBMITTED');
       expect(iPassed, greaterThan(0));
       expect(iTail, greaterThan(iPassed),
-          reason: '마지막 분기가 OVERRIDDEN이어야 일부만 맞은 경우가 통과로 새지 않는다');
-      expect(computeState,
-          contains('if (evidence.nameMatched && evidence.identifierMatched)'));
+          reason: '마지막 분기가 SUBMITTED여야 미판정이 통과로 새지 않는다');
     });
 
     test('클라이언트가 보낸 상태 문자열을 쓰지 않는다', () {
@@ -143,8 +157,11 @@ void main() {
   group('R0 — 기기는 판정하지 않고 근거만 만든다', () {
     test('선택 결과가 경로가 아니라 근거를 담는다', () {
       expect(pick, contains('class DocumentPickResult'));
-      expect(pick, contains('final bool nameMatched;'));
-      expect(pick, contains('final bool identifierMatched;'));
+      // [PII-DOC-R1.2] bool 두 개로는 "안 맞음"과 "안 봄"이 구분되지 않아
+      //   항목별 결과(DocFieldOutcome)로 바뀌었다. 담는 것이 판정이 아니라
+      //   근거라는 원래 계약은 그대로다.
+      expect(pick, contains('final DocFieldOutcome nameOutcome;'));
+      expect(pick, contains('final DocFieldOutcome identifierOutcome;'));
       expect(pick, contains('final bool ocrFailed;'));
       expect(pick, contains('final bool overridden;'));
       expect(pick, contains('Future<DocumentPickResult?> pickAndVerifyIdCard('));
@@ -156,14 +173,21 @@ void main() {
     });
 
     test('불일치 강행 경로가 overridden을 들고 간다', () {
-      expect('overridden: true,'.allMatches(pick).length, greaterThanOrEqualTo(2),
-          reason: '신분증·통장사본 두 경고 분기 모두');
+      // [PII-DOC-R1.2] 신분증은 "무시한 불일치가 있을 때만" 강행으로 기록한다
+      //   (idHasMismatch). 인식 실패만 있었던 제출에 없는 잘못을 붙이지 않는다.
+      //   통장은 기존대로 overridden: true — 판정 로직은 R1.3 몫이다.
+      expect(pick, contains('overridden: idHasMismatch'));
+      expect('overridden: true,'.allMatches(pick).length,
+          greaterThanOrEqualTo(1),
+          reason: '통장 경고 분기 + OCR 실패 분기');
     });
 
     test('예금주 검증을 skip한 경우를 일치로 부풀리지 않는다', () {
-      expect(pick,
-          contains('nameMatched: expectedName != null && '
-              "result['isNameValid'] == true"));
+      // [PII-DOC-R1.2] 부풀리지 않는 것에서 한 걸음 더 간다 —
+      //   확인한 것이 없으면 '불일치'도 아니고 UNASSESSED다.
+      expect(pick, contains('final bkName = expectedName == null'));
+      expect(pick, contains('? DocFieldOutcome.unassessed'));
+      expect(pick, contains('final bkIdent = !bkHasExpectedAcc'));
     });
 
     test('호출부가 근거를 CF로 보낸다', () {

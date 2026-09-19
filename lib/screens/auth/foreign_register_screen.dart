@@ -19,6 +19,7 @@ import '../../services/foreign_id_ocr_service.dart';
 import '../../services/legal_terms_service.dart';
 import '../../services/phone_verification_service.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/document_upload_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../widgets/common/common_widgets.dart';
@@ -524,7 +525,14 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableMarkIdCardVerified',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-              .call({'storagePath': uploadedPath});
+              .call({
+                'storagePath': uploadedPath,
+                // [PII-DOC-R1.2 / INV-3] 최초 가입에서는 등록번호 OCR 값이
+                //   곧 신원의 source다. 그 값으로 자기 자신을 검증할 수 없으므로
+                //   판정은 UNASSESSED이고, 그 사실을 **보낸다**.
+                //   보내지 않는 것과 '없다고 말하는 것'은 다르다.
+                'selfCheck': DocumentPickResult.unassessedSelfCheck(),
+              });
         } catch (e) {
           debugPrint('⚠️ [ForeignReg resume] markIdCardVerified 실패 (재시도 가능): $e');
         }
@@ -670,7 +678,11 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
             await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
                 .httpsCallable('callableMarkIdCardVerified',
                     options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-                .call({'storagePath': _uploadedStoragePath});
+                .call({
+                  'storagePath': _uploadedStoragePath,
+                  // [PII-DOC-R1.2 / INV-3] 위와 같은 이유로 UNASSESSED.
+                  'selfCheck': DocumentPickResult.unassessedSelfCheck(),
+                });
           } catch (e) {
             debugPrint('⚠️ [ForeignReg commit retry] markIdCardVerified 실패: $e');
           }
@@ -769,7 +781,14 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableMarkIdCardVerified',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-              .call({'storagePath': uploadedPath});
+              .call({
+                'storagePath': uploadedPath,
+                // [PII-DOC-R1.2 / INV-3] 최초 가입에서는 등록번호 OCR 값이
+                //   곧 신원의 source다. 그 값으로 자기 자신을 검증할 수 없으므로
+                //   판정은 UNASSESSED이고, 그 사실을 **보낸다**.
+                //   보내지 않는 것과 '없다고 말하는 것'은 다르다.
+                'selfCheck': DocumentPickResult.unassessedSelfCheck(),
+              });
         } catch (e) {
           debugPrint('⚠️ [ForeignReg commit] markIdCardVerified 실패: $e');
         }

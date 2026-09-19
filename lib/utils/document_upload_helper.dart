@@ -2,6 +2,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../widgets/dialogs/ocr_verification_dialog.dart';
+import 'identity_identifier.dart';
 import 'ocr_verification_helper.dart';
 import 'responsive_helper.dart';
 import 'image_helper.dart';
@@ -20,11 +21,11 @@ class DocumentPickResult {
   /// 업로드할 임시 파일 경로. 호출자가 업로드 후 삭제 책임을 진다.
   final String path;
 
-  /// 기기 OCR이 기대한 이름을 찾았는가.
-  final bool nameMatched;
+  /// 이름 대조 결과.
+  final DocFieldOutcome nameOutcome;
 
-  /// 기기 OCR이 기대한 식별번호(주민번호 앞7자리·계좌번호)를 찾았는가.
-  final bool identifierMatched;
+  /// 식별번호(주민/외국인등록번호 앞7자리 · 계좌번호) 대조 결과.
+  final DocFieldOutcome identifierOutcome;
 
   /// OCR 자체가 실패했는가 (타임아웃·예외·인식 불가).
   final bool ocrFailed;
@@ -34,18 +35,40 @@ class DocumentPickResult {
 
   const DocumentPickResult({
     required this.path,
-    this.nameMatched = false,
-    this.identifierMatched = false,
+    this.nameOutcome = DocFieldOutcome.unassessed,
+    this.identifierOutcome = DocFieldOutcome.unassessed,
     this.ocrFailed = false,
     this.overridden = false,
   });
 
   /// CF로 보낼 근거 payload. 서버가 이 값으로 상태를 계산한다.
+  ///
+  /// [PII-DOC-R1.2] bool 두 개(`nameMatched`/`identifierMatched`)로는
+  ///   "비교했는데 달랐다"와 "비교 자체를 못 했다"가 구분되지 않았다.
+  ///   그래서 기대값이 없을 때의 기본값 `true`가 "일치"로 읽혔다.
+  ///   이제 각 항목이 자기 상태를 스스로 말한다.
+  ///
+  ///   `selfCheckVersion`은 서버가 구버전 payload를 **통과로 읽지 않기** 위한
+  ///   표시다. 이 키가 없으면 서버는 판정 근거가 없다고 본다.
   Map<String, dynamic> get selfCheck => {
-        'nameMatched': nameMatched,
-        'identifierMatched': identifierMatched,
+        'selfCheckVersion': 2,
+        'name': nameOutcome.wire,
+        'identifier': identifierOutcome.wire,
         'ocrFailed': ocrFailed,
         'overridden': overridden,
+      };
+
+  /// 비교 기준이 없어 아무것도 판정하지 못한 제출.
+  ///
+  /// 최초 외국인 가입이 여기에 해당한다 — 등록번호 OCR 값이 곧 신원의
+  /// source이므로 그 값으로 자기 자신을 검증할 수 없다(INV-3).
+  /// 그 사실을 **보내지 않는 것**과 **없다고 말하는 것**은 다르다.
+  static Map<String, dynamic> unassessedSelfCheck({bool ocrFailed = false}) => {
+        'selfCheckVersion': 2,
+        'name': DocFieldOutcome.unassessed.wire,
+        'identifier': DocFieldOutcome.unassessed.wire,
+        'ocrFailed': ocrFailed,
+        'overridden': false,
       };
 }
 
@@ -193,6 +216,46 @@ class DocumentUploadHelper {
         }
       }
 
+      // [PII-DOC-R1.2] 항목별 판정 결과 — 화면 분기와 서버 근거가 같은 값을 쓴다.
+      final idName =
+          (result['nameOutcome'] as DocFieldOutcome?) ?? DocFieldOutcome.unassessed;
+      final idIdent = (result['identifierOutcome'] as DocFieldOutcome?) ??
+          DocFieldOutcome.unassessed;
+      final idHasMismatch = idName == DocFieldOutcome.mismatch ||
+          idIdent == DocFieldOutcome.mismatch;
+      final idHasUnreadable = idName == DocFieldOutcome.unreadable ||
+          idIdent == DocFieldOutcome.unreadable;
+      final idAllMatched = idName == DocFieldOutcome.matched &&
+          idIdent == DocFieldOutcome.matched;
+
+      // 비교 기준이 없어 아무것도 판정하지 못했다 — 사용자 잘못이 아니다.
+      //   불일치 경고를 띄우면 "당신 서류가 틀렸다"고 말하는 셈이 된다.
+      //   막지도 않고, 통과라고 말하지도 않는다. [§15]
+      if (!idHasMismatch && !idHasUnreadable && !idAllMatched) {
+        if (!context.mounted) {
+          await image.delete();
+          return null;
+        }
+        final proceed = await OcrVerificationDialog.showWarning(
+          context: context,
+          documentType: '신분증',
+          expectedInfo: '',
+          extractedInfo: null,
+          reason: '등록된 정보가 부족해 서류와 대조하지 못했습니다.\n'
+              '그대로 등록할 수 있으며, 서류 정보를 다시 확인해주세요.',
+        );
+        if (!proceed) {
+          await image.delete();
+          image = null;
+          return null;
+        }
+        return DocumentPickResult(
+          path: image.path,
+          nameOutcome: idName,
+          identifierOutcome: idIdent,
+        );
+      }
+
       if (result['isValid'] && result['confidence'] >= 0.7) {
         String extractedInfo = '이름: $expectedName';
         if (expectedResidentNumber != null && expectedResidentNumber.isNotEmpty) {
@@ -213,17 +276,21 @@ class DocumentUploadHelper {
         // [R0] 여기서도 '검증됨'이라고 말하지 않는다 — 기기가 본 것만 전한다.
         return DocumentPickResult(
           path: image.path,
-          nameMatched: result['isNameValid'] == true,
-          identifierMatched: result['isResidentNumberValid'] == true,
+          nameOutcome: idName,
+          identifierOutcome: idIdent,
         );
 
       } else {
+        // [PII-DOC-R1.2 / §15] 불일치와 인식 실패를 같은 문장으로 말하지 않는다.
         String reason = '';
-        if (!result['isNameValid']) {
-          reason += '• 이름이 일치하지 않습니다\n';
+        if (idName == DocFieldOutcome.mismatch) {
+          reason += '• 등록된 이름과 신분증 이름이 다릅니다\n';
         }
-        if (expectedResidentNumber != null && !result['isResidentNumberValid']) {
-          reason += '• 주민번호가 일치하지 않습니다\n';
+        if (idIdent == DocFieldOutcome.mismatch) {
+          reason += '• 등록된 신원정보와 신분증 번호가 다릅니다\n';
+        }
+        if (idIdent == DocFieldOutcome.unreadable) {
+          reason += '• 신분증에서 번호를 읽지 못했습니다\n';
         }
         reason += '사진이 흐리거나 조명이 부족할 수 있습니다';
 
@@ -252,11 +319,14 @@ class DocumentUploadHelper {
           return null;
         }
         // [R0] 불일치인데 사용자가 진행했다 — 그 사실이 서버에 남아야 한다.
+        //   [R1.2] 다만 사용자가 무시한 **불일치**가 있을 때만 강행이다.
+        //   인식 실패만 있었던 제출을 강행으로 기록하면 사용자에게 없는
+        //   잘못을 붙이게 된다.
         return DocumentPickResult(
           path: image.path,
-          nameMatched: result['isNameValid'] == true,
-          identifierMatched: result['isResidentNumberValid'] == true,
-          overridden: true,
+          nameOutcome: idName,
+          identifierOutcome: idIdent,
+          overridden: idHasMismatch,
         );
       }
 
@@ -372,6 +442,27 @@ class DocumentUploadHelper {
         }
       }
 
+      // [PII-DOC-R1.2] 통장도 같은 어휘로 근거를 남긴다 — 기대값이 없으면
+      //   '불일치'가 아니라 UNASSESSED다. 예전에는 외국인(예금주 비교 skip)과
+      //   계좌 미등록 상태가 `false`로 내려가 "확인했는데 달랐다"처럼 보였다.
+      //
+      //   ※ 통장의 **판정 로직**(isValid·confidence·필수 필드)은 이번 Phase
+      //     범위가 아니다 — R1.3에서 다룬다. 여기서는 의미 손실만 막는다.
+      final bkName = expectedName == null || expectedName.isEmpty
+          ? DocFieldOutcome.unassessed
+          : (result['isNameValid'] == true
+              ? DocFieldOutcome.matched
+              : DocFieldOutcome.mismatch);
+      final bkHasExpectedAcc =
+          expectedAccountNumber != null && expectedAccountNumber.isNotEmpty;
+      final bkIdent = !bkHasExpectedAcc
+          ? DocFieldOutcome.unassessed
+          : (result['isAccountValid'] == true
+              ? DocFieldOutcome.matched
+              : ((result['extractedAccountNumber'] as String?) == null
+                  ? DocFieldOutcome.unreadable
+                  : DocFieldOutcome.mismatch));
+
       if (result['isValid'] && result['confidence'] >= 0.6) {
         String extractedInfo = '예금주: $expectedName';
         if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
@@ -393,13 +484,11 @@ class DocumentUploadHelper {
         );
 
         // [R0] 예금주 검증을 skip한 경우(외국인)는 '일치'가 아니다 —
-        //   expectedName이 없으면 확인한 것이 없다. 근거를 부풀리지 않는다.
+        //   [R1.2] 그리고 '불일치'도 아니다. 확인한 것이 없으면 UNASSESSED다.
         return DocumentPickResult(
           path: image.path,
-          nameMatched: expectedName != null && result['isNameValid'] == true,
-          identifierMatched: expectedAccountNumber != null &&
-              expectedAccountNumber.isNotEmpty &&
-              result['isAccountValid'] == true,
+          nameOutcome: bkName,
+          identifierOutcome: bkIdent,
         );
 
       } else {
@@ -452,10 +541,8 @@ class DocumentUploadHelper {
         // [R0] 불일치인데 사용자가 진행했다 — 그 사실이 서버에 남아야 한다.
         return DocumentPickResult(
           path: image.path,
-          nameMatched: expectedName != null && result['isNameValid'] == true,
-          identifierMatched: expectedAccountNumber != null &&
-              expectedAccountNumber.isNotEmpty &&
-              result['isAccountValid'] == true,
+          nameOutcome: bkName,
+          identifierOutcome: bkIdent,
           overridden: true,
         );
       }

@@ -243,15 +243,46 @@ const DOC_REUPLOAD_REQUIRED = "REUPLOAD_REQUIRED";
 
 /** 클라이언트가 보내는 **증거**. 판정이 아니다. */
 type SrvDocSelfCheck = {
-  /** 기기 OCR이 이름을 찾았는가 */
+  /** [v2] 근거 스키마 버전. 없으면 판정 근거로 쓰지 않는다. */
+  selfCheckVersion?: unknown;
+  /** [v2] 이름 대조 결과 — MATCHED | MISMATCH | UNREADABLE | UNASSESSED */
+  name?: unknown;
+  /** [v2] 식별번호 대조 결과 — 위와 같은 어휘 */
+  identifier?: unknown;
+  /** [v1 legacy] 기기 OCR이 이름을 찾았는가 */
   nameMatched?: unknown;
-  /** 기기 OCR이 식별번호(주민번호 앞7자리·계좌번호)를 찾았는가 */
+  /** [v1 legacy] 기기 OCR이 식별번호를 찾았는가 */
   identifierMatched?: unknown;
   /** OCR 자체가 실패했는가(타임아웃·예외) */
   ocrFailed?: unknown;
   /** 경고를 보고도 사용자가 그대로 제출했는가 */
   overridden?: unknown;
 };
+
+// [PII-DOC-R1.2] 항목별 대조 결과 어휘 — 클라이언트 `DocFieldOutcome`과 같다.
+//
+//   bool 하나로는 "비교했는데 달랐다"와 "비교 자체를 못 했다"가 구분되지 않는다.
+//   그 구분이 없어서 기대값이 없을 때의 기본값 true가 "일치"로 읽혔고,
+//   V3 외국인은 birthDate·gender가 없어 **항상** 그 경로였다.
+const DOC_FIELD_MATCHED = "MATCHED";
+const DOC_FIELD_MISMATCH = "MISMATCH";
+const DOC_FIELD_UNREADABLE = "UNREADABLE";
+const DOC_FIELD_UNASSESSED = "UNASSESSED";
+const DOC_FIELD_OUTCOMES = [
+  DOC_FIELD_MATCHED, DOC_FIELD_MISMATCH,
+  DOC_FIELD_UNREADABLE, DOC_FIELD_UNASSESSED,
+];
+
+/**
+ * 클라이언트가 보낸 항목 결과를 정규화한다. 모르는 값은 UNASSESSED다.
+ *
+ * @param {unknown} v 클라이언트 값
+ * @return {string} 정규화된 결과
+ */
+function srvDocFieldOutcome(v: unknown): string {
+  return (typeof v === "string" && DOC_FIELD_OUTCOMES.includes(v)) ?
+    v : DOC_FIELD_UNASSESSED;
+}
 
 /**
  * 제출 증거에서 문서 상태를 정한다 — **서버가 유일한 매핑 지점**이다.
@@ -263,26 +294,63 @@ type SrvDocSelfCheck = {
  */
 function srvComputeDocumentState(
   raw: SrvDocSelfCheck | undefined
-): {state: string; evidence: Record<string, boolean> | null} {
+): {state: string; evidence: Record<string, unknown> | null} {
   if (!raw || typeof raw !== "object") {
     return {state: DOC_SUBMITTED, evidence: null};
   }
   const b = (v: unknown) => v === true;
-  const evidence = {
-    nameMatched: b(raw.nameMatched),
-    identifierMatched: b(raw.identifierMatched),
-    ocrFailed: b(raw.ocrFailed),
-    overridden: b(raw.overridden),
+  const ocrFailed = b(raw.ocrFailed);
+  const overridden = b(raw.overridden);
+
+  // [PII-DOC-R1.2] v2 미만 payload는 **판정 근거로 쓰지 않는다.**
+  //
+  //   구버전 클라이언트의 `identifierMatched: true`는 "비교해서 맞았다"일 수도
+  //   "비교할 기준이 없어 기본값이 그대로 올라왔다"일 수도 있다. 서버는 둘을
+  //   구분할 수 없고, 구분할 수 없는 주장을 통과로 읽으면 R1-B3가 그대로 남는다.
+  //   그래서 UNASSESSED로 본다 — 통과도 불일치도 아니다.
+  //
+  //   게이트에는 영향이 없다: idCardDocumentState는 현재 어떤 경로도 막지 않고
+  //   (지원 자격은 isIdVerified가 판단한다), 사용자가 경고를 넘긴 제출은
+  //   아래 overridden 분기에서 여전히 OVERRIDDEN으로 남는다.
+  const isV2 = typeof raw.selfCheckVersion === "number" &&
+    raw.selfCheckVersion >= 2;
+
+  const nameOutcome = isV2 ?
+    srvDocFieldOutcome(raw.name) : DOC_FIELD_UNASSESSED;
+  const identifierOutcome = isV2 ?
+    srvDocFieldOutcome(raw.identifier) : DOC_FIELD_UNASSESSED;
+
+  const evidence: Record<string, unknown> = {
+    selfCheckVersion: isV2 ? 2 : 1,
+    name: nameOutcome,
+    identifier: identifierOutcome,
+    ocrFailed,
+    overridden,
+    // 구버전이 보낸 주장은 **주장으로만** 보존한다 — 판정에 쓰지 않는다.
+    ...(isV2 ? {} : {
+      legacyNameMatched: b(raw.nameMatched),
+      legacyIdentifierMatched: b(raw.identifierMatched),
+    }),
   };
+
   // 사용자가 경고를 넘겼거나 OCR이 실패했으면, 일치 여부와 무관하게 override다.
-  if (evidence.overridden || evidence.ocrFailed) {
+  if (overridden || ocrFailed) {
     return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence};
   }
-  if (evidence.nameMatched && evidence.identifierMatched) {
+  // 실제로 비교해서 다른 것이 하나라도 있으면 통과가 아니다.
+  if (nameOutcome === DOC_FIELD_MISMATCH ||
+      identifierOutcome === DOC_FIELD_MISMATCH) {
+    return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence};
+  }
+  // 필요한 항목을 **모두 비교했고 모두 일치**했을 때만 통과다.
+  //   UNASSESSED·UNREADABLE은 통과가 아니다 — 확인하지 않은 것을 확인했다고
+  //   말하지 않는다. (INV-1)
+  if (nameOutcome === DOC_FIELD_MATCHED &&
+      identifierOutcome === DOC_FIELD_MATCHED) {
     return {state: DOC_SELF_CHECK_PASSED, evidence};
   }
-  // 일부만 맞았다 — 통과로 올리지 않는다.
-  return {state: DOC_SELF_CHECK_OVERRIDDEN, evidence};
+  // 비교하지 못한 항목이 남았다 — 불일치가 아니라 판정 불가다. (INV-2)
+  return {state: DOC_SUBMITTED, evidence};
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -12911,6 +12979,20 @@ export const callableFinalizeForeignIdentity = onCall(
       // 외국인 성별코드: 5,6 → 1900년대; 7,8 → 2000년대; 9 → 1900년대(일부)
       const birthYear = (genderDigit === 7 || genderDigit === 8) ? (2000 + yy) : (1900 + yy);
       const serverBirthDate = new Date(Date.UTC(birthYear, mm - 1, dd));
+      // [PII-DOC-R1.2] 성별도 같은 자리에서 나온다 — 여기서 파생하지 않으면
+      //   users.gender가 null로 남고, 그러면 신분증 재등록 때 기대 식별번호를
+      //   만들 수 없어 **비교 자체를 못 한다**. 그 공백이 R1-B3의 절반이었다.
+      //
+      //   birthDate는 이미 서버가 이 번호에서 계산해 저장하고 있었다(아래 tx).
+      //   빠져 있던 것은 성별 하나뿐이다.
+      //
+      //   5·7 남성 / 6·8 여성. 그 밖의 코드(구 규칙 9 등)는 이 표에 없으므로
+      //   추측해서 쓰지 않는다 — 틀린 기대값은 거짓 불일치를 만든다.
+      //   새 민감 필드를 만들지 않고 기존 gender 필드를 쓴다. 전체 13자리는
+      //   저장하지 않는다. (INV-4)
+      const serverGender =
+        (genderDigit === 5 || genderDigit === 7) ? "남성" :
+          ((genderDigit === 6 || genderDigit === 8) ? "여성" : null);
       // [V3-AGE] 만 19세 이상 검증 — 서버 재계산 (V4)
       // [TZ-FIX] KST 기준 날짜 사용 — UTC 기준 시 생일 당일 KST 00:00~08:59 구간에서 미달 판정 버그
       const _ageKstOffsetMs = 9 * 60 * 60 * 1000;
@@ -13011,6 +13093,9 @@ export const callableFinalizeForeignIdentity = onCall(
           foreignIdentityFingerprint: fingerprint,
           // [V3] 서버 재계산 생년월일 저장 (클라이언트 birthDate 덮어쓰기)
           birthDate: admin.firestore.Timestamp.fromDate(serverBirthDate),
+          // [PII-DOC-R1.2] 성별도 서버가 같은 번호에서 파생한다.
+          //   클라이언트가 자유롭게 주장하게 두지 않는다.
+          ...(serverGender ? {gender: serverGender} : {}),
           // [V3] 외국인등록증에서 추출한 공식 이름 (OCR + 사용자 확인)
           ...(legalNameRaw ? {legalName: String(legalNameRaw).trim().slice(0, 100)} : {}),
           // [V3] 체류자격 (E-9, F-4 등)

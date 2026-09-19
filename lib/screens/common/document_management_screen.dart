@@ -10,6 +10,7 @@ import '../../utils/responsive_helper.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/document_upload_helper.dart';
+import '../../utils/identity_identifier.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
@@ -787,21 +788,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     );
   }
 
-  /// 신분증/통장 검증용 주민번호 앞자리 계산
-  /// 반환 형식: "YYMMDD-G" (예: 1990년 1월 1일 남성 → "900101-1")
-  /// 내국인은 residentNumber가 저장되지 않으므로 birthDate + gender로 재계산.
-  /// 성별 코드: 2000년 이전 남성=1, 여성=2 / 2000년 이후 남성=3, 여성=4
-  String? _buildExpectedResidentNumber(UserModel user) {
-    if (user.birthDate == null || user.gender == null) return null;
-    final birth = user.birthDate!;
-    final yy = (birth.year % 100).toString().padLeft(2, '0');
-    final mm = birth.month.toString().padLeft(2, '0');
-    final dd = birth.day.toString().padLeft(2, '0');
-    final front = '$yy$mm$dd';
-    final isMale = user.gender == '남성';
-    final genderCode = birth.year >= 2000 ? (isMale ? 3 : 4) : (isMale ? 1 : 2);
-    return '$front-$genderCode';
-  }
+  /// 신분증 대조용 기대 식별번호 앞 7자리.
+  ///
+  /// [PII-DOC-R1.2] 계산 규칙은 `identity_identifier.dart` 한 곳에만 있다.
+  ///   여기 있던 구현은 국적 개념이 없어 외국인에게 내국인 코드(1~4)를 찍었고,
+  ///   등록증의 5~8과 항상 불일치했다. 같은 변환을 화면마다 복사하지 않는다.
+  String? _buildExpectedResidentNumber(UserModel user) =>
+      expectedIdentifierForUser(user).prefix;
 
   /// 신분증 업로드
   Future<void> _uploadIdCard() async {

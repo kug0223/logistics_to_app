@@ -3,6 +3,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import 'identity_identifier.dart';
+
 /// 📄 OCR 기반 서류 검증 헬퍼 클래스
 ///
 /// [설계 원칙] OcrVerificationHelper는 "이미 알고 있는 expected value가
@@ -79,9 +81,23 @@ class OcrVerificationHelper {
     final cleanedOcr = _cleanText(rawText);
     final cleanedExpected = _cleanText(expectedName);
 
-    final isNameValid = cleanedOcr.contains(cleanedExpected);
+    // [PII-DOC-R1.2] 이름은 기대값이 없으면 비교하지 않는다.
+    final bool nameAssessable = cleanedExpected.isNotEmpty;
+    final isNameValid = nameAssessable && cleanedOcr.contains(cleanedExpected);
+    final DocFieldOutcome nameOutcome = !nameAssessable
+        ? DocFieldOutcome.unassessed
+        : (isNameValid ? DocFieldOutcome.matched : DocFieldOutcome.mismatch);
 
-    bool isResidentNumberValid = true;
+    // [PII-DOC-R1.2 / INV-1] 검사하지 않은 값을 true로 만들지 않는다.
+    //
+    //   여기 있던 `bool isResidentNumberValid = true;`가 R1-B3의 전부였다.
+    //   기대값이 없으면 if 블록에 들어가지 않고 그 기본값이 그대로
+    //   `identifierMatched = true`가 되어 SELF_CHECK_PASSED까지 올라갔다.
+    //   V3 외국인은 birthDate·gender가 null이라 **항상** 이 경로였다.
+    //
+    //   이제 기대값이 없으면 UNASSESSED다. 비교하지 않았다는 사실이 남는다.
+    DocFieldOutcome identifierOutcome = DocFieldOutcome.unassessed;
+    bool isResidentNumberValid = false;
     String? extractedResidentNumber;
 
     if (expectedResidentNumber != null && expectedResidentNumber.isNotEmpty) {
@@ -107,11 +123,21 @@ class OcrVerificationHelper {
           break;
         }
       }
+      // [PII-DOC-R1.2 / §6] 비교는 했는데 서류에서 번호를 **하나도 못 읽은** 경우와
+      //   읽었는데 다른 경우를 구분한다. 전자는 불일치가 아니라 인식 실패다.
+      final anyCandidate = residentPattern.hasMatch(rawText);
       isResidentNumberValid = matchedCandidate != null;
       extractedResidentNumber = matchedCandidate;
+      identifierOutcome = isResidentNumberValid
+          ? DocFieldOutcome.matched
+          : (anyCandidate
+              ? DocFieldOutcome.mismatch
+              : DocFieldOutcome.unreadable);
     }
 
-    final isValid = isNameValid && isResidentNumberValid;
+    // isValid는 "전부 확인됐고 전부 일치" — UNASSESSED는 통과가 아니다.
+    final isValid = nameOutcome == DocFieldOutcome.matched &&
+        identifierOutcome == DocFieldOutcome.matched;
 
     double confidence = 0.0;
     if (isNameValid && isResidentNumberValid) {
@@ -126,6 +152,10 @@ class OcrVerificationHelper {
       'isValid': isValid,
       'isNameValid': isNameValid,
       'isResidentNumberValid': isResidentNumberValid,
+      // [PII-DOC-R1.2] 판정 결과 어휘 — bool 두 개로는 "안 맞음"과 "안 봄"이
+      //   구분되지 않는다. consumer는 이 값을 쓴다.
+      'nameOutcome': nameOutcome,
+      'identifierOutcome': identifierOutcome,
       'confidence': confidence,
       // [OCR-P0-002 FIX] null 반환 —
       // 신뢰 가능한 OCR 이름 추출 로직이 없으므로 null.
