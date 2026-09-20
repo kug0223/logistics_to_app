@@ -11608,6 +11608,99 @@ async function srvResolvePromisedPaySchedule(
   };
 }
 
+/** [R6.4] 승인된 변경까지 반영한 실효 지급일정. */
+type SrvEffectivePaySchedule = {
+  payScheduleType: string | undefined;
+  payScheduleDay: number | undefined;
+  payScheduleTime: string | undefined;
+  /** APPLICATION | CONTRACT | CLIENT | NONE | AMENDMENT */
+  source: string;
+  amended: boolean;
+  amendmentId: string | null;
+  amendmentEffectiveFrom: string | null;
+};
+
+/**
+ * [BLOCKER-R63-PAYMENT-CHANGE-APPROVAL-NO-EFFECT] 승인은 효력이어야 한다.
+ *
+ *   payment_change_requests 는 applicationId 단위로 지급일정 변경을 담고,
+ *   관리자가 승인하면 status 가 APPROVED 가 됐다. 그런데 그 승인을 읽는
+ *   곳이 아무 데도 없었다 — 승인 버튼은 눌리는데 근로자에게 달라지는
+ *   것은 없었다.
+ *
+ *   원래 약속은 덮지 않는다. Application·Contract 스냅샷은 수락 당시의
+ *   사실 그대로 남고, 승인된 요청이 그 위에 얹히는 수정(amendment)이다.
+ *
+ *     원래 약속  +  승인된 변경  =  실효 지급일정
+ *
+ *   요청 문서 자체가 effect source 다. 별도 collection 을 만들면 승인과
+ *   효력이 두 번 쓰여 반쪽 성공이 생긴다 — APPROVED 하나가 곧 효력이다.
+ *
+ *   effectiveFrom 비교 기준은 **근무일**이다. 지급일 계산
+ *   (srvCalculatePaymentDueDate)이 workDate 를 입력으로 받으므로,
+ *   "이 날의 근무에 어떤 지급 규칙이 적용되는가" 가 자연스러운 질문이다.
+ *
+ * @param {SrvPromisedPaySchedule} promise 원래 약속
+ * @param {string | undefined} applicationId 지원서 ID
+ * @param {string} workDateKst 근무일 "yyyy-MM-dd" (KST)
+ * @return {Promise<SrvEffectivePaySchedule>} 실효 지급일정
+ */
+async function srvResolveEffectivePaySchedule(
+  promise: SrvPromisedPaySchedule,
+  applicationId: string | undefined,
+  workDateKst: string
+): Promise<SrvEffectivePaySchedule> {
+  const base: SrvEffectivePaySchedule = {
+    ...promise, amended: false, amendmentId: null, amendmentEffectiveFrom: null,
+  };
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  if (!applicationId || !DATE_RE.test(workDateKst)) return base;
+  try {
+    // status 는 코드에서 거른다 — 복합 인덱스를 새로 요구하지 않는다.
+    const snap = await db.collection("payment_change_requests")
+      .where("applicationId", "==", applicationId).limit(50).get();
+    let best: {ef: string; pAt: number; t: string; d: number | undefined;
+      id: string} | null = null;
+    for (const doc of snap.docs) {
+      const r = doc.data();
+      // [§22] REJECTED·PENDING 은 효력이 없다. 모르는 status 도 마찬가지다.
+      if (r["status"] !== "APPROVED") continue;
+      const ef = r["effectiveFrom"];
+      if (typeof ef !== "string" || !DATE_RE.test(ef)) continue;
+      // 아직 효력이 오지 않은 변경은 이 근무에 적용되지 않는다.
+      if (ef > workDateKst) continue;
+      const ps = srvReadPaySchedule({
+        payScheduleType: r["requestedPayScheduleType"],
+        payScheduleDay: r["requestedPayScheduleDay"],
+      });
+      if (!ps) continue;
+      const pAt =
+        (r["processedAt"] as admin.firestore.Timestamp | undefined)
+          ?.toMillis() ?? 0;
+      // [§20] 늦은 effectiveFrom 이 이기고, 같으면 나중에 처리된 것이 이긴다.
+      if (!best || ef > best.ef || (ef === best.ef && pAt > best.pAt)) {
+        best = {ef, pAt, t: ps.t, d: ps.d, id: doc.id};
+      }
+    }
+    if (best) {
+      return {
+        payScheduleType: best.t,
+        payScheduleDay: best.d,
+        // 변경 요청은 지급 시각을 담지 않는다 — 옛 시각을 새 주기에
+        // 끌어다 붙이지 않는다. 없는 것은 없는 대로 둔다.
+        payScheduleTime: undefined,
+        source: "AMENDMENT",
+        amended: true,
+        amendmentId: best.id,
+        amendmentEffectiveFrom: best.ef,
+      };
+    }
+  } catch (e) {
+    console.warn("[paySchedule] 승인된 변경 조회 실패:", e);
+  }
+  return base;
+}
+
 function srvAssertUniqueWorkDetailIds(wds: unknown[]): void {
   const ids = (wds as Record<string, unknown>[]).map(
     (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
@@ -20005,6 +20098,16 @@ export const callableCalculateAndConfirmWage = onCall(
         `[R6.3] 지급일정 약속 스냅샷 없음 — ${promisedPaySchedule.source} 사용: ` +
         `att=${d.attendanceId} app=${wageAppId}`);
     }
+    // [R6.4] 승인된 변경이 있으면 그것이 이 근무의 지급일정이다.
+    const effectivePaySchedule = await srvResolveEffectivePaySchedule(
+      promisedPaySchedule, wageAppId, d.workDate);
+    if (effectivePaySchedule.amended) {
+      console.log(
+        `[R6.4] 승인된 지급일정 변경 적용: att=${d.attendanceId} ` +
+        `req=${effectivePaySchedule.amendmentId} ` +
+        `effectiveFrom=${effectivePaySchedule.amendmentEffectiveFrom} ` +
+        `→ ${effectivePaySchedule.payScheduleType}`);
+    }
     const businessId2 = attData2.businessId as string;
     const userId2 = attData2.userId as string;
     // 권한 확인
@@ -20169,11 +20272,11 @@ export const callableCalculateAndConfirmWage = onCall(
       if (wageResult2.incomeTaxDeduction) wd.incomeTaxDeduction = wageResult2.incomeTaxDeduction;
       if (wageResult2.retroactiveDeduction) wd.retroactiveDeduction = wageResult2.retroactiveDeduction;
       // [R6.3] 약속 기준 — 현재 공고값이 아니다.
-      if (promisedPaySchedule.payScheduleType != null) {
-        wd.payScheduleType = promisedPaySchedule.payScheduleType;
+      if (effectivePaySchedule.payScheduleType != null) {
+        wd.payScheduleType = effectivePaySchedule.payScheduleType;
       }
-      if (promisedPaySchedule.payScheduleDay != null) {
-        wd.payScheduleDay = promisedPaySchedule.payScheduleDay;
+      if (effectivePaySchedule.payScheduleDay != null) {
+        wd.payScheduleDay = effectivePaySchedule.payScheduleDay;
       }
       // Phase 6: canonical extra-work breakdown
       wd.contractExcessMinutes = wageResult2.contractExcessMinutes;
@@ -29047,6 +29150,24 @@ export const callableApprovePaymentChangeRequest = onCall(
       if (reqData.status !== "PENDING") {
         throw new HttpsError("failed-precondition", `이미 처리된 요청입니다. 현재 상태: ${reqData.status as string}`);
       }
+      // [R6.4] APPROVED 는 곧 효력이다 — 효력을 만들 수 없는 요청은 승인하지 않는다.
+      //   승인해 놓고 resolver 가 읽지 못해 아무 일도 안 일어나는 상태를 막는다.
+      if (typeof reqData.applicationId !== "string" ||
+          reqData.applicationId.length === 0) {
+        throw new HttpsError(
+          "failed-precondition",
+          "변경 요청에 대상 근무 정보가 없어 승인할 수 없습니다.");
+      }
+      if (typeof reqData.effectiveFrom !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(reqData.effectiveFrom)) {
+        throw new HttpsError(
+          "failed-precondition",
+          "변경 요청의 효력 시작일이 올바르지 않아 승인할 수 없습니다.");
+      }
+      srvAssertPayScheduleValid([{
+        payScheduleType: reqData.requestedPayScheduleType,
+        payScheduleDay: reqData.requestedPayScheduleDay,
+      }], {require: true});
       tx.update(reqRef, {
         status: "APPROVED",
         processedBy: callerUid,

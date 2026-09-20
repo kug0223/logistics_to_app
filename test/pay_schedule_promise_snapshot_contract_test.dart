@@ -98,11 +98,18 @@ void main() {
       expect(f, contains('await srvResolvePromisedPaySchedule( wagePromiseApp, wageAppId'));
     });
 
-    test('PP-31 wageDetail 에 약속값을 쓴다 — 클라이언트 payload 아님', () {
-      expect(f, contains('wd.payScheduleType = promisedPaySchedule.payScheduleType'));
-      expect(f, contains('wd.payScheduleDay = promisedPaySchedule.payScheduleDay'));
+    // [R6.4 갱신] 약속 위에 승인된 변경(amendment)이 얹힌 **실효값**을 쓴다.
+    //   약속이 직접 쓰이던 자리를 effectivePaySchedule 이 이어받았고,
+    //   승인된 변경이 없으면 그 값은 곧 약속이다(srvResolveEffectivePaySchedule).
+    //   변하지 않은 계약: 클라이언트 payload 는 여전히 쓰이지 않는다.
+    test('PP-31 wageDetail 에 실효값을 쓴다 — 클라이언트 payload 아님', () {
+      expect(f, contains('wd.payScheduleType = effectivePaySchedule.payScheduleType'));
+      expect(f, contains('wd.payScheduleDay = effectivePaySchedule.payScheduleDay'));
       expect(f, isNot(contains('wd.payScheduleType = d.payScheduleType')));
       expect(f, isNot(contains('wd.payScheduleDay = d.payScheduleDay')));
+      // 실효값의 출발점은 약속이다
+      expect(f, contains(
+          'await srvResolveEffectivePaySchedule( promisedPaySchedule, wageAppId, d.workDate)'));
     });
 
     test('PP-32 약속이 없으면 그 사실을 로그로 남긴다', () {
