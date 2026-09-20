@@ -68,7 +68,9 @@ class TaxIdentityReview {
     this.officialName,
     this.koreanName,
     this.birthDate,
-  });
+    bool hasTaxIdentity = false,
+    this.taxIdentifierType,
+  }) : _hasTaxIdentity = hasTaxIdentity;
 
   final TaxReviewState state;
   final bool valid;
@@ -81,6 +83,13 @@ class TaxIdentityReview {
 
   final bool hasIdDocument;
   final DateTime? reviewedAt;
+
+  /// [PII-B4-R1.4] 신고용 식별번호가 등록돼 있는가. 번호 자체는 오지 않는다.
+  bool get hasTaxIdentity => _hasTaxIdentity;
+  final bool _hasTaxIdentity;
+
+  /// KOREAN_RRN | FOREIGN_REGISTRATION_NUMBER | null
+  final String? taxIdentifierType;
 
   /// 신분증과 대조할 등록 정보.
   final String? officialName;
@@ -103,6 +112,8 @@ class TaxIdentityReview {
       koreanName: m['koreanName'] as String?,
       birthDate:
           b is num ? DateTime.fromMillisecondsSinceEpoch(b.toInt()) : null,
+      hasTaxIdentity: m['hasTaxIdentity'] == true,
+      taxIdentifierType: m['taxIdentifierType'] as String?,
     );
   }
 }
@@ -146,6 +157,28 @@ class TaxIdentityReviewService {
       'expectedIdDocumentVersion': expectedIdDocumentVersion,
     });
     return (res.data['signedUrl'] ?? '') as String;
+  }
+
+  /// [PII-B4-R1.4 §39·§48] 신고용 식별번호를 **확인을 누른 순간에만** 연다.
+  ///
+  ///   원본 이미지를 여는 문과 같은 조건이다 — 권한 + 관계 + 지금 보고 있는
+  ///   그 버전. 이 값은 generic 조회 응답에는 절대 실리지 않는다.
+  ///   화면에서는 메모리로만 다루고 저장·복사·로그를 남기지 않는다.
+  static Future<String> fullIdentifier({
+    required String businessId,
+    required String targetUid,
+    required int expectedIdDocumentVersion,
+    required String expectedTaxIdentityFingerprint,
+  }) async {
+    final res = await _fn
+        .httpsCallable('callableGetTaxIdentityNumber')
+        .call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'targetUid': targetUid,
+      'expectedIdDocumentVersion': expectedIdDocumentVersion,
+      'expectedTaxIdentityFingerprint': expectedTaxIdentityFingerprint,
+    });
+    return (res.data['identifier'] ?? '') as String;
   }
 
   /// 확인 결과를 현재 값에 묶어 기록한다.

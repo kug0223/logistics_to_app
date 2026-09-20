@@ -270,7 +270,10 @@ void main() {
 
   group('수락 UI는 지원 경로의 canonical 요소를 재사용한다', () {
     test('서류가 없으면 등록으로 보낸다', () {
-      expect(myApps.contains('if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {'), true);
+      // [PII-B4-R1.4] 같은 canonical 게이트에 세무 축 입력이 더해졌다.
+      //   보는 게이트가 하나라는 사실은 그대로다.
+      expect(myApps.contains('meetsApplyPrerequisites(user,'), true);
+      expect(myApps.contains('isFlexType: isFlex, taxStatus: acceptTax)'), true);
       expect(myApps.contains("ToastHelper.showWarning('근무 확정을 위해 서류 등록이 필요합니다.');"),
           true);
       expect(myApps.contains('await ApplyPrerequisitesScreen.show(context, isFlexType: isFlex);'),

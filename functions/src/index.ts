@@ -735,6 +735,84 @@ function srvPayoutRegistrationMessage(code: string): string {
     "통장사본 등록이 필요합니다." : "통장 정보 등록이 필요합니다.";
 }
 
+// ── [PII-B4-R1.4 §34·§35·§38] 세무 identity 축 ────────────────
+//
+//   지급자료 helper와 **합치지 않는다**. 묻는 것이 다르다:
+//   하나는 "돈 보낼 곳이 등록됐는가", 하나는 "신고할 번호가 등록됐는가".
+//   합치면 한쪽 사유가 다른 쪽 문구로 나가고, 근로자는 엉뚱한 화면으로 간다.
+const ONB_MISSING_TAX_IDENTITY = "MISSING_TAX_IDENTITY";
+const ONB_TAX_DOCUMENT_MISMATCH = "TAX_DOCUMENT_MISMATCH";
+
+/**
+ * [§35·§37] 등록한 세무 번호와 신분증 사이에 **명시적 불일치**가 있는가.
+ *
+ *   ── 이 판정이 왜 taxIdentities에 붙는가 ────────────────────
+ *
+ *   `idCardSelfCheck.identifier`는 신분증 업로드 시점에 **앞 7자리**(생년월일
+ *   +성별에서 역산한 값)와 대조한 결과다. 전체 13자리 대조가 아니다.
+ *   그리고 클라이언트는 등록된 번호를 되받을 수 없으므로(§27), 전체 대조가
+ *   가능한 순간은 근로자가 번호를 **입력하는 그때**뿐이다.
+ *
+ *   그래서 그 시점의 판정을 세무 레코드에 함께 남기고, 어느 신분증 버전에
+ *   대한 판정인지를 같이 적는다. 신분증이 바뀌면 그 판정은 현재에 대한
+ *   진술이 아니므로 막지 않는다.
+ *
+ *   MISMATCH만 막는다. UNREADABLE·UNASSESSED·OCR 실패는 "다르다"가 아니라
+ *   "모른다"이므로 지원을 막지 않는다 — 그건 나중에 사람이 본다(§37).
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} u users 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} tax taxIdentities 문서
+ * @return {boolean} 현재 신분증 버전에 대한 명시적 불일치 여부
+ */
+function srvHasCurrentTaxDocumentMismatch(
+  u: FirebaseFirestore.DocumentData | undefined,
+  tax: FirebaseFirestore.DocumentData | undefined
+): boolean {
+  if (!tax) return false;
+  if (tax["documentMatchOutcome"] !== DOC_FIELD_MISMATCH) return false;
+  const evaluatedV = tax["documentMatchIdDocumentVersion"];
+  if (typeof evaluatedV !== "number") return false;
+  return evaluatedV === srvDocumentVersionsOf(u ?? {}).id;
+}
+
+/**
+ * [§34] 지원·초대수락을 막아야 하는 세무 축 사유.
+ *
+ *   활성화 플래그를 **한 번만** 읽고 두 검사를 함께 한다 — 지원 경로에서
+ *   같은 설정을 두 번 읽지 않기 위해서다.
+ *
+ * @param {string} uid 근로자
+ * @param {FirebaseFirestore.DocumentData | undefined} userData users 문서
+ * @return {Promise<string | null>} 차단 사유 코드. 없으면 null.
+ */
+async function srvTaxIdentityOnboardingBlock(
+  uid: string, userData: FirebaseFirestore.DocumentData | undefined
+): Promise<string | null> {
+  if (!await srvIsTaxIdentityCollectionEnabled()) return null;
+  let taxData: FirebaseFirestore.DocumentData | undefined;
+  try {
+    const snap = await db.collection(TAX_ID_COL).doc(uid).get();
+    if (!snap.exists) return ONB_MISSING_TAX_IDENTITY;
+    taxData = snap.data();
+  } catch (e) {
+    // 읽지 못했다는 것은 "없다"가 아니다. 지원을 막을 근거로 쓰지 않는다.
+    console.error(`[taxIdentity] 등록 여부 조회 실패 (${uid}):`, e);
+    return null;
+  }
+  if (srvHasCurrentTaxDocumentMismatch(userData, taxData)) {
+    return ONB_TAX_DOCUMENT_MISMATCH;
+  }
+  return null;
+}
+
+/** 세무 축 누락 사유 → 사용자 문구. */
+function srvTaxIdentityGateMessage(code: string): string {
+  return code === ONB_TAX_DOCUMENT_MISMATCH ?
+    "등록한 세무정보와 신분증 정보가 일치하지 않습니다. " +
+      "세무정보를 수정하거나 신분증을 다시 등록해주세요." :
+    "세무정보 등록이 필요합니다.";
+}
+
 // ═══════════════════════════════════════════════════════════
 // [PII-DOC-R1.5] 근무 확정 readiness — MATCHING READINESS
 //
@@ -1028,6 +1106,284 @@ function srvResolvePayrollReadiness(
 //   다시 볼 이유는 **내용이 바뀌었을 때** 생긴다.
 // ═══════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════
+// [PII-B4-R1.4] CANONICAL TAX IDENTITY
+//
+//   신고에 쓸 식별번호가 어디에 있는가에 대한 유일한 답.
+//
+//   ── 왜 users가 아니라 별도 컬렉션인가 ──────────────────────
+//
+//   users는 읽는 곳이 수십 군데다. 민감 필드를 거기 두면 allowlist를
+//   영원히 관리해야 하고, 한 번만 빠뜨려도 새어 나간다(SENSITIVE_FIELDS를
+//   두 벌 유지해 온 이력이 그 증거다). 별도 컬렉션이면 rules 한 줄로 끝난다.
+//
+//   그리고 보존기간이 다르다. users는 탈퇴 시 즉시 파기 대상이고 세무
+//   자료는 법정 보존 의무가 있다. 같은 문서에 두면 둘 중 하나를 반드시
+//   어긴다.
+//
+//   ── 왜 서버 암호화인가 ────────────────────────────────────
+//
+//   legacy users.residentNumber는 클라이언트 AES-CBC라 서버가 복호화할 수
+//   없다. 그래서 R1.1은 **암호문 자체**를 지문에 넣는 우회를 했다. 신규
+//   수집은 그 우회를 물려받지 않는다 — 서버가 키를 쥐고, 지문은 평문
+//   HMAC이라 같은 값이면 언제나 같은 지문이 된다.
+//
+//   기존 클라이언트 ENCRYPT_KEY는 서버로 옮기지 않는다. 별도 키다.
+// ═══════════════════════════════════════════════════════════
+
+const TAX_ID_COL = "taxIdentities";
+const TAX_ID_AUDIT_COL = "taxIdentityAuditLogs";
+
+const TAX_ID_TYPE_KOREAN = "KOREAN_RRN";
+const TAX_ID_TYPE_FOREIGN = "FOREIGN_REGISTRATION_NUMBER";
+
+const TAX_ID_SOURCE_ONBOARDING = "WORKER_DOCUMENT_ONBOARDING";
+const TAX_ID_SOURCE_FOREIGN_SIGNUP = "FOREIGN_SIGNUP";
+
+// [§7·§10] 서버 전용 secret. 클라이언트 ENCRYPT_KEY / FOREIGN_HMAC_SECRET과
+//   **모두 다른 값**이어야 한다. 같으면 외국인 uniqueness 지문과 세무 지문이
+//   같아져 두 컬렉션이 서로를 조회하는 수단이 된다.
+const TAX_ID_ENCRYPT_KEY = process.env.TAX_ID_ENCRYPT_KEY ?? "";
+const TAX_ID_HMAC_SECRET = process.env.TAX_ID_HMAC_SECRET ?? "";
+
+/** 사용자에게 보여줄 공통 실패 문구 — 내부 사정을 말하지 않는다. */
+const TAX_ID_UNAVAILABLE_MSG = "세무정보 등록을 지금 처리할 수 없습니다. 잠시 후 다시 시도해주세요.";
+
+/**
+ * [§8] secret을 검사하고 돌려준다. 하나라도 없거나 형식이 틀리면 **던진다**.
+ *
+ *   `?? ""` 로 받아 놓고 그대로 진행하면 빈 키로 암호화한 값이 저장된다.
+ *   그건 저장 실패보다 나쁘다 — 복호화되지 않는 쓰레기가 신고 자료 자리에
+ *   앉는다. 여기서 끊으면 식별번호는 **하나도 저장되지 않는다**.
+ *
+ * @return {{key: Buffer, hmac: string}} 검증된 키 재료
+ */
+function srvTaxSecretsOrThrow(): {key: Buffer; hmac: string} {
+  if (!TAX_ID_ENCRYPT_KEY || !TAX_ID_HMAC_SECRET) {
+    console.error("[taxIdentity] secret 미설정 — fail closed", {
+      hasEncryptKey: !!TAX_ID_ENCRYPT_KEY, hasHmac: !!TAX_ID_HMAC_SECRET,
+    });
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+  // [§10] 도메인 분리 — 같은 값이면 지문이 서로를 대체할 수 있게 된다.
+  if (TAX_ID_HMAC_SECRET === FOREIGN_HMAC_SECRET) {
+    console.error("[taxIdentity] TAX_ID_HMAC_SECRET이 FOREIGN_HMAC_SECRET과 같다 — fail closed");
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+  let key: Buffer;
+  try {
+    key = Buffer.from(TAX_ID_ENCRYPT_KEY, "base64");
+  } catch (e) {
+    console.error("[taxIdentity] ENCRYPT_KEY base64 디코딩 실패 — fail closed");
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+  if (key.length !== 32) {
+    console.error(`[taxIdentity] ENCRYPT_KEY 길이 오류 (${key.length}B, 32B 필요) — fail closed`);
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+  if (TAX_ID_HMAC_SECRET.length < 32) {
+    console.error("[taxIdentity] HMAC_SECRET이 너무 짧다 — fail closed");
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+  return {key, hmac: TAX_ID_HMAC_SECRET};
+}
+
+/**
+ * [§7] AES-256-GCM 암호화. 저장 형식 `iv:tag:ciphertext` (각 base64).
+ *
+ *   GCM을 쓰는 이유: 인증 태그가 있어 변조된 암호문이 복호화 단계에서
+ *   조용히 다른 평문이 되지 않는다. legacy CBC에는 그 보장이 없다.
+ *
+ * @param {string} normalized 정규화된 13자리
+ * @return {string} 저장 문자열
+ */
+function srvEncryptTaxIdentifier(normalized: string): string {
+  const {key} = srvTaxSecretsOrThrow();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(normalized, "utf8"), cipher.final()]);
+  return [
+    iv.toString("base64"),
+    cipher.getAuthTag().toString("base64"),
+    ct.toString("base64"),
+  ].join(":");
+}
+
+/**
+ * 저장된 식별번호를 복호화한다. 서버 전용 — 응답에 담을 때는 호출부가
+ * 권한·목적·현재 버전을 모두 확인한 뒤여야 한다(§39·§48).
+ *
+ * @param {string} stored `iv:tag:ciphertext`
+ * @return {string} 평문 13자리
+ */
+function srvDecryptTaxIdentifier(stored: string): string {
+  const {key} = srvTaxSecretsOrThrow();
+  const parts = (stored ?? "").split(":");
+  if (parts.length !== 3) {
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+  try {
+    const d = crypto.createDecipheriv(
+      "aes-256-gcm", key, Buffer.from(parts[0], "base64"));
+    d.setAuthTag(Buffer.from(parts[1], "base64"));
+    return Buffer.concat([
+      d.update(Buffer.from(parts[2], "base64")), d.final(),
+    ]).toString("utf8");
+  } catch (e) {
+    // 태그 불일치 = 변조되었거나 키가 다르다. 추측해서 돌려주지 않는다.
+    console.error("[taxIdentity] 복호화 실패 (태그 불일치 또는 키 불일치)");
+    throw new HttpsError("failed-precondition", TAX_ID_UNAVAILABLE_MSG);
+  }
+}
+
+/**
+ * [§9] 값 동일성 지문. 같은 번호 → 같은 지문, 다른 번호 → 다른 지문.
+ *
+ *   이것은 "정부가 인증했다"는 뜻이 **아니다**. 값이 그대로인지만 말한다.
+ *
+ * @param {string} normalized 정규화된 13자리
+ * @return {string} hex
+ */
+function srvTaxIdentifierFingerprint(normalized: string): string {
+  const {hmac} = srvTaxSecretsOrThrow();
+  return crypto.createHmac("sha256", hmac)
+    .update(normalized, "utf8").digest("hex");
+}
+
+/**
+ * [§17] 숫자만 남기고 13자리인지 본다. 하이픈·공백·전각 무관.
+ *
+ * @param {unknown} raw 클라이언트 입력
+ * @return {string | null} 정규화 13자리, 아니면 null
+ */
+function srvNormalizeTaxIdentifier(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const digits = raw.replace(/\D/g, "");
+  return /^\d{13}$/.test(digits) ? digits : null;
+}
+
+/**
+ * [§19] 주민등록번호 검증부호.
+ *
+ *   앞 12자리에 가중치 2,3,4,5,6,7,8,9,2,3,4,5를 곱해 더하고
+ *   `(11 - (합 % 11)) % 10` 이 13번째 자리와 같아야 한다.
+ *
+ *   ⚠️ 2020년 10월 주민등록번호 부여체계 개편으로 뒤 6자리가 임의번호가
+ *   되면서, 그 이후 **새로 부여된** 번호에는 이 검증부호가 성립하지 않을
+ *   수 있다. 만 19세 이상 사용자는 대부분 개편 이전에 번호를 받았지만,
+ *   번호 변경제도로 새 번호를 받은 사람은 예외일 수 있다.
+ *   이 한계는 보고서에 명시한다 — 조용히 통과시키지도, 조용히 막지도 않는다.
+ *
+ * @param {string} n 정규화 13자리
+ * @return {boolean} 검증부호 일치 여부
+ */
+function srvKoreanRrnChecksumOk(n: string): boolean {
+  const w = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(n[i]) * w[i];
+  return ((11 - (sum % 11)) % 10) === Number(n[12]);
+}
+
+/**
+ * [§18] 앞 7자리는 생년월일·성별로 완전히 결정된다 — 그리고 그 둘은
+ * PASS가 준 값이다. 그래서 OCR 없이도 **객관적으로** 대조할 수 있다.
+ *
+ *   내국인 성별코드: 1900년대 남1 여2 / 2000년대 남3 여4.
+ *   클라이언트 `identity_identifier.dart`와 같은 표다.
+ *
+ *   birthDate는 서버가 UTC 자정으로 저장한다(PASS·외국인 경로 모두).
+ *   그래서 UTC getter로 읽는다 — 로컬 getter를 쓰면 하루가 밀린다.
+ *
+ * @param {string} n 정규화 13자리
+ * @param {FirebaseFirestore.DocumentData} u users 문서
+ * @return {string | null} 불일치 사유. 일치하면 null.
+ */
+function srvKoreanRrnMatchesPassIdentity(
+  n: string, u: FirebaseFirestore.DocumentData
+): string | null {
+  const birth = u["birthDate"] as admin.firestore.Timestamp | undefined;
+  const gender = (u["gender"] as string | undefined) ?? "";
+  if (!birth?.toDate || !gender) {
+    // 기준이 없으면 대조할 수 없다. 통과시키지 않는다 — 검증 없는 저장은
+    // 나중에 "확인했다"고 말할 수 없는 값을 만든다.
+    return "본인인증 정보가 없어 주민등록번호를 확인할 수 없습니다.";
+  }
+  const d = birth.toDate();
+  const yy = String(d.getUTCFullYear() % 100).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  if (n.slice(0, 6) !== `${yy}${mm}${dd}`) {
+    return "주민등록번호 앞자리가 본인인증 생년월일과 다릅니다.";
+  }
+  const isMale = gender === "남성";
+  const expected = d.getUTCFullYear() >= 2000 ?
+    (isMale ? "3" : "4") : (isMale ? "1" : "2");
+  if (n[6] !== expected) {
+    return "주민등록번호 뒷자리 첫 숫자가 본인인증 정보와 다릅니다.";
+  }
+  return null;
+}
+
+// ── [§11·§12] 서버 활성화 게이트 ──────────────────────────────
+//
+//   클라이언트 Remote Config는 UI를 감출 뿐 보안 경계가 아니다.
+//   callable을 직접 부르면 그만이다. 그래서 서버에도 같은 스위치를 둔다.
+const TAX_COLLECTION_DOC = "tax_identity_collection";
+const TAX_COLLECTION_OFF_MSG = "세무정보 등록은 아직 제공되지 않습니다.";
+
+/**
+ * 수집이 켜져 있는가. **읽기 실패도 꺼짐으로 본다.**
+ *
+ *   장애가 곧 무단 수집이 되지 않게 한다. 모르면 하지 않는다.
+ *
+ * @return {Promise<boolean>} 활성 여부
+ */
+async function srvIsTaxIdentityCollectionEnabled(): Promise<boolean> {
+  try {
+    const snap = await db.collection("app_settings")
+      .doc(TAX_COLLECTION_DOC).get();
+    return snap.exists && snap.get("enabled") === true;
+  } catch (e) {
+    console.error("[taxIdentity] 활성화 설정 읽기 실패 — fail closed:", e);
+    return false;
+  }
+}
+
+/**
+ * [§12] 민감정보 writer 앞에 세우는 관문.
+ *
+ * @return {Promise<void>} 꺼져 있으면 던진다
+ */
+async function srvAssertTaxIdentityCollectionEnabled(): Promise<void> {
+  if (!await srvIsTaxIdentityCollectionEnabled()) {
+    throw new HttpsError("failed-precondition", TAX_COLLECTION_OFF_MSG);
+  }
+}
+
+/**
+ * [§56] 세무 identity 변경 감사 기록. 식별번호 원문·암호문 모두 담지 않는다.
+ *
+ * @param {object} e 기록할 사건
+ * @return {Promise<void>} 실패해도 본작업을 막지 않는다
+ */
+async function srvLogTaxIdentityAudit(e: {
+  actorUid: string; targetUid: string; action: string;
+  identifierType: string;
+  oldFingerprint?: string | null; newFingerprint?: string | null;
+}): Promise<void> {
+  try {
+    await db.collection(TAX_ID_AUDIT_COL).add({
+      actorUid: e.actorUid, targetUid: e.targetUid, action: e.action,
+      identifierType: e.identifierType,
+      oldFingerprint: e.oldFingerprint ?? null,
+      newFingerprint: e.newFingerprint ?? null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error("[taxIdentity] 감사 기록 실패:", err);
+  }
+}
+
 const TAX_REVIEW_PURPOSE = "TAX_IDENTITY_REVIEW";
 
 const TAX_REVIEW_UNREVIEWED = "UNREVIEWED";
@@ -1060,13 +1416,25 @@ const TAX_REVIEW_STALE = "STALE";
  *   외국인은 foreignIdentityFingerprint가 이미 서버 HMAC(결정적)이라
  *   같은 역할을 한다.
  *
+ *   ── canonical 전환 [PII-B4-R1.4 §41·§42] ───────────────────
+ *
+ *   신규 수집은 `taxIdentities/{uid}`에 들어가고 그 지문은 서버 HMAC이라
+ *   결정적이다. 그 레코드가 있으면 **그것만** 본다 — legacy 암호문을 함께
+ *   섞으면 두 출처가 같은 질문에 다른 답을 하게 된다.
+ *
+ *   레코드가 없을 때만 legacy로 물러난다. migration은 하지 않는다
+ *   (서버가 legacy를 복호화할 수 없으므로 애초에 불가능하다).
+ *
  * @param {FirebaseFirestore.DocumentData | undefined} u users 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} tax taxIdentities 문서
  * @return {string} sha256 hex
  */
 function srvTaxIdentityFingerprint(
-  u: FirebaseFirestore.DocumentData | undefined
+  u: FirebaseFirestore.DocumentData | undefined,
+  tax?: FirebaseFirestore.DocumentData | undefined
 ): string {
   const d = u ?? {};
+  const canonicalFp = (tax?.["identifierFingerprint"] as string | undefined) ?? "";
   const legal = (d["legalName"] as string | undefined) ?? "";
   const name = (d["name"] as string | undefined) ?? "";
   const official = legal.length > 0 ? legal : name;
@@ -1079,8 +1447,11 @@ function srvTaxIdentityFingerprint(
     (d["foreignIdentityFingerprint"] as string | undefined) ?? "",
     // 값이 바뀌면 지문이 바뀐다. 없으면 없음으로 구분된다 — 값 A와 값 B가
     // 같은 지문이 되는 일도, 있음과 없음이 섞이는 일도 없다.
-    typeof d["residentNumber"] === "string" && d["residentNumber"].length > 0 ?
-      "R:" + (d["residentNumber"] as string) : "R:ABSENT",
+    canonicalFp.length > 0 ?
+      "T:" + canonicalFp :
+      (typeof d["residentNumber"] === "string" &&
+        (d["residentNumber"] as string).length > 0 ?
+        "R:" + (d["residentNumber"] as string) : "R:ABSENT"),
   ];
   return crypto.createHash("sha256")
     .update(parts.join(" ")).digest("hex");
@@ -1108,14 +1479,16 @@ type SrvTaxIdentityReview = {
  *
  * @param {FirebaseFirestore.DocumentData | undefined} userData 근로자 문서
  * @param {FirebaseFirestore.DocumentData | undefined} review 이 사업장의 검토 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} tax taxIdentities 문서
  * @return {SrvTaxIdentityReview} 판정
  */
 function srvResolveTaxIdentityReview(
   userData: FirebaseFirestore.DocumentData | undefined,
-  review: FirebaseFirestore.DocumentData | undefined
+  review: FirebaseFirestore.DocumentData | undefined,
+  tax?: FirebaseFirestore.DocumentData | undefined
 ): SrvTaxIdentityReview {
   const curIdV = srvDocumentVersionsOf(userData ?? {}).id;
-  const curFp = srvTaxIdentityFingerprint(userData);
+  const curFp = srvTaxIdentityFingerprint(userData, tax);
   const base = {
     currentIdDocumentVersion: curIdV,
     currentTaxFingerprint: curFp,
@@ -13886,9 +14259,40 @@ export const callableFinalizeForeignIdentity = onCall(
       }
 
       // ── STAGE: TRANSACTION ───────────────────────────────────
+      // ── STAGE: TAX_IDENTITY [PII-B4-R1.4 §23·§24] ────────────
+      //
+      //   여기는 정규화된 13자리를 이미 손에 쥔 유일한 자리다. 외국인에게
+      //   서류관리에서 같은 번호를 다시 입력시키지 않으려면 지금 써야 한다.
+      //
+      //   암호화·지문 계산은 트랜잭션 **밖에서** 끝낸다 — 트랜잭션 재시도마다
+      //   새 IV로 다시 암호화하면 같은 커밋 안에서 값이 흔들린다.
+      //
+      //   [§63] 수집이 꺼져 있거나 secret이 준비되지 않았으면 세무 레코드만
+      //   만들지 않는다. 외국인 가입 자체는 기존대로 완료된다 — 이 기능
+      //   때문에 이미 동작하던 가입을 깨지 않는다.
+      const foreignTaxEnabled = await srvIsTaxIdentityCollectionEnabled();
+      let foreignTaxFp: string | null = null;
+      let foreignTaxEnc: string | null = null;
+      if (foreignTaxEnabled) {
+        try {
+          foreignTaxFp = srvTaxIdentifierFingerprint(normalized);
+          foreignTaxEnc = srvEncryptTaxIdentifier(normalized);
+        } catch (taxErr) {
+          // [§8] secret 문제면 **아무것도 저장하지 않는다**. 빈 키로 만든
+          //   암호문을 신고 자료 자리에 앉히지 않는다.
+          console.error("[finalize] 세무 identity 준비 실패 — 세무 레코드 생략", taxErr);
+          foreignTaxFp = null;
+          foreignTaxEnc = null;
+        }
+      }
+      const foreignTaxRef = db.collection(TAX_ID_COL).doc(uid);
+
       _diagStage = "FINALIZE_STAGE_TRANSACTION_START";
-      console.info(`[finalize] ${_diagStage}`);
+      console.info(`[finalize] ${_diagStage} | taxWrite=${!!foreignTaxEnc}`);
       await db.runTransaction(async (tx) => {
+        // [§24] 읽기를 먼저 모두 끝낸다 — Firestore는 쓰기 뒤 읽기를 허용하지 않는다.
+        const foreignTaxSnap = (foreignTaxEnc && foreignTaxFp) ?
+          await tx.get(foreignTaxRef) : null;
         const fpSnap = await tx.get(fpRef);
         if (fpSnap.exists) {
           const existingUid = fpSnap.data()?.uid as string | undefined;
@@ -13927,9 +14331,35 @@ export const callableFinalizeForeignIdentity = onCall(
           ...(visaTypeRaw ? {visaType: String(visaTypeRaw).trim().slice(0, 20)} : {}),
           // [V3] 체류기간만료일
           ...(stayExpiryTs ? {stayExpiryDate: stayExpiryTs} : {}),
-          // [TODO-FOREIGN-ENCRYPT] foreignIdNumberEncrypted: AES 암호화 전체 번호
-          //   CF에 ENCRYPT_KEY 환경변수 지원 추가 후 구현 예정
+          // [PII-B4-R1.4] 전체번호는 users에 두지 않는다 — taxIdentities로 간다.
         });
+        // [§23·§24] 신원·uniqueness·세무가 같은 커밋에서 같은 사람을 말한다.
+        //   [§25] 같은 번호로 재시도해도 중복 레코드가 생기지 않는다 —
+        //   문서 id가 uid이고, 값이 같으면 다시 쓰지 않는다.
+        if (foreignTaxEnc && foreignTaxFp && foreignTaxSnap) {
+          if (!foreignTaxSnap.exists) {
+            tx.set(foreignTaxRef, {
+              uid,
+              identifierType: TAX_ID_TYPE_FOREIGN,
+              encryptedIdentifier: foreignTaxEnc,
+              identifierFingerprint: foreignTaxFp,
+              registrationSource: TAX_ID_SOURCE_FOREIGN_SIGNUP,
+              // 가입 시점에는 등록증 대조를 이 값으로 하지 않았다 —
+              // OCR은 입력 보조였을 뿐이므로 판정으로 올리지 않는다.
+              documentMatchOutcome: DOC_FIELD_UNASSESSED,
+              documentMatchIdDocumentVersion: null,
+              registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          } else if (
+            foreignTaxSnap.get("identifierFingerprint") !== foreignTaxFp) {
+            tx.update(foreignTaxRef, {
+              encryptedIdentifier: foreignTaxEnc,
+              identifierFingerprint: foreignTaxFp,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        }
       });
       _diagStage = "FINALIZE_STAGE_TRANSACTION_DONE";
       console.info(`[finalize] ${_diagStage} OK`);
@@ -26288,15 +26718,21 @@ export const callableGetTaxIdentityReview = onCall(
     if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
       throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
     }
-    const [u, r] = await Promise.all([
+    const [u, r, t] = await Promise.all([
       db.collection("users").doc(targetUid).get(),
       db.collection(BIZ_DOC_REVIEW_COL)
         .doc(srvBizReviewId(businessId, targetUid)).get(),
+      // [R1.4 §41] 지문의 canonical 출처.
+      db.collection(TAX_ID_COL).doc(targetUid).get(),
     ]);
     if (!u.exists) throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
     const ud = u.data()!;
-    const tr = srvResolveTaxIdentityReview(ud, r.data());
+    const tr = srvResolveTaxIdentityReview(ud, r.data(), t.data());
     return {
+      // [§26·§48] 번호 자체는 여기서 주지 않는다 — 관리자가 명시적으로
+      //   확인을 누를 때 callableGetTaxIdentityNumber가 연다.
+      hasTaxIdentity: t.exists,
+      taxIdentifierType: (t.data()?.["identifierType"] as string | null) ?? null,
       state: tr.state,
       valid: tr.valid,
       reviewedAtMs: tr.reviewedAt,
@@ -26313,6 +26749,248 @@ export const callableGetTaxIdentityReview = onCall(
         (ud["birthDate"] as admin.firestore.Timestamp | undefined)
           ?.toMillis?.() ?? null,
     };
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// [PII-B4-R1.4] 근로자 본인이 쓰는 세무 identity writer/reader
+// ══════════════════════════════════════════════════════════════
+
+/** 등록·수정이 공통으로 하는 검증. 통과하면 정규화된 13자리를 돌려준다. */
+async function srvValidateKoreanTaxIdentifierOrThrow(
+  rawIdentifier: unknown, userData: FirebaseFirestore.DocumentData
+): Promise<string> {
+  // [§22·§66] 외국인은 가입 시 한 번 등록된다. 이 경로로 번호만 바꾸면
+  //   외국인 신원 재확인 없이 uniqueness sentinel과 세무 번호가 갈라진다.
+  if (srvIsForeignIdentity(userData)) {
+    throw new HttpsError("failed-precondition",
+      "외국인등록번호는 가입 시 등록됩니다. 변경이 필요하면 고객센터로 문의해주세요.");
+  }
+  const normalized = srvNormalizeTaxIdentifier(rawIdentifier);
+  if (!normalized) {
+    throw new HttpsError("invalid-argument", "주민등록번호 13자리를 입력해주세요.");
+  }
+  // [§20] OCR 결과는 여기 오지 않는다. 등록 가부는 서버가 확인할 수 있는
+  //   것만으로 정한다 — 형식, 본인인증 정보와의 일치, 검증부호.
+  const mismatch = srvKoreanRrnMatchesPassIdentity(normalized, userData);
+  if (mismatch) throw new HttpsError("failed-precondition", mismatch);
+  if (!srvKoreanRrnChecksumOk(normalized)) {
+    throw new HttpsError("invalid-argument",
+      "주민등록번호를 다시 확인해주세요. 입력한 번호가 올바르지 않습니다.");
+  }
+  return normalized;
+}
+
+// ── callableRegisterTaxIdentity ───────────────────────────────
+// [§16] 최초 등록. 본인만. 값은 근로자가 직접 입력한 것이 canonical이다.
+export const callableRegisterTaxIdentity = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    // [§12·§13] UI 플래그는 보안 경계가 아니다. 서버에서 다시 막는다.
+    await srvAssertTaxIdentityCollectionEnabled();
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+      throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
+    }
+    const ud = userSnap.data()!;
+    const reqData = request.data as {
+      rawIdentifier?: unknown; documentMatch?: unknown;
+    };
+    const normalized = await srvValidateKoreanTaxIdentifierOrThrow(
+      reqData?.rawIdentifier, ud);
+    // [§20] 대조 결과는 **근거**일 뿐 등록 가부를 정하지 않는다. 등록은
+    //   위 서버 검증만으로 끝났다. 여기서 받는 것은 "지금 신분증과 같아
+    //   보였는가"이고, 모르는 값은 UNASSESSED로 떨어진다.
+    const regMatch = srvDocFieldOutcome(reqData?.documentMatch);
+    const regEvaluatedIdV = srvDocumentVersionsOf(ud).id;
+
+    // secret 검증은 여기서 처음 던진다 — 실패하면 아무것도 저장되지 않는다.
+    const fingerprint = srvTaxIdentifierFingerprint(normalized);
+    const encrypted = srvEncryptTaxIdentifier(normalized);
+
+    const ref = db.collection(TAX_ID_COL).doc(uid);
+    const outcome = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(ref);
+      if (cur.exists) {
+        // [§61 D8] 같은 값 재등록은 성공으로 본다 — 재시도가 오류가 되면
+        //   사용자는 무엇이 잘못됐는지 알 수 없다. 다른 값이면 수정 경로다.
+        if (cur.get("identifierFingerprint") === fingerprint) return "unchanged";
+        throw new HttpsError("already-exists",
+          "이미 등록된 세무정보가 있습니다. 수정으로 변경해주세요.");
+      }
+      tx.set(ref, {
+        uid,
+        identifierType: TAX_ID_TYPE_KOREAN,
+        encryptedIdentifier: encrypted,
+        identifierFingerprint: fingerprint,
+        registrationSource: TAX_ID_SOURCE_ONBOARDING,
+        documentMatchOutcome: regMatch,
+        documentMatchIdDocumentVersion: regEvaluatedIdV,
+        registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return "created";
+    });
+    if (outcome === "created") {
+      await srvLogTaxIdentityAudit({
+        actorUid: uid, targetUid: uid, action: "REGISTER",
+        identifierType: TAX_ID_TYPE_KOREAN, newFingerprint: fingerprint,
+      });
+    }
+    return {success: true, outcome};
+  }
+);
+
+// ── callableUpdateTaxIdentity ─────────────────────────────────
+// [§21] 본인 정정 전용. 지문이 바뀌므로 모든 사업장의 확인이 낡는다.
+export const callableUpdateTaxIdentity = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    await srvAssertTaxIdentityCollectionEnabled();
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+      throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
+    }
+    const updUd = userSnap.data()!;
+    const updData = request.data as {
+      rawIdentifier?: unknown; documentMatch?: unknown;
+    };
+    const normalized = await srvValidateKoreanTaxIdentifierOrThrow(
+      updData?.rawIdentifier, updUd);
+    const updMatch = srvDocFieldOutcome(updData?.documentMatch);
+    const updEvaluatedIdV = srvDocumentVersionsOf(updUd).id;
+
+    const fingerprint = srvTaxIdentifierFingerprint(normalized);
+    const encrypted = srvEncryptTaxIdentifier(normalized);
+
+    const ref = db.collection(TAX_ID_COL).doc(uid);
+    const prev = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(ref);
+      if (!cur.exists) {
+        throw new HttpsError("not-found",
+          "등록된 세무정보가 없습니다. 먼저 등록해주세요.");
+      }
+      const old = (cur.get("identifierFingerprint") as string | null) ?? null;
+      if (old === fingerprint) {
+        // 값은 그대로인데 대조만 다시 했을 수 있다 — 근거는 갱신한다.
+        tx.update(ref, {
+          documentMatchOutcome: updMatch,
+          documentMatchIdDocumentVersion: updEvaluatedIdV,
+        });
+        return null;
+      }
+      tx.update(ref, {
+        encryptedIdentifier: encrypted,
+        identifierFingerprint: fingerprint,
+        documentMatchOutcome: updMatch,
+        documentMatchIdDocumentVersion: updEvaluatedIdV,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return old;
+    });
+    if (prev !== null) {
+      // [§44] 기존 REVIEWED_OK는 지문 불일치로 읽는 순간 STALE이 된다.
+      //   자동으로 REVIEWED_OK를 옮겨 적지 않는다 — 사람이 다시 본다.
+      await srvLogTaxIdentityAudit({
+        actorUid: uid, targetUid: uid, action: "UPDATE",
+        identifierType: TAX_ID_TYPE_KOREAN,
+        oldFingerprint: prev, newFingerprint: fingerprint,
+      });
+    }
+    return {success: true, changed: prev !== null};
+  }
+);
+
+// ── callableGetTaxIdentityStatus ──────────────────────────────
+// [§26·§27] 본인이 자기 등록 상태를 본다. **번호는 돌려주지 않는다.**
+//   수집 활성화 여부와 무관하게 동작한다 — 상태를 못 읽으면 화면이
+//   "등록 필요"인지 "이미 등록"인지 말할 수 없다.
+export const callableGetTaxIdentityStatus = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const [snap, enabled] = await Promise.all([
+      db.collection(TAX_ID_COL).doc(uid).get(),
+      srvIsTaxIdentityCollectionEnabled(),
+    ]);
+    if (!snap.exists) {
+      return {registered: false, identifierType: null, updatedAtMs: null,
+        collectionEnabled: enabled};
+    }
+    // [§33] 대조 결과도 알려준다 — 화면이 "확인 필요"를 말할 수 있어야 한다.
+    //   번호는 어떤 형태로도 나가지 않는다.
+    const uSnap = await db.collection("users").doc(uid).get();
+    return {
+      registered: true,
+      identifierType: (snap.get("identifierType") as string | null) ?? null,
+      updatedAtMs:
+        (snap.get("updatedAt") as admin.firestore.Timestamp | undefined)
+          ?.toMillis?.() ?? null,
+      collectionEnabled: enabled,
+      documentMatch: srvDocFieldOutcome(snap.get("documentMatchOutcome")),
+      documentMatchCurrent:
+        srvHasCurrentTaxDocumentMismatch(uSnap.data(), snap.data()) ||
+        (snap.get("documentMatchIdDocumentVersion") ===
+          srvDocumentVersionsOf(uSnap.data() ?? {}).id),
+    };
+  }
+);
+
+// ── callableGetTaxIdentityNumber ──────────────────────────────
+// [§39·§48] 관리자가 신분증과 대조하려면 번호가 필요하다. 그 번호는
+//   generic DTO가 아니라 **이 문 하나**로만 나간다 — 원본 이미지를 여는
+//   callableGetTaxIdentityIdCardUrl과 같은 조건이다.
+export const callableGetTaxIdentityNumber = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, targetUid, expectedIdDocumentVersion,
+      expectedTaxIdentityFingerprint} = request.data as {
+      businessId?: string; targetUid?: string;
+      expectedIdDocumentVersion?: number;
+      expectedTaxIdentityFingerprint?: string;
+    };
+    if (!businessId || !targetUid) {
+      throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
+    }
+    await srvAssertTaxIdentityAuthority(callerUid, businessId);
+    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
+      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    }
+    const [u, t] = await Promise.all([
+      db.collection("users").doc(targetUid).get(),
+      db.collection(TAX_ID_COL).doc(targetUid).get(),
+    ]);
+    if (!u.exists || !t.exists) {
+      throw new HttpsError("not-found", "등록된 세무정보가 없습니다.");
+    }
+    // [§49] 화면이 보고 있는 그 버전일 때만 연다. 낡은 화면으로 현재
+    //   번호를 여는 경로를 남기지 않는다.
+    const ud = u.data()!;
+    if (typeof expectedIdDocumentVersion !== "number" ||
+        expectedIdDocumentVersion !== srvDocumentVersionsOf(ud).id ||
+        expectedTaxIdentityFingerprint !==
+          srvTaxIdentityFingerprint(ud, t.data())) {
+      throw new HttpsError("aborted",
+        "신분증 또는 등록 정보가 변경되었습니다. 다시 확인해주세요.");
+    }
+    const identifier =
+      srvDecryptTaxIdentifier(t.get("encryptedIdentifier") as string);
+    // 감사: 누가 누구의 번호를 열었는가. 번호 자체는 남기지 않는다.
+    await srvLogTaxIdentityAudit({
+      actorUid: callerUid, targetUid, action: "VIEW",
+      identifierType: (t.get("identifierType") as string) ?? "",
+      newFingerprint: (t.get("identifierFingerprint") as string) ?? null,
+    });
+    return {identifier, identifierType: t.get("identifierType") ?? null};
   }
 );
 
@@ -26416,15 +27094,18 @@ export const callableReviewTaxIdentity = onCall(
 
     // [§34·§35] 화면을 연 뒤 신분증이나 세무 identity가 바뀌었으면 이 확인은
     //   더 이상 현재 값에 대한 것이 아니다. 낡은 확인을 현재로 남기지 않는다.
+    const taxRef = db.collection(TAX_ID_COL).doc(targetUid);
     const bound = await db.runTransaction(async (tx) => {
-      const [fw, fr] = await Promise.all([
-        tx.get(workerRef), tx.get(reviewRef)]);
+      // [R1.4 §50] 세무 레코드도 **트랜잭션 안에서** 읽는다. 지문의 출처가
+      //   바뀌는 순간을 놓치면 낡은 제출이 현재로 남는다.
+      const [fw, fr, ft] = await Promise.all([
+        tx.get(workerRef), tx.get(reviewRef), tx.get(taxRef)]);
       if (!fw.exists) {
         throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
       }
       const wd = fw.data()!;
       const curIdV = srvDocumentVersionsOf(wd).id;
-      const curFp = srvTaxIdentityFingerprint(wd);
+      const curFp = srvTaxIdentityFingerprint(wd, ft.data());
       if (curIdV !== expectedIdDocumentVersion ||
           curFp !== expectedTaxIdentityFingerprint) {
         throw new HttpsError("aborted",
@@ -29775,6 +30456,13 @@ export const callableApplyToTO = onCall(
       throw new HttpsError(
         "failed-precondition", srvPayoutRegistrationMessage(applyOnbMissing));
     }
+    // [PII-B4-R1.4 §34·§39] 세무 identity 축. 수집이 꺼져 있으면 null이라
+    //   기존 동작 그대로다 — 켜지는 순간부터 지원 전제로 살아난다.
+    const applyTaxBlock = await srvTaxIdentityOnboardingBlock(uid, userData);
+    if (applyTaxBlock) {
+      throw new HttpsError(
+        "failed-precondition", srvTaxIdentityGateMessage(applyTaxBlock));
+    }
     if (userData["isBlacklisted"] === true) {
       const reason = (userData["blacklistReason"] as string | undefined) ?? "이용 정책 위반";
       throw new HttpsError("permission-denied", `이용 제한된 계정입니다.\n사유: ${reason}`);
@@ -32371,6 +33059,27 @@ export const callableAcceptTOInvitation = onCall(
     const slotId      = appData.slotId as string | undefined;
     const confirmedAt = admin.firestore.Timestamp.now();
 
+    // [PII-B4-R1.4 §39] 세무 축 입력은 **트랜잭션 밖에서** 읽는다.
+    //   트랜잭션 콜백 안에서 tx를 거치지 않고 읽으면 그 값은 트랜잭션의
+    //   일관성 밖에 있고, 재시도마다 다시 읽힌다. 등록 여부는 이 초대와
+    //   무관한 별도 문서이므로 여기서 한 번 읽어 들고 들어간다.
+    //   신분증 불일치 판정만 트랜잭션이 읽은 fresh user 문서로 한다.
+    const acceptTaxEnabled = await srvIsTaxIdentityCollectionEnabled();
+    let acceptTaxRegistered = true;
+    let acceptTaxData: FirebaseFirestore.DocumentData | undefined;
+    if (acceptTaxEnabled) {
+      try {
+        const s = await db.collection(TAX_ID_COL).doc(callerUid).get();
+        acceptTaxRegistered = s.exists;
+        acceptTaxData = s.data();
+      } catch (e) {
+        // 읽지 못한 것은 "없다"가 아니다 — 수락을 막을 근거로 쓰지 않는다.
+        console.error(`[taxIdentity] 초대수락 등록 조회 실패 (${callerUid}):`, e);
+        acceptTaxRegistered = true;
+        acceptTaxData = undefined;
+      }
+    }
+
     await db.runTransaction(async (tx) => {
       const fresh = await tx.get(appRef);
       if (!fresh.exists) throw new HttpsError("not-found", "초대를 찾을 수 없습니다.");
@@ -32438,6 +33147,18 @@ export const callableAcceptTOInvitation = onCall(
         throw new HttpsError(
           "failed-precondition",
           srvPayoutRegistrationMessage(acceptOnbMissing));
+      }
+      // [PII-B4-R1.4 §39] 지원과 같은 세무 축을 같은 자리에서 본다.
+      //   한쪽만 막히면 초대 수락이 우회로가 된다.
+      if (acceptTaxEnabled) {
+        if (!acceptTaxRegistered) {
+          throw new HttpsError("failed-precondition",
+            srvTaxIdentityGateMessage(ONB_MISSING_TAX_IDENTITY));
+        }
+        if (srvHasCurrentTaxDocumentMismatch(freshUserData, acceptTaxData)) {
+          throw new HttpsError("failed-precondition",
+            srvTaxIdentityGateMessage(ONB_TAX_DOCUMENT_MISMATCH));
+        }
       }
       //
       // 이 Application에 대한 동의를 지금 받는다 —
@@ -35977,6 +36698,18 @@ export const callableDeleteAccountPreData = onCall(
               }
             }
           }
+        }
+        // [PII-B4-R1.4 §57] 세무 identity도 계정 생명주기에 붙는다.
+        //   탈퇴한 계정의 식별번호가 고아로 남지 않게 한다.
+        //
+        //   ⚠️ 법정 보존 의무(국세기본법 §85의3 등)와의 관계는 아직 확정되지
+        //   않았다. 지금은 신고 기능 자체가 없어 보존할 제출물이 없으므로
+        //   삭제한다. 신고가 도입되면 이 자리에서 다시 판단해야 한다
+        //   (docs/tax_identity_cutover_checklist.md §3-4).
+        try {
+          await db.collection(TAX_ID_COL).doc(uid).delete();
+        } catch (e) {
+          console.warn(`callableDeleteAccountPreData: taxIdentities 삭제 실패 (${uid}):`, e);
         }
       } catch (e) {
         console.error(`callableDeleteAccountPreData: recordDeletedAccount failed (${uid}):`, e);

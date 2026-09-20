@@ -17,6 +17,9 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../services/storage_service.dart';
+import '../../services/tax_identity_service.dart';
+import '../../utils/image_helper.dart';
+import '../../utils/ocr_verification_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
@@ -48,10 +51,22 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   bool _isLoading = false;
   bool _hasChanges = false;
 
+  /// [PII-B4-R1.4] 세무정보 등록 상태 — 번호는 담기지 않는다.
+  ///   null = 아직 조회 전. `loadFailed` = 조회 실패(미등록과 다르다).
+  TaxIdentityStatus? _taxStatus;
+
   @override
   void initState() {
     super.initState();
     _loadUserDocuments();
+    _loadTaxIdentity();
+  }
+
+  /// 세무정보 상태 조회. 실패해도 화면 전체를 막지 않는다.
+  Future<void> _loadTaxIdentity() async {
+    final s = await TaxIdentityService.loadStatus();
+    if (!mounted) return;
+    setState(() => _taxStatus = s);
   }
 
   @override
@@ -685,6 +700,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
         _buildIdCardSection(user),
 
+        // [PII-B4-R1.4 §28] 신분증 바로 아래 — 같은 "신원 확인" 단계다.
+        //   수집이 켜져 있을 때만 보인다(§14). 꺼져 있으면 서버도 등록을
+        //   받지 않으므로 등록할 수 없는 항목을 띄우지 않는다.
+        if (_showsTaxIdentity) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          _buildTaxIdentitySection(user),
+        ],
+
         SizedBox(height: ResponsiveHelper.spacing(context, 18)),
 
         // ② 급여정보 준비 섹션
@@ -1083,6 +1106,178 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           style: ResponsiveHelper.smallStyle(context,
               color: s.color, fontWeight: FontWeight.w600)),
     ]);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // [PII-B4-R1.4] 세무정보
+  //
+  //   등록된 번호는 **다시 보여주지 않는다**(§27). 서버가 응답에 싣지
+  //   않으므로 앱이 알 수도 없다. 화면이 말하는 것은 "등록됐는가"와
+  //   "지금 신분증과 어긋난 것이 확인됐는가" 둘뿐이다.
+  // ══════════════════════════════════════════════════════════════
+
+  /// 이 화면에 세무정보 항목을 띄울 것인가.
+  ///
+  ///   서버 응답을 우선한다 — Remote Config는 화면용 스위치이고,
+  ///   실제로 등록을 받는지 아는 쪽은 서버다. 이미 등록된 사람에게는
+  ///   플래그와 무관하게 상태를 보여준다(감추면 사라진 것처럼 보인다).
+  bool get _showsTaxIdentity {
+    final s = _taxStatus;
+    if (s == null) return false;
+    if (s.registered) return true;
+    return s.collectionEnabled || TaxIdentityService.collectionEnabledLocally;
+  }
+
+  ({String label, Color color, IconData icon}) _taxStatusChip() {
+    final s = _taxStatus;
+    if (s == null || s.loadFailed) {
+      return (label: '확인 불가', color: AppColors.grey500, icon: Icons.help_outline);
+    }
+    if (!s.registered) {
+      return (label: '미등록', color: AppColors.grey500, icon: Icons.remove_circle_outline);
+    }
+    if (s.blocksApply) {
+      return (label: '정보 확인 필요', color: AppColors.errorFaded, icon: Icons.error_outline);
+    }
+    return (label: '등록 완료', color: AppColors.successDark, icon: Icons.check_circle);
+  }
+
+  Widget _buildTaxIdentitySection(UserModel user) {
+    final s = _taxStatus;
+    final registered = s?.registered == true;
+    // [§3·§65] 외국인은 가입 시 등록된다 — 여기서 번호를 다시 묻지 않는다.
+    final isForeign = user.isForeign;
+    final chip = _taxStatusChip();
+
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.grey200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt_long_outlined,
+                  size: 22,
+                  color: registered ? AppColors.infoDark : AppColors.grey400),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('세무정보',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                    Text(
+                      isForeign
+                          ? '가입 시 등록됨 — 외국인등록번호'
+                          : '소득신고에 쓰이는 주민등록번호',
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: isForeign && registered
+                              ? AppColors.successDark
+                              : AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              _docStatusChip(context, chip),
+            ],
+          ),
+
+          // 불일치는 근로자가 할 일이 있다는 뜻이다 — 무엇을 할지 말한다.
+          if (s?.blocksApply == true) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+              decoration: BoxDecoration(
+                color: AppColors.errorFaded.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '등록한 세무정보와 신분증 정보가 달라 보입니다.\n'
+                '세무정보를 수정하거나 신분증을 다시 등록해주세요.',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.errorFaded),
+              ),
+            ),
+          ],
+
+          Padding(
+            padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 12)),
+            child: const Divider(
+                height: 1, thickness: 0.5, color: AppColors.grey200),
+          ),
+
+          // [§28] 외국인은 수정 CTA 없음 — 변경은 신원 재확인이 함께 가야 한다.
+          if (isForeign)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                registered
+                    ? '가입 시 등록되어 추가 입력이 필요하지 않습니다.'
+                    : '가입 정보를 확인할 수 없습니다. 고객센터로 문의해주세요.',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey600),
+              ),
+            )
+          else if (registered)
+            Row(
+              children: [
+                TextButton(
+                  onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: AppColors.grey600,
+                  ),
+                  child: Text('수정',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey600,
+                          fontWeight: FontWeight.w500)),
+                ),
+                const Spacer(),
+                // 등록된 번호를 되돌려 보여주는 경로는 두지 않는다(§27).
+                Text('등록된 번호는 표시되지 않습니다',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.grey400)),
+              ],
+            )
+          else
+            _flatPrimaryButton(
+              text: '세무정보 등록하기',
+              onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 세무정보 입력 — 등록/수정 공용.
+  Future<void> _openTaxIdentitySheet(UserModel user) async {
+    FocusScope.of(context).unfocus(); // 키보드 포커스 crash 방지
+    final registered = _taxStatus?.registered == true;
+    final saved = await DialogHelper.showSheet<bool>(
+      context,
+      isScrollControlled: true,
+      builder: (_) => _TaxIdentitySheet(user: user, isUpdate: registered),
+    );
+    if (saved == true) {
+      _hasChanges = true;
+      await _loadTaxIdentity();
+    }
   }
 
   /// 📄 신원 확인 카드 — 단층 구조 (Nested Card 금지)
@@ -1776,4 +1971,254 @@ class _BankEditDialogState extends State<_BankEditDialog> {
       ],
     );
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// [PII-B4-R1.4] 세무정보 입력 시트
+//
+//   여기가 전체번호를 손에 쥐는 **유일한 순간**이다. 그래서 신분증
+//   대조도 여기서 한다 — 등록이 끝나면 앱은 그 번호를 다시 알 수 없다.
+//
+//   제출 후에는 컨트롤러를 비우고 시트를 닫는다(§29).
+// ══════════════════════════════════════════════════════════════
+class _TaxIdentitySheet extends StatefulWidget {
+  const _TaxIdentitySheet({required this.user, required this.isUpdate});
+
+  final UserModel user;
+  final bool isUpdate;
+
+  @override
+  State<_TaxIdentitySheet> createState() => _TaxIdentitySheetState();
+}
+
+class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
+  final _frontCtrl = TextEditingController();
+  final _backCtrl = TextEditingController();
+  final _backFocus = FocusNode();
+
+  bool _busy = false;
+  String? _error;
+
+  /// 신분증 대조 결과 — 하지 않았으면 UNASSESSED다.
+  ///
+  ///   이 값은 **등록 가부를 정하지 않는다**. 서버가 형식·본인인증 정보·
+  ///   검증부호로 판단하고, 이건 "확인이 필요한가"를 말할 뿐이다(§20).
+  DocFieldOutcome _match = DocFieldOutcome.unassessed;
+  bool _checking = false;
+
+  @override
+  void dispose() {
+    _frontCtrl.dispose();
+    _backCtrl.dispose();
+    _backFocus.dispose();
+    super.dispose();
+  }
+
+  String get _entered =>
+      '${_frontCtrl.text.trim()}${_backCtrl.text.trim()}'
+          .replaceAll(RegExp(r'\D'), '');
+
+  bool get _canSubmit => _entered.length == 13 && !_busy;
+
+  /// 신분증 사진과 대조. 선택 사항이며, 실패해도 등록을 막지 않는다.
+  Future<void> _compareWithIdCard() async {
+    if (_entered.length != 13) return;
+    setState(() => _checking = true);
+    File? image;
+    try {
+      image = await ImageHelper.pickAndCompressImage(
+        context,
+        type: ImageType.document,
+        useBottomSheet: true,
+      );
+      if (image == null || !mounted) return;
+      final result = await OcrVerificationHelper.verifyIdCardName(
+        image.path,
+        widget.user.name,
+        expectedResidentNumber: _entered,
+      ).timeout(const Duration(seconds: 30),
+          onTimeout: () => <String, dynamic>{});
+      if (!mounted) return;
+      setState(() => _match =
+          result['identifierOutcome'] as DocFieldOutcome? ??
+              DocFieldOutcome.unassessed);
+    } catch (e) {
+      // 대조 실패는 불일치가 아니다 — 모르는 상태로 둔다(§16·§37).
+      if (mounted) setState(() => _match = DocFieldOutcome.unassessed);
+    } finally {
+      // 대조용 임시 파일은 업로드하지 않는다 — 여기서 끝난다.
+      try {
+        await image?.delete();
+      } catch (_) {/* 이미 지워졌으면 무시 */}
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _submit() async {
+    if (!_canSubmit) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final value = _entered;
+    final err = widget.isUpdate
+        ? await TaxIdentityService.update(value, documentMatch: _match)
+        : await TaxIdentityService.register(value, documentMatch: _match);
+    if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _busy = false;
+        _error = err;
+      });
+      return;
+    }
+    // [§29] 제출 즉시 입력값을 지운다 — 뒤로 가도 남아 있지 않게.
+    _frontCtrl.clear();
+    _backCtrl.clear();
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  ({String text, Color color})? get _matchHint => switch (_match) {
+        DocFieldOutcome.matched =>
+          (text: '신분증의 번호와 같습니다', color: AppColors.successDark),
+        DocFieldOutcome.mismatch => (
+            text: '신분증의 번호와 다릅니다. 입력값을 확인해주세요',
+            color: AppColors.errorFaded
+          ),
+        DocFieldOutcome.unreadable => (
+            text: '신분증에서 번호를 읽지 못했습니다. 등록은 계속할 수 있어요',
+            color: AppColors.grey600
+          ),
+        DocFieldOutcome.unassessed => null,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final hint = _matchHint;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: ResponsiveHelper.spacing(context, 20),
+        right: ResponsiveHelper.spacing(context, 20),
+        top: ResponsiveHelper.spacing(context, 20),
+        bottom: MediaQuery.of(context).viewInsets.bottom +
+            ResponsiveHelper.spacing(context, 20),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.isUpdate ? '세무정보 수정' : '세무정보 등록',
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.w700)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '소득신고·원천징수에 쓰이는 주민등록번호입니다.\n'
+            '등록한 번호는 화면에 다시 표시되지 않습니다.',
+            style:
+                ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          Row(
+            children: [
+              Expanded(
+                flex: 6,
+                child: _digitField(_frontCtrl, 6, '앞 6자리',
+                    autofocus: true,
+                    onFilled: () => _backFocus.requestFocus()),
+              ),
+              Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8)),
+                child: const Text('-'),
+              ),
+              Expanded(
+                flex: 7,
+                child: _digitField(_backCtrl, 7, '뒤 7자리',
+                    focusNode: _backFocus, obscure: true),
+              ),
+            ],
+          ),
+          if (hint != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            Text(hint.text,
+                style: ResponsiveHelper.tinyStyle(context, color: hint.color)),
+          ],
+          if (_error != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            Text(_error!,
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.errorFaded)),
+          ],
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+          // 대조는 선택이다. 건너뛰어도 등록은 된다 — 확인은 나중에
+          // 관리자가 신분증 원본과 직접 한다(§37).
+          TextButton.icon(
+            onPressed: (_entered.length == 13 && !_checking && !_busy)
+                ? _compareWithIdCard
+                : null,
+            icon: _checking
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.badge_outlined, size: 16),
+            label: Text(_checking ? '확인 중…' : '신분증 사진으로 확인 (선택)',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.infoDark)),
+            style: TextButton.styleFrom(padding: EdgeInsets.zero),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+          SafeArea(
+            top: false,
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _canSubmit ? _submit : null,
+                child: _busy
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : Text(widget.isUpdate ? '수정하기' : '등록하기'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _digitField(
+    TextEditingController ctrl,
+    int len,
+    String label, {
+    bool autofocus = false,
+    bool obscure = false,
+    FocusNode? focusNode,
+    VoidCallback? onFilled,
+  }) =>
+      TextField(
+        controller: ctrl,
+        focusNode: focusNode,
+        autofocus: autofocus,
+        obscureText: obscure,
+        keyboardType: TextInputType.number,
+        maxLength: len,
+        // [§29] 복사·붙여넣기 메뉴를 열지 않는다.
+        enableInteractiveSelection: false,
+        decoration: InputDecoration(
+          labelText: label,
+          counterText: '',
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+        onChanged: (v) {
+          // 입력이 바뀌면 이전 대조 결과는 더 이상 이 값에 대한 것이 아니다.
+          setState(() => _match = DocFieldOutcome.unassessed);
+          if (v.length == len) onFilled?.call();
+        },
+      );
 }

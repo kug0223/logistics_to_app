@@ -769,9 +769,10 @@ void main() {
     final posting = _load('lib/screens/common/job_posting_screen.dart');
 
     test('상세 화면도 서류 전제조건을 본다', () {
+      // [PII-B4-R1.4] 세무 축이 인자로 더해졌다 — 게이트는 여전히 하나다.
+      expect(posting.contains('meetsApplyPrerequisites(user,'), true);
       expect(
-          posting.contains('if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {'),
-          true);
+          posting.contains('isFlexType: isFlex, taxStatus: acceptTax)'), true);
     });
 
     test('상세 화면도 이 건에 대한 동의를 받는다', () {

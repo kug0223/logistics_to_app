@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
+import '../../services/tax_identity_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
@@ -421,7 +422,23 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
 /// 지원 전 요구사항 충족 여부 순수 체크 함수.
 /// 다이얼로그 없이 bool만 반환 — UI 결정은 호출자가 담당.
-bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
+/// [PII-B4-R1.4 §39] 세무 축을 포함한 지원 준비 판정.
+///
+///   [taxStatus]는 서버가 아는 사실이므로 호출자가 조회해 넘긴다.
+///   **null이면 막지 않는다** — 모르는 것을 미등록으로 읽으면 조회 한 번
+///   실패했다는 이유로 정상 지원자의 버튼이 잠긴다. 최종 판단은 서버가
+///   `callableApplyToTO`에서 다시 한다.
+// 시그니처를 한 줄로 두는 이유: 여러 계약 테스트가 이 함수 본문을
+// `'bool meetsApplyPrerequisites('` ~ `'\n}'` 로 잘라 읽는다. 매개변수를
+// 여러 줄로 펴면 닫는 `})` 가 줄 맨 앞의 `}` 가 되어 본문이 잘린다.
+bool meetsApplyPrerequisites(UserModel user,
+    {required bool isFlexType, TaxIdentityStatus? taxStatus}) {
+  // 세무 축 — 수집이 켜졌고, 미등록이거나 현재 신분증과 명시적으로
+  // 어긋났을 때만 막는다. UNREADABLE·UNASSESSED는 막지 않는다(§37).
+  if (taxStatus != null && !taxStatus.loadFailed) {
+    if (taxStatus.collectionEnabled && !taxStatus.registered) return false;
+    if (taxStatus.blocksApply) return false;
+  }
   // 블랙리스트·제재 계정: 문서 갖춰도 지원 불가 — CF 차단과 동일
   // restrictedUntil 만료 체크 포함 (위젯 _isRestricted getter와 동일 로직)
   if (user.isBlacklisted || user.isRestricted) {

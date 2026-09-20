@@ -37,6 +37,17 @@ enum DocFieldOutcome {
   unassessed,
 }
 
+/// 서버가 돌려준 문자열 → 어휘. 모르는 값은 UNASSESSED다.
+///
+/// [PII-B4-R1.4] 서버 `srvDocFieldOutcome`과 같은 규칙 — 모르는 것을
+/// 통과로도 불일치로도 읽지 않는다.
+DocFieldOutcome docFieldOutcomeFromWire(Object? wire) => switch (wire) {
+      'MATCHED' => DocFieldOutcome.matched,
+      'MISMATCH' => DocFieldOutcome.mismatch,
+      'UNREADABLE' => DocFieldOutcome.unreadable,
+      _ => DocFieldOutcome.unassessed,
+    };
+
 extension DocFieldOutcomeWire on DocFieldOutcome {
   /// 서버로 보내는 값. 서버 `SrvDocFieldOutcome`과 **같은 문자열**이어야 한다.
   String get wire => switch (this) {

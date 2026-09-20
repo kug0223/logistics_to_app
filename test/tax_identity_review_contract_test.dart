@@ -181,7 +181,10 @@ void main() {
 
     test('15b §4·§5 — 서버가 계산한다. 클라이언트 지문을 받지 않는다', () {
       // 제출은 받은 지문을 **비교에만** 쓰고, 저장은 서버 계산값이다.
-      expect(review, contains('const curFp = srvTaxIdentityFingerprint(wd)'));
+      // [PII-B4-R1.4] 지문의 출처가 taxIdentities 레코드로 바뀌었다.
+      //   바뀐 것은 무엇으로 계산하느냐이고, **서버가 계산한다**는 사실은 같다.
+      expect(review,
+          contains('const curFp = srvTaxIdentityFingerprint(wd, ft.data())'));
       expect(review, contains('reviewedTaxIdentityFingerprint: curFp'));
       expect(review,
           isNot(contains('reviewedTaxIdentityFingerprint: expectedTaxIdentityFingerprint')));

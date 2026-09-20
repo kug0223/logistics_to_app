@@ -329,32 +329,41 @@ void main() {
     });
   });
 
-  group('범위 — R1.4는 아직 아니다 (§18·§30)', () {
-    test('29 taxIdentities / tax secret 을 만들지 않았다', () {
-      for (final banned in [
-        'taxIdentities', 'TAX_ID_HMAC_SECRET', 'TAX_ID_ENCRYPT_KEY',
-        'callableRegisterTaxIdentity', 'callableUpdateTaxIdentity',
-      ]) {
-        expect(cf, isNot(contains(banned)), reason: banned);
-      }
-      expect(_src('firestore.rules'), isNot(contains('taxIdentities')));
+  group('범위 — R1.3A가 건드리지 않은 것 (§18·§30)', () {
+    // [PII-B4-R1.4] 이 그룹은 원래 "taxIdentities·tax secret·지원 gate·
+    //   13자리 OCR을 만들지 않았다"를 고정했다. R1.4가 그 넷을 의도적으로
+    //   만들었으므로 그 금지는 해제된다 — 해제 사실을 여기 남기고, 각
+    //   계약은 R1.4 전용 파일이 이어받는다:
+    //     tax_identity_registration_contract_test
+    //     tax_identity_collection_guard_contract_test
+    //     full_id_ocr_contract_test
+    //     foreign_tax_identity_integration_contract_test
+    //
+    //   아래는 R1.3A가 세운 것 중 **지금도 유효한** 경계만 남긴 것이다.
+    test('29 R1.3A는 세무 저장소를 만들지 않았다 (R1.4가 만들었다)', () {
+      // 경계가 옮겨졌다는 사실 자체를 고정한다 — 조용히 사라지지 않게.
+      expect(cf, contains('const TAX_ID_COL = "taxIdentities";'),
+          reason: 'R1.4에서 도입 — R1.3A 시점에는 없었다');
+      expect(_src('firestore.rules'), contains('match /taxIdentities/{uid} {'));
     });
 
-    test('30 지원 gate를 바꾸지 않았다', () {
+    test('30 지원 gate의 기존 조건은 그대로다', () {
       final gate = _codeOf(_sliceOf(
           _src('lib/screens/user/apply_prerequisites_screen.dart'),
           'bool meetsApplyPrerequisites(', '\n}'));
-      expect(gate, isNot(contains('TaxIdentity')));
-      expect(gate, isNot(contains('taxIdentity')));
-      // 기존 조건은 그대로다.
+      // R1.4가 세무 축을 **추가**했을 뿐, 기존 축을 빼지 않았다.
       expect(gate, contains('if (!user.hasBankAccount) return false;'));
       expect(gate, contains('if (!user.hasIdDocument)'));
+      expect(gate, contains('!user.isForeign && !user.isPassVerified'));
+      expect(gate, contains('user.isBlacklisted || user.isRestricted'));
     });
 
-    test('31 내국인 OCR parser를 확장하지 않았다', () {
+    test('31 7자리 대조 경로가 사라지지 않았다', () {
+      // 전체번호를 아직 등록하지 않은 사용자는 이 경로로 대조한다.
       final idOcr = _src('lib/utils/ocr_verification_helper.dart');
-      expect(idOcr, contains(r"RegExp(r'(\d{6})[-\s]?(\d)')"),
-          reason: '13자리 확장은 R1.4');
+      expect(idOcr, contains(r"RegExp(r'(\d{6})[-\s]?(\d)')"));
+      expect(idOcr, contains(r"RegExp(r'(\d{6})[-\s]?(\d{7})')"),
+          reason: 'R1.4 전체 대조');
     });
 
     test('32 CONFIRMED 자동 신분증 grant 재도입 없음 (§29)', () {

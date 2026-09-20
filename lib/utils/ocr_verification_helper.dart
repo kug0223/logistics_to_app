@@ -112,7 +112,18 @@ class OcrVerificationHelper {
       //   계좌번호·전화번호 등이 앞에 있으면 false-negative 발생.
       final cleanedExpectedRN =
           expectedResidentNumber.replaceAll(RegExp(r'\D'), '');
-      final residentPattern = RegExp(r'(\d{6})[-\s]?(\d)');
+      // [PII-B4-R1.4 §30·§31] 기대값이 전체 13자리면 전체를 대조한다.
+      //
+      //   기대값 길이로 분기하는 이유: 기준을 아는 쪽이 비교 범위를 정해야
+      //   한다. 자유 추출로 "이게 주민번호겠지"를 고르면 운전면허증의
+      //   면허번호를 집어 올 수 있다. 기대값과 같은 후보만 찾으면 그 위험이
+      //   구조적으로 없다 — 다른 숫자군은 애초에 일치하지 않는다.
+      //
+      //   앞 7자리만 아는 경우(전체번호 미등록)는 기존 동작 그대로다.
+      final wantsFull = cleanedExpectedRN.length == 13;
+      final residentPattern = wantsFull
+          ? RegExp(r'(\d{6})[-\s]?(\d{7})')
+          : RegExp(r'(\d{6})[-\s]?(\d)');
       String? matchedCandidate;
       for (final match in residentPattern.allMatches(rawText)) {
         final front = match.group(1)!;
@@ -121,6 +132,17 @@ class OcrVerificationHelper {
         if (cleanedCandidate == cleanedExpectedRN) {
           matchedCandidate = '$front-$back';
           break;
+        }
+      }
+      // [§31] 줄 단위 2차 대조 — OCR이 숫자 사이에 잡음을 끼워 넣으면
+      //   위 패턴이 끊긴다. 한 줄 안에서만 숫자를 모아 보는 것이므로
+      //   서로 무관한 숫자가 이어붙어 생기는 거짓 일치는 없다.
+      if (matchedCandidate == null && wantsFull) {
+        for (final line in rawText.split('\n')) {
+          if (line.replaceAll(RegExp(r'\D'), '') == cleanedExpectedRN) {
+            matchedCandidate = cleanedExpectedRN;
+            break;
+          }
         }
       }
       // [PII-DOC-R1.2 / §6] 비교는 했는데 서류에서 번호를 **하나도 못 읽은** 경우와

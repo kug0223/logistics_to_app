@@ -11,6 +11,7 @@ import '../../../models/core/application_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/schedule_conflict_service.dart';
+import '../../../services/tax_identity_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -2300,7 +2301,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (mounted) setState(() => _isSubmitting = false);
       return;
     }
-    if (!meetsApplyPrerequisites(user, isFlexType: to.isFlexType)) {
+    // [PII-B4-R1.4 §39] job_posting_screen 경로와 같은 축을 본다.
+    final applyTax = await TaxIdentityService.loadStatus();
+    if (!mounted) {
+      return;
+    }
+    if (!meetsApplyPrerequisites(user,
+        isFlexType: to.isFlexType, taxStatus: applyTax)) {
       final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: to.isFlexType);
       if (ok != true || !mounted) {
         if (mounted) setState(() => _isSubmitting = false);

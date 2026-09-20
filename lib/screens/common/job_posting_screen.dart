@@ -16,6 +16,7 @@ import '../../models/core/insurance_rate_model.dart';
 
 // Services
 import '../../services/firestore_service.dart';
+import '../../services/tax_identity_service.dart';
 
 // Models (slot, application)
 import '../../models/core/slot_model.dart';
@@ -2647,7 +2648,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     // 전제조건 확인
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
-    if (!meetsApplyPrerequisites(user, isFlexType: _to!.isFlexType)) {
+    // [PII-B4-R1.4 §39] 서버가 보는 세무 축을 클라이언트도 같이 본다.
+    //   조회 실패는 막지 않는다 — 최종 판단은 callableApplyToTO가 한다.
+    final applyTax = await TaxIdentityService.loadStatus();
+    if (!mounted) return;
+    if (!meetsApplyPrerequisites(user,
+        isFlexType: _to!.isFlexType, taxStatus: applyTax)) {
       final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: _to!.isFlexType);
       if (!ok || !mounted) return;
     }
@@ -3265,7 +3271,10 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final user = context.read<UserProvider>().currentUser;
     if (user == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
     final isFlex = _to?.isFlexType ?? true;
-    if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {
+    final acceptTax = await TaxIdentityService.loadStatus();
+    if (!mounted) return;
+    if (!meetsApplyPrerequisites(user,
+        isFlexType: isFlex, taxStatus: acceptTax)) {
       ToastHelper.showWarning('근무 확정을 위해 서류 등록이 필요합니다.');
       final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: isFlex);
       if (!ok || !mounted) return;

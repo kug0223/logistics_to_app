@@ -1649,7 +1649,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     final decision = await DialogHelper.showSheet<String>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => _TaxIdentityReviewSheet(review: r, imageUrl: url),
+      builder: (ctx) => _TaxIdentityReviewSheet(
+        review: r, imageUrl: url,
+        businessId: bizId, targetUid: widget.user.uid,
+      ),
     );
     if (decision == null || !mounted) return;
 
@@ -2596,7 +2599,12 @@ class _TaxIdentityReviewSheet extends StatelessWidget {
   const _TaxIdentityReviewSheet({
     required this.review,
     required this.imageUrl,
+    required this.businessId,
+    required this.targetUid,
   });
+
+  final String businessId;
+  final String targetUid;
 
   final TaxIdentityReview review;
   final String imageUrl;
@@ -2669,6 +2677,18 @@ class _TaxIdentityReviewSheet extends StatelessWidget {
                 ],
               ),
             ),
+            // [PII-B4-R1.4 §39·§48] 신고용 번호는 여기서만, 누를 때만 열린다.
+            if (review.hasTaxIdentity) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+              _TaxIdentifierReveal(
+                businessId: businessId,
+                targetUid: targetUid,
+                idDocumentVersion: review.idDocumentVersion,
+                fingerprint: review.taxIdentityFingerprint,
+                isForeign:
+                    review.taxIdentifierType == 'FOREIGN_REGISTRATION_NUMBER',
+              ),
+            ],
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             ConstrainedBox(
               constraints: BoxConstraints(
@@ -2727,6 +2747,109 @@ class _TaxIdentityReviewSheet extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// [PII-B4-R1.4 §39·§48] 신고용 식별번호 — 누를 때만 열린다
+//
+//   조회 응답에는 번호가 실리지 않는다. 관리자가 신분증과 대조하겠다고
+//   누른 그 순간에만 서버가 복호화해서 내려주고, 화면은 메모리로만
+//   들고 있는다. 저장·복사·로그를 남기지 않는다.
+// ══════════════════════════════════════════════════════════════
+class _TaxIdentifierReveal extends StatefulWidget {
+  const _TaxIdentifierReveal({
+    required this.businessId,
+    required this.targetUid,
+    required this.idDocumentVersion,
+    required this.fingerprint,
+    required this.isForeign,
+  });
+
+  final String businessId;
+  final String targetUid;
+  final int idDocumentVersion;
+  final String fingerprint;
+  final bool isForeign;
+
+  @override
+  State<_TaxIdentifierReveal> createState() => _TaxIdentifierRevealState();
+}
+
+class _TaxIdentifierRevealState extends State<_TaxIdentifierReveal> {
+  String? _value;
+  bool _loading = false;
+
+  String get _label => widget.isForeign ? '외국인등록번호' : '주민등록번호';
+
+  Future<void> _reveal() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      final v = await TaxIdentityReviewService.fullIdentifier(
+        businessId: widget.businessId,
+        targetUid: widget.targetUid,
+        expectedIdDocumentVersion: widget.idDocumentVersion,
+        expectedTaxIdentityFingerprint: widget.fingerprint,
+      );
+      if (!mounted) return;
+      setState(() => _value = v);
+    } catch (e) {
+      // 번호는 로그에 남기지 않는다 — 실패 종류만 남긴다.
+      debugPrint('❌ 세무 식별번호 열람 실패: ${e.runtimeType}');
+      if (!mounted) return;
+      ToastHelper.showError(
+          e is FirebaseFunctionsException && e.code == 'aborted'
+              ? (e.message ?? '등록 정보가 변경되었습니다. 다시 확인해주세요.')
+              : '세무정보를 열지 못했습니다');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_value != null) {
+      return Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        decoration: BoxDecoration(
+          color: AppColors.grey50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.grey200),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_label,
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.grey500)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            // 선택·복사를 열지 않는다 — 대조에 필요한 것은 보는 것뿐이다.
+            Text(_value!,
+                style: ResponsiveHelper.bodyStyle(context)
+                    .copyWith(fontWeight: FontWeight.w700, letterSpacing: 1)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text('이 값은 저장되지 않으며 화면을 닫으면 사라집니다.',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.grey400)),
+          ],
+        ),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: _loading ? null : _reveal,
+      icon: _loading
+          ? const SizedBox(
+              width: 14, height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.visibility_outlined, size: 16),
+      label: Text(_loading ? '여는 중…' : '$_label 확인'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 40),
+        foregroundColor: AppColors.infoDark,
       ),
     );
   }

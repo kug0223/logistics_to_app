@@ -2447,6 +2447,23 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // taxIdentities — 신고용 식별번호 (CF Admin SDK 전용)
+    // [PII-B4-R1.4] users에 두지 않은 이유가 여기 한 줄이다.
+    //   users는 읽는 곳이 수십 군데라 allowlist를 영원히 관리해야 하지만,
+    //   별도 컬렉션은 본인조차 읽을 수 없게 한 줄로 끝난다.
+    //   본인 등록 상태는 callableGetTaxIdentityStatus가 알려준다 —
+    //   번호를 돌려주지 않고 등록 여부만 말한다.
+    // ═══════════════════════════════════════════════════════════
+    match /taxIdentities/{uid} {
+      allow read, write: if false;
+    }
+
+    // taxIdentityAuditLogs — 세무 identity 변경·열람 감사 (CF 전용, 불변)
+    match /taxIdentityAuditLogs/{logId} {
+      allow read, write: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // worker_availability — 근로자 근무 가능일 (Phase 8.1A)
     //
     // 설계 원칙:
