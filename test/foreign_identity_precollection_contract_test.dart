@@ -276,15 +276,19 @@ void main() {
       for (final e in both.entries) {
         expect(e.value, isNot(contains('주민등록번호 — 근로계약서 작성 시 입력')),
             reason: '존재하지 않는 입력 UI를 설명하던 문구: ${e.key}');
-        expect(e.value, contains('주민등록번호 — 현재는 신규로 수집하지 않습니다'),
+        // [PII-B4-R1.3B §5] R1.3A는 여기에 "향후 수집 예정"까지 적었다.
+        //   로드맵은 수집항목이 아니다 — 현재 사실만 남기고 변경은 개정 조항으로
+        //   옮겼다. 문구 truth 전수는 legal_terms_current_truth_contract_test.
+        expect(e.value, contains('주민등록번호 — 현재 수집하지 않습니다'),
             reason: e.key);
       }
     });
 
     test('24 예정 기능을 제공 중인 것처럼 말하지 않는다 (§11)', () {
       for (final e in both.entries) {
-        expect(e.value, contains('수집할 예정이며, 시행 전에 별도로 고지하고 동의를 받습니다'),
-            reason: e.key);
+        // [PII-B4-R1.3B §5] 변경 예고는 일반 개정 조항으로만 한다.
+        expect(e.value, contains('■ 처리방침의 개정'), reason: e.key);
+        expect(e.value, isNot(contains('수집할 예정이며')), reason: e.key);
         // 아직 없는 기능 — 제공 중이라고 쓰면 안 된다.
         expect(e.value, isNot(contains('지급명세서를 제출합니다')), reason: e.key);
         expect(e.value, isNot(contains('홈택스')), reason: e.key);
