@@ -11440,6 +11440,72 @@ async function getEffectiveActivePostingCountTx(
  * @param {unknown[]} wds workDetails 배열
  * @return {void} 중복이면 throw
  */
+/**
+ * [R6.2] 급여 지급 일정의 canonical enum.
+ *   srvCalculatePaymentDueDate 가 아는 값과 정확히 같다.
+ *   UI(create_edit_work_detail_dialog.dart: same_day/next_day/weekly/monthly)와도 같다.
+ */
+const PAY_SCHEDULE_TYPES = ["same_day", "next_day", "weekly", "monthly"];
+
+/**
+ * [R6.2] 공고에 들어가는 지급 일정 검증.
+ *
+ *   이전에는 서버 어디에도 이 값의 화이트리스트가 없었다. 공고 생성이
+ *   임의 문자열을 그대로 저장했고, 그 공고로 사람이 지원하고 계약하고
+ *   실제로 일한 뒤 **급여 확정 단계에서야** paymentDueDate 를 계산할 수
+ *   없다며 막혔다. 비용이 근무 이후에 발생하는 구조였다.
+ *
+ *   UI 는 이미 네 값만 제시하고, 주급·월급이면 지급일까지 받아야 저장된다.
+ *   서버가 그보다 느슨할 이유가 없다.
+ *
+ *   require=false 는 레거시 공고 수정 경로용이다. DEV 실측에서 기존
+ *   workDetail 의 절반 이상이 이 값을 갖고 있지 않다 — 없는 값을 지어내
+ *   채우지도 않고, 그 문서의 수정을 막지도 않는다. 없는 것은 그대로 없고,
+ *   급여 확정의 기존 PREVALIDATE 가 여전히 큰 소리로 막는다.
+ *
+ * @param {unknown[]} wds workDetail 배열
+ * @param {{require: boolean}} opts require=true 면 누락도 거절(신규 생성)
+ * @return {void}
+ */
+function srvAssertPayScheduleValid(
+  wds: unknown[],
+  opts: {require: boolean}
+): void {
+  if (!Array.isArray(wds)) return;
+  for (const raw of wds) {
+    if (!raw || typeof raw !== "object") continue;
+    const wd = raw as Record<string, unknown>;
+    const t = wd["payScheduleType"];
+    if (t === undefined || t === null || t === "") {
+      if (opts.require) {
+        throw new HttpsError(
+          "invalid-argument",
+          "급여 지급 일정을 선택해주세요. (당일·익일·주급·월급)"
+        );
+      }
+      continue;
+    }
+    if (typeof t !== "string" || !PAY_SCHEDULE_TYPES.includes(t)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "급여 지급 일정이 올바르지 않습니다. 당일·익일·주급·월급 중에서 선택해주세요."
+      );
+    }
+    if (t === "weekly" || t === "monthly") {
+      const d = wd["payScheduleDay"];
+      const maxDay = t === "weekly" ? 7 : 31;
+      if (typeof d !== "number" || !Number.isInteger(d) || d < 1 || d > maxDay) {
+        throw new HttpsError(
+          "invalid-argument",
+          t === "weekly" ?
+            "주급은 지급 요일(1~7)을 함께 지정해야 합니다." :
+            "월급은 지급 날짜(1~31)를 함께 지정해야 합니다."
+        );
+      }
+    }
+  }
+}
+
 function srvAssertUniqueWorkDetailIds(wds: unknown[]): void {
   const ids = (wds as Record<string, unknown>[]).map(
     (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
@@ -11547,6 +11613,8 @@ export const callableCreateTO = onCall(
     }
     // [R2.4.1 §5] 생성 시점부터 composite identity 고유성을 강제한다.
     srvAssertUniqueWorkDetailIds(toWorkDetailsCreate);
+    // [R6.2] 신규 공고는 지급 일정을 반드시 갖는다 — 나중에 급여를 못 닫는 공고를 만들지 않는다.
+    srvAssertPayScheduleValid(toWorkDetailsCreate, {require: true});
 
     // [WORKTYPE-SCOPE] submitted workType이 해당 business의 active workType인지 검증
     // assertBusinessPostingReady는 active count >= 1만 확인 — 이름 교차검증은 별도 (SUPER_ADMIN 면제)
@@ -12231,6 +12299,8 @@ export const callableCreateFlexSlots = onCall(
     if (!Array.isArray(workDetails) || workDetails.length === 0) throw new HttpsError("invalid-argument", "workDetails 필요");
     // [R2.4.1 §5] 슬롯 생성에도 같은 고유성 계약을 적용한다.
     srvAssertUniqueWorkDetailIds(workDetails);
+    // [R6.2] 슬롯 workDetail 이 실제 급여 계산의 source 다 — 같은 기준으로 검증한다.
+    srvAssertPayScheduleValid(workDetails, {require: true});
     // [TO-M-05] dates 입력 검증: YYYY-MM-DD 포맷 · 과거날짜 차단 · 중복 제거
     {
       const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -12721,6 +12791,11 @@ export const callableUpdateTO = onCall(
     //   (toData.totalConfirmed는 아래 totalRequired 사전 검증에서 계속 쓴다.
     //    그쪽 canonical 판정도 이미 txEdit 안에 있다.)
     const mutatesWorkDetails = "workDetails" in updates;
+    // [R6.2] 수정 경로 — 값이 있으면 반드시 유효해야 한다.
+    //   레거시 문서에 없는 값을 새로 요구하지는 않는다(require=false).
+    if (mutatesWorkDetails && Array.isArray(updates.workDetails)) {
+      srvAssertPayScheduleValid(updates.workDetails as unknown[], {require: false});
+    }
 
     // [POSTING-V2-03H.1] identity guard가 볼 대상. 순수 비교 결과이므로
     //   트랜잭션 밖에서 계산해도 된다 — application 관계를 읽지 않는다.
@@ -13332,6 +13407,15 @@ export const callableUpdateSlotWorkDetails = onCall(
         "invalid-argument",
         "slotId+workDetails(SINGLE) 또는 batchUpdates(BATCH)가 필요합니다."
       );
+    }
+    // [R6.2] SINGLE·BATCH 양쪽 모두 같은 기준으로 본다.
+    if (isSingle) {
+      srvAssertPayScheduleValid(data.workDetails as unknown[], {require: false});
+    }
+    if (isBatch) {
+      for (const bu of data.batchUpdates!) {
+        srvAssertPayScheduleValid(bu.workDetails as unknown[], {require: false});
+      }
     }
 
     // ── 권한 검증 (callableUpdateTO 동일 패턴) ──
@@ -19684,6 +19768,12 @@ export const callableCalculateAndConfirmWage = onCall(
     if (d.wageType !== "hourly" && d.wageType !== "daily") {
       throw new HttpsError("invalid-argument", "wageType은 'hourly' 또는 'daily'여야 합니다.");
     }
+    // [R6.2] 지급 일정은 클라이언트 payload 로 들어온다. 공고를 검증해도
+    //   이 경로로 잘못된 값이 wageDetail 에 앉으면 급여 확정이 또 막힌다.
+    //   같은 화이트리스트를 여기서도 적용한다 (defense-in-depth).
+    srvAssertPayScheduleValid(
+      [{payScheduleType: d.payScheduleType, payScheduleDay: d.payScheduleDay}],
+      {require: false});
     const VALID_TAX_TYPES = ["none", "freelancer_3_3", "daily_worker", "daily_auto_8", "four_insurance_fixed"];
     if (!VALID_TAX_TYPES.includes(d.taxDeductionType)) {
       throw new HttpsError("invalid-argument", "유효하지 않은 taxDeductionType입니다.");
