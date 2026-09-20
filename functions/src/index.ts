@@ -9074,6 +9074,19 @@ export const callableFinalizeEmployerSignature = onCall(
         const appSnap = await db.collection("applications").doc(targetAppId).get();
         if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
         const appData = appSnap.data()!;
+        // [R6.3] 계약서의 지급일정은 지원서 약속에서 온다.
+        //   클라이언트는 계약서를 만들 때 공고의 **현재** workDetail 을 읽는다.
+        //   확정과 서명 사이에 공고가 바뀌면 계약서만 새 값을 갖게 된다.
+        {
+          const ps = srvReadPaySchedule(appData as Record<string, unknown>);
+          const snapObj = contractData["snapshot"];
+          if (ps && snapObj && typeof snapObj === "object") {
+            const sn = snapObj as Record<string, unknown>;
+            sn["payScheduleType"] = ps.t;
+            sn["payScheduleDay"] = ps.d ?? null;
+            sn["payScheduleTime"] = ps.tm ?? null;
+          }
+        }
         if ((appData.businessId as string) !== bizId || (appData.uid as string) !== workerId) {
           throw new HttpsError("permission-denied", "지원서의 사업장/근로자 정보가 일치하지 않습니다.");
         }
@@ -11506,6 +11519,95 @@ function srvAssertPayScheduleValid(
   }
 }
 
+/** [R6.3] 근로자가 수락한 지급일정. 어디서 온 값인지 감추지 않는다. */
+type SrvPromisedPaySchedule = {
+  payScheduleType: string | undefined;
+  payScheduleDay: number | undefined;
+  payScheduleTime: string | undefined;
+  /** APPLICATION | CONTRACT | CLIENT | NONE */
+  source: string;
+};
+
+/**
+ * 한 문서에서 유효한 지급일정만 꺼낸다. 유효하지 않으면 null —
+ * 다음 source 로 넘어가라는 뜻이다.
+ *
+ * @param {Record<string, unknown> | null | undefined} m 읽을 맵
+ * @return {{t: string, d: number | undefined, tm: string | undefined} | null} 결과
+ */
+function srvReadPaySchedule(
+  m: Record<string, unknown> | null | undefined
+): {t: string; d: number | undefined; tm: string | undefined} | null {
+  if (!m) return null;
+  const t = m["payScheduleType"];
+  if (typeof t !== "string" || !PAY_SCHEDULE_TYPES.includes(t)) return null;
+  const d = m["payScheduleDay"];
+  const tm = m["payScheduleTime"];
+  return {
+    t,
+    d: typeof d === "number" ? d : undefined,
+    tm: typeof tm === "string" && tm.length > 0 ? tm : undefined,
+  };
+}
+
+/**
+ * [BLOCKER-R62-PAYSCHEDULE-LIVE-LEAKAGE] 지급일정의 약속 권위.
+ *
+ *   공고의 현재 조건은 **앞으로 뽑을 사람**에 대한 사실이고, 이미 수락한
+ *   사람의 지급일정은 **그때 고정된 사실**이다. 그런데 급여 계산이 매번
+ *   현재 슬롯 workDetail 을 다시 읽었다(클라이언트가 읽어 payload 로 전달).
+ *   확정된 근로자가 있는 공고에서 지급일정을 당일→주급으로 바꾸면 이미
+ *   일한 사람의 지급일까지 따라 바뀌는 구조였다.
+ *
+ *   우선순위는 compensation snapshot 과 같다:
+ *     Application 약속 → Contract 스냅샷 → 클라이언트(레거시) → 없음
+ *
+ *   레거시는 두 단계로 받는다. 이 패치 이전 지원서에는 약속이 없지만,
+ *   계약까지 간 근무는 계약서 스냅샷이 그 시점의 조건을 갖고 있다.
+ *   둘 다 없으면 현재 공고로 덮지 않고 "없음"으로 둔다 — 기존
+ *   ConfirmFinalWage PREVALIDATE 가 그것을 큰 소리로 막는다.
+ *
+ * @param {FirebaseFirestore.DocumentData | null} appData 지원서
+ * @param {string | undefined} applicationId 지원서 ID (계약 조회용)
+ * @param {Record<string, unknown>} clientFallback 클라이언트 전달값(레거시)
+ * @return {Promise<SrvPromisedPaySchedule>} 판정 결과
+ */
+async function srvResolvePromisedPaySchedule(
+  appData: FirebaseFirestore.DocumentData | null,
+  applicationId: string | undefined,
+  clientFallback: Record<string, unknown>
+): Promise<SrvPromisedPaySchedule> {
+  const mk = (r: {t: string; d: number | undefined; tm: string | undefined},
+    source: string): SrvPromisedPaySchedule =>
+    ({payScheduleType: r.t, payScheduleDay: r.d, payScheduleTime: r.tm, source});
+
+  const fromApp = srvReadPaySchedule(
+    appData as Record<string, unknown> | null);
+  if (fromApp) return mk(fromApp, "APPLICATION");
+
+  if (applicationId) {
+    try {
+      const con = await db.collection("employment_contracts")
+        .where("applicationId", "==", applicationId).limit(1).get();
+      if (!con.empty) {
+        const fromCon = srvReadPaySchedule(
+          con.docs[0].data()["snapshot"] as Record<string, unknown>);
+        if (fromCon) return mk(fromCon, "CONTRACT");
+      }
+    } catch (e) {
+      console.warn("[paySchedule] 계약 스냅샷 조회 실패:", e);
+    }
+  }
+
+  const fromClient = srvReadPaySchedule(clientFallback);
+  if (fromClient) return mk(fromClient, "CLIENT");
+
+  return {
+    payScheduleType: undefined, payScheduleDay: undefined,
+    payScheduleTime: undefined, source: "NONE",
+  };
+}
+
 function srvAssertUniqueWorkDetailIds(wds: unknown[]): void {
   const ids = (wds as Record<string, unknown>[]).map(
     (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
@@ -12216,6 +12318,15 @@ export function buildCompensationSnapshot(
   out.nightIncluded = typeof nIn === "boolean" ? nIn : false;
   const tdt = wd["taxDeductionType"];
   if (typeof tdt === "string" && tdt.length > 0) out.taxDeductionType = tdt;
+  // [R6.3] 지급일정도 근로자에게 가는 약속이다 — 수락 시점에 함께 얼린다.
+  //   이 스냅샷을 쓰는 네 writer(지원·초대·대체근무 제안·확정 재배치)가
+  //   모두 서버가 해상도한 workDetail 을 넘기므로 클라이언트 값은 끼지 않는다.
+  const ps = srvReadPaySchedule(wd);
+  if (ps) {
+    out.payScheduleType = ps.t;
+    if (ps.d !== undefined) out.payScheduleDay = ps.d;
+    if (ps.tm !== undefined) out.payScheduleTime = ps.tm;
+  }
   return out;
 }
 
@@ -19883,6 +19994,17 @@ export const callableCalculateAndConfirmWage = onCall(
           `att=${d.attendanceId} app=${wageAppId} [${drift.join(", ")}]`);
       }
     }
+    // [R6.3] 지급일정은 클라이언트 payload 가 아니라 약속에서 온다.
+    //   공고를 나중에 고쳐도 이미 수락한 사람의 지급일은 그대로다.
+    const promisedPaySchedule = await srvResolvePromisedPaySchedule(
+      wagePromiseApp, wageAppId,
+      {payScheduleType: d.payScheduleType, payScheduleDay: d.payScheduleDay});
+    if (promisedPaySchedule.source === "CLIENT" ||
+        promisedPaySchedule.source === "CONTRACT") {
+      console.warn(
+        `[R6.3] 지급일정 약속 스냅샷 없음 — ${promisedPaySchedule.source} 사용: ` +
+        `att=${d.attendanceId} app=${wageAppId}`);
+    }
     const businessId2 = attData2.businessId as string;
     const userId2 = attData2.userId as string;
     // 권한 확인
@@ -20046,8 +20168,13 @@ export const callableCalculateAndConfirmWage = onCall(
       if (wageResult2.ltcInsuranceDeduction) wd.ltcInsuranceDeduction = wageResult2.ltcInsuranceDeduction;
       if (wageResult2.incomeTaxDeduction) wd.incomeTaxDeduction = wageResult2.incomeTaxDeduction;
       if (wageResult2.retroactiveDeduction) wd.retroactiveDeduction = wageResult2.retroactiveDeduction;
-      if (d.payScheduleType != null) wd.payScheduleType = d.payScheduleType;
-      if (d.payScheduleDay != null) wd.payScheduleDay = d.payScheduleDay;
+      // [R6.3] 약속 기준 — 현재 공고값이 아니다.
+      if (promisedPaySchedule.payScheduleType != null) {
+        wd.payScheduleType = promisedPaySchedule.payScheduleType;
+      }
+      if (promisedPaySchedule.payScheduleDay != null) {
+        wd.payScheduleDay = promisedPaySchedule.payScheduleDay;
+      }
       // Phase 6: canonical extra-work breakdown
       wd.contractExcessMinutes = wageResult2.contractExcessMinutes;
       wd.premiumOvertimeMinutes = wageResult2.premiumOvertimeMinutes;
@@ -29325,6 +29452,14 @@ export const callableUpdateWageDetail = onCall(
 
     // 2. 관리자 권한 검증 (트랜잭션 외부 — assertBizAdmin은 Firestore 2회 read)
     const { callerData: updateWageCallerData } = await assertBizAdmin(callerUid, attData.businessId as string);
+    // [R6.3] 관리자 급여내역 수정도 지급일정 약속을 바꾸지 못한다.
+    const updWageAppId = attData.applicationId as string | undefined;
+    const updWageAppSnap = updWageAppId ?
+      await db.collection("applications").doc(updWageAppId).get() : null;
+    const updWagePaySchedule = await srvResolvePromisedPaySchedule(
+      updWageAppSnap?.exists ? updWageAppSnap.data()! : null,
+      updWageAppId,
+      (attData.wageDetail ?? {}) as Record<string, unknown>);
     // [PERM-WAGE-05] 서브어드민 canManageWage 세부 권한 검증 — callableConfirmFinalWage·callableWageCancel과 대칭
     const updateWageCallerRole = updateWageCallerData?.role as string | undefined;
     if (updateWageCallerRole !== "BUSINESS_ADMIN" && updateWageCallerRole !== "SUPER_ADMIN") {
@@ -29394,6 +29529,15 @@ export const callableUpdateWageDetail = onCall(
       const rawWDMap = wageDetailMap as Record<string, unknown>;
       for (const f of WAGE_DETAIL_ALLOW_FIELDS) {
         if (f in rawWDMap) safeWageDetailMap[f] = rawWDMap[f];
+      }
+      // [R6.3] 지급일정은 이 경로로도 바뀌지 않는다 — 약속이 이긴다.
+      if (updWagePaySchedule.payScheduleType != null) {
+        safeWageDetailMap["payScheduleType"] = updWagePaySchedule.payScheduleType;
+        if (updWagePaySchedule.payScheduleDay != null) {
+          safeWageDetailMap["payScheduleDay"] = updWagePaySchedule.payScheduleDay;
+        } else {
+          delete safeWageDetailMap["payScheduleDay"];
+        }
       }
 
       tx.update(attRef, {
