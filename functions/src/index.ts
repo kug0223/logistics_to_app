@@ -206,6 +206,79 @@ const ACTUAL_WORK_BLOCK_MESSAGE =
   "근태 수정 또는 급여 처리 화면에서 처리해주세요.";
 
 // ═══════════════════════════════════════════════════════════
+// [LIFECYCLE-ACTUAL-WORK-INTEGRITY-R0] 일괄 취소에서 실근무를 건너뛴다
+//
+//   확정을 되돌리는 **단건** writer들은 R5.3E.1 경계를 지킨다. 그런데
+//   lifecycle writer는 그 경계를 몰랐다 — 계정 탈퇴·사업장 비활성화·
+//   사업장 삭제·공고 삭제가 businessId/uid/toId로 CONFIRMED를 통째로
+//   긁어 CANCELED로 덮고 좌석까지 반납했다. 이미 출근한 사람, 급여가
+//   확정된 사람이 그 안에 섞여 있었다.
+//
+//   ── 고용관계의 끝 ≠ 일한 적 없음 ──────────────────────────
+//
+//   사업장이 문을 닫는 것과 그 사람이 그날 일했다는 사실은 다른 층이다.
+//   앞의 것은 바뀌지만 뒤의 것은 바뀌지 않는다. 미래 약속은 접어도
+//   지나간 근무는 접을 수 없다.
+//
+//   ── 왜 차단이 아니라 건너뛰기인가 ─────────────────────────
+//
+//   단건 취소는 사람이 버튼을 누르는 행위라 거절하면 된다. 일괄 처리는
+//   수백 건을 한 번에 도는 작업이고, 한 건 때문에 전체를 세우면 나머지
+//   정상 건까지 정리되지 않는다. 그래서 그 건만 **그대로 둔다** —
+//   상태도, 좌석도 건드리지 않는다.
+//
+//   ── 모르면 건너뛴다 ───────────────────────────────────────
+//
+//   attendance를 읽지 못한 것은 "근무가 없다"가 아니다. 읽기 실패를
+//   근무 없음으로 읽으면 장애가 곧 기록 파괴가 된다. UNKNOWN은 보존
+//   쪽으로 넘긴다.
+// ═══════════════════════════════════════════════════════════
+
+/** 일괄 lifecycle 취소에서 제외된 지원서. */
+type SrvPreservedApp = {id: string; reason: string};
+
+/**
+ * 일괄 취소 대상 중 실근무가 시작된 건을 가려낸다.
+ *
+ * @param {FirebaseFirestore.QueryDocumentSnapshot[]} docs 후보 지원서들
+ * @return {Promise<{cancelable, preserved}>} 취소 가능 / 보존 대상
+ */
+async function srvPartitionLifecycleCancelable(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[]
+): Promise<{
+  cancelable: FirebaseFirestore.QueryDocumentSnapshot[];
+  preserved: SrvPreservedApp[];
+}> {
+  const cancelable: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  const preserved: SrvPreservedApp[] = [];
+  // 일괄 처리는 드물고 건수가 크므로 동시성을 제한한다.
+  const CHUNK = 20;
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const slice = docs.slice(i, i + CHUNK);
+    const verdicts = await Promise.all(slice.map(async (d) => {
+      try {
+        return await srvHasActualWorkStarted(d.id, d.data());
+      } catch (e) {
+        // [§22] ERROR ≠ ZERO. 모르는 것을 "근무 없음"으로 읽지 않는다.
+        console.error(`[lifecycle] 실근무 판정 실패 (${d.id}) — 보존:`, e);
+        return {started: true, reason: "UNKNOWN", attendanceId: null};
+      }
+    }));
+    slice.forEach((d, idx) => {
+      const v = verdicts[idx];
+      if (v.started) preserved.push({id: d.id, reason: v.reason ?? "UNKNOWN"});
+      else cancelable.push(d);
+    });
+  }
+  if (preserved.length > 0) {
+    console.info(
+      `[lifecycle] 실근무 보존 ${preserved.length}건: ` +
+      preserved.map((p) => `${p.id}(${p.reason})`).join(", ").slice(0, 500));
+  }
+  return {cancelable, preserved};
+}
+
+// ═══════════════════════════════════════════════════════════
 // [DOCUMENT-VERIFICATION-INTEGRITY-R0] 제출 문서의 상태
 //
 //   `isIdVerified`는 이름이 말하는 것을 한 적이 없다. 그 값이 뜻한 것은
@@ -7418,12 +7491,15 @@ export const onBusinessDeleted = onDocumentDeleted(
           .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
           .get();
 
-        if (!appsSnap.empty) {
+        // [LIFECYCLE-R0 §4] 사업장을 지워도 그 사람이 일한 사실은 지워지지 않는다.
+        const {cancelable: bizDelCancelable} =
+          await srvPartitionLifecycleCancelable(appsSnap.docs);
+        if (bizDelCancelable.length > 0) {
           // [특이사항] 30개 TO × 다수 지원서 = 500건 초과 가능 → 500건 단위로 분할 커밋
           const batchSize = 499;
-          for (let k = 0; k < appsSnap.docs.length; k += batchSize) {
+          for (let k = 0; k < bizDelCancelable.length; k += batchSize) {
             const appBatch = db.batch();
-            const slice = appsSnap.docs.slice(k, k + batchSize);
+            const slice = bizDelCancelable.slice(k, k + batchSize);
             for (const doc of slice) {
               appBatch.update(doc.ref, {
                 status: "CANCELED",
@@ -7435,7 +7511,8 @@ export const onBusinessDeleted = onDocumentDeleted(
           }
 
           // scheduled attendance → absent
-          const appIds = appsSnap.docs.map((d) => d.id);
+          //   보존한 건의 attendance는 손대지 않는다 — 취소한 건만 대상이다.
+          const appIds = bizDelCancelable.map((d) => d.id);
           for (let j = 0; j < appIds.length; j += chunkSize) {
             const appChunk = appIds.slice(j, j + chunkSize);
             const attSnap = await db
@@ -15417,6 +15494,11 @@ export const onBusinessDeactivated = onDocumentUpdated(
         db.collection("applications").where("toId", "==", toId).where("status", "==", "CONFIRMED").limit(500).get(),
       ]);
 
+      // [LIFECYCLE-R0] 확정 계열 중 실근무가 시작된 건을 먼저 가려낸다.
+      const {cancelable: deactivateCancelable} =
+        await srvPartitionLifecycleCancelable(
+          [...contractPendingSnap.docs, ...confirmedSnap.docs]);
+
       // batch에 TO 업데이트 + 전체 지원서 처리
       // [특이사항/CRITICAL-003] CONTRACT_PENDING·CONFIRMED도 포함 — 비활성화 사업장의 좀비 상태 계약 방지
       // 근로기준법 제42조 "3년 보존" 의무는 계약서 문서에 적용 (자동 삭제 금지), 지원서 상태는 별개
@@ -15437,15 +15519,9 @@ export const onBusinessDeactivated = onDocumentUpdated(
             rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         })),
-        ...contractPendingSnap.docs.map((appDoc) => ({
-          ref: appDoc.ref,
-          data: {
-            status: "CANCELED",
-            cancelReason: "BUSINESS_DEACTIVATED",
-            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-        })),
-        ...confirmedSnap.docs.map((appDoc) => ({
+        // [LIFECYCLE-R0 §4] 이미 근무가 시작된 건은 손대지 않는다.
+        //   사업장이 문을 닫는 것과 그 사람이 그날 일했다는 사실은 다른 층이다.
+        ...deactivateCancelable.map((appDoc) => ({
           ref: appDoc.ref,
           data: {
             status: "CANCELED",
@@ -15470,7 +15546,7 @@ export const onBusinessDeactivated = onDocumentUpdated(
         }
       }
 
-      const canceledCount = contractPendingSnap.size + confirmedSnap.size;
+      const canceledCount = deactivateCancelable.length;
       const processed = pendingAppsSnap.size + canceledCount;
       console.log(
         `✅ [사업장 비활성화] TO ${toId} → CLOSED, ` +
@@ -15496,10 +15572,14 @@ export const onBusinessDeactivated = onDocumentUpdated(
         .where("status", "==", "CONFIRMED")
         .limit(500)
         .get();
-      if (closedConfirmedSnap.size > 0) {
+      // [LIFECYCLE-R0] 잔여 CONFIRMED 경로도 같은 경계를 쓴다 — 한쪽만
+      //   막으면 같은 사람이 이 경로로 다시 취소된다.
+      const {cancelable: closedCancelable} =
+        await srvPartitionLifecycleCancelable(closedConfirmedSnap.docs);
+      if (closedCancelable.length > 0) {
         const CLOSED_BATCH_LIMIT = 400;
-        for (let i = 0; i < closedConfirmedSnap.docs.length; i += CLOSED_BATCH_LIMIT) {
-          const chunk = closedConfirmedSnap.docs.slice(i, i + CLOSED_BATCH_LIMIT);
+        for (let i = 0; i < closedCancelable.length; i += CLOSED_BATCH_LIMIT) {
+          const chunk = closedCancelable.slice(i, i + CLOSED_BATCH_LIMIT);
           const batch = db.batch();
           chunk.forEach((appDoc) => batch.update(appDoc.ref, {
             status: "CANCELED",
@@ -15517,7 +15597,8 @@ export const onBusinessDeactivated = onDocumentUpdated(
             })));
           }
         }
-        console.log(`✅ [사업장 비활성화] 잔여 CONFIRMED ${closedConfirmedSnap.size}건 → CANCELED: ${businessId}`);
+        console.log(`✅ [사업장 비활성화] 잔여 CONFIRMED ${closedCancelable.length}건 → CANCELED ` +
+          `(실근무 보존 ${closedConfirmedSnap.size - closedCancelable.length}건): ${businessId}`);
       }
     }
 
@@ -22352,12 +22433,21 @@ export const callableDeleteTO = onCall(
           );
         }
 
+        // [LIFECYCLE-R0 §4] 공고를 지워도 그 사람이 일한 사실은 지워지지 않는다.
+        //   확정 계열만 판정 대상이다 — PENDING/INVITED는 약속이 아니다.
+        const toDelCandidates = pageSnap.docs.filter((doc) =>
+          CONFIRMED_STATUSES.includes((doc.data().status as string | undefined) ?? ""));
+        const {preserved: toDelPreserved} =
+          await srvPartitionLifecycleCancelable(toDelCandidates);
+        const toDelPreservedIds = new Set(toDelPreserved.map((p) => p.id));
+
         const batch = db.batch();
         let count = 0;
         let revokedCount = 0;
         for (const doc of pageSnap.docs) {
           const d = doc.data();
           const status = d.status as string | undefined;
+          if (toDelPreservedIds.has(doc.id)) continue;
           if (status && ACTIVE_STATUSES.includes(status)) {
             // 활성 지원서 → AUTO_CANCELED (근로자에게 공고 취소 알림)
             batch.update(doc.ref, {
@@ -36502,7 +36592,13 @@ export const callableDeleteAccountApplications = onCall(
       db.collection("attendance").where("userId", "==", callerUid).where("status", "==", "scheduled").get(),
     ]);
 
-    const allAppDocs = [...pendingSnap.docs, ...contractSnap.docs, ...confirmedSnap.docs];
+    // [LIFECYCLE-R0 §4·§17] 이미 근무가 시작된 건은 건너뛴다.
+    //   PENDING은 약속이 아니므로 판정 대상이 아니다 — 확정 계열만 본다.
+    //   건너뛴 건은 상태도 좌석도 그대로 둔다(아래 카운터 집계에서도 빠진다).
+    const {cancelable: liveConfirmedDocs, preserved: delPreserved} =
+      await srvPartitionLifecycleCancelable(
+        [...contractSnap.docs, ...confirmedSnap.docs]);
+    const allAppDocs = [...pendingSnap.docs, ...liveConfirmedDocs];
     const pendingToIds: string[] = [];
     const confirmedApps: { id: string; toId: string | null; slotId: string | null; workType: string | null }[] = [];
 
@@ -36747,6 +36843,8 @@ export const callableDeleteAccountApplications = onCall(
     return {
       canceledCount: allAppDocs.length,
       attendanceCount: attSnap.docs.length,
+      // [LIFECYCLE-R0] 건너뛴 건 — 탈퇴해도 일한 기록은 남는다.
+      preservedCount: delPreserved.length,
       // pendingToIds · confirmedApps: 클라이언트 CF 통합 후 참조 불필요 (하위 호환 유지용)
       pendingToIds,
       confirmedApps,
