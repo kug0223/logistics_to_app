@@ -6,6 +6,12 @@
 //
 //   다만 탭 배지가 그 값을 쓰므로 아예 안 부르지는 않는다. 받기 전에는
 //   "없음"이 아니라 "모름"이라고 말한다.
+//
+// [R8-P1D 갱신] 두 요청 목록이 각자의 로더로 분리되면서 이 계약의 전제
+//   (`_loadRequestTabs` 하나가 둘을 묶고 `_requestTabsInFlight` 하나를 공유)가
+//   바뀌었다. 지켜야 할 것 — 첫 화면은 급여만 기다린다 / 둘은 서로 독립이다 /
+//   모름을 0건이라 하지 않는다 / 중복 호출하지 않는다 — 은 그대로 두고
+//   새 구조에 맞춰 다시 건다.
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -35,9 +41,13 @@ void main() {
   final code = _codeOf(raw);
   final f = _flat(code);
 
+  const loadSig =
+      'Future<void> _load({bool withRequestTabs = true, bool afterMutation = false}) async {';
+  const changeSig = 'Future<void> _reloadChangeRequests({bool afterMutation = false}) async {';
+  const settleSig = 'Future<void> _reloadSettlements({bool afterMutation = false}) async {';
+
   group('RT-1 — 첫 화면은 급여만 기다린다', () {
-    final load = _sliceOf(code, 'Future<void> _load() async {',
-        'Future<void> _loadRequestTabs() async {');
+    final load = _sliceOf(code, loadSig, 'void _refreshAfterMutation({');
     final lf = _flat(load);
 
     test('RT-10 base 단계에 급여 조회 둘만 있다', () {
@@ -59,30 +69,36 @@ void main() {
   });
 
   group('RT-2 — 두 요청은 서로 독립이다', () {
-    final sec = _sliceOf(code, 'Future<void> _loadRequestTabs() async {',
-        'Future<void> _loadAllOutstanding() async {');
-    final sf = _flat(sec);
+    final chg = _sliceOf(code, changeSig, settleSig);
+    final stl = _sliceOf(code, settleSig, 'Future<void> _loadAllOutstanding() async {');
 
-    test('RT-20 둘을 병렬로 낸다', () {
-      expect(sf, contains('await Future.wait(['));
-      expect(sf, contains('getPendingChangeRequests(widget.businessId)'));
-      expect(sf, contains('getPendingSettlementRequests(widget.businessId)'));
+    test('RT-20 첫 로드는 둘을 병렬로 낸다', () {
+      expect(f, contains(
+          'Future<void> _loadRequestTabs() => Future.wait([_reloadChangeRequests(), _reloadSettlements()]);'));
+      expect(_flat(chg), contains('getPendingChangeRequests(widget.businessId)'));
+      expect(_flat(stl), contains('getPendingSettlementRequests(widget.businessId)'));
     });
 
     test('RT-21 각자 자기 실패를 자기 안에서 끝낸다', () {
-      expect('.catchError('.allMatches(sec).length, 2);
-      expect(sf, contains("_changeRequestsError = '변경 요청을 불러오지 못했습니다.'"));
-      expect(sf, contains("_settlementRequestsError = '중간정산 요청을 불러오지 못했습니다.'"));
+      expect(_flat(chg), contains("_changeRequestsError = afterMutation"));
+      expect(_flat(chg), contains("'변경 요청을 불러오지 못했습니다.'"));
+      expect(_flat(stl), contains("_settlementRequestsError = afterMutation"));
+      expect(_flat(stl), contains("'중간정산 요청을 불러오지 못했습니다.'"));
+      // 한쪽 로더가 다른 쪽 상태를 건드리지 않는다
+      expect(chg.contains('_settlement'), false);
+      expect(stl.contains('_changeRequests'), false);
     });
 
     test('RT-22 성공한 쪽만 loaded 로 올린다', () {
-      expect(sf, contains('_changeRequests = v; _changeRequestsLoaded = true;'));
-      expect(sf, contains('_settlementRequests = v; _settlementsLoaded = true;'));
+      expect(_flat(chg), contains('_changeRequests = v; _changeRequestsLoaded = true;'));
+      expect(_flat(stl), contains('_settlementRequests = v; _settlementsLoaded = true;'));
     });
 
     test('RT-23 급여 목록 실패 상태와 섞이지 않는다', () {
-      expect(sf, isNot(contains('_loadError')));
-      expect(sf, isNot(contains('_isLoading')));
+      for (final body in [chg, stl]) {
+        expect(body.contains('_loadError'), false);
+        expect(body.contains('_isLoading'), false);
+      }
     });
   });
 
@@ -101,6 +117,7 @@ void main() {
       expect(notLoadedAt, greaterThan(-1));
       expect(notLoadedAt, lessThan(emptyAt), reason: '미수신 분기가 없음 분기보다 앞');
       expect(tf, contains('변경 요청 불러오는 중'));
+      expect(tf, contains('if (_changeRequestsInFlight)'));
     });
 
     test('RT-32 중간정산 탭도 같다', () {
@@ -109,31 +126,37 @@ void main() {
       final tf = _flat(tab);
       expect(tab.indexOf('if (!_settlementsLoaded)'), greaterThan(-1));
       expect(tf, contains('중간정산 요청 불러오는 중'));
+      expect(tf, contains('if (_settlementsInFlight)'));
     });
 
-    test('RT-33 실패하면 다시 시도할 길이 있다', () {
-      expect('unawaited(_loadRequestTabs())'.allMatches(code).length, 3); // _load 1 + 재시도 2
+    test('RT-33 실패하면 그 목록만 다시 시도한다', () {
+      expect(f, contains('onPressed: () => unawaited(_reloadChangeRequests())'));
+      expect(f, contains('onPressed: () => unawaited(_reloadSettlements())'));
       expect(f, contains("child: const Text('다시 시도')"));
+      // [R8-P1D] 재시도가 옆 탭까지 끌어오지 않는다
+      expect('unawaited(_loadRequestTabs())'.allMatches(code).length, 1);
     });
   });
 
   group('RT-4 — 중복 호출 방지', () {
-    final sec = _sliceOf(code, 'Future<void> _loadRequestTabs() async {',
-        'Future<void> _loadAllOutstanding() async {');
+    final chg = _sliceOf(code, changeSig, settleSig);
+    final stl = _sliceOf(code, settleSig, 'Future<void> _loadAllOutstanding() async {');
+
     test('RT-40 진행 중이면 다시 내지 않는다', () {
-      expect(_flat(sec), contains('if (_requestTabsInFlight) return'));
+      expect(_flat(chg), contains('if (!mounted || _changeRequestsInFlight) return'));
+      expect(_flat(stl), contains('if (!mounted || _settlementsInFlight) return'));
     });
 
     test('RT-41 끝나면 플래그를 내린다 — 재시도가 막히지 않는다', () {
-      expect(_flat(sec), contains('setState(() => _requestTabsInFlight = false)'));
+      expect(_flat(chg), contains('finally { if (mounted) setState(() => _changeRequestsInFlight = false); }'));
+      expect(_flat(stl), contains('finally { if (mounted) setState(() => _settlementsInFlight = false); }'));
     });
 
     test('RT-42 실패해도 loaded 를 true 로 고정하지 않는다', () {
-      // catchError 경로에서 loaded 를 세우지 않는다
-      final catches = sec.split('.catchError(');
-      for (final c in catches.skip(1)) {
-        final body = c.substring(0, c.indexOf('}),') + 1);
-        expect(body.contains('Loaded = true'), false);
+      for (final body in [chg, stl]) {
+        final catchAt = body.indexOf('} catch (e) {');
+        expect(catchAt, greaterThan(-1));
+        expect(body.substring(catchAt).contains('Loaded = true'), false);
       }
     });
   });
@@ -147,10 +170,10 @@ void main() {
       expect(f, contains("_loadError = '급여 현황을 불러오지 못했습니다.'"));
     });
 
-    test('RT-52 mutation 후 갱신 경로는 그대로 _load() 다', () {
-      // 승인/거절 후 _load() 가 base + 요청 탭을 함께 되살린다
+    test('RT-52 mutation 후 갱신은 write-set 기준 경로를 탄다', () {
+      // [R8-P1D] 승인/거절 후 무조건 _load() 하던 것을 write-set 기준으로 나눴다
       expect(f, contains('await _payService.approveChangeRequest('));
-      expect(f, contains('_load();'));
+      expect(f, contains('_refreshAfterMutation('));
     });
   });
 }

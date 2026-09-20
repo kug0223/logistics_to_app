@@ -110,7 +110,13 @@ class _PayrollPaymentDashboardScreenState
 
   /// [R8-P1B] 요청 탭 두 개는 첫 화면을 막지 않는다.
   ///   받기 전에는 "없음"이 아니라 "모름"이다 — 배지도 목록도 그렇게 말한다.
-  bool _requestTabsInFlight = false;
+  // [R8-P1D] 두 요청 목록은 서로 다른 mutation 이 건드린다 — 진행 상태도 따로 둔다.
+  //   변경요청 승인이 중간정산 목록을 다시 읽게 하지 않기 위해서다.
+  bool _changeRequestsInFlight = false;
+  bool _settlementsInFlight = false;
+  // [R8-P1D] 밀린 재로드가 무엇을 원했는지 — 좁히다가 빠뜨리지 않도록 합집합으로 둔다.
+  bool _pendingWithRequests = false;
+  bool _pendingAfterMutation = false;
   bool _changeRequestsLoaded = false;
   bool _settlementsLoaded = false;
   String? _changeRequestsError;
@@ -304,10 +310,26 @@ class _PayrollPaymentDashboardScreenState
   // 데이터 로드
   // ══════════════════════════════════════════════════════════
 
-  Future<void> _load() async {
+  /// [R8-P1D] [withRequestTabs] = 요청 목록까지 다시 읽을 것인가.
+  ///
+  ///   이체·이체취소처럼 서버가 attendance 만 바꾼 mutation 뒤에는 false 다.
+  ///   변경요청·중간정산 목록은 그 mutation 으로 바뀌지 않는다 — 다시 읽을
+  ///   이유가 없다.
+  ///
+  ///   [afterMutation] = 이 갱신이 이미 성공한 처리의 뒤끝인가.
+  ///   갱신이 실패해도 처리가 실패한 것은 아니다. 그 둘을 같은 문장으로
+  ///   말하지 않기 위해 구분한다.
+  Future<void> _load({bool withRequestTabs = true, bool afterMutation = false}) async {
     if (!mounted) return;
-    if (_fetchInProgress) { _pendingReload = true; return; }
+    if (_fetchInProgress) {
+      _pendingReload = true;
+      _pendingWithRequests = _pendingWithRequests || withRequestTabs;
+      _pendingAfterMutation = _pendingAfterMutation || afterMutation;
+      return;
+    }
     _pendingReload = false;
+    _pendingWithRequests = false;
+    _pendingAfterMutation = false;
     // 재시도 시작 — 이전 실패 표시를 지운다.
     if (_loadError != null) setState(() => _loadError = null);
     _fetchInProgress = true;
@@ -346,7 +368,11 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
       if (mounted) {
-        ToastHelper.showError('데이터를 불러오지 못했습니다');
+        // [R8-P1D §25] 처리는 이미 서버에서 끝났다 — 갱신 실패를 처리 실패처럼
+        //   말하지 않는다.
+        ToastHelper.showError(afterMutation
+            ? '처리는 완료됐어요. 최신 급여 현황을 불러오지 못했습니다'
+            : '데이터를 불러오지 못했습니다');
         // [§22] 실패를 화면 상태로 남긴다 — 0건·0원으로 위장하지 않는다.
         setState(() {
           _isLoading = false;
@@ -356,12 +382,30 @@ class _PayrollPaymentDashboardScreenState
     } finally {
       _fetchInProgress = false;
       // 연/월 변경으로 새 로드 요청이 밀린 경우 최신 상태로 재실행
-      if (_pendingReload) _load();
+      if (_pendingReload) {
+        _load(withRequestTabs: _pendingWithRequests,
+              afterMutation: _pendingAfterMutation);
+      }
     }
     // [R8-P1B] 화면이 그려진 뒤에 요청 목록을 받는다.
     //   탭 배지가 이 값을 쓰므로 아예 안 부르지는 않는다 — 다만 급여 화면이
     //   나오는 것을 이 둘이 기다리게 하지 않는다.
-    unawaited(_loadRequestTabs());
+    if (withRequestTabs) unawaited(_loadRequestTabs());
+  }
+
+  /// [R8-P1D §25·§26] mutation 직후의 갱신.
+  ///
+  ///   무엇을 다시 읽을지는 **서버가 무엇을 썼는지**로 정한다. UI 버튼 이름이
+  ///   아니라 writer 의 write-set 이 기준이다.
+  ///   갱신이 실패해도 mutation 은 이미 끝났다 — 각 경로가 그렇게 말한다.
+  void _refreshAfterMutation({
+    bool base = false,
+    bool changeRequests = false,
+    bool settlements = false,
+  }) {
+    if (base) unawaited(_load(withRequestTabs: false, afterMutation: true));
+    if (changeRequests) unawaited(_reloadChangeRequests(afterMutation: true));
+    if (settlements) unawaited(_reloadSettlements(afterMutation: true));
   }
 
   /// [R8-P1B] 변경요청·중간정산 — 두 요청 탭의 데이터.
@@ -369,40 +413,65 @@ class _PayrollPaymentDashboardScreenState
   ///   급여 목록과 달리 첫 화면을 막지 않는다. 둘은 서로도 독립이라
   ///   한쪽이 실패해도 다른 쪽 목록과 배지는 그대로 온다.
   ///   받기 전에는 배지를 그리지 않는다 — 모르는 것을 0건이라고 하지 않는다.
-  Future<void> _loadRequestTabs() async {
-    if (!mounted) return;
-    if (_requestTabsInFlight) return;   // 빠른 왕복에도 중복 호출하지 않는다
+  Future<void> _loadRequestTabs() =>
+      Future.wait([_reloadChangeRequests(), _reloadSettlements()]);
+
+  /// [R8-P1D] 지급방식 변경 요청 목록만 다시 읽는다.
+  ///
+  ///   callableApprove/RejectPaymentChangeRequest 는 payment_change_requests
+  ///   문서만 쓴다. 이미 확정된 급여 row 의 지급방식을 그 자리에서 고치지
+  ///   않는다 — R6.4 가 정한 대로 효력은 서버 resolver 가 다음 계산 때 적용한다.
+  ///   그러니 이 목록만 새로 읽으면 된다.
+  Future<void> _reloadChangeRequests({bool afterMutation = false}) async {
+    if (!mounted || _changeRequestsInFlight) return;
     setState(() {
-      _requestTabsInFlight = true;
+      _changeRequestsInFlight = true;
       _changeRequestsError = null;
+    });
+    try {
+      final v = await _payService.getPendingChangeRequests(widget.businessId);
+      if (!mounted) return;
+      setState(() {
+        _changeRequests = v;
+        _changeRequestsLoaded = true;
+      });
+    } catch (e) {
+      debugPrint('❌ 지급방식 변경요청 로드 실패: $e');
+      if (!mounted) return;
+      setState(() => _changeRequestsError = afterMutation
+          ? '처리는 완료됐어요. 목록을 새로 불러오지 못했습니다.'
+          : '변경 요청을 불러오지 못했습니다.');
+    } finally {
+      if (mounted) setState(() => _changeRequestsInFlight = false);
+    }
+  }
+
+  /// [R8-P1D] 중간정산 요청 목록만 다시 읽는다.
+  ///
+  ///   거절(callableRejectInterimSettlement)은 이 목록만 바꾼다.
+  ///   승인·이체처리·승인취소는 attendance 도 함께 쓰므로 base 도 같이 읽는다.
+  Future<void> _reloadSettlements({bool afterMutation = false}) async {
+    if (!mounted || _settlementsInFlight) return;
+    setState(() {
+      _settlementsInFlight = true;
       _settlementRequestsError = null;
     });
-    await Future.wait([
-      _payService.getPendingChangeRequests(widget.businessId).then((v) {
-        if (!mounted) return;
-        setState(() {
-          _changeRequests = v;
-          _changeRequestsLoaded = true;
-        });
-      }).catchError((Object e) {
-        debugPrint('❌ 지급방식 변경요청 로드 실패: $e');
-        if (!mounted) return;
-        setState(() => _changeRequestsError = '변경 요청을 불러오지 못했습니다.');
-      }),
-      _payService.getPendingSettlementRequests(widget.businessId).then((v) {
-        if (!mounted) return;
-        setState(() {
-          _settlementRequests = v;
-          _settlementsLoaded = true;
-        });
-      }).catchError((Object e) {
-        debugPrint('❌ 중간정산 요청 로드 실패: $e');
-        if (!mounted) return;
-        setState(() => _settlementRequestsError = '중간정산 요청을 불러오지 못했습니다.');
-      }),
-    ]);
-    if (!mounted) return;
-    setState(() => _requestTabsInFlight = false);
+    try {
+      final v = await _payService.getPendingSettlementRequests(widget.businessId);
+      if (!mounted) return;
+      setState(() {
+        _settlementRequests = v;
+        _settlementsLoaded = true;
+      });
+    } catch (e) {
+      debugPrint('❌ 중간정산 요청 로드 실패: $e');
+      if (!mounted) return;
+      setState(() => _settlementRequestsError = afterMutation
+          ? '처리는 완료됐어요. 목록을 새로 불러오지 못했습니다.'
+          : '중간정산 요청을 불러오지 못했습니다.');
+    } finally {
+      if (mounted) setState(() => _settlementsInFlight = false);
+    }
   }
 
   // ─── [PHASE-2C] 전체 미이체 로드 ─────────────────────────────────────────────
@@ -1153,17 +1222,19 @@ class _PayrollPaymentDashboardScreenState
         if (processedCount > 0) {
           ToastHelper.showSuccess('$processedCount건 이체 완료 처리되었습니다');
         }
-        _load();
+        // [R8-P1D] 서버가 바꾼 것은 attendance 뿐이다 — 요청 목록은 그대로다.
+        _refreshAfterMutation(base: true);
       }
     } on TransferBlockedException catch (e) {
       // [PII-DOC-R0.2] 실패가 아니라 **하지 않은 것**이다. 기술문 대신 할 일을 말한다.
       debugPrint('ℹ️ 이체 제외: $e');
       await _explainSingleBlock(e);
-      if (mounted) _load();
+      if (mounted) _refreshAfterMutation(base: true);
     } catch (e) {
       debugPrint('❌ 이체 완료 처리 실패: $e');
       if (mounted) ToastHelper.showError('이체 완료 처리에 실패했습니다\n$e');
-      if (mounted) _load();
+      // 실패해도 서버가 일부를 바꿨을 수 있다 — 추측하지 않고 서버에서 다시 읽는다.
+      if (mounted) _load(withRequestTabs: false);
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -1218,7 +1289,10 @@ class _PayrollPaymentDashboardScreenState
           ToastHelper.showInfo(
               '${batchResult.alreadyTransferred.length}건은 이미 이체 완료된 항목이에요');
         }
-        _load();
+        // [R8-P1D] processed id 를 서버가 돌려주지 않는다 — 성공 행을 추측해
+        //   패치하지 않고 base 를 서버에서 다시 읽는다. skip 된 행은 서버의
+        //   원래 값 그대로 돌아온다.
+        _refreshAfterMutation(base: true);
       }
     } catch (e) {
       debugPrint('❌ 일괄 이체 실패: $e');
@@ -1234,7 +1308,7 @@ class _PayrollPaymentDashboardScreenState
         } else {
           ToastHelper.showError('일괄 처리에 실패했습니다\n$e');
         }
-        _load();
+        _load(withRequestTabs: false);
       }
     } finally {
       if (mounted) setState(() => _isTransferring = false);
@@ -1494,7 +1568,9 @@ class _PayrollPaymentDashboardScreenState
       );
       if (!mounted) return;
       ToastHelper.showSuccess('중간정산 승인이 취소되었습니다.');
-      _load();
+      // [R8-P1D] callableCancelApprovedInterimSettlement 는 요청 문서와
+      //   attendance lock 을 함께 바꾼다 — 둘 다 읽는다.
+      _refreshAfterMutation(base: true, settlements: true);
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showError('승인 취소 실패: ${e.toString().replaceFirst("Exception: ", "")}');
@@ -1539,7 +1615,12 @@ class _PayrollPaymentDashboardScreenState
         req: req,
         scheduledTransferDate: picked,
       );
-      if (mounted) { ToastHelper.showSuccess('중간정산 승인 완료 — 이체 예정일: ${DateFormat('MM/dd').format(picked)}'); _load(); }
+      if (mounted) {
+        ToastHelper.showSuccess('중간정산 승인 완료 — 이체 예정일: ${DateFormat('MM/dd').format(picked)}');
+        // [R8-P1D] 승인은 attendance 에 lock(activeInterimSettlementId)을 건다.
+        //   요청 목록만 읽으면 잠긴 급여가 잠기지 않은 것처럼 남는다.
+        _refreshAfterMutation(base: true, settlements: true);
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
@@ -1566,7 +1647,12 @@ class _PayrollPaymentDashboardScreenState
       final tnResult = await _showTransferNoteDialog();
       if (tnResult.cancelled || !mounted) return; // back = cancel, finally resets _isTransferring
       await _payService.processInterimSettlement(req: req, transferNote: tnResult.note);
-      if (mounted) { ToastHelper.showSuccess('이체 처리 완료'); _load(); }
+      if (mounted) {
+        ToastHelper.showSuccess('이체 처리 완료');
+        // [R8-P1D §30] 요청은 PROCESSED, 급여는 이체완료 — 한 화면에서 둘이
+        //   함께 맞아야 한다. 한쪽만 갱신하지 않는다.
+        _refreshAfterMutation(base: true, settlements: true);
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
@@ -1593,7 +1679,12 @@ class _PayrollPaymentDashboardScreenState
       setState(() => _isTransferring = true); // 실제 서비스 호출 직전에 설정
       await _payService.rejectInterimSettlement(
           req: req, rejectReason: reason);
-      if (mounted) { ToastHelper.showSuccess('거절 처리되었습니다'); _load(); }
+      if (mounted) {
+        ToastHelper.showSuccess('거절 처리되었습니다');
+        // [R8-P1D] PENDING 요청만 REJECTED 로 바뀐다. lock 이 걸리기 전 상태라
+        //   attendance 는 건드리지 않는다 — 급여 목록을 다시 읽지 않는다.
+        _refreshAfterMutation(settlements: true);
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
@@ -1617,7 +1708,12 @@ class _PayrollPaymentDashboardScreenState
       );
       if (ok != true || !mounted) return;
       await _payService.approveChangeRequest(requestId: req.id, businessId: req.businessId);
-      if (mounted) { ToastHelper.showSuccess('변경 요청이 승인되었습니다'); _load(); }
+      if (mounted) {
+        ToastHelper.showSuccess('변경 요청이 승인되었습니다');
+        // [R8-P1D] 승인은 요청 문서만 바꾼다. 이미 확정된 급여의 지급방식은
+        //   그대로다 — R6.4 대로 효력은 다음 계산에서 서버가 적용한다.
+        _refreshAfterMutation(changeRequests: true);
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
@@ -1643,7 +1739,10 @@ class _PayrollPaymentDashboardScreenState
       if (reason == null || reason.isEmpty || !mounted) return;
       await _payService.rejectChangeRequest(
           requestId: req.id, businessId: req.businessId, rejectReason: reason);
-      if (mounted) { ToastHelper.showSuccess('거절 처리되었습니다'); _load(); }
+      if (mounted) {
+        ToastHelper.showSuccess('거절 처리되었습니다');
+        _refreshAfterMutation(changeRequests: true);
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
@@ -2210,7 +2309,11 @@ class _PayrollPaymentDashboardScreenState
                             ),
                           ),
                         );
-                        if (result == true && mounted) _load();
+                        // [R8-P1D] 상세화면의 mutation 은 이체 취소뿐이다
+                        //   (callableCancelTransfer → attendance only).
+                        if (result == true && mounted) {
+                          _refreshAfterMutation(base: true);
+                        }
                       } : null,
                       onSelect: _batchMode ? () {
                         setState(() {
@@ -2401,7 +2504,9 @@ class _PayrollPaymentDashboardScreenState
                             ),
                           ),
                         );
-                        if (result == true && mounted) _load();
+                        if (result == true && mounted) {
+                          _refreshAfterMutation(base: true);
+                        }
                       },
                     ));
                   },
@@ -2546,7 +2651,7 @@ class _PayrollPaymentDashboardScreenState
   Widget _buildChangeRequestTab() {
     // [R8-P1B] 아직 못 받은 것과 없는 것은 다른 화면이다.
     if (!_changeRequestsLoaded) {
-      if (_requestTabsInFlight) {
+      if (_changeRequestsInFlight) {
         return const LoadingWidget(message: '변경 요청 불러오는 중...');
       }
       return AppEmptyState(
@@ -2554,7 +2659,8 @@ class _PayrollPaymentDashboardScreenState
         iconColor: AppColors.grey500,
         title: _changeRequestsError ?? '변경 요청을 불러오지 못했습니다.',
         action: TextButton(
-          onPressed: () => unawaited(_loadRequestTabs()),
+          // [R8-P1D] 실패한 목록만 다시 시도한다 — 옆 탭까지 끌어오지 않는다.
+          onPressed: () => unawaited(_reloadChangeRequests()),
           child: const Text('다시 시도'),
         ),
       );
@@ -2583,7 +2689,7 @@ class _PayrollPaymentDashboardScreenState
   Widget _buildSettlementTab() {
     // [R8-P1B] 아직 못 받은 것과 없는 것은 다른 화면이다.
     if (!_settlementsLoaded) {
-      if (_requestTabsInFlight) {
+      if (_settlementsInFlight) {
         return const LoadingWidget(message: '중간정산 요청 불러오는 중...');
       }
       return AppEmptyState(
@@ -2591,7 +2697,8 @@ class _PayrollPaymentDashboardScreenState
         iconColor: AppColors.grey500,
         title: _settlementRequestsError ?? '중간정산 요청을 불러오지 못했습니다.',
         action: TextButton(
-          onPressed: () => unawaited(_loadRequestTabs()),
+          // [R8-P1D] 실패한 목록만 다시 시도한다 — 옆 탭까지 끌어오지 않는다.
+          onPressed: () => unawaited(_reloadSettlements()),
           child: const Text('다시 시도'),
         ),
       );
