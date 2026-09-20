@@ -4705,13 +4705,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           .call({'businessId': _selectedBusinessId, 'entries': entries});
 
       final processed = result.data['processed'] as int? ?? 0;
+      // [R5-R0.2 §8·§9] 서버가 분류한 실패 건수를 그대로 쓴다.
+      //   클라이언트가 미리 센 skipCount는 "급여 확정/이체" 하나만 알고,
+      //   나머지 사유(근태 없음·다른 사업장·미래 날짜 등)는 몰랐다.
+      final failed = result.data['failed'] as int? ?? 0;
 
       if (!mounted) return;
-      if (processed > 0) {
+      if (failed > 0) {
+        // 전부 실패한 경우도 성공처럼 말하지 않는다.
+        ToastHelper.showWarning(processed > 0
+            ? '$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'
+            : '$failed명 모두 처리하지 못했습니다');
+      } else if (processed > 0) {
         ToastHelper.showSuccess('$processed명 퇴근 처리 완료');
-        _hasChanges = true;
       }
-      if (skipCount > 0) ToastHelper.showWarning('$skipCount명 처리 불가 (급여 확정/이체 완료)');
+      if (processed > 0) _hasChanges = true;
 
       await _loadData();
     } catch (e) {
@@ -4875,12 +4883,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             .call({'businessId': _selectedBusinessId, 'entries': entries});
 
         final processed = result.data['processed'] as int? ?? 0;
+        // [R5-R0.2 §8·§9] 그룹 경로도 같은 분기를 쓴다.
+        final failed = result.data['failed'] as int? ?? 0;
 
         if (!mounted) return;
-        if (processed > 0) {
+        if (failed > 0) {
+          ToastHelper.showWarning(processed > 0
+              ? '$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'
+              : '$failed명 모두 처리하지 못했습니다');
+        } else if (processed > 0) {
           ToastHelper.showSuccess('$processed명 퇴근 처리 완료');
-          _hasChanges = true;
         }
+        if (processed > 0) _hasChanges = true;
       }
 
       if (!mounted) return;

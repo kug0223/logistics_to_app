@@ -25520,19 +25520,24 @@ export const callableBatchCheckOut = onCall(
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
-    const skipped: string[] = [];
-    const skippedSet = new Set<string>();
-    const addSkipped = (id: string) => { if (!skippedSet.has(id)) { skipped.push(id); skippedSet.add(id); } };
+    // [R5-R0.2 §5] 처리하지 못한 건을 분류와 함께 센다.
+    //   출근과 같은 mental model 이지만 분류는 퇴근의 실제 분기에서 나온다.
+    //   entry 단위로 센다 — processed + failed == total 이 성립해야 한다.
+    const failures: {attendanceId: string; reason: string}[] = [];
+    const addFailure = (id: string, reason: string) => {
+      failures.push({attendanceId: id, reason});
+    };
 
     // Phase 1: workHours 범위·status 유효성 사전 필터
+    //   [§5] 여기서 걸러진 건도 "처리하지 못한 건"이다 — 조용히 사라지지 않는다.
     const validEntries = entries.filter((e) => {
       // [L4-FIX] workHours 상한 검증 — 관리자가 24시간 초과 근무시간 입력으로 임금 부풀리기 차단
       if (typeof e.workHours === "number" && (e.workHours < 0 || e.workHours > 24)) {
-        addSkipped(e.attendanceId); return false;
+        addFailure(e.attendanceId, "invalidWorkHours"); return false;
       }
       if (!VALID_ATTENDANCE_STATUS.has(e.status)) {
         console.error(`퇴근 처리 건너뜀 — 유효하지 않은 status: ${e.status} (${e.attendanceId})`);
-        addSkipped(e.attendanceId); return false;
+        addFailure(e.attendanceId, "invalidStatus"); return false;
       }
       return true;
     });
@@ -25541,27 +25546,27 @@ export const callableBatchCheckOut = onCall(
     const CHUNK_CO = 20;
     for (let ci = 0; ci < validEntries.length; ci += CHUNK_CO) {
       const chunk = validEntries.slice(ci, ci + CHUNK_CO);
-      await Promise.allSettled(
-        chunk.map(async (entry) => {
+      const coResults = await Promise.allSettled(
+        chunk.map(async (entry): Promise<string | null> => {
           const {attendanceId, checkOutMs, workHours, status, resetWageDetail} = entry;
           const ref = db.collection("attendance").doc(attendanceId);
           try {
             if (resetWageDetail) {
               // wageCalculated → pending 리셋 시 트랜잭션: 동시에 confirmed/transferred 전환 방어
-              await db.runTransaction(async (tx) => {
+              return db.runTransaction(async (tx): Promise<string | null> => {
                 const snap = await tx.get(ref);
-                if (!snap.exists) { addSkipped(attendanceId); return; }
+                if (!snap.exists) return "attendanceMissing";
                 const snapData = snap.data()!;
                 // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-                if (snapData.businessId !== businessId) { addSkipped(attendanceId); return; }
+                if (snapData.businessId !== businessId) return "ownerMismatch";
                 const ws = snapData.wageStatus as string | undefined;
-                if (ws === "confirmed" || ws === "transferred") { addSkipped(attendanceId); return; }
+                if (ws === "confirmed" || ws === "transferred") return "wageAlreadySettled";
                 // [5A.1-P1-WF-06] 미래 날짜 attendance checkOut 차단
                 const coWorkDateTs = snapData.workDate as admin.firestore.Timestamp | undefined;
                 if (coWorkDateTs) {
                   const KST_OFFSET_MS_CO = 9 * 60 * 60 * 1000;
                   const todayKSTStartMs_co = (() => { const d = new Date(Date.now() + KST_OFFSET_MS_CO); d.setUTCHours(0, 0, 0, 0); return d.getTime() - KST_OFFSET_MS_CO; })();
-                  if (coWorkDateTs.toMillis() > todayKSTStartMs_co) { addSkipped(attendanceId); return; }
+                  if (coWorkDateTs.toMillis() > todayKSTStartMs_co) return "futureDate";
                 }
                 tx.update(ref, {
                   checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
@@ -25576,26 +25581,30 @@ export const callableBatchCheckOut = onCall(
                   yearMonth: admin.firestore.FieldValue.delete(),
                   updatedAt: now,
                 });
+                return null;
               });
             } else {
               // 단순 퇴근 기록 — TOCTOU 방지를 위해 runTransaction 사용
-              await db.runTransaction(async (tx) => {
+              return db.runTransaction(async (tx): Promise<string | null> => {
                 const snap = await tx.get(ref);
                 let coServerWs: string | undefined;
-                if (snap.exists) {
+                // [R5-R0.2 §4] 없는 근태에 update 하면 NOT_FOUND 로 catch 에
+                //   떨어져 unknownError 가 됐다. 실제 이유를 그대로 말한다.
+                if (!snap.exists) return "attendanceMissing";
+                {
                   const snapData = snap.data()!;
                   // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-                  if (snapData.businessId !== businessId) { addSkipped(attendanceId); return; }
+                  if (snapData.businessId !== businessId) return "ownerMismatch";
                   // [BATCH-CHECKOUT-WAGE-FIX] confirmed도 차단 — callableCheckOut과 일치
                   if (snapData.wageStatus === "transferred" || snapData.wageStatus === "confirmed") {
-                    addSkipped(attendanceId); return;
+                    return "wageAlreadySettled";
                   }
                   // [5A.1-P1-WF-06] 미래 날짜 attendance checkOut 차단
                   const coWorkDateTs2 = snapData.workDate as admin.firestore.Timestamp | undefined;
                   if (coWorkDateTs2) {
                     const KST_OFFSET_MS_CO2 = 9 * 60 * 60 * 1000;
                     const todayKSTStartMs_co2 = (() => { const d = new Date(Date.now() + KST_OFFSET_MS_CO2); d.setUTCHours(0, 0, 0, 0); return d.getTime() - KST_OFFSET_MS_CO2; })();
-                    if (coWorkDateTs2.toMillis() > todayKSTStartMs_co2) { addSkipped(attendanceId); return; }
+                    if (coWorkDateTs2.toMillis() > todayKSTStartMs_co2) return "futureDate";
                   }
                   coServerWs = snapData.wageStatus as string | undefined;
                 }
@@ -25617,18 +25626,38 @@ export const callableBatchCheckOut = onCall(
                   coUpdateData["yearMonth"] = admin.firestore.FieldValue.delete();
                 }
                 tx.update(ref, coUpdateData);
+                return null;
               });
             }
-            if (!skippedSet.has(attendanceId)) successCount++;
           } catch (e) {
+            // [§6] 내부 메시지·스택은 응답에 싣지 않는다 — 분류만 내보낸다.
             console.error(`퇴근 처리 실패 (${attendanceId}):`, e);
-            addSkipped(attendanceId);
+            return "unknownError";
           }
         })
       );
+      coResults.forEach((r, idx) => {
+        const id = chunk[idx].attendanceId;
+        if (r.status !== "fulfilled") { addFailure(id, "unknownError"); return; }
+        if (r.value === null) successCount++;
+        else addFailure(id, r.value);
+      });
     }
 
-    return {success: true, processed: successCount, skipped};
+    // [R5-R0.2 §1·§5] 일부만 처리된 사실을 숨기지 않는다.
+    //   이전에는 {processed, skipped} 였고, skipped 는 중복 제거된 id 목록이라
+    //   건수 합이 맞지 않았고 이유도 없었다. 관리자는 몇 명이 왜 빠졌는지
+    //   알 수 없었다.
+    //   skipped 는 기존 소비자를 위해 유지한다(고유 id 목록).
+    const skipped = [...new Set(failures.map((f) => f.attendanceId))];
+    return {
+      success: true,
+      processed: successCount,
+      failed: failures.length,
+      total: entries.length,
+      failures,
+      skipped,
+    };
   }
 );
 

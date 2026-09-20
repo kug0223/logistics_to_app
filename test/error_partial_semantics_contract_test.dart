@@ -242,6 +242,75 @@ void main() {
     });
   });
 
+  group('INV-7b — 일괄 퇴근도 partial을 말한다 (R0.2)', () {
+    final co = _flat(_codeOf(_sliceOf(cfRaw,
+        'export const callableBatchCheckOut = onCall(', '  }\n);')));
+
+    test('19e 응답이 processed/failed/total/failures 를 돌려준다 (§5)', () {
+      expect(co, contains('processed: successCount,'));
+      expect(co, contains('failed: failures.length,'));
+      expect(co, contains('total: entries.length,'));
+      expect(co, contains('failures,'));
+      // 기존 소비자를 위해 skipped 도 유지한다.
+      expect(co, contains('const skipped = [...new Set(failures.map((f) => f.attendanceId))];'));
+    });
+
+    test('19f entry 단위로 센다 — processed + failed == total (§5)', () {
+      // 중복 제거 Set 으로 세던 구조가 사라졌다.
+      expect(co, isNot(contains('skippedSet')));
+      expect(co, isNot(contains('addSkipped(')));
+      expect(co, contains('if (r.value === null) successCount++;'));
+      expect(co, contains('else addFailure(id, r.value);'));
+    });
+
+    test('19g 사전 필터 실패도 사라지지 않는다 (§5)', () {
+      expect(co, contains('addFailure(e.attendanceId, "invalidWorkHours"); return false;'));
+      expect(co, contains('addFailure(e.attendanceId, "invalidStatus"); return false;'));
+    });
+
+    test('19h 분류는 실제 분기에서만 나온다 (§4)', () {
+      for (final reason in [
+        '"invalidWorkHours"', '"invalidStatus"', '"attendanceMissing"',
+        '"ownerMismatch"', '"wageAlreadySettled"', '"futureDate"',
+        '"unknownError"',
+      ]) {
+        expect(co, contains(reason), reason: reason);
+      }
+      // 없는 상태를 지어내지 않았다.
+      expect(co, isNot(contains('"notCheckedIn"')));
+      expect(co, isNot(contains('"alreadyCheckedOut"')));
+    });
+
+    test('19i 없는 근태를 unknownError 로 뭉개지 않는다 (§4)', () {
+      expect(co, contains('if (!snap.exists) return "attendanceMissing";'));
+    });
+
+    test('19j 내부 메시지·스택을 싣지 않는다 (§6)', () {
+      final c = _flat(_sliceOf(cfRaw,
+          r'퇴근 처리 실패 (${attendanceId})', 'coResults.forEach'));
+      expect(c, contains('return "unknownError";'));
+      expect(c, isNot(contains('e.message')));
+      expect(c, isNot(contains('.stack')));
+    });
+
+    test('19k 급여 truth 를 새로 건드리지 않았다 (§12)', () {
+      // 기존 리셋 조건(calculated / resetWageDetail)만 유지 — 새 경로 없음.
+      expect(co, contains('const coEffectiveReset = coServerWs === "calculated";'));
+      expect(co, contains('if (ws === "confirmed" || ws === "transferred") return "wageAlreadySettled";'));
+    });
+
+    test('19l 화면이 성공·부분·전부실패를 다르게 말한다 (§8·§9)', () {
+      final f = _flat(att);
+      expect(f, contains(r"'$processed명 퇴근 처리 · $failed명 처리하지 못했습니다'"));
+      expect(f, contains(r"'$failed명 모두 처리하지 못했습니다'"));
+      expect(f, contains(r"'$processed명 퇴근 처리 완료'"));
+      // 두 진입점 모두 failed 를 읽는다.
+      expect("final failed = result.data['failed'] as int? ?? 0;"
+          .allMatches(att).length, 4,
+          reason: '출근 2 + 퇴근 2');
+    });
+  });
+
   group('INV-8 — 근로자 화면도 실패와 없음을 가른다 (R0.1 §19·§20)', () {
     final sch = _codeOf(_src('lib/screens/user/my_schedule_screen.dart'));
     final con = _codeOf(_src('lib/screens/user/user_contracts_screen.dart'));
