@@ -217,6 +217,41 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
   List<_ItemMeta> get _submitTargets =>
       _metas.where((m) => m.isSubmittable).toList();
 
+  /// [R8-P3A] 동시에 보내는 지원 요청 수 상한.
+  ///
+  ///   DEV 실측에서 4까지는 실패·재시도 없이 선형에 가깝게 빨라졌다.
+  ///   그 이상은 관리자 알림 쓰기까지 같이 몰리므로 여기서 묶는다.
+  static const int _applyConcurrency = 4;
+
+  /// 한 항목을 서버에 보낸다. 성공 여부는 서버 응답으로만 정한다(§50).
+  Future<bool> _applyOne(String uid, _ItemMeta meta) {
+    final work = meta.item.work;
+    final slot = meta.item.slot;
+    // Flex: slot.date / Contract: to.date (AWD의 workDate: date ?? to.date 와 동일)
+    final workDate = slot?.date ?? widget.to.date;
+    return _firestoreService.applyToTOWithWorkType(
+      uid: uid,
+      businessId: widget.to.businessId,
+      businessName: widget.to.businessName,
+      toTitle: widget.to.title,
+      workDate: workDate,
+      selectedWorkType: work.workType,
+      workDetailId: work.id,
+      wage: work.wage,
+      wageType: work.wageType,
+      workTypeIcon: work.workTypeIcon,
+      workTypeColor: work.workTypeColor,
+      workTypeBackgroundColor: work.workTypeBackgroundColor,
+      startTime: work.startTime,
+      endTime: work.endTime,
+      workEndDate: widget.to.endDate,
+      workDays: widget.to.workDays,
+      type: widget.to.type,
+      toId: widget.to.id,
+      slotId: slot?.id,
+    );
+  }
+
   Future<void> _submit() async {
     if (_isSubmitting) return;
     final targets = _submitTargets;
@@ -229,56 +264,48 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
 
     int successCount = 0;
 
-    for (final meta in targets) {
-      final item = meta.item;
-      final work = item.work;
-      final slot = item.slot;
-      // Flex: slot.date / Contract: to.date (AWD의 workDate: date ?? to.date 와 동일)
-      final workDate = slot?.date ?? widget.to.date;
-
-      try {
-        final success = await _firestoreService.applyToTOWithWorkType(
-          uid: user.uid,
-          businessId: widget.to.businessId,
-          businessName: widget.to.businessName,
-          toTitle: widget.to.title,
-          workDate: workDate,
-          selectedWorkType: work.workType,
-          workDetailId: work.id,
-          wage: work.wage,
-          wageType: work.wageType,
-          workTypeIcon: work.workTypeIcon,
-          workTypeColor: work.workTypeColor,
-          workTypeBackgroundColor: work.workTypeBackgroundColor,
-          startTime: work.startTime,
-          endTime: work.endTime,
-          workEndDate: widget.to.endDate,
-          workDays: widget.to.workDays,
-          type: widget.to.type,
-          toId: widget.to.id,
-          slotId: slot?.id,
-        );
-        if (!mounted) return;
-        if (success) {
-          successCount++;
-          setState(() {
-            meta.submitted = true;
-            meta.applyError = null;
-          });
-        } else {
-          setState(() {
-            meta.submitted = true;
-            meta.applyError = '지원에 실패했습니다';
-          });
+    // [R8-P3A] 선택한 업무들을 한 번에 하나씩 기다리지 않는다.
+    //
+    //   지원 하나는 DEV 실측 700ms 안팎이다. 7건을 고르면 그대로 7번을
+    //   줄 세워 기다렸다 — 7.5초. 그런데 각 지원은 서로 독립이다.
+    //   다음 호출의 payload가 앞 호출의 결과를 쓰지 않고, 정원·마감·중복은
+    //   전부 서버 트랜잭션이 그 순간에 다시 본다. 클라이언트 순서가
+    //   정답을 만들지 않는다.
+    //
+    //   그렇다고 전부 한꺼번에 던지지는 않는다. 지원마다 같은 공고 문서의
+    //   totalPending을 올리고 관리자 알림도 함께 쓴다. 동시 요청 수를
+    //   묶어두면 그 부담이 선형으로 커지지 않는다.
+    //   (DEV 실측: 7건 기준 1→7544ms, 2→2888, 3→2147, 4→1553, 모두 실패 0)
+    var nextIndex = 0;
+    Future<void> worker() async {
+      for (;;) {
+        final i = nextIndex++;
+        if (i >= targets.length) return;
+        final meta = targets[i];
+        String? error;
+        try {
+          final success = await _applyOne(user.uid, meta);
+          if (!success) error = '지원에 실패했습니다';
+        } catch (e) {
+          error = _friendlyError(e);
         }
-      } catch (e) {
-        if (!mounted) return;
+        if (error == null) successCount++;
+        // [§21] 시트를 닫아도 이미 보낸 지원은 취소되지 않는다.
+        //   화면 표시만 건너뛰고 나머지 항목도 끝까지 보낸다 —
+        //   중간에 멈추면 사용자가 볼 수 없는 반쪽 상태가 남는다.
+        if (!mounted) continue;
         setState(() {
           meta.submitted = true;
-          meta.applyError = _friendlyError(e);
+          meta.applyError = error;
         });
       }
     }
+
+    // [§40·§42] 하나가 실패해도 나머지를 취소하지 않는다 — 각 결과를 따로 담는다.
+    await Future.wait(List.generate(
+      targets.length < _applyConcurrency ? targets.length : _applyConcurrency,
+      (_) => worker(),
+    ));
 
     if (!mounted) return;
     setState(() {
