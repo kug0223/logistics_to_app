@@ -29662,6 +29662,47 @@ function _clampAttendanceRules(rules: AttendanceRulesData): AttendanceRulesData 
 }
 
 /**
+ * 약속된 근무 시작 시각(HH:MM).
+ *
+ * [R6.0A] 인가의 기준은 **약속**이지 클라이언트가 보낸 값이 아니다.
+ *   우선순위: Application snapshot → Contract snapshot.
+ *   공고(TO/slot)의 현재 값은 읽지 않는다 — 확정 뒤 공고를 고쳐도
+ *   이미 성립한 약속의 시간 권위는 바뀌지 않아야 한다.
+ *   둘 다 없으면 "모른다"이고, 모르는 경계로 유급근로를 열어주지 않는다.
+ *
+ * @param {string} applicationId 지원서 ID
+ * @param {FirebaseFirestore.DocumentData} appData 지원서 데이터
+ * @return {Promise<string>} "HH:MM"
+ */
+async function srvCommittedStartTime(
+  applicationId: string,
+  appData: FirebaseFirestore.DocumentData
+): Promise<string> {
+  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const fromApp = appData["startTime"];
+  if (typeof fromApp === "string" && HHMM.test(fromApp)) return fromApp;
+  const con = await db.collection("employment_contracts")
+    .where("applicationId", "==", applicationId).limit(1).get();
+  if (!con.empty) {
+    const snapObj = con.docs[0].data()["snapshot"];
+    const fromCon = (snapObj as Record<string, unknown> | undefined)?.["startTime"];
+    if (typeof fromCon === "string" && HHMM.test(fromCon)) return fromCon;
+  }
+  throw new HttpsError(
+    "failed-precondition",
+    "이 근무의 시작 시간이 확인되지 않아 출근을 처리할 수 없습니다. " +
+    "관리자에게 문의해주세요."
+  );
+}
+
+/** KST epoch ms → "HH:MM" */
+function srvKstHhmm(ms: number): string {
+  const d = new Date(ms + 9 * 60 * 60 * 1000);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:` +
+    `${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+/**
  * 출근 반올림
  * - 조출(earlyWindow 이상 일찍): Math.trunc = Dart ~/ — contractStart 방향
  * - 정시(lateGrace 이내): roundedOffset=0
@@ -29908,8 +29949,40 @@ export const callableCheckIn = onCall(
     const serverRules = (bizSnap.data()?.attendanceRules ?? {}) as AttendanceRulesData;
     // [LOW-03-FIX] businessName 서버 조회 — 클라이언트 전달값 허위 사업장명 심기 차단
     const serverBusinessName = (bizSnap.data()?.name as string | undefined) ?? businessName;
-    // appData.startTime이 서버 권위 소스 — 없으면 클라이언트값 fallback (하위호환, HH:MM 이미 검증됨)
-    const serverStartTime = (appData.startTime as string | undefined) || scheduledStartTime;
+    // ═══════════════════════════════════════════════════════════
+    // [BLOCKER-R6-EARLY-PUNCH-SCHEDULE-AUTHORITY] 근로자 punch는 일정 변경 권한이 아니다
+    // ───────────────────────────────────────────────────────────
+    // 실측(DEV): 18:00~21:00 근무에 근로자가 15:49:13 에 self check-in 하자
+    //   조출 반올림이 16:00 을 만들었고, 그 시각부터 유급 근로가 시작됐다.
+    //   날짜 게이트(오늘/7일)는 있었지만 **시각 게이트가 없었다**.
+    //
+    //   earlyWindow 는 "조출로 인정하지 않는 유예 구간"이다(그 안의 punch는
+    //   시작시각으로 normalize 된다). 그 밖은 곧 조기근무 영역인데, 그것을
+    //   승인하는 주체가 아무도 없었다. 근로자가 혼자서 약속 범위 밖의
+    //   유급근로를 만들어낸 셈이다.
+    //
+    //   판정 순서를 authorization → rounding 으로 세운다. 반올림이 만들어낸
+    //   시각으로 허용 여부를 정하지 않는다. 거절은 트랜잭션 이전이므로
+    //   attendance·seat·wage 어느 것도 생기지 않는다.
+    //
+    //   관리자 경로(callableBatchCheckIn / callableBatchAdjustAttendanceTime)는
+    //   현장 보정 권한이 더 넓으므로 이 게이트를 적용하지 않는다.
+    //   조기근무가 실제로 필요하면 관리자가 그 경로로 기록한다.
+    // ═══════════════════════════════════════════════════════════
+    const serverStartTime = await srvCommittedStartTime(applicationId, appData);
+    {
+      const admitRules = _clampAttendanceRules(serverRules);
+      const [gsh, gsm] = serverStartTime.split(":").map(Number);
+      const committedStartMs = workDateMs + (gsh * 60 + gsm) * 60000;
+      const admitFromMs = committedStartMs - admitRules.earlyWindow! * 60000;
+      if (Date.now() < admitFromMs) {
+        throw new HttpsError(
+          "failed-precondition",
+          `아직 출근할 수 있는 시간이 아닙니다. ` +
+          `${serverStartTime} 시작 근무는 ${srvKstHhmm(admitFromMs)}부터 출근할 수 있습니다.`
+        );
+      }
+    }
 
     // [LOCATION-GATE] attendanceType ↔ method 서버 바인딩 + GPS 거리 검증
     // callableCheckIn이 출근 생성 전에 server-side admission gate를 실행한다.
