@@ -67,13 +67,22 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
   }
 
   /// standalone 진입에서만 자체 초기 로드가 필요하다.
+  ///
+  /// [R8-P1A] Shell 경로에도 한 가지 예외가 생겼다.
+  ///   탭이 lazy가 되면서 Jobs가 항상 먼저 도는 보장이 사라졌다. 관리자가
+  ///   공고 탭을 거치지 않고 근무 탭을 먼저 열면 공유 controller는 한 번도
+  ///   로드되지 않은 상태이고, 이 화면은 `hasLoadedOnce`를 기다리므로
+  ///   영원히 스피너로 남는다.
+  ///   이미 로드된 뒤에는 돌지 않으므로 재방문 시 중복 조회는 없고,
+  ///   Jobs와 거의 동시에 열려도 controller가 진행 중 사이클로 접는다.
   @override
   void initState() {
     super.initState();
-    if (!_ownsController) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _controller.load(context);
+      if (_ownsController || !_controller.hasLoadedOnce) {
+        _controller.load(context);
+      }
     });
   }
 

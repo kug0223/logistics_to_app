@@ -439,6 +439,20 @@ class _PayrollPaymentDashboardScreenState
   Future<void> _loadBankInfo(Set<String> uids) async {
     final uncached = uids.where((u) => !_userBankCache.containsKey(u)).toList();
     if (uncached.isEmpty) return;
+    // [R8-P1A] 이름 조회와 지급 준비 조회는 서로의 결과를 쓰지 않는다.
+    //   둘 다 uids + businessId 만 있으면 되는데 직렬로 붙어 있어서
+    //   왕복 한 번이 그냥 더 들었다.
+    //   각자 자기 실패를 자기 안에서 끝낸다 — 한쪽이 실패해도 다른 쪽 결과가
+    //   사라지지 않고, 급여 목록 자체도 영향받지 않는다.
+    await Future.wait([
+      _loadWorkerNames(uncached),
+      _loadPayrollReadiness(uids),
+    ]);
+  }
+
+  /// 근로자 이름 배치 조회. 실패해도 이 함수 밖으로 던지지 않는다.
+  Future<void> _loadWorkerNames(List<String> uncached) async {
+    if (uncached.isEmpty) return;
     try {
       final userMap = await _fsService.getUsersBatch(uncached,
           businessId: widget.businessId,
@@ -451,7 +465,6 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       debugPrint('❌ 근로자 이름 배치 로드 실패: $e');
     }
-    await _loadPayrollReadiness(uids);
   }
 
   /// [PII-DOC-R1.6.1] 이 근로자들의 **현재** 지급 준비 상태.
@@ -461,8 +474,17 @@ class _PayrollPaymentDashboardScreenState
   ///   버튼으로 보여줄지 판단할 수 있다.
   Future<void> _loadPayrollReadiness(Set<String> uids) async {
     if (uids.isEmpty) return;
-    final batch = await PayrollReadinessService.loadBatch(
-        businessId: widget.businessId, workerUids: uids.toList());
+    // [R8-P1A] 이름 조회와 나란히 돈다. 여기서 던지면 옆의 결과까지 같이
+    //   버려지므로, 예기치 못한 실패도 이 안에서 "모름"으로 끝낸다.
+    //   (loadBatch 자체는 이미 실패를 삼켜 failed 배치를 돌려준다)
+    PayrollReadinessBatch batch;
+    try {
+      batch = await PayrollReadinessService.loadBatch(
+          businessId: widget.businessId, workerUids: uids.toList());
+    } catch (e) {
+      debugPrint('❌ 지급 준비 배치 로드 실패: $e');
+      batch = PayrollReadinessBatch.failed;
+    }
     if (!mounted) return;
     setState(() {
       _readiness

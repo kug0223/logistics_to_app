@@ -58,6 +58,17 @@ class BusinessAdminShell extends StatefulWidget {
 class _BusinessAdminShellState extends State<BusinessAdminShell> {
   int _currentIndex = 0;
 
+  /// [R8-P1A] 실제로 열어 본 탭만 만든다.
+  ///
+  ///   IndexedStack은 자식을 전부 만든다. 그래서 셸에 들어오는 것만으로
+  ///   홈·공고·급여·관리의 initState가 한꺼번에 돌았고, 보이지도 않는 탭 셋이
+  ///   첫 화면과 같은 네트워크 대역을 나눠 썼다.
+  ///
+  ///   숨기는 것이 목적이 아니라 **로드를 미루는 것**이 목적이다. 그래서
+  ///   방문 전에는 자식 자리에 아무것도 하지 않는 위젯을 둔다. 한 번 방문한
+  ///   뒤에는 다시 빼지 않으므로 IndexedStack의 상태 보존은 그대로다.
+  final Set<int> _visitedTabs = <int>{};
+
   /// [POSTING-V2-03O.1] 공고 목록 controller — 이 Shell이 유일한 소유자다.
   /// 두 Root가 소비만 하고, dispose도 여기서 한 번만 한다.
   final WorkforceController _postingController = WorkforceController();
@@ -65,6 +76,8 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
   @override
   void initState() {
     super.initState();
+    // [R8-P1A] 처음 보이는 탭만 방문 처리 — 나머지는 첫 진입 때 만들어진다.
+    _visitedTabs.add(_currentIndex);
     // [P2-B] FCMService가 Shell 탭 전환을 호출할 수 있도록 콜백 등록
     AdminTabSwitcher.instance.register(switchToTab);
     // [NAV-POLICY-N1] Home Task deep-link용 tab normalize + push 콜백 등록
@@ -107,7 +120,11 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
       _navigatorKeys[index].currentState?.popUntil((r) => r.isFirst);
       return true;
     }
-    setState(() => _currentIndex = index);
+    // [R8-P1A] 여기서 처음 방문 처리한다 — 이 탭의 loader는 지금부터 돈다.
+    setState(() {
+      _visitedTabs.add(index);
+      _currentIndex = index;
+    });
     return true;
   }
 
@@ -123,15 +140,22 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
     final up = context.read<UserProvider>();
     if (!_visibleTabIndices(up).contains(index)) return false;
 
+    // [R8-P1A] 아직 열어 본 적 없는 탭에는 Navigator 자체가 없다.
+    //   정규화할 스택이 없는 것이지 실패가 아니다 — 만들고 나서 push한다.
+    //   이미 방문한 탭에서 Navigator가 없으면 기존대로 fail closed.
+    final firstOpen = !_visitedTabs.contains(index);
     final targetNav = _navigatorKeys[index].currentState;
-    if (targetNav == null) return false;
+    if (!firstOpen && targetNav == null) return false;
 
     // target tab stack root 정규화 — stale 월별/Dashboard 제거
-    targetNav.popUntil((r) => r.isFirst);
+    targetNav?.popUntil((r) => r.isFirst);
 
     // bottom nav target tab으로 전환
-    if (_currentIndex != index) {
-      setState(() => _currentIndex = index);
+    if (_currentIndex != index || firstOpen) {
+      setState(() {
+        _visitedTabs.add(index);
+        _currentIndex = index;
+      });
     }
 
     // IndexedStack 전환 완료 이후 push
@@ -187,6 +211,14 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
     }
   }
 
+  /// [R8-P1A] 방문 전에는 자식을 만들지 않는다.
+  ///   `root`를 즉시 만들면 initState가 돌아 lazy의 의미가 없으므로
+  ///   빌더로 받아 방문 시점에만 평가한다.
+  Widget _lazyTab(int index, Widget Function() root) {
+    if (!_visitedTabs.contains(index)) return const SizedBox.shrink();
+    return _buildTabNavigator(index, root());
+  }
+
   Widget _buildTabNavigator(int index, Widget root) {
     return Navigator(
       key: _navigatorKeys[index],
@@ -231,14 +263,14 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
         body: IndexedStack(
           index: _currentIndex,
           children: [
-            _buildTabNavigator(0, const BusinessAdminHomeScreen()),
+            _lazyTab(0, () => const BusinessAdminHomeScreen()),
             // [POSTING-V2-03O.1] 같은 controller 인스턴스를 두 Root가 공유한다.
-            _buildTabNavigator(
-                1, JobsRootScreen(postingController: _postingController)),
-            _buildTabNavigator(
-                2, WorkforceRootScreen(postingController: _postingController)),
-            _buildTabNavigator(3, const PayrollOverviewScreen()),
-            _buildTabNavigator(4, const SettingsScreen()),
+            _lazyTab(
+                1, () => JobsRootScreen(postingController: _postingController)),
+            _lazyTab(2,
+                () => WorkforceRootScreen(postingController: _postingController)),
+            _lazyTab(3, () => const PayrollOverviewScreen()),
+            _lazyTab(4, () => const SettingsScreen()),
           ],
         ),
         bottomNavigationBar: BottomNavigationBar(

@@ -217,10 +217,23 @@ void main() {
       expect(wf.contains('_onDataRevisionChanged'), false);
     });
 
-    test('02-e WorkforceRoot의 초기 load는 standalone 전용이다 (§3, §5)', () {
+    // [R8-P1A 갱신] 원래 계약의 전제는 "Shell의 IndexedStack이 두 Root를 동시에
+    //   mount한다"였다. 그래서 Jobs가 반드시 먼저 로드했고, Workforce는 조용히
+    //   소비만 하면 됐다.
+    //
+    //   탭이 lazy first-open이 되면서 그 전제가 사라졌다. 관리자가 공고 탭을
+    //   거치지 않고 근무 탭을 먼저 열면 공유 controller는 비어 있고, 이 화면은
+    //   hasLoadedOnce를 기다리므로 영구 스피너가 된다.
+    //
+    //   변하지 않은 계약: **무조건 로드하지 않는다.** 비어 있을 때만 낸다.
+    test('02-e WorkforceRoot의 초기 load는 조건부다 — standalone 또는 빈 controller (§3, §5)', () {
       final body = _flat(_codeOf(_bodyOf(_src(_wfPath), 'void initState()')));
-      expect(body.contains('if (!_ownsController) return;'), true,
-          reason: 'Shell 경로에서는 자체 fetch를 하지 않는다');
+      expect(body.contains('if (_ownsController || !_controller.hasLoadedOnce)'), true,
+          reason: 'Shell 경로에서는 controller가 비어 있을 때만 로드한다');
+      final condAt = body.indexOf('if (_ownsController || !_controller.hasLoadedOnce)');
+      final loadAt = body.indexOf('_controller.load(context);');
+      expect(loadAt, greaterThan(condAt),
+          reason: '조건 없는 load가 아니다 — 가드 뒤에서만 호출된다');
     });
 
     test('02-f WorkforceRoot는 controller를 소비만 한다 (§3)', () {
