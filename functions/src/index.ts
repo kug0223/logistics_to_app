@@ -237,45 +237,107 @@ const ACTUAL_WORK_BLOCK_MESSAGE =
 /** 일괄 lifecycle 취소에서 제외된 지원서. */
 type SrvPreservedApp = {id: string; reason: string};
 
+// ── [R0.1] pre-read 와 commit 사이의 창을 없앤다 ───────────────
+//
+//   R0 는 "먼저 판정하고 나중에 batch 로 쓴다" 였다. 그 사이에 체크인이
+//   commit 되면 낡은 판정이 그대로 쓰인다 — 출근했는데 취소된 상태가
+//   남는다.
+//
+//   그래서 판정과 쓰기를 **같은 트랜잭션 안**에 둔다. 읽는 ref 에는
+//   `{applicationId}_{오늘}` 결정적 id 가 포함되므로, 체크인이 쓰는 바로
+//   그 문서를 이 트랜잭션도 읽는다. 둘은 같은 문서를 두고 직렬화되고,
+//   "출근 + 취소" 가 동시에 성립하는 경로가 사라진다.
+//
+//   단건 writer 가 쓰는 srvAssertNoActualWorkInTx 와 같은 원리다 —
+//   다른 점은 거절 대신 **그 건만 건너뛴다**는 것뿐이다(§8).
+
+/** 한 건의 lifecycle 취소 결과. */
+type SrvLifecycleCancelOutcome = "canceled" | "preserved" | "skipped";
+
 /**
- * 일괄 취소 대상 중 실근무가 시작된 건을 가려낸다.
+ * 지원서 한 건을 commit 시점 재검증과 함께 취소한다.
  *
- * @param {FirebaseFirestore.QueryDocumentSnapshot[]} docs 후보 지원서들
- * @return {Promise<{cancelable, preserved}>} 취소 가능 / 보존 대상
+ * @param {FirebaseFirestore.QueryDocumentSnapshot} doc 취소 후보
+ * @param {Record<string, unknown>} cancelData 적용할 필드
+ * @param {string[]} allowedStatuses 이 상태일 때만 취소한다
+ * @return {Promise<SrvLifecycleCancelOutcome>} 결과
  */
-async function srvPartitionLifecycleCancelable(
-  docs: FirebaseFirestore.QueryDocumentSnapshot[]
-): Promise<{
-  cancelable: FirebaseFirestore.QueryDocumentSnapshot[];
+async function srvLifecycleCancelOne(
+  doc: FirebaseFirestore.QueryDocumentSnapshot,
+  cancelData: Record<string, unknown>,
+  allowedStatuses: string[]
+): Promise<SrvLifecycleCancelOutcome> {
+  // 쿼리는 트랜잭션 안에서 쓸 수 없다 — ref 확보만 밖에서 한다.
+  // 결정적 id(오늘·근무일)가 포함되므로 "아직 없는" 체크인 문서도 읽는다.
+  const refs = await srvActualWorkAttendanceRefs(doc.id, doc.data());
+  return db.runTransaction(async (tx) => {
+    const fresh = await tx.get(doc.ref);
+    if (!fresh.exists) return "skipped";
+    const st = (fresh.get("status") as string | undefined) ?? "";
+    if (!allowedStatuses.includes(st)) return "skipped";
+    const snaps = await Promise.all(refs.map((r) => tx.get(r)));
+    for (const s of snaps) {
+      if (!s.exists) continue;
+      if (srvActualWorkReasonOf(s.data())) return "preserved";
+    }
+    tx.update(doc.ref, cancelData);
+    return "canceled";
+  });
+}
+
+/** 일괄 lifecycle 취소 결과 집계. */
+type SrvLifecycleCancelReport = {
+  canceled: FirebaseFirestore.QueryDocumentSnapshot[];
   preserved: SrvPreservedApp[];
-}> {
-  const cancelable: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  skipped: string[];
+};
+
+/**
+ * 여러 지원서를 lifecycle 사유로 취소한다 — 건마다 commit 시점 재검증.
+ *
+ * 한 건이 보존된다고 전체를 세우지 않는다(§8). 취소 가능한 건은 취소하고,
+ * 실근무 건만 그대로 둔다.
+ *
+ * @param {FirebaseFirestore.QueryDocumentSnapshot[]} docs 후보들
+ * @param {Record<string, unknown>} cancelData 적용할 필드
+ * @param {string[]} allowedStatuses 이 상태일 때만 취소
+ * @return {Promise<SrvLifecycleCancelReport>} 결과 집계
+ */
+async function srvLifecycleCancelBulk(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  cancelData: Record<string, unknown>,
+  allowedStatuses: string[] = CONFIRMED_STATUSES
+): Promise<SrvLifecycleCancelReport> {
+  const canceled: FirebaseFirestore.QueryDocumentSnapshot[] = [];
   const preserved: SrvPreservedApp[] = [];
-  // 일괄 처리는 드물고 건수가 크므로 동시성을 제한한다.
-  const CHUNK = 20;
+  const skipped: string[] = [];
+  // 건마다 트랜잭션이므로 동시성을 제한한다.
+  const CHUNK = 10;
   for (let i = 0; i < docs.length; i += CHUNK) {
     const slice = docs.slice(i, i + CHUNK);
-    const verdicts = await Promise.all(slice.map(async (d) => {
+    const outcomes = await Promise.all(slice.map(async (d) => {
       try {
-        return await srvHasActualWorkStarted(d.id, d.data());
+        return await srvLifecycleCancelOne(d, cancelData, allowedStatuses);
       } catch (e) {
-        // [§22] ERROR ≠ ZERO. 모르는 것을 "근무 없음"으로 읽지 않는다.
-        console.error(`[lifecycle] 실근무 판정 실패 (${d.id}) — 보존:`, e);
-        return {started: true, reason: "UNKNOWN", attendanceId: null};
+        // [§7] ERROR ≠ ZERO. 모르는 것을 "근무 없음"으로 읽지 않는다.
+        //   트랜잭션이 실패하면 아무것도 쓰이지 않았다 — 보존으로 센다.
+        console.error(`[lifecycle] 취소 트랜잭션 실패 (${d.id}) — 보존:`, e);
+        return "preserved" as SrvLifecycleCancelOutcome;
       }
     }));
     slice.forEach((d, idx) => {
-      const v = verdicts[idx];
-      if (v.started) preserved.push({id: d.id, reason: v.reason ?? "UNKNOWN"});
-      else cancelable.push(d);
+      const o = outcomes[idx];
+      if (o === "canceled") canceled.push(d);
+      else if (o === "preserved") preserved.push({id: d.id, reason: "ACTUAL_WORK_OR_UNKNOWN"});
+      else skipped.push(d.id);
     });
   }
   if (preserved.length > 0) {
     console.info(
       `[lifecycle] 실근무 보존 ${preserved.length}건: ` +
-      preserved.map((p) => `${p.id}(${p.reason})`).join(", ").slice(0, 500));
+      preserved.map((p) => p.id).join(", ").slice(0, 500));
   }
-  return {cancelable, preserved};
+  return {canceled, preserved, skipped};
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -7491,28 +7553,18 @@ export const onBusinessDeleted = onDocumentDeleted(
           .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
           .get();
 
-        // [LIFECYCLE-R0 §4] 사업장을 지워도 그 사람이 일한 사실은 지워지지 않는다.
-        const {cancelable: bizDelCancelable} =
-          await srvPartitionLifecycleCancelable(appsSnap.docs);
-        if (bizDelCancelable.length > 0) {
-          // [특이사항] 30개 TO × 다수 지원서 = 500건 초과 가능 → 500건 단위로 분할 커밋
+        // [LIFECYCLE-R0.1 §4] 사업장을 지워도 그 사람이 일한 사실은 지워지지 않는다.
+        //   건별 트랜잭션 — 판정과 쓰기가 같은 경계에 있다.
+        const bizDelReport = await srvLifecycleCancelBulk(appsSnap.docs, {
+          status: "CANCELED",
+          cancelReason: "BUSINESS_DELETED",
+          canceledAt: Timestamp.now(),
+        });
+        if (bizDelReport.canceled.length > 0) {
           const batchSize = 499;
-          for (let k = 0; k < bizDelCancelable.length; k += batchSize) {
-            const appBatch = db.batch();
-            const slice = bizDelCancelable.slice(k, k + batchSize);
-            for (const doc of slice) {
-              appBatch.update(doc.ref, {
-                status: "CANCELED",
-                cancelReason: "BUSINESS_DELETED",
-                canceledAt: Timestamp.now(),
-              });
-            }
-            await appBatch.commit();
-          }
-
           // scheduled attendance → absent
           //   보존한 건의 attendance는 손대지 않는다 — 취소한 건만 대상이다.
-          const appIds = bizDelCancelable.map((d) => d.id);
+          const appIds = bizDelReport.canceled.map((d) => d.id);
           for (let j = 0; j < appIds.length; j += chunkSize) {
             const appChunk = appIds.slice(j, j + chunkSize);
             const attSnap = await db
@@ -15494,10 +15546,15 @@ export const onBusinessDeactivated = onDocumentUpdated(
         db.collection("applications").where("toId", "==", toId).where("status", "==", "CONFIRMED").limit(500).get(),
       ]);
 
-      // [LIFECYCLE-R0] 확정 계열 중 실근무가 시작된 건을 먼저 가려낸다.
-      const {cancelable: deactivateCancelable} =
-        await srvPartitionLifecycleCancelable(
-          [...contractPendingSnap.docs, ...confirmedSnap.docs]);
+      // [LIFECYCLE-R0.1] 확정 계열은 건마다 트랜잭션으로 취소한다 —
+      //   판정과 쓰기가 같은 경계 안에 있어야 체크인과 직렬화된다.
+      const deactivateReport = await srvLifecycleCancelBulk(
+        [...contractPendingSnap.docs, ...confirmedSnap.docs],
+        {
+          status: "CANCELED",
+          cancelReason: "BUSINESS_DEACTIVATED",
+          canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
 
       // batch에 TO 업데이트 + 전체 지원서 처리
       // [특이사항/CRITICAL-003] CONTRACT_PENDING·CONFIRMED도 포함 — 비활성화 사업장의 좀비 상태 계약 방지
@@ -15519,16 +15576,8 @@ export const onBusinessDeactivated = onDocumentUpdated(
             rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         })),
-        // [LIFECYCLE-R0 §4] 이미 근무가 시작된 건은 손대지 않는다.
-        //   사업장이 문을 닫는 것과 그 사람이 그날 일했다는 사실은 다른 층이다.
-        ...deactivateCancelable.map((appDoc) => ({
-          ref: appDoc.ref,
-          data: {
-            status: "CANCELED",
-            cancelReason: "BUSINESS_DEACTIVATED",
-            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-        })),
+        // 확정 계열은 위 트랜잭션에서 이미 처리됐다 — batch에는 TO와
+        // PENDING만 남는다.
       ];
 
       // 청크 단위 batch 커밋
@@ -15546,7 +15595,7 @@ export const onBusinessDeactivated = onDocumentUpdated(
         }
       }
 
-      const canceledCount = deactivateCancelable.length;
+      const canceledCount = deactivateReport.canceled.length;
       const processed = pendingAppsSnap.size + canceledCount;
       console.log(
         `✅ [사업장 비활성화] TO ${toId} → CLOSED, ` +
@@ -15572,33 +15621,19 @@ export const onBusinessDeactivated = onDocumentUpdated(
         .where("status", "==", "CONFIRMED")
         .limit(500)
         .get();
-      // [LIFECYCLE-R0] 잔여 CONFIRMED 경로도 같은 경계를 쓴다 — 한쪽만
+      // [LIFECYCLE-R0.1] 잔여 CONFIRMED 경로도 같은 경계를 쓴다 — 한쪽만
       //   막으면 같은 사람이 이 경로로 다시 취소된다.
-      const {cancelable: closedCancelable} =
-        await srvPartitionLifecycleCancelable(closedConfirmedSnap.docs);
-      if (closedCancelable.length > 0) {
-        const CLOSED_BATCH_LIMIT = 400;
-        for (let i = 0; i < closedCancelable.length; i += CLOSED_BATCH_LIMIT) {
-          const chunk = closedCancelable.slice(i, i + CLOSED_BATCH_LIMIT);
-          const batch = db.batch();
-          chunk.forEach((appDoc) => batch.update(appDoc.ref, {
-            status: "CANCELED",
-            cancelReason: "BUSINESS_DEACTIVATED",
-            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-          }));
-          try {
-            await batch.commit();
-          } catch (err) {
-            console.warn(`⚠️ [사업장 비활성화] 잔여 CONFIRMED 배치 실패 — 개별 처리:`, err);
-            await Promise.allSettled(chunk.map((appDoc) => appDoc.ref.update({
-              status: "CANCELED",
-              cancelReason: "BUSINESS_DEACTIVATED",
-              canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-            })));
-          }
-        }
-        console.log(`✅ [사업장 비활성화] 잔여 CONFIRMED ${closedCancelable.length}건 → CANCELED ` +
-          `(실근무 보존 ${closedConfirmedSnap.size - closedCancelable.length}건): ${businessId}`);
+      //   batch 대신 건별 트랜잭션이므로 개별 fallback이 필요 없다.
+      const closedReport = await srvLifecycleCancelBulk(
+        closedConfirmedSnap.docs,
+        {
+          status: "CANCELED",
+          cancelReason: "BUSINESS_DEACTIVATED",
+          canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      if (closedConfirmedSnap.size > 0) {
+        console.log(`✅ [사업장 비활성화] 잔여 CONFIRMED ${closedReport.canceled.length}건 → CANCELED ` +
+          `(실근무 보존 ${closedReport.preserved.length}건): ${businessId}`);
       }
     }
 
@@ -22433,13 +22468,21 @@ export const callableDeleteTO = onCall(
           );
         }
 
-        // [LIFECYCLE-R0 §4] 공고를 지워도 그 사람이 일한 사실은 지워지지 않는다.
+        // [LIFECYCLE-R0.1 §4] 공고를 지워도 그 사람이 일한 사실은 지워지지 않는다.
         //   확정 계열만 판정 대상이다 — PENDING/INVITED는 약속이 아니다.
+        //   확정 계열은 건별 트랜잭션에서 이미 취소됐고, 아래 batch는
+        //   보존된 건과 이미 처리된 건을 건너뛴다.
         const toDelCandidates = pageSnap.docs.filter((doc) =>
           CONFIRMED_STATUSES.includes((doc.data().status as string | undefined) ?? ""));
-        const {preserved: toDelPreserved} =
-          await srvPartitionLifecycleCancelable(toDelCandidates);
-        const toDelPreservedIds = new Set(toDelPreserved.map((p) => p.id));
+        const toDelReport = await srvLifecycleCancelBulk(toDelCandidates, {
+          status: "AUTO_CANCELED",
+          canceledAt: now,
+          cancelReason: "TO_DELETED",
+        });
+        const toDelHandledIds = new Set([
+          ...toDelReport.preserved.map((p) => p.id),
+          ...toDelReport.canceled.map((d) => d.id),
+        ]);
 
         const batch = db.batch();
         let count = 0;
@@ -22447,14 +22490,19 @@ export const callableDeleteTO = onCall(
         for (const doc of pageSnap.docs) {
           const d = doc.data();
           const status = d.status as string | undefined;
-          if (toDelPreservedIds.has(doc.id)) continue;
+          // 실근무 보존 건은 상태도 알림도 grant도 건드리지 않는다.
+          if (toDelReport.preserved.some((p) => p.id === doc.id)) continue;
           if (status && ACTIVE_STATUSES.includes(status)) {
             // 활성 지원서 → AUTO_CANCELED (근로자에게 공고 취소 알림)
-            batch.update(doc.ref, {
-              status: "AUTO_CANCELED",
-              canceledAt: now,
-              cancelReason: "TO_DELETED",
-            });
+            //   확정 계열은 위 트랜잭션에서 이미 쓰였다 — 중복 쓰기를 피하고
+            //   알림·grant 회수만 이어서 한다.
+            if (!toDelHandledIds.has(doc.id)) {
+              batch.update(doc.ref, {
+                status: "AUTO_CANCELED",
+                canceledAt: now,
+                cancelReason: "TO_DELETED",
+              });
+            }
             const applicantUid = d.uid as string | undefined;
             if (applicantUid) {
               notifyTargets.push({
@@ -36592,19 +36640,24 @@ export const callableDeleteAccountApplications = onCall(
       db.collection("attendance").where("userId", "==", callerUid).where("status", "==", "scheduled").get(),
     ]);
 
-    // [LIFECYCLE-R0 §4·§17] 이미 근무가 시작된 건은 건너뛴다.
-    //   PENDING은 약속이 아니므로 판정 대상이 아니다 — 확정 계열만 본다.
-    //   건너뛴 건은 상태도 좌석도 그대로 둔다(아래 카운터 집계에서도 빠진다).
-    const {cancelable: liveConfirmedDocs, preserved: delPreserved} =
-      await srvPartitionLifecycleCancelable(
-        [...contractSnap.docs, ...confirmedSnap.docs]);
-    const allAppDocs = [...pendingSnap.docs, ...liveConfirmedDocs];
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // [LIFECYCLE-R0.1 §2·§3] 확정 계열은 **건마다 트랜잭션**으로 취소한다.
+    //   판정과 쓰기가 같은 일관성 경계 안에 있어야 체크인과 직렬화된다.
+    //   PENDING은 약속이 아니므로 판정 대상이 아니다 — 기존대로 batch.
+    const delReport = await srvLifecycleCancelBulk(
+      [...contractSnap.docs, ...confirmedSnap.docs],
+      {status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"});
+    const delPreserved = delReport.preserved;
+    // 보존된 건의 attendance는 건드리지 않는다.
+    const delPreservedIds = new Set(delPreserved.map((p) => p.id));
+
+    const allAppDocs = [...pendingSnap.docs, ...delReport.canceled];
     const pendingToIds: string[] = [];
     const confirmedApps: { id: string; toId: string | null; slotId: string | null; workType: string | null }[] = [];
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
-
     // 상태 분류 + 배치 쓰기용 업데이트 목록 구성
+    //   확정 계열은 위 트랜잭션에서 이미 쓰였다 — 여기서는 카운터 집계만 한다.
     type DocUpdate = {ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown>};
     const allUpdates: DocUpdate[] = [];
 
@@ -36612,7 +36665,10 @@ export const callableDeleteAccountApplications = onCall(
       const d = doc.data();
       const status = d.status as string;
       const toId = (d.toId as string | undefined) ?? null;
-      allUpdates.push({ref: doc.ref, data: {status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}});
+      if (status === "PENDING") {
+        allUpdates.push({ref: doc.ref,
+          data: {status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}});
+      }
       if (status === "PENDING" && toId) {
         pendingToIds.push(toId);
       } else if ((status === "CONFIRMED" || status === "CONTRACT_PENDING") && toId) {
@@ -36625,7 +36681,13 @@ export const callableDeleteAccountApplications = onCall(
       }
     }
 
+    // [LIFECYCLE-R0.1 §16] 보존된 지원서의 근태는 건드리지 않는다.
+    //   status=="scheduled" 조회라 체크인한 row는 애초에 들어오지 않지만,
+    //   같은 지원서의 다른 날 예정 row까지 absent로 만들면 살려 둔 근무가
+    //   반쪽이 된다.
     for (const doc of attSnap.docs) {
+      const appId = doc.data().applicationId as string | undefined;
+      if (appId && delPreservedIds.has(appId)) continue;
       allUpdates.push({ref: doc.ref, data: {status: "absent", absentReason: "USER_DELETED", updatedAt: now}});
     }
 
@@ -36842,7 +36904,10 @@ export const callableDeleteAccountApplications = onCall(
 
     return {
       canceledCount: allAppDocs.length,
-      attendanceCount: attSnap.docs.length,
+      attendanceCount: attSnap.docs.filter((d) => {
+        const a = d.data().applicationId as string | undefined;
+        return !(a && delPreservedIds.has(a));
+      }).length,
       // [LIFECYCLE-R0] 건너뛴 건 — 탈퇴해도 일한 기록은 남는다.
       preservedCount: delPreserved.length,
       // pendingToIds · confirmedApps: 클라이언트 CF 통합 후 참조 불필요 (하위 호환 유지용)
