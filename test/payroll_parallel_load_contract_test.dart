@@ -56,7 +56,7 @@ void main() {
 
   group('PL-2 — 의존성이 없다는 것이 코드로 보인다', () {
     test('PL-20 지급 준비 조회는 uids 와 businessId 만 쓴다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
           'bool _needsSnapshotRefresh(');
       final rf = _flat(rd);
       expect(rf, contains('workerUids: uids.toList()'));
@@ -67,7 +67,7 @@ void main() {
 
     test('PL-21 이름 조회는 지급 준비 결과를 읽지 않는다', () {
       final nm = _sliceOf(code, 'Future<void> _loadWorkerNames(List<String> uncached)',
-          'Future<void> _loadPayrollReadiness(');
+          'Set<String> get _visibleWorkerUids');
       expect(_flat(nm), isNot(contains('_readiness')));
     });
   });
@@ -75,13 +75,13 @@ void main() {
   group('PL-3 — 실패는 서로 독립이다', () {
     test('PL-30 이름 조회 실패가 밖으로 나가지 않는다', () {
       final nm = _sliceOf(code, 'Future<void> _loadWorkerNames(List<String> uncached)',
-          'Future<void> _loadPayrollReadiness(');
+          'Set<String> get _visibleWorkerUids');
       expect(_flat(nm), contains('} catch (e) {'));
       expect(_flat(nm), contains('근로자 이름 배치 로드 실패'));
     });
 
     test('PL-31 지급 준비 실패도 밖으로 나가지 않는다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
           'bool _needsSnapshotRefresh(');
       final rf = _flat(rd);
       expect(rf, contains('} catch (e) {'));
@@ -93,7 +93,7 @@ void main() {
     });
 
     test('PL-33 모르는 것을 "확인 필요"로 바꾸지 않는다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
           'bool _needsSnapshotRefresh(');
       expect(_flat(rd), contains('_readinessUnknown = batch.loadFailed ? uids.toSet() : batch.failedUids.toSet()'));
     });
@@ -117,11 +117,13 @@ void main() {
 
   group('PL-5 — 중복 호출이 없다', () {
     test('PL-50 지급 준비 조회 호출부는 한 곳뿐이다', () {
-      expect('_loadPayrollReadiness('.allMatches(code).length, 2); // 정의 1 + 호출 1
+      // [R8-P2.1] 정의 1 + _loadBankInfo(첫 로드) 1 + _reloadReadiness(검토 후) 1.
+      //   판정만 다시 읽는 경로가 생겼을 뿐, 중복 호출은 여전히 없다.
+      expect('_loadPayrollReadiness('.allMatches(code).length, 3);
     });
 
     test('PL-51 mounted 가드가 유지된다', () {
-      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids)',
+      final rd = _sliceOf(code, 'Future<void> _loadPayrollReadiness(Set<String> uids,',
           'bool _needsSnapshotRefresh(');
       expect(_flat(rd), contains('if (!mounted) return'));
     });

@@ -558,6 +558,13 @@ class _PayrollPaymentDashboardScreenState
   ///   그런데 그 옆의 [이체 완료] 버튼은 Attendance 스냅샷 계좌로 처리한다.
   ///   화면이 보여주는 계좌와 실제로 돈이 가는 계좌가 다를 수 있었다는 뜻이다.
   ///   이제 카드도 스냅샷을 읽는다(_bankLineFor).
+  ///
+  /// [R8-P2.1] 이름 캐시와 지급 준비 상태는 **무효화 조건이 다르다.**
+  ///
+  ///   예전에는 이름 캐시가 다 차 있으면 여기서 곧장 반환했고, 그 바람에
+  ///   지급 준비 조회까지 함께 건너뛰었다. 이름은 안 바뀌지만 지급 준비는
+  ///   통장사본 검토 한 번으로 바뀐다 — 둘을 같은 조건으로 묶을 수 없다.
+  ///   준비 상태만 다시 읽어야 하는 쪽은 [_reloadReadiness] 를 쓴다.
   Future<void> _loadBankInfo(Set<String> uids) async {
     final uncached = uids.where((u) => !_userBankCache.containsKey(u)).toList();
     if (uncached.isEmpty) return;
@@ -589,12 +596,45 @@ class _PayrollPaymentDashboardScreenState
     }
   }
 
+  /// [R8-P2.1] 지금 화면이 보여주고 있는 근로자 전부.
+  ///
+  ///   지급 준비 조회는 받은 목록으로 통째로 갈아끼우므로(아래 clear),
+  ///   일부만 넘기면 나머지 근로자의 판정이 사라진다. 두 탭의 합집합을 쓴다.
+  Set<String> get _visibleWorkerUids => {
+        ..._allRecords.map((r) => r.userId),
+        ..._outstandingAll.map((r) => r.userId),
+      };
+
+  /// [R8-P2.1] 지급 준비 상태만 다시 읽는다.
+  ///
+  ///   canonical readiness 는 users 문서와 businessApplicantDocumentReviews
+  ///   두 곳에서 나온다. 통장사본 검토는 두 번째를 쓴다 — 그러면 판정이
+  ///   `STALE_MANUAL_REVIEW(ready=false)` 에서 `READY_MANUAL(ready=true)` 로
+  ///   바뀐다. 그런데 화면은 검토 직후 "지급정보를 갱신하면 이체할 수 있어요"
+  ///   라고 안내해 놓고 정작 그 버튼을 띄우지 못했다. 버튼 조건이 옛 판정을
+  ///   보고 있었기 때문이다.
+  ///
+  ///   급여 목록은 건드리지 않는다 — 이 mutation 은 attendance 를 쓰지 않는다.
+  ///   전체 스피너도 띄우지 않는다. 기존 행은 그대로 둔다.
+  int _readinessSeq = 0;
+  Future<void> _reloadReadiness() async {
+    if (!mounted) return;
+    final uids = _visibleWorkerUids;
+    if (uids.isEmpty) return;
+    final seq = ++_readinessSeq;
+    // 겹쳐 들어온 갱신 중 오래된 응답이 최신 판정을 덮지 않게 한다.
+    await _loadPayrollReadiness(uids, guard: () => seq == _readinessSeq);
+  }
+
   /// [PII-DOC-R1.6.1] 이 근로자들의 **현재** 지급 준비 상태.
   ///
   ///   급여 기록은 확정 당시만 안다. 근로자가 그 뒤 계좌를 고쳤는지는
   ///   여기서만 알 수 있고, 그것을 알아야 "지급정보 갱신"을 실행 가능한
   ///   버튼으로 보여줄지 판단할 수 있다.
-  Future<void> _loadPayrollReadiness(Set<String> uids) async {
+  /// [R8-P2.1] [guard] 가 false 를 돌려주면 이 응답은 버린다 — 늦게 도착한
+  ///   옛 조회가 최신 판정을 덮지 않게 한다.
+  Future<void> _loadPayrollReadiness(Set<String> uids,
+      {bool Function()? guard}) async {
     if (uids.isEmpty) return;
     // [R8-P1A] 이름 조회와 나란히 돈다. 여기서 던지면 옆의 결과까지 같이
     //   버려지므로, 예기치 못한 실패도 이 안에서 "모름"으로 끝낸다.
@@ -608,6 +648,7 @@ class _PayrollPaymentDashboardScreenState
       batch = PayrollReadinessBatch.failed;
     }
     if (!mounted) return;
+    if (guard != null && !guard()) return;
     setState(() {
       _readiness
         ..clear()
@@ -719,7 +760,11 @@ class _PayrollPaymentDashboardScreenState
       ToastHelper.showSuccess(r.correctionOpened
           ? '근로자에게 통장사본 재등록을 요청했습니다'
           : '확인 완료했습니다. 지급정보를 갱신하면 이체할 수 있어요');
-      await _loadAllOutstanding();
+      // [R8-P2.1] 이 검토가 바꾸는 것은 지급 준비 판정뿐이다 —
+      //   attendance 도 지원서도 쓰지 않는다. 그러니 판정만 다시 읽는다.
+      //   (예전에는 급여 목록을 다시 읽으면서 정작 판정은 캐시에 막혀
+      //    갱신되지 않았고, 방금 안내한 '지급정보 갱신' 버튼이 뜨지 않았다.)
+      await _reloadReadiness();
     } catch (e) {
       if (!mounted) return;
       // 화면을 연 뒤 근로자가 서류를 바꾼 경우 — 낡은 판정은 기록되지 않는다.
@@ -769,7 +814,13 @@ class _PayrollPaymentDashboardScreenState
               '아래 ${res.skipped.length}건은 처리하지 않았습니다.\n\n$lines',
         );
       }
+      // [R8-P2.1] 스냅샷 갱신이 쓰는 것은 attendance 다 — 지급 준비 판정은
+      //   그대로다(users·검토 문서 미변경). 그래서 판정은 다시 읽지 않고
+      //   급여 행만 다시 읽는다. 두 탭 모두에서 이 버튼을 쓸 수 있으므로
+      //   양쪽 목록을 함께 되살린다 — 한쪽만 읽으면 갱신이 끝난 행에
+      //   '지급정보 갱신' 버튼이 그대로 남는다.
       await _loadAllOutstanding();
+      if (mounted) _load(withRequestTabs: false);
     } catch (e) {
       if (mounted) ToastHelper.showError('지급정보 갱신에 실패했습니다');
       debugPrint('❌ 스냅샷 갱신 실패: $e');
