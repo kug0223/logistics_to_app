@@ -2397,7 +2397,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         : widget.groupSlotIdsByDate?[DateTime.utc(date.year, date.month, date.day)]);
 
     try {
-      final success = await _firestoreService.applyToTOWithWorkType(
+      final result = await _firestoreService.applyToTOWithWorkType(
         uid: _currentUserId!,
         businessId: to.businessId,
         businessName: to.businessName,
@@ -2419,14 +2419,42 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         slotId: resolvedSlotId,
         desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       );
-      if (!success) return; // 에러 메시지는 applyToTOWithWorkType 내부에서 이미 표시됨
+      // [R8-P3A.1] 서비스는 더 이상 Toast 를 띄우지 않는다 — 결과만 돌려준다.
+      //   여기서 세 가지를 구분해서 말한다: 됐다 / 안 된 이유가 있다 / 모른다.
+      var applied = result;
+      if (applied.isUnknown) {
+        // 대답을 못 들었을 뿐 기록됐을 수 있다 — canonical 상태를 다시 본다.
+        try {
+          final mine = await _firestoreService.getMyApplicationsForTOFresh(to.id);
+          if (_firestoreService.hasLandedApplication(mine,
+              toId: to.id,
+              slotId: resolvedSlotId,
+              workType: work.workType)) {
+            applied = applied.reconciledAsApplied();
+          }
+        } catch (e) {
+          debugPrint('⚠️ 지원 결과 재확인 실패: $e'); // UNKNOWN 유지
+        }
+      }
+      if (!mounted) return;
+      if (!applied.isApplied) {
+        // UNKNOWN 은 실패가 아니다 — 확인이 필요하다고 말한다.
+        if (applied.isUnknown) {
+          ToastHelper.showWarning('${applied.message} 내 지원 목록에서 확인해주세요.');
+        } else {
+          ToastHelper.showError(applied.message);
+        }
+        return;
+      }
 
       // 상태 새로고침
       await _refreshApplicationStatus(date ?? to.date, work.workType);
 
       if (!mounted) return;
       _hasChanges = true;
-      ToastHelper.showSuccess('지원이 완료되었습니다');
+      ToastHelper.showSuccess(applied.outcome == ApplyOutcome.alreadyApplied
+          ? '이미 지원한 업무예요'
+          : '지원이 완료되었습니다');
       AnalyticsService.logApply(
         toId: to.id,
         businessName: to.businessName,

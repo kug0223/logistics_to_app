@@ -74,8 +74,16 @@ class _ItemMeta {
   final ({SlotModel? slot, WorkDetailModel work}) item;
   _ItemStatus status = _ItemStatus.checking;
   ConflictInfo conflictInfo = ConflictInfo.ok;
-  String? applyError; // null = 아직 미제출 또는 성공, non-null = 실패 메시지
+  String? applyError; // null = 아직 미제출 또는 성공, non-null = 실패/미확인 메시지
   bool submitted = false;
+
+  /// [R8-P3A.1] 서버가 준 결과의 성격. null = 아직 제출 전.
+  ///   실패와 "결과를 모름"을 같은 칸에 넣지 않기 위해 따로 둔다.
+  ApplyOutcome? outcome;
+
+  bool get applyOk => outcome == ApplyOutcome.success ||
+      outcome == ApplyOutcome.alreadyApplied;
+  bool get applyUnknown => outcome == ApplyOutcome.unknown;
 
   _ItemMeta({required this.item});
 
@@ -224,7 +232,7 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
   static const int _applyConcurrency = 4;
 
   /// 한 항목을 서버에 보낸다. 성공 여부는 서버 응답으로만 정한다(§50).
-  Future<bool> _applyOne(String uid, _ItemMeta meta) {
+  Future<ApplyResult> _applyOne(String uid, _ItemMeta meta) {
     final work = meta.item.work;
     final slot = meta.item.slot;
     // Flex: slot.date / Contract: to.date (AWD의 workDate: date ?? to.date 와 동일)
@@ -282,21 +290,25 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
         final i = nextIndex++;
         if (i >= targets.length) return;
         final meta = targets[i];
-        String? error;
+        ApplyResult result;
         try {
-          final success = await _applyOne(user.uid, meta);
-          if (!success) error = '지원에 실패했습니다';
+          result = await _applyOne(user.uid, meta);
         } catch (e) {
-          error = _friendlyError(e);
+          // 서비스가 결과로 돌려주지 못한 예외 — 보냈는지조차 알 수 없다.
+          result = ApplyResult.unknown(_friendlyError(e));
         }
-        if (error == null) successCount++;
+        if (result.isNewlyApplied) successCount++;
         // [§21] 시트를 닫아도 이미 보낸 지원은 취소되지 않는다.
         //   화면 표시만 건너뛰고 나머지 항목도 끝까지 보낸다 —
         //   중간에 멈추면 사용자가 볼 수 없는 반쪽 상태가 남는다.
-        if (!mounted) continue;
+        if (!mounted) {
+          meta.outcome = result.outcome;
+          continue;
+        }
         setState(() {
           meta.submitted = true;
-          meta.applyError = error;
+          meta.outcome = result.outcome;
+          meta.applyError = result.isApplied ? null : result.message;
         });
       }
     }
@@ -307,26 +319,59 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
       (_) => worker(),
     ));
 
+    // [R8-P3A.1] 결과를 못 들은 건만 canonical 상태로 되묻는다.
+    //
+    //   정상 성공 경로에는 읽기를 한 번도 더하지 않는다. 모르는 건이 있을
+    //   때만, 그것도 항목마다가 아니라 내 지원 목록을 **한 번** 새로 읽어
+    //   전부 대조한다. 문서 id 를 계산해 맞춰보지 않는다 — 서버가 초대·제안이
+    //   만든 기존 문서로 수렴시킬 수 있어 클라이언트 계산과 다를 수 있다.
+    final unknowns = targets.where((m) => m.applyUnknown).toList();
+    if (unknowns.isNotEmpty) {
+      try {
+        final mine = await _firestoreService.getMyApplicationsForTOFresh(widget.to.id);
+        for (final meta in unknowns) {
+          final landed = _firestoreService.hasLandedApplication(
+            mine,
+            toId: widget.to.id,
+            slotId: meta.item.slot?.id,
+            workType: meta.item.work.workType,
+          );
+          if (!landed) continue; // 아직 모른다 — 실패로 바꾸지 않는다
+          meta.outcome = ApplyOutcome.success;
+          meta.applyError = null;
+          successCount++;
+        }
+      } catch (e) {
+        debugPrint('⚠️ 지원 결과 재확인 실패: $e'); // UNKNOWN 그대로 둔다
+      }
+    }
+
     if (!mounted) return;
     setState(() {
       _isSubmitting = false;
       _submitDone = true;
     });
 
-    if (successCount > 0 && successCount == targets.length) {
-      // All success → toast + close
-      final msg = targets.length == 1
-          ? '지원이 완료되었습니다'
-          : '${targets.length}개 업무에 지원했어요.';
+    // [R8-P3A.1] 전부 지원된 상태일 때만 닫는다.
+    //   '이미 지원중'도 사용자 관점에서는 지원된 것이라 남겨둘 이유가 없다.
+    //   반대로 결과를 모르는 건이 하나라도 있으면 닫지 않는다 — 시트에서
+    //   무엇이 미확인인지 그대로 보여준다.
+    if (targets.every((m) => m.applyOk)) {
+      final msg = successCount == 0
+          ? '이미 지원한 업무예요'
+          : (targets.length == 1
+              ? '지원이 완료되었습니다'
+              : '${targets.length}개 업무에 지원했어요.');
       ToastHelper.showSuccess(msg);
       if (mounted) {
         Navigator.pop(
           context,
-          MultiApplyResult(hasChanges: true, appliedCount: successCount),
+          MultiApplyResult(
+              hasChanges: successCount > 0, appliedCount: successCount),
         );
       }
     }
-    // Partial / All fail → sheet 내 결과 표시 (_submitDone == true)
+    // Partial / 미확인 / 실패 → sheet 내 결과 표시 (_submitDone == true)
   }
 
   String _friendlyError(Object e) {
@@ -471,15 +516,25 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
       if (isDisabled) {
         borderColor = AppColors.grey200;
         bgColor = AppColors.grey50;
-      } else if (meta.applyError == null) {
+      } else if (meta.applyOk) {
         borderColor = AppColors.success.withValues(alpha: 0.5);
         bgColor = AppColors.success.withValues(alpha: 0.04);
-        badgeText = '지원 완료';
+        badgeText = meta.outcome == ApplyOutcome.alreadyApplied
+            ? '이미 지원중'
+            : '지원 완료';
         badgeColor = AppColors.success;
+      } else if (meta.applyUnknown) {
+        // [R8-P3A.1] 모르는 것을 실패라고 말하지 않는다.
+        borderColor = AppColors.warning.withValues(alpha: 0.45);
+        bgColor = AppColors.warning.withValues(alpha: 0.05);
+        badgeText = '확인 필요';
+        badgeColor = AppColors.warning;
+        subMsg = '${meta.applyError} 내 지원 목록에서 확인해주세요.';
+        subColor = AppColors.warningDark;
       } else {
         borderColor = AppColors.error.withValues(alpha: 0.4);
         bgColor = AppColors.error.withValues(alpha: 0.04);
-        badgeText = '실패';
+        badgeText = '지원 불가';
         badgeColor = AppColors.error;
         subMsg = meta.applyError;
         subColor = AppColors.error;
@@ -712,11 +767,34 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
 
   Widget _buildResult(BuildContext context) {
     final targets = _submitTargets;
-    final successCount = targets.where((m) => m.applyError == null).length;
-    final failCount = targets.length - successCount;
+    final okCount = targets.where((m) => m.applyOk).length;
+    final unknownCount = targets.where((m) => m.applyUnknown).length;
+    final failCount = targets.length - okCount - unknownCount;
 
     return Column(
       children: [
+        // [R8-P3A.1] 결과를 모르는 건은 실패 칸에 넣지 않고 따로 말한다.
+        if (unknownCount > 0) ...[
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(10),
+              border:
+                  Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              '$unknownCount개 업무는 지원 결과를 확인하지 못했어요.\n'
+              '지원이 접수됐을 수 있으니 내 지원 목록에서 확인해주세요.',
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                color: AppColors.warningDark,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        ],
         if (failCount > 0) ...[
           Container(
             width: double.infinity,
@@ -731,7 +809,7 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  successCount == 0
+                  failCount == targets.length
                       ? '지원에 실패했어요'
                       : '${targets.length}개 중 $failCount개 업무 지원에 실패했어요',
                   style: ResponsiveHelper.smallStyle(context).copyWith(
@@ -740,7 +818,7 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
                   ),
                 ),
                 ...targets
-                    .where((m) => m.applyError != null)
+                    .where((m) => !m.applyOk && !m.applyUnknown)
                     .map((m) => Padding(
                           padding: EdgeInsets.only(
                               top: ResponsiveHelper.spacing(context, 4)),
@@ -761,8 +839,10 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           onPressed: () => Navigator.pop(
             context,
             MultiApplyResult(
-              hasChanges: successCount > 0,
-              appliedCount: successCount,
+              // [R8-P3A.1] 새로 기록된 건만 센다 — '이미 지원중'은 변화가 아니다.
+              hasChanges: targets.any((m) => m.outcome == ApplyOutcome.success),
+              appliedCount:
+                  targets.where((m) => m.outcome == ApplyOutcome.success).length,
             ),
           ),
         ),

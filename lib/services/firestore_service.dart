@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -764,7 +766,7 @@ class FirestoreService {
   Future<bool> syncGroupMasterStats(String toId) async => recalculateTOStats(toId);
 
   /// 구 applyToTOWithWorkType — applyToTO 위임 (toId 필수)
-  Future<bool> applyToTOWithWorkType({
+  Future<ApplyResult> applyToTOWithWorkType({
     required String uid,
     required String businessId,
     required String businessName,
@@ -788,7 +790,8 @@ class FirestoreService {
   }) async {
     if (toId == null) {
       debugPrint('⚠️ applyToTOWithWorkType: toId 없음');
-      return false;
+      // 보내지도 않았다 — 결과 불확실이 아니라 분명한 실패다.
+      return ApplyResult.failed('공고 정보를 찾을 수 없어 지원할 수 없습니다', code: 'no-to-id');
     }
     return applyToTO(
       toId: toId,

@@ -248,8 +248,11 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
 
     try {
       int appliedCount = 0;
+      // [R8-P3A.1] 단건·다건이 같은 결과 계약을 쓴다 — 첫 실패 사유를 남긴다.
+      String? firstProblem;
+      var anyUnknown = false;
       for (final work in widget.selectedWorks) {
-        final success = await _firestoreService.applyToTOWithWorkType(
+        final result = await _firestoreService.applyToTOWithWorkType(
           uid: _currentUserId!,
           businessId: widget.to.businessId,
           businessName: widget.to.businessName,
@@ -271,10 +274,20 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
           slotId: null,
           desiredStartDate: effectiveDesiredStart,
         );
-        if (success) appliedCount++;
+        if (result.isNewlyApplied) appliedCount++;
+        if (!result.isApplied) {
+          if (result.isUnknown) anyUnknown = true;
+          firstProblem ??= result.message;
+        }
       }
 
       if (!mounted) return;
+      // 결과를 모르는 건은 실패라고 말하지 않는다 — 확인이 필요하다고 말한다.
+      if (anyUnknown) {
+        ToastHelper.showWarning('일부 지원 결과를 확인하지 못했어요. 내 지원 목록에서 확인해주세요.');
+      } else if (firstProblem != null && appliedCount == 0) {
+        ToastHelper.showError(firstProblem);
+      }
       Navigator.pop(
         context,
         ApplyDialogResult(

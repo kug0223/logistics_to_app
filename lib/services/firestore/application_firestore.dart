@@ -1,5 +1,82 @@
 part of '../firestore_service.dart';
 
+/// [R8-P3A.1] 지원 한 건의 결과.
+///
+///   예전에는 bool 하나였다. 그래서 "정원이 찼다"와 "대답을 못 들었다"가
+///   같은 false 로 합쳐졌고, 화면은 둘 다 "지원에 실패했습니다"라고 말했다.
+///   그런데 타임아웃은 지원이 **기록된 뒤** 응답만 유실된 것일 수 있다.
+///
+///   그래서 세 가지를 나눈다 — 서버가 이유를 말한 것, 이미 지원돼 있던 것,
+///   그리고 결과를 모르는 것.
+enum ApplyOutcome {
+  /// 서버가 새 지원(또는 재지원)을 기록했다.
+  success,
+
+  /// 이미 살아있는 지원이 있었다 — 사용자 입장에서는 지원된 상태다.
+  alreadyApplied,
+
+  /// 서버가 거절했다. 정원·마감·권한·서류 등 이유가 분명하다.
+  failed,
+
+  /// 기록됐는지 알 수 없다. 실패라고 단정하면 안 된다.
+  unknown,
+}
+
+/// 서버의 대답을 못 들은 것으로 보는 CF 오류 코드.
+///
+///   명시적 도메인 코드(already-exists / failed-precondition / permission-denied
+///   / invalid-argument / resource-exhausted / not-found)는 여기 들어가지 않는다.
+///   그것들은 서버가 **판단해서 돌려준 답**이다.
+const Set<String> _kApplyUncertainCodes = {
+  'deadline-exceeded', // 시간 안에 답이 안 왔다 — 커밋됐을 수 있다
+  'unavailable', // 서버에 닿지 못했다
+  'cancelled', // 전송이 끊겼다
+  'internal', // 서버가 예기치 않게 죽었다 — 커밋 전후를 알 수 없다
+  'unknown',
+};
+
+class ApplyResult {
+  const ApplyResult._(this.outcome, this.message,
+      {this.code, this.applicationId, this.isReactivation = false});
+
+  final ApplyOutcome outcome;
+
+  /// 사용자에게 그대로 보여줘도 되는 문장.
+  final String message;
+
+  /// 분류 근거로 남기는 서버 코드(표시용 아님).
+  final String? code;
+  final String? applicationId;
+  final bool isReactivation;
+
+  factory ApplyResult.success({String? applicationId, bool isReactivation = false}) =>
+      ApplyResult._(ApplyOutcome.success, '지원이 완료되었습니다',
+          applicationId: applicationId, isReactivation: isReactivation);
+
+  factory ApplyResult.alreadyApplied(String message) =>
+      ApplyResult._(ApplyOutcome.alreadyApplied, message, code: 'already-exists');
+
+  factory ApplyResult.failed(String message, {String? code}) =>
+      ApplyResult._(ApplyOutcome.failed, message, code: code);
+
+  factory ApplyResult.unknown(String message, {String? code}) =>
+      ApplyResult._(ApplyOutcome.unknown, message, code: code);
+
+  /// 지원이 canonical 하게 성립한 상태인가 — 새로 기록했든, 이미 있었든.
+  bool get isApplied =>
+      outcome == ApplyOutcome.success || outcome == ApplyOutcome.alreadyApplied;
+
+  /// 이번 호출이 **새로** 기록한 것인가 (건수 집계용).
+  bool get isNewlyApplied => outcome == ApplyOutcome.success;
+
+  bool get isUnknown => outcome == ApplyOutcome.unknown;
+
+  /// [R8-P3A.1] canonical 조회로 실제 기록됐음을 확인했을 때 결과를 정정한다.
+  ApplyResult reconciledAsApplied() =>
+      ApplyResult._(ApplyOutcome.success, '지원이 완료되었습니다',
+          code: code, applicationId: applicationId);
+}
+
 // ═══════════════════════════════════════════════════════════
 // 지원서 관리 (Application Management) — slots 구조 기반
 // ═══════════════════════════════════════════════════════════
@@ -316,12 +393,65 @@ extension ApplicationFirestore on FirestoreService {
   // 지원하기
   // ───────────────────────────────────────────────────────
 
+  /// [R8-P3A.1] 결과를 못 들은 지원을 canonical 상태로 되묻는다.
+  ///
+  ///   응답을 받지 못했다고 해서 지원이 안 된 것은 아니다. 문서 id 를
+  ///   클라이언트가 계산해 맞춰보는 방식은 쓰지 않는다 — 서버는 초대·제안이
+  ///   만든 기존 문서로 수렴시키거나 서버가 정한 wdId 로 id 를 만들기 때문에
+  ///   클라이언트 계산과 다를 수 있다. 그래서 **관계**로 찾는다.
+  ///   캐시를 쓰지도, 채우지도 않는다 — 되물을 때 옛 값을 보면 의미가 없다.
+  ///   공고 범위로 좁혀 읽는 이유: 전체 목록 조회는 정렬 없이 200건 상한이라
+  ///   지원이 많은 근로자에게는 방금 만든 건이 빠질 수 있다.
+  Future<List<ApplicationModel>> getMyApplicationsForTOFresh(String toId) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetMyApplications',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final result = await callable.call<Map<String, dynamic>>({
+      'toId': toId,
+      'limit': 200,
+    });
+    return (result.data['applications'] as List? ?? [])
+        .whereType<Map>()
+        .map((m) {
+          final raw = _cfHydrate(Map<String, dynamic>.from(m));
+          final id = raw.remove('id') as String? ?? '';
+          return ApplicationModel.tryFromMap(raw, id);
+        })
+        .whereType<ApplicationModel>()
+        .toList();
+  }
+
+  /// [R8-P3A.1] 이 지원이 canonical 하게 살아 있는가.
+  ///
+  ///   멀티 지원 시트가 '이미 지원중'을 가려내는 기준과 같은 관계식이다.
+  bool hasLandedApplication(
+    List<ApplicationModel> mine, {
+    required String toId,
+    String? slotId,
+    required String workType,
+  }) {
+    const live = [
+      AppStatus.pending,
+      AppStatus.contractPending,
+      AppStatus.confirmed,
+    ];
+    return mine.any((app) {
+      final sameSlot = (slotId == null || slotId.isEmpty)
+          ? (app.slotId == null || app.slotId!.isEmpty)
+          : app.slotId == slotId;
+      return app.toId == toId &&
+          app.selectedWorkType == workType &&
+          sameSlot &&
+          live.contains(app.status);
+    });
+  }
+
   /// 공고 지원 (flex: slotId 필수, contract: slotId null)
   /// [CF 이전 2026-07-14] callableApplyToTO — 검증+쓰기+카운터 증감 원자화
   ///   이전 이유: 클라이언트 runTransaction(검증)과 batch(쓰기) 분리로 TOCTOU 가능
   ///             서류/블랙리스트/제재/시간충돌 검증이 클라이언트에서만 이루어져 위조 가능
   /// [A02-FIX] 복합 docId: CF에서 동일하게 계산 — 동시 지원 시 트랜잭션 충돌로 하나만 성공
-  Future<bool> applyToTO({
+  Future<ApplyResult> applyToTO({
     required String toId,
     String? slotId,
     required String businessId,
@@ -343,7 +473,12 @@ extension ApplicationFirestore on FirestoreService {
     List<String>? workDays,
     DateTime? desiredStartDate,
   }) async {
-    NetworkChecker.instance.assertOnline('지원하려면 인터넷 연결이 필요합니다.');
+    try {
+      NetworkChecker.instance.assertOnline('지원하려면 인터넷 연결이 필요합니다.');
+    } on NetworkOfflineException catch (e) {
+      // 보내지도 않았다 — 결과가 불확실한 경우와 구분한다.
+      return ApplyResult.failed(e.message, code: 'offline');
+    }
     GlobalLoadingController.show('지원 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -384,20 +519,35 @@ extension ApplicationFirestore on FirestoreService {
       invalidateMyApplicationsCache(uid);
       // newApplication 알림은 callableApplyToTO CF 내부에서 Admin SDK로 발송됨 (클라이언트 불필요)
       debugPrint('✅ ${isReactivation ? "재지원" : "지원"} 완료: $toTitle / $selectedWorkType');
-      return true;
+      return ApplyResult.success(
+        applicationId: data['applicationId'] as String?,
+        isReactivation: isReactivation,
+      );
     } on FirebaseFunctionsException catch (e) {
+      // [R8-P3A.1] 서버가 이유를 말해준 것과, 대답 자체를 못 들은 것은 다르다.
+      //
+      //   서버는 지원을 커밋한 뒤 관리자 알림을 보낸다. 그 알림은 try/catch 로
+      //   감싸여 있어 실패해도 success 를 돌려준다 — 여기까지는 안전하다.
+      //   문제는 **대답이 오지 않는 경우**다. 타임아웃·연결 끊김이면 지원은
+      //   이미 기록됐을 수 있는데 클라이언트는 알 길이 없다.
+      //   그걸 "지원 실패"라고 말하면 사실이 아닌 말을 하는 것이다.
       debugPrint('❌ 지원 CF 오류: ${e.code} / ${e.message}');
       final msg = e.message ?? '지원 중 오류가 발생했습니다.';
-      if (e.code == 'already-exists') {
-        ToastHelper.showWarning(msg);
-      } else {
-        ToastHelper.showError(msg);
+      if (_kApplyUncertainCodes.contains(e.code)) {
+        return ApplyResult.unknown(
+            '지원 결과를 확인하지 못했어요.', code: e.code);
       }
-      return false;
+      if (e.code == 'already-exists') {
+        return ApplyResult.alreadyApplied(msg);
+      }
+      return ApplyResult.failed(msg, code: e.code);
+    } on TimeoutException catch (e) {
+      debugPrint('❌ 지원 타임아웃: $e');
+      return ApplyResult.unknown('지원 결과를 확인하지 못했어요.', code: 'timeout');
     } catch (e) {
+      // 정체를 모르는 실패다. 보냈는지조차 단정할 수 없으므로 실패로 못 박지 않는다.
       debugPrint('❌ 지원 실패: $e');
-      ToastHelper.showError('지원 중 오류가 발생했습니다.');
-      return false;
+      return ApplyResult.unknown('지원 결과를 확인하지 못했어요.', code: 'unknown');
     } finally {
       GlobalLoadingController.hide();
     }

@@ -77,7 +77,7 @@ void main() {
 
   group('MA-2 — 각 지원은 서로 독립이다 (병렬화 근거)', () {
     test('MA-20 다음 호출이 앞 호출 결과를 쓰지 않는다', () {
-      final one = _sliceOf(code, 'Future<bool> _applyOne(String uid, _ItemMeta meta) {',
+      final one = _sliceOf(code, 'Future<ApplyResult> _applyOne(String uid, _ItemMeta meta) {',
           'Future<void> _submit() async {');
       // payload 는 meta.item 과 widget.to 만으로 만들어진다
       expect(_flat(one), contains('final work = meta.item.work;'));
@@ -103,8 +103,9 @@ void main() {
 
   group('MA-3 — 부분 실패가 나머지를 취소하지 않는다', () {
     test('MA-30 각 항목이 자기 오류를 자기 안에서 끝낸다', () {
-      expect(sf, contains('String? error;'));
-      expect(sf, contains('} catch (e) { error = _friendlyError(e); }'));
+      // [R8-P3A.1] 결과가 bool 에서 ApplyResult 로 바뀌었다 — 격리 의도는 같다.
+      expect(sf, contains('ApplyResult result;'));
+      expect(sf, contains('} catch (e) { result = ApplyResult.unknown(_friendlyError(e)); }'));
     });
 
     test('MA-31 실패해도 루프가 다음 항목으로 넘어간다', () {
@@ -118,13 +119,12 @@ void main() {
     test('MA-32 결과는 선택 순서 그대로 남는다', () {
       // 결과를 targets[i] 의 meta 에 직접 기록한다 — 정렬이 뒤섞이지 않는다
       expect(sf, contains('final meta = targets[i];'));
-      expect(sf, contains('meta.submitted = true; meta.applyError = error;'));
+      expect(sf, contains('meta.submitted = true; meta.outcome = result.outcome;'));
     });
 
     test('MA-33 성공 건수는 서버 응답으로만 센다', () {
-      expect(sf, contains('final success = await _applyOne(user.uid, meta);'));
-      expect(sf, contains("if (!success) error = '지원에 실패했습니다';"));
-      expect(sf, contains('if (error == null) successCount++;'));
+      expect(sf, contains('result = await _applyOne(user.uid, meta);'));
+      expect(sf, contains('if (result.isNewlyApplied) successCount++;'));
     });
 
     test('MA-34 부분 결과 화면이 유지된다', () {
@@ -136,7 +136,7 @@ void main() {
   group('MA-4 — 시트를 닫아도 보낸 지원은 취소되지 않는다', () {
     test('MA-40 dispose 가 남은 항목 전송을 중단시키지 않는다', () {
       // 예전에는 루프 안에서 `if (!mounted) return;` 으로 통째로 빠져나갔다
-      expect(sf, contains('if (!mounted) continue;'));
+      expect(sf, contains('if (!mounted) { meta.outcome = result.outcome; continue; }'));
       final worker = _sliceOf(submit, 'Future<void> worker() async {',
           'await Future.wait(List.generate(');
       expect(worker.contains('if (!mounted) return;'), false);
@@ -146,7 +146,7 @@ void main() {
       final worker = _sliceOf(submit, 'Future<void> worker() async {',
           'await Future.wait(List.generate(');
       final at = worker.indexOf('setState(');
-      expect(at, greaterThan(worker.indexOf('if (!mounted) continue;')));
+      expect(at, greaterThan(worker.indexOf('if (!mounted) {')));
     });
 
     test('MA-42 중복 제출 가드가 그대로다', () {
@@ -165,7 +165,7 @@ void main() {
     });
 
     test('MA-51 결과는 pop 한 번으로 호출자에게 넘긴다', () {
-      expect(sf, contains('MultiApplyResult(hasChanges: true, appliedCount: successCount)'));
+      expect(sf, contains('MultiApplyResult( hasChanges: successCount > 0, appliedCount: successCount)'));
       expect("Navigator.pop(".allMatches(submit).length, 1);
     });
   });
