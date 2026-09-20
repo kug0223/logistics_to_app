@@ -108,6 +108,14 @@ class _PayrollPaymentDashboardScreenState
   List<PaymentChangeRequestModel>     _changeRequests    = [];
   List<InterimSettlementRequestModel> _settlementRequests = [];
 
+  /// [R8-P1B] 요청 탭 두 개는 첫 화면을 막지 않는다.
+  ///   받기 전에는 "없음"이 아니라 "모름"이다 — 배지도 목록도 그렇게 말한다.
+  bool _requestTabsInFlight = false;
+  bool _changeRequestsLoaded = false;
+  bool _settlementsLoaded = false;
+  String? _changeRequestsError;
+  String? _settlementRequestsError;
+
   /// [PHASE-2C] showAllOutstanding 모드용 — 전 기간 미이체 기록
   List<AttendanceModel> _outstandingAll = [];
   bool _outstandingLoading = false;
@@ -305,6 +313,10 @@ class _PayrollPaymentDashboardScreenState
     _fetchInProgress = true;
     if (!_isLoading) setState(() => _isLoading = true);
     try {
+      // [R8-P1B] 첫 화면을 가로막는 것은 급여 자체뿐이다.
+      //   변경요청·중간정산 두 CF가 각각 500ms 넘게 걸리는데, 급여 조회는
+      //   50ms대다. 넷을 함께 기다리는 동안 화면 전체가 스피너였고, 그 시간을
+      //   정한 것은 정작 지금 보고 있지 않은 탭의 데이터였다.
       final results = await Future.wait([
         _payService.getPayrollRecords(
             businessId: widget.businessId,
@@ -314,8 +326,6 @@ class _PayrollPaymentDashboardScreenState
             businessId: widget.businessId,
             year: _selectedYear, month: _selectedMonth,
             wageStatus: AttendanceModel.wageTransferred),
-        _payService.getPendingChangeRequests(widget.businessId),
-        _payService.getPendingSettlementRequests(widget.businessId),
       ]);
 
       final confirmedPage   = results[0] as PayrollPage<AttendanceModel>;
@@ -328,8 +338,6 @@ class _PayrollPaymentDashboardScreenState
       if (!mounted) return;
       setState(() {
         _allRecords         = allRecs;
-        _changeRequests     = results[2] as List<PaymentChangeRequestModel>;
-        _settlementRequests = results[3] as List<InterimSettlementRequestModel>;
         _selectedIds.clear();
         _batchMode = false;
         _recomputeDerived(); // H1: 파생 캐시 갱신
@@ -350,6 +358,51 @@ class _PayrollPaymentDashboardScreenState
       // 연/월 변경으로 새 로드 요청이 밀린 경우 최신 상태로 재실행
       if (_pendingReload) _load();
     }
+    // [R8-P1B] 화면이 그려진 뒤에 요청 목록을 받는다.
+    //   탭 배지가 이 값을 쓰므로 아예 안 부르지는 않는다 — 다만 급여 화면이
+    //   나오는 것을 이 둘이 기다리게 하지 않는다.
+    unawaited(_loadRequestTabs());
+  }
+
+  /// [R8-P1B] 변경요청·중간정산 — 두 요청 탭의 데이터.
+  ///
+  ///   급여 목록과 달리 첫 화면을 막지 않는다. 둘은 서로도 독립이라
+  ///   한쪽이 실패해도 다른 쪽 목록과 배지는 그대로 온다.
+  ///   받기 전에는 배지를 그리지 않는다 — 모르는 것을 0건이라고 하지 않는다.
+  Future<void> _loadRequestTabs() async {
+    if (!mounted) return;
+    if (_requestTabsInFlight) return;   // 빠른 왕복에도 중복 호출하지 않는다
+    setState(() {
+      _requestTabsInFlight = true;
+      _changeRequestsError = null;
+      _settlementRequestsError = null;
+    });
+    await Future.wait([
+      _payService.getPendingChangeRequests(widget.businessId).then((v) {
+        if (!mounted) return;
+        setState(() {
+          _changeRequests = v;
+          _changeRequestsLoaded = true;
+        });
+      }).catchError((Object e) {
+        debugPrint('❌ 지급방식 변경요청 로드 실패: $e');
+        if (!mounted) return;
+        setState(() => _changeRequestsError = '변경 요청을 불러오지 못했습니다.');
+      }),
+      _payService.getPendingSettlementRequests(widget.businessId).then((v) {
+        if (!mounted) return;
+        setState(() {
+          _settlementRequests = v;
+          _settlementsLoaded = true;
+        });
+      }).catchError((Object e) {
+        debugPrint('❌ 중간정산 요청 로드 실패: $e');
+        if (!mounted) return;
+        setState(() => _settlementRequestsError = '중간정산 요청을 불러오지 못했습니다.');
+      }),
+    ]);
+    if (!mounted) return;
+    setState(() => _requestTabsInFlight = false);
   }
 
   // ─── [PHASE-2C] 전체 미이체 로드 ─────────────────────────────────────────────
@@ -1695,13 +1748,18 @@ class _PayrollPaymentDashboardScreenState
                           badgeColor: AppColors.error,
                           urgent: _pendingIsUrgent)),   // H1: 캐시
                       Tab(child: AppTabLabel(label: '이체현황')),
+                      // [R8-P1B] 아직 못 받았으면 배지를 그리지 않는다.
+                      //   count: null 은 배지 자체를 숨긴다 — 0건이라고
+                      //   말하지 않는 것과 말하는 것은 다르다.
                       Tab(child: AppTabLabel(
                           label: '변경요청',
-                          count: _changeRequests.length,
+                          count: _changeRequestsLoaded
+                              ? _changeRequests.length : null,
                           badgeColor: AppColors.info)),
                       Tab(child: AppTabLabel(
                           label: '중간정산',
-                          count: _settlementRequests.length,
+                          count: _settlementsLoaded
+                              ? _settlementRequests.length : null,
                           badgeColor: AppColors.grey500)),
                     ],
                   ),
@@ -2486,6 +2544,21 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── 변경요청 탭 ──────────────────────────────────────────
   Widget _buildChangeRequestTab() {
+    // [R8-P1B] 아직 못 받은 것과 없는 것은 다른 화면이다.
+    if (!_changeRequestsLoaded) {
+      if (_requestTabsInFlight) {
+        return const LoadingWidget(message: '변경 요청 불러오는 중...');
+      }
+      return AppEmptyState(
+        icon: Icons.cloud_off_outlined,
+        iconColor: AppColors.grey500,
+        title: _changeRequestsError ?? '변경 요청을 불러오지 못했습니다.',
+        action: TextButton(
+          onPressed: () => unawaited(_loadRequestTabs()),
+          child: const Text('다시 시도'),
+        ),
+      );
+    }
     if (_changeRequests.isEmpty) {
       return const AppEmptyState(
           icon: Icons.swap_horiz_outlined, title: '지급방식 변경 요청이 없습니다');
@@ -2508,6 +2581,21 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── 중간정산 탭 ──────────────────────────────────────────
   Widget _buildSettlementTab() {
+    // [R8-P1B] 아직 못 받은 것과 없는 것은 다른 화면이다.
+    if (!_settlementsLoaded) {
+      if (_requestTabsInFlight) {
+        return const LoadingWidget(message: '중간정산 요청 불러오는 중...');
+      }
+      return AppEmptyState(
+        icon: Icons.cloud_off_outlined,
+        iconColor: AppColors.grey500,
+        title: _settlementRequestsError ?? '중간정산 요청을 불러오지 못했습니다.',
+        action: TextButton(
+          onPressed: () => unawaited(_loadRequestTabs()),
+          child: const Text('다시 시도'),
+        ),
+      );
+    }
     // [PHASE-2C.2] Home Action 진입 시 PENDING 전용 필터
     // 일반 탭 진입(showPendingSettlementOnly=false)은 PENDING+APPROVED 그대로
     final displayList = widget.showPendingSettlementOnly
