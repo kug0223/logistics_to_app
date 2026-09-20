@@ -1139,6 +1139,13 @@ const TAX_ID_TYPE_FOREIGN = "FOREIGN_REGISTRATION_NUMBER";
 
 const TAX_ID_SOURCE_ONBOARDING = "WORKER_DOCUMENT_ONBOARDING";
 const TAX_ID_SOURCE_FOREIGN_SIGNUP = "FOREIGN_SIGNUP";
+/**
+ * [PII-B4-R1.4.1 §15] 수집이 꺼져 있던 때 가입한 외국인이 뒤늦게 등록한 경우.
+ *
+ *   가입 경로와 구분해 둔다 — 같은 값이라도 "언제 확보했는가"가 다르고,
+ *   나중에 이 모집단만 따로 봐야 할 일이 생긴다.
+ */
+const TAX_ID_SOURCE_FOREIGN_RECOVERY = "FOREIGN_RECOVERY";
 
 // [§7·§10] 서버 전용 secret. 클라이언트 ENCRYPT_KEY / FOREIGN_HMAC_SECRET과
 //   **모두 다른 값**이어야 한다. 같으면 외국인 uniqueness 지문과 세무 지문이
@@ -1263,25 +1270,64 @@ function srvNormalizeTaxIdentifier(raw: unknown): string | null {
 }
 
 /**
- * [§19] 주민등록번호 검증부호.
+ * [PII-B4-R1.4.1 §2·§3·§5] 구 주민등록번호 검증부호 — **진단용이다.**
  *
  *   앞 12자리에 가중치 2,3,4,5,6,7,8,9,2,3,4,5를 곱해 더하고
- *   `(11 - (합 % 11)) % 10` 이 13번째 자리와 같아야 한다.
+ *   `(11 - (합 % 11)) % 10` 이 13번째 자리와 같은지 본다.
  *
- *   ⚠️ 2020년 10월 주민등록번호 부여체계 개편으로 뒤 6자리가 임의번호가
- *   되면서, 그 이후 **새로 부여된** 번호에는 이 검증부호가 성립하지 않을
- *   수 있다. 만 19세 이상 사용자는 대부분 개편 이전에 번호를 받았지만,
- *   번호 변경제도로 새 번호를 받은 사람은 예외일 수 있다.
- *   이 한계는 보고서에 명시한다 — 조용히 통과시키지도, 조용히 막지도 않는다.
+ *   ── 왜 더 이상 막지 않는가 ────────────────────────────────
+ *
+ *   2020년 10월 부여체계 개편 이후의 번호는 뒤 6자리가 **임의번호**다.
+ *   생년월일 6 + 성별·세기 1 + 무작위 6. 그러므로 이 검증부호는 현재
+ *   유효한 모든 번호에 성립하는 규칙이 **아니다**.
+ *
+ *   R1.4는 이것을 hard gate로 썼다. 그러면 번호 변경제도로 새 번호를 받은
+ *   사람이나 개편 이후 부여자가 **정상 번호를 들고 와도 거부당한다.**
+ *   본인인증과 앞 7자리가 일치하는 사람을 "번호가 틀렸다"고 돌려보내는
+ *   것은 검증이 아니라 고장이다.
+ *
+ *   그래서 결과는 기록만 하고 판정에 쓰지 않는다. 참이면 구 규칙과
+ *   맞아떨어진다는 사실 하나이고, 거짓은 아무 뜻도 아니다.
  *
  * @param {string} n 정규화 13자리
- * @return {boolean} 검증부호 일치 여부
+ * @return {boolean} 구 규칙 검증부호 일치 여부 (등록 가부와 무관)
  */
-function srvKoreanRrnChecksumOk(n: string): boolean {
+function srvKoreanRrnLegacyChecksumOk(n: string): boolean {
   const w = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
   let sum = 0;
   for (let i = 0; i < 12; i++) sum += Number(n[i]) * w[i];
   return ((11 - (sum % 11)) % 10) === Number(n[12]);
+}
+
+/**
+ * [§4] 구조 검증 — 실재하는 날짜인가, 내국인 성별·세기 코드인가.
+ *
+ *   아래 PASS 대조가 사실상 같은 것을 확인하지만, 기준(birthDate·gender)이
+ *   없는 계정에서도 "형식이 틀렸다"와 "대조할 수 없다"를 구분해 말하기
+ *   위해 여기서 먼저 본다.
+ *
+ * @param {string} n 정규화 13자리
+ * @return {string | null} 오류 문구. 형식이 맞으면 null.
+ */
+function srvKoreanRrnStructureError(n: string): string | null {
+  const mm = Number(n.slice(2, 4));
+  const dd = Number(n.slice(4, 6));
+  const code = Number(n[6]);
+  // 내국인: 1·2 = 1900년대, 3·4 = 2000년대.
+  if (code < 1 || code > 4) {
+    return "주민등록번호 뒷자리 첫 숫자가 올바르지 않습니다.";
+  }
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) {
+    return "주민등록번호 앞자리의 생년월일이 올바르지 않습니다.";
+  }
+  // 2월 30일 같은 값을 통과시키지 않는다 — 실재하는 날짜여야 한다.
+  const year = (code === 3 || code === 4) ?
+    2000 + Number(n.slice(0, 2)) : 1900 + Number(n.slice(0, 2));
+  const d = new Date(Date.UTC(year, mm - 1, dd));
+  if (d.getUTCMonth() + 1 !== mm || d.getUTCDate() !== dd) {
+    return "주민등록번호 앞자리의 생년월일이 올바르지 않습니다.";
+  }
+  return null;
 }
 
 /**
@@ -26770,14 +26816,13 @@ async function srvValidateKoreanTaxIdentifierOrThrow(
   if (!normalized) {
     throw new HttpsError("invalid-argument", "주민등록번호 13자리를 입력해주세요.");
   }
-  // [§20] OCR 결과는 여기 오지 않는다. 등록 가부는 서버가 확인할 수 있는
-  //   것만으로 정한다 — 형식, 본인인증 정보와의 일치, 검증부호.
+  // [§4] hard gate는 여기까지다 — 구조, 그리고 본인인증 정보와의 일치.
+  //   [§2·§5] 구 검증부호는 더 이상 막지 않는다. 개편 이후 번호에는
+  //   성립하지 않는 규칙이라, 그것으로 거부하면 정상 번호가 거부된다.
+  const structural = srvKoreanRrnStructureError(normalized);
+  if (structural) throw new HttpsError("invalid-argument", structural);
   const mismatch = srvKoreanRrnMatchesPassIdentity(normalized, userData);
   if (mismatch) throw new HttpsError("failed-precondition", mismatch);
-  if (!srvKoreanRrnChecksumOk(normalized)) {
-    throw new HttpsError("invalid-argument",
-      "주민등록번호를 다시 확인해주세요. 입력한 번호가 올바르지 않습니다.");
-  }
   return normalized;
 }
 
@@ -26827,6 +26872,9 @@ export const callableRegisterTaxIdentity = onCall(
         encryptedIdentifier: encrypted,
         identifierFingerprint: fingerprint,
         registrationSource: TAX_ID_SOURCE_ONBOARDING,
+        // [§5] 구 검증부호 결과는 **근거로만** 남는다. 거짓이어도 정상
+        //   등록이다 — 개편 이후 번호에는 그 규칙이 성립하지 않는다.
+        legacyChecksumOk: srvKoreanRrnLegacyChecksumOk(normalized),
         documentMatchOutcome: regMatch,
         documentMatchIdDocumentVersion: regEvaluatedIdV,
         registeredAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -26888,6 +26936,7 @@ export const callableUpdateTaxIdentity = onCall(
       tx.update(ref, {
         encryptedIdentifier: encrypted,
         identifierFingerprint: fingerprint,
+        legacyChecksumOk: srvKoreanRrnLegacyChecksumOk(normalized),
         documentMatchOutcome: updMatch,
         documentMatchIdDocumentVersion: updEvaluatedIdV,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -26907,6 +26956,98 @@ export const callableUpdateTaxIdentity = onCall(
   }
 );
 
+// ── callableRecoverForeignTaxIdentity ─────────────────────────
+// [PII-B4-R1.4.1 §10~§21] 수집이 꺼져 있을 때 가입한 외국인의 복구 경로.
+//
+//   ── 왜 backfill이 아니라 재입력인가 ─────────────────────────
+//
+//   서버는 외국인등록번호 원문을 저장한 적이 없다. 남아 있는 것은
+//   HMAC 지문뿐이고, 지문은 되돌릴 수 없다(§11). 그러므로 서버가 혼자
+//   채울 수 있는 값이 아니다 — 본인이 다시 입력하는 수밖에 없다.
+//
+//   ── 왜 generic 등록이 아닌가 ────────────────────────────────
+//
+//   외국인에게 `callableRegisterTaxIdentity`를 열어 주면 신원 지문과
+//   세무 번호가 **다른 값**이 될 수 있다. 같은 사람에 대해 두 컬렉션이
+//   서로 다른 번호를 말하게 된다. 그래서 여기서는 입력값을 기존 신원
+//   지문과 **대조해서 일치할 때만** 받는다(§14·§17).
+//
+//   틀리면 아무것도 쓰지 않는다. 신원을 덮어쓰지도, 세무를 만들지도
+//   않는다 — 번호가 바뀐 것이라면 그것은 신원 재확인의 일이지
+//   세무정보 정정이 아니다(§16).
+export const callableRecoverForeignTaxIdentity = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    // [§20] UI를 감춰 둔 것과 무관하게 서버에서 다시 막는다.
+    await srvAssertTaxIdentityCollectionEnabled();
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+      throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
+    }
+    const ud = userSnap.data()!;
+    const ownFp = ud["foreignIdentityFingerprint"] as string | undefined;
+    if (!ownFp) {
+      // 외국인 신원이 없는 계정은 이 경로의 대상이 아니다.
+      throw new HttpsError("failed-precondition",
+        "외국인 신원 정보가 없어 이 방식으로 등록할 수 없습니다.");
+    }
+
+    const raw = (request.data as {rawForeignIdentifier?: unknown})
+      ?.rawForeignIdentifier;
+    const normalized = normalizeForeignId(
+      typeof raw === "string" ? raw : "");
+    if (!normalized) {
+      throw new HttpsError("invalid-argument", FOREIGN_ID_FORMAT_MESSAGE);
+    }
+
+    // [§14] 신원 지문과 **정확히** 같아야 한다. 같은 secret, 같은 규칙.
+    if (computeForeignIdFingerprint(normalized) !== ownFp) {
+      // [§16·§21] 무엇이 틀렸는지 번호로 말하지 않는다. 상태만 말한다.
+      console.warn(`[taxRecovery] 신원 지문 불일치 | uid=${uid} | idLen=${normalized.length}`);
+      throw new HttpsError("failed-precondition",
+        "입력한 외국인등록번호가 가입 시 등록한 번호와 다릅니다. " +
+        "번호가 변경되었다면 고객센터로 문의해주세요.");
+    }
+
+    // [§17] 값 truth는 같고, 지문은 목적별로 다른 secret을 쓴다.
+    const taxFp = srvTaxIdentifierFingerprint(normalized);
+    const encrypted = srvEncryptTaxIdentifier(normalized);
+
+    const ref = db.collection(TAX_ID_COL).doc(uid);
+    const outcome = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(ref);
+      if (cur.exists) {
+        // [§19] 이미 있으면 그대로 둔다. 같은 번호이므로 지문도 같다.
+        return "already_registered";
+      }
+      tx.set(ref, {
+        uid,
+        identifierType: TAX_ID_TYPE_FOREIGN,
+        encryptedIdentifier: encrypted,
+        identifierFingerprint: taxFp,
+        registrationSource: TAX_ID_SOURCE_FOREIGN_RECOVERY,
+        // 등록증 대조는 가입 때 OCR 보조로만 했다 — 판정으로 올리지 않는다.
+        documentMatchOutcome: DOC_FIELD_UNASSESSED,
+        documentMatchIdDocumentVersion: null,
+        registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return "created";
+    });
+    if (outcome === "created") {
+      await srvLogTaxIdentityAudit({
+        actorUid: uid, targetUid: uid, action: "FOREIGN_RECOVERY",
+        identifierType: TAX_ID_TYPE_FOREIGN, newFingerprint: taxFp,
+      });
+    }
+    // [§21] 응답에 번호를 담지 않는다.
+    return {success: true, outcome};
+  }
+);
+
 // ── callableGetTaxIdentityStatus ──────────────────────────────
 // [§26·§27] 본인이 자기 등록 상태를 본다. **번호는 돌려주지 않는다.**
 //   수집 활성화 여부와 무관하게 동작한다 — 상태를 못 읽으면 화면이
@@ -26921,8 +27062,15 @@ export const callableGetTaxIdentityStatus = onCall(
       srvIsTaxIdentityCollectionEnabled(),
     ]);
     if (!snap.exists) {
-      return {registered: false, identifierType: null, updatedAtMs: null,
-        collectionEnabled: enabled};
+      // [§12] 외국인인데 세무 레코드가 없다 — 수집이 꺼져 있던 때 가입한
+      //   경우다. 그때만 복구 CTA를 띄운다. 정상 가입자는 이 상태가 아니다.
+      const u = await db.collection("users").doc(uid).get();
+      return {
+        registered: false, identifierType: null, updatedAtMs: null,
+        collectionEnabled: enabled,
+        foreignRecoveryAvailable:
+          enabled && !!(u.data() ?? {})["foreignIdentityFingerprint"],
+      };
     }
     // [§33] 대조 결과도 알려준다 — 화면이 "확인 필요"를 말할 수 있어야 한다.
     //   번호는 어떤 형태로도 나가지 않는다.
@@ -26934,6 +27082,7 @@ export const callableGetTaxIdentityStatus = onCall(
         (snap.get("updatedAt") as admin.firestore.Timestamp | undefined)
           ?.toMillis?.() ?? null,
       collectionEnabled: enabled,
+      foreignRecoveryAvailable: false,
       documentMatch: srvDocFieldOutcome(snap.get("documentMatchOutcome")),
       documentMatchCurrent:
         srvHasCurrentTaxDocumentMismatch(uSnap.data(), snap.data()) ||

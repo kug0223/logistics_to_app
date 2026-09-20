@@ -172,9 +172,12 @@ void main() {
       expect(cf, isNot(contains('new Set(["5", "6", "7", "8", "9"]')));
     });
 
-    test('12 precheck와 finalize가 같은 관문을 쓴다', () {
-      expect('normalizeForeignId('.allMatches(cf).length, 3,
-          reason: '정의 1 + precheck 1 + finalize 1');
+    test('12 외국인 번호가 들어오는 모든 문이 같은 관문을 쓴다', () {
+      // [PII-B4-R1.4.1] 세무 복구 경로가 네 번째 사용처로 추가됐다.
+      //   번호를 받는 문이 늘어날 때마다 이 수가 늘어야 한다 — 늘지 않으면
+      //   어딘가가 정규화를 건너뛰었다는 뜻이다.
+      expect('normalizeForeignId('.allMatches(cf).length, 4,
+          reason: '정의 1 + precheck 1 + finalize 1 + 세무 복구 1');
     });
 
     test('13 거부 사유를 사용자에게 설명한다', () {

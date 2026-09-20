@@ -1128,6 +1128,12 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     return s.collectionEnabled || TaxIdentityService.collectionEnabledLocally;
   }
 
+  /// [PII-B4-R1.4.1 §12] 외국인인데 세무 레코드가 없다 — 수집이 꺼져 있던
+  ///   때 가입한 계정이다. 이때만 한 번 등록할 길을 연다. 정상 가입자는
+  ///   이미 등록돼 있으므로 이 상태가 되지 않는다.
+  bool get _needsForeignTaxRecovery =>
+      _taxStatus?.foreignRecoveryAvailable == true;
+
   ({String label, Color color, IconData icon}) _taxStatusChip() {
     final s = _taxStatus;
     if (s == null || s.loadFailed) {
@@ -1180,7 +1186,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                             .copyWith(fontWeight: FontWeight.w600)),
                     Text(
                       isForeign
-                          ? '가입 시 등록됨 — 외국인등록번호'
+                          ? (_needsForeignTaxRecovery
+                              ? '가입 시 확인한 외국인등록번호를 등록해주세요'
+                              : '가입 시 등록됨 — 외국인등록번호')
                           : '소득신고에 쓰이는 주민등록번호',
                       style: ResponsiveHelper.tinyStyle(context,
                           color: isForeign && registered
@@ -1221,7 +1229,14 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           ),
 
           // [§28] 외국인은 수정 CTA 없음 — 변경은 신원 재확인이 함께 가야 한다.
-          if (isForeign)
+          //   [R1.4.1 §12] 단 하나의 예외: 수집이 꺼져 있던 때 가입해
+          //   세무 레코드가 없는 계정은 여기서 한 번 등록할 수 있다.
+          if (isForeign && _needsForeignTaxRecovery)
+            _flatPrimaryButton(
+              text: '세무정보 등록하기',
+              onPressed: _isLoading ? null : () => _openTaxIdentitySheet(user),
+            )
+          else if (isForeign)
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -1272,7 +1287,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     final saved = await DialogHelper.showSheet<bool>(
       context,
       isScrollControlled: true,
-      builder: (_) => _TaxIdentitySheet(user: user, isUpdate: registered),
+      builder: (_) => _TaxIdentitySheet(
+        user: user,
+        isUpdate: registered,
+        isForeignRecovery: _needsForeignTaxRecovery,
+      ),
     );
     if (saved == true) {
       _hasChanges = true;
@@ -1982,10 +2001,19 @@ class _BankEditDialogState extends State<_BankEditDialog> {
 //   제출 후에는 컨트롤러를 비우고 시트를 닫는다(§29).
 // ══════════════════════════════════════════════════════════════
 class _TaxIdentitySheet extends StatefulWidget {
-  const _TaxIdentitySheet({required this.user, required this.isUpdate});
+  const _TaxIdentitySheet({
+    required this.user,
+    required this.isUpdate,
+    this.isForeignRecovery = false,
+  });
 
   final UserModel user;
   final bool isUpdate;
+
+  /// [R1.4.1] 수집이 꺼져 있을 때 가입한 외국인의 1회 복구인가.
+  ///   서버가 입력값을 가입 때 만든 신원 지문과 대조하므로,
+  ///   여기서 별도 OCR 대조를 붙이지 않는다 — 그쪽이 더 강한 확인이다.
+  final bool isForeignRecovery;
 
   @override
   State<_TaxIdentitySheet> createState() => _TaxIdentitySheetState();
@@ -2062,9 +2090,11 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
       _error = null;
     });
     final value = _entered;
-    final err = widget.isUpdate
-        ? await TaxIdentityService.update(value, documentMatch: _match)
-        : await TaxIdentityService.register(value, documentMatch: _match);
+    final err = widget.isForeignRecovery
+        ? await TaxIdentityService.recoverForeign(value)
+        : widget.isUpdate
+            ? await TaxIdentityService.update(value, documentMatch: _match)
+            : await TaxIdentityService.register(value, documentMatch: _match);
     if (!mounted) return;
     if (err != null) {
       setState(() {
@@ -2114,8 +2144,11 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
                   .copyWith(fontWeight: FontWeight.w700)),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           Text(
-            '소득신고·원천징수에 쓰이는 주민등록번호입니다.\n'
-            '등록한 번호는 화면에 다시 표시되지 않습니다.',
+            widget.isForeignRecovery
+                ? '가입할 때 확인한 외국인등록번호를 한 번 더 입력해주세요.\n'
+                    '가입 정보와 같은 번호일 때만 등록됩니다.'
+                : '소득신고·원천징수에 쓰이는 주민등록번호입니다.\n'
+                    '등록한 번호는 화면에 다시 표시되지 않습니다.',
             style:
                 ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
           ),
@@ -2154,7 +2187,10 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
           // 대조는 선택이다. 건너뛰어도 등록은 된다 — 확인은 나중에
           // 관리자가 신분증 원본과 직접 한다(§37).
-          TextButton.icon(
+          //
+          // [R1.4.1] 외국인 복구에는 붙이지 않는다. 서버가 가입 때 만든
+          //   신원 지문과 직접 대조하므로 OCR보다 확실하다.
+          if (!widget.isForeignRecovery) TextButton.icon(
             onPressed: (_entered.length == 13 && !_checking && !_busy)
                 ? _compareWithIdCard
                 : null,

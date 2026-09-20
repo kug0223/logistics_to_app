@@ -50,6 +50,7 @@ class TaxIdentityService {
         registered: m['registered'] == true,
         identifierType: m['identifierType'] as String?,
         collectionEnabled: m['collectionEnabled'] == true,
+        foreignRecoveryAvailable: m['foreignRecoveryAvailable'] == true,
         documentMatch: docFieldOutcomeFromWire(m['documentMatch']),
         documentMatchCurrent: m['documentMatchCurrent'] == true,
         loadFailed: false,
@@ -76,6 +77,25 @@ class TaxIdentityService {
     DocFieldOutcome documentMatch = DocFieldOutcome.unassessed,
   }) =>
       _submit('callableUpdateTaxIdentity', rawIdentifier, documentMatch);
+
+  /// [PII-B4-R1.4.1 §13] 수집이 꺼져 있을 때 가입한 외국인의 복구.
+  ///
+  ///   일반 등록이 아니다. 서버가 입력값을 **가입 때 만든 신원 지문과
+  ///   대조**해서 같을 때만 받는다. 다르면 아무것도 쓰지 않는다 —
+  ///   번호가 바뀐 것이라면 신원 재확인의 일이지 세무정보 정정이 아니다.
+  static Future<String?> recoverForeign(String rawForeignIdentifier) async {
+    try {
+      await _fn.httpsCallable('callableRecoverForeignTaxIdentity')
+          .call({'rawForeignIdentifier': rawForeignIdentifier});
+      return null;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ [TaxIdentity] 외국인 복구 실패 | code=${e.code}');
+      return e.message ?? '세무정보를 저장하지 못했습니다.';
+    } catch (e) {
+      debugPrint('❌ [TaxIdentity] 외국인 복구 실패: ${e.runtimeType}');
+      return '세무정보를 저장하지 못했습니다. 잠시 후 다시 시도해주세요.';
+    }
+  }
 
   static Future<String?> _submit(
     String name,
@@ -108,6 +128,7 @@ class TaxIdentityStatus {
     required this.documentMatch,
     required this.documentMatchCurrent,
     required this.loadFailed,
+    this.foreignRecoveryAvailable = false,
   });
 
   /// 조회 자체가 실패했을 때. `registered == false`와 **다르다**.
@@ -115,6 +136,7 @@ class TaxIdentityStatus {
       : registered = false,
         identifierType = null,
         collectionEnabled = false,
+        foreignRecoveryAvailable = false,
         documentMatch = DocFieldOutcome.unassessed,
         documentMatchCurrent = false,
         loadFailed = true;
@@ -122,6 +144,10 @@ class TaxIdentityStatus {
   final bool registered;
   final String? identifierType;
   final bool collectionEnabled;
+
+  /// [§12] 외국인 신원은 있는데 세무 레코드가 없다 — 복구 CTA 대상.
+  ///   정상 가입한 외국인은 이 값이 false다(이미 등록돼 있으므로).
+  final bool foreignRecoveryAvailable;
 
   /// 입력 시점에 신분증과 대조한 결과.
   final DocFieldOutcome documentMatch;

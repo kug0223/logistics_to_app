@@ -104,11 +104,15 @@ void main() {
       expect(m, contains('if (!birth?.toDate || !gender)'));
     });
 
-    test('07 검증부호를 실제로 계산한다', () {
-      final c = _flat(_codeOf(_sliceOf(cfRaw,
-          'function srvKoreanRrnChecksumOk(', '\n}')));
-      expect(c, contains('const w = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];'));
-      expect(c, contains('((11 - (sum % 11)) % 10) === Number(n[12])'));
+    test('07 구조 검증이 hard gate다 (R1.4.1에서 검증부호를 내렸다)', () {
+      // [PII-B4-R1.4.1 §2] 구 검증부호는 2020.10 개편 이후 번호에 성립하지
+      //   않아 hard gate에서 내려왔다. 그 자리를 구조 검증이 대신한다.
+      //   검증부호 정책 전수는 rrn_current_assignment_contract_test.
+      expect(cf, isNot(contains('function srvKoreanRrnChecksumOk(')));
+      final s = _flat(_codeOf(_sliceOf(cfRaw,
+          'function srvKoreanRrnStructureError(', '\n}')));
+      expect(s, contains('if (code < 1 || code > 4)'));
+      expect(s, contains('mm < 1 || mm > 12 || dd < 1 || dd > 31'));
     });
 
     test('08 검증부호 알고리즘이 실제 번호에서 성립한다', () {
