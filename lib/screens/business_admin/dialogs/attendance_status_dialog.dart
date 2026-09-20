@@ -4600,6 +4600,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           .call({'businessId': _selectedBusinessId, 'entries': entries});
 
       final processed = result.data['processed'] as int? ?? 0;
+      // [R5-R0.1 §14] 처리하지 못한 건을 성공 옆에 묻지 않는다.
+      final failed = result.data['failed'] as int? ?? 0;
 
       // 지각 신뢰도 연동 — CF 성공 후, 단건 실패는 무시
       final lateCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -4624,8 +4626,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }));
 
       if (!mounted) return;
-      if (processed > 0) {
+      // [R5-R0.1 §14] 처리하지 못한 건이 있으면 그 사실을 함께 말한다.
+      if (failed > 0) {
+        ToastHelper.showWarning(
+            '$processed명 출근 처리 · $failed명 처리하지 못했습니다');
+      } else if (processed > 0) {
         ToastHelper.showSuccess('$processed명 출근 처리 완료');
+      }
+      if (processed > 0) {
         _hasChanges = true;
       }
       if (entries.length - processed > 0) {
@@ -4765,6 +4773,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             .call({'businessId': _selectedBusinessId, 'entries': entries});
 
         final processed = result.data['processed'] as int? ?? 0;
+        // [R5-R0.1 §14] 처리하지 못한 건을 성공 옆에 묻지 않는다.
+        final failed = result.data['failed'] as int? ?? 0;
 
         final lateCallableGroup = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
             .httpsCallable('callableReportLate',
@@ -4789,7 +4799,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         if (!mounted) return;
         if (processed > 0) {
-          ToastHelper.showSuccess('$processed명 출근 처리 완료');
+          if (failed > 0) {
+            ToastHelper.showWarning('$processed명 출근 처리 · $failed명 처리하지 못했습니다');
+          } else {
+            ToastHelper.showSuccess('$processed명 출근 처리 완료');
+          }
           _hasChanges = true;
         }
         if (entries.length - processed > 0) ToastHelper.showWarning('${entries.length - processed}명 처리 실패');

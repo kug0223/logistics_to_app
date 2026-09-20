@@ -73,6 +73,47 @@ function srvOmitUndefined(
 }
 
 // ═══════════════════════════════════════════════════════════
+// [R5-ERROR-PARTIAL-R0.1] 보상 모델의 출처는 공고 하나다
+//
+//   금액(`wage`)은 이미 서버가 공고에서 읽고, 못 찾으면 거절한다.
+//   그런데 그 옆의 `wageType` 은 못 찾으면 클라이언트 값을 쓰고,
+//   그것도 없으면 "hourly" 를 적어 넣었다.
+//
+//   시급과 일급은 같은 숫자에 대해 전혀 다른 약속이다. 90,000 이
+//   하루치인지 한 시간치인지를 서버가 지어내면, 근로자에게 가는
+//   약속이 공고와 다른 값이 된다. 형제 필드 하나는 fail-closed 인데
+//   다른 하나만 fail-open 일 이유가 없다.
+//
+//   ── 왜 UNKNOWN 을 새로 만들지 않는가 ──────────────────────
+//
+//   공고 작성기(`WorkDetailData.wageType`)는 non-nullable 이고 항상
+//   쓴다. 즉 값이 없는 공고는 정상 경로에서 만들어지지 않는다.
+//   없는 것은 legacy 이거나 잘못 만들어진 공고이고, 그 위에 약속을
+//   세우는 것 자체가 틀렸다 — 새 상태를 만드는 대신 거절한다.
+// ═══════════════════════════════════════════════════════════
+
+/** 서버가 약속으로 인정하는 보상 모델. */
+const CANONICAL_WAGE_TYPES = ["hourly", "daily"];
+
+/**
+ * 공고(workDetail)에서 보상 모델을 읽는다. 없거나 모르는 값이면 거절한다.
+ *
+ * @param {Record<string, unknown> | undefined} wd canonical workDetail
+ * @return {string} hourly | daily
+ */
+function srvResolveCanonicalWageType(
+  wd: Record<string, unknown> | undefined
+): string {
+  const v = wd?.["wageType"];
+  if (typeof v === "string" && CANONICAL_WAGE_TYPES.includes(v)) return v;
+  throw new HttpsError(
+    "failed-precondition",
+    "공고의 급여 형태(시급/일급)를 서버에서 확인할 수 없습니다. " +
+    "공고를 수정한 뒤 다시 시도해주세요."
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // [R5.3E.1] 실제 근무 개시 경계 — 단일 정의
 //
 //   확정을 되돌리는 writer가 여럿이다(확정취소·리컨펌 거절·계약 무효화·
@@ -25280,11 +25321,15 @@ export const callableBatchCheckIn = onCall(
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
+    // [R5-R0.1 §13] 처리하지 못한 건과 그 분류. 내부 메시지는 담지 않는다.
+    const failures: {applicationId: string; reason: string}[] = [];
 
     // Phase 1: 유효하지 않은 status 건 사전 필터
+    //   여기서 걸러진 건도 "처리하지 못한 건"이다 — 조용히 사라지지 않는다.
     const validEntries = entries.filter(e => {
       if (!VALID_ATTENDANCE_STATUS.has(e.status)) {
         console.error(`출근 처리 건너뜀 — 유효하지 않은 status: ${e.status} (${e.applicationId})`);
+        failures.push({applicationId: e.applicationId, reason: "invalidStatus"});
         return false;
       }
       return true;
@@ -25296,7 +25341,7 @@ export const callableBatchCheckIn = onCall(
     for (let ci = 0; ci < validEntries.length; ci += CHUNK_CI) {
       const chunk = validEntries.slice(ci, ci + CHUNK_CI);
       const chunkResults = await Promise.allSettled(
-        chunk.map(async (entry): Promise<boolean> => {
+        chunk.map(async (entry): Promise<string | null> => {
           const {applicationId, workDateMs, userId, businessName, workType, status, checkInMs, attendanceId} = entry;
           // [HIGH-02-FIX] workDateMs = Dart KST 자정 UTC ms → getFullYear()는 UTC 기준 → 전날 날짜
           const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -25348,7 +25393,7 @@ export const callableBatchCheckIn = onCall(
               if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
                   appVerifySnap.data()!.businessId !== businessId) {
                 console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
-                return false;
+                return "ownerMismatch";
               }
               // [R5.3E.1] 확정 상태 검증 — 취소된 지원서에 새 출근 기록을 만들지 않는다.
               //   cancel ‖ check-in에서 취소가 먼저 이긴 경우 현재 상태 기준으로 처리한다.
@@ -25356,20 +25401,20 @@ export const callableBatchCheckIn = onCall(
               const batchCiStatus = (appVerifySnap.data()!.status as string | undefined) ?? "";
               if (!CONFIRMED_STATUSES.includes(batchCiStatus)) {
                 console.warn(`출근 처리 건너뜀 — 확정 상태가 아님 (${applicationId}): ${batchCiStatus}`);
-                return false;
+                return "invalidState";
               }
               // [5A.1-P1-WF-01] 미래 날짜 신규 출근 기록 생성 차단
               const todayKSTStartMs_ci = (() => { const d = new Date(Date.now() + KST_OFFSET_MS); d.setUTCHours(0, 0, 0, 0); return d.getTime() - KST_OFFSET_MS; })();
               if (workDateMs > todayKSTStartMs_ci) {
                 console.warn(`출근 처리 건너뜀 — 미래 날짜 (${applicationId})`);
-                return false;
+                return "futureDate";
               }
               // [5A.1-P1-WF-04] Application canonical 근무일·업무 컨텍스트 검증
               // callableCheckInAttendance HIGH-CHECKIN-01/02 동일 패턴 — wrong-date/비근무일 차단
               const workCtx = await _resolveAttendanceWorkContext(workDateMs, appVerifySnap.data()!, db);
               if (!workCtx.valid) {
                 console.warn(`출근 처리 건너뜀 — 유효하지 않은 근무 컨텍스트 (${applicationId}): ${workCtx.reason}`);
-                return false;
+                return "invalidWorkContext";
               }
               const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
               const docId = `${applicationId}_${dateStr}`;
@@ -25379,7 +25424,7 @@ export const callableBatchCheckIn = onCall(
                 const existWs = existingSnap.data()?.wageStatus as string | undefined;
                 if (existWs === "confirmed" || existWs === "transferred") {
                   console.error(`출근 처리 건너뜀 — 이미 임금 확정/이체 완료 (${docId})`);
-                  return false;
+                  return "wageAlreadySettled";
                 }
               }
               // [R5-R0 §5] 같은 이유로 여기도 undefined 를 걸러 낸다.
@@ -25408,19 +25453,36 @@ export const callableBatchCheckIn = onCall(
                 updatedAt: now,
               }), {merge: true});
             }
-            return true;
+            return null;
           } catch (e) {
+            // [§13] 내부 메시지·스택은 응답에 싣지 않는다 — 분류만 내보낸다.
             console.error(`출근 처리 실패 (${applicationId}):`, e);
-            return false;
+            return "unknownError";
           }
         })
       );
-      chunkResults.forEach((r) => {
-        if (r.status === "fulfilled" && r.value === true) successCount++;
+      chunkResults.forEach((r, idx) => {
+        if (r.status !== "fulfilled") {
+          failures.push({applicationId: chunk[idx].applicationId, reason: "unknownError"});
+          return;
+        }
+        if (r.value === null) successCount++;
+        else failures.push({applicationId: chunk[idx].applicationId, reason: r.value});
       });
     }
 
-    return {success: true, processed: successCount, total: entries.length};
+    // [R5-R0.1 §12·§13·§14] 일부만 처리된 사실을 숨기지 않는다.
+    //
+    //   이전에는 {processed, total}만 돌려줬다. 8/10이면 화면은 "8명
+    //   처리"라고만 말했고, 관리자는 나머지 2명이 왜 빠졌는지 알 방법이
+    //   없었다 — 실패가 성공 옆에 조용히 묻혔다.
+    return {
+      success: true,
+      processed: successCount,
+      failed: failures.length,
+      total: entries.length,
+      failures,
+    };
   }
 );
 
@@ -30793,7 +30855,8 @@ export const callableApplyToTO = onCall(
     const startTime = data.startTime ?? "";
     const endTime = data.endTime ?? "";
     const wage = data.wage;
-    const wageType = data.wageType ?? "hourly";
+    // [R5-R0.1 §4] 클라이언트의 wageType 은 받지 않는다 — 아래에서 공고를
+    //   읽어 정한다. payload 에 남아 있어도 약속의 출처가 되지 않는다.
     const workTypeIcon = data.workTypeIcon ?? null;
     const workTypeColor = data.workTypeColor ?? null;
     const workTypeBackgroundColor = data.workTypeBackgroundColor ?? null;
@@ -31115,11 +31178,12 @@ export const callableApplyToTO = onCall(
     const effectiveWage = serverWage;
     // [POSTING-V2-03I.3] 금액과 함께 산정 조건도 지금 고정한다.
     const compensationSnapshot = buildCompensationSnapshot(promisedWD);
-    // [LOW-41-01] wageType 화이트리스트 — 레거시 TO 누락 시 클라이언트 값 무검증 저장 방지
-    const VALID_WAGE_TYPES = ["hourly", "daily"];
-    const effectiveWageType = (serverWageType && VALID_WAGE_TYPES.includes(serverWageType))
-      ? serverWageType
-      : (VALID_WAGE_TYPES.includes(wageType) ? wageType : "hourly");
+    // [R5-R0.1 §3] 금액과 같은 출처, 같은 엄격함.
+    //   이전에는 서버 값이 없으면 클라이언트 값을, 그것도 없으면 "hourly"를
+    //   적었다. 클라이언트는 무엇을 고를지 정하는 쪽이지 무엇이 약속인지
+    //   정하는 쪽이 아니다.
+    const effectiveWageType = srvResolveCanonicalWageType(promisedWD);
+    void serverWageType;
 
     // [CROSS-DOMAIN-R5.3C.2] 법정 최저임금은 **약속을 만드는 자리**에서 본다.
     //   R5.3C.1에서는 개별 급여 제안에만 있었다. 그런데 근로자에게 가는 약속은
@@ -33168,7 +33232,9 @@ export const callableOfferAlternativeWork = onCall(
       ).getUTCFullYear();
       const offerMinWage = await srvLoadMinimumWage(offerKstYear);
       const violation = srvValidateMinimumWagePromise({
-        wageType: offeredWageType ?? "hourly",
+        // [R5-R0.1] 최저임금 판정은 실제 보상 모델 위에서 해야 한다.
+        //   시급으로 가정하고 일급을 검사하면 그 판정은 아무 뜻이 없다.
+        wageType: srvResolveCanonicalWageType(targetWD),
         wage: offeredWage ?? 0,
         minimumWage: offerMinWage,
         startTime: (targetWD["startTime"] as string | undefined) ?? "09:00",
@@ -34513,7 +34579,8 @@ export const callableProposeConfirmedReassignment = onCall(
       ).getUTCFullYear();
       const crMinWage = await srvLoadMinimumWage(crYear);
       const crViolation = srvValidateMinimumWagePromise({
-        wageType: crWageType ?? "hourly",
+        // [R5-R0.1] 제안도 같은 규칙 — 가정한 모델로 법정 하한을 재지 않는다.
+        wageType: srvResolveCanonicalWageType(crTargetWD),
         wage: crOfferedWage ?? 0,
         minimumWage: crMinWage,
         startTime: (crTargetWD["startTime"] as string | undefined) ?? "09:00",

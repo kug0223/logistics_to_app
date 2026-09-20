@@ -46,6 +46,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   List<ApplicationModel> _applications = [];
   bool _isLoading = true;
+
+  /// [R5-R0.1 §20] 조회 실패 사유 — "없음"과 다른 축이다.
+  String? _loadError;
   bool _initialLoadStarted = false;
 
   // 필터: ALL / CONFIRMED / PENDING
@@ -168,7 +171,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       setState(() => _isLoading = false);
       return;
     }
-    setState(() => _isLoading = true);
+    setState(() { _isLoading = true; _loadError = null; });
 
     // Phase 1: 지원 내역 먼저 로드 (1분 TTL 캐시 — 재방문 시 즉시 반환)
     try {
@@ -181,7 +184,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _loadError = '일정을 불러오지 못했습니다.';
+        });
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       return;
@@ -1115,6 +1121,24 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   }
 
   Widget _buildEmptyState() {
+    // [R5-ERROR-PARTIAL-R0.1 §20] 조회 실패를 "일정 없음"으로 말하지 않는다.
+    //   예전에는 catch에서 로딩만 끄고 토스트를 띄웠다. 목록이 빈 채로
+    //   남으니 화면은 '오늘 일정이 없어요'를 띄웠고, 토스트가 사라진 뒤엔
+    //   근로자가 자기 근무를 없는 것으로 알게 된다.
+    if (_loadError != null) {
+      return AppEmptyState(
+        icon: Icons.cloud_off_outlined,
+        iconColor: AppColors.grey500,
+        title: '일정을 불러오지 못했습니다',
+        subtitle: '일정이 없다는 뜻이 아닙니다. 잠시 후 다시 시도해주세요.',
+        action: TextButton.icon(
+          onPressed: _isLoading ? null : _loadApplications,
+          icon: const Icon(Icons.refresh, size: 18),
+          label: const Text('다시 시도'),
+        ),
+        asSliver: true,
+      );
+    }
     final isFiltered = _selectedFilter != 'ALL';
     final sel = _selectedDay!;
     final dateLabel = '${sel.month}월 ${sel.day}일';

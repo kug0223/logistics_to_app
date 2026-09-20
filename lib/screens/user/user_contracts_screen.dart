@@ -51,6 +51,9 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
 
   List<EmploymentContractModel> _items = [];
   bool _isLoading = true;
+
+  /// [R5-R0.1 §19] 조회 실패 사유 — "계약 없음"과 다른 축이다.
+  String? _loadError;
   bool _fetchInProgress = false;
   bool _isLoadingMore = false;
   bool _hasMore = false;
@@ -119,6 +122,8 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
 
     _fetchInProgress = true;
     setState(() {
+      // 재시도 시작 — 이전 실패 표시를 지운다.
+      _loadError = null;
       _isLoading = true;
       _items = [];
       _lastDocId = null;
@@ -146,7 +151,11 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
       }
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
-      if (mounted) ToastHelper.showError('계약서 목록을 불러오지 못했습니다');
+      if (mounted) {
+        // [R5-R0.1 §19] 실패를 화면 상태로 남긴다 — "계약 없음"과 갈린다.
+        setState(() => _loadError = '계약서 목록을 불러오지 못했습니다.');
+        ToastHelper.showError('계약서 목록을 불러오지 못했습니다');
+      }
     } finally {
       _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
@@ -339,7 +348,14 @@ class _UserContractsScreenState extends State<UserContractsScreen> {
   // ── Empty State ──────────────────────────────────────────────────
 
   Widget _buildEmptyContent(BuildContext context) {
-    final (icon, title, subtitle) = switch (_currentFilter) {
+    // [R5-R0.1 §19] 조회 실패를 "계약 없음"으로 단정하지 않는다.
+    final (icon, title, subtitle) = _loadError != null
+        ? (
+            Icons.cloud_off_outlined,
+            '계약서를 불러오지 못했습니다',
+            '계약서가 없다는 뜻이 아닙니다. 잠시 후 다시 시도해주세요.',
+          )
+        : switch (_currentFilter) {
       null => (
           Icons.description_outlined,
           '등록된 계약서가 없어요',

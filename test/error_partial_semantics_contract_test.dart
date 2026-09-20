@@ -83,13 +83,34 @@ void main() {
       expect(ci, contains(': undefined'));
     });
 
-    test('05b [잔존] 지원 생성은 아직 wageType을 기본값으로 만든다', () {
-      // [OPEN-R5R0-APPLY-WAGETYPE-DEFAULT] callableApplyToTO가
-      //   `data.wageType ?? "hourly"`로 보상 모델을 지어낸다. 이 Phase의
-      //   범위(출근 크래시)가 아니라 생성 semantics이므로 손대지 않았고,
-      //   사라지면 이 테스트가 알려 준다.
-      expect(cf, contains('const wageType = data.wageType ?? "hourly";'),
-          reason: '고쳐졌다면 이 테스트를 지우고 잔존 목록에서 빼야 한다');
+    test('05b 지원 생성도 보상 모델을 지어내지 않는다 (R0.1 §3)', () {
+      // R0에서 잔존으로 남겼던 `data.wageType ?? "hourly"` 를 제거했다.
+      expect(cf, isNot(contains('const wageType = data.wageType ?? "hourly";')));
+      expect(cf, contains(
+          'const effectiveWageType = srvResolveCanonicalWageType(promisedWD);'));
+    });
+
+    test('05c canonical resolver는 fail-closed다 (§6)', () {
+      final r = _flat(_codeOf(_sliceOf(cfRaw,
+          'function srvResolveCanonicalWageType(', '\n}')));
+      expect(r, contains('CANONICAL_WAGE_TYPES.includes(v)) return v;'));
+      expect(r, contains('throw new HttpsError('));
+      // 기본값으로 떨어지는 분기가 없다.
+      expect(r, isNot(contains('return "hourly"')));
+      expect(cf, contains('const CANONICAL_WAGE_TYPES = ["hourly", "daily"];'));
+    });
+
+    test('05d 제안·재배치의 최저임금 판정도 실제 모델 위에서 한다 (§9)', () {
+      expect(cf, contains('wageType: srvResolveCanonicalWageType(targetWD),'));
+      expect(cf, contains('wageType: srvResolveCanonicalWageType(crTargetWD),'));
+      expect(_flat(cf), isNot(contains('wageType: offeredWageType ?? "hourly"')));
+      expect(_flat(cf), isNot(contains('wageType: crWageType ?? "hourly"')));
+    });
+
+    test('05e 초대는 원래 지어내지 않았다 — 회귀 고정', () {
+      // 조건부 spread: 없으면 필드를 쓰지 않는다(발명 아님).
+      expect(cf, contains(
+          '...(derivedWageType !== undefined && {wageType: derivedWageType}),'));
     });
 
     test('06 소비자는 부재를 "다른 출처에서 해상도"로 읽는다', () {
@@ -181,6 +202,70 @@ void main() {
       expect(branch, contains('_loadError != null'));
       expect(branch.indexOf('_isLoading'),
           lessThan(branch.indexOf('_loadError != null')));
+    });
+  });
+
+  group('INV-7 — PARTIAL을 SUCCESS로 숨기지 않는다 (R0.1 §12~§14)', () {
+    test('19a 일괄 출근이 실패 건과 분류를 돌려준다', () {
+      final r = _flat(_codeOf(_sliceOf(cfRaw,
+          '// [R5-R0.1 §12·§13·§14] 일부만 처리된 사실을 숨기지 않는다.',
+          '  }\n);')));
+      expect(r, contains('processed: successCount'));
+      expect(r, contains('failed: failures.length'));
+      expect(r, contains('total: entries.length'));
+      expect(r, contains('failures,'));
+    });
+
+    test('19b 실패 분류가 코드로만 나간다 — 내부 메시지 없음', () {
+      for (final reason in [
+        '"ownerMismatch"', '"invalidState"', '"futureDate"',
+        '"invalidWorkContext"', '"wageAlreadySettled"',
+        '"invalidStatus"', '"unknownError"',
+      ]) {
+        expect(cf, contains(reason), reason: reason);
+      }
+      final agg = _flat(_codeOf(_sliceOf(cfRaw,
+          'chunkResults.forEach((r, idx) => {', '});')));
+      expect(agg, isNot(contains('e.message')));
+      expect(agg, isNot(contains('.stack')));
+    });
+
+    test('19c 사전 필터로 걸러진 건도 실패로 센다', () {
+      expect(cf, contains(
+          'failures.push({applicationId: e.applicationId, reason: "invalidStatus"});'));
+    });
+
+    test('19d 화면이 실패 건을 말한다', () {
+      expect(att, contains("final failed = result.data['failed'] as int? ?? 0;"));
+      expect(_flat(att), contains(
+          r"ToastHelper.showWarning( '$processed명 출근 처리 · $failed명 처리하지 못했습니다')"));
+    });
+  });
+
+  group('INV-8 — 근로자 화면도 실패와 없음을 가른다 (R0.1 §19·§20)', () {
+    final sch = _codeOf(_src('lib/screens/user/my_schedule_screen.dart'));
+    final con = _codeOf(_src('lib/screens/user/user_contracts_screen.dart'));
+
+    test('20a 일정: 실패 상태가 있고 빈 상태보다 먼저 본다', () {
+      expect(sch, contains('String? _loadError;'));
+      expect(sch, contains("_loadError = '일정을 불러오지 못했습니다.';"));
+      final e = _flat(_sliceOf(sch, 'Widget _buildEmptyState() {', 'isFiltered'));
+      expect(e, contains('if (_loadError != null)'));
+      expect(e, contains('일정이 없다는 뜻이 아닙니다'));
+    });
+
+    test('20b 계약: 실패 상태가 있고 "계약 없음"과 갈린다', () {
+      expect(con, contains('String? _loadError;'));
+      expect(con, contains("_loadError = '계약서 목록을 불러오지 못했습니다.'"));
+      final e = _flat(_sliceOf(con,
+          'Widget _buildEmptyContent(BuildContext context) {', 'switch (_currentFilter)'));
+      expect(e, contains('_loadError != null'));
+      expect(e, contains('계약서가 없다는 뜻이 아닙니다'));
+    });
+
+    test('20c 재시도 시작 시 실패 표시를 지운다', () {
+      expect(sch, contains('_isLoading = true; _loadError = null;'));
+      expect(con, contains('_loadError = null;'));
     });
   });
 
