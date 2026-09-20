@@ -248,12 +248,54 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }
   }
 
+  /// [R8-P1C] 근태만 다시 읽는 요청의 세대 번호.
+  ///   빠르게 이어지는 mutation에서 늦게 도착한 옛 응답이 최신 화면을
+  ///   덮지 않게 한다. 전체 로드도 이 번호를 올려 진행 중인 부분 갱신을
+  ///   무효화한다.
+  int _attRefreshSeq = 0;
+
+  /// [R8-P1C] 근태 행만 서버에서 다시 읽는다.
+  ///
+  ///   출퇴근·시간수정·노쇼·리셋·마감취소는 서버에서 attendance 문서만
+  ///   바꾼다. 그런데 지금까지는 그 뒤에 _loadData()를 통째로 다시 돌려
+  ///   지원서·업무유형·근로자 프로필·계약 상태·모집단위 종료 여부까지 전부
+  ///   다시 읽었다. 출근 한 번에 7개 쿼리가 나갔고, 그중 6개는 바뀐 것이
+  ///   없는 데이터였다.
+  ///
+  ///   성공한 행만 골라 갱신하지 않고 그 날 근태를 통째로 다시 읽는다.
+  ///   어차피 조회는 한 번이고, 그래야 같은 시간에 다른 관리자가 바꾼 행도
+  ///   함께 최신이 된다. 서버 응답을 근거로 상태를 추측하지 않는다.
+  Future<void> _refreshAttendanceOnly() async {
+    if (!mounted) return;
+    final appIds = _confirmedWorkers.map((a) => a.id).toList();
+    if (appIds.isEmpty) return;
+    final seq = ++_attRefreshSeq;
+    try {
+      final map = await _getAttendanceRecords(appIds);
+      if (!mounted || seq != _attRefreshSeq) return;
+      setState(() {
+        _attendanceMap = map;
+        _rebuildStatusCache();
+        _rebuildTabWorkers();
+      });
+    } catch (e) {
+      // [§26] 처리는 됐는데 새로 못 읽은 것이다 — mutation이 실패한 것처럼
+      //   말하지 않는다. 그리고 낡은 화면을 그대로 두지 않고 전체를 다시 건다.
+      debugPrint('❌ 근태 갱신 실패 (처리 자체는 완료): $e');
+      if (!mounted || seq != _attRefreshSeq) return;
+      ToastHelper.showWarning('처리는 완료됐어요. 최신 상태를 불러오지 못해 다시 불러옵니다.');
+      await _loadData();
+    }
+  }
+
   /// 전체 데이터 로드 (병렬 처리로 최적화)
   // [D05 설계] 데이터 새로고침 시 선택 상태(_selectedIds)를 초기화한다.
   // 의도된 동작: 새로고침 후 서버 데이터가 변경되면 이전 선택이 유효하지 않을 수 있으므로,
   // 잘못된 배치 처리를 방지하기 위해 항상 초기화한다.
   Future<void> _loadData() async {
     if (!mounted) return;
+    // [R8-P1C] 진행 중인 부분 갱신을 무효화한다 — 옛 응답이 뒤늦게 덮지 않게.
+    _attRefreshSeq++;
     setState(() {
       _isLoading = true;
       // 재시도 시작 — 이전 실패 표시를 지운다.
@@ -3209,7 +3251,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       if (!mounted) return;
       _hasChanges = true;
       ToastHelper.showSuccess('노쇼 처리 완료 (${targets.length}명)');
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (노쇼).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 배치 노쇼 실패: $e');
       if (!mounted) return;
@@ -3331,7 +3374,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final processed = result.data['processed'] as int? ?? 0;
       _hasChanges = true;
       ToastHelper.showSuccess('리셋 완료 ($processed명)');
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (리셋).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 리셋 실패: $e');
       if (mounted) ToastHelper.showError('리셋 실패');
@@ -3892,7 +3936,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }));
 
       _hasChanges = true;
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (시간수정).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 일괄 시간 조정 실패: $e');
       if (mounted) ToastHelper.showError('일괄 시간 조정 실패');
@@ -4640,7 +4685,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         ToastHelper.showWarning('${entries.length - processed}명 처리 실패');
       }
 
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (일괄출근).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 일괄 출근 처리 실패: $e');
       if (!mounted) return;
@@ -4721,7 +4767,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }
       if (processed > 0) _hasChanges = true;
 
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (일괄퇴근).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 일괄 퇴근 처리 실패: $e');
       if (!mounted) return;
@@ -4817,7 +4864,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         if (entries.length - processed > 0) ToastHelper.showWarning('${entries.length - processed}명 처리 실패');
       }
 
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (파트별출근).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 출근 처리 실패: $e');
       if (mounted) ToastHelper.showError('일괄 출근 처리 실패');
@@ -4902,7 +4950,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         ToastHelper.showWarning('${failMessages.length}명 처리 실패\n${failMessages.join('\n')}');
       }
 
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (파트별퇴근).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 퇴근 처리 실패: $e');
       if (mounted) ToastHelper.showError('일괄 퇴근 처리 실패');
@@ -4987,7 +5036,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       if (!mounted) return;
       _hasChanges = true;
       ToastHelper.showSuccess('$processed명 마감취소 완료');
-      await _loadData();
+      // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (마감취소).
+      await _refreshAttendanceOnly();
     } catch (e) {
       debugPrint('❌ 마감 취소 실패: $e');
       if (mounted) ToastHelper.showError('마감취소에 실패했습니다');
