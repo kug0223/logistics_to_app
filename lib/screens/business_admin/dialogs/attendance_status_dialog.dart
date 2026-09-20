@@ -121,6 +121,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   // UI 상태
   bool _isLoading = true;
+
+  /// [R5-R0 §14] 조회 실패 사유. null 이면 "실패하지 않았다"는 뜻이지
+  /// "결과가 있다"는 뜻이 아니다 — 빈 결과와는 별개 축이다.
+  String? _loadError;
   String? _selectedBusinessId;
   bool _hasChanges = false;  // ✅ 변경 여부 추적
   
@@ -252,6 +256,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if (!mounted) return;
     setState(() {
       _isLoading = true;
+      // 재시도 시작 — 이전 실패 표시를 지운다.
+      _loadError = null;
       _selectedIds.clear();
       _selectAll = false;
       _nameFilter = '';
@@ -337,9 +343,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
       debugPrint('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
     } catch (e) {
+      // [R5-ERROR-PARTIAL-R0 §16] 조회 실패를 "근무자 없음"으로 말하지 않는다.
+      //
+      //   이전에는 여기서 로딩만 끄고 끝냈다. _confirmedWorkers 가 빈
+      //   채로 남으니 화면은 '확정된 근무자가 없습니다' 를 띄웠다. 토스트는
+      //   사라지고, 그 뒤로는 "오늘 일하는 사람이 없다" 고 단언하는 화면만
+      //   남는다 — 실제로는 모르는 상태였다.
       debugPrint('❌ 당일명단 데이터 로드 실패: $e');
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _loadError = '근무자 명단을 불러오지 못했습니다.';
+      });
       ToastHelper.showError('데이터 로드 실패');
     }
   }
@@ -947,17 +962,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           Flexible(
             child: _isLoading
                 ? const LoadingWidget(message: '당일명단 조회 중...')
-                : _confirmedWorkers.isEmpty
-                    ? _buildEmptyState()
-                    : _buildContent(theme),
+                : _loadError != null
+                    ? _buildErrorState()
+                    : _confirmedWorkers.isEmpty
+                        ? _buildEmptyState()
+                        : _buildContent(theme),
           ),
 
           // 선택 인원 확인/취소 고정 바 (선택 + 대상 있을 때만 표시)
-          if (!_isLoading && _selectedIds.isNotEmpty)
+          if (!_isLoading && _loadError == null && _selectedIds.isNotEmpty)
             _buildSelectionConfirmBar(theme),
 
-          // 하단 고정 바 (명단 출력 / 급여관리 / 처리현황 — 항상 표시)
-          if (!_isLoading)
+          // 하단 고정 바 (명단 출력 / 급여관리 / 처리현황)
+          //   [R5-R0 §18] 명단을 모르는 상태에서는 그 명단을 전제로 한
+          //   동작을 열지 않는다 — 빈 명단을 출력하거나 급여 화면으로
+          //   보내면 "없음"을 사실처럼 굳힌다.
+          if (!_isLoading && _loadError == null)
             _buildBottomBar(theme),
         ],
       ),
@@ -995,11 +1015,27 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     );
   }
 
-  /// 빈 상태
+  /// 빈 상태 — **조회에 성공했고 결과가 0명**일 때만 쓴다.
   Widget _buildEmptyState() {
     return const AppEmptyState(
       icon: Icons.people_outline,
       title: '확정된 근무자가 없습니다',
+    );
+  }
+
+  /// [R5-R0 §14·§30] 조회 실패 상태 — 없음과 다른 말을 하고, 다시 시도할
+  /// 길을 준다. 자동 재시도·폴링은 두지 않는다.
+  Widget _buildErrorState() {
+    return AppEmptyState(
+      icon: Icons.cloud_off_outlined,
+      iconColor: AppColors.grey500,
+      title: _loadError ?? '명단을 확인하지 못했습니다',
+      subtitle: '근무자가 없다는 뜻이 아닙니다. 잠시 후 다시 시도해주세요.',
+      action: TextButton.icon(
+        onPressed: _isLoading ? null : _loadData,
+        icon: const Icon(Icons.refresh, size: 18),
+        label: const Text('다시 시도'),
+      ),
     );
   }
 

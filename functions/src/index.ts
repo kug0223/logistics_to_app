@@ -39,6 +39,39 @@ const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 //   서로 다른 숫자). 세는 곳이 여럿이면 정의는 하나여야 한다.
 const PENDING_STATUSES = ["PENDING", "INVITED"];
 
+/**
+ * [R5-ERROR-PARTIAL-R0 §5] `undefined` 필드를 뺀 사본.
+ *
+ *   Firestore 는 `undefined` 를 값으로 받지 않고 **문서 전체 쓰기를 거부**한다.
+ *   그래서 "값이 없을 수도 있는 필드" 를 그대로 담으면, 그 필드 하나가
+ *   비었다는 이유로 쓰기 전체가 INTERNAL 로 죽는다 — 실제로 wageType 이
+ *   없는 지원서에서 출근이 막혔다.
+ *
+ *   ── 왜 null 로 바꾸지 않는가 ──────────────────────────────
+ *
+ *   이 필드들의 소비자는 "없으면 다른 출처에서 해상도한다" 로 동작한다.
+ *   null 을 써 넣으면 "없음" 이 아니라 "없다고 확정됨" 이 되어 그 해상도
+ *   경로가 달라진다. 모르는 것은 적지 않는 쪽이 맞다.
+ *
+ *   ── 왜 ignoreUndefinedProperties 전역 설정이 아닌가 ────────
+ *
+ *   전역으로 켜면 의도치 않은 undefined 도 조용히 사라진다. 그건 이
+ *   Phase 가 없애려는 바로 그 종류의 은폐다. 값이 없을 수 있다고
+ *   **판단한 자리에서만** 명시적으로 뺀다.
+ *
+ * @param {Record<string, unknown>} obj 원본
+ * @return {Record<string, unknown>} undefined 키가 제거된 사본
+ */
+function srvOmitUndefined(
+  obj: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════════
 // [R5.3E.1] 실제 근무 개시 경계 — 단일 정의
 //
@@ -25349,7 +25382,10 @@ export const callableBatchCheckIn = onCall(
                   return false;
                 }
               }
-              await db.collection("attendance").doc(docId).set({
+              // [R5-R0 §5] 같은 이유로 여기도 undefined 를 걸러 낸다.
+              //   이쪽은 try/catch 안이라 죽어도 조용히 "실패 1건" 으로만
+              //   남았다 — 관리자는 왜 안 됐는지 알 수 없었다.
+              await db.collection("attendance").doc(docId).set(srvOmitUndefined({
                 applicationId,
                 userId,
                 businessId,
@@ -25370,7 +25406,7 @@ export const callableBatchCheckIn = onCall(
                 snapshotWageType: workCtx.snapshotWageType,
                 createdAt: now,
                 updatedAt: now,
-              }, {merge: true});
+              }), {merge: true});
             }
             return true;
           } catch (e) {
@@ -29943,7 +29979,12 @@ export const callableCheckIn = onCall(
       if (latitude != null) docData.checkInLat = latitude;
       if (longitude != null) docData.checkInLng = longitude;
 
-      tx.set(ref, docData);
+      // [R5-R0 §1·§6] wageType 이 없는 지원서(legacy·수동 생성)에서
+      //   undefined 가 payload 에 들어가 출근 전체가 INTERNAL 로 죽었다.
+      //   출근은 근태 사실이고 wageType 은 급여 메타다 — 후자가 비었다고
+      //   전자를 막지 않는다. 없는 필드는 쓰지 않고, 급여 계산은 기존대로
+      //   WorkDetail 에서 해상도한다.
+      tx.set(ref, srvOmitUndefined(docData));
     });
 
     return {success: true, attendanceId: docId};

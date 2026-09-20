@@ -94,6 +94,13 @@ class _PayrollPaymentDashboardScreenState
 
   // ── 데이터
   bool _isLoading = true;
+
+  /// [R5-ERROR-PARTIAL-R0 §22] 조회 실패 사유.
+  ///
+  ///   이전에는 실패해도 로딩만 끄고 토스트를 띄웠다. 목록은 비어 있는
+  ///   채로 남아 화면이 '미지급 0건 · 0원'을 정상처럼 말했다 — 돈이
+  ///   걸린 자리에서 모르는 것을 없다고 말한 셈이다.
+  String? _loadError;
   bool _fetchInProgress = false;
   bool _pendingReload = false;
   bool _isExporting = false;
@@ -293,6 +300,8 @@ class _PayrollPaymentDashboardScreenState
     if (!mounted) return;
     if (_fetchInProgress) { _pendingReload = true; return; }
     _pendingReload = false;
+    // 재시도 시작 — 이전 실패 표시를 지운다.
+    if (_loadError != null) setState(() => _loadError = null);
     _fetchInProgress = true;
     if (!_isLoading) setState(() => _isLoading = true);
     try {
@@ -330,7 +339,11 @@ class _PayrollPaymentDashboardScreenState
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
       if (mounted) {
         ToastHelper.showError('데이터를 불러오지 못했습니다');
-        setState(() => _isLoading = false);
+        // [§22] 실패를 화면 상태로 남긴다 — 0건·0원으로 위장하지 않는다.
+        setState(() {
+          _isLoading = false;
+          _loadError = '급여 현황을 불러오지 못했습니다.';
+        });
       }
     } finally {
       _fetchInProgress = false;
@@ -1618,6 +1631,20 @@ class _PayrollPaymentDashboardScreenState
             )
           : _isLoading
           ? const LoadingWidget(message: '급여 현황 불러오는 중...')
+          // [§14·§22·§30] 실패는 "없음"과 다른 화면이다. 금액을 보여주지
+          //   않고, 다시 시도할 길을 준다. 자동 폴링은 두지 않는다.
+          : _loadError != null
+          ? AppEmptyState(
+              icon: Icons.cloud_off_outlined,
+              iconColor: AppColors.grey500,
+              title: _loadError!,
+              subtitle: '미지급 건이 없다는 뜻이 아닙니다. 잠시 후 다시 시도해주세요.',
+              action: TextButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('다시 시도'),
+              ),
+            )
           : Column(children: [
               // ── 검색바
               AppSearchBar(controller: _searchCtrl, hintText: '근무자 이름으로 검색'),
