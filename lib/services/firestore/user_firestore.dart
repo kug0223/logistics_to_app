@@ -86,6 +86,11 @@ extension UserFirestore on FirestoreService {
     'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
     'rejectedBy', 'rejectedAt',
     'ci', 'ciHash', 'passVerifiedAt',
+    // [PII-B4-R1.4.3] 신원 기준 — 세무 identity 대조가 이 값 위에 선다.
+    //   rules가 1차 경계이고 여기는 실수로 보내는 것을 막는 2차 방어다.
+    //   정당한 writer는 전부 CF(Admin SDK)이므로 이 목록에 걸리지 않는다.
+    'birthDate', 'gender', 'identityBasisSource', 'identityBasisAt',
+    'name', 'legalName', 'koreanName',
     // [PII-B4-R1.1] 주민등록번호 — 세무 identity 확인의 근거값.
     //   클라이언트 재저장이 곧 재암호화이고, 재암호화는 근거 없는 STALE 이다.
     'residentNumber',

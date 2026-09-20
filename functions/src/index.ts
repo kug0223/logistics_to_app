@@ -1299,6 +1299,64 @@ function srvKoreanRrnLegacyChecksumOk(n: string): boolean {
   return ((11 - (sum % 11)) % 10) === Number(n[12]);
 }
 
+// ═══════════════════════════════════════════════════════════
+// [PII-B4-R1.4.3] IDENTITY BASIS — 생년월일·성별의 출처
+//
+//   세무 identity의 hard gate는 "앞 7자리가 본인인증 생년월일·성별과
+//   맞는가"다. 그런데 그 둘이 users 문서의 평범한 필드였고, 클라이언트가
+//   고칠 수 있었다. 기준을 고칠 수 있으면 기준이 아니다 — 타인 번호를
+//   등록할 수 있었다(R1.4.2 실측).
+//
+//   ── 왜 새 컬렉션이 아닌가 ──────────────────────────────────
+//
+//   필드를 옮기면 birthDate를 읽는 모든 곳(계약서·명세서·연령·대조)이
+//   따라 움직여야 한다. 값이 틀린 게 아니라 **출처가 불분명한 것**이
+//   문제이므로, 값은 그대로 두고 출처를 명시하고 쓰기를 닫는다.
+//
+//   ── 기록이 없으면 추정하지 않는다 ─────────────────────────
+//
+//   passVerifiedAt이 있다고 birthDate가 PASS에서 왔다는 뜻은 아니다.
+//   가입 시점에 그 값을 쓴 것은 클라이언트였다. 그래서 서버가 직접
+//   확정한 경우에만 표시를 남기고, 표시가 없으면 신뢰하지 않는다.
+const IDENTITY_BASIS_PASS = "PASS";
+const IDENTITY_BASIS_FOREIGN = "FOREIGN_IDENTITY";
+
+/**
+ * PASS가 준 `YYYYMMDD` 를 Timestamp로. UTC 자정으로 고정한다 —
+ * 읽는 쪽(`srvKoreanRrnMatchesPassIdentity`)이 UTC getter를 쓴다.
+ *
+ * @param {string | undefined} s YYYYMMDD
+ * @return {admin.firestore.Timestamp | null} 파싱 실패 시 null
+ */
+function srvPassBirthDateToTimestamp(
+  s: string | undefined
+): admin.firestore.Timestamp | null {
+  if (!s || s.length < 8) return null;
+  const y = parseInt(s.substring(0, 4), 10);
+  const m = parseInt(s.substring(4, 6), 10);
+  const d = parseInt(s.substring(6, 8), 10);
+  if (!y || !m || !d) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() + 1 !== m ||
+      dt.getUTCDate() !== d) {
+    return null;
+  }
+  return admin.firestore.Timestamp.fromDate(dt);
+}
+
+/**
+ * 서버가 신원 기준을 확정했다는 표시. 이 필드는 클라이언트가 쓸 수 없다.
+ *
+ * @param {string} source PASS | FOREIGN_IDENTITY
+ * @return {Record<string, unknown>} update patch 조각
+ */
+function srvIdentityBasisPatch(source: string): Record<string, unknown> {
+  return {
+    identityBasisSource: source,
+    identityBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 /**
  * [§4] 구조 검증 — 실재하는 날짜인가, 내국인 성별·세기 코드인가.
  *
@@ -1347,6 +1405,16 @@ function srvKoreanRrnStructureError(n: string): string | null {
 function srvKoreanRrnMatchesPassIdentity(
   n: string, u: FirebaseFirestore.DocumentData
 ): string | null {
+  // [PII-B4-R1.4.3 §7] 출처가 서버로 확정된 값만 기준으로 쓴다.
+  //
+  //   값이 들어 있다는 사실은 근거가 아니다. 가입 시점에 그 값을 쓴 것은
+  //   클라이언트였고, R1.4.2 실측에서 그 경로로 타인 번호가 등록됐다.
+  //   표시가 없으면 "모른다"로 보고 대조하지 않는다.
+  const basis = u["identityBasisSource"] as string | undefined;
+  if (basis !== IDENTITY_BASIS_PASS && basis !== IDENTITY_BASIS_FOREIGN) {
+    return "본인인증으로 확인된 생년월일·성별이 없습니다. " +
+      "설정에서 본인인증을 다시 진행한 뒤 등록해주세요.";
+  }
   const birth = u["birthDate"] as admin.firestore.Timestamp | undefined;
   const gender = (u["gender"] as string | undefined) ?? "";
   if (!birth?.toDate || !gender) {
@@ -8311,9 +8379,23 @@ export const finalizeRegistration = onCall(
           role: userRole,  // users/{uid}.role 사용 (권위적 출처)
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+        // [PII-B4-R1.4.3 §5] 가입 payload의 생년월일·성별은 클라이언트가
+        //   쓴 값이다. PASS 결과를 화면에서 받아 넘겼을 뿐이므로 서버가
+        //   보증한 값이 아니다. 여기서 **서버가 들고 있는 토큰 값으로
+        //   다시 확정**하고, 그 사실을 표시로 남긴다.
+        //
+        //   토큰에 값이 없으면 표시도 남기지 않는다 — 없는 근거를
+        //   있다고 적지 않는다. 세무 등록은 그 경우 거부된다.
+        const regGender = tokenData["gender"] as string | undefined;
+        const regBirth = srvPassBirthDateToTimestamp(
+          tokenData["birthDate"] as string | undefined);
         tx.update(db.collection("users").doc(uid), {
           ciHash,
           passVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...(regGender ? {gender: regGender} : {}),
+          ...(regBirth ? {birthDate: regBirth} : {}),
+          ...((regGender && regBirth) ?
+            srvIdentityBasisPatch(IDENTITY_BASIS_PASS) : {}),
         });
       });
     } else {
@@ -8403,11 +8485,13 @@ export const finalizePassReauth = onCall(
     if (reauthName)   updateFields["name"]   = reauthName;
     if (reauthPhone)  updateFields["phone"]  = reauthPhone;
     if (reauthGender) updateFields["gender"] = reauthGender;
-    if (reauthBdStr && reauthBdStr.length >= 8) {
-      const y = parseInt(reauthBdStr.substring(0, 4), 10);
-      const m = parseInt(reauthBdStr.substring(4, 6), 10) - 1; // 0-indexed month
-      const d = parseInt(reauthBdStr.substring(6, 8), 10);
-      updateFields["birthDate"] = admin.firestore.Timestamp.fromDate(new Date(y, m, d));
+    // [PII-B4-R1.4.3] 파싱을 한 곳으로 모은다 — 읽는 쪽이 UTC getter를 쓰므로
+    //   쓰는 쪽도 UTC 자정으로 고정한다.
+    const reauthBirth = srvPassBirthDateToTimestamp(reauthBdStr);
+    if (reauthBirth) updateFields["birthDate"] = reauthBirth;
+    // 재인증도 서버가 기준을 확정하는 경로다 — 표시를 갱신한다.
+    if (reauthGender && reauthBirth) {
+      Object.assign(updateFields, srvIdentityBasisPatch(IDENTITY_BASIS_PASS));
     }
     await db.collection("users").doc(uid).update(updateFields);
     // passToken 일회용 소비
@@ -14371,6 +14455,9 @@ export const callableFinalizeForeignIdentity = onCall(
           // [PII-DOC-R1.2] 성별도 서버가 같은 번호에서 파생한다.
           //   클라이언트가 자유롭게 주장하게 두지 않는다.
           ...(serverGender ? {gender: serverGender} : {}),
+          // [PII-B4-R1.4.3] 이 두 값은 서버가 등록번호에서 직접 파생했다.
+          //   그 사실을 표시로 남겨 세무 대조의 기준으로 쓸 수 있게 한다.
+          ...(serverGender ? srvIdentityBasisPatch(IDENTITY_BASIS_FOREIGN) : {}),
           // [V3] 외국인등록증에서 추출한 공식 이름 (OCR + 사용자 확인)
           ...(legalNameRaw ? {legalName: String(legalNameRaw).trim().slice(0, 100)} : {}),
           // [V3] 체류자격 (E-9, F-4 등)
