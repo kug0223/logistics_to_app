@@ -11701,6 +11701,90 @@ async function srvResolveEffectivePaySchedule(
   return base;
 }
 
+/** [R6.5] workDetail 안에서 Firestore Timestamp 로 저장돼야 하는 날짜 필드. */
+const WD_TIMESTAMP_FIELDS = [
+  "applicationDeadline", "closedAt", "emergencyOpenedAt",
+];
+
+/**
+ * [R6.5] 날짜 필드의 canonical 정규화.
+ *
+ *   저장 타입은 Firestore Timestamp 다 — reader 가 .toDate()/.toMillis() 를
+ *   부르고 범위 쿼리(where "<=" now)도 그 타입을 전제한다.
+ *   클라이언트는 _sanitizeForCF 가 모든 Timestamp 를 밀리초 숫자로 바꿔 보낸다.
+ *
+ *   이전에는 writer 들이 하나같이 "숫자면 바꾸고 아니면 그대로 둔다" 였다.
+ *   그래서 map·문자열·배열이 그대로 저장됐고, 잘못됐다는 사실은 한참 뒤
+ *   지원 시점에 wdDeadlineTs.toDate is not a function → INTERNAL 로 터졌다.
+ *   쓰는 사람이 고칠 수 있는 입력 오류를 내부 오류로 만들지 않는다.
+ *
+ *   없음(undefined)과 명시적 없음(null)은 그대로 둔다 — 마감 없는 공고는
+ *   정상이다. 잘못된 타입만 거절한다. 둘을 같은 것으로 취급하지 않는다.
+ *
+ * @param {unknown} v 입력값
+ * @param {string} label 오류 메시지에 쓸 필드 이름
+ * @return {admin.firestore.Timestamp | null | undefined} 정규화 결과
+ */
+function srvNormalizeTimestampField(
+  v: unknown, label: string
+): admin.firestore.Timestamp | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (v instanceof admin.firestore.Timestamp) return v;
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return admin.firestore.Timestamp.fromMillis(v);
+  }
+  throw new HttpsError(
+    "invalid-argument",
+    `${label}의 형식이 올바르지 않습니다. 날짜는 밀리초 숫자로 보내주세요.`
+  );
+}
+
+/**
+ * [R6.5] workDetail 배열의 날짜 필드를 정규화한 새 배열.
+ *   원본을 바꾸지 않는다. 하나라도 형식이 틀리면 전체를 거절한다 —
+ *   일부만 저장돼 절반 맞는 공고가 남지 않게 한다.
+ *
+ * @param {unknown} wds workDetail 배열
+ * @return {Record<string, unknown>[]} 정규화된 배열
+ */
+function srvNormalizeWorkDetailTimestamps(
+  wds: unknown
+): Record<string, unknown>[] {
+  if (!Array.isArray(wds)) return [];
+  return (wds as Record<string, unknown>[]).map((wd) => {
+    if (!wd || typeof wd !== "object") return wd;
+    const out: Record<string, unknown> = {...wd};
+    for (const f of WD_TIMESTAMP_FIELDS) {
+      if (!(f in out)) continue;
+      const norm = srvNormalizeTimestampField(out[f], f);
+      if (norm === undefined) delete out[f];
+      else out[f] = norm;
+    }
+    return out;
+  });
+}
+
+/**
+ * [R6.5] 저장된 날짜 값을 Timestamp 로만 읽는다.
+ *   잘못된 타입을 "마감 없음" 으로 조용히 넘기지 않는다 — 그러면 마감된
+ *   공고가 영원히 열린 것처럼 보인다. 모르는 값은 모른다고 말한다.
+ *
+ * @param {unknown} v 저장된 값
+ * @param {string} label 오류 메시지에 쓸 필드 이름
+ * @return {admin.firestore.Timestamp | null} Timestamp 또는 없음
+ */
+function srvReadTimestampOrThrow(
+  v: unknown, label: string
+): admin.firestore.Timestamp | null {
+  if (v === undefined || v === null) return null;
+  if (v instanceof admin.firestore.Timestamp) return v;
+  throw new HttpsError(
+    "failed-precondition",
+    `공고의 ${label} 정보가 손상되어 처리할 수 없습니다. 관리자에게 문의해주세요.`
+  );
+}
+
 function srvAssertUniqueWorkDetailIds(wds: unknown[]): void {
   const ids = (wds as Record<string, unknown>[]).map(
     (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
@@ -11828,11 +11912,12 @@ export const callableCreateTO = onCall(
       statusUpdatedAt: serverTime,   // 클라이언트 전달값 오버라이드
     };
     // 클라이언트가 Timestamp → millisecondsSinceEpoch로 변환하여 전달한 날짜 필드를 복원
+    // [R6.5] 숫자면 바꾸고 아니면 통과가 아니라, 틀린 타입은 거절한다.
     for (const field of ["rangeStart", "rangeEnd", "applicationDeadline", "publishAt", "workStartAvailableFrom", "workStartAvailableUntil"]) {
-      const v = finalData[field];
-      if (typeof v === "number") {
-        finalData[field] = admin.firestore.Timestamp.fromMillis(v);
-      }
+      if (!(field in finalData)) continue;
+      const norm = srvNormalizeTimestampField(finalData[field], field);
+      if (norm === undefined) delete finalData[field];
+      else finalData[field] = norm;
     }
     // [HIGH-1 수정 2026-07-17] rangeStart < rangeEnd 역전 검증
     //   역전된 날짜가 계약서·임금 계산 전체로 전파됨 (workEndDate = rangeEnd)
@@ -11847,16 +11932,8 @@ export const callableCreateTO = onCall(
     }
     // workDetails 내부 날짜 필드도 복원
     if (Array.isArray(finalData.workDetails)) {
-      finalData.workDetails = (finalData.workDetails as Record<string, unknown>[]).map((wd) => {
-        const newWd = {...wd};
-        for (const field of ["applicationDeadline", "closedAt", "emergencyOpenedAt"]) {
-          const v = newWd[field];
-          if (typeof v === "number") {
-            newWd[field] = admin.firestore.Timestamp.fromMillis(v);
-          }
-        }
-        return newWd;
-      });
+      finalData.workDetails =
+        srvNormalizeWorkDetailTimestamps(finalData.workDetails);
     }
     // creatorUID 재확인 (callerUid 기준으로 고정)
     finalData.creatorUID = callerUid;
@@ -12505,6 +12582,9 @@ export const callableCreateFlexSlots = onCall(
     srvAssertUniqueWorkDetailIds(workDetails);
     // [R6.2] 슬롯 workDetail 이 실제 급여 계산의 source 다 — 같은 기준으로 검증한다.
     srvAssertPayScheduleValid(workDetails, {require: true});
+    // [R6.5] 서버가 마감을 계산하지 않는 조합에서는 클라이언트 값이 그대로
+    //   남는다. 남더라도 canonical 타입이어야 한다.
+    const normalizedFlexWDs = srvNormalizeWorkDetailTimestamps(workDetails);
     // [TO-M-05] dates 입력 검증: YYYY-MM-DD 포맷 · 과거날짜 차단 · 중복 제거
     {
       const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -12637,7 +12717,7 @@ export const callableCreateFlexSlots = onCall(
       const slotRef = toRef.collection("slots").doc();
 
       // 업무별 마감 계산 (KST 기준 서버 계산)
-      const wdsWithDeadlines = workDetails.map((wd) => {
+      const wdsWithDeadlines = normalizedFlexWDs.map((wd) => {
         const newWd = {...wd};
         if (deadlineType === "HOURS_BEFORE" && typeof wd.startTime === "string") {
           newWd.applicationDeadline = admin.firestore.Timestamp.fromMillis(
@@ -13215,8 +13295,14 @@ export const callableUpdateTO = onCall(
       if (BLOCKED_FIELDS.includes(key)) continue;  // 위험 필드 스킵
       if (value === null) {
         finalUpdates[key] = admin.firestore.FieldValue.delete();  // null → 삭제
-      } else if (TIMESTAMP_FIELDS.includes(key) && typeof value === "number") {
-        finalUpdates[key] = admin.firestore.Timestamp.fromMillis(value);  // ms → Timestamp
+      } else if (TIMESTAMP_FIELDS.includes(key)) {
+        // [R6.5] 틀린 타입을 그대로 저장하지 않는다.
+        const norm = srvNormalizeTimestampField(value, key);
+        if (norm !== undefined) finalUpdates[key] = norm;
+      } else if (key === "workDetails") {
+        // [R6.5] workDetails 안의 날짜도 같은 기준. 이전에는 이 경로에서
+        //   숫자조차 변환되지 않고 그대로 저장됐다.
+        finalUpdates[key] = srvNormalizeWorkDetailTimestamps(value);
       } else {
         finalUpdates[key] = value;
       }
@@ -13645,20 +13731,22 @@ export const callableUpdateSlotWorkDetails = onCall(
 
     // ── workDetails 직렬화 변환 헬퍼 — applicationDeadlineMs(number) → Firestore Timestamp ──
     const toFirestoreWDs = (wds: Record<string, unknown>[]) =>
-      wds.map((d) => {
+      srvNormalizeWorkDetailTimestamps(wds.map((d) => {
         const out: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(d)) {
           if (k === "applicationDeadlineMs") {
-            if (typeof v === "number") {
-              out["applicationDeadline"] = admin.firestore.Timestamp.fromMillis(v);
+            // [R6.5] null 은 "마감 없음"(slotUpdate 에서 삭제 처리), 숫자는 변환,
+            //   그 외 타입은 거절 — 조용히 무시하지 않는다.
+            const norm = srvNormalizeTimestampField(v, "applicationDeadlineMs");
+            if (norm !== null && norm !== undefined) {
+              out["applicationDeadline"] = norm;
             }
-            // applicationDeadlineMs=null → applicationDeadline 필드 생략 (삭제는 slotUpdate에서 별도 처리)
           } else {
             out[k] = v;
           }
         }
         return out;
-      });
+      }));
 
     // ── duplicate composite ID 검증 헬퍼 ──
     const checkDuplicateIds = (wds: Record<string, unknown>[]) => {
@@ -31604,7 +31692,8 @@ export const callableApplyToTO = onCall(
     if (publishEndDateTs && publishEndDateTs.toDate() < new Date()) {
       throw new HttpsError("permission-denied", "게시 기간이 만료된 공고입니다.");
     }
-    const toDeadlineTs = toData["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+    const toDeadlineTs =
+      srvReadTimestampOrThrow(toData["applicationDeadline"], "지원 마감 시간");
     if (toDeadlineTs && toDeadlineTs.toDate() < new Date()) {
       throw new HttpsError("permission-denied", "지원 마감된 공고입니다.");
     }
@@ -31661,7 +31750,9 @@ export const callableApplyToTO = onCall(
       serverWage = wd["wage"] as number | undefined;
       serverWageType = wd["wageType"] as string | undefined;
       resolvedWdId = wd["wdId"] as string | undefined; // [Phase 8.1E.2]
-      const wdDeadlineTs = wd["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+      // [R6.5] 손상된 값을 "마감 없음" 으로 넘기지 않는다.
+      const wdDeadlineTs =
+        srvReadTimestampOrThrow(wd["applicationDeadline"], "업무 마감 시간");
       if (wdDeadlineTs && wdDeadlineTs.toDate() < new Date()) {
         throw new HttpsError("permission-denied", "해당 업무의 지원 마감 시간이 지났습니다.");
       }
@@ -31967,7 +32058,8 @@ export const callableApplyToTO = onCall(
               ?? (rawWD as Record<string, unknown>[]).find((x) => x["workType"] === selectedWorkType)
               ?? {})
           : ((rawWD as Record<string, unknown>[]).find((x) => x["workType"] === selectedWorkType) ?? {});
-        const dtTs = wdTx["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+        const dtTs =
+          srvReadTimestampOrThrow(wdTx["applicationDeadline"], "업무 마감 시간");
         if (dtTs && dtTs.toDate() < new Date()) {
           throw new HttpsError("permission-denied", "방금 마감된 업무입니다.");
         }
@@ -32004,7 +32096,8 @@ export const callableApplyToTO = onCall(
         if (ld["isManualClosed"] === true || ld["status"] === "CLOSED") {
           throw new HttpsError("permission-denied", "방금 마감된 공고입니다.");
         }
-        const dtTs = ld["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+        const dtTs =
+          srvReadTimestampOrThrow(ld["applicationDeadline"], "지원 마감 시간");
         if (dtTs && dtTs.toDate() < new Date()) {
           throw new HttpsError("permission-denied", "지원 마감 시간이 지났습니다.");
         }
