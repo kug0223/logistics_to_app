@@ -118,18 +118,100 @@ void main() {
     });
   });
 
-  group('TA-4 — 관리자 경로는 기계적으로 통일하지 않는다', () {
+  group('TA-4 — 관리자 일괄 출근도 일반 운영 버튼이므로 경계가 있다 (R6.0B)', () {
     final batchIn = _sliceOf(raw, 'export const callableBatchCheckIn = onCall(',
-        'return {success: true');
+        'interface CheckOutEntry');
+    final bCode = _codeOf(batchIn);
+    final bFlat = _flat(bCode);
+    final gate = _sliceOf(raw, 'async function srvBatchCheckInTimeGate(',
+        'function _processCheckin(');
+    final gCode = _codeOf(gate);
 
-    test('TA-40 관리자 batch check-in 에는 이 게이트를 넣지 않았다', () {
-      expect(_codeOf(batchIn), isNot(contains('admitFromMs')));
-      expect(_codeOf(batchIn), isNot(contains('srvCommittedStartTime')));
+    test('TA-40 일괄 출근이 시각 게이트를 통과한다', () {
+      expect(bFlat, contains('await srvBatchCheckInTimeGate('));
+      expect(bFlat, contains('if (ciTimeGate) {'));
+      expect(bFlat, contains('return ciTimeGate;'));
     });
 
-    test('TA-41 관리자 보정 경로가 실재한다 — 조기근무는 그쪽에서 기록한다', () {
+    test('TA-41 게이트는 worker 와 같은 약속 권위를 쓴다', () {
+      expect(_flat(gCode), contains('await srvCommittedStartTime('));
+      expect(_flat(gCode), contains('_clampAttendanceRules(rules).earlyWindow'));
+      expect(_flat(gCode), contains('if (checkInMs < admitFromMs) return "beforeCommittedWindow"'));
+    });
+
+    test('TA-42 클라이언트 checkInMs 를 무검증으로 저장하지 않는다', () {
+      expect(_flat(gCode), contains('if (checkInMs > Date.now()) return "futureCheckInTime"'));
+      expect(_flat(gCode), contains('!Number.isFinite(checkInMs)'));
+    });
+
+    test('TA-43 UNKNOWN 약속시각은 fail closed', () {
+      expect(_flat(gCode), contains('return "unknownCommittedTime"'));
+    });
+
+    test('TA-44 게이트가 신규/기존 두 경로보다 앞에 있다', () {
+      final gateAt = bCode.indexOf('if (ciTimeGate)');
+      final branchAt = bCode.indexOf('if (attendanceId) {');
+      expect(gateAt, greaterThan(-1));
+      expect(gateAt, lessThan(branchAt));
+    });
+
+    test('TA-45 관리자 보정 경로가 실재한다 — 실제 조기근무는 그쪽에서 기록한다', () {
       expect(raw, contains('export const callableBatchAdjustAttendanceTime = onCall('));
-      expect(raw, contains('export const callableBatchCheckIn = onCall('));
+      final adj = _sliceOf(raw, 'export const callableBatchAdjustAttendanceTime = onCall(',
+          'export const callableBatchAdminConfirm');
+      // 정정 경로는 actor 를 남기고 90일 소급 한도를 갖는다
+      expect(_flat(_codeOf(adj)), contains('modifiedBy: callerUid'));
+      expect(_flat(_codeOf(adj)), contains('ninetyDaysAgo'));
+    });
+  });
+
+  group('TA-6 — 관리자 기록의 actor provenance (R6.0B §5)', () {
+    final batchIn = _sliceOf(raw, 'export const callableBatchCheckIn = onCall(',
+        'interface CheckOutEntry');
+    final bFlat = _flat(_codeOf(batchIn));
+
+    test('TA-60 신규 생성 경로에도 누가 만들었는지 남는다', () {
+      final newRow = _sliceOf(_codeOf(batchIn), 'modifyRequested: false,', 'createdAt: now,');
+      expect(_flat(newRow), contains('modifiedBy: callerUid'));
+      expect(_flat(newRow), contains('modifiedAt: now'));
+    });
+
+    test('TA-61 how 도 함께 남는다 — 근로자 punch 와 구분된다', () {
+      expect(bFlat, contains('checkInMethod: "manual"'));
+    });
+
+    test('TA-62 기존 row 수정 경로의 actor 는 그대로다', () {
+      expect(bFlat, contains('modifiedBy: callerUid'));
+      expect(bFlat, contains('isModified: true'));
+    });
+  });
+
+  group('TA-7 — 건너뛴 건을 성공으로 세지 않는다 (PARTIAL ≠ SUCCESS)', () {
+    final batchIn = _sliceOf(raw, 'export const callableBatchCheckIn = onCall(',
+        'interface CheckOutEntry');
+    final bFlat = _flat(_codeOf(batchIn));
+
+    test('TA-70 기존 row 경로가 사유 코드를 돌려준다', () {
+      expect(bFlat, contains('return "alreadyCheckedIn"'));
+      expect(bFlat, contains('return "wageAlreadySettled"'));
+      expect(bFlat, contains('return "wageAlreadyCalculated"'));
+      expect(bFlat, contains('Promise<string | null> => { const snap = await tx.get(ref)'));
+    });
+
+    test('TA-71 confirmed/transferred/calculated 보호는 유지된다', () {
+      expect(bFlat, contains('if (ws === "confirmed" || ws === "transferred")'));
+      expect(bFlat, contains('if (ws === "calculated")'));
+      expect(bFlat, contains('if (snapData.checkIn != null)'));
+    });
+
+    test('TA-72 미래 날짜 차단은 유지된다', () {
+      expect(bFlat, contains('return "futureDate"'));
+      expect(bFlat, contains('if (workDateMs > todayKSTStartMs_ci)'));
+    });
+
+    test('TA-73 processed + failed == total 집계가 유지된다', () {
+      expect(bFlat, contains('if (r.value === null) successCount++'));
+      expect(bFlat, contains('total: entries.length'));
     });
   });
 

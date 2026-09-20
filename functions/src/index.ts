@@ -25310,7 +25310,11 @@ export const callableBatchCheckIn = onCall(
 
     const callerUid = request.auth.uid;
     // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
-    const {callerData: batchCheckInCallerData} = await assertBizAdmin(callerUid, businessId);
+    const {callerData: batchCheckInCallerData, bizData: batchCheckInBizData} =
+      await assertBizAdmin(callerUid, businessId);
+    // [R6.0B] 시각 경계는 사업장 규칙에서 온다 — 클라이언트 전달값은 쓰지 않는다.
+    const batchCiRules =
+      (batchCheckInBizData?.attendanceRules ?? {}) as AttendanceRulesData;
     // [PERM-WORKERS-03] 서브어드민 canManageWorkers 세부 권한 검증 — callableBatchSetNoShow와 대칭
     const batchCheckInCallerRole = batchCheckInCallerData?.role as string | undefined;
     if (batchCheckInCallerRole !== "BUSINESS_ADMIN" && batchCheckInCallerRole !== "SUPER_ADMIN") {
@@ -25350,29 +25354,49 @@ export const callableBatchCheckIn = onCall(
           const checkInTs = admin.firestore.Timestamp.fromMillis(checkInMs);
 
           try {
+            // [L3-FIX] applicationId → userId 교차검증 — 타 근로자 UID 지정으로 TrustScore 조작 차단
+            // [BATCH-CHECKIN-BIZ-FIX] businessId 교차검증 — 타 사업장 근무자 명의 기록 차단
+            // [R6.0B] 두 경로가 같은 약속을 기준으로 판단하도록 지원서 read를 앞으로 옮겼다.
+            const appVerifySnap = await db.collection("applications").doc(applicationId).get();
+            if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
+                appVerifySnap.data()!.businessId !== businessId) {
+              console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
+              return "ownerMismatch";
+            }
+            // [R6.0B] 시각 권한 게이트 — 신규/기존 양쪽 경로 공통.
+            //   일반 운영 버튼이 약속 밖 유급근로를 만들지 않게 한다.
+            const ciTimeGate = await srvBatchCheckInTimeGate(
+              applicationId, appVerifySnap.data()!, workDateMs, checkInMs, batchCiRules);
+            if (ciTimeGate) {
+              console.warn(`출근 처리 건너뜀 — ${ciTimeGate} (${applicationId})`);
+              return ciTimeGate;
+            }
             if (attendanceId) {
               // [CF-HIGH-1-FIX] TOCTOU 방지 — get+update를 runTransaction으로 원자화
               // callableBatchCheckOut non-resetWageDetail 경로와 동일 패턴 적용
               const ref = db.collection("attendance").doc(attendanceId);
-              await db.runTransaction(async (tx) => {
+              // [R6.0B] 건너뛴 건을 성공으로 세지 않는다 — PARTIAL ≠ SUCCESS.
+              //   이전에는 tx 안에서 그냥 return 했고 바깥은 그것을 처리 완료로 집계했다.
+              return await db.runTransaction(async (tx): Promise<string | null> => {
                 const snap = await tx.get(ref);
                 if (snap.exists) {
                   const snapData = snap.data()!;
                   // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-                  if (snapData.businessId !== businessId) return;
+                  if (snapData.businessId !== businessId) return "ownerMismatch";
                   const ws = snapData.wageStatus as string | undefined;
                   // [P1-WF-01] calculated/confirmed/transferred 모두 차단
                   // calculated: stale wage snapshot이 confirmFinalWage에 그대로 confirmed될 수 있음
                   // correction은 AdjustAttendanceTime canonical path 사용
-                  if (ws === "confirmed" || ws === "transferred" || ws === "calculated") return;
+                  if (ws === "confirmed" || ws === "transferred") return "wageAlreadySettled";
+                  if (ws === "calculated") return "wageAlreadyCalculated";
                   // [P1-WF-01] 기존 checkIn 존재 → BatchCheckIn 불허
                   // JTBD: BatchCheckIn = 최초 출근 기록 전용. 기존 시간 수정은 AdjustAttendanceTime.
-                  if (snapData.checkIn != null) return;
+                  if (snapData.checkIn != null) return "alreadyCheckedIn";
                   // [5A.1-P1-WF-01] 미래 날짜 attendance checkIn 차단
                   const attWorkDateTs = snapData.workDate as admin.firestore.Timestamp | undefined;
                   if (attWorkDateTs) {
                     const todayKSTStartMs = (() => { const d = new Date(Date.now() + KST_OFFSET_MS); d.setUTCHours(0, 0, 0, 0); return d.getTime() - KST_OFFSET_MS; })();
-                    if (attWorkDateTs.toMillis() > todayKSTStartMs) return;
+                    if (attWorkDateTs.toMillis() > todayKSTStartMs) return "futureDate";
                   }
                 }
                 tx.update(ref, {
@@ -25384,17 +25408,10 @@ export const callableBatchCheckIn = onCall(
                   modifiedBy: callerUid,
                   updatedAt: now,
                 });
+                return null;
               });
             } else {
               // 신규 출근 기록 — wageStatus='pending' 고정
-              // [L3-FIX] applicationId → userId 교차검증 — 타 근로자 UID 지정으로 TrustScore 조작 차단
-              const appVerifySnap = await db.collection("applications").doc(applicationId).get();
-              // [BATCH-CHECKIN-BIZ-FIX] businessId 교차검증 추가 — 타 사업장 근무자 명의로 출근 기록 생성 차단
-              if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
-                  appVerifySnap.data()!.businessId !== businessId) {
-                console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
-                return "ownerMismatch";
-              }
               // [R5.3E.1] 확정 상태 검증 — 취소된 지원서에 새 출근 기록을 만들지 않는다.
               //   cancel ‖ check-in에서 취소가 먼저 이긴 경우 현재 상태 기준으로 처리한다.
               //   (기존 row를 고치는 attendanceId 경로는 근태 정정 flow이므로 대상 아님)
@@ -25444,6 +25461,11 @@ export const callableBatchCheckIn = onCall(
                 status,
                 isModified: false,
                 modifyRequested: false,
+                // [R6.0B §5] 관리자가 대신 만든 기록이다 — 누가 만들었는지 남긴다.
+                //   checkInMethod="manual"은 "어떻게"만 말하고 "누가"를 말하지 않았다.
+                //   기존 수정 경로와 같은 canonical actor 필드를 재사용한다.
+                modifiedBy: callerUid,
+                modifiedAt: now,
                 wageStatus: "pending",
                 // [5A.1-SNAPSHOT-PARITY] TO 레벨 임금 고정 snapshot — callableCheckInAttendance L20025~20026 parity
                 // 파트 전환 후에도 해당 날짜 기준 임금으로 계산되도록 보존
@@ -29700,6 +29722,54 @@ function srvKstHhmm(ms: number): string {
   const d = new Date(ms + 9 * 60 * 60 * 1000);
   return `${String(d.getUTCHours()).padStart(2, "0")}:` +
     `${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * [R6.0B] 관리자 일괄 출근의 시각 권한 게이트.
+ *
+ *   `일괄 출근`은 **일상 운영 버튼**이다 — 실제 출근 사실을 대신 기록하거나
+ *   빠진 punch 를 채우는 것이지, 확정된 약속 밖의 근무를 승인하는 자리가
+ *   아니다. 시간 시트의 기본값이 "지금"이라, 18:00 근무를 15:49 에 열어
+ *   그대로 확인하면 두 시간짜리 약속 밖 유급근로가 기본값으로 생겼다.
+ *
+ *   그래서 일반 경로에는 근로자와 같은 경계를 둔다. 실제 조기근무는
+ *   callableBatchAdjustAttendanceTime — 이미 존재하는 정정 권한 — 이 맡는다.
+ *   거기에는 actor(modifiedBy)와 90일 소급 한도가 이미 있다.
+ *
+ *   checkInMs 는 클라이언트 입력이다. 미래 시각과 약속 밖 과거를 모두 막는다.
+ *
+ * @param {string} applicationId 지원서 ID
+ * @param {FirebaseFirestore.DocumentData} appData 지원서 데이터
+ * @param {number} workDateMs 근무일(KST 자정 UTC ms)
+ * @param {number} checkInMs 기록하려는 출근 시각
+ * @param {AttendanceRulesData} rules 사업장 근태 규칙
+ * @return {Promise<string | null>} 거절 사유 코드, 통과면 null
+ */
+async function srvBatchCheckInTimeGate(
+  applicationId: string,
+  appData: FirebaseFirestore.DocumentData,
+  workDateMs: number,
+  checkInMs: number,
+  rules: AttendanceRulesData
+): Promise<string | null> {
+  if (typeof checkInMs !== "number" || !Number.isFinite(checkInMs)) {
+    return "invalidCheckInTime";
+  }
+  // 아직 오지 않은 시각을 "실제 출근했다"고 기록할 수는 없다.
+  if (checkInMs > Date.now()) return "futureCheckInTime";
+  let startTime: string;
+  try {
+    startTime = await srvCommittedStartTime(applicationId, appData);
+  } catch (_) {
+    // 약속 시각을 모르면 경계를 모른다 — 모르는 경계로 열어주지 않는다.
+    return "unknownCommittedTime";
+  }
+  const [h, m] = startTime.split(":").map(Number);
+  const committedStartMs = workDateMs + (h * 60 + m) * 60000;
+  const admitFromMs =
+    committedStartMs - _clampAttendanceRules(rules).earlyWindow! * 60000;
+  if (checkInMs < admitFromMs) return "beforeCommittedWindow";
+  return null;
 }
 
 /**
