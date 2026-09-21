@@ -9715,6 +9715,20 @@ export const callableVoidContractWithApplications = onCall(
     });
 
     if (result.alreadyVoided) return {alreadyVoided: true};
+
+    // [R8-P3B.1 §13] 무효화가 실제로 커밋된 경우에만 알린다.
+    try {
+      await srvNotifyContractVoided({
+        contractId,
+        businessId: result.businessId ?? businessId,
+        businessName: result.businessName ?? businessName,
+        workerId: result.workerId ?? workerId,
+      });
+    } catch (e) {
+      console.error(
+        "⚠️ [voidContractWithApplications] 무효화 알림 실패 (무효화는 완료됨):", e);
+    }
+
     return {success: true, workerId: result.workerId, businessName: result.businessName, businessId: result.businessId, applicationIds: result.applicationIds};
   }
 );
@@ -18432,6 +18446,181 @@ export const callableApplyNoShowPenalty = onCall(
 // 호출자: 지원자 본인(USER_CANCELED/SAME_DAY_CANCEL) 또는 사업장 관리자(ADMIN_CANCELED)
 // 반환값: slot decrement · 패널티 · 알림에 필요한 지원서 필드 일체
 // ═══════════════════════════════════════════════════════════
+/**
+ * [R8-P3B.1] KST 기준 `M/D` — 클라이언트 FormatHelper.formatDateShort 와 같은 문구.
+ *
+ * @param {number} ms epoch 밀리초
+ * @return {string} 예: "9/21"
+ */
+function srvKstMonthDay(ms: number): string {
+  const d = new Date(ms + 9 * 60 * 60 * 1000);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+/**
+ * [R8-P3B.1] 확정 취소 알림 — 누가 취소했느냐에 따라 받는 사람이 다르다.
+ *
+ *   예전에는 CF 가 값을 돌려주면 **클라이언트가** 알림 callable 을 한 번 더
+ *   불렀다. 관리자 취소면 1회, 근로자 자기 취소면 사업장·근로자 문서를 읽고
+ *   관리자 수만큼 불렀다. 왕복 하나가 DEV 실측 600ms대다 — 취소를 누른
+ *   사람이 그만큼 더 기다렸고, 응답 직후 앱이 죽으면 알림은 사라졌다.
+ *
+ *   수신자 범위는 그대로다. 관리자 취소 → 근로자 본인. 근로자 취소 →
+ *   businesses.adminIds(비었으면 ownerId). 서브어드민 팬아웃은 원래 없다 —
+ *   confirmationCanceled 는 근무자용 문구가 섞일 수 있어 팬아웃 제외 대상이다.
+ *
+ *   문서 id 를 지원서·수신자로 고정해 재시도에도 두 번 쌓이지 않는다.
+ *   FCM 은 onNotificationCreated 트리거가 보낸다 — 여기서는 문서만 쓴다.
+ *
+ * @param {object} a 취소된 지원서의 사실들
+ * @return {Promise<void>} 실패해도 취소 자체에는 영향이 없다
+ */
+async function srvNotifyConfirmationCanceled(a: {
+  applicationId: string;
+  businessId: string;
+  businessName: string;
+  workerUid: string;
+  workType: string;
+  workDateMs: number | null;
+  toId: string;
+  workDetailId: string;
+  isAdminCancel: boolean;
+  cancelReason?: string | null;
+}): Promise<void> {
+  const when = a.workDateMs ? srvKstMonthDay(a.workDateMs) : "";
+  const dateLine = when ? `\n근무일: ${when}` : "";
+
+  if (a.isAdminCancel) {
+    // 관리자가 취소했다 → 근로자 본인에게
+    const reasonLine = a.cancelReason ? `\n사유: ${a.cancelReason}` : "";
+    const ref = db.collection("users").doc(a.workerUid)
+      .collection("notifications")
+      .doc(`confirmation_canceled_${a.applicationId}_${a.workerUid}`);
+    try {
+      await ref.create({
+        userId: a.workerUid,
+        type: "confirmationCanceled",
+        title: "확정 취소",
+        body: `${a.businessName}의 ${a.workType} 확정이 취소되었습니다.` +
+          `${reasonLine}${dateLine}`,
+        data: {
+          applicationId: a.applicationId,
+          businessId: a.businessId,
+          action: "applicationDetail",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+    } catch (e) {
+      if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
+      console.error(
+        `⚠️ [confirmationCanceled] 알림 저장 실패 uid=${a.workerUid} ` +
+        `application=${a.applicationId}:`, e);
+    }
+    return;
+  }
+
+  // 근로자가 스스로 취소했다 → 그 사업장 관리자들에게
+  if (!a.businessId) {
+    console.error(
+      "⚠️ [confirmationCanceled] businessId 없음 — application=" +
+      a.applicationId);
+    return;
+  }
+  const [bizSnap, workerSnap] = await Promise.all([
+    db.collection("businesses").doc(a.businessId).get(),
+    db.collection("users").doc(a.workerUid).get(),
+  ]);
+  const bizData = bizSnap.data();
+  let adminIds: string[] = (bizData?.adminIds as string[] | undefined) ?? [];
+  if (adminIds.length === 0) {
+    const owner = bizData?.ownerId as string | undefined;
+    if (owner) adminIds = [owner];
+  }
+  if (adminIds.length === 0) {
+    console.error(
+      `⚠️ [confirmationCanceled] 수신자 없음 — businessId=${a.businessId}`);
+    return;
+  }
+  const workerName = (workerSnap.data()?.name as string | undefined) ?? "근무자";
+  const payload = {
+    type: "confirmationCanceled",
+    title: "확정 취소",
+    body: `${workerName}님이 ${a.workType} 확정 근무를 취소했습니다.${dateLine}`,
+    data: {
+      applicationId: a.applicationId,
+      businessId: a.businessId,
+      toId: a.toId,
+      workDetailId: a.workDetailId,
+      workType: a.workType,
+      workDate: a.workDateMs ? new Date(a.workDateMs).toISOString() : "",
+      action: "applicantDetail",
+    },
+    category: "admin",
+    isRead: false,
+    createdAt: admin.firestore.Timestamp.now(),
+  };
+  const results = await Promise.allSettled(adminIds.map((adminUid) =>
+    db.collection("users").doc(adminUid).collection("notifications")
+      .doc(`confirmation_canceled_by_worker_${a.applicationId}_${adminUid}`)
+      .create({...payload, userId: adminUid})));
+  results.forEach((r, i) => {
+    if (r.status !== "rejected") return;
+    if ((r.reason as {code?: number})?.code === 6) return;
+    console.error(
+      `⚠️ [confirmationCanceled] 관리자 알림 실패 uid=${adminIds[i]} ` +
+      `application=${a.applicationId}:`, r.reason);
+  });
+}
+
+/**
+ * [R8-P3B.1] 계약서 무효 처리 알림 — 근로자 본인에게.
+ *
+ *   여기도 클라이언트가 CF 응답을 받은 뒤 알림 callable 을 한 번 더 불렀다.
+ *   무효화는 근로자가 반드시 알아야 하는 사실인데, 그 통지가 호출자 앱의
+ *   생존에 달려 있었다.
+ *
+ * @param {object} a 무효화된 계약의 사실들
+ * @return {Promise<void>} 실패해도 무효화 자체에는 영향이 없다
+ */
+async function srvNotifyContractVoided(a: {
+  contractId: string;
+  businessId: string;
+  businessName: string;
+  workerId: string;
+}): Promise<void> {
+  if (!a.workerId) {
+    console.error(
+      `⚠️ [contractVoided] workerId 없음 — contract=${a.contractId}`);
+    return;
+  }
+  try {
+    await db.collection("users").doc(a.workerId).collection("notifications")
+      .doc(`contract_voided_${a.contractId}_${a.workerId}`)
+      .create({
+        userId: a.workerId,
+        type: "contractVoided",
+        title: "계약서 무효 처리",
+        body: `${a.businessName}의 근로계약서가 무효 처리되었습니다. ` +
+          "계약서 목록을 확인해 주세요.",
+        data: {
+          contractId: a.contractId,
+          businessId: a.businessId,
+          screen: "userContracts",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+  } catch (e) {
+    if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
+    console.error(
+      `⚠️ [contractVoided] 알림 저장 실패 uid=${a.workerId} ` +
+      `contract=${a.contractId}:`, e);
+  }
+}
+
 export const callableCancelConfirmedApplication = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -18835,6 +19024,27 @@ export const callableCancelConfirmedApplication = onCall(
     // 6. 클라이언트 후속 처리(slot decrement, 알림)에 필요한 값 반환
     // [R3-B.3.2] 노쇼 패널티는 위 cancellation tx와 SAME_TX — SERVER_AUTHORITATIVE_PERSISTENCE = YES
     // [FIX-4] ID-CONSENT Grant revoke는 위 transaction 내부에서 처리 완료 (atomic 보장)
+
+    // [R8-P3B.1 §7] 도메인 커밋이 끝난 뒤에만 보낸다. 실패해도 취소는 성공이다.
+    try {
+      await srvNotifyConfirmationCanceled({
+        applicationId,
+        businessId: (appData.businessId as string | undefined) ?? "",
+        businessName: (appData.businessName as string | undefined) ?? "",
+        workerUid,
+        workType: (appData.selectedWorkType as string | undefined) ?? "",
+        workDateMs:
+          (appData.workDate as admin.firestore.Timestamp | undefined)
+            ?.toMillis() ?? null,
+        toId: (appData.toId as string | undefined) ?? "",
+        workDetailId: (appData.workDetailId as string | undefined) ?? "",
+        isAdminCancel,
+        cancelReason,
+      });
+    } catch (e) {
+      console.error(
+        "⚠️ [cancelConfirmedApplication] 확정취소 알림 실패 (취소는 완료됨):", e);
+    }
 
     return {
       success: true,

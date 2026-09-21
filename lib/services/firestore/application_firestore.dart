@@ -930,17 +930,13 @@ extension ApplicationFirestore on FirestoreService {
 
       final toId = cfData['toId'] as String?;
       final slotId = cfData['slotId'] as String?;
-      final selectedWorkType = cfData['selectedWorkType'] as String?;
       final businessId = cfData['businessId'] as String?;
-      final businessName = cfData['businessName'] as String? ?? '';
       final isAdminCancel = cfData['isAdminCancel'] as bool? ?? false;
       // [SERVER-AUTH] 서버가 판정한 penalty 여부를 사용 (client boolean 무시)
       final serverShouldPenalty = cfData['shouldApplyNoShowPenalty'] as bool? ?? false;
-      final workDateMs = cfData['workDateMs'] as int?;
-      final workDetailId = cfData['workDetailId'] as String? ?? '';
-      final workDate = workDateMs != null
-          ? DateTime.fromMillisecondsSinceEpoch(workDateMs).toLocal()
-          : DateTime.now();
+      // [R8-P3B.1] workType·businessName·workDate·workDetailId 는 알림 문구에만
+      //   쓰였다. 알림이 CF 로 가면서 여기서는 더 읽지 않는다 — CF 응답 필드
+      //   자체는 하위 호환을 위해 그대로 둔다.
 
       // 2. 캐시 무효화 (Fix-A: capacity decrement는 서버 TX에서 atomic 처리 완료 — 별도 CF 호출 불필요)
       // serverShouldPenalty=$serverShouldPenalty 참고용 — no-show penalty도 서버 인라인 처리됨
@@ -959,54 +955,16 @@ extension ApplicationFirestore on FirestoreService {
         ),
       ]);
 
-      // 6. 알림 발송
-      if (isAdminCancel) {
-        await createNotification(NotificationModel.createConfirmationCanceled(
-          userId: uid,
-          businessName: businessName,
-          businessId: businessId ?? '',
-          workType: selectedWorkType ?? '',
-          workDate: workDate,
-          applicationId: applicationId,
-          cancelReason: cancelReason,
-        ));
-      } else {
-        // M-1: 근무자 자기 취소 시 관리자에게 확정취소 알림
-        try {
-          final bId = businessId ?? '';
-          if (bId.isNotEmpty) {
-            // [PERF-F2] bizDoc + workerDoc 동시 시작 (2 RTT → 1 RTT)
-            final bizDocFuture = _firestore.collection('businesses').doc(bId)
-                .get(const GetOptions(source: Source.server));
-            final workerDocFuture = _firestore.collection('users').doc(uid)
-                .get(const GetOptions(source: Source.server));
-            final bizDoc = await bizDocFuture;
-            final adminIds = List<String>.from(bizDoc.data()?['adminIds'] as List? ?? []);
-            if (adminIds.isEmpty) {
-              final fallback = bizDoc.data()?['ownerId'] as String?;
-              if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
-            }
-            if (adminIds.isNotEmpty) {
-              final workerDoc = await workerDocFuture;
-              final workerName = workerDoc.data()?['name'] as String? ?? '근무자';
-              await Future.wait(adminIds.map((adminUid) => createNotification(
-                NotificationModel.createConfirmationCanceledByWorker(
-                  userId: adminUid,
-                  workerName: workerName,
-                  workType: selectedWorkType ?? '',
-                  workDate: workDate,
-                  applicationId: applicationId,
-                  businessId: bId,
-                  toId: toId ?? '',
-                  workDetailId: workDetailId,
-                ),
-              )));
-            }
-          }
-        } catch (e) {
-          debugPrint('⚠️ [M-1] 근무자 확정 취소 관리자 알림 발송 실패: $e');
-        }
-      }
+      // 6. 알림 — [R8-P3B.1] callableCancelConfirmedApplication CF 안으로 이관.
+      //
+      //   여기서는 CF 응답을 받은 뒤 알림 callable 을 **다시** 불렀다.
+      //   관리자 취소면 1회, 근무자 자기 취소면 사업장·근무자 문서를 읽고
+      //   관리자 수만큼 불렀다. 왕복 하나가 DEV 실측 600ms대다 — 취소를 누른
+      //   사람이 그만큼 더 기다렸고, 응답 직후 앱이 죽으면 알림은 사라졌다.
+      //
+      //   수신자 범위는 그대로다: 관리자 취소 → 근무자 본인,
+      //   근무자 취소 → businesses.adminIds(비었으면 ownerId).
+      //   (confirmationCanceled 는 원래 서브어드민 팬아웃 대상이 아니다.)
 
       debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티(서버판정): $serverShouldPenalty)');
       return true;

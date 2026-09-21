@@ -10,7 +10,6 @@ import '../models/core/business_model.dart';
 import '../models/core/to_model.dart';
 import '../models/core/contract_template_model.dart';
 import '../models/core/employment_contract_model.dart';
-import '../models/core/notification_model.dart';
 import '../models/core/user_model.dart';
 import '../utils/work_detail_helper.dart';
 import '../models/core/work_detail_data.dart';
@@ -604,25 +603,13 @@ class ContractService {
     final alreadyVoided = data?['alreadyVoided'] as bool? ?? false;
     if (alreadyVoided) return; // 멱등 처리 — 이미 voided 상태
 
-    // Post-TX: 근무자에게 무효화 알림 발송 (CF TX 성공 이후 — 비원자적, best-effort)
-    // [H-34] TX 외부에서 알림 발송 → 알림 실패 시 TX 상태(voided+CANCELED)는 유지
-    final workerId = data?['workerId'] as String? ?? '';
-    final bizName = data?['businessName'] as String? ?? '';
-    final bizId = data?['businessId'] as String? ?? '';
-    if (workerId.isNotEmpty) {
-      try {
-        await _firestoreService.createNotification(
-          NotificationModel.createContractVoided(
-            userId: workerId,
-            businessName: bizName,
-            businessId: bizId,
-            contractId: contractId,
-          ),
-        );
-      } catch (e) {
-        debugPrint('⚠️ [H-34] 계약서 무효화 알림 발송 실패 (비치명적): $e');
-      }
-    }
+    // [R8-P3B.1] 무효화 알림은 callableVoidContractWithApplications 가 보낸다.
+    //
+    //   예전에는 여기서 CF 응답을 받은 뒤 알림 callable 을 한 번 더 불렀다.
+    //   근로자가 반드시 알아야 할 사실의 통지가 **호출자 앱의 생존**에
+    //   달려 있었다 — 응답 직후 앱이 죽으면 계약이 무효가 된 줄 모른다.
+    //   수신자(근로자 본인)·문구·목적지(userContracts)는 그대로다.
+    //   [H-34] 알림 실패가 TX 상태(voided+CANCELED)를 되돌리지 않는 것도 그대로다.
   }
 
   /// voidFailedAppIds에 기록된 application들을 재시도로 취소 처리.
