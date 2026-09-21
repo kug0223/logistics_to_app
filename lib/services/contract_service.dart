@@ -289,34 +289,17 @@ class ContractService {
     // [알림 흐름]
     // 1차) 근무자 지원 → 관리자에게 newApplication 알림 (application_firestore.dart)
     // 2차) 관리자 확정 + 계약서 발송 → 근무자에게 contractSignRequested 알림 (saveEmployerSignature)
-    // 3차) 근무자 서명 완료 → 모든 관리자(adminIds)에게 contractSigned 알림 (여기)
-    try {
-      final bizSnap = await _db.collection('businesses').doc(contract.businessId).get();
-      final data = bizSnap.data();
-      final adminIds = List<String>.from(data?['adminIds'] as List? ?? []);
-      if (adminIds.isEmpty) {
-        final fallback = data?['ownerId'] as String?;
-        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
-      }
-      if (adminIds.isEmpty) {
-        debugPrint('⚠️ contractSigned: adminIds 없음 — businessId: ${contract.businessId}');
-      } else {
-        // [PERF] 알림 N+1 → 병렬 발송
-        await Future.wait(adminIds.map((adminUid) =>
-          _firestoreService.createNotification(
-            NotificationModel.createContractSigned(
-              userId: adminUid,
-              workerName: contract.snapshot.workerName,
-              businessId: contract.businessId,
-              contractId: contract.id,
-              applicationId: contract.applicationId,
-            ),
-          ),
-        ));
-      }
-    } catch (e) {
-      debugPrint('⚠️ contractSigned 알림 발송 실패 (비치명적): $e');
-    }
+    // 3차) 근무자 서명 완료 → 관리자 + canManageContract 서브어드민에게 contractSigned
+    //
+    // [R8-P3B] 3차 알림 발송을 callableFinalizeWorkerSignature CF 안으로 옮겼다.
+    //   여기서는 사업장 문서를 한 번 읽고, 관리자 수만큼 createNotification 을
+    //   **다시** 호출했다. 서명을 누른 근로자가 그 왕복을 전부 기다렸고
+    //   (callable 왕복 하나가 DEV 실측 500ms대), 응답을 받은 직후 앱이 죽으면
+    //   알림은 영구히 사라졌다. 2차(사업주 서명)는 이미 같은 이유로 CF 안에
+    //   있었다 — 이쪽만 남아 있었다.
+    //
+    //   수신자 범위는 그대로다. 오히려 관리자 수만큼 반복되던 서브어드민
+    //   팬아웃이 한 번으로 정리돼 중복 알림이 사라진다.
 
     return updated;
   }

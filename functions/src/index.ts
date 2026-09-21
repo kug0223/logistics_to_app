@@ -8815,6 +8815,81 @@ async function _deleteOwnAttemptArtifact(
 //   CF 실패 시 클라이언트 롤백 불가 → 이 함수 내부에서 Admin SDK로 직접 정리.
 // Input:  { contractId, signatureBase64: string, pdfBase64: string }
 // Output: { success: true, pdfUrl: string, sigUrl: string }
+/**
+ * [R8-P3B] 근로계약 서명 완료 알림 — 관리자 + canManageContract 서브어드민.
+ *
+ *   예전에는 클라이언트가 CF 응답을 받은 뒤 createNotification 을 관리자
+ *   수만큼 **다시** 호출했다. 서명 화면은 그 왕복을 기다렸고(관리자 1명당
+ *   callable 1회, DEV 실측 왕복 하나가 500ms대), 응답을 받은 직후 앱이
+ *   죽으면 알림은 영구히 사라졌다. 사업주 서명 경로는 이미 같은 이유로
+ *   CF 안으로 옮겨져 있다 — 이쪽만 남아 있었다.
+ *
+ *   수신자 범위는 그대로다: businesses.adminIds(비었으면 ownerId) +
+ *   canManageContract 서브어드민(관리자와 겹치면 제외). 기존에는 관리자
+ *   수만큼 팬아웃이 반복돼 서브어드민에게 중복 알림이 쌓였는데, 여기서는
+ *   한 번만 해석한다.
+ *
+ *   문서 id 를 계약·수신자로 고정해 재시도에도 같은 알림이 두 번 쌓이지
+ *   않는다(callableApproveApplicationForReview 와 같은 방식).
+ *   FCM 은 onNotificationCreated 트리거가 보낸다 — 여기서는 문서만 쓴다.
+ *
+ * @param {object} args contractId / businessId / applicationId / workerName
+ * @return {Promise<void>} 실패해도 서명 자체에는 영향이 없다
+ */
+async function srvNotifyContractSigned(args: {
+  contractId: string;
+  businessId: string;
+  applicationId: string;
+  workerName: string;
+}): Promise<void> {
+  const {contractId, businessId, applicationId, workerName} = args;
+  if (!businessId) {
+    console.error(
+      `⚠️ [contractSigned] businessId 없음 — contract=${contractId}`);
+    return;
+  }
+  const [bizSnap, subAdminIds] = await Promise.all([
+    db.collection("businesses").doc(businessId).get(),
+    getSubAdminsWithPermission(businessId, "canManageContract"),
+  ]);
+  const bizData = bizSnap.data();
+  let adminIds: string[] = (bizData?.adminIds as string[] | undefined) ?? [];
+  if (adminIds.length === 0) {
+    const owner = bizData?.ownerId as string | undefined;
+    if (owner) adminIds = [owner];
+  }
+  const recipients = [
+    ...adminIds,
+    ...subAdminIds.filter((id) => !adminIds.includes(id)),
+  ];
+  if (recipients.length === 0) {
+    console.error(
+      `⚠️ [contractSigned] 수신자 없음 — businessId=${businessId}`);
+    return;
+  }
+  const payload = {
+    type: "contractSigned",
+    title: "계약서 서명 완료",
+    body: `${workerName}님이 근로계약서 서명을 완료했습니다.`,
+    data: {contractId, applicationId, businessId, screen: "contractSigned"},
+    category: "admin",
+    isRead: false,
+    createdAt: admin.firestore.Timestamp.now(),
+  };
+  const results = await Promise.allSettled(recipients.map((uid) =>
+    db.collection("users").doc(uid).collection("notifications")
+      .doc(`contract_signed_${contractId}_${uid}`)
+      .create({...payload, userId: uid})));
+  results.forEach((r, i) => {
+    if (r.status !== "rejected") return;
+    // 이미 있는 문서 = 같은 서명에 대한 재시도다. 두 번 쌓지 않는 것이 의도다.
+    if ((r.reason as {code?: number})?.code === 6) return;
+    console.error(
+      `⚠️ [contractSigned] 알림 저장 실패 uid=${recipients[i]} ` +
+      `contract=${contractId}:`, r.reason);
+  });
+}
+
 export const callableFinalizeWorkerSignature = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -8905,6 +8980,10 @@ export const callableFinalizeWorkerSignature = onCall(
     const contractRef = db.collection("employment_contracts").doc(contractId);
     // 트랜잭션 재시도 시 동일 타임스탬프 보장 (Timestamp.now()는 재시도마다 달라짐)
     const signedAt = admin.firestore.Timestamp.now();
+    // [R8-P3B] 커밋 뒤 보낼 알림의 재료 — 트랜잭션 안에서 읽은 값으로 채운다.
+    let signedBizId = "";
+    let signedApplicationId = "";
+    let signedWorkerName = "";
 
     // [PII-B4-R1] 서명자 신분증 등록 여부 조회 제거 — auto-grant가 없어져
     //   더 이상 필요하지 않다.
@@ -8943,6 +9022,14 @@ export const callableFinalizeWorkerSignature = onCall(
           ? (data["applicationIds"] as string[])
           : (data["applicationId"] ? [data["applicationId"] as string] : []);
         const contractBizId = data["businessId"] as string | undefined;
+        // [R8-P3B] 재시도되면 마지막 시도의 값이 남는다 — 커밋된 값과 같다.
+        signedBizId = contractBizId ?? "";
+        signedApplicationId =
+          (data["applicationId"] as string | undefined) ??
+          applicationIds[0] ?? "";
+        signedWorkerName =
+          ((data["snapshot"] as Record<string, unknown> | undefined)?.[
+            "workerName"] as string | undefined) ?? "";
         const appRefs = applicationIds.map((id) => db.collection("applications").doc(id));
 
         // [TX-READ-BEFORE-WRITE] Firestore 트랜잭션 규칙: 모든 읽기는 쓰기 전에 완료해야 함.
@@ -8998,6 +9085,23 @@ export const callableFinalizeWorkerSignature = onCall(
         await _deleteOwnAttemptArtifact(sigUpload);
       }
       throw e;
+    }
+
+    // [R8-P3B §2] Domain truth first, notification second.
+    //   서명은 이미 커밋됐다. 알림이 실패해도 서명을 실패로 돌려주지 않는다.
+    if (signedBizId) {
+      try {
+        await srvNotifyContractSigned({
+          contractId,
+          businessId: signedBizId,
+          applicationId: signedApplicationId,
+          workerName: signedWorkerName,
+        });
+      } catch (e) {
+        console.error(
+          "⚠️ [finalizeWorkerSignature] contractSigned 알림 실패 (서명은 완료됨):",
+          e);
+      }
     }
 
     return {success: true, pdfUrl: computedPdfUrl, sigUrl};

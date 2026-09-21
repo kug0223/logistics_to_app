@@ -420,10 +420,19 @@ void main() {
   group('계약 서명 완료 알림은 실재한다', () {
     // [VERIFY-CONTRACT-NOTIFICATION-INVENTORY] — 과거 기록의 모순을 source로 확정.
     test('근로자 서명 후 관리자에게 보낸다', () {
-      final c = _flat(_codeOf(_src('lib/services/contract_service.dart')));
-      expect(c.contains('NotificationModel.createContractSigned('), true);
-      expect(c.contains("final adminIds = List<String>.from(data?['adminIds'] as List? ?? []);"), true,
+      // [R8-P3B] 발송 주체가 클라이언트에서 CF 로 옮겨졌다.
+      //   알림이 실재한다는 사실과 수신자 범위는 그대로다 — 그것을 서버에서 건다.
+      final fn = _flat(_codeOf(_src('functions/src/index.ts')));
+      expect(fn.contains('async function srvNotifyContractSigned(args: {'), true);
+      expect(fn.contains('await srvNotifyContractSigned({ contractId, businessId: signedBizId,'), true,
+          reason: '근로자 서명 CF 가 커밋 뒤에 보낸다');
+      expect(fn.contains('let adminIds: string[] = (bizData?.adminIds as string[] | undefined) ?? [];'), true,
           reason: '수신자는 그 사업장의 관리자들이다');
+      expect(fn.contains('getSubAdminsWithPermission(businessId, "canManageContract")'), true,
+          reason: '계약 권한을 가진 서브어드민도 받는다');
+      // 클라이언트는 더 이상 이 알림을 쓰지 않는다
+      final c = _flat(_codeOf(_src('lib/services/contract_service.dart')));
+      expect(c.contains('NotificationModel.createContractSigned('), false);
     });
 
     test('payload가 application과 contract를 모두 들고 간다', () {
