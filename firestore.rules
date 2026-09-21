@@ -175,6 +175,25 @@ service cloud.firestore {
       );
     }
 
+    // [R8-P3B.3A] TO 문서 트리(tos / slots / workDetails) **쓰기** 권한.
+    //
+    //   isToAdmin은 읽기와 쓰기에 같이 쓰이는데, SubAdmin이기만 하면 통과였다.
+    //   그래서 canManageWage만 가진 SubAdmin도 공고를 수정·삭제하고 슬롯을
+    //   만들 수 있었다. 이 프로젝트는 이미 businesses/{id}/workTypes 에서
+    //   isSubAdminOf(businessId) && subAdminCanManageTo(businessId) 패턴을
+    //   쓰고 있다 — 같은 패턴을 TO 쓰기에도 적용한다.
+    //
+    //   읽기(isToAdmin)는 건드리지 않는다. 권한이 없어도 자기 사업장 공고를
+    //   보는 것은 정상이다.
+    function isToWriteAdmin(toId) {
+      let to = get(/databases/$(database)/documents/tos/$(toId));
+      return to != null && to.data != null && (
+        isAdminOf(to.data.get('businessId', '')) ||
+        (isSubAdminOf(to.data.get('businessId', '')) &&
+         subAdminCanManageTo(to.data.get('businessId', '')))
+      );
+    }
+
     // payroll_summaries 부모 문서 businessId 기반 관리자 검증
     // [NULL-CRASH-FIX 2026-07-16] get().data 직접 접근 → null crash 방지 (isToAdmin() 동일 패턴)
     // [5C.1A-RULES-02] SubAdmin은 canManageWage=true인 경우에만 허용
@@ -467,17 +486,35 @@ service cloud.firestore {
       //   - lastRestartAt: applyRestartProgram CF
       //   - isBlacklisted: callableBlacklistUser / callableUnblacklistUser CF (슈퍼어드민 전용)
 
-      // BUSINESS_ADMIN이 자기 사업장 멤버 제거 시 subAdminBusinessIds/subAdminOf 필드만 허용
-      // (CF trigger가 arrayUnion으로 설정, 클라이언트 removeMember()가 arrayRemove로 제거)
-      allow update: if isLoggedIn() &&
-                       isBusinessAdmin() &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['subAdminBusinessIds', 'subAdminOf']) &&
-                       // 배열 요소는 줄어드는 방향만 허용 (추가 차단)
-                       resource.data.get('subAdminBusinessIds', []).hasAll(
-                         request.resource.data.get('subAdminBusinessIds', [])) &&
-                       // 제거 대상 사업장 중 하나라도 본인 관리 사업장이어야 함
-                       isBusinessAdmin();
+      // [R8-P3B.3A] subAdminBusinessIds/subAdminOf 클라이언트 update 브랜치 삭제.
+      //
+      //   원래 의도는 "BUSINESS_ADMIN이 자기 사업장 멤버를 제거할 때만" 이었다.
+      //   그런데 그 조건이 작성되지 않았다 — 자리에 isBusinessAdmin()이 한 번 더
+      //   들어가 있었고, isOwner(userId)도 없었다. 결과:
+      //
+      //     · 대상이 아무 user 문서나 될 수 있었다
+      //     · 단조 감소 가드(hasAll)는 subAdminBusinessIds에만 걸려 있어
+      //       레거시 subAdminOf(String)는 임의 값으로 쓸 수 있었다
+      //     · isSubAdminOf()가 아직 레거시 subAdminOf를 인정하므로
+      //       BUSINESS_ADMIN이 자기 문서에 남의 businessId를 넣어
+      //       그 사업장의 SubAdmin 권한을 스스로 부여할 수 있었다
+      //       (→ 타 사업장 applications/tos/slots/employment_contracts 변조)
+      //
+      //   이 브랜치를 쓰는 클라이언트 코드는 없다. canonical writer는 전부
+      //   CF(Admin SDK, Rules 우회)다:
+      //     · callableRemoveMember      — 관리자의 멤버 제거
+      //     · callableLeaveAsSubAdmin   — 본인의 직책 해제
+      //     · onMemberInvitationAccepted 트리거 — 권한 부여
+      //   따라서 조건을 덧붙여 살리지 않고 삭제한다.
+      //
+      //   본인 update 브랜치(아래 isOwner)의 denylist에 이미
+      //   subAdminBusinessIds/subAdminOf가 들어 있으므로, 브랜치 삭제로
+      //   클라이언트 쓰기 경로는 완전히 닫힌다.
+      //
+      //   [OPEN-R8P3B3-LEGACY-SUBADMINOF] isSubAdminOf()의 레거시
+      //   subAdminOf 읽기 자체는 이번에 제거하지 않는다 — 마이그레이션
+      //   완료 여부 미확인. 이번에는 "클라이언트가 조작할 수 있는
+      //   write surface"만 닫는다.
 
       // [BIZ-CREATE-FIX] 사업장 등록 시 BUSINESS_ADMIN이 managedBusinessIds 업데이트 허용
       // 조건: (1)본인 문서 (2)BUSINESS_ADMIN (3)managedBusinessIds만 변경
@@ -789,7 +826,7 @@ service cloud.firestore {
                     //   updateSlotFull/saveBatchSlotChanges에서 slots update와 함께 tos.totalRequired를
                     //   클라이언트 SDK 트랜잭션/배치로 increment할 때 PERMISSION_DENIED 발생 차단.
                     //   totalRequired만 변경하는 경우에 한해 isToAdmin 허용.
-                    || (isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                    || (isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin()) &&
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalRequired']) &&
                         request.resource.data.totalRequired >= 0)
                     // [SLOT-ADD 2026-07-15] 슬롯 추가(addSlot) 시 TO 집계 필드 업데이트 예외
@@ -798,7 +835,7 @@ service cloud.firestore {
                     //   감사 필드(closedBy/reopenedBy/updatedBy 등) 미포함 → 보안 위험 없음.
                     //   status 변경은 ACTIVE 복구로만 제한 (CLOSED/FULL/EXPIRED 설정 불가).
                     // [LOW-2 수정 2026-07-16] totalRequired/totalSlots 음수 허용 방지
-                    || (isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                    || (isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin()) &&
                         request.resource.data.diff(resource.data).affectedKeys()
                           .hasOnly(['totalSlots', 'totalRequired', 'status', 'isPublished',
                                     'statusUpdatedAt', 'rangeStart', 'rangeEnd']) &&
@@ -818,7 +855,7 @@ service cloud.firestore {
                         request.resource.data.get('totalSlots', 0) >= 0)
                     // [WORKDETAIL-FIX] closeWorkDetail/reopenWorkDetail — workDetails 배열 마감·재오픈 허용
                     //   workDetails 필드 단독 업데이트. isToAdmin(businessId 소속) 검증으로 타 사업장 위조 차단.
-                    || (isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                    || (isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin()) &&
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workDetails']));
 
       // [CAPACITY-STAGE3A] DEFERRED-PUBLISH 직접 전환 규칙 제거
@@ -840,9 +877,12 @@ service cloud.firestore {
       // CF callableDecrementSlotConfirmed(Admin SDK)가 유일한 감소 경로 — 클라이언트 직접 쓰기 차단
 
       // SubAdmin도 공고 삭제 허용 (update에 있으나 delete에 누락)
+      // [R8-P3B.3A] SubAdmin은 canManageTo 필수 — 공고 삭제는 TO 관리 권한이다.
+      //   여기는 tos 문서 자신이므로 resource.data.businessId를 직접 쓴다(get 1회 절감).
       allow delete: if isLoggedIn() &&
                        (isAdminOf(resource.data.businessId) ||
-                        isSubAdminOf(resource.data.businessId) ||
+                        (isSubAdminOf(resource.data.businessId) &&
+                         subAdminCanManageTo(resource.data.businessId)) ||
                         isSuperAdmin());
 
       match /workDetails/{workDetailId} {
@@ -856,9 +896,10 @@ service cloud.firestore {
                           .data.get('isPublished', false) == true
                       )
                     );
-        allow create, delete: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
+        // [R8-P3B.3A] workDetails는 TO 본문(임금·업무 상세)이다 — 쓰기는 canManageTo.
+        allow create, delete: if isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin());
         // [SEC-WD] businessId/toId 불변 — 부모-자식 관계 변조 차단 (슈퍼어드민 예외)
-        allow update: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+        allow update: if isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin()) &&
                         (isSuperAdmin() ||
                          !request.resource.data.diff(resource.data).affectedKeys()
                            .hasAny(['businessId', 'toId']));
@@ -880,17 +921,18 @@ service cloud.firestore {
         // [RULE-SLOT-CREATE] create 시 카운터 초기값 강제 + status 화이트리스트
         //   관리자가 confirmedCount:999 또는 status:'closed'로 슬롯을 첫 생성하는 조작 차단
         //   [8.1E.1] workDetailCounts 직접 초기화 차단 — CF(Admin SDK) 전용 필드
-        allow create: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+        // [R8-P3B.3A] SubAdmin은 canManageTo 필수 (isToWriteAdmin)
+        allow create: if isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin()) &&
                         (isSuperAdmin() ||
                          (request.resource.data.get('confirmedCount', 0) == 0 &&
                           request.resource.data.get('pendingCount', 0) == 0 &&
                           request.resource.data.get('workDetailCounts', {}).keys().size() == 0 &&
                           (!request.resource.data.keys().hasAny(['status']) ||
                            request.resource.data.status in ['open', 'full', 'closed'])));
-        allow delete: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
+        allow delete: if isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin());
         // [SEC] confirmedCount ±1 제한 — 관리자도 임의 값으로 정원 조작 불가
         // Admin SDK CF(callableDecrementSlotConfirmed)는 rules 제외 — 소유권 검증 내장
-        allow update: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+        allow update: if isLoggedIn() && (isToWriteAdmin(toId) || isSuperAdmin()) &&
                         // confirmedCount ±1 제한
                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['confirmedCount']) ||
                          (request.resource.data.confirmedCount >= 0 &&
@@ -1052,6 +1094,20 @@ service cloud.firestore {
                        //   PENDING: callableApplyToTO 우회 — wage/startTime/endTime 재검증 누락
                        !(resource.data.get('status', '') in ['CANCELED', 'AUTO_CANCELED', 'REJECTED'] &&
                          request.resource.data.status in ['CONFIRMED', 'PENDING']) &&
+                       // [R8-P3B.3A] CONFIRMED/CONTRACT_PENDING → PENDING 되돌리기는 인력 관리 권한 필수.
+                       //   차단 목록에서 이 전이 하나만 빠져 있었다. 그래서 권한 종류와 무관하게
+                       //   SubAdmin이면 누구나(canManageWage만 가진 사람도) 남의 확정 근무를
+                       //   되돌릴 수 있었다 — 뒤이어 callableVoidApplicationContracts가 돌면서
+                       //   서명된 근로계약서까지 무효화된다.
+                       //   UI는 이미 canManageWorkers로 막고 있었다(fixed_worker_management_dialog).
+                       //   경계는 UI가 아니라 Rules여야 하므로 같은 capability를 여기서 강제한다.
+                       //   BUSINESS_ADMIN(isAdminOf)은 기존과 동일하게 허용.
+                       //   writer(updateApplicationStatus)가 쓰는 필드는 status/statusHistory 뿐이고,
+                       //   둘 다 위 denylist에 없으므로 이 조건만 추가하면 정상 경로는 그대로다.
+                       (!(resource.data.get('status', '') in ['CONFIRMED', 'CONTRACT_PENDING'] &&
+                          request.resource.data.status == 'PENDING') ||
+                        isAdminOf(resource.data.businessId) ||
+                        subAdminCanManageWorkers(resource.data.businessId)) &&
                        // [APPROVE-AUTH-01] PENDING→CONTRACT_PENDING SUB_ADMIN 직접 전이 차단
                        //   callableApproveApplicationForReview CF(Admin SDK) 전용
                        //   canManageTo=true여도 SUB_ADMIN client 직접 승인 우회 불가 — callable 경유 필수

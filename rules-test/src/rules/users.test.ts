@@ -388,10 +388,22 @@ describe('U-UPDATE: users 문서 수정', () => {
     await assertFails(updateDoc(doc(db, 'users', IDS.user), { role: 'BUSINESS_ADMIN' }));
   });
 
-  test('U-UPDATE-14 ✅ 사업장관리자는 자기 사업장 서브어드민의 subAdminOf를 제거할 수 있다', async () => {
+  // [R8-P3B.3A] 기대값 반전 — 클라이언트 subAdminOf 제거 경로 삭제.
+  //
+  //   이 테스트는 원래 "자기 사업장 서브어드민이면 제거 가능"을 확인했다.
+  //   그 허용 브랜치에는 정작 "자기 사업장인지" 검증이 없었다(주석만 있었다).
+  //   그래서 바로 아래 U-UPDATE-15(다른 사업장이면 불가)가 계속 실패하고 있었다.
+  //   레거시 subAdminOf는 단조 감소 가드도 없어서 임의 값 쓰기가 가능했고,
+  //   isSubAdminOf()가 그 필드를 인정하므로 타 사업장 SubAdmin 권한
+  //   자가 부여로 이어졌다.
+  //
+  //   canonical writer는 이미 CF다 — callableRemoveMember / callableLeaveAsSubAdmin.
+  //   Admin SDK는 Rules를 평가하지 않으므로 정상 경로는 그대로다
+  //   (rules-test/src/rules/trust_boundary.test.ts TB-3).
+  test('U-UPDATE-14 ❌ 사업장관리자도 클라이언트에서 subAdminOf를 제거할 수 없다 (CF 전용)', async () => {
     const db = getAuth(env, IDS.admin);
     // 모듈식 SDK v9+: deleteField() 사용 (FieldValue.delete() 아님)
-    await assertSucceeds(updateDoc(doc(db, 'users', IDS.subAdmin), {
+    await assertFails(updateDoc(doc(db, 'users', IDS.subAdmin), {
       subAdminOf: deleteField(),
     }));
   });
