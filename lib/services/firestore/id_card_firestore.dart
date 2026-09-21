@@ -58,25 +58,9 @@ extension IdCardFirestore on FirestoreService {
         return requestId;
       }
 
-      // CREATED: 알림 생성 (지원자에게) — 클라이언트에서 처리
-      if (requestId != null) {
-        final reasonText = reason == IdCardAccessReason.other
-            ? (customReason ?? '기타')
-            : _getReasonText(reason);
-        try {
-          await createNotification(
-            NotificationModel.createIdCardAccessRequest(
-              userId: targetUserId,
-              businessName: requesterBusinessName,
-              businessId: requesterBusinessId,
-              reason: reasonText,
-              requestId: requestId,
-            ),
-          );
-        } catch (e) {
-          debugPrint('⚠️ [createIdCardAccessRequest] 알림 생성 실패: $e');
-        }
-      }
+      // [R8-P3B.2] CREATED 알림은 callableCreateIdCardAccessRequest 가 보낸다.
+      //   근로자 동의가 필요한 요청인데, 그 통지가 요청자 앱의 생존에
+      //   달려 있었다. 사유 문구 표(_getReasonText)도 서버로 함께 옮겼다.
 
       debugPrint('✅ [createIdCardAccessRequest] 요청 생성 완료: $requestId');
       ToastHelper.showSuccess('신분증 열람 요청을 보냈습니다');
@@ -335,14 +319,7 @@ extension IdCardFirestore on FirestoreService {
     }
   }
 
-  String _getReasonText(IdCardAccessReason reason) {
-    switch (reason) {
-      case IdCardAccessReason.incomeTax: return '소득세 신고';
-      case IdCardAccessReason.laborContract: return '근로계약서 작성';
-      case IdCardAccessReason.insurance: return '4대보험 신고';
-      case IdCardAccessReason.identityVerify: return '본인 확인';
-      case IdCardAccessReason.other: return '기타';
-    }
-  }
+  // [R8-P3B.2] 사유 문구 표는 서버(ID_ACCESS_REASON_TEXT)로 옮겼다 —
+  //   요청을 만드는 곳이 알림 문구도 같이 책임진다.
   
 }

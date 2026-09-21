@@ -25,7 +25,6 @@ import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/business_work_type_model.dart';
-import '../../../models/core/notification_model.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
@@ -5013,25 +5012,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       if (!mounted) return;
       final processed = result.data['processed'] as int? ?? 0;
 
-      // 알림 병렬 발송 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
-      await Future.wait(targets.map((app) async {
-        final attendance = _attendanceMap[app.id];
-        if (attendance == null) return;
-        try {
-          final businessName = _businessNameMap[app.businessId] ?? '';
-          await _firestoreService.createNotification(
-            NotificationModel.createWageCancelConfirmed(
-              userId: app.uid,
-              businessName: businessName,
-              businessId: app.businessId,
-              workDate: app.workDate,
-              attendanceId: attendance.id,
-            ),
-          );
-        } catch (e) {
-          debugPrint('⚠️ 알림 발송 실패 (${app.uid}): $e');
-        }
-      }));
+      // [R8-P3B.2] 마감취소 알림은 callableCancelFinalConfirmation 가 보낸다.
+      //   취소 CF 가 끝난 뒤 인원수만큼 알림 callable 을 다시 불렀다 —
+      //   화면이 그걸 await 했고, 같은 이벤트의 문구를 급여 화면도 따로
+      //   만들고 있었다. 이제 CF 한 곳에서 처리한다.
+      //   (TrustScore 는 onAttendanceWageStatusChanged 트리거가 그대로 처리)
 
       if (!mounted) return;
       _hasChanges = true;

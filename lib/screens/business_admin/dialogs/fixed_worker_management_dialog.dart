@@ -1315,20 +1315,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final lastDayOfMonth = DateTime(rawEndYear, rawEndMonth + 1, 0).day;
       final newEnd = DateTime(rawEndYear, rawEndMonth, app.workEndDate!.day.clamp(1, lastDayOfMonth));
 
-      final newApp = await _firestoreService.createRenewedApplication(
+      await _firestoreService.createRenewedApplication(
         original: app,
         newStartDate: newStart,
         newEndDate: newEnd,
       );
-      await _firestoreService.createNotification(
-        NotificationModel.createContractRenewed(
-          userId: app.uid,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          newEndDate: newEnd,
-          applicationId: newApp.id,
-        ),
-      );
+      // [R8-P3B.2] 연장 알림은 callableCreateContractRenewal 가 보낸다.
       return true;
     } catch (e) {
       debugPrint('❌ 계약 연장 실패 (${app.uid}): $e');
@@ -1717,16 +1709,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         newEndDate: newEndDate,
       );
 
-      // 2. 근무자에게 연장 알림
-      await _firestoreService.createNotification(
-        NotificationModel.createContractRenewed(
-          userId: app.uid,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          newEndDate: newEndDate,
-          applicationId: newApp.id,
-        ),
-      );
+      // 2. 연장 알림 — [R8-P3B.2] callableCreateContractRenewal 가 보낸다.
+      //   연장 문서를 만든 뒤 알림 callable 을 다시 부르면, 근무자가 반드시
+      //   알아야 할 사실의 통지가 관리자 앱의 생존에 달린다.
 
       if (mounted) {
         _loadFixedWorkers();

@@ -33,8 +33,6 @@ import '../../../widgets/common/app_empty_state.dart';
 
 import '../../../widgets/dialogs/wage/wage_detail_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
-import '../../../models/core/notification_model.dart';
-import '../../../services/firestore_service.dart';
 
 // Providers
 import '../../../providers/user_provider.dart';
@@ -73,7 +71,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
   
-  final _firestoreService = FirestoreService();
+  // [R8-P3B.2] 이 화면이 FirestoreService 를 쓰던 유일한 이유가 알림 발송이었다.
+  //   알림이 CF 로 가면서 더 필요하지 않다.
 
   late TabController _tabController;
   bool _isProcessing = false;
@@ -784,20 +783,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             nightAmount: (result.data['nightAmount'] as num?)?.toInt(),
           );
 
-          if (calculatedWage.retroactiveDeduction > 0 && app != null) {
-            _firestoreService.createNotification(
-              NotificationModel.createRetroactiveDeductionAlert(
-                userId: app.uid,
-                businessName: widget.businessName,
-                businessId: widget.businessId,
-                workDate: attendance.workDate,
-                retroactiveAmount: calculatedWage.retroactiveDeduction,
-                grossWage: reconciledWage.totalAmount,
-                netWage: serverNetWage,
-                attendanceId: attendance.id,
-              ),
-            );
-          }
+          // [R8-P3B.2] 소급공제 안내는 callableCalculateAndConfirmWage 가 보낸다.
+          //   금액을 계산한 쪽이 알리는 쪽이기도 해야 한다 — 응답을 받아
+          //   조건을 보고 알림 callable 을 다시 부르면 그 사이 앱이 죽었을 때
+          //   공제 사실이 전달되지 않는다.
 
           return (
             success: true,
@@ -1293,20 +1282,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         nightAmount: (indivResult.data['nightAmount'] as num?)?.toInt(),
       );
 
-      if (calculatedWage.retroactiveDeduction > 0) {
-        _firestoreService.createNotification(
-          NotificationModel.createRetroactiveDeductionAlert(
-            userId: app.uid,
-            businessName: widget.businessName,
-            businessId: widget.businessId,
-            workDate: attendance.workDate,
-            retroactiveAmount: calculatedWage.retroactiveDeduction,
-            grossWage: indivReconciledWage.totalAmount,
-            netWage: indivServerNetWage,
-            attendanceId: attendance.id,
-          ),
-        );
-      }
+      // [R8-P3B.2] 개별 계산 경로도 같다 — 안내는 CF 가 보낸다.
 
       _hasChanges = true;
       widget.onConfirmed?.call();
@@ -1639,31 +1615,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
       }
 
-      // 지원자 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
-      // [FCM-FIX 2026-08-10] fire-and-forget → await + 개별 에러 처리로 수정
-      // 알림 실패는 급여 확정 결과에 영향 없음 (알림만 개별 catch)
-      for (final app in processedApps) {
-        final att = widget.attendanceMap[app.id];
-        if (att != null) {
-          // att.finalWage는 다이얼로그 오픈 시점 스냅샷이므로 0일 수 있음.
-          // 방금 계산한 _calculatedWages 값을 우선 사용하고, 없으면 att.finalWage로 fallback.
-          final wageAmount = _calculatedWages[app.id]?.effectiveNetWage ?? att.finalWage ?? 0;
-          try {
-            await _firestoreService.createNotification(
-              NotificationModel.createWageConfirmed(
-                userId: app.uid,
-                businessName: widget.businessName,
-                businessId: widget.businessId,
-                workDate: att.workDate,
-                totalWage: wageAmount,
-                attendanceId: att.id,
-              ),
-            );
-          } catch (e) {
-            debugPrint('⚠️ 급여 확정 알림 발송 실패 (${app.uid}): $e');
-          }
-        }
-      }
+      // [R8-P3B.2] 급여 정산 완료 알림은 callableConfirmFinalWage 가 보낸다.
+      //   여기서는 마감된 건 수만큼 알림 callable 을 **다시** 불렀다.
+      //   20명을 마감하면 왕복이 20번 더 붙었고 화면이 그걸 await 했다.
+      //   CF 는 마감 트랜잭션에서 읽은 값으로 한 번에 처리한다.
+      //   (TrustScore 는 onAttendanceWageStatusChanged 트리거가 그대로 처리)
     } catch (e) {
       debugPrint('❌ 마감 처리 실패: $e');
       failCount = targetPairs.length - successCount;
@@ -1788,23 +1744,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         // totalWorkDays -1은 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       }
 
-      // 마감 취소 알림 발송 — 트랜잭션 성공 항목에만 발송
-      // (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
-      for (final appId in committedAppIds) {
-        final attendance = widget.attendanceMap[appId];
-        if (attendance == null) continue;
-        final app = _transferredWorkers.where((a) => a.id == appId).firstOrNull;
-        if (app == null) continue;
-        _firestoreService.createNotification(
-          NotificationModel.createWageCancelConfirmed(
-            userId: app.uid,
-            businessName: widget.businessName,
-            businessId: widget.businessId,
-            workDate: attendance.workDate,
-            attendanceId: attendance.id,
-          ),
-        );
-      }
+      // [R8-P3B.2] 마감취소 알림은 callableCancelFinalConfirmation 가 보낸다.
+      //   같은 이벤트를 이 화면과 근태 화면이 **각각** 만들고 있었다 —
+      //   문구 생성 로직이 두 벌이었고, 둘 다 취소 CF 가 끝난 뒤 인원수만큼
+      //   알림 callable 을 다시 불렀다. 이제 CF 한 곳에서 처리한다.
+      //   (TrustScore 는 onAttendanceWageStatusChanged 트리거가 그대로 처리)
     } catch (e) {
       debugPrint('❌ 마감 취소 실패: $e');
       failCount = targetIds.length - successCount;

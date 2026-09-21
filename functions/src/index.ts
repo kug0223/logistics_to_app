@@ -20344,6 +20344,59 @@ async function srvGetMonthlyStatsTx(
 //           taxDeductionType, yearMonth, payScheduleType?, payScheduleDay? }
 // Output: { success: true, effectiveNetWage: number }
 // ═══════════════════════════════════════════════════════════
+/**
+ * [R8-P3B.2] 4대보험 소급 공제 안내 — 급여를 계산한 근로자 본인에게.
+ *
+ *   이 금액은 서버가 계산한다(srvApplyDay8Retroactive). 그런데 알림은
+ *   클라이언트가 응답을 받아 조건을 보고 **다시** 호출했다 — 계산한 쪽과
+ *   알리는 쪽이 갈려 있었고, 응답 직후 앱이 죽으면 공제 사실이 전달되지
+ *   않았다.
+ *
+ * @param {object} a 계산 결과의 사실들
+ * @return {Promise<void>} 실패해도 급여 계산에는 영향이 없다
+ */
+async function srvNotifyRetroactiveDeduction(a: {
+  attendanceId: string;
+  userId: string;
+  businessId: string;
+  workDate: string;
+  retroactiveAmount: number;
+  netWage: number;
+}): Promise<void> {
+  // 사업장 이름은 여기서 한 번 읽는다 — 소급공제가 생긴 경우에만 도는 경로다.
+  const bizSnap = await db.collection("businesses").doc(a.businessId).get();
+  const businessName = (bizSnap.data()?.name as string | undefined) ?? "";
+  const won = (n: number) => Math.round(n).toLocaleString("ko-KR");
+  const [, m, d] = a.workDate.split("-");
+  const md = `${Number(m)}/${Number(d)}`;
+  try {
+    await db.collection("users").doc(a.userId).collection("notifications")
+      .doc(`retroactive_deduction_${a.attendanceId}_${a.userId}`)
+      .create({
+        userId: a.userId,
+        type: "retroactiveDeductionAlert",
+        title: "4대보험 소급 공제 안내",
+        body: `${businessName} ${md} 근무 포함 이번 달 근무 횟수가 8회를 넘어 ` +
+          "4대보험이 첫 근무부터 적용됩니다. 이전 근무분 보험료 " +
+          `${won(a.retroactiveAmount)}원이 이번 급여에서 함께 공제됩니다.\n` +
+          `실수령액: ${won(a.netWage)}원`,
+        data: {
+          attendanceId: a.attendanceId,
+          businessId: a.businessId,
+          action: "wageDetail",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+  } catch (e) {
+    if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
+    console.error(
+      `⚠️ [retroactiveDeductionAlert] 알림 저장 실패 uid=${a.userId} ` +
+      `attendance=${a.attendanceId}:`, e);
+  }
+}
+
 export const callableCalculateAndConfirmWage = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -20692,6 +20745,23 @@ export const callableCalculateAndConfirmWage = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
+
+    // [R8-P3B.2 §20] 계산·저장은 이미 끝났다 — 안내가 실패해도 급여는 그대로다.
+    if (wageResult2.retroactiveDeduction > 0) {
+      try {
+        await srvNotifyRetroactiveDeduction({
+          attendanceId: d.attendanceId,
+          userId: userId2,
+          businessId: businessId2,
+          workDate: d.workDate,
+          retroactiveAmount: wageResult2.retroactiveDeduction,
+          netWage: effectiveNetWage2,
+        });
+      } catch (e) {
+        console.error(
+          "⚠️ [calculateAndConfirmWage] 소급공제 안내 실패 (계산은 완료됨):", e);
+      }
+    }
 
     return {
       success: true,
@@ -25396,6 +25466,71 @@ function srvCalculatePaymentDueDate(
 // [V5-FIX] 급여 마감 CF 이전 — confirmedAt serverTimestamp 강제, confirmedBy 서버 강제
 // 클라이언트 _closeWages 트랜잭션에서 confirmedAt: DateTime.now() 클라이언트 시계 위조 가능 차단.
 // paymentDueDate 계산도 서버에서 처리 (클라이언트 시각 기반 계산 제거).
+/**
+ * [R8-P3B.2] 급여 마감/마감취소 알림 — 근무자 본인에게.
+ *
+ *   예전에는 마감 CF 가 끝난 뒤 **클라이언트가** 확정된 건 수만큼
+ *   createNotification 을 다시 불렀다. 20명을 마감하면 왕복이 20번 더
+ *   붙었고(급여 확정 화면은 그걸 await 했다), 응답 직후 앱이 죽으면
+ *   그만큼의 알림이 사라졌다.
+ *
+ *   같은 이벤트를 급여 화면과 근태 화면이 **각각** 만들고 있어서 문구
+ *   생성 로직도 두 벌이었다. 여기로 모은다.
+ *
+ *   수신자는 그대로 근무자 본인 한 명이다(이 type 들은 서브어드민 팬아웃
+ *   대상이 아니다). 문서 id 를 근태·수신자로 고정해 재시도에도 두 번
+ *   쌓이지 않는다. FCM 은 onNotificationCreated 트리거가 보낸다.
+ *
+ * @param {string} kind "wageConfirmed" | "wageCancelConfirmed"
+ * @param {string} businessId 사업장
+ * @param {Array} rows 확정/취소된 근태들
+ * @return {Promise<void>} 실패해도 마감 결과에는 영향이 없다
+ */
+async function srvNotifyWageEvent(
+  kind: "wageConfirmed" | "wageCancelConfirmed",
+  businessId: string,
+  rows: {attendanceId: string; userId: string;
+    workDateMs: number | null; amount?: number}[],
+): Promise<void> {
+  const targets = rows.filter((r) => r.userId);
+  if (targets.length === 0) return;
+  const bizSnap = await db.collection("businesses").doc(businessId).get();
+  const businessName = (bizSnap.data()?.name as string | undefined) ?? "";
+  const idPrefix = kind === "wageConfirmed" ?
+    "wage_confirmed" : "wage_cancel_confirmed";
+
+  const results = await Promise.allSettled(targets.map((r) => {
+    const when = r.workDateMs ? srvKstMonthDay(r.workDateMs) : "";
+    const head = `${businessName} ${when} 근무`;
+    const body = kind === "wageConfirmed" ?
+      `${head} 급여가 정산되었습니다. 앱에서 확인하세요.` :
+      `${head} 급여 확정이 취소되었습니다. 급여 조정 후 다시 안내드릴 예정입니다.`;
+    return db.collection("users").doc(r.userId).collection("notifications")
+      .doc(`${idPrefix}_${r.attendanceId}_${r.userId}`)
+      .create({
+        userId: r.userId,
+        type: kind,
+        title: kind === "wageConfirmed" ? "급여 정산 완료" : "급여 확정 취소",
+        body,
+        data: {
+          attendanceId: r.attendanceId,
+          businessId,
+          action: "wageDetail",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+  }));
+  results.forEach((r, i) => {
+    if (r.status !== "rejected") return;
+    if ((r.reason as {code?: number})?.code === 6) return;
+    console.error(
+      `⚠️ [${kind}] 알림 저장 실패 uid=${targets[i].userId} ` +
+      `attendance=${targets[i].attendanceId}:`, r.reason);
+  });
+}
+
 export const callableConfirmFinalWage = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -25553,6 +25688,8 @@ export const callableConfirmFinalWage = onCall(
     // [PERF-2026-07-16] attendance 항목별 독립 트랜잭션 → chunk-20 병렬화
     // 각 트랜잭션이 서로 다른 attendance/{id}만 접근하므로 contention 없음
     const CHUNK = 20;
+    // [R8-P3B.2] 실제로 마감된 건만 알림 대상이다.
+    const confirmedIds: string[] = [];
     for (let ci = 0; ci < attendanceIds.length; ci += CHUNK) {
       const chunk = attendanceIds.slice(ci, ci + CHUNK);
       const chunkResults = await Promise.allSettled(
@@ -25694,6 +25831,7 @@ export const callableConfirmFinalWage = onCall(
       chunkResults.forEach((r, j) => {
         if (r.status === "fulfilled" && r.value === "ok") {
           successCount++;
+          confirmedIds.push(chunk[j]); // [R8-P3B.2] 알림 대상
         } else {
           if (r.status === "rejected") console.error(`마감 실패 (${chunk[j]}):`, r.reason);
           // [P0.1] no_due_date = prevalidation 통과 후 race condition — skip 처리
@@ -25727,6 +25865,27 @@ export const callableConfirmFinalWage = onCall(
       correctionsOpened = opened.filter(Boolean).length;
     } catch (e) {
       console.error("[confirmFinalWage] 보완 요청 생성 실패(마감은 유지):", e);
+    }
+
+    // [R8-P3B.2 §20] 마감은 이미 끝났다 — 알림이 실패해도 마감 결과는 그대로다.
+    try {
+      await srvNotifyWageEvent("wageConfirmed", businessId,
+        confirmedIds.map((attId) => {
+          const d = attSnapById.get(attId) ?? {};
+          const wd = (d.wageDetail ?? {}) as Record<string, unknown>;
+          return {
+            attendanceId: attId,
+            userId: (d.userId as string | undefined) ?? "",
+            workDateMs:
+              (d.workDate as admin.firestore.Timestamp | undefined)
+                ?.toMillis() ?? null,
+            // 화면이 쓰던 값과 같은 순서: 실수령액 우선, 없으면 확정 금액.
+            amount: (wd.netWage as number | undefined) ??
+              (d.finalWage as number | undefined) ?? 0,
+          };
+        }));
+    } catch (e) {
+      console.error("[confirmFinalWage] 마감 알림 실패(마감은 유지):", e);
     }
 
     return {
@@ -25767,6 +25926,9 @@ export const callableCancelFinalConfirmation = onCall(
     // [PERF-2026-07-16] attendance 항목별 독립 트랜잭션 → chunk-20 병렬화
     // runTransaction: 읽기-쓰기 원자성 보장 — 동시 transferred 전환 경합 방어 (변경 없음)
     const CHUNK = 20;
+    // [R8-P3B.2] 실제로 취소된 건만 알림 대상이다.
+    const canceledRows: {attendanceId: string; userId: string;
+      workDateMs: number | null}[] = [];
     for (let ci = 0; ci < attendanceIds.length; ci += CHUNK) {
       const chunk = attendanceIds.slice(ci, ci + CHUNK);
       const chunkResults = await Promise.allSettled(
@@ -25774,13 +25936,21 @@ export const callableCancelFinalConfirmation = onCall(
           const ref = db.collection("attendance").doc(id);
           return db.runTransaction(async (tx) => {
             const snap = await tx.get(ref);
-            if (!snap.exists) return false;
+            if (!snap.exists) return null;
             const data = snap.data()!;
             // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-            if (data.businessId !== businessId) return false;
+            if (data.businessId !== businessId) return null;
             // [PAY-08] 중간정산 APPROVED lock — 마감 취소 차단
-            if (data.activeInterimSettlementId) return false;
-            if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return false;
+            if (data.activeInterimSettlementId) return null;
+            if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return null;
+            // [R8-P3B.2] 알림에 쓸 사실을 트랜잭션 안에서 읽은 값으로 담는다.
+            const cancelNotifyRow = {
+              attendanceId: id,
+              userId: (data.userId as string | undefined) ?? "",
+              workDateMs:
+                (data.workDate as admin.firestore.Timestamp | undefined)
+                  ?.toMillis() ?? null,
+            };
 
             const existingDetail = (data.wageDetail ?? {}) as Record<string, unknown>;
             const updatedDetail: Record<string, unknown> = {...existingDetail};
@@ -25812,18 +25982,26 @@ export const callableCancelFinalConfirmation = onCall(
               wageAccountReviewRequired: admin.firestore.FieldValue.delete(),
               updatedAt: now,
             });
-            return true;
+            return cancelNotifyRow;
           });
         })
       );
       chunkResults.forEach((r, j) => {
-        if (r.status === "fulfilled" && r.value === true) {
+        if (r.status === "fulfilled" && r.value) {
           successCount++;
+          canceledRows.push(r.value);
         } else {
           if (r.status === "rejected") console.error(`마감 취소 실패 (${chunk[j]}):`, r.reason);
           skipped.push(chunk[j]);
         }
       });
+    }
+
+    // [R8-P3B.2 §20] 취소는 이미 커밋됐다 — 알림 실패가 되돌리지 않는다.
+    try {
+      await srvNotifyWageEvent("wageCancelConfirmed", businessId, canceledRows);
+    } catch (e) {
+      console.error("[cancelFinalConfirmation] 취소 알림 실패(취소는 유지):", e);
     }
 
     return {success: true, processed: successCount, skipped};
@@ -31143,6 +31321,55 @@ export const callableCheckOut = onCall(
 //   1. confirmedAt/appliedAt: DateTime.now() 클라이언트 조작 → 계약일자 위변조
 //   2. contractVoidedAt: DateTime.now() → 무효화 일자 위조
 //   3. WriteBatch에 원본 상태 검증 없음 → 이미 연장된 계약 이중 연장 가능
+/**
+ * [R8-P3B.2] 계약 연장 확정 알림 — 근무자 본인에게.
+ *
+ *   연장 문서를 만든 뒤 **클라이언트가** 알림 callable 을 다시 불렀다.
+ *   연장은 근무자가 반드시 알아야 하는 사실인데, 그 통지가 관리자 앱의
+ *   생존에 달려 있었다.
+ *
+ * @param {object} a 연장된 계약의 사실들
+ * @return {Promise<void>} 실패해도 연장 자체에는 영향이 없다
+ */
+async function srvNotifyContractRenewed(a: {
+  applicationId: string;
+  workerUid: string;
+  businessId: string;
+  businessName: string;
+  newEndDateMs: number;
+}): Promise<void> {
+  if (!a.workerUid) {
+    console.error(
+      "⚠️ [contractRenewed] workerUid 없음 — application=" + a.applicationId);
+    return;
+  }
+  const end = new Date(a.newEndDateMs + 9 * 60 * 60 * 1000);
+  const md = `${end.getUTCMonth() + 1}/${end.getUTCDate()}`;
+  try {
+    await db.collection("users").doc(a.workerUid).collection("notifications")
+      .doc(`contract_renewed_${a.applicationId}_${a.workerUid}`)
+      .create({
+        userId: a.workerUid,
+        type: "contractRenewed",
+        title: "계약 연장 확정",
+        body: `${a.businessName}과의 계약이 ${md}까지 연장되었습니다.`,
+        data: {
+          applicationId: a.applicationId,
+          businessId: a.businessId,
+          screen: "mySchedule",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+  } catch (e) {
+    if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
+    console.error(
+      `⚠️ [contractRenewed] 알림 저장 실패 uid=${a.workerUid} ` +
+      `application=${a.applicationId}:`, e);
+  }
+}
+
 export const callableCreateContractRenewal = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -31330,6 +31557,24 @@ export const callableCreateContractRenewal = onCall(
       //   D-0 자동 갱신(processContractRenewalChecks)도 동일하게 카운터 미조정.
       //   갱신은 계약 기간 연장이며 확정 인원 변경이 아니므로 +1 불필요.
     });
+
+    // [R8-P3B.2 §20] 연장은 이미 커밋됐다 — 알림 실패가 되돌리지 않는다.
+    try {
+      const bizSnapRenew =
+        await db.collection("businesses").doc(businessId).get();
+      await srvNotifyContractRenewed({
+        applicationId: newApplicationId,
+        workerUid: (originalData.uid as string | undefined) ?? "",
+        businessId,
+        businessName:
+          (bizSnapRenew.data()?.name as string | undefined) ??
+          (originalData.businessName as string | undefined) ?? "",
+        newEndDateMs,
+      });
+    } catch (e) {
+      console.error(
+        "⚠️ [createContractRenewal] 연장 알림 실패 (연장은 완료됨):", e);
+    }
 
     return {success: true, newApplicationId};
   }
@@ -38750,6 +38995,69 @@ export const callableGetMyIdCardRequestsAsAdmin = onCall(
 // 관리자용: 신분증 열람 요청 생성 (중복 체크 서버 포함) — 알림은 클라이언트에서 별도 처리
 // Admin SDK → idCardAccessRequests LIST 규칙 우회
 // 반환: {requestId, reason: 'CREATED'|'ALREADY_PENDING'|'ALREADY_APPROVED'}
+/**
+ * [R8-P3B.2] 신분증 열람 요청 사유의 사람이 읽는 문구.
+ *   클라이언트 _getReasonText 와 같은 표를 서버에 둔다 — 요청을 만든 곳이
+ *   문구도 같이 책임진다.
+ */
+const ID_ACCESS_REASON_TEXT: Record<string, string> = {
+  incomeTax: "소득세 신고",
+  laborContract: "근로계약서 작성",
+  insurance: "4대보험 신고",
+  identityVerify: "본인 확인",
+  other: "기타",
+};
+
+/**
+ * [R8-P3B.2] 신분증 열람 요청 알림 — 요청 대상 근로자 본인에게.
+ *
+ *   요청 문서를 만든 뒤 **클라이언트가** 알림 callable 을 다시 불렀다.
+ *   근로자 동의가 필요한 요청인데, 그 통지가 요청자 앱의 생존에 달려 있었다.
+ *
+ *   [§13] 본문·데이터에 민감정보를 넣지 않는다 — 기존과 같이
+ *   사업장명·사유 문구·requestId 만 담는다. 신분증 이미지 URL 이나
+ *   주민번호는 들어가지 않는다.
+ *
+ * @param {object} a 요청의 사실들
+ * @return {Promise<void>} 실패해도 요청 생성에는 영향이 없다
+ */
+async function srvNotifyIdCardAccessRequested(a: {
+  requestId: string;
+  targetUserId: string;
+  businessId: string;
+  businessName: string;
+  reason: string;
+  customReason?: string;
+}): Promise<void> {
+  const reasonText = a.reason === "other" ?
+    (a.customReason && a.customReason.length > 0 ? a.customReason : "기타") :
+    (ID_ACCESS_REASON_TEXT[a.reason] ?? a.reason);
+  try {
+    await db.collection("users").doc(a.targetUserId)
+      .collection("notifications")
+      .doc(`id_access_requested_${a.requestId}_${a.targetUserId}`)
+      .create({
+        userId: a.targetUserId,
+        type: "idCardAccessRequested",
+        title: "신분증 열람 요청",
+        body: `${a.businessName}에서 신분증 열람을 요청했습니다.\n사유: ${reasonText}`,
+        data: {
+          requestId: a.requestId,
+          businessId: a.businessId,
+          action: "idCardAccessRequest",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+  } catch (e) {
+    if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
+    console.error(
+      `⚠️ [idCardAccessRequested] 알림 저장 실패 uid=${a.targetUserId} ` +
+      `request=${a.requestId}:`, e);
+  }
+}
+
 export const callableCreateIdCardAccessRequest = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -38833,6 +39141,21 @@ export const callableCreateIdCardAccessRequest = onCall(
       requestedAt: admin.firestore.FieldValue.serverTimestamp(),
       applicationId: applicationId ?? null,
     });
+
+    // [R8-P3B.2 §20] 요청 문서는 이미 생성됐다 — 알림 실패가 되돌리지 않는다.
+    try {
+      await srvNotifyIdCardAccessRequested({
+        requestId: docRef.id,
+        targetUserId,
+        businessId: requesterBusinessId,
+        businessName: requesterBusinessName ?? "",
+        reason,
+        customReason,
+      });
+    } catch (e) {
+      console.error(
+        "⚠️ [createIdCardAccessRequest] 알림 실패 (요청은 생성됨):", e);
+    }
 
     return {requestId: docRef.id, reason: "CREATED"};
   }
