@@ -10200,8 +10200,17 @@ export const callableMarkBankbookVerified = onCall(
         ((cur["bankbookDocumentVersion"] as number | undefined) ?? 0) + 1;
       const curAcc = (cur["bankAccountVersion"] as number | undefined) ?? 0;
       tx.update(bbUserRef, {
-        // legacy 소비자가 남아 있어 URL은 넘어온 경우에만 갱신한다.
-        ...(imageUrl ? {bankbookImageUrl: imageUrl} : {}),
+        // [R8-P5] 영구 download URL을 남기지 않는다 — 신분증([BUG-ID-01])과 같은 규칙.
+        //
+        //   canonical 접근 경로는 callableGetBankbookSignedUrl(1시간 Signed URL) 하나다.
+        //   화면도 이 필드를 읽지 않고(worker_detail_dialog: 직접 노출 금지),
+        //   callableGetUsersBatch는 응답에서 이 필드를 지워서 보낸다.
+        //   남는 쓸모는 "제출했는가"의 legacy 폴백(path ?? url)뿐인데
+        //   bankbookImagePath를 바로 아래에서 항상 쓰므로 그것도 필요 없다.
+        //
+        //   지우는 이유가 하나 더 있다: 재업로드하면 클라이언트가 **옛 파일을 삭제**한다.
+        //   옛 URL을 그대로 두면 없는 파일을 가리키는 토큰이 남는다.
+        bankbookImageUrl: admin.firestore.FieldValue.delete(),
         // [V3] Storage 경로 저장 — callableGetBankbookSignedUrl Signed URL 발급 기반
         bankbookImagePath: storagePath,
         // [Phase 6] bankVerificationStatus / isBankbookVerified 제거 — V3에서 불필요

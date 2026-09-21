@@ -1651,7 +1651,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
     setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
 
-    String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
+    // [R8-P5] orphan 추적을 URL 이 아니라 Storage 경로로 한다 —
+    //   업로드가 더 이상 download URL 을 만들지 않으므로 지울 대상도 경로다.
+    String? newBankbookPath;
     try {
       // [V3 FOREIGN HOLDER] 외국인: user.name 기반 예금주 비교 skip (legalName 불일치 오탐)
       // 내국인: user.name 기반 SOFT 이름 검증 유지
@@ -1666,38 +1668,58 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       final imagePath = picked.path;
 
       final oldUrl = user.bankbookImageUrl;
+      final oldPath = user.bankbookImagePath;
 
       // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
+      //
+      // [R8-P5] uploadImage → uploadImageNoUrl.
+      //   uploadImage 는 업로드 뒤 getDownloadURL() 을 한 번 더 부른다.
+      //   DEV 실측 warm 약 250ms 짜리 왕복인데, 그렇게 얻은 URL 로 하는 일이 없다:
+      //     · 통장사본 열람은 callableGetBankbookSignedUrl(1시간 Signed URL) 전용이고
+      //       ([V3] worker_detail_dialog — bankbookImageUrl 직접 노출 금지)
+      //     · callableGetUsersBatch 는 응답에서 이 필드를 지워서 보낸다
+      //   그러면서도 **영구 토큰이 박힌 다운로드 URL** 이 PII 문서에 대해 만들어져
+      //   Firestore 에 저장되고 있었다. 신분증은 [BUG-ID-01] 로 이미 이 경로를 막았다 —
+      //   통장사본만 남아 있었다.
       final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      bool uploadOk = false;
       try {
-        newUrl = await _storageService.uploadImage(imagePath, storagePath);
+        uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath);
       } finally {
         // TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일.
         try { await File(imagePath).delete(); } catch (_) {}
       }
 
-      if (newUrl == null) {
+      if (!uploadOk) {
         if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
         return;
       }
 
-      // 2. CF로 isBankbookVerified/bankbookVerifiedAt 설정 — Admin SDK 경유로 직접 쓰기 차단 준수
+      // 2. CF로 통장사본 canonical state 기록 — Admin SDK 경유로 직접 쓰기 차단 준수
       //    [DOCUMENT-VERIFICATION-INTEGRITY-R0] storagePath 직통 + 기기 확인 근거.
+      //    [R8-P5] imageUrl 미전달 — 서버가 canonical 로 쓰는 값은 storagePath 하나다.
+      newBankbookPath = storagePath; // CF 호출 전 Storage orphan 추적
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkBankbookVerified')
           .call({
-        'imageUrl': newUrl,
         'storagePath': storagePath,
         'selfCheck': picked.selfCheck,
       });
-      newUrl = null; // CF 성공 — Storage 정리 불필요
+      newBankbookPath = null; // CF 성공 — Storage 정리 불필요
 
       // 3. 기존 이미지 삭제 (best-effort)
-      if (oldUrl != null) {
+      //    [R8-P5] path 기반 우선, 없으면 URL fallback — 신분증과 같은 순서.
+      if (oldPath != null) {
+        try {
+          await _storageService.deleteImage(oldPath);
+        } catch (e) {
+          debugPrint('⚠️ 기존 통장사본 삭제 실패 (무시): $e');
+        }
+      } else if (oldUrl != null) {
         try {
           await _storageService.deleteImageByUrl(oldUrl);
         } catch (e) {
-          debugPrint('⚠️ 기존 통장사본 삭제 실패 (무시): $e');
+          debugPrint('⚠️ 기존 통장사본 URL 삭제 실패 (무시): $e');
         }
       }
 
@@ -1707,11 +1729,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       _hasChanges = true;
       ToastHelper.showSuccess('통장사본이 등록되었습니다');
     } catch (e) {
-      // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
-      if (newUrl != null) {
-        try {
-          await _storageService.deleteImageByUrl(newUrl);
-        } catch (_) {}
+      // [R8-P5] CF 실패 시 업로드된 통장사본 Storage orphan 방지 (경로 기반 — 신분증과 동일)
+      if (newBankbookPath != null) {
+        try { await _storageService.deleteImage(newBankbookPath); } catch (_) {}
       }
       if (mounted) ToastHelper.showError('통장사본 등록에 실패했습니다');
     } finally {
