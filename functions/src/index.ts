@@ -13781,6 +13781,13 @@ export const callableUpdateSlotWorkDetails = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
+    // [R8-P4] 단계 계측 — 슬롯 수에 따라 어디가 늘어나는지 로그 한 줄로 남긴다.
+    //   값이 아니라 소요 ms만 남기므로 개인정보가 없고, 호출당 1줄이라 비용도 없다.
+    const _t0 = Date.now();
+    const _stage: Record<string, number> = {};
+    const _mark = (k: string) => {
+      _stage[k] = Date.now() - _t0;
+    };
 
     const data = request.data as {
       toId?: string;
@@ -13846,6 +13853,7 @@ export const callableUpdateSlotWorkDetails = onCall(
         throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
       }
     }
+    _mark("auth");
 
     // ── workDetails 직렬화 변환 헬퍼 — applicationDeadlineMs(number) → Firestore Timestamp ──
     const toFirestoreWDs = (wds: Record<string, unknown>[]) =>
@@ -14281,19 +14289,51 @@ export const callableUpdateSlotWorkDetails = onCall(
     // 제한: 각 transaction이 독립적이므로 이전 슬롯 성공 후 이후 슬롯 실패 시
     //      이전 슬롯 롤백 불가 (Firestore 구조적 한계 — all-or-nothing 미보장).
     const {batchUpdates} = data;
+    // [R8-P4] 아래에서 여러 번 쓰므로 한 번만 좁힌다.
+    const batchUpdatesList = batchUpdates!;
 
     // workDetails duplicate 검증 (모든 슬롯 동일 workType 구성 전제)
-    const firstWDs = batchUpdates![0].workDetails;
+    const firstWDs = batchUpdatesList[0].workDetails;
     const newIds = checkDuplicateIds(firstWDs);
     const newIdSet = new Set(newIds);
 
     // 각 슬롯에 대해 순차적 per-slot transaction 실행.
     // 하나라도 throw → 이후 슬롯 미처리 → 클라이언트 전체 실패로 인식.
+    //
+    // [R8-P4] 슬롯 트랜잭션을 순차에서 제한 병렬로 바꿨다.
+    //
+    //   30일 일괄 수정이 2.2초였다. 서버 계측을 보면 그 중 1.7초가 이 루프였고,
+    //   루프는 슬롯 하나당 트랜잭션 하나를 **줄 세워** 기다리고 있었다.
+    //   슬롯당 ~57ms(읽기 14 + 정원 count 19 + 커밋 23)가 슬롯 수만큼 더해졌다.
+    //
+    //   슬롯끼리는 독립이다. 각자 자기 slotRef만 읽고 쓴다.
+    //   TO 문서(totalRequired)는 읽지 않고 increment만 하는 blind write라
+    //   트랜잭션 충돌 대상이 아니고, increment는 교환법칙이 성립한다.
+    //   그래서 동시에 돌려도 충돌하지 않는다.
+    //
+    //   트랜잭션 구조 자체는 그대로다 — 슬롯 하나당 트랜잭션 하나, 슬롯 단위 원자성,
+    //   같은 검증, 같은 순서. 바뀐 것은 **기다리는 방식**뿐이다.
+    //
+    //   [§21·§22] 부분 성공 가능성은 원래부터 있었다(트랜잭션이 슬롯별로 독립).
+    //   달라지는 것은 실패 시 커밋된 슬롯이 "앞에서부터 연속"이 아니라
+    //   "앞에서부터 연속 + 진행 중이던 최대 동시 실행 수만큼"이 될 수 있다는 점이다.
+    //   실패가 보이면 새 슬롯을 더 시작하지 않는다.
+    const BATCH_SLOT_CONCURRENCY = 6;
 
-    // [Phase 8.1C] BATCH dispatch 수집용 배열
-    const batchDispatchSlots: _ToMatchSlot[] = [];
+    // [Phase 8.1C] BATCH dispatch 수집용 배열 — 슬롯 순서를 보존하려고 인덱스로 채운다.
+    const batchDispatchByIndex: (_ToMatchSlot | null)[] =
+      new Array(batchUpdatesList.length).fill(null);
+    // [R8-P4] 슬롯 트랜잭션에 실제로 쓴 시간의 합(워커별 누적).
+    //   total과 함께 보면 병렬이 실제로 겹쳤는지 알 수 있다 — Σtx > total이면 겹친 것이다.
+    //   더 잘게 쪼갠 계측은 최적화를 정하는 동안만 썼고 남기지 않았다:
+    //   트랜잭션 본문의 호출 형태를 바꾸면 그 문장을 고정한 계약 테스트가 깨진다.
+    const _acc = {tx: 0};
 
-    for (const update of batchUpdates!) {
+    const processSlotUpdate = async (
+      update: typeof batchUpdatesList[number],
+      slotIndex: number
+    ) => {
+      const _txStart = Date.now();
       const slotRef = toRef.collection("slots").doc(update.slotId);
 
       // [STALE-EDIT] fail-closed: 슬롯별 expectedEditRevision 누락 시 즉시 거부
@@ -14423,6 +14463,7 @@ export const callableUpdateSlotWorkDetails = onCall(
           tx.update(toRef, {totalRequired: admin.firestore.FieldValue.increment(delta)});
         }
       });
+      _acc.tx += Date.now() - _txStart;
 
       // [Phase 8.1C] 트랜잭션 후 새 tuple 확인 → dispatch 후보 수집
       if (capturedBatchDateMs > 0) {
@@ -14440,7 +14481,9 @@ export const callableUpdateSlotWorkDetails = onCall(
             String(kstDate.getUTCMonth() + 1).padStart(2, "0"),
             String(kstDate.getUTCDate()).padStart(2, "0"),
           ].join("-");
-          batchDispatchSlots.push({
+          // [R8-P4] 병렬 처리라 push 순서가 뒤섞인다 — 슬롯 인덱스 자리에 넣어
+          //   알림에 실리는 날짜 순서를 순차 처리 때와 같게 유지한다.
+          batchDispatchByIndex[slotIndex] = {
             dateKey,
             workDetails: addedWDs.map(wd => ({
               workType: wd.workType as string,
@@ -14453,10 +14496,42 @@ export const callableUpdateSlotWorkDetails = onCall(
                 return wdId ? (capturedBatchWDC[wdId]?.confirmedCount ?? 0) : 0;
               })(),
             })),
-          });
+          };
         }
       }
+    };
+
+    // [R8-P4] 제한 병렬 실행 — 공유 인덱스를 나눠 갖는 워커 풀.
+    //   실패가 하나라도 보이면 새 슬롯을 시작하지 않는다(진행 중인 것은 끝난다).
+    //   첫 번째로 발생한 오류를 그대로 던져 기존 클라이언트 처리(stale-edit 다이얼로그 등)를 유지한다.
+    {
+      const updates = batchUpdatesList;
+      let nextIndex = 0;
+      let firstError: unknown = null;
+      const worker = async () => {
+        for (;;) {
+          if (firstError !== null) return;
+          const i = nextIndex++;
+          if (i >= updates.length) return;
+          try {
+            await processSlotUpdate(updates[i], i);
+          } catch (e) {
+            if (firstError === null) firstError = e;
+            return;
+          }
+        }
+      };
+      await Promise.all(
+        Array.from(
+          {length: Math.min(BATCH_SLOT_CONCURRENCY, updates.length)},
+          () => worker()
+        )
+      );
+      if (firstError !== null) throw firstError;
     }
+
+    const batchDispatchSlots = batchDispatchByIndex.filter(
+      (s): s is _ToMatchSlot => s !== null);
 
     // [Phase 8.1C] BATCH dispatch: ACTIVE TO + 새 tuple 존재 시 근로자 알림
     if (batchDispatchSlots.length > 0) {
@@ -14474,7 +14549,13 @@ export const callableUpdateSlotWorkDetails = onCall(
       }
     }
 
-    console.log(`✅ [callableUpdateSlotWorkDetails] BATCH ${batchUpdates!.length}개 슬롯 수정 완료 (by: ${callerUid})`);
+    _mark("done");
+    // [R8-P4] auth/total은 실제 경과, Σ가 붙은 것은 워커별 누적 합이다.
+    //   병렬 실행이라 Σtx가 total보다 클 수 있다 — 잘못 읽지 않도록 표시한다.
+    console.log(
+      `✅ [callableUpdateSlotWorkDetails] BATCH ${batchUpdatesList.length}개 슬롯 수정 완료 ` +
+      `(by: ${callerUid}) | ms auth=${_stage.auth} total=${_stage.done} ` +
+      `conc=${BATCH_SLOT_CONCURRENCY} Σtx=${_acc.tx}`);
     return {success: true};
   }
 );
