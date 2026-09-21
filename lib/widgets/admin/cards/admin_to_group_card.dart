@@ -74,6 +74,17 @@ class TOGroupCard extends StatefulWidget {
   final FirestoreService firestoreService;
   final TOListDialogs dialogs;
   final VoidCallback onChanged;
+
+  /// [R8-P4.1] 이 공고 **하나만** 바뀌었을 때 쓰는 갱신 콜백.
+  ///
+  /// 일괄수정은 편집한 공고의 슬롯과 totalRequired만 바꾼다. 그런데
+  /// [onChanged]는 사업장의 모든 공고와 모든 슬롯을 다시 읽고(전체 재조회)
+  /// 펼침 상태까지 초기화한다. 영향 범위가 공고 하나로 확정된 경로는
+  /// 이 콜백으로 그 공고만 최신화한다.
+  ///
+  /// 제공되지 않으면 [onChanged]로 떨어진다 — 기존 호출부는 그대로 동작한다.
+  final void Function(String toId)? onTOChanged;
+
   final bool isExpanded;
   final Set<String> expandedTOs;
   final VoidCallback onToggleExpand;
@@ -109,6 +120,7 @@ class TOGroupCard extends StatefulWidget {
     required this.firestoreService,
     required this.dialogs,
     required this.onChanged,
+    this.onTOChanged,
     required this.isExpanded,
     required this.expandedTOs,
     required this.onToggleExpand,
@@ -135,6 +147,19 @@ class TOGroupCard extends StatefulWidget {
 class _TOGroupCardState extends State<TOGroupCard> {
   /// [4I.1] Close/Reopen/Delete 중복 실행 방어 — 연타 보호
   bool _isLifecycleActionRunning = false;
+
+  /// [R8-P4.1] 영향 범위가 공고 하나로 확정된 변경을 알린다.
+  ///
+  /// 부모가 scoped 갱신을 지원하면 그 공고만 다시 읽고, 아니면 기존처럼
+  /// 전체 갱신으로 떨어진다 — 동작은 어느 쪽이든 최신 canonical state다.
+  void _notifyTOChanged(String toId) {
+    final scoped = widget.onTOChanged;
+    if (scoped != null) {
+      scoped(toId);
+    } else {
+      widget.onChanged();
+    }
+  }
 
   // build() 내 O(N) 집계 캐시 — didUpdateWidget에서 갱신
   late List<TOItem> _targetTOs;
@@ -1929,7 +1954,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
             onReturn: (result) {
               if (result == true && mounted) {
                 widget.firestoreService.clearCache(toId: masterTO.id);
-                widget.onChanged();
+                // [R8-P4.1] 슬롯 하나 수정도 영향 범위는 이 공고다 — 일괄수정과 같은 경로.
+                _notifyTOChanged(masterTO.id);
               }
             },
           );
@@ -1966,7 +1992,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           onReturn: (result) {
             if (result == true && mounted) {
               widget.firestoreService.clearCache(toId: masterTO.id);
-              widget.onChanged();
+              // [R8-P4.1] 일괄수정이 건드린 것은 이 공고의 슬롯과 totalRequired뿐이다.
+              //   전체 목록을 다시 읽지 않고 이 공고만 최신화한다.
+              _notifyTOChanged(masterTO.id);
             }
           },
         );

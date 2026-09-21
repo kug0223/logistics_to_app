@@ -768,8 +768,8 @@ void main() {
     test('09-h operationalDate는 controller만 쓴다', () {
       final ctrl = _src(_ctrlPath);
       expect(
-          RegExp(r'setOperationalDate\(').allMatches(ctrl).length, 2,
-          reason: 'root load + group detail 재조회 두 곳');
+          RegExp(r'setOperationalDate\(').allMatches(ctrl).length, 3,
+          reason: 'root load + group detail 재조회 + [R8-P4.1] 단일 공고 갱신');
       expect(_codeOf(_src(_cardPath)).contains('setOperationalDate('), false,
           reason: '카드는 읽기만 한다');
     });

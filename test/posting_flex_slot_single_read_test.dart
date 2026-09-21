@@ -156,8 +156,9 @@ void main() {
           '_service.loadFlexSlots('
               .allMatches(_codeOf(_src(_ctrlPath)))
               .length,
-          2,
-          reason: 'root load와 펼침/재시도 두 경로 모두 single-snapshot loader를 써야 한다');
+          3,
+          reason: 'root load·펼침/재시도·[R8-P4.1] 단일 공고 갱신 — 세 경로 모두 '
+              'single-snapshot loader를 써야 한다');
     });
   });
 
@@ -523,8 +524,9 @@ void main() {
       }
       // FLEX preload는 controller 하나에서만 돈다
       final ctrl = _codeOf(_src(_ctrlPath));
-      expect('_service.loadFlexSlots('.allMatches(ctrl).length, 2,
-          reason: 'root load 1 + loadGroupDetails 1 — 그대로다');
+      expect('_service.loadFlexSlots('.allMatches(ctrl).length, 3,
+          reason: 'root load 1 + loadGroupDetails 1 + [R8-P4.1] refreshGroup 1 — '
+              '모두 이 controller 안이다');
     });
 
     test('12-d 필터는 여전히 client-side다 (§26)', () {

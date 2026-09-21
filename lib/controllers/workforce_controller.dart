@@ -17,6 +17,27 @@ import '../utils/format_helper.dart';
 /// global invalidation으로 자기 자신을 다시 갱신하지 않는다.
 enum AdminMutationOrigin { home, jobs, workforce }
 
+/// [R8-P4.1] 공고 하나만 다시 읽은 결과.
+///
+/// 저장은 이미 성공한 뒤에 도는 갱신이므로, 실패를 "저장 실패"로 말하면 안 된다.
+/// 호출부가 문구를 고를 수 있도록 결과를 구분해서 돌려준다.
+enum TOGroupRefreshOutcome {
+  /// 최신 상태로 교체됨
+  refreshed,
+
+  /// 문서가 없어졌다 — 목록에서 제거했다 (읽기 실패와 구분된 뒤에만 이 값)
+  removed,
+
+  /// 읽지 못했다 — 기존 목록을 그대로 둔다 (ERROR ≠ EMPTY)
+  failed,
+
+  /// 더 최신 갱신이 이미 돌았다 — 이 결과는 버린다
+  superseded,
+
+  /// 현재 목록에 없는 공고 (필터에 걸렸거나 아직 안 실림)
+  notInList,
+}
+
 /// 리스트·캘린더 뷰가 공유하는 단일 데이터 소스
 ///
 /// 두 뷰는 이 컨트롤러의 [items]를 읽기만 한다.
@@ -694,6 +715,81 @@ class WorkforceController extends ChangeNotifier {
     _onExternalReloadCallback?.call();
     return load(context);
   }
+
+  /// [R8-P4.1] 공고 하나만 canonical state로 다시 읽는다.
+  ///
+  /// 일괄수정은 편집한 공고의 슬롯과 그 공고의 totalRequired만 바꾼다.
+  /// 그런데 저장 후에는 [reload]가 돌면서 사업장의 **모든** 공고를 다시 읽고
+  /// (callableGetAdminTOs) 모든 flex 공고의 슬롯을 다시 읽었다.
+  /// DEV 실측으로 전체 재조회는 서버 기준 ~890ms, 공고 하나는 ~60ms다.
+  ///
+  /// 값을 클라이언트에서 지어내지 않는다(§10) — 공고 문서와 슬롯을
+  /// 서버에서 다시 읽어 교체한다. 읽는 경로는 기존 것 그대로다
+  /// (getTOOrFailure / loadFlexSlots).
+  ///
+  /// 반환값으로 호출부가 "저장 성공 + 갱신 실패"를 구분할 수 있게 한다(§22).
+  Future<TOGroupRefreshOutcome> refreshGroup(String toId) async {
+    final seq = (_groupRefreshSeq[toId] ?? 0) + 1;
+    _groupRefreshSeq[toId] = seq;
+    bool stale() => (_groupRefreshSeq[toId] ?? 0) != seq;
+
+    final index = _items.indexWhere((g) => g.id == toId);
+    if (index < 0) {
+      // 목록에 없는 공고 — 필터 때문일 수도, 방금 사라진 것일 수도 있다.
+      // 어느 쪽인지 여기서 단정하지 않는다.
+      return TOGroupRefreshOutcome.notInList;
+    }
+
+    try {
+      final result = await _service.getTOOrFailure(toId);
+      if (_disposed || stale()) return TOGroupRefreshOutcome.superseded;
+      if (result.failed) return TOGroupRefreshOutcome.failed;
+
+      final fresh = result.to;
+      if (fresh == null) {
+        // 문서가 없다 = 삭제됨. 읽기 실패(failed)와 구분된 뒤에만 여기 온다.
+        final at = _items.indexWhere((g) => g.id == toId);
+        if (at < 0) return TOGroupRefreshOutcome.superseded;
+        _items = List<TOGroupItem>.of(_items)..removeAt(at);
+        _groupDetailErrorIds.remove(toId);
+        _sortItemsForOperations();
+        if (!_disposed) notifyListeners();
+        return TOGroupRefreshOutcome.removed;
+      }
+
+      final rebuilt = TOGroupItem(singleTO: fresh);
+      if (fresh.isFlexType) {
+        final loaded = await _service.loadFlexSlots(toId, masterTO: fresh);
+        if (_disposed || stale()) return TOGroupRefreshOutcome.superseded;
+        rebuilt.setGroupTOs(loaded.groupTOs);
+        rebuilt.setSlotDates(loaded.slotDates);
+        rebuilt.setOperationalDate(priorityDateOf(rebuilt, DateTime.now(),
+            detailErrorIds: _groupDetailErrorIds));
+      }
+
+      // 같은 자리에 같은 key(toId)로 넣는다 — 펼침 상태는 view가 key로 들고 있다.
+      final at = _items.indexWhere((g) => g.id == toId);
+      if (at < 0) return TOGroupRefreshOutcome.superseded;
+      // 새 list 인스턴스로 교체한다 — 뷰의 필터 캐시가 identical(items) 로
+      // 무효화를 판단하므로, 제자리 수정만 하면 낡은 결과가 그대로 그려진다.
+      final next = List<TOGroupItem>.of(_items);
+      next[at] = rebuilt;
+      _items = next;
+      _groupDetailErrorIds.remove(toId);
+      // 정렬 기준(운영일 등)이 바뀔 수 있으므로 목록만 다시 세운다 — 네트워크 없음.
+      _sortItemsForOperations();
+      if (!_disposed) notifyListeners();
+      return TOGroupRefreshOutcome.refreshed;
+    } catch (e) {
+      debugPrint('❌ WorkforceController.refreshGroup 실패 ($toId): $e');
+      // [POSTING-V2-01B] 실패를 빈 목록·슬롯 없음으로 커밋하지 않는다.
+      return TOGroupRefreshOutcome.failed;
+    }
+  }
+
+  /// [R8-P4.1] 공고별 refresh 세대 토큰 — 빠른 연속 저장에서 늦게 온 응답이
+  /// 최신 결과를 덮지 않게 한다(P1C/P1D와 같은 방식).
+  final Map<String, int> _groupRefreshSeq = {};
 
   // ── Lazy Loading ─────────────────────────────────────────
 

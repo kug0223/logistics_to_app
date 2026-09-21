@@ -698,7 +698,8 @@ void main() {
       final ctrl = _codeOf(_src('lib/controllers/workforce_controller.dart'));
       expect(ctrl.contains('static DateTime? priorityDateOf('), true);
       expect(
-          RegExp(r'setOperationalDate\(').allMatches(ctrl).length, 2);
+          RegExp(r'setOperationalDate\(').allMatches(ctrl).length, 3,
+          reason: 'root load + 펼침 + [R8-P4.1] 단일 공고 갱신 — 모두 controller 안이다');
     });
 
     test('12-c 추가 조회 없음 (§28)', () {

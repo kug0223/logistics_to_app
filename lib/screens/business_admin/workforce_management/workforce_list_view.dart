@@ -258,6 +258,44 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     }
   }
 
+  /// [R8-P4.1] 공고 하나만 수정한 뒤의 갱신.
+  ///
+  /// 이전에는 슬롯 하나를 고쳐도 [_reload]가 돌았다. 그러면 사업장의 모든 공고와
+  /// 모든 flex 공고의 슬롯을 다시 읽고(DEV 실측 서버 기준 ~890ms), 펼쳐 둔
+  /// 그룹·날짜가 전부 접혔다. 방금 고친 날짜를 다시 찾아 들어가야 했다.
+  ///
+  /// 바뀐 것은 그 공고의 슬롯과 totalRequired뿐이므로 그 공고만 다시 읽는다.
+  /// 값은 서버에서 다시 읽는다 — 보낸 payload로 화면을 지어내지 않는다.
+  ///
+  /// 펼침 상태(_expandedGroups/_expandedTOs)는 toId·slotId를 key로 들고 있고
+  /// 갱신 후에도 같은 key가 유지되므로 건드리지 않는다.
+  Future<void> _refreshEditedTO(String toId) async {
+    final controller = context.read<WorkforceController>();
+    final outcome = await controller.refreshGroup(toId);
+    if (!mounted) return;
+    switch (outcome) {
+      case TOGroupRefreshOutcome.refreshed:
+      case TOGroupRefreshOutcome.superseded:
+        break;
+      case TOGroupRefreshOutcome.removed:
+        // 공고가 사라졌다 — 그 공고에 걸린 펼침 상태만 정리한다.
+        setState(() {
+          _expandedGroups.remove(toId);
+          if (_activeGroupKey == toId) _activeGroupKey = null;
+          _lastCachedItems = null;
+        });
+        break;
+      case TOGroupRefreshOutcome.notInList:
+        // 현재 필터에 안 보이는 공고 — 목록을 건드리지 않는다.
+        break;
+      case TOGroupRefreshOutcome.failed:
+        // [§22] 저장은 성공했다. 갱신만 실패한 것을 저장 실패로 말하지 않는다.
+        //   [§23] 목록을 비우지도 않는다 — 마지막 성공 데이터를 그대로 둔다.
+        ToastHelper.showWarning('저장했습니다. 목록 갱신은 실패해 이전 내용이 보일 수 있습니다');
+        break;
+    }
+  }
+
   /// 탭·필터가 바뀌지 않으면 이전 결과를 그대로 반환 (H2)
   List<TOGroupItem> _getFilteredItems(List<TOGroupItem> allItems) {
     final controller = context.read<WorkforceController>();
@@ -698,6 +736,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 firestoreService: _firestoreService,
                 dialogs: _dialogs,
                 onChanged: _reload,
+                onTOChanged: _refreshEditedTO,
                 isExpanded: _expandedGroups.contains(groupItem.id),
                 expandedTOs: _expandedTOs,
                 onToggleExpand: () => _handleGroupExpand(groupItem),
