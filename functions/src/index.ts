@@ -8774,6 +8774,11 @@ async function _saveContractArtifact(
     contentType,
     metadata: {metadata: {firebaseStorageDownloadTokens: downloadToken}},
     preconditionOpts: {ifGenerationMatch: 0},
+    // [R8-P6] resumable 업로드는 세션을 먼저 열고 본문을 보낸다 — 왕복이 하나 더 붙는다.
+    //   서명 3KB 를 올리는 데 534ms 가 걸리고 있었고 그중 대부분이 그 왕복이었다.
+    //   여기 들어오는 것은 서명 PNG(수 KB)와 계약 PDF(입력 상한 5MB)뿐이라
+    //   한 번의 multipart 요청으로 보내는 편이 맞다. ifGenerationMatch 는 그대로 적용된다.
+    resumable: false,
   });
   return {
     path,
@@ -8907,11 +8912,22 @@ export const callableFinalizeWorkerSignature = onCall(
       throw new HttpsError("invalid-argument", "pdfBase64가 필요하거나 너무 큽니다 (최대 5MB).");
     }
 
+    // [R8-P6] 단계별 소요 — 어디서 기다리는지 로그 한 줄로 남긴다. 개인정보는 담지 않는다.
+    const _t = {
+      start: Date.now(), prev: Date.now(),
+      lap: {} as Record<string, number>,
+    };
+    const _mark = (k: string) => {
+      const now = Date.now();
+      _t.lap[k] = now - _t.prev;
+      _t.prev = now;
+    };
     const bucket = admin.storage().bucket();
     const signatureBytes = Buffer.from(signatureBase64, "base64");
     const computedSigHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
     const pdfBytes = Buffer.from(pdfBase64, "base64");
     const pdfHash = crypto.createHash("sha256").update(pdfBytes).digest("hex");
+    _mark("decode");
 
     // ═══════════════════════════════════════════════════════════
     // [GAP-CONTRACT-SIGNATURE-STORAGE-PREAUTH-01] 사전 인가 — Storage 부작용 이전
@@ -8939,6 +8955,7 @@ export const callableFinalizeWorkerSignature = onCall(
         throw new HttpsError("failed-precondition", "사업주 서명이 완료되지 않은 계약서입니다.");
       }
     }
+    _mark("precheck");
 
     // ── 서명 이미지 업로드 (Admin SDK — storage rules: if false)
     // [CREATOR-CLEANUP-RACE-01] 이 요청 전용 attempt 경로 — 두 artifact가 한 attempt에 속한다.
@@ -8949,33 +8966,36 @@ export const callableFinalizeWorkerSignature = onCall(
     let sigUpload: ContractArtifactUpload | null = null;
     let pdfUpload: ContractArtifactUpload | null = null;
     let sigUrl: string;
-    try {
-      sigUpload = await _saveContractArtifact(
-        sigStoragePath, signatureBytes, "image/png",
-        crypto.randomBytes(16).toString("hex"));
-      const encodedSigPath = encodeURIComponent(sigStoragePath);
-      sigUrl =
-        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-        `${encodedSigPath}?alt=media&token=${sigUpload.token}`;
-    } catch (e) {
-      throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
-    }
-
-    // ── PDF 업로드 (Admin SDK) + URL 생성
     let computedPdfUrl: string;
-    try {
-      pdfUpload = await _saveContractArtifact(
-        pdfStoragePath, pdfBytes, "application/pdf",
-        crypto.randomBytes(16).toString("hex"));
-      const encodedPdfPath = encodeURIComponent(pdfStoragePath);
-      computedPdfUrl =
-        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-        `${encodedPdfPath}?alt=media&token=${pdfUpload.token}`;
-    } catch (e) {
-      // PDF 업로드 실패 → 이 attempt의 서명만 정리 (다른 요청 artifact와 무관)
-      await _deleteOwnAttemptArtifact(sigUpload);
-      throw new HttpsError("internal", "PDF 업로드에 실패했습니다.");
+    // [R8-P6] 서명과 PDF 를 동시에 올린다.
+    //   둘은 같은 attempt 경로 아래 서로 다른 파일이고, 어느 쪽도 상대의 결과를 쓰지 않는다.
+    //   Firestore 는 둘 다 성공한 뒤에야 건드리므로 계약 상태 순서는 그대로다.
+    //   순차로 올릴 때 각각 500ms 대였고 그 둘이 서버 시간의 대부분이었다.
+    {
+      const [sigRes, pdfRes] = await Promise.allSettled([
+        _saveContractArtifact(sigStoragePath, signatureBytes, "image/png",
+          crypto.randomBytes(16).toString("hex")),
+        _saveContractArtifact(pdfStoragePath, pdfBytes, "application/pdf",
+          crypto.randomBytes(16).toString("hex")),
+      ]);
+      sigUpload = sigRes.status === "fulfilled" ? sigRes.value : null;
+      pdfUpload = pdfRes.status === "fulfilled" ? pdfRes.value : null;
+      // 한쪽만 성공했으면 그 한쪽을 지운다 — 순차 판과 같은 정리 결과.
+      if (sigRes.status !== "fulfilled" || pdfRes.status !== "fulfilled") {
+        await _deleteOwnAttemptArtifact(sigUpload);
+        await _deleteOwnAttemptArtifact(pdfUpload);
+        if (sigRes.status !== "fulfilled") {
+          throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
+        }
+        throw new HttpsError("internal", "PDF 업로드에 실패했습니다.");
+      }
+      const base = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/`;
+      const tokenUrl = (p: string, t: string) =>
+        `${base}${encodeURIComponent(p)}?alt=media&token=${t}`;
+      sigUrl = tokenUrl(sigStoragePath, sigRes.value.token);
+      computedPdfUrl = tokenUrl(pdfStoragePath, pdfRes.value.token);
     }
+    _mark("uploads");
 
     const contractRef = db.collection("employment_contracts").doc(contractId);
     // 트랜잭션 재시도 시 동일 타임스탬프 보장 (Timestamp.now()는 재시도마다 달라짐)
@@ -9075,17 +9095,19 @@ export const callableFinalizeWorkerSignature = onCall(
         }
       });
     } catch (e) {
-      // 이미 완료된 계약서(failed-precondition)는 기존 파일 보존 — cleanup 불필요
-      // 그 외 Firestore/내부 오류에서만 업로드된 파일을 정리한다.
       // [CREATOR-CLEANUP-RACE-01] 이 attempt 전용 경로만 정리한다.
       //   승자는 자기 attempt 경로를 Firestore에 기록했고 그 경로는 이 요청이 알 수 없으므로
       //   어떤 오류 분류에서도 타 요청의 artifact를 삭제할 수 없다.
-      if (!(e instanceof HttpsError) || e.code !== "failed-precondition") {
-        await _deleteOwnAttemptArtifact(pdfUpload);
-        await _deleteOwnAttemptArtifact(sigUpload);
-      }
+      // [R8-P6] 예전에는 failed-precondition 이면 정리를 건너뛰었다.
+      //   동시에 두 번 누르면 진 쪽이 올린 서명 PNG 와 계약 PDF 가 그대로 남았다.
+      //   계약 PDF 에는 임금·개인정보가 들어 있다. 실측에서 2개가 남는 것을 확인했다.
+      await Promise.all([
+        _deleteOwnAttemptArtifact(pdfUpload),
+        _deleteOwnAttemptArtifact(sigUpload),
+      ]);
       throw e;
     }
+    _mark("tx");
 
     // [R8-P3B §2] Domain truth first, notification second.
     //   서명은 이미 커밋됐다. 알림이 실패해도 서명을 실패로 돌려주지 않는다.
@@ -9103,6 +9125,12 @@ export const callableFinalizeWorkerSignature = onCall(
           e);
       }
     }
+    _mark("notify");
+    console.log(
+      `[R8P6-STAGE] workerSignature total=${Date.now() - _t.start}ms ` +
+      `sigKB=${Math.round(signatureBytes.length / 1024)} ` +
+      `pdfKB=${Math.round(pdfBytes.length / 1024)} ` +
+      Object.entries(_t.lap).map(([k, v]) => `${k}=${v}ms`).join(" "));
 
     return {success: true, pdfUrl: computedPdfUrl, sigUrl};
   }
@@ -9130,6 +9158,16 @@ export const callableFinalizeEmployerSignature = onCall(
       throw new HttpsError("invalid-argument", "signatureBase64가 필요하거나 너무 큽니다 (최대 375KB).");
     }
 
+    // [R8-P6] 단계별 소요 — 어디서 기다리는지 로그 한 줄로 남긴다. 개인정보는 담지 않는다.
+    const _t = {
+      start: Date.now(), prev: Date.now(),
+      lap: {} as Record<string, number>,
+    };
+    const _mark = (k: string) => {
+      const now = Date.now();
+      _t.lap[k] = now - _t.prev;
+      _t.prev = now;
+    };
     const bucket = admin.storage().bucket();
     const signatureBytes = Buffer.from(signatureBase64, "base64");
     const employerHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
@@ -9241,6 +9279,8 @@ export const callableFinalizeEmployerSignature = onCall(
       }
     }
 
+    _mark("validate");
+
     // ── Storage 업로드 (Admin SDK) — 인가·상태 검증 통과 후에만 실행
     //    다운로드 토큰 수동 생성
     // [CREATOR-CLEANUP-RACE-01] attempt 경로가 고유하므로 동시 요청이 서로를
@@ -9256,6 +9296,7 @@ export const callableFinalizeEmployerSignature = onCall(
     } catch (e) {
       throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
     }
+    _mark("sigUpload");
 
     try {
       if (isNewUnsaved === true) {
@@ -9316,18 +9357,16 @@ export const callableFinalizeEmployerSignature = onCall(
         });
       }
     } catch (e) {
-      // 이미 완료된 계약서(failed-precondition/already-exists)는 기존 파일 보존
-      // 그 외 Firestore/내부 오류에서만 업로드된 파일을 Admin SDK로 정리
-      const isAlreadyDone =
-        e instanceof HttpsError &&
-        (e.code === "failed-precondition" || e.code === "already-exists");
-      if (!isAlreadyDone) {
-        // [CREATOR-CLEANUP-RACE-01] 이 attempt 전용 경로만 정리 —
-        //   승자가 참조하는 artifact는 다른 attempt 경로에 있어 건드릴 수 없다.
-        await _deleteOwnAttemptArtifact(sigUpload);
-      }
+      // [CREATOR-CLEANUP-RACE-01] 이 attempt 전용 경로만 정리 —
+      //   승자가 참조하는 artifact는 다른 attempt 경로에 있어 건드릴 수 없다.
+      // [R8-P6] 예전에는 failed-precondition/already-exists 면 정리를 건너뛰었다.
+      //   경로가 결정적이던 시절에는 그게 맞았다 — 지우면 남의 진짜 파일이 사라졌다.
+      //   attempt 경로로 바뀐 뒤로는 이 요청이 올린 것만 지우므로 건너뛸 이유가 없고,
+      //   건너뛴 만큼 서명 이미지가 Storage 에 영구히 남았다.
+      await _deleteOwnAttemptArtifact(sigUpload);
       throw e;
     }
+    _mark("tx");
 
     // [FCM-FIX 2026-08-10] 근로자 서명 요청 알림 — CF 내부 발송으로 원자성 확보
     // 이전: CF 반환 후 클라이언트 Dart에서 createNotification 호출 → 크래시/네트워크 오류 시 영구 누락
@@ -9362,6 +9401,11 @@ export const callableFinalizeEmployerSignature = onCall(
       // 알림 실패는 계약서 저장 성공에 영향 없음 (근로자는 앱 열면 pending_worker 상태로 확인 가능)
       console.error("[callableFinalizeEmployerSignature] 근로자 서명 요청 알림 실패:", notifErr);
     }
+    _mark("notify");
+    console.log(
+      `[R8P6-STAGE] employerSignature total=${Date.now() - _t.start}ms ` +
+      `sigKB=${Math.round(signatureBytes.length / 1024)} ` +
+      Object.entries(_t.lap).map(([k, v]) => `${k}=${v}ms`).join(" "));
 
     return {success: true, employerSignatureUrl: url};
   }
