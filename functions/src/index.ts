@@ -10147,6 +10147,70 @@ export const callableDeleteIdCard = onCall(
 //
 // Input:  { imageUrl: string }  — Storage 다운로드 URL (본인 경로만 허용)
 // Output: { success: true }
+// ── callableRegisterBusinessLicense ──────────────────────────
+// [R8-P5.1] 사업자등록증(users 경로) 등록 — 서버 전용 writer.
+//
+//   이전에는 클라이언트가 업로드 후 users/{uid}.businessLicenseImageUrl 을
+//   **직접** 썼다. 신분증·통장사본은 둘 다 CF 전용인데 여기만 열려 있었고,
+//   그 값이 사업장 승인/공고 등록 선행조건(checkBusinessLicense)을 연다.
+//   그래서 아무 이미지 URL 을 써 넣는 것만으로 gate 가 열렸다(DEV 실측).
+//
+//   이 callable 이 하는 일은 신분증/통장사본과 같다:
+//     호출자 본인 경로인지 · Storage 에 실제로 있는지 확인하고
+//     경로만 기록한다. 영구 download URL 을 만들지 않는다.
+//
+//   "이 이미지가 진짜 사업자등록증인가"는 여기서 판정하지 않는다 —
+//   그건 SUPER_ADMIN 검토의 몫이고, 이 경로는 제출 사실만 기록한다.
+export const callableRegisterBusinessLicense = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {storagePath} = request.data as {storagePath?: string};
+
+    if (!storagePath || typeof storagePath !== "string" ||
+        storagePath.length === 0 || storagePath.length > 500) {
+      throw new HttpsError("invalid-argument", "storagePath가 필요합니다.");
+    }
+    // [§9] 본인 경로만. [§49] 타인 uid 경로 등록 불가.
+    if (!srvIsOwnedStoragePath(storagePath, callerUid)) {
+      throw new HttpsError("permission-denied", "본인 사업자등록증만 등록할 수 있습니다.");
+    }
+    // checkBusinessLicense 가 인정하는 경로 규칙과 같은 말을 한다.
+    if (!storagePath.startsWith(`users/${callerUid}/businessLicense_`)) {
+      throw new HttpsError("invalid-argument", "사업자등록증 경로가 아닙니다.");
+    }
+
+    // [§26·§27] BUSINESS_ADMIN 만. 가입 진행 중(registration_pending)도 허용 —
+    //   서류를 먼저 올리는 흐름을 막으면 가입 자체가 막힌다.
+    const licenseCallerSnap = await db.collection("users").doc(callerUid).get();
+    if (!licenseCallerSnap.exists) {
+      throw new HttpsError("not-found", "사용자 문서를 찾을 수 없습니다.");
+    }
+    const licenseRole = licenseCallerSnap.data()?.role as string | undefined;
+    if (licenseRole !== "BUSINESS_ADMIN" && licenseRole !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "사업자만 사업자등록증을 등록할 수 있습니다.");
+    }
+
+    // [§10] 실제 object 가 있어야 한다 — 임의 문자열 등록 차단.
+    const [licenseExists] =
+      await admin.storage().bucket().file(storagePath).exists();
+    if (!licenseExists) {
+      throw new HttpsError("not-found", "Storage에 해당 파일이 존재하지 않습니다.");
+    }
+
+    // [§7·§22] 경로만 기록하고, 남아 있던 영구 URL 은 지운다.
+    //   재업로드 시 클라이언트가 옛 파일을 삭제하므로 옛 URL 은 빈 토큰이 된다.
+    await db.collection("users").doc(callerUid).update({
+      businessLicenseImagePath: storagePath,
+      businessLicenseImageUrl: admin.firestore.FieldValue.delete(),
+      businessLicenseUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.info(`[registerBusinessLicense] uid=${callerUid} 등록 완료`);
+    return {success: true};
+  }
+);
+
 export const callableMarkBankbookVerified = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -21016,23 +21080,52 @@ async function checkBusinessLicense(
     }
   }
 
-  // 2. legacy: users/{ownerId}.businessLicenseImageUrl
-  // [OWNER-LEGACY] 단순 truthy check 제거 — URL parse + exists() 강제
+  // 2. owner 경로: users/{ownerId}
+  //
+  // [R8-P5.1 BLOCKER] 여기에 prefix 검증이 없었다.
+  //
+  //   canonical 분기(위)는 businesses/{bizId}/license/ 를 강제하는데
+  //   이 분기는 URL 에서 뽑은 **아무 경로나** exists() 만 보고 VALID 를 줬다.
+  //   그리고 users/{uid}.businessLicenseImageUrl 은 본인이 직접 쓸 수 있었다.
+  //
+  //   DEV 실측으로 확인한 우회: 자기 경로에 아무 이미지나 올리고
+  //   그 download URL 을 그 필드에 써 넣으면 LICENSE_NOT_READY 가
+  //   APPROVED 로 바뀌었다. 업로드 화면을 거치지도 않는다.
+  //
+  //   이제 두 가지를 요구한다:
+  //     · 서버가 기록한 경로(businessLicenseImagePath)를 먼저 본다 —
+  //       callableRegisterBusinessLicense 만 쓰는 값이다.
+  //     · 레거시 URL 은 users/{ownerId}/businessLicense_ 로 시작할 때만 본다.
+  //       (그 화면이 쓰던 실제 경로 규칙이다. 임의 경로는 더 이상 통과하지 않는다.)
   const ownerId = bizData?.ownerId as string | undefined;
   if (ownerId) {
     try {
       const ownerSnap = await db.collection("users").doc(ownerId).get();
-      const legacyUrl = ownerSnap.data()?.businessLicenseImageUrl as string | undefined;
+      const ownerData = ownerSnap.data();
+      const candidates: string[] = [];
+      // 서버가 기록한 경로 — 클라이언트가 쓸 수 없는 값이다.
+      const serverPath = ownerData?.businessLicenseImagePath as string | undefined;
+      if (serverPath) candidates.push(serverPath);
+      // 레거시 URL — 경로 규칙을 만족할 때만 후보로 올린다.
+      const legacyUrl = ownerData?.businessLicenseImageUrl as string | undefined;
       if (legacyUrl) {
         const legacyMatch = legacyUrl.match(/\/o\/([^?]+)/);
         if (legacyMatch && legacyMatch[1]) {
           try {
-            const legacyPath = decodeURIComponent(legacyMatch[1]);
-            const [legacyExists] = await bucket.file(legacyPath).exists();
-            if (legacyExists) return "VALID";
+            candidates.push(decodeURIComponent(legacyMatch[1]));
           } catch {
-            apiFailed = true;
+            // 디코딩 실패 = 후보 아님. apiFailed 가 아니다.
           }
+        }
+      }
+      const prefix = `users/${ownerId}/businessLicense_`;
+      for (const p of candidates) {
+        if (p.includes("..") || !p.startsWith(prefix)) continue;
+        try {
+          const [exists] = await bucket.file(p).exists();
+          if (exists) return "VALID";
+        } catch {
+          apiFailed = true;
         }
       }
     } catch {

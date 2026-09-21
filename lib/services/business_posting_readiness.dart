@@ -57,12 +57,23 @@ class BusinessPostingReadiness {
           .collection('users')
           .doc(ownerId)
           .get();
-      return (ownerSnap.data()?['businessLicenseImageUrl'] as String?)
-              ?.isNotEmpty ==
-          true;
+      return _ownerHasLicense(ownerSnap.data());
     } catch (_) {
       return false;
     }
+  }
+
+  /// [R8-P5.1] owner 문서의 사업자등록증 보유 여부.
+  ///
+  ///   서버(checkBusinessLicense)와 같은 순서로 본다 —
+  ///   businessLicenseImagePath(CF가 기록한 canonical) 우선, 레거시 URL 폴백.
+  ///   path만 보면 레거시 사용자가 NOT READY로 보이고,
+  ///   URL만 보면 신규 등록자가 NOT READY로 보인다.
+  static bool _ownerHasLicense(Map<String, dynamic>? ownerData) {
+    if (ownerData == null) return false;
+    final path = ownerData['businessLicenseImagePath'] as String?;
+    if (path?.isNotEmpty == true) return true;
+    return (ownerData['businessLicenseImageUrl'] as String?)?.isNotEmpty == true;
   }
 
   /// 단일 사업장의 전체 readiness 비동기 조회.
@@ -87,10 +98,7 @@ class BusinessPostingReadiness {
               .collection('users')
               .doc(ownerId)
               .get();
-          hasOwnerLegacyLicense =
-              (ownerSnap.data()?['businessLicenseImageUrl'] as String?)
-                      ?.isNotEmpty ==
-                  true;
+          hasOwnerLegacyLicense = _ownerHasLicense(ownerSnap.data());
         } catch (_) {}
       }
     }

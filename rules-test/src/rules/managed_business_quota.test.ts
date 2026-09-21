@@ -57,6 +57,7 @@ beforeEach(async () => {
   await env.clearFirestore();
   await Promise.all([
     seedUser(env, OTHER, { role: 'BUSINESS_ADMIN', name: '타인', isBlacklisted: false, managedBusinessIds: [] }),
+    seedAdminWith([]),
     seedUser(env, FOREIGN, {
       role: 'USER', name: '외국인', isBlacklisted: false,
       legalName: 'NGUYEN VAN A',
@@ -250,6 +251,60 @@ describe('FK koreanName 클라이언트 write 차단', () => {
     const db = getAuth(env, FOREIGN);
     await assertSucceeds(
       updateDoc(doc(db, 'users', FOREIGN), { phone: '01033334444' }),
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BL-1 ~ BL-3  사업자등록증 metadata write 경계
+//
+//   users/{uid}.businessLicenseImageUrl 은 표시용이 아니다.
+//   checkBusinessLicense → 사업장 자동승인 / assertBusinessPostingReady 를 거쳐
+//   공고 등록 선행조건을 연다. 그런데 본인이 직접 쓸 수 있었고,
+//   레거시 분기는 경로 검증도 없었다 — 아무 이미지 URL 한 줄로 관문이 열렸다
+//   (DEV 실측으로 확인). 이제 callableRegisterBusinessLicense 전용이다.
+// ═══════════════════════════════════════════════════════════════
+describe('BL 사업자등록증 metadata 는 CF 전용', () => {
+  test('BL-1 본인도 businessLicenseImageUrl 을 직접 쓸 수 없다', async () => {
+    const db = getAuth(env, ADMIN);
+    await assertFails(
+      updateDoc(doc(db, 'users', ADMIN), {
+        businessLicenseImageUrl: 'https://example.com/anything.jpg',
+      }),
+    );
+  });
+
+  test('BL-1b businessLicenseImagePath 도 직접 쓸 수 없다', async () => {
+    const db = getAuth(env, ADMIN);
+    await assertFails(
+      updateDoc(doc(db, 'users', ADMIN), {
+        businessLicenseImagePath: `users/${ADMIN}/businessLicense_fake.jpg`,
+      }),
+    );
+  });
+
+  test('BL-1c businessLicenseUploadedAt 도 직접 쓸 수 없다', async () => {
+    const db = getAuth(env, ADMIN);
+    await assertFails(
+      updateDoc(doc(db, 'users', ADMIN), {
+        businessLicenseUploadedAt: new Date(),
+      }),
+    );
+  });
+
+  test('BL-2 관계없는 프로필 필드는 여전히 본인이 쓸 수 있다', async () => {
+    const db = getAuth(env, ADMIN);
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', ADMIN), { phone: '01055556666' }),
+    );
+  });
+
+  test('BL-3 타인의 사업자등록증 필드는 더더욱 쓸 수 없다', async () => {
+    const db = getAuth(env, ADMIN);
+    await assertFails(
+      updateDoc(doc(db, 'users', OTHER), {
+        businessLicenseImagePath: `users/${OTHER}/businessLicense_x.jpg`,
+      }),
     );
   });
 });

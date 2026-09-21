@@ -109,6 +109,9 @@ extension UserFirestore on FirestoreService {
     'authPhone', 'phoneVerificationLevel', 'contactPhone',
     'bankVerificationStatus', 'bankbookUploadedAt',
     'bankVerifiedAt', 'bankVerifiedBy',
+    // [R8-P5.1] 사업자등록증 — callableRegisterBusinessLicense CF 전용.
+    //   사업장 자동승인·공고 등록 선행조건을 여는 값이라 클라이언트가 쓰면 안 된다.
+    'businessLicenseImageUrl', 'businessLicenseImagePath', 'businessLicenseUploadedAt',
     'bankReviewedBy', 'bankReviewedAt',
   };
 

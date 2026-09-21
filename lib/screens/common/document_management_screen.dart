@@ -354,7 +354,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 📋 사업자등록증 섹션
   Widget _buildBusinessLicenseSection(UserModel user) {
-    final hasLicense = user.businessLicenseImageUrl != null;
+    // [R8-P5.1] path 우선 — 신규 등록은 경로만 기록한다(영구 URL 미생성).
+    //   레거시 사용자는 URL 만 갖고 있으므로 둘 다 본다.
+    final hasLicense = user.businessLicenseImagePath != null ||
+        user.businessLicenseImageUrl != null;
     final cleanNumber = _businessNumberController.text.replaceAll('-', '');
     final hasBusinessInfo = cleanNumber.length == 10 &&
         _businessNameController.text.trim().isNotEmpty;
@@ -532,7 +535,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
     setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
 
-    String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
+    // [R8-P5.1] orphan 추적을 URL 이 아니라 Storage 경로로 한다 —
+    //   업로드가 더 이상 download URL 을 만들지 않으므로 지울 대상도 경로다.
+    String? newLicensePath;
     try {
       // 입력한 정보로 OCR 검증
       final imagePath = await DocumentUploadHelper.pickAndVerifyBusinessLicense(
@@ -547,36 +552,49 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화
 
       final oldUrl = user.businessLicenseImageUrl;
+      final oldPath = user.businessLicenseImagePath;
 
       // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
+      //
+      // [R8-P5.1] uploadImage → uploadImageNoUrl.
+      //   이 값은 표시용이 아니다 — checkBusinessLicense를 거쳐 사업장 자동승인과
+      //   공고 등록 선행조건을 연다. 그런데 클라이언트가 users 문서에 직접 쓰고 있었고,
+      //   업로드는 영구 토큰 URL까지 만들었다. 신분증·통장사본과 같은 규칙으로 맞춘다.
       final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      bool uploadOk = false;
       try {
-        newUrl = await _storageService.uploadImage(imagePath, storagePath);
+        uploadOk = await _storageService.uploadImageNoUrl(imagePath, storagePath);
       } finally {
         // TMP-01: pickAndVerifyBusinessLicense가 반환한 임시 압축 파일.
         try { await File(imagePath).delete(); } catch (_) {}
       }
 
-      if (newUrl == null) {
+      if (!uploadOk) {
         if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
         return;
       }
 
-      // 2. Firestore에 새 URL 저장
-      await _firestoreService.updateUserDocument(
-        user.uid,
-        {
-          'businessLicenseImageUrl': newUrl,
-        },
-      );
-      newUrl = null; // Firestore 저장 성공 → 정리 불필요
+      // 2. CF로 등록 — 경로 소유권·존재 확인 후 서버가 기록한다.
+      //    클라이언트 직접 write는 Rules denylist로 막혀 있다.
+      newLicensePath = storagePath; // CF 호출 전 Storage orphan 추적
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRegisterBusinessLicense')
+          .call({'storagePath': storagePath});
+      newLicensePath = null; // CF 성공 — Storage 정리 불필요
 
       // 3. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
-      if (oldUrl != null) {
+      //    path 우선, 레거시 사용자만 URL 폴백 — 신분증·통장사본과 같은 순서.
+      if (oldPath != null) {
+        try {
+          await _storageService.deleteImage(oldPath);
+        } catch (e) {
+          debugPrint('⚠️ 기존 사업자등록증 삭제 실패 (무시): $e');
+        }
+      } else if (oldUrl != null) {
         try {
           await _storageService.deleteImageByUrl(oldUrl);
         } catch (e) {
-          debugPrint('⚠️ 기존 사업자등록증 삭제 실패 (무시): $e');
+          debugPrint('⚠️ 기존 사업자등록증 URL 삭제 실패 (무시): $e');
         }
       }
 
@@ -587,11 +605,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       ToastHelper.showSuccess('사업자등록증이 등록되었습니다');
       _hasChanges = true;
     } catch (e) {
-      // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
-      if (newUrl != null) {
-        try {
-          await _storageService.deleteImageByUrl(newUrl);
-        } catch (_) {}
+      // [R8-P5.1] CF 실패 시 업로드된 파일 Storage orphan 방지 (경로 기반)
+      if (newLicensePath != null) {
+        try { await _storageService.deleteImage(newLicensePath); } catch (_) {}
       }
       if (mounted) ToastHelper.showError('사업자등록증 등록에 실패했습니다');
     } finally {

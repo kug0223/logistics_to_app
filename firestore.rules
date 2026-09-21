@@ -408,6 +408,14 @@ service cloud.firestore {
                          //   "비우고 다시 만들기"로 사업장 5개 제한이 사실상 없는 것과 같다.
                          //   추가는 위 [BIZ-CREATE-FIX] 브랜치(정확히 +1, 축소·교체 불가)만 허용.
                          'managedBusinessIds',
+                         // [R8-P5.1] businessLicenseImageUrl / businessLicenseImagePath —
+                         //   callableRegisterBusinessLicense CF 전용.
+                         //   이 값은 checkBusinessLicense를 거쳐 사업장 자동승인과
+                         //   공고 등록 선행조건(assertBusinessPostingReady)을 연다.
+                         //   본인이 직접 쓸 수 있으면 아무 이미지 URL 한 줄로 그 관문이 열린다
+                         //   — DEV에서 실제로 열렸다. 신분증·통장사본과 같이 CF 전용으로 닫는다.
+                         'businessLicenseImageUrl', 'businessLicenseImagePath',
+                         'businessLicenseUploadedAt',
                          // [M-1] badges — CF onReviewCreated/뱃지 자격 검증 전용
                          //   클라이언트 직접 삽입 시 자격 조건 우회 가능
                          'badges',

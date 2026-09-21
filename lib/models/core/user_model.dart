@@ -171,7 +171,10 @@ class UserModel {
   final String? blacklistReason;        // 블랙리스트 사유
   final String? businessNumber;         // 사업자등록번호 (관리자용)
   final String? businessName;           // 상호명 (관리자용)
-  final String? businessLicenseImageUrl; // 사업자등록증 이미지
+  final String? businessLicenseImageUrl; // 사업자등록증 이미지 (레거시 영구 URL)
+  /// [R8-P5.1] 사업자등록증 Storage 경로 — callableRegisterBusinessLicense 가 기록한다.
+  ///   영구 download URL 을 만들지 않는 canonical 값이다.
+  final String? businessLicenseImagePath;
   final String? ceoName;                 // 대표자명
   // ── 신뢰도 시스템 — [5A.2A] storedTrustScore 제거 ──
   final double rehireRate;               // 재고용 희망률 (0.0~1.0)
@@ -280,6 +283,7 @@ class UserModel {
     this.businessNumber,
     this.businessName,
     this.businessLicenseImageUrl,
+    this.businessLicenseImagePath,
     this.ceoName,
     // ── 신뢰도 시스템 ──
     this.rehireRate = 0.0,
@@ -624,6 +628,7 @@ class UserModel {
       businessNumber: map['businessNumber'],
       businessName: map['businessName'],
       businessLicenseImageUrl: map['businessLicenseImageUrl'],
+      businessLicenseImagePath: map['businessLicenseImagePath'] as String?,
       ceoName: map['ceoName'],
       // ── 신뢰도 시스템 — [5A.2A] storedTrustScore 제거 (Firestore의 trustScore 필드는 읽지 않음)
       rehireRate: (map['rehireRate'] as num?)?.toDouble() ?? 0.0,
@@ -725,6 +730,7 @@ class UserModel {
       'businessNumber': businessNumber,
       'businessName': businessName,
       'businessLicenseImageUrl': businessLicenseImageUrl,
+      'businessLicenseImagePath': businessLicenseImagePath,
       'ceoName': ceoName,
       // ── 신뢰도 시스템 — [5A.2A] trustScore write 제거
       'rehireRate': rehireRate,
@@ -844,6 +850,7 @@ class UserModel {
     String? businessNumber,
     String? businessName,
     String? businessLicenseImageUrl,
+    String? businessLicenseImagePath,
     String? ceoName,
     // ── 신뢰도 시스템 ──
     double? rehireRate,
@@ -929,6 +936,7 @@ class UserModel {
       businessNumber: businessNumber ?? this.businessNumber,
       businessName: businessName ?? this.businessName,
       businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl,
+      businessLicenseImagePath: businessLicenseImagePath ?? this.businessLicenseImagePath,
       ceoName: ceoName ?? this.ceoName,
       // ── 신뢰도 시스템 ──
       rehireRate: rehireRate ?? this.rehireRate,
