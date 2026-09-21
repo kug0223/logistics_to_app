@@ -41,7 +41,13 @@ service firebase.storage {
     //   → allow get: if false (전면 차단). 모든 접근은 CF Admin SDK 경유.
     //
     //   ※ 일반 businesses/{bizId} 하위 이미지와 보안등급을 달리 적용하는 의도.
-    //   ※ 이 규칙이 더 구체적이므로 아래 일반 규칙보다 우선 적용됨.
+    //
+    // [R8-P5.2 2026-09-21] 위 "더 구체적인 규칙이 우선 적용됨"은 사실이 아니었다.
+    //   Storage rules 는 매칭되는 모든 match 블록을 평가해 하나라도 허용하면 허용한다(OR).
+    //   license/ 경로는 아래 일반 블록의 {allPaths=**} 에도 매칭되므로,
+    //   여기서 read:false 를 선언해도 아래 allow get: isLoggedIn() 이 그대로 열어 줬다.
+    //   DEV 런타임에서 무관한 근로자 계정이 남의 등록증을 읽는 것을 확인했다.
+    //   → 차단은 "더 구체적인 블록"이 아니라 일반 블록의 조건에서 직접 제외해야 성립한다.
     match /businesses/{businessId}/license/{allPaths=**} {
       allow read: if false;       // SDK 직접 접근 전면 차단 (토큰도 없으므로 URL 접근도 403)
       allow create, update: if false;  // CF Admin SDK 전용
@@ -49,7 +55,11 @@ service firebase.storage {
     }
 
     // 일반 사업장 이미지 (대표·추가·교통편·업무유형): 로그인 사용자 읽기 허용
-    match /businesses/{businessId}/{allPaths=**} {
+    //   [R8-P5.2] {allPaths=**} → {fileName} 단일 세그먼트.
+    //   license/ 는 두 세그먼트라 이 블록에 아예 매칭되지 않는다 — OR 합산 경로를 구조로 끊는다.
+    //   (조건식으로 제외하려 했으나 allPaths.matches() 평가 실패로 전체 deny 가 되어 되돌렸다)
+    //   businesses/{id}/ 아래 더 깊은 경로는 매칭되는 규칙이 없어 기본 거부 — CF Admin SDK 전용.
+    match /businesses/{businessId}/{fileName} {
       allow get: if isLoggedIn();
       allow list: if false;
       allow create, update: if false;
