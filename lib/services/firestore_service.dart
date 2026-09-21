@@ -544,13 +544,16 @@ class FirestoreService {
     };
     var statsFailed = false;
     try {
-      // slotId 쿼리는 보안 규칙 제한 — toId 전체를 가져와 클라이언트에서 필터
-      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
-      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED 발생.
-      //   statuses 파라미터 제거 후 클라이언트 필터링으로 전환.
+      // [R8-P7] 예전 주석은 "slotId 쿼리는 보안 규칙 제한"이라 TO 전체를 받는다고
+      //   적혀 있었다. 그 제약은 이 경로가 Firestore 직접 쿼리이던 시절의 것이고,
+      //   지금은 callableGetApplicationsByBiz(Admin SDK) 경유라 해당하지 않는다.
+      //   CF 는 slotId 를 이미 받는다. 한 슬롯의 좌석을 세려고 그 TO 의 모든 날짜
+      //   지원서를 받아오고 있었다 — DEV 실측에서 18건 중 1건만 쓰고 있었다.
+      //   statuses 는 CF 가 단일 equality 만 받아 계속 클라이언트에서 거른다.
       final allApps = await getApplicationsByTOId(
         to.id,
         businessId: to.businessId,
+        slotId: slotId,
       );
       // [SYSTEM-INTEGRATION-R2.4 §4/§19] 좌석을 반납한 확정은 정원을 소모하지 않는다.
       //

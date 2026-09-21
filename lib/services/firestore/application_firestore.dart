@@ -91,10 +91,15 @@ extension ApplicationFirestore on FirestoreService {
   /// [statuses] 지정 시 해당 상태만 조회 (미지정 시 전체)
   /// [uid] USER 컨텍스트에서 중복 체크 시 필수 — 보안 규칙 `uid == auth.uid` 필터 충족
   ///       미전달 시 관리자 컨텍스트(businessId 필수)로 간주
+  /// [slotId] 지정 시 서버에서 해당 슬롯만 거른다.
+  ///   예전에는 "slotId 쿼리는 보안 규칙 제한"이라 TO 전체를 받아 클라이언트에서
+  ///   걸렀다. 지금은 CF(Admin SDK) 경유라 그 제약이 없고, CF 는 이미 slotId 를
+  ///   받는다. 한 슬롯을 세려고 TO 전체를 받을 이유가 없다.
   Future<List<ApplicationModel>> getApplicationsByTOId(
     String toId, {
     String? businessId,
     String? uid,
+    String? slotId,
     List<String>? statuses,
   }) async {
     assert(
@@ -113,6 +118,7 @@ extension ApplicationFirestore on FirestoreService {
           'limit': 2000,
         });
         final statusSet = statuses != null ? Set<String>.from(statuses) : null;
+        // slotId 는 CF 가 uid 경로에서 받지 않는다 — 여기서만 거른다.
         return (result.data['applications'] as List? ?? [])
             .whereType<Map>()
             .map((m) {
@@ -121,11 +127,15 @@ extension ApplicationFirestore on FirestoreService {
               return ApplicationModel.tryFromMap(raw, id);
             })
             .whereType<ApplicationModel>()
+            .where((a) => slotId == null || a.slotId == slotId)
             .where((a) => statusSet == null || statusSet.contains(a.status))
             .toList();
       } catch (e) {
+        // [R8-P7] 예전에는 여기서 빈 목록을 돌려줬다. 이 경로는 USER 의 중복지원
+        //   확인에 쓰인다 — 조회가 실패했는데 "지원 내역 없음"이라고 말하면
+        //   모르는 것을 없는 것으로 바꾸는 셈이다. 관리자 경로는 이미 rethrow 한다.
         debugPrint('❌ 지원자 목록 조회 실패(user): $e');
-        return [];
+        rethrow;
       }
     }
     // 관리자 컨텍스트 — [CF 이전 2026-07-13] callableGetApplicationsByBiz
@@ -136,6 +146,7 @@ extension ApplicationFirestore on FirestoreService {
       final result = await callable.call<Map<String, dynamic>>({
         'businessId': businessId,
         'toId': toId,
+        if (slotId != null && slotId.isNotEmpty) 'slotId': slotId,
         'limit': 2000,
       });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
