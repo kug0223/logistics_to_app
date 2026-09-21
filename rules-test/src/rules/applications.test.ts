@@ -8,7 +8,7 @@
 //   APP-DELETE-*: 삭제 권한
 
 import { RulesTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, limit, getDocs, serverTimestamp } from 'firebase/firestore';
 import {
   createTestEnv, getAnonymous, getAuth,
   seedCommonFixtures, seedUser, seedDoc,
@@ -161,9 +161,12 @@ describe('APP-READ-LIST: applications 목록 쿼리', () => {
 describe('APP-CREATE: 지원서 생성', () => {
   const newAppId = 'app-new-001';
 
-  test('APP-CREATE-01 ✅ 본인 uid + 올바른 businessId + 블랙리스트 아님 → 생성 가능', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — applications create = if false (CF 전용).
+  //   지원 생성은 callableApplyToTO(Admin SDK)만 한다. 클라이언트 직접 생성을 열어 두면
+  //   wage/startTime/endTime 등 계약 조건을 임의 값으로 심을 수 있다.
+  test('APP-CREATE-01 ❌ 본인 uid여도 지원서를 직접 생성할 수 없다 (callableApplyToTO 전용)', async () => {
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(setDoc(doc(db, 'applications', newAppId), {
+    await assertFails(setDoc(doc(db, 'applications', newAppId), {
       uid: IDS.user,
       businessId: IDS.business,
       toId: TO_ID,
@@ -233,9 +236,11 @@ describe('APP-CREATE: 지원서 생성', () => {
     }));
   });
 
-  test('APP-CREATE-07 ✅ 해당 사업장 관리자는 지원서를 생성할 수 있다 (계약 연장 등)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 관리자 경로도 CF 전용.
+  //   계약 연장은 callableCreateContractRenewal(TOCTOU 방어 + serverTimestamp 강제).
+  test('APP-CREATE-07 ❌ 관리자도 지원서를 직접 생성할 수 없다 (callableCreateContractRenewal 전용)', async () => {
     const db = getAuth(env, IDS.admin);
-    await assertSucceeds(setDoc(doc(db, 'applications', newAppId), {
+    await assertFails(setDoc(doc(db, 'applications', newAppId), {
       uid: IDS.user,
       businessId: IDS.business,
       toId: TO_ID,
@@ -259,23 +264,38 @@ describe('APP-CREATE: 지원서 생성', () => {
 // APP-UPDATE: 상태 전이
 // ─────────────────────────────────────────────────────
 describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
-  test('APP-UPDATE-01 ✅ 본인이 PENDING 지원서를 CANCELED로 취소할 수 있다', async () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — 테스트가 틀렸다.
+  //   [MEDIUM-4] canceledAt == request.time 강제가 추가됐다. 과거 시각으로 위조하면
+  //   callableApplyNoShowPenalty의 48시간 기준을 우회할 수 있기 때문이다.
+  //   클라이언트 시계(new Date())는 request.time과 같을 수 없으므로
+  //   serverTimestamp()를 쓴다 — 실제 writer(cancelApplication)도 그렇게 쓴다.
+  test('APP-UPDATE-01 ✅ 본인이 PENDING 지원서를 CANCELED로 취소할 수 있다 (canceledAt 서버시각)', async () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'CANCELED',
-      canceledAt: new Date(),
+      canceledAt: serverTimestamp(),
     }));
   });
 
-  // [APP-CCANCEL] 설계 변경: USER가 CONFIRMED 확정 취소 가능
-  //   - schedule_card(단기 전용, noShowPenalty=false), apply_work_dialog(단기/장기, 출퇴근 기록 없는 경우)
-  //   - canceledBy 없음, cancelMessage 없음 — 허용 필드: status/canceledAt/cancelReason/statusHistory 만
-  test('APP-UPDATE-02 ✅ 본인이 CONFIRMED 지원서를 올바른 필드로 CANCELED로 취소 가능', async () => {
+  test('APP-UPDATE-01b ❌ canceledAt을 클라이언트 시각으로 쓰면 차단된다 (소급 위조 방지)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
+      status: 'CANCELED',
+      canceledAt: new Date(2020, 0, 1),
+    }));
+  });
+
+  // [R8-P3B.3A.1] 기대값 반전 — 확정 취소는 CF 전용으로 이전됐다.
+  //   [APP-CCANCEL] 당시에는 클라이언트 직접 전이를 허용했으나,
+  //   callableCancelConfirmedApplication이 canceledBy를 callerUid로 강제하고
+  //   statusHistory.at을 서버 시간으로 쓰며 슬롯 confirmedCount 감소까지 원자적으로 처리한다.
+  //   schedule_card / apply_work_dialog 모두 CF 경유로 전환 완료.
+  test('APP-UPDATE-02 ❌ 본인도 CONFIRMED 확정 취소를 직접 할 수 없다 (callableCancelConfirmedApplication 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONFIRMED' });
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'CANCELED',
-      canceledAt: new Date(),
+      canceledAt: serverTimestamp(),
       cancelReason: 'USER_CANCELED',
     }));
   });
@@ -291,12 +311,13 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-02c ✅ 본인이 CONTRACT_PENDING 지원서도 CANCELED로 취소 가능', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 위와 같은 CF 이전. [036] CONTRACT_PENDING은 관리자 개입 필요.
+  test('APP-UPDATE-02c ❌ CONTRACT_PENDING 취소도 직접 할 수 없다 (CF 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONTRACT_PENDING' });
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'CANCELED',
-      canceledAt: new Date(),
+      canceledAt: serverTimestamp(),
       cancelReason: 'USER_CANCELED',
     }));
   });
@@ -308,10 +329,13 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-04 ✅ 근로계약서 서명 완료 (CONTRACT_PENDING → CONFIRMED)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [RULE-FIX-M2] CONTRACT_PENDING → CONFIRMED는 CF 전용.
+  //   callableFinalizeWorkerSignature가 workerId 검증 + 서명 완료 확인 후 전이한다.
+  //   클라이언트 직접 전이를 열어 두면 서명 없이 확정에 들어갈 수 있다.
+  test('APP-UPDATE-04 ❌ 서명 완료 전이는 직접 할 수 없다 (callableFinalizeWorkerSignature 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONTRACT_PENDING' });
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'CONFIRMED',
     }));
   });
@@ -324,10 +348,12 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-06 ✅ 취소 후 재지원 (CANCELED → PENDING)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 재지원(CANCELED → PENDING)도 callableApplyToTO 전용.
+  //   직접 전이를 허용하면 wage/startTime/endTime 재검증을 건너뛴 채 되살릴 수 있다.
+  test('APP-UPDATE-06 ❌ 취소 후 재지원을 직접 전이로 할 수 없다 (callableApplyToTO 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CANCELED' });
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'PENDING',
       appliedAt: new Date(),
     }));
@@ -342,10 +368,12 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-08 ✅ CONFIRMED 상태에서 퇴사 요청 (resignStatus → PENDING)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 퇴사 요청은 callableRequestResignation 전용.
+  //   resign* 필드 전체가 관리자·본인 양쪽 경로에서 CF-ONLY로 잠겼다(감사 필드 위조 차단).
+  test('APP-UPDATE-08 ❌ 퇴사 요청을 직접 쓸 수 없다 (callableRequestResignation 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONFIRMED' });
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       resignStatus: 'PENDING',
       resignRequestedAt: new Date(),
       resignRequestDate: new Date(),
@@ -360,22 +388,32 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-10 ✅ 본인이 퇴사 요청 취소 (resignStatus PENDING → null)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 퇴사 요청 취소는 callableCancelResignRequest 전용.
+  test('APP-UPDATE-10 ❌ 퇴사 요청 취소를 직접 쓸 수 없다 (callableCancelResignRequest 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONFIRMED', resignStatus: 'PENDING' });
     const db = getAuth(env, IDS.user);
-    const { FieldValue } = await import('firebase/firestore');
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       resignStatus: null,
       resignRequestedAt: null,
       resignRequestDate: null,
     }));
   });
 
-  test('APP-UPDATE-11 ✅ 관리자가 uid·businessId·toId 불변 유지하며 지원서 수정', async () => {
+  // [R8-P3B.3A.1] 전이만 반전 — [S6-FIX] PENDING → CONFIRMED는 callableConfirmApplication 전용.
+  //   직접 전이 시 totalConfirmed 증가 없이 확정 상태에 들어가 정원이 어긋난다.
+  //   "uid·businessId·toId 불변" 자체는 여전히 유효하므로, 허용되는 필드로 별도 확인한다.
+  test('APP-UPDATE-11 ❌ 관리자도 PENDING → CONFIRMED 직접 전이 불가 (callableConfirmApplication 전용)', async () => {
     const db = getAuth(env, IDS.admin);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'CONFIRMED',
       confirmedAt: new Date(),
+    }));
+  });
+
+  test('APP-UPDATE-11b ✅ 관리자는 허용 필드(isStarred)를 수정할 수 있다', async () => {
+    const db = getAuth(env, IDS.admin);
+    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+      isStarred: true,
     }));
   });
 
@@ -409,12 +447,15 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-16 ✅ 관리자가 resignStatus PENDING → APPROVED로 승인 가능', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 퇴사 승인은 callableApproveTermination 전용.
+  //   관리자 분기 denylist에 resign*/termination*/actualResignDate가 전부 들어 있다
+  //   (resignApprovedBy 같은 감사 필드를 클라이언트가 쓰면 수행자 위조가 된다).
+  test('APP-UPDATE-16 ❌ 관리자도 퇴사 승인을 직접 쓸 수 없다 (callableApproveTermination 전용)', async () => {
     await seedDoc(env, 'applications', APP_ID, {
       ...baseApp, status: 'CONFIRMED', resignStatus: 'PENDING',
     });
     const db = getAuth(env, IDS.admin);
-    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       resignStatus: 'APPROVED',
       actualResignDate: new Date(),
     }));

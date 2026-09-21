@@ -101,9 +101,12 @@ describe('TSH-CREATE/UPDATE/DELETE: trust_score_history 쓰기', () => {
     );
   });
 
-  test('TSH-WRITE-03 슈퍼어드민은 create 허용 (긴급 수정)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — trust_score_history create/update = if false.
+  //   신뢰도 변동 이력은 감사 기록이다. 슈퍼어드민이라도 클라이언트에서 쓰면
+  //   수행자·사유를 위조할 수 있어, 기록은 CF(callableAdjustTrustScore 등)만 남긴다.
+  test('TSH-WRITE-03 슈퍼어드민도 이력을 직접 생성할 수 없다 (CF 전용)', async () => {
     const db = getAuth(env, IDS.superAdmin, { role: 'SUPER_ADMIN' });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'trust_score_history', 'tsh-super-create'), {
         userId: IDS.user,
         businessId: IDS.business,
@@ -113,11 +116,20 @@ describe('TSH-CREATE/UPDATE/DELETE: trust_score_history 쓰기', () => {
     );
   });
 
-  test('TSH-WRITE-04 슈퍼어드민만 update/delete 허용', async () => {
+  test('TSH-WRITE-04 슈퍼어드민도 이력을 수정할 수 없다 (불변 감사 기록)', async () => {
     const db = getAuth(env, IDS.superAdmin, { role: 'SUPER_ADMIN' });
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'trust_score_history', 'tsh-001'), { delta: -5 }),
     );
+  });
+
+  // [R8-P3B.3A.1] 신규 — delete만 슈퍼어드민에게 남아 있다는 점을 고정
+  test('TSH-WRITE-04b 슈퍼어드민은 이력을 삭제할 수 있다', async () => {
+    await seedDoc(env, 'trust_score_history', 'tsh-del', {
+      userId: IDS.user, businessId: IDS.business, delta: 1, reason: 'X',
+    });
+    const db = getAuth(env, IDS.superAdmin, { role: 'SUPER_ADMIN' });
+    await assertSucceeds(deleteDoc(doc(db, 'trust_score_history', 'tsh-del')));
   });
 
   test('TSH-WRITE-05 관리자 update 차단 (감사 이력 불변 보호)', async () => {
@@ -150,9 +162,12 @@ describe('RR-GET: review_requests 단건 읽기', () => {
 });
 
 describe('RR-CREATE: review_requests 생성', () => {
-  test('RR-CREATE-01 관리자가 소속 사업장으로 생성 허용', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — review_requests create = isSuperAdmin() 전용.
+  //   월간 리뷰 요청은 스케줄러/CF가 만든다. 관리자가 임의로 만들 수 있으면
+  //   리뷰 요청 자체를 조작할 수 있다.
+  test('RR-CREATE-01 관리자는 리뷰 요청을 직접 생성할 수 없다 (CF/슈퍼어드민 전용)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'review_requests', 'rr-new-admin'), {
         workerId: IDS.user,
         businessId: IDS.business,
@@ -162,9 +177,9 @@ describe('RR-CREATE: review_requests 생성', () => {
     );
   });
 
-  test('RR-CREATE-02 서브어드민도 생성 허용', async () => {
+  test('RR-CREATE-02 서브어드민도 리뷰 요청을 생성할 수 없다', async () => {
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'review_requests', 'rr-new-sub'), {
         workerId: IDS.user,
         businessId: IDS.business,
@@ -188,11 +203,13 @@ describe('RR-CREATE: review_requests 생성', () => {
 });
 
 describe('RR-UPDATE: review_requests 필드 분리 수정', () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — [MEDIUM-FIX 29차] 값 화이트리스트가
+  //   소문자('pending'/'submitted')로 정의돼 있다. 대문자는 임의 값으로 취급돼 차단된다.
   test('RR-UPDATE-01 워커는 workerStatus/workerReviewId만 수정 허용', async () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
       updateDoc(doc(db, 'review_requests', 'rr-001'), {
-        workerStatus: 'SUBMITTED',
+        workerStatus: 'submitted',
         workerReviewId: 'mr-utb-001',
       }),
     );
@@ -207,12 +224,43 @@ describe('RR-UPDATE: review_requests 필드 분리 수정', () => {
     );
   });
 
-  test('RR-UPDATE-03 관리자는 adminStatus/adminReviewId만 수정 허용', async () => {
+  // [R8-P3B.3A.1] 정책이 두 군데 강해졌다.
+  //   1) 값 화이트리스트가 소문자다('pending'/'submitted').
+  //   2) [REVIEW-BINDING 2026-09-08] adminStatus를 submitted로 바꾸려면
+  //      adminReviewId가 가리키는 monthly_reviews 문서가 같은 트랜잭션/배치 안에
+  //      실제로 존재해야 하고(getAfter), 그 문서의 requestId·businessId가 맞아야 한다.
+  //      리뷰를 쓰지 않은 채 "작성 완료"로만 마킹하는 경로를 막는 규칙이다.
+  test('RR-UPDATE-03 관리자는 adminStatus/adminReviewId만 수정 허용 (리뷰 문서 결속 필요)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-admin-001', {
+      requestId: 'rr-001',
+      businessId: IDS.business,
+      targetUserId: IDS.user,
+      reviewType: 'ADMIN_TO_USER',
+    });
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       updateDoc(doc(db, 'review_requests', 'rr-001'), {
-        adminStatus: 'SUBMITTED',
+        adminStatus: 'submitted',
         adminReviewId: 'mr-admin-001',
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 리뷰 문서 없이 마킹만 하는 경로 차단 확인 ([REVIEW-BINDING])
+  // 별도 문서를 쓴다 — rr-001은 위 테스트에서 이미 submitted가 되어
+  // adminStatus가 affectedKeys에 잡히지 않고, 그러면 결속 조건이 평가되지 않는다.
+  test('RR-UPDATE-03b 리뷰 문서 없이 adminStatus만 submitted로 바꿀 수 없다', async () => {
+    await seedDoc(env, 'review_requests', 'rr-unbound', {
+      workerId: IDS.user,
+      businessId: IDS.business,
+      workerStatus: 'pending',
+      adminStatus: 'pending',
+    });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'review_requests', 'rr-unbound'), {
+        adminStatus: 'submitted',
+        adminReviewId: 'mr-does-not-exist',
       }),
     );
   });

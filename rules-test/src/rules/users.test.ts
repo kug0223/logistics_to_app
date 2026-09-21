@@ -45,14 +45,17 @@ describe('U-READ-GET: users 문서 읽기', () => {
     await assertSucceeds(getDoc(doc(db, 'users', IDS.user)));
   });
 
-  test('U-READ-03 ✅ 사업장관리자는 USER 역할 문서를 읽을 수 있다', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — 관리자의 USER 문서 직접 읽기는 CF 전용.
+  //   users get 규칙은 isOwner || isSuperAdmin 만 남았다. 관리자 경로는 전부 CF다:
+  //   callableGetUsersBatch / callableGetWorkerBasicProfile (businessId 서버 검증).
+  test('U-READ-03 ❌ 사업장관리자는 USER 문서를 직접 읽을 수 없다 (callableGetUsersBatch 전용)', async () => {
     const db = getAuth(env, IDS.admin);
-    await assertSucceeds(getDoc(doc(db, 'users', IDS.user)));
+    await assertFails(getDoc(doc(db, 'users', IDS.user)));
   });
 
-  test('U-READ-04 ✅ 서브어드민도 USER 역할 문서를 읽을 수 있다', async () => {
+  test('U-READ-04 ❌ 서브어드민도 USER 문서를 직접 읽을 수 없다 (CF 전용)', async () => {
     const db = getAuth(env, IDS.subAdmin);
-    await assertSucceeds(getDoc(doc(db, 'users', IDS.user)));
+    await assertFails(getDoc(doc(db, 'users', IDS.user)));
   });
 
   test('U-READ-05 ❌ 비로그인 상태에서는 읽기 불가', async () => {
@@ -80,9 +83,12 @@ describe('U-READ-GET: users 문서 읽기', () => {
 // U-READ: LIST
 // ─────────────────────────────────────────────────────
 describe('U-READ-LIST: users 목록 쿼리', () => {
-  test('U-LIST-01 ✅ limit=1 쿼리는 비로그인도 가능 (중복 체크용)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [M-3] limit<=1 비인증 예외 제거됨.
+  //   중복 체크는 callableCheckUsername / callableCheckForeignIdExists / callableFindUsername CF로 이전.
+  //   예외를 두면 비인증 클라이언트가 limit=1 쿼리를 반복해 users PII를 훑을 수 있었다.
+  test('U-LIST-01 ❌ limit=1 쿼리도 비로그인은 불가 (중복 체크는 CF 전용)', async () => {
     const db = getAnonymous(env);
-    await assertSucceeds(getDocs(query(collection(db, 'users'), limit(1))));
+    await assertFails(getDocs(query(collection(db, 'users'), limit(1))));
   });
 
   test('U-LIST-02 ✅ 슈퍼어드민은 limit 제한 없이 목록 조회 가능', async () => {
@@ -202,12 +208,18 @@ describe('U-CREATE: users 문서 생성 (회원가입)', () => {
     }));
   });
 
-  // SEC-105: isDummy=true는 관리자 경로로만 생성 가능 — 일반 가입 경로 차단
-  test('U-CREATE-14 ❌ isDummy=true 포함 생성 차단 (SEC-105)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — isDummy 메커니즘 자체가 제거됐다(commit 1a4a545).
+  //   SEC-105가 막으려던 것은 "isDummy:true를 심어 두면 관리자가 '더미 삭제' 규칙으로
+  //   내 계정을 영구 삭제하게 만들 수 있다"였다. 그 삭제 규칙이 사라졌고
+  //   (users delete = isSuperAdmin() && auth.uid != userId),
+  //   isDummy는 이제 firestore.rules 어디에서도 읽히지 않는다(전수 grep 0건,
+  //   functions/src/index.ts 도 0건). 값이 들어 있어도 아무 권한도 만들지 않는다.
+  //   → 남겨 두면 "막혀 있다"는 착각을 주므로, 현재 사실(그냥 일반 필드)을 기록한다.
+  test('U-CREATE-14 ✅ isDummy는 rules가 읽지 않는 일반 필드다 (삭제 규칙 제거로 위험 소멸)', async () => {
     const db = getAuth(env, newUid);
-    await assertFails(setDoc(doc(db, 'users', newUid), {
+    await assertSucceeds(setDoc(doc(db, 'users', newUid), {
       ...safeData,
-      isDummy: true,  // CF Admin SDK 전용 — 일반 가입 경로에서 차단
+      isDummy: true,  // rules/CF 모두 미참조 — 권한 효과 없음
     }));
   });
 
@@ -312,14 +324,32 @@ describe('U-CREATE: users 문서 생성 (회원가입)', () => {
 // U-UPDATE: 본인 문서 수정
 // ─────────────────────────────────────────────────────
 describe('U-UPDATE: users 문서 수정', () => {
-  test('U-UPDATE-01 ✅ 본인은 일반 필드(name, phone 등)를 수정할 수 있다', async () => {
+  // [R8-P3B.3A.1] name은 더 이상 "일반 필드"가 아니다.
+  //   [PII-B4-R1.4.3] name/legalName/koreanName은 계약서 명의와 급여 예금주의 출처라
+  //   본인 update denylist에 들어갔다. 정당한 writer는 전부 CF다
+  //   (finalizeRegistration / finalizePassReauth / callableFinalizeForeignIdentity).
+  //   프로필 수정 UI도 주소·지역·사진만 다룬다.
+  test('U-UPDATE-01 ✅ 본인은 일반 필드(phone 등)를 수정할 수 있다', async () => {
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(updateDoc(doc(db, 'users', IDS.user), { name: '수정됨', phone: '01099999999' }));
+    await assertSucceeds(updateDoc(doc(db, 'users', IDS.user), { phone: '01099999999' }));
   });
 
-  test('U-UPDATE-02 ✅ 슈퍼어드민은 모든 필드를 수정할 수 있다', async () => {
+  test('U-UPDATE-01b ❌ 본인이 name을 수정할 수 없다 (법적 이름 축 — CF 전용)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'users', IDS.user), { name: '수정됨' }));
+  });
+
+  // [R8-P3B.3A.1] 기대값 반전 — 슈퍼어드민도 role 직접 변경 불가.
+  //   [M-1] role은 callableUpdateUserRole CF 전용이다. 슈퍼어드민이 직접 쓰면
+  //   감사 로그 없이 권한이 바뀐다.
+  test('U-UPDATE-02 ❌ 슈퍼어드민도 role은 직접 수정할 수 없다 (callableUpdateUserRole 전용)', async () => {
     const db = getAuth(env, IDS.superAdmin);
-    await assertSucceeds(updateDoc(doc(db, 'users', IDS.user), { role: 'BUSINESS_ADMIN' }));
+    await assertFails(updateDoc(doc(db, 'users', IDS.user), { role: 'BUSINESS_ADMIN' }));
+  });
+
+  test('U-UPDATE-02b ✅ 슈퍼어드민은 denylist 밖 운영 필드를 수정할 수 있다', async () => {
+    const db = getAuth(env, IDS.superAdmin);
+    await assertSucceeds(updateDoc(doc(db, 'users', IDS.user), { phone: '01088887777' }));
   });
 
   test('U-UPDATE-03 ❌ 비로그인은 수정 불가', async () => {
@@ -497,10 +527,13 @@ describe('U-DELETE: users 문서 삭제', () => {
     await assertSucceeds(deleteDoc(doc(db, 'users', IDS.user)));
   });
 
-  test('U-DELETE-02 ✅ 관리자는 isDummy=true 문서를 삭제할 수 있다', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — "더미 삭제" 규칙 제거(commit 1a4a545).
+  //   users delete = isSuperAdmin() && auth.uid != userId 하나뿐이다.
+  //   BUSINESS_ADMIN이 남의 계정 문서를 지울 수 있는 경로는 더 이상 없다.
+  test('U-DELETE-02 ❌ 관리자는 isDummy=true 문서도 삭제할 수 없다 (더미 삭제 규칙 제거)', async () => {
     await seedUser(env, 'uid-dummy', { role: 'USER', isDummy: true, username: 'dummy', name: '더미', email: 'd@test.com', isBlacklisted: false });
     const db = getAuth(env, IDS.admin);
-    await assertSucceeds(deleteDoc(doc(db, 'users', 'uid-dummy')));
+    await assertFails(deleteDoc(doc(db, 'users', 'uid-dummy')));
   });
 
   test('U-DELETE-03 ❌ 일반 유저는 삭제 불가', async () => {

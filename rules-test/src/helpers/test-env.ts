@@ -71,6 +71,24 @@ export async function seedDoc(
   });
 }
 
+// [R8-P3B.3A.1] SubAdmin 세부 권한 문서(businesses/{bizId}/members/{uid}).
+//
+//   Rules의 subAdminCanManageTo/Workers/Wage/Contract 는 전부 이 문서를 읽는다.
+//   이 문서가 없으면 SubAdmin은 "소속은 있으나 권한은 없는" 상태다.
+export async function seedSubAdminMember(
+  env: RulesTestEnvironment,
+  businessId: string,
+  uid: string,
+  permissions: Record<string, boolean>,
+) {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore()
+      .collection('businesses').doc(businessId)
+      .collection('members').doc(uid)
+      .set({ uid, permissions, addedAt: new Date() });
+  });
+}
+
 // ── 공통 uid/id 상수 ─────────────────────────────────────────────
 export const IDS = {
   superAdmin: 'uid-super',
@@ -105,8 +123,22 @@ export async function seedCommonFixtures(env: RulesTestEnvironment) {
     // 다른 일반 유저
     seedUser(env, user2, { role: 'USER', username: 'user2', name: '유저2', email: 'user2@test.com', isBlacklisted: false }),
     // 사업장 biz-001 (admin 소유)
-    seedBusiness(env, business, { ownerId: admin, adminIds: [admin, subAdmin], name: '테스트사업장', status: 'approved' }),
+    // [R8-P3B.3A.1] adminIds에서 subAdmin 제거.
+    //   이전에는 subAdmin이 adminIds에도 들어 있어 isAdminOf(biz-001) == true 였다.
+    //   그러면 SubAdmin 테스트가 사실은 BUSINESS_ADMIN을 검증하게 되어
+    //   capability(canManageTo/Workers/…) 검증이 전부 가려진다.
+    seedBusiness(env, business, { ownerId: admin, adminIds: [admin], name: '테스트사업장', status: 'approved' }),
     // 사업장 biz-002 (admin2 소유)
     seedBusiness(env, business2, { ownerId: admin2, adminIds: [admin2], name: '다른사업장', status: 'approved' }),
   ]);
+
+  // [R8-P3B.3A.1] 공통 subAdmin은 "권한을 모두 가진 정상 서브관리자"로 둔다.
+  //   개별 capability 경계(권한별 허용/차단)는 trust_boundary.test.ts가 전담한다.
+  //   여기서는 "SubAdmin이라서 되는 일"과 "BUSINESS_ADMIN이라서 되는 일"을 섞지 않는 것이 목적이다.
+  await seedSubAdminMember(env, business, subAdmin, {
+    canManageTo: true,
+    canManageWorkers: true,
+    canManageWage: true,
+    canManageContract: true,
+  });
 }

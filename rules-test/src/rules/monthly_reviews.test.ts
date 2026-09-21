@@ -1,9 +1,9 @@
 // rules-test/src/rules/monthly_reviews.test.ts
 // monthly_reviews 컬렉션 보안 규칙 검증 (30개 시나리오)
 import { RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, serverTimestamp } from 'firebase/firestore';
 import {
-  createTestEnv, getAuth, seedDoc, seedCommonFixtures,
+  createTestEnv, getAuth, seedDoc, seedUser, seedCommonFixtures,
   assertFails, assertSucceeds, IDS,
 } from '../helpers/test-env';
 
@@ -110,7 +110,18 @@ describe('MR-GET: 단건 읽기', () => {
 // ─── MR-CREATE ───────────────────────────────────────────────────
 
 describe('MR-CREATE: 리뷰 생성', () => {
-  test('MR-CREATE-01 관리자가 ADMIN_TO_USER 리뷰 생성 허용 (isPublished=false 필수)', async () => {
+  // [R8-P3B.3A.1] 정책이 강해졌다 — [REVIEW-BINDING 2026-09-08].
+  //   관리자 리뷰는 반드시 review_requests 슬롯에 결속돼야 한다:
+  //   requestId + targetUserId 필수 + isAdminReviewRequestBound()로
+  //   workerId/businessId/adminStatus=='pending'/deadline을 교차검증한다.
+  //   엉뚱한 대상·타 사업장·기한 만료·이미 제출된 슬롯을 write 경계에서 전부 막는다.
+  test('MR-CREATE-01 관리자가 ADMIN_TO_USER 리뷰 생성 허용 (요청 슬롯 결속 필요)', async () => {
+    await seedDoc(env, 'review_requests', 'rr-mr-admin', {
+      workerId: IDS.user,
+      businessId: IDS.business,
+      workerStatus: 'pending',
+      adminStatus: 'pending',
+    });
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       setDoc(doc(db, 'monthly_reviews', 'mr-admin-create'), {
@@ -118,7 +129,30 @@ describe('MR-CREATE: 리뷰 생성', () => {
         businessId: IDS.business,
         reviewerId: IDS.admin,
         targetUserId: IDS.user,
+        requestId: 'rr-mr-admin',
         isPublished: false,  // 생성 시 false 필수 (CF가 이후 제어)
+        rating: 5,
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 다른 근무자를 대상으로 슬롯을 돌려쓰는 경로 차단 ([REVIEW-BINDING])
+  test('MR-CREATE-01b 요청 슬롯의 근무자와 다른 대상으로는 리뷰를 쓸 수 없다', async () => {
+    await seedDoc(env, 'review_requests', 'rr-mr-wrongtarget', {
+      workerId: IDS.user,
+      businessId: IDS.business,
+      workerStatus: 'pending',
+      adminStatus: 'pending',
+    });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'monthly_reviews', 'mr-wrong-target'), {
+        reviewType: 'ADMIN_TO_USER',
+        businessId: IDS.business,
+        reviewerId: IDS.admin,
+        targetUserId: IDS.user2,  // 슬롯의 workerId와 불일치
+        requestId: 'rr-mr-wrongtarget',
+        isPublished: false,
         rating: 5,
       }),
     );
@@ -138,7 +172,15 @@ describe('MR-CREATE: 리뷰 생성', () => {
     );
   });
 
-  test('MR-CREATE-03 서브어드민도 ADMIN_TO_USER 리뷰 생성 허용 (HIGH-FIX)', async () => {
+  // [R8-P3B.3A.1] SubAdmin은 canManageWorkers가 있어야 한다
+  //   ([SECURITY-ADMIN-REVIEW-MR-CREATE 2026-09-05]) + 위와 같은 슬롯 결속.
+  test('MR-CREATE-03 canManageWorkers 서브어드민은 ADMIN_TO_USER 리뷰 생성 허용', async () => {
+    await seedDoc(env, 'review_requests', 'rr-mr-sub', {
+      workerId: IDS.user,
+      businessId: IDS.business,
+      workerStatus: 'pending',
+      adminStatus: 'pending',
+    });
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
     await assertSucceeds(
       setDoc(doc(db, 'monthly_reviews', 'mr-sub-create'), {
@@ -146,6 +188,7 @@ describe('MR-CREATE: 리뷰 생성', () => {
         businessId: IDS.business,
         reviewerId: IDS.subAdmin,
         targetUserId: IDS.user,
+        requestId: 'rr-mr-sub',
         isPublished: false,
         rating: 4,
       }),
@@ -252,12 +295,26 @@ describe('MR-CREATE: 리뷰 생성', () => {
 // ─── MR-UPDATE ───────────────────────────────────────────────────
 
 describe('MR-UPDATE: 리뷰 수정', () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — [SEC-MR-TS] businessRespondedAt == request.time 강제.
+  //   답변 시각 위조를 막는다. 클라이언트 문자열 시각은 통과하지 못한다.
   test('MR-UPDATE-01 관리자가 businessResponse 답변 필드만 수정 허용 (H-02)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       updateDoc(doc(db, 'monthly_reviews', MR_UTB), {
         businessResponse: '감사합니다!',
-        businessRespondedAt: '2024-01-20T10:00:00Z',
+        businessRespondedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 답변 시각 위조 차단 확인 ([SEC-MR-TS])
+  test('MR-UPDATE-01b businessRespondedAt을 임의 시각으로 쓰면 차단된다', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-utb-ts', { ...userToBusinessBase });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-utb-ts'), {
+        businessResponse: '감사합니다!',
+        businessRespondedAt: new Date(2020, 0, 1),
       }),
     );
   });
@@ -312,6 +369,14 @@ describe('MR-UPDATE: 리뷰 수정', () => {
       targetUserName: '유저1',
       comment: '열심히 했습니다',
     });
+    // [R8-P3B.3A.1] [SEC-92/103] isDeletingAccount 교차검증이 추가됐다.
+    //   deleteAccountWithPassword CF가 마킹한 계정만 익명화할 수 있다.
+    //   활성 계정이 FieldValue.delete()로 불리한 리뷰만 골라 지우는 것을 막는다.
+    await seedUser(env, IDS.user, {
+      role: 'USER', username: 'user1', name: '유저1',
+      email: 'user@test.com', isBlacklisted: false,
+      isDeletingAccount: true,
+    });
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
       updateDoc(doc(db, 'monthly_reviews', 'mr-anon-target'), {
@@ -343,11 +408,18 @@ describe('MR-UPDATE: 리뷰 수정', () => {
       reviewerId: IDS.admin,
       reviewerName: '관리자',
     });
+    // [R8-P3B.3A.1] 9-B도 isDeletingAccount 필수 + reviewerId는 삭제가 아니라 빈 문자열이다
+    //   (규칙: request.resource.data.get('reviewerId','') == '').
+    await seedUser(env, IDS.admin, {
+      role: 'BUSINESS_ADMIN', username: 'admin', name: '관리자',
+      email: 'admin@test.com', isBlacklisted: false,
+      isDeletingAccount: true,
+    });
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       updateDoc(doc(db, 'monthly_reviews', 'mr-anon-reviewer'), {
         reviewerName: '탈퇴한 회원',
-        reviewerId: deleteField(),
+        reviewerId: '',
       }),
     );
   });

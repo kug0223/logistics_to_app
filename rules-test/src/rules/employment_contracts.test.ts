@@ -220,7 +220,11 @@ describe('EC-CREATE: 계약서 생성', () => {
 
 describe('EC-UPDATE: 근무자 서명 (pending 상태)', () => {
   // SEC-91: pending_worker → completed 전이만 허용 (이전: status 목표값 무제한)
-  test('EC-UPDATE-01 근무자가 pending_worker에서 completed로 서명 완료 허용 (SEC-91)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [CONTRACT-M1-FIX] completed 직접 전이 차단.
+  //   근무자 서명 완료는 callableFinalizeWorkerSignature(Admin SDK) 전용이다.
+  //   클라이언트가 직접 completed로 쓰면 서명 검증 없이 계약이 성립된 것처럼 된다.
+  //   서명 URL/해시/시각 필드도 같은 이유로 CF 전용이다.
+  test('EC-UPDATE-01 근무자도 completed 전이를 직접 쓸 수 없다 (callableFinalizeWorkerSignature 전용)', async () => {
     await seedDoc(env, 'employment_contracts', 'contract-worker-sign', {
       businessId: IDS.business,
       workerId: IDS.user,
@@ -230,7 +234,7 @@ describe('EC-UPDATE: 근무자 서명 (pending 상태)', () => {
       employerSignatureHash: 'employer-hash-abc',
     });
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'employment_contracts', 'contract-worker-sign'), {
         workerSignatureUrl: 'https://sig.example.com/worker.png',
         workerSignatureHash: 'abc123',
@@ -380,11 +384,30 @@ describe('EC-UPDATE: 완료·voided 상태 보호', () => {
     );
   });
 
-  test('EC-UPDATE-08 슈퍼어드민은 completed 계약서도 수정 허용', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [HIGH-FIX 29차] completed 계약서는 슈퍼어드민도 못 고친다.
+  //   슈퍼어드민 분기에 resource.data.status != 'completed' 조건이 추가됐다.
+  //   완성된 근로계약서의 articles/wage/slots가 사후 변조되면 노동법상 문제가 된다.
+  test('EC-UPDATE-08 슈퍼어드민도 completed 계약서는 수정할 수 없다', async () => {
     const db = getAuth(env, IDS.superAdmin, { role: 'SUPER_ADMIN' });
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'employment_contracts', 'contract-completed'), {
         status: 'active',
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — completed가 아닌 계약서는 슈퍼어드민이 고칠 수 있다(운영 정정)
+  test('EC-UPDATE-08b 슈퍼어드민은 completed가 아닌 계약서는 수정할 수 있다', async () => {
+    await seedDoc(env, 'employment_contracts', 'contract-draft-super', {
+      businessId: IDS.business,
+      workerId: IDS.user,
+      applicationId: APP_ID,
+      status: 'pending_employer',
+    });
+    const db = getAuth(env, IDS.superAdmin, { role: 'SUPER_ADMIN' });
+    await assertSucceeds(
+      updateDoc(doc(db, 'employment_contracts', 'contract-draft-super'), {
+        memo: '운영 정정',
       }),
     );
   });
@@ -393,12 +416,14 @@ describe('EC-UPDATE: 완료·voided 상태 보호', () => {
 // ─── EC-UPDATE: 계약해지 근무자 수락 ────────────────────────────────
 
 describe('EC-UPDATE: 근무자 계약해지 수락 (terminationStatus)', () => {
-  test('EC-TERM-01 terminationStatus=PENDING 시 근무자가 voided 전환 허용', async () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — [B4-FIX] contractVoidedAt == request.time 강제.
+  //   무효화 날짜를 과거/미래로 조작하지 못하게 한다. 클라이언트 문자열 시각은 통과하지 못한다.
+  test('EC-TERM-01 terminationStatus=PENDING 시 근무자가 voided 전환 허용 (무효화 시각은 서버시각)', async () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
       updateDoc(doc(db, 'employment_contracts', 'contract-termination'), {
         status: 'voided',
-        contractVoidedAt: '2024-01-01T10:00:00Z',
+        contractVoidedAt: serverTimestamp(),
         voidReason: '계약해지 수락',
       }),
     );

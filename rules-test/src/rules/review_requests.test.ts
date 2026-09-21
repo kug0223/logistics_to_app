@@ -3,7 +3,7 @@
 import { RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import { doc, getDoc, getDocs, collection, query, where, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import {
-  createTestEnv, getAuth, seedDoc, seedCommonFixtures,
+  createTestEnv, getAuth, seedDoc, seedUser, seedCommonFixtures,
   assertFails, assertSucceeds, IDS,
 } from '../helpers/test-env';
 
@@ -90,30 +90,34 @@ describe('RR-LIST: 목록 조회', () => {
 // ─── RR-CREATE ───────────────────────────────────────────────────
 
 describe('RR-CREATE: 생성', () => {
-  // xtest: 에뮬레이터에서 isAdminOf() get() 호출 시 evaluation error — 에뮬레이터 한계
-  xtest('RR-CREATE-01 관리자가 소속 사업장에 생성 허용', async () => {
+  // [R8-P3B.3A.1] skip 해제 + 기대값 반전.
+  //   기존 사유("에뮬레이터에서 isAdminOf() evaluation error")는 더 이상 맞지 않는다 —
+  //   같은 연산이 trust_and_simple.test.ts에서 정상 평가된다.
+  //   그리고 현재 정책은 review_requests create = isSuperAdmin() 전용이다.
+  //   리뷰 요청 슬롯은 스케줄러/CF가 만든다. 관리자가 임의로 만들 수 있으면
+  //   리뷰 대상·시점을 직접 고를 수 있게 된다.
+  test('RR-CREATE-01 관리자는 리뷰 요청을 직접 생성할 수 없다 (CF/슈퍼어드민 전용)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'review_requests', 'rr-new-admin'), {
         businessId: IDS.business,
         workerId: IDS.user,
         workerName: '유저1',
-        workerStatus: 'PENDING',
-        adminStatus: 'PENDING',
+        workerStatus: 'pending',
+        adminStatus: 'pending',
       }),
     );
   });
 
-  // xtest: 에뮬레이터 isSubAdminOf() evaluation error
-  xtest('RR-CREATE-02 서브어드민도 소속 사업장에 생성 허용', async () => {
+  test('RR-CREATE-02 서브어드민도 리뷰 요청을 생성할 수 없다', async () => {
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'review_requests', 'rr-new-sub'), {
         businessId: IDS.business,
         workerId: IDS.user,
         workerName: '유저1',
-        workerStatus: 'PENDING',
-        adminStatus: 'PENDING',
+        workerStatus: 'pending',
+        adminStatus: 'pending',
       }),
     );
   });
@@ -140,7 +144,7 @@ describe('RR-UPDATE: 수정', () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
       updateDoc(doc(db, 'review_requests', 'rr-worker-update'), {
-        workerStatus: 'SUBMITTED',
+        workerStatus: 'submitted',  // [MEDIUM-FIX 29차] 값 화이트리스트는 소문자다
         workerReviewId: 'mr-123',
       }),
     );
@@ -156,12 +160,22 @@ describe('RR-UPDATE: 수정', () => {
     );
   });
 
-  test('RR-UPDATE-03 관리자가 adminStatus·adminReviewId 변경 허용', async () => {
+  // [R8-P3B.3A.1] [REVIEW-BINDING 2026-09-08] adminStatus를 submitted로 바꾸려면
+  //   adminReviewId가 가리키는 monthly_reviews 문서가 실제로 존재하고
+  //   requestId·businessId가 맞아야 한다(getAfter 교차검증).
+  //   리뷰를 안 쓰고 "작성 완료"로만 마킹하는 경로를 write 경계에서 막는다.
+  test('RR-UPDATE-03 관리자가 adminStatus·adminReviewId 변경 허용 (리뷰 문서 결속 필요)', async () => {
     await seedDoc(env, 'review_requests', 'rr-admin-update', { ...rrBase });
+    await seedDoc(env, 'monthly_reviews', 'mr-456', {
+      requestId: 'rr-admin-update',
+      businessId: IDS.business,
+      targetUserId: IDS.user,
+      reviewType: 'ADMIN_TO_USER',
+    });
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       updateDoc(doc(db, 'review_requests', 'rr-admin-update'), {
-        adminStatus: 'COMPLETED',
+        adminStatus: 'submitted',  // [MEDIUM-FIX 29차] 허용 값은 pending/submitted 뿐이다
         adminReviewId: 'mr-456',
       }),
     );
@@ -178,8 +192,13 @@ describe('RR-UPDATE: 수정', () => {
   });
 
   // SEC-88: 탈퇴 익명화 — users 문서 삭제 전에 처리하므로 isUser() 통과
+  // [R8-P3B.3A.1] [SEC-88] isDeletingAccount 교차검증 추가 — 탈퇴 처리 중인 계정만 익명화 가능.
   test('RR-UPDATE-05 탈퇴 익명화: 본인이 workerName만 변경 허용 (SEC-88)', async () => {
     await seedDoc(env, 'review_requests', 'rr-anonymize', { ...rrBase });
+    await seedUser(env, IDS.user, {
+      role: 'USER', username: 'user1', name: '유저1',
+      email: 'user@test.com', isBlacklisted: false, isDeletingAccount: true,
+    });
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
       updateDoc(doc(db, 'review_requests', 'rr-anonymize'), {

@@ -9,11 +9,13 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import {
   createTestEnv,
   getAuth,
   seedDoc,
+  seedUser,
   seedCommonFixtures,
   assertFails,
   assertSucceeds,
@@ -24,6 +26,11 @@ let env: RulesTestEnvironment;
 
 beforeAll(async () => {
   env = await createTestEnv('businesses');
+  // [R8-P3B.3A.1] 실행 간 잔여 데이터 제거.
+  //   이 파일은 beforeEach에서 clearFirestore를 하지 않아, 에뮬레이터를 켜 둔 채
+  //   두 번 돌리면 앞선 실행이 만든 문서(예: 멤버 등록 테스트 결과)가 남아
+  //   create가 update로 바뀌어 실패했다. 실행 시작점에서 한 번 비운다.
+  await env.clearFirestore();
   await seedCommonFixtures(env);
 
   // workTypes
@@ -50,9 +57,18 @@ beforeAll(async () => {
   });
 
   // members 서브컬렉션
+  // [R8-P3B.3A.1] permissions 포함 — subAdminCanManageTo/Workers/… 가 이 필드를 읽는다.
+  //   이전에는 seedCommonFixtures가 만든 권한 문서를 이 시드가 덮어써서
+  //   권한 없는 SubAdmin이 됐고, workTypes 쓰기 테스트가 그 사실에 걸렸다.
   await seedDoc(env, `businesses/${IDS.business}/members`, IDS.subAdmin, {
     role: 'SUB_ADMIN',
     joinedAt: '2024-01-01T00:00:00Z',
+    permissions: {
+      canManageTo: true,
+      canManageWorkers: true,
+      canManageWage: true,
+      canManageContract: true,
+    },
   });
 
   // 단독 관리자 사업장 (SEC-95: 탈퇴 시 deactivatedAt 허용 테스트용)
@@ -94,6 +110,8 @@ describe('BIZ-GET/LIST: 사업장 읽기', () => {
 // ─── BIZ-CREATE ──────────────────────────────────────────────────────
 
 describe('BIZ-CREATE: 사업장 생성', () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — fixture에 businessNumber가 빠져 있었다.
+  //   [LOW-1] 사업자등록번호 10자리 숫자 포맷을 create 시점에 서버 검증한다.
   test('BIZ-CREATE-01 BUSINESS_ADMIN이 ownerId=본인, adminIds에 본인 포함으로 생성 허용', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
@@ -102,6 +120,21 @@ describe('BIZ-CREATE: 사업장 생성', () => {
         adminIds: [IDS.admin],
         name: '신규사업장',
         status: 'pending',
+        businessNumber: '1234567890',  // [LOW-1] 10자리 숫자 필수
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 위 조건의 반대면 차단되는지 함께 고정한다.
+  test('BIZ-CREATE-01b 사업자등록번호 포맷이 틀리면 생성 차단 (LOW-1)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'businesses', 'biz-bad-number'), {
+        ownerId: IDS.admin,
+        adminIds: [IDS.admin],
+        name: '신규사업장',
+        status: 'pending',
+        businessNumber: '123-45-67890',  // 하이픈 포함 → 차단
       }),
     );
   });
@@ -218,10 +251,12 @@ describe('BIZ-UPDATE: 사업장 수정', () => {
         adminIds: [IDS.admin, IDS.admin2],
       }),
     );
-    // 원복
+    // 원복 — [R8-P3B.3A.1] subAdmin을 adminIds에 되돌려 넣지 않는다.
+    //   여기서 넣으면 이후 테스트에서 isAdminOf(subAdmin)가 true가 되어
+    //   SubAdmin 경계 검증(MEM-DELETE-01b 등)이 통째로 가려진다.
     await env.withSecurityRulesDisabled(async (ctx) => {
       await ctx.firestore().collection('businesses').doc(IDS.business).update({
-        adminIds: [IDS.admin, IDS.subAdmin],
+        adminIds: [IDS.admin],
       });
     });
   });
@@ -255,11 +290,21 @@ describe('BIZ-UPDATE: 사업장 수정', () => {
     );
   });
 
+  // [R8-P3B.3A.1] "이중 관리자"를 전용 fixture로 만든다.
+  //   이전에는 biz-001의 adminIds가 [admin, subAdmin]인 것에 기대고 있었는데,
+  //   그 구성 자체가 SubAdmin을 BUSINESS_ADMIN으로 만드는 문제라 제거했다.
+  //   검증하려는 것은 "관리자가 2명이면 단독 탈퇴 예외가 적용되지 않는다"이므로
+  //   진짜 공동 관리자 사업장을 따로 만든다.
   test('BIZ-UPDATE-08 ❌ 이중 관리자 사업장에서 deactivatedAt 설정 차단 (SEC-95)', async () => {
-    // biz-001의 adminIds == [admin, subAdmin] → size()==2 → 차단
-    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await seedDoc(env, 'businesses', 'biz-dual-admin', {
+      ownerId: IDS.admin,
+      adminIds: [IDS.admin, IDS.admin2],  // size()==2 → 단독 탈퇴 예외 미적용
+      name: '공동관리사업장',
+      isApproved: true,
+    });
+    const db = getAuth(env, IDS.admin, { businessId: 'biz-dual-admin' });
     await assertFails(
-      updateDoc(doc(db, 'businesses', IDS.business), {
+      updateDoc(doc(db, 'businesses', 'biz-dual-admin'), {
         deactivatedAt: '2024-01-15T18:00:00Z',
       }),
     );
@@ -493,13 +538,74 @@ describe('MEMBERS: 멤버 서브컬렉션', () => {
     );
   });
 
+  // [R8-P3B.3A.1] 정책은 그대로다 — fixture 2가지가 현재 규칙과 맞지 않았다.
+  //   1) 초대장에 createdAt이 없었다. [D4-CP1] 유효기간이 3일로 좁혀지면서
+  //      isValidPendingInvitation이 inv.createdAt > now-3d 를 본다.
+  //   2) IDS.subAdmin의 members 문서는 이미 시드돼 있어 set()이 create가 아니라 update였다.
+  //      create 규칙을 검증하려면 멤버 문서가 없는 uid를 써야 한다.
   test('MEM-CREATE-02 유효한 초대장으로 본인 멤버 등록 허용 (MEDIUM-FIX)', async () => {
-    const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
+    const newMember = 'uid-invitee';
+    await seedUser(env, newMember, { role: 'USER', name: '초대받은사람', isBlacklisted: false });
+    await seedDoc(env, 'member_invitations', 'inv-fresh', {
+      targetUid: newMember,
+      businessId: IDS.business,
+      status: 'pending',
+      invitedBy: IDS.admin,
+      createdAt: new Date(),  // [D4-CP1] 3일 이내
+      permissions: { canManageTo: true },
+    });
+    const db = getAuth(env, newMember);
     await assertSucceeds(
-      setDoc(doc(db, `businesses/${IDS.business}/members`, IDS.subAdmin), {
+      setDoc(doc(db, `businesses/${IDS.business}/members`, newMember), {
         role: 'SUB_ADMIN',
         joinedAt: '2024-01-01T00:00:00Z',
-        invitationId: 'inv-001',  // 유효한 초대 (targetUid=subAdmin, businessId=biz-001)
+        invitationId: 'inv-fresh',
+        // [SEC-MEMBER-PERM] 초대장에 적힌 권한과 정확히 같아야 한다 (권한 위조 차단)
+        permissions: { canManageTo: true },
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 초대장보다 큰 권한으로 등록 차단 ([SEC-MEMBER-PERM])
+  test('MEM-CREATE-02c 초대장에 없는 권한을 얹어 등록할 수 없다', async () => {
+    const greedy = 'uid-invitee-greedy';
+    await seedUser(env, greedy, { role: 'USER', name: '권한위조', isBlacklisted: false });
+    await seedDoc(env, 'member_invitations', 'inv-greedy', {
+      targetUid: greedy,
+      businessId: IDS.business,
+      status: 'pending',
+      invitedBy: IDS.admin,
+      createdAt: new Date(),
+      permissions: { canManageTo: true },
+    });
+    const db = getAuth(env, greedy);
+    await assertFails(
+      setDoc(doc(db, `businesses/${IDS.business}/members`, greedy), {
+        role: 'SUB_ADMIN',
+        joinedAt: '2024-01-01T00:00:00Z',
+        invitationId: 'inv-greedy',
+        permissions: { canManageTo: true, canManageWage: true },  // 초대장에 없는 권한
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 만료된 초대로는 등록되지 않는지 함께 고정 ([D4-CP1] 3일)
+  test('MEM-CREATE-02b 3일 지난 초대장으로는 멤버 등록 불가', async () => {
+    const staleMember = 'uid-invitee-stale';
+    await seedUser(env, staleMember, { role: 'USER', name: '오래된초대', isBlacklisted: false });
+    await seedDoc(env, 'member_invitations', 'inv-stale', {
+      targetUid: staleMember,
+      businessId: IDS.business,
+      status: 'pending',
+      invitedBy: IDS.admin,
+      createdAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000),
+    });
+    const db = getAuth(env, staleMember);
+    await assertFails(
+      setDoc(doc(db, `businesses/${IDS.business}/members`, staleMember), {
+        role: 'SUB_ADMIN',
+        joinedAt: '2024-01-01T00:00:00Z',
+        invitationId: 'inv-stale',
       }),
     );
   });
@@ -515,10 +621,20 @@ describe('MEMBERS: 멤버 서브컬렉션', () => {
     );
   });
 
-  test('MEM-DELETE-01 멤버 본인이 자진 탈퇴 허용', async () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — 탈퇴자의 users 문서가 없었다.
+  //   [SEC-MEMBER-DEL] 규칙이 !isSubAdminOf(businessId)를 보는데,
+  //   isSubAdminOf()는 users/{uid}를 읽는다. 문서가 아예 없으면 판정이 서지 않는다.
+  test('MEM-DELETE-01 멤버 본인이 자진 탈퇴 허용 (SubAdmin 아님)', async () => {
+    await seedUser(env, 'uid-resign', { role: 'USER', name: '탈퇴자', isBlacklisted: false });
     await seedDoc(env, `businesses/${IDS.business}/members`, 'uid-resign', { role: 'USER' });
     const db = getAuth(env, 'uid-resign');
     await assertSucceeds(deleteDoc(doc(db, `businesses/${IDS.business}/members`, 'uid-resign')));
+  });
+
+  // [R8-P3B.3A.1] 신규 — SubAdmin 본인 삭제 차단 ([SEC-MEMBER-DEL] 스텔스 지속 방지)
+  test('MEM-DELETE-01b SubAdmin은 자기 멤버 문서를 삭제할 수 없다', async () => {
+    const db = getAuth(env, IDS.subAdmin);
+    await assertFails(deleteDoc(doc(db, `businesses/${IDS.business}/members`, IDS.subAdmin)));
   });
 
   test('MEM-DELETE-02 타 사업장 일반유저는 멤버 삭제 차단', async () => {

@@ -11,6 +11,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import {
   createTestEnv,
@@ -133,12 +134,25 @@ describe('NOTIF-CREATE: 클라이언트 직접 생성 완전 차단 (SEC-14)', (
 // ─── NOTIF-UPDATE: isRead/readAt 필드만 허용 ─────────────────────────
 
 describe('NOTIF-UPDATE: 읽음 처리 필드만 수정 허용 (SEC-14)', () => {
-  test('NOTIF-UPDATE-01 본인은 isRead/readAt 필드만 수정할 수 있다', async () => {
+  // [R8-P3B.3A.1] 정책은 그대로다 — [LOW-FIX 29차] readAt == request.time 강제.
+  //   읽은 시각을 과거/미래로 조작하지 못하게 한다. 클라이언트 문자열 시각은 통과하지 못한다.
+  test('NOTIF-UPDATE-01 본인은 isRead/readAt 필드만 수정할 수 있다 (readAt 서버시각)', async () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
       updateDoc(doc(db, `users/${IDS.user}/notifications`, NOTIF_ID), {
         isRead: true,
-        readAt: '2024-01-15T10:00:00Z',
+        readAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — readAt 위조 차단 확인
+  test('NOTIF-UPDATE-01b readAt을 임의 시각으로 쓰면 차단된다', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      updateDoc(doc(db, `users/${IDS.user}/notifications`, NOTIF_ID), {
+        isRead: true,
+        readAt: new Date(2020, 0, 1),
       }),
     );
   });

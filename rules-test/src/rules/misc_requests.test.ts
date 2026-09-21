@@ -2,7 +2,7 @@
 // member_invitations + payment_change_requests + interim_settlement_requests
 // + app_settings + id_card_copy_logs + CF전용 차단 (40개 시나리오)
 import { RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import {
   createTestEnv, getAuth, seedDoc, seedCommonFixtures,
   assertFails, assertSucceeds, IDS,
@@ -97,6 +97,9 @@ describe('MEMBER_INVITATIONS: 초대장 접근 제어', () => {
     await assertFails(getDoc(doc(db, 'member_invitations', 'inv-test')));
   });
 
+  // [R8-P3B.3A.1] 정책은 그대로다 — fixture에 createdAt이 없었다.
+  //   [LOW-FIX] createdAt == request.time 강제. 미래 날짜를 주입해
+  //   초대 유효기간(3일)을 무한정 늘리는 것을 막는다.
   test('INV-CREATE-01 관리자가 본인 invitedBy로 초대장 생성 허용 (SEC-31)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
@@ -105,6 +108,21 @@ describe('MEMBER_INVITATIONS: 초대장 접근 제어', () => {
         invitedBy: IDS.admin,
         businessId: IDS.business,
         status: 'pending',
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — createdAt 위조 차단 확인 ([LOW-FIX])
+  test('INV-CREATE-01b createdAt을 미래 날짜로 심으면 차단된다', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'member_invitations', 'inv-future'), {
+        targetUid: IDS.user2,
+        invitedBy: IDS.admin,
+        businessId: IDS.business,
+        status: 'pending',
+        createdAt: new Date(2099, 0, 1),
       }),
     );
   });
@@ -198,6 +216,9 @@ describe('PAYMENT_CHANGE_REQUESTS: 지급방식 변경 요청', () => {
     await assertFails(getDoc(doc(db, 'payment_change_requests', 'pcr-001')));
   });
 
+  // [R8-P3B.3A.1] 정책은 그대로다 — fixture가 허용 필드 목록 밖의 requestedAt을 보냈다.
+  //   [LOW-FIX] keys().hasOnly([...]) 화이트리스트가 붙어 processedBy/processedAt 등
+  //   처리 결과 필드를 create 시점에 심지 못하게 한다. requestedAt은 그 목록에 없다.
   test('PCR-CREATE-01 근무자 본인이 소속 사업장으로 생성 허용', async () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
@@ -205,7 +226,22 @@ describe('PAYMENT_CHANGE_REQUESTS: 지급방식 변경 요청', () => {
         workerId: IDS.user,
         businessId: IDS.business,  // 소속 사업장
         status: 'PENDING',
-        requestedAt: '2024-01-15T09:00:00Z',
+        createdAt: serverTimestamp(),  // [TS-FIX] 서버 시각 강제
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 처리 결과 필드 선주입 차단 확인 ([LOW-FIX] 화이트리스트)
+  test('PCR-CREATE-01b 생성 시 processedBy/processedAt을 심을 수 없다', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      setDoc(doc(db, 'payment_change_requests', 'pcr-preprocessed'), {
+        workerId: IDS.user,
+        businessId: IDS.business,
+        status: 'PENDING',
+        createdAt: serverTimestamp(),
+        processedBy: IDS.user,
+        processedAt: new Date(),
       }),
     );
   });
@@ -294,6 +330,7 @@ describe('INTERIM_SETTLEMENT_REQUESTS: 중간정산 요청', () => {
     await assertSucceeds(getDoc(doc(db, 'interim_settlement_requests', 'isr-001')));
   });
 
+  // [R8-P3B.3A.1] 정책은 그대로다 — PCR과 같은 화이트리스트 문제(requestedAt).
   test('ISR-CREATE-01 근무자 본인이 소속 사업장으로 생성 허용', async () => {
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
@@ -301,19 +338,35 @@ describe('INTERIM_SETTLEMENT_REQUESTS: 중간정산 요청', () => {
         workerId: IDS.user,
         businessId: IDS.business,
         status: 'PENDING',
-        requestedAt: '2024-01-15T09:00:00Z',
+        createdAt: serverTimestamp(),
       }),
     );
   });
 
-  test('ISR-CREATE-02 서브어드민도 생성 허용 (CRITICAL-FIX)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [ISR-CREATE-01 2026-09-01] SUB_ADMIN direct CREATE 제거.
+  //   관리자 생성 경로는 callableAdminDirectInterimSettlement(CF) 하나다.
+  //   SubAdmin에게는 worker/amount/attendance 바인딩도, 정상 UX도 없어 최소권한으로 닫았다.
+  test('ISR-CREATE-02 서브어드민은 중간정산 요청을 직접 생성할 수 없다 (CF 전용)', async () => {
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'interim_settlement_requests', 'isr-sub-new'), {
         workerId: IDS.user,
         businessId: IDS.business,
         status: 'PENDING',
-        requestedAt: '2024-01-15T09:00:00Z',
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — BUSINESS_ADMIN 경로는 열려 있는지 함께 고정
+  test('ISR-CREATE-02b 사업장 관리자는 생성할 수 있다', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertSucceeds(
+      setDoc(doc(db, 'interim_settlement_requests', 'isr-admin-new'), {
+        workerId: IDS.user,
+        businessId: IDS.business,
+        status: 'PENDING',
+        createdAt: serverTimestamp(),
       }),
     );
   });
@@ -342,10 +395,32 @@ describe('INTERIM_SETTLEMENT_REQUESTS: 중간정산 요청', () => {
     );
   });
 
-  test('ISR-UPDATE-01 관리자가 PENDING→PROCESSED 처리 허용 (SEC-52)', async () => {
+  // [R8-P3B.3A.1] 상태 기계가 바뀌었다 — PENDING에서 바로 PROCESSED로 가지 않는다.
+  //   [SEC-52] PENDING → APPROVED/REJECTED → (APPROVED만) PROCESSED.
+  //   이체 실행(PROCESSED)은 승인된 건에만 붙는다.
+  test('ISR-UPDATE-01 관리자가 PENDING→APPROVED 승인 허용 (SEC-52)', async () => {
+    await seedDoc(env, 'interim_settlement_requests', 'isr-approve', {
+      workerId: IDS.user, businessId: IDS.business, status: 'PENDING',
+    });
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
-      updateDoc(doc(db, 'interim_settlement_requests', 'isr-001'), {
+      updateDoc(doc(db, 'interim_settlement_requests', 'isr-approve'), {
+        status: 'APPROVED',
+        processedBy: IDS.admin,
+        processedAt: '2024-01-15T10:00:00Z',
+        updatedAt: '2024-01-15T10:00:00Z',
+      }),
+    );
+  });
+
+  // [R8-P3B.3A.1] 신규 — 단계 건너뛰기 차단
+  test('ISR-UPDATE-01b PENDING에서 PROCESSED로 건너뛸 수 없다 (승인 단계 우회)', async () => {
+    await seedDoc(env, 'interim_settlement_requests', 'isr-skip', {
+      workerId: IDS.user, businessId: IDS.business, status: 'PENDING',
+    });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'interim_settlement_requests', 'isr-skip'), {
         status: 'PROCESSED',
         processedBy: IDS.admin,
         processedAt: '2024-01-15T10:00:00Z',
@@ -354,11 +429,15 @@ describe('INTERIM_SETTLEMENT_REQUESTS: 중간정산 요청', () => {
     );
   });
 
+  // [R8-P3B.3A.1] 이전 테스트는 앞 테스트가 isr-001을 PROCESSED로 만들어 놓는 것에
+  //   의존하고 있었다(순서 의존). 자기 fixture를 직접 만들어 독립시킨다.
   test('ISR-UPDATE-02 PROCESSED 상태에서 재처리 차단 (SEC-52 역변조)', async () => {
+    await seedDoc(env, 'interim_settlement_requests', 'isr-processed', {
+      workerId: IDS.user, businessId: IDS.business, status: 'PROCESSED',
+    });
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
-    // isr-001은 이미 PROCESSED 상태
     await assertFails(
-      updateDoc(doc(db, 'interim_settlement_requests', 'isr-001'), {
+      updateDoc(doc(db, 'interim_settlement_requests', 'isr-processed'), {
         status: 'REJECTED',
         processedBy: IDS.admin,
         processedAt: '2024-01-15T11:00:00Z',
@@ -405,9 +484,14 @@ describe('APP_SETTINGS: 앱 설정 접근 제어', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('ID_CARD_COPY_LOGS: 신분증 열람 감사 로그', () => {
-  test('ICCL-CREATE-01 관리자가 본인 viewerId + 소속 businessId로 로그 생성 허용', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [GAP-ID-02] 클라이언트 create 완전 차단.
+  //   신분증 열람 감사 로그는 열람을 수행하는 CF가 직접 남긴다:
+  //   callableGetIdCardSignedUrl / callableLogResidentNumberCopy (Admin SDK).
+  //   클라이언트가 쓰게 두면 열람하고도 로그를 안 남기는 선택이 가능해진다.
+  //   worker_detail_dialog._logResidentNumberCopy의 client write는 제거 완료.
+  test('ICCL-CREATE-01 관리자도 열람 로그를 직접 쓸 수 없다 (CF가 기록)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'id_card_copy_logs', 'log-admin-new'), {
         viewerId: IDS.admin,
         businessId: IDS.business,

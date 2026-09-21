@@ -117,14 +117,17 @@ describe('AT-GET: 단건 읽기', () => {
     await assertSucceeds(getDoc(doc(db, 'attendance', ATT)));
   });
 
-  test('AT-GET-02 소속 사업장 관리자는 출근 기록을 읽을 수 있다', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [R3-ATT-GET-01-PATCH 2026-09-04]
+  //   attendance get에서 isAdminOf/isSubAdminOf가 제거됐다.
+  //   관리자 출결 읽기는 전부 callableGetAdminAttendances(CF Admin SDK)로 이전 완료.
+  test('AT-GET-02 소속 사업장 관리자도 출근 기록을 직접 읽을 수 없다 (callableGetAdminAttendances 전용)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
-    await assertSucceeds(getDoc(doc(db, 'attendance', ATT)));
+    await assertFails(getDoc(doc(db, 'attendance', ATT)));
   });
 
-  test('AT-GET-03 서브어드민은 소속 사업장 출근 기록을 읽을 수 있다', async () => {
+  test('AT-GET-03 서브어드민도 출근 기록을 직접 읽을 수 없다 (CF 전용)', async () => {
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(getDoc(doc(db, 'attendance', ATT)));
+    await assertFails(getDoc(doc(db, 'attendance', ATT)));
   });
 
   test('AT-GET-04 슈퍼어드민은 모든 출근 기록을 읽을 수 있다', async () => {
@@ -511,10 +514,14 @@ describe('AT-DELETE: 출근 기록 삭제', () => {
     await assertSucceeds(deleteDoc(doc(db, 'attendance', 'att-del-admin')));
   });
 
-  test('AT-DELETE-02 서브어드민도 소속 사업장 출근 기록 삭제 허용 (RULE-06)', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [AD-01 2026-09-01] SubAdmin 삭제 권한 제거.
+  //   이 테스트는 그동안 통과하고 있었는데, 공통 fixture가 subAdmin을
+  //   businesses.adminIds에도 넣어 isAdminOf가 true였기 때문이다(가려진 테스트).
+  //   fixture를 바로잡자 실제 정책이 드러났다.
+  test('AT-DELETE-02 서브어드민은 출근 기록을 삭제할 수 없다 (AD-01: BUSINESS_ADMIN 전용)', async () => {
     await seedDoc(env, 'attendance', 'att-del-sub', baseAtt);
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(deleteDoc(doc(db, 'attendance', 'att-del-sub')));
+    await assertFails(deleteDoc(doc(db, 'attendance', 'att-del-sub')));
   });
 
   test('AT-DELETE-03 슈퍼어드민은 모든 출근 기록 삭제 허용', async () => {

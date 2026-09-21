@@ -93,9 +93,12 @@ describe('ICAR-CREATE: 신분증 열람 요청 생성', () => {
     );
   });
 
-  test('ICAR-CREATE-02 서브어드민도 요청 생성 허용', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — create 조건이 isBusinessAdmin() && isAdminOf(...)다.
+  //   SubAdmin은 role이 USER라 isBusinessAdmin()을 통과하지 못한다.
+  //   신분증 열람 요청은 사업주 명의로만 만들어진다(요청자 신원이 곧 열람 책임자).
+  test('ICAR-CREATE-02 서브어드민은 신분증 열람 요청을 직접 생성할 수 없다', async () => {
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'idCardAccessRequests', 'icar-sub-new'), {
         requesterId: IDS.subAdmin,
         requesterBusinessId: IDS.business,

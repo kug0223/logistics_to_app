@@ -159,9 +159,12 @@ describe('DELETED_ACCOUNTS: 탈퇴 계정 접근 제어', () => {
     );
   });
 
-  test('DA-UPDATE-01 슈퍼어드민은 탈퇴 계정을 수정할 수 있다', async () => {
+  // [R8-P3B.3A.1] 기대값 반전 — [HIGH-FIX 29차] deleted_accounts update = if false.
+  //   재가입 차단 기록(phone/ci/ciHash)을 슈퍼어드민이 직접 고칠 수 있으면
+  //   30일 재가입 제한과 블랙리스트 영구 차단을 우회할 수 있다. 운영 수정도 CF 경유.
+  test('DA-UPDATE-01 슈퍼어드민도 탈퇴 계정을 직접 수정할 수 없다 (CF 전용)', async () => {
     const db = getAuth(env, IDS.superAdmin, { role: 'SUPER_ADMIN' });
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'deleted_accounts', 'del-user-001'), {
         note: '블랙리스트 추가',
       }),
