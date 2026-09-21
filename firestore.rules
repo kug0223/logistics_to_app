@@ -403,6 +403,11 @@ service cloud.firestore {
                          // [SEC-109] CF resetPasswordWithCode가 관리하는 비밀번호 이력
                          //   클라이언트 직접 삭제 시 비밀번호 재사용 이력 무력화 가능
                          'passwordHistory',
+                         // [R8-P3B.3B] managedBusinessIds — businesses create의 [RATE-01]
+                         //   쿼터가 이 배열의 길이를 그대로 읽는다. 본인이 자유롭게 쓸 수 있으면
+                         //   "비우고 다시 만들기"로 사업장 5개 제한이 사실상 없는 것과 같다.
+                         //   추가는 위 [BIZ-CREATE-FIX] 브랜치(정확히 +1, 축소·교체 불가)만 허용.
+                         'managedBusinessIds',
                          // [M-1] badges — CF onReviewCreated/뱃지 자격 검증 전용
                          //   클라이언트 직접 삽입 시 자격 조건 우회 가능
                          'badges',
@@ -519,17 +524,42 @@ service cloud.firestore {
       // [BIZ-CREATE-FIX] 사업장 등록 시 BUSINESS_ADMIN이 managedBusinessIds 업데이트 허용
       // 조건: (1)본인 문서 (2)BUSINESS_ADMIN (3)managedBusinessIds만 변경
       //       (4)H-06: 기존 배열보다 정확히 1개 증가만 허용 (제거·임의 교체 차단)
-      //       (5)[HIGH-10-FIX] 추가된 businessId가 실제 본인 소유/관리 사업장인지 isAdminOf 검증
-      //          → 타사 businessId 주입으로 managedBusinessIds 오염 공격 차단
+      //
+      // [R8-P3B.3B] 이 브랜치가 managedBusinessIds의 **유일한** 클라이언트 쓰기 경로다.
+      //   (아래 isOwner 브랜치의 denylist에 managedBusinessIds가 추가됐다.)
+      //
+      //   이전 문제: denylist에 없어서 본인이 배열을 비울 수 있었고,
+      //   businesses create의 [RATE-01] 쿼터가 바로 그 배열 길이를 보기 때문에
+      //   "비우고 다시 만들기"로 5개 제한을 무한히 우회할 수 있었다.
+      //
+      //   [HIGH-10-FIX]의 isAdminOf(추가된 id) 검증은 제거한다.
+      //   isAdminOf는 exists(businesses/{id})를 먼저 보는데, 사업장 생성은
+      //   business 문서 set과 users update가 **같은 배치**로 나간다.
+      //   규칙 평가 시점에 그 문서는 아직 없으므로 이 조건은 의도한 용도에서
+      //   항상 false였다 — 지금까지 생성이 통과한 것은 느슨한 isOwner 브랜치
+      //   덕분이었고, 그 브랜치를 닫으면 생성 자체가 깨진다.
+      //
+      //   소유권 검증을 뺀 대신 다음 세 가지로 경계를 세운다:
+      //     · oldIds ⊆ newIds — 기존 항목을 하나도 지울 수 없다
+      //     · size == old + 1 — 한 번에 하나만, 교체도 불가
+      //     · old.size() < 5  — 쿼터를 쓰기 시점에도 강제(businesses create와 이중)
+      //   임의 businessId를 넣어도 **배열이 길어질 뿐**이라 쿼터는 조여지기만 한다.
+      //   그리고 이 필드는 더 이상 어떤 인가 판단에도 쓰이지 않는다
+      //   (CF는 businesses.adminIds / members.permissions를 ground truth로 본다).
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        isBusinessAdmin() &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['managedBusinessIds']) &&
+                       request.resource.data.managedBusinessIds.hasAll(
+                         resource.data.get('managedBusinessIds', [])) &&
                        request.resource.data.managedBusinessIds.size() ==
                          resource.data.get('managedBusinessIds', []).size() + 1 &&
-                       isAdminOf(request.resource.data.managedBusinessIds
-                         .removeAll(resource.data.get('managedBusinessIds', []))[0]);
+                       resource.data.get('managedBusinessIds', []).size() < 5 &&
+                       request.resource.data.managedBusinessIds
+                         .removeAll(resource.data.get('managedBusinessIds', []))[0] is string &&
+                       request.resource.data.managedBusinessIds
+                         .removeAll(resource.data.get('managedBusinessIds', []))[0].size() > 0;
 
       // 회원가입(본인) 또는 관리자 더미 데이터 생성
       // [RULE-01] 더미 생성 시 민감 필드 차단 — role/isBlacklisted/sealBase64 등 초기값으로 심으면

@@ -14964,11 +14964,18 @@ export const callableFinalizeForeignIdentity = onCall(
       const {
         rawForeignId,
         legalName: legalNameRaw,
+        koreanName: koreanNameRaw,
         visaType: visaTypeRaw,
         stayExpiryDate: stayExpiryDateRaw,
       } = request.data as {
         rawForeignId?: string;
         legalName?: string;   // OCR + 사용자 확인 공식 이름
+        // [R8-P3B.3B] koreanName — 사용자가 직접 입력하는 한국식 이름(표시용).
+        //   legalName(등록증 공식 이름)과 완전히 별개이고 서로 덮어쓰지 않는다.
+        //   displayName getter가 koreanName → legalName → name 순으로 본다.
+        //   이전에는 클라이언트가 users 문서에 직접 쓰려 했으나
+        //   [PII-B4-R1.4.3] denylist에 막혀 **항상 실패**하고 있었다.
+        koreanName?: string;
         visaType?: string;    // 체류자격 (E-9, F-4 등)
         stayExpiryDate?: string; // 체류기간만료일 ISO8601 (YYYY-MM-DD)
       };
@@ -15114,6 +15121,34 @@ export const callableFinalizeForeignIdentity = onCall(
       }
       const foreignTaxRef = db.collection(TAX_ID_COL).doc(uid);
 
+      // [R8-P3B.3B] 사용자 확인 프로필 값 — 이름 축과 체류 정보.
+      //   트랜잭션 **밖에서** 한 번만 만든다. 이유는 두 갈래 모두 같은 값을 써야 하기 때문이다:
+      //     · 신규 fingerprint 등록 경로
+      //     · 같은 uid가 다시 호출한 멱등 경로 (아래)
+      //   멱등 경로가 이전에는 아무것도 쓰지 않고 return했다. 그래서 재개 가입
+      //   (RegistrationRecoveryScreen)에서 이름을 다시 입력해도 저장되지 않았다.
+      //   기존 legalName 검증 계약(trim + 100자)을 그대로 쓴다 — 새 규칙을 만들지 않는다.
+      const stayExpiryTs: admin.firestore.Timestamp | undefined = (() => {
+        if (!stayExpiryDateRaw) return undefined;
+        const parsed = new Date(stayExpiryDateRaw);
+        if (isNaN(parsed.getTime())) return undefined;
+        return admin.firestore.Timestamp.fromDate(parsed);
+      })();
+      const srvTrimmedName = (v: unknown): string | null => {
+        if (typeof v !== "string") return null;
+        const t = v.trim();
+        return t.length > 0 ? t.slice(0, 100) : null;
+      };
+      const legalNameValue = srvTrimmedName(legalNameRaw);
+      const koreanNameValue = srvTrimmedName(koreanNameRaw);
+      const foreignProfilePatch: Record<string, unknown> = {
+        ...(legalNameValue ? {legalName: legalNameValue} : {}),
+        ...(koreanNameValue ? {koreanName: koreanNameValue} : {}),
+        ...(visaTypeRaw ? {visaType: String(visaTypeRaw).trim().slice(0, 20)} : {}),
+        ...(stayExpiryTs ? {stayExpiryDate: stayExpiryTs} : {}),
+      };
+      const hasForeignProfilePatch = Object.keys(foreignProfilePatch).length > 0;
+
       _diagStage = "FINALIZE_STAGE_TRANSACTION_START";
       console.info(`[finalize] ${_diagStage} | taxWrite=${!!foreignTaxEnc}`);
       await db.runTransaction(async (tx) => {
@@ -15124,8 +15159,18 @@ export const callableFinalizeForeignIdentity = onCall(
         if (fpSnap.exists) {
           const existingUid = fpSnap.data()?.uid as string | undefined;
           if (existingUid === uid) {
-            // 동일 UID 재호출 — 멱등(idempotent): 이미 완료 상태, 아무 작업 없음
-            console.info(`[finalize] TRANSACTION idempotent — fingerprint already owned by same uid`);
+            // 동일 UID 재호출 — 멱등(idempotent): 신원(fingerprint)은 이미 확정됐다.
+            // [R8-P3B.3B] 다만 사용자 확인 프로필 값은 여기서도 반영한다.
+            //   재개 가입에서 이름을 다시 입력한 경우, 이 갈래로 들어오면
+            //   예전에는 아무것도 저장되지 않고 끝났다.
+            //   신원 파생 값(fingerprint/birthDate/gender/identityBasis)은
+            //   이미 확정된 것을 다시 쓰지 않는다 — 프로필 필드만 갱신한다.
+            if (hasForeignProfilePatch) {
+              tx.update(userRef, foreignProfilePatch);
+              console.info("[finalize] TRANSACTION idempotent — 프로필 필드만 갱신");
+            } else {
+              console.info("[finalize] TRANSACTION idempotent — fingerprint already owned by same uid");
+            }
             return;
           }
           // 다른 UID가 선점 → 중복 등록
@@ -15137,14 +15182,6 @@ export const callableFinalizeForeignIdentity = onCall(
           role,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        // [V3] stayExpiryDate 파싱
-        let stayExpiryTs: admin.firestore.Timestamp | admin.firestore.FieldValue | undefined;
-        if (stayExpiryDateRaw) {
-          const parsed = new Date(stayExpiryDateRaw);
-          if (!isNaN(parsed.getTime())) {
-            stayExpiryTs = admin.firestore.Timestamp.fromDate(parsed);
-          }
-        }
         tx.update(userRef, {
           foreignIdentityFingerprint: fingerprint,
           // [V3] 서버 재계산 생년월일 저장 (클라이언트 birthDate 덮어쓰기)
@@ -15155,12 +15192,9 @@ export const callableFinalizeForeignIdentity = onCall(
           // [PII-B4-R1.4.3] 이 두 값은 서버가 등록번호에서 직접 파생했다.
           //   그 사실을 표시로 남겨 세무 대조의 기준으로 쓸 수 있게 한다.
           ...(serverGender ? srvIdentityBasisPatch(IDENTITY_BASIS_FOREIGN) : {}),
-          // [V3] 외국인등록증에서 추출한 공식 이름 (OCR + 사용자 확인)
-          ...(legalNameRaw ? {legalName: String(legalNameRaw).trim().slice(0, 100)} : {}),
-          // [V3] 체류자격 (E-9, F-4 등)
-          ...(visaTypeRaw ? {visaType: String(visaTypeRaw).trim().slice(0, 20)} : {}),
-          // [V3] 체류기간만료일
-          ...(stayExpiryTs ? {stayExpiryDate: stayExpiryTs} : {}),
+          // [V3] 등록증 공식 이름(legalName) · 한국식 이름(koreanName) · 체류 정보.
+          //   [R8-P3B.3B] 멱등 경로와 같은 값을 쓰도록 위에서 한 번만 만든다.
+          ...foreignProfilePatch,
           // [PII-B4-R1.4] 전체번호는 users에 두지 않는다 — taxIdentities로 간다.
         });
         // [§23·§24] 신원·uniqueness·세무가 같은 커밋에서 같은 사람을 말한다.
@@ -17161,10 +17195,15 @@ export const callableGetBankbookSignedUrl = onCall(
 
     // 2. [CROSS-DOMAIN-R5.2A] 대상 사업장 인가 — 지원서를 읽기 **전에**.
     //   canonical source는 businesses 문서(ownerId/adminIds)와 users의
-    //   managedBusinessIds/subAdminBusinessIds다. users.businessId 단독 판정 금지.
+    //   subAdminBusinessIds다. users.businessId 단독 판정 금지.
+    //
+    // [R8-P3B.3B] managedBusinessIds를 인가 근거에서 제거했다.
+    //   이 필드는 클라이언트가 직접 쓰는 값이다(사업장 생성 시 +1).
+    //   이 파일의 다른 곳들은 이미 [H-1]/[HIGH-04-FIX]로 "client-tainted"라 적고
+    //   businesses.adminIds를 ground truth로 쓰고 있는데, 여기 한 곳만 남아 있었다.
+    //   소속 판정은 businesses 문서와 subAdmin 배정으로 충분하다.
+    //   (실제 열람 게이트는 아래 canManageWage가 members 문서로 한 번 더 본다.)
     const callerBizId = claimedBizId;
-    const callerManagedBizIds =
-      (callerData.managedBusinessIds as string[] | undefined) ?? [];
     const allSubBizIds = [...new Set([
       ...callerSubAdminBizIds,
       ...(callerSubAdminOf ? [callerSubAdminOf] : []),
@@ -17172,7 +17211,6 @@ export const callableGetBankbookSignedUrl = onCall(
     // users 쪽 배정 필드 — businesses 문서와 함께 봐서, 어느 한쪽만 갱신된
     // 과도기에도 소유자가 자기 사업장에서 막히지 않게 한다.
     const claimedByCallerFields =
-      callerManagedBizIds.includes(callerBizId) ||
       allSubBizIds.includes(callerBizId) ||
       (callerBusinessId !== undefined && callerBusinessId === callerBizId);
 

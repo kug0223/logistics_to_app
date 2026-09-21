@@ -703,10 +703,17 @@ class AuthService {
   Future<String?> finalizeForeignIdentity(
     String rawForeignId, {
     String? legalName,
+    String? koreanName,
     String? visaType,
   }) async {
     final payload = <String, dynamic>{'rawForeignId': rawForeignId};
     if (legalName != null && legalName.isNotEmpty) payload['legalName'] = legalName;
+    // [R8-P3B.3B] koreanName은 여기서만 저장된다.
+    //   이전에는 화면이 users 문서에 직접 update를 날렸는데,
+    //   [PII-B4-R1.4.3] denylist('name','legalName','koreanName')에 막혀
+    //   **항상 PERMISSION_DENIED**였고 catch가 조용히 삼켰다.
+    //   그래서 재개 가입에서 한국식 이름이 영영 저장되지 않았다.
+    if (koreanName != null && koreanName.isNotEmpty) payload['koreanName'] = koreanName;
     if (visaType != null && visaType.isNotEmpty) payload['visaType'] = visaType;
     // [DEBUG] CF 호출 직전 상태 확인
     final currentUid = _auth.currentUser?.uid;
@@ -714,7 +721,7 @@ class AuthService {
     // [PII-B4-R1.3A] maskedId(앞 8자리)·legalName·visaType 제거.
     //   진단에 필요한 것은 "번호가 왔는가 / 길이가 맞는가"이지 번호가 아니다.
     //   debugPrint는 릴리스에서 살아남으므로 값을 만들지 않는다. (§3·§4)
-    debugPrint('🔷 [finalize] CF 호출 시작 | uid=$currentUid | idLen=$idLen | hasLegalName=${legalName != null && legalName.isNotEmpty} | hasVisaType=${visaType != null && visaType.isNotEmpty}');
+    debugPrint('🔷 [finalize] CF 호출 시작 | uid=$currentUid | idLen=$idLen | hasLegalName=${legalName != null && legalName.isNotEmpty} | hasKoreanName=${koreanName != null && koreanName.isNotEmpty} | hasVisaType=${visaType != null && visaType.isNotEmpty}');
     try {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableFinalizeForeignIdentity',

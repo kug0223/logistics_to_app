@@ -141,11 +141,31 @@ void main() {
               'if (callerBusinessId === appBusinessId) {'),
           false,
           reason: '소유자는 businessId가 비어 있을 수 있다');
+    });
+
+    // [R8-P3B.3B] 기대값 반전 — managedBusinessIds는 인가 근거가 아니다.
+    //
+    //   이 배열은 클라이언트가 직접 쓰는 값이다(사업장 생성 시 +1).
+    //   이 파일의 다른 CF들은 이미 [H-1]/[HIGH-04-FIX]로 "client-tainted"라 적고
+    //   businesses.adminIds를 ground truth로 쓰고 있었는데, 통장사본 경로 한 곳만
+    //   배정 source로 남아 있었다.
+    //
+    //   빼도 소유자가 막히지 않는다 — stillMember의 첫 줄이 bizOwnerId === callerUid다.
+    //   businessId가 비어 있는 소유자를 구제하는 것은 그 조건이지 이 배열이 아니었다.
+    test('managedBusinessIds를 인가 근거로 쓰지 않는다', () {
       expect(
           bankbook.contains('const callerManagedBizIds = '
               '(callerData.managedBusinessIds as string[] | undefined) ?? [];'),
+          false,
+          reason: '클라이언트가 쓰는 값이라 배정 근거가 될 수 없다');
+      expect(
+          bankbook.contains('callerManagedBizIds.includes(callerBizId)'),
+          false);
+      expect(
+          bankbook.contains('const claimedByCallerFields = '
+              'allSubBizIds.includes(callerBizId) ||'),
           true,
-          reason: 'canonical 배정 source를 함께 본다');
+          reason: '남는 배정 source는 subAdmin 배정과 users.businessId 뿐이다');
     });
 
     test('businesses 문서의 owner/adminIds가 판정에 들어간다', () {

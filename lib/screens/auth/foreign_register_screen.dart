@@ -454,6 +454,9 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
     final rawId = _rawForeignIdCtrl.text.trim().replaceAll(RegExp(r'\D'), '');
     final legalName = _legalNameCtrl.text.trim();
+    // [R8-P3B.3B] 한국식 이름은 finalizeForeignIdentity(CF)로 넘겨 저장한다.
+    //   users 문서 직접 update는 [PII-B4-R1.4.3] denylist에 막혀 항상 실패했다.
+    final koreanName = _koreanNameCtrl.text.trim();
     final visaType = _visaTypeCtrl.text.trim();
     final imagePath = _imagePath;
 
@@ -500,10 +503,17 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       //    fingerprint가 없으면 finalizeForeignIdentity 호출
       //    fingerprint가 있으면 이미 완료 — skip (idempotent 보장)
       bool hasFingerprint = false;
+      // [R8-P3B.3B] 같은 읽기에서 koreanName도 같이 본다 — 추가 왕복 없음.
+      //   fingerprint가 이미 있으면 신원은 확정된 것이라 finalize를 건너뛰었는데,
+      //   그러면 사용자가 이번에 입력한 한국식 이름이 어디에도 저장되지 않는다.
+      //   (예전에는 그 자리를 users 직접 update가 메우려 했고, 그건 항상 실패했다.)
+      //   저장할 이름이 실제로 달라졌을 때만 finalize를 부른다.
+      String? storedKoreanName;
       try {
         final docSnap = await FirebaseFirestore.instance
             .collection('users').doc(uid).get();
         hasFingerprint = docSnap.data()?['foreignIdentityFingerprint'] != null;
+        storedKoreanName = docSnap.data()?['koreanName'] as String?;
       } catch (e) {
         debugPrint('⚠️ [ForeignReg resume] Firestore 읽기 실패 — finalize 시도: $e');
         // 읽기 실패 시 finalize 호출로 폴백 (CF 내부에서 중복 방지)
@@ -511,10 +521,14 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
       if (!mounted) return;
 
-      if (!hasFingerprint) {
+      final koreanNameNeedsSave =
+          koreanName.isNotEmpty && koreanName != storedKoreanName;
+
+      if (!hasFingerprint || koreanNameNeedsSave) {
         final finalizeErr = await AuthService().finalizeForeignIdentity(
           rawId,
           legalName: legalName.isNotEmpty ? legalName : null,
+          koreanName: koreanName.isNotEmpty ? koreanName : null,
           visaType: visaType.isNotEmpty ? visaType : null,
         );
         if (!mounted) return;
@@ -549,18 +563,12 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         try { await File(imagePath).delete(); } catch (_) {}
       }
 
-      // [V3 BUG-FIX] koreanName 저장 — isResume 흐름에서 signUp()을 호출하지 않으므로
-      //   koreanName이 Firestore에 기록되지 않는 누락 버그 수정.
-      //   displayName getter(koreanName ?? legalName ?? name)가 올바르게 동작하려면 필수.
-      final koreanNameResume = _koreanNameCtrl.text.trim();
-      if (koreanNameResume.isNotEmpty) {
-        try {
-          await FirebaseFirestore.instance
-              .collection('users').doc(uid).update({'koreanName': koreanNameResume});
-        } catch (e) {
-          debugPrint('⚠️ [ForeignReg resume] koreanName 저장 실패 (치명적 아님): $e');
-        }
-      }
+      // [R8-P3B.3B] koreanName 직접 write 제거.
+      //   여기 있던 users 문서 update는 [PII-B4-R1.4.3] denylist('koreanName')에
+      //   막혀 **한 번도 성공한 적이 없다**. try/catch가 "치명적 아님"으로 삼켜서
+      //   실패가 드러나지 않았고, 고치려던 버그(재개 가입에서 한국식 이름 누락)는
+      //   그대로 남아 있었다. 게다가 매번 실패하는 왕복이 한 번 더 붙었다.
+      //   이제 위 finalizeForeignIdentity(CF)가 저장한다 — 왕복은 1회 줄었다.
 
       if (!mounted) return;
       setState(() => _isBusy = false);
@@ -671,6 +679,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         final finalizeErr = await AuthService().finalizeForeignIdentity(
           rawId,
           legalName: legalName.isNotEmpty ? legalName : null,
+          koreanName: koreanName.isNotEmpty ? koreanName : null,
           visaType: visaType.isNotEmpty ? visaType : null,
         );
         if (!mounted) return;
@@ -774,6 +783,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       final finalizeErr = await AuthService().finalizeForeignIdentity(
         rawId,
         legalName: legalName.isNotEmpty ? legalName : null,
+        koreanName: koreanName.isNotEmpty ? koreanName : null,
         visaType: visaType.isNotEmpty ? visaType : null,
       );
       if (!mounted) return;
@@ -807,15 +817,8 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         try { await File(imagePath).delete(); } catch (_) {}
       }
 
-      // ── koreanName 저장 ───────────────────────────────────────
-      if (koreanName.isNotEmpty) {
-        try {
-          await FirebaseFirestore.instance
-              .collection('users').doc(uid).update({'koreanName': koreanName});
-        } catch (e) {
-          debugPrint('⚠️ [ForeignReg commit] koreanName 저장 실패 (치명적 아님): $e');
-        }
-      }
+      // [R8-P3B.3B] koreanName 직접 write 제거 — 위 finalizeForeignIdentity(CF)가 저장한다.
+      //   여기 있던 update는 denylist에 막혀 항상 실패했고, 실패 왕복만 한 번 더 붙었다.
     }
 
     // ── region + terms → active (fresh + retry 공통) ─────────────
