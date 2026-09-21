@@ -142,3 +142,25 @@ export async function seedCommonFixtures(env: RulesTestEnvironment) {
     canManageContract: true,
   });
 }
+
+// ─────────────────────────────────────────────────────────────
+// [R8-P5.3] Storage Rules 테스트 환경 (§34 §35)
+//
+//   storage.rules 에는 회귀 스위트가 없었다. 그 사이 2026-07-17 의
+//   보안 수정이 두 달 넘게 배포되지 않았고, 아무도 알아차리지 못했다.
+//   R8-P5.2 의 런타임 probe 를 여기로 옮겨 고정한다.
+// ─────────────────────────────────────────────────────────────
+const STORAGE_HOST = '127.0.0.1';
+const STORAGE_PORT = 6061;
+const STORAGE_RULES_PATH = path.resolve(__dirname, '../../../storage.rules');
+
+export async function createStorageTestEnv(): Promise<RulesTestEnvironment> {
+  return initializeTestEnvironment({
+    projectId: PROJECT_ID,
+    storage: {
+      host: STORAGE_HOST,
+      port: STORAGE_PORT,
+      rules: fs.readFileSync(STORAGE_RULES_PATH, 'utf8'),
+    },
+  });
+}

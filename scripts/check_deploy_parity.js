@@ -169,6 +169,31 @@ function slice(file) {
     drift.push({what: name, kind: 'DEPLOY MISSING'});
   }
 
+  // ── 3. 실제로 트래픽을 받는 revision ────────────────────────
+  //   [R8-P5.3] 여기가 처음엔 빠져 있었다. 함수 메타데이터가 새 artifact 를 가리켜도
+  //   새 revision 이 기동에 실패하면 Cloud Run 은 옛 revision 을 계속 서빙한다.
+  //   2026-09-21 전체 배포에서 리전 CPU 쿼터로 21개가 그 상태가 됐고,
+  //   artifact 만 봤을 때는 전부 일치로 보였다.
+  console.log('── Cloud Run revision');
+  let rpage = ''; const services = [];
+  do {
+    const r = await getJson('run.googleapis.com',
+        `/v2/projects/${PROJECT}/locations/asia-northeast3/services?pageSize=100${rpage}`, tok);
+    (r.services || []).forEach((s) => services.push(s));
+    rpage = r.nextPageToken ? '&pageToken=' + r.nextPageToken : '';
+  } while (rpage);
+  let stale = 0;
+  for (const s of services) {
+    const svc = s.name.split('/').pop();
+    const created = (s.latestCreatedRevision || '').split('/').pop();
+    const ready = (s.latestReadyRevision || '').split('/').pop();
+    if (!created || !ready || created === ready) continue;
+    const fn = (ours.find((f) => f.runServiceId === svc) || {}).id || svc;
+    drift.push({what: fn, kind: 'STALE REVISION', detail: `서빙중 ${ready} / 최신 ${created}`});
+    stale++;
+  }
+  console.log(`   서비스 ${services.length}개 / 옛 revision 서빙 ${stale}개`);
+
   console.log(`   검사 ${ours.length}개 / drift ${drift.length}개`);
   if (drift.length) {
     console.log('\n배포본이 HEAD 와 다릅니다:');

@@ -19572,7 +19572,16 @@ export const callableDecrementSlotConfirmed = onCall(
         return;
       }
       // 음수 방지: totalConfirmed가 이미 0 이하이면 중단
-      const toSnap = await tx.get(toRef);
+      // [R8-P5.3] 슬롯 읽기를 여기로 올렸다.
+      //   아래 tx.update(toRef) 뒤에서 읽고 있었다. Firestore 트랜잭션은 모든 읽기가
+      //   모든 쓰기보다 앞서야 하므로, totalConfirmed > 0 이고 slotId 가 있는 경우
+      //   — 즉 flex 공고에서 확정을 취소하는 정상 경로 — 가 항상 INTERNAL 로 죽었다.
+      //   totalConfirmed 가 0 이면 그 앞에서 return 해 버려서 드러나지 않았다.
+      const slotRef = slotId ? toRef.collection("slots").doc(slotId) : null;
+      const [toSnap, slotSnap] = await Promise.all([
+        tx.get(toRef),
+        slotRef ? tx.get(slotRef) : Promise.resolve(null),
+      ]);
       const currentConfirmed = (toSnap.data()?.totalConfirmed as number) ?? 0;
       if (currentConfirmed <= 0) {
         tx.update(freshAppRef, {confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp()});
@@ -19590,10 +19599,8 @@ export const callableDecrementSlotConfirmed = onCall(
         }
       }
       tx.update(toRef, toUpdate);
-      if (slotId) {
-        const slotRef = toRef.collection("slots").doc(slotId);
+      if (slotRef && slotSnap) {
         // [L-1] 슬롯 레벨 음수 방어 — TO 레벨 체크와 독립적으로 슬롯도 보호
-        const slotSnap = await tx.get(slotRef);
         const slotConfirmedCount = (slotSnap.data()?.confirmedCount as number) ?? 0;
         if (slotConfirmedCount > 0) {
           // [Phase 8.1E.2D] new-schema slot + wdId resolve 실패 → aggregate-only mutation 금지
