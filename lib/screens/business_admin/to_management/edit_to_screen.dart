@@ -607,18 +607,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   /// 화면을 닫으면 함께 사라진다 — 전역 캐시로 승격하지 않는다.
   Future<List<Map<String, dynamic>>> _fetchApplications() async {
     // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
-    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetApplicationsByBiz',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-    final result = await callable.call<Map<String, dynamic>>({
+    // [R8-P7.1] cap 에서 잘린 것을 전부로 오해하지 않도록 페이징 헬퍼 경유.
+    return fetchApplicationsByBizPaged({
       'businessId': widget.to.businessId,
       'toId': widget.to.id,
       'limit': 2000,
-    });
-    return (result.data['applications'] as List? ?? [])
-        .whereType<Map>()
-        .map((m) => Map<String, dynamic>.from(m))
-        .toList();
+    }, timeout: const Duration(seconds: 15));
   }
 
   /// 서버가 지원서를 업무에 매칭하는 세 가지 방식을 그대로 따른다.

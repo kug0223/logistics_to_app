@@ -8,6 +8,8 @@ import '../models/core/review_request_model.dart';
 import '../models/settings/trust_settings_model.dart';
 import '../utils/firestore_helper.dart';
 import '../utils/network_checker.dart';
+// [R8-P7.1] fetchApplicationsByBizPaged — 지원서 조회가 cap 에서 조용히 잘리지 않게 한다.
+import 'firestore_service.dart';
 
 /// 리뷰 커서 기반 페이지네이션 결과
 ///
@@ -538,29 +540,33 @@ class MonthlyReviewService {
       final monthEndExclusive = DateTime(year, month + 1, 1);
 
       // 3종 CF 병렬 호출
-      final allResults = await Future.wait([
-        _fn.httpsCallable('callableGetApplicationsByBiz')
-            .call({'businessId': businessId, 'status': AppStatus.confirmed, 'limit': 500}),
-        _fn.httpsCallable('callableGetApplicationsByBiz')
-            .call({'businessId': businessId, 'status': AppStatus.contractPending, 'limit': 500}),
-        _fn.httpsCallable('callableGetMonthlyReviewsByBiz')
-            .call({
-              'businessId': businessId,
-              'reviewType': ReviewType.ADMIN_TO_USER.name,
-              'reviewYear': year,
-              'reviewMonth': month,
-            }),
+      // [R8-P7.1] 지원서 조회는 페이징 헬퍼 경유 — limit 500 에서 잘린 것을
+      //   전부로 보면 월간 리뷰 대상자가 말없이 빠진다.
+      final appsFuture = Future.wait([
+        fetchApplicationsByBizPaged(
+            {'businessId': businessId, 'status': AppStatus.confirmed, 'limit': 500}),
+        fetchApplicationsByBizPaged(
+            {'businessId': businessId, 'status': AppStatus.contractPending, 'limit': 500}),
       ]);
+      final reviewFuture = _fn.httpsCallable('callableGetMonthlyReviewsByBiz')
+          .call({
+            'businessId': businessId,
+            'reviewType': ReviewType.ADMIN_TO_USER.name,
+            'reviewYear': year,
+            'reviewMonth': month,
+          });
+      final appPages = await appsFuture;
+      final reviewResult = await reviewFuture;
 
       // 지원서 원시 맵 파싱 (parseTimestampNullable로 {_seconds,_nanoseconds} 처리)
       final List<Map<String, dynamic>> allAppMaps = [];
-      for (final res in allResults.sublist(0, 2)) {
-        final list = (res.data['applications'] as List? ?? []).whereType<Map>();
+      for (final res in appPages) {
+        final list = res.whereType<Map>();
         allAppMaps.addAll(list.map((e) => Map<String, dynamic>.from(e)));
       }
 
       // 이미 리뷰된 targetUserId 집합
-      final rawReviews = (allResults[2].data['reviews'] as List? ?? []).whereType<Map>().toList();
+      final rawReviews = (reviewResult.data['reviews'] as List? ?? []).whereType<Map>().toList();
       final reviewedUserIds = rawReviews
           .map((d) => d['targetUserId'] as String?)
           .whereType<String>()

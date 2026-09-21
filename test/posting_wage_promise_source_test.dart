@@ -345,8 +345,9 @@ void main() {
       expect(body.contains('httpsCallable'), false);
       expect(body.contains('FirebaseFirestore'), false);
       final code = _codeOf(_src(_editPath));
-      expect("httpsCallable('callableGetApplicationsByBiz'".allMatches(code).length,
-          1);
+      // [R8-P7.1] 직접 호출이 페이징 헬퍼로 바뀌었다. 세는 대상만 옮긴다 —
+      //   조회 지점이 하나뿐이라는 계약은 그대로다.
+      expect("fetchApplicationsByBizPaged(".allMatches(code).length, 1);
     });
 
     test('06-c 틀린 문구가 제거됐다 (§10)', () {

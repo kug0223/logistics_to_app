@@ -224,12 +224,13 @@ void main() {
     test('01-e 새 callable / 새 Firestore query를 만들지 않았다 (§6)', () {
       final body = _codeOf(_bodyOf(
           _src(_editPath), 'Future<List<Map<String, dynamic>>> _fetchApplications('));
-      expect(body.contains("'callableGetApplicationsByBiz'"), true);
+      expect(body.contains("fetchApplicationsByBizPaged("), true);
       expect(body.contains('FirebaseFirestore.instance'), false);
       expect(body.contains('.collection('), false);
       // 원본 조회 지점은 파일 전체에서 하나뿐 — 두 경로가 같은 fetch를 공유한다
       final code = _codeOf(_src(_editPath));
-      expect("httpsCallable('callableGetApplicationsByBiz'".allMatches(code).length, 1);
+      // [R8-P7.1] 직접 호출 → 페이징 헬퍼. 조회 지점 1개 계약은 유지된다.
+      expect("fetchApplicationsByBizPaged(".allMatches(code).length, 1);
     });
 
     test('01-f 화면을 닫으면 사라지는 세션 상태다 (§16)', () {

@@ -1304,14 +1304,12 @@ class FirestoreService {
   /// 퇴사 신청 목록 조회 (resignStatus == PENDING) — CF 경유, 보안 규칙 우회
   Future<List<ApplicationModel>> getResignRequests(String businessId) async {
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz');
-      final result = await callable.call({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'resignStatus': AppStatus.pending,
         'limit': 200,
       });
-      final raw = (result.data['applications'] as List? ?? []).whereType<Map>().toList();
+      final raw = (result).whereType<Map>().toList();
       final apps = raw.map((e) {
         final hydrated = _cfHydrate(Map<String, dynamic>.from(e));
         final id = hydrated.remove('id') as String? ?? '';
@@ -1345,29 +1343,24 @@ class FirestoreService {
       
       // [CF-FIX] uid + businessId 다중 equality 쿼리 → PERMISSION_DENIED 우회
       // callableGetApplicationsByBiz (Admin SDK)로 교체
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz');
       // [PERF] applications + reviews 두 CF 호출 병렬화
       final reviewCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetMonthlyReviewsForUser',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final parallelResults = await Future.wait([
-        callable.call({
-          'businessId': businessId,
-          'uid': userId,
-          if (purpose != null) 'purpose': purpose,
-        }),
-        reviewCallable.call<Map<String, dynamic>>({
-          'targetUserId': userId,
-          'businessId': businessId,
-          'reviewType': 'ADMIN_TO_USER',
-          'publishedOnly': true,
-          'limit': 5,
-        }),
-      ]);
-      final cfResult = parallelResults[0];
-      final reviewResult = parallelResults[1] as HttpsCallableResult<Map<String, dynamic>>;
-      final rawApps = (cfResult.data['applications'] as List? ?? []).whereType<Map>().toList();
+      final appsFuture = fetchApplicationsByBizPaged({
+        'businessId': businessId,
+        'uid': userId,
+        if (purpose != null) 'purpose': purpose,
+      });
+      final reviewFuture = reviewCallable.call<Map<String, dynamic>>({
+        'targetUserId': userId,
+        'businessId': businessId,
+        'reviewType': 'ADMIN_TO_USER',
+        'publishedOnly': true,
+        'limit': 5,
+      });
+      final rawApps = (await appsFuture).whereType<Map>().toList();
+      final reviewResult = await reviewFuture;
 
       if (rawApps.isEmpty) {
         return {

@@ -81,6 +81,52 @@ class ApplyResult {
 // 지원서 관리 (Application Management) — slots 구조 기반
 // ═══════════════════════════════════════════════════════════
 
+/// callableGetApplicationsByBiz 를 **끝까지** 읽는다.
+///
+///   [R8-P7.1] 예전에는 호출부마다 `limit: 2000` 을 넘기고 돌아온 만큼을
+///   전부라고 여겼다. 서버는 cap 에서 조용히 잘랐고, 잘린 것과 그게 전부인 것을
+///   구분할 방법이 없었다. 지원서가 cap 을 넘는 사업장에서는 나머지가
+///   말없이 사라진다 — 관리자 화면에서는 "지원자가 없다"와 같은 모양이다.
+///
+///   이제 서버가 hasMore / lastDocId 를 준다. 이 함수만 거치면
+///   호출부가 그 신호를 무시할 수 없다.
+///
+///   [maxPages] 를 다 쓰고도 더 남아 있으면 **던진다**. 조용히 자르는 것을
+///   없애려는 함수가 스스로 조용히 자르면 안 된다.
+Future<List<Map<String, dynamic>>> fetchApplicationsByBizPaged(
+  Map<String, dynamic> params, {
+  int maxPages = 50,
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+
+  final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      .httpsCallable('callableGetApplicationsByBiz',
+          options: HttpsCallableOptions(timeout: timeout));
+
+  final out = <Map<String, dynamic>>[];
+  String? cursor;
+  for (var page = 0; page < maxPages; page++) {
+    final result = await callable.call<Map<String, dynamic>>({
+      ...params,
+      if (cursor != null) 'startAfterDocId': cursor,
+    });
+    final data = result.data;
+    out.addAll((data['applications'] as List? ?? [])
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m)));
+
+    // 구버전 서버는 hasMore 를 모른다 — 없으면 더 없다고 본다(기존 동작).
+    if (data['hasMore'] != true) return out;
+    final next = data['lastDocId'] as String?;
+    if (next == null || next.isEmpty) return out;
+    cursor = next;
+  }
+  throw StateError(
+    'fetchApplicationsByBizPaged: $maxPages 페이지를 읽고도 남아 있다 '
+    '(${out.length}건 로드). 조회 범위를 좁혀야 한다.',
+  );
+}
+
 extension ApplicationFirestore on FirestoreService {
 
   // ───────────────────────────────────────────────────────
@@ -140,17 +186,14 @@ extension ApplicationFirestore on FirestoreService {
     }
     // 관리자 컨텍스트 — [CF 이전 2026-07-13] callableGetApplicationsByBiz
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'toId': toId,
         if (slotId != null && slotId.isNotEmpty) 'slotId': slotId,
         'limit': 2000,
       });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -176,17 +219,14 @@ extension ApplicationFirestore on FirestoreService {
   }) async {
     assert(businessId != null && businessId.isNotEmpty, 'getApplicationsBySlotId: businessId 필수');
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId ?? '',
         'toId': toId,
         'slotId': slotId,
         'limit': 2000,
       });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -260,15 +300,12 @@ extension ApplicationFirestore on FirestoreService {
     String businessId,
   ) async {
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'orderByAppliedAtDesc': true,
         'limit': 1000,
       });
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -278,8 +315,12 @@ extension ApplicationFirestore on FirestoreService {
           .whereType<ApplicationModel>()
           .toList();
     } catch (e) {
+      // [R8-P7.1] 예전에는 빈 목록을 돌려줬다. 이 조회는 고정 근무자 명단의
+      //   원천이다 — 실패를 "근무자 없음"으로 바꾸면 관리자가 명단이 비었다고
+      //   믿는다. 실제로 이 경로는 businessId+appliedAt 복합 인덱스가 없어
+      //   계속 INTERNAL 이었고, 그 사실이 빈 목록에 가려져 있었다.
       debugPrint('❌ 사업장별 지원서 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -1157,16 +1198,13 @@ extension ApplicationFirestore on FirestoreService {
     //   기기 local 자정으로 창을 만들면 UTC 기기에서 그 지원자가 창 밖으로 나간다.
     final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workDateGteMs': dateStart.millisecondsSinceEpoch,
         'workDateLtMs': dateEnd.millisecondsSinceEpoch,
         'limit': 2000,
       });
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -1191,16 +1229,13 @@ extension ApplicationFirestore on FirestoreService {
     //   9시간 밀려 KST 1일 근무가 빠지고 다음 달 1일이 끼어든다.
     final (monthStart, monthEnd) = FormatHelper.kstMonthRange(month);
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workDateGteMs': monthStart.millisecondsSinceEpoch,
         'workDateLtMs': monthEnd.millisecondsSinceEpoch,
         'limit': 2000,
       });
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -1240,17 +1275,14 @@ extension ApplicationFirestore on FirestoreService {
     required String businessId,
   }) async {
     final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
-    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetApplicationsByBiz',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-    final result = await callable.call<Map<String, dynamic>>({
+    final result = await fetchApplicationsByBizPaged({
       'businessId': businessId,
       'workDateGteMs': dateStart.millisecondsSinceEpoch,
       'workDateLtMs': dateEnd.millisecondsSinceEpoch,
       'limit': 2000,
       'purpose': 'applicantReview',
     });
-    return (result.data['applications'] as List? ?? [])
+    return (result)
         .whereType<Map>()
         .map((m) {
           final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -1275,15 +1307,12 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime fromDate,
   }) async {
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workEndDateGteMs': fromDate.millisecondsSinceEpoch,
         'limit': 200,
       });
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -1308,15 +1337,12 @@ extension ApplicationFirestore on FirestoreService {
   /// [PHASE-2A] 단기 전용 필터 제거 — SupportReviewQueueScreen과 semantics 일치
   Future<int> getAllPendingApplicationsCount(String businessId) async {
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({
+      final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'status': AppStatus.pending,
         'limit': 500,
       });
-      return (result.data['applications'] as List? ?? [])
+      return (result)
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -1366,25 +1392,22 @@ extension ApplicationFirestore on FirestoreService {
     final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
 
     {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final futures = await Future.wait([
-        callable.call<Map<String, dynamic>>({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workDateGteMs': dateStart.millisecondsSinceEpoch,
           'workDateLtMs': dateEnd.millisecondsSinceEpoch,
           'limit': 2000,
         }),
-        callable.call<Map<String, dynamic>>({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workEndDateGteMs': dateStart.millisecondsSinceEpoch,
           'limit': 2000,
         }),
       ]);
 
-      List<ApplicationModel> parseApps(HttpsCallableResult<Map<String, dynamic>> r) =>
-          (r.data['applications'] as List? ?? [])
+      List<ApplicationModel> parseApps(List<Map<String, dynamic>> r) =>
+          (r)
               .whereType<Map>()
               .map((m) {
                 final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -1493,28 +1516,25 @@ extension ApplicationFirestore on FirestoreService {
     final (rangeStart, _) = FormatHelper.kstDayRange(start);
     final (_, rangeEnd) = FormatHelper.kstDayRange(end);
 
-    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetApplicationsByBiz',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
     final futures = await Future.wait([
       // 단기: 보이는 범위 전체를 한 번에
-      callable.call<Map<String, dynamic>>({
+      fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workDateGteMs': rangeStart.millisecondsSinceEpoch,
         'workDateLtMs': rangeEnd.millisecondsSinceEpoch,
         'limit': 2000,
       }),
       // 장기: 범위 시작 이후 종료되는 계약 후보 (당일 조회와 같은 조건)
-      callable.call<Map<String, dynamic>>({
+      fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workEndDateGteMs': rangeStart.millisecondsSinceEpoch,
         'limit': 2000,
       }),
     ]);
 
-    List<ApplicationModel> parseApps(HttpsCallableResult<Map<String, dynamic>> r) =>
-        (r.data['applications'] as List? ?? [])
+    List<ApplicationModel> parseApps(List<Map<String, dynamic>> r) =>
+        (r)
             .whereType<Map>()
             .map((m) {
               final raw = _cfHydrate(Map<String, dynamic>.from(m));

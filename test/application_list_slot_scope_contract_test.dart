@@ -81,9 +81,10 @@ void main() {
     test('APLC-5 USER 경로 조회 실패를 빈 목록으로 바꾸지 않는다', () {
       final code = _codeOf(_read(appSvc));
       // 표지는 반드시 코드여야 한다 — _codeOf 가 주석 줄을 지운다.
+      // [R8-P7.1] 관리자 경로가 페이징 헬퍼로 바뀌어 끝 표지를 옮겼다.
       final body = _flat(_slice(code,
           "httpsCallable('callableGetMyApplications'",
-          "httpsCallable('callableGetApplicationsByBiz'"));
+          'fetchApplicationsByBizPaged({'));
       expect(body.contains('rethrow'), isTrue,
           reason: '조회 실패를 "지원 내역 없음"으로 표시하면 안 된다');
       expect(body.contains('return [];'), isFalse,

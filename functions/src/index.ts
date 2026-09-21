@@ -21296,6 +21296,7 @@ export const callableGetApplicationsByBiz = onCall(
       workEndDateGteMs, workEndDateLtMs,
       orderByAppliedAtDesc,
       limit: rawLimit,
+      startAfterDocId,
       purpose,
     } = (request.data ?? {}) as {
       businessId?: string; toId?: string; slotId?: string;
@@ -21305,6 +21306,7 @@ export const callableGetApplicationsByBiz = onCall(
       workEndDateGteMs?: number; workEndDateLtMs?: number;
       orderByAppliedAtDesc?: boolean;
       limit?: number;
+      startAfterDocId?: string;
       purpose?: string;
     };
 
@@ -21421,11 +21423,32 @@ export const callableGetApplicationsByBiz = onCall(
     if (orderByAppliedAtDesc === true)
       q = q.orderBy("appliedAt", "desc");
 
-    q = q.limit(cap);
+    // [R8-P7.1] cap 에서 조용히 자르지 않는다.
+    //   이전에는 딱 cap 만큼 돌려주고 끝이라, 잘린 것과 그게 전부인 것을
+    //   호출부가 구분할 수 없었다. cap+1 을 읽어 더 있는지 확인하고
+    //   hasMore / lastDocId 로 알린다 — callableGetMyApplications 와 같은 계약이다.
+    //   정렬은 Firestore 가 __name__ 을 tie-breaker 로 붙여 주므로
+    //   orderBy 유무와 무관하게 cursor 위치가 안정적이다.
+    q = q.limit(cap + 1);
+    if (startAfterDocId && typeof startAfterDocId === "string") {
+      const cursorSnap = await db.collection("applications")
+        .doc(startAfterDocId).get();
+      // businessId 필터가 이미 걸려 있어 타 사업장 문서가 새어 나올 수는 없다.
+      // 소속을 확인하는 것은 의미 없는 위치 지정을 거부하기 위해서다.
+      const cursorBiz = cursorSnap.data()?.["businessId"];
+      if (!cursorSnap.exists || cursorBiz !== businessId) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 cursor입니다.");
+      }
+      q = q.startAfter(cursorSnap);
+    }
     const snap = await q.get();
+    const hasMore = snap.docs.length > cap;
+    const pageDocs = hasMore ? snap.docs.slice(0, cap) : snap.docs;
 
     return {
-      applications: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      applications: pageDocs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      hasMore,
+      lastDocId: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null,
     };
   }
 );

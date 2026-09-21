@@ -215,28 +215,24 @@ extension AttendanceFirestore on FirestoreService {
 
       debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
 
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-
       final results = await Future.wait([
         // 1. 오늘 단기 근무 (workDate == today)
-        callable.call<Map<String, dynamic>>({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workDateGteMs': todayStart.millisecondsSinceEpoch,
           'workDateLtMs': todayEnd.millisecondsSinceEpoch,
           'limit': 2000,
         }),
         // 2. 장기 근무자 (workEndDate >= todayStart, 클라이언트에서 isWorkingOnDate 필터)
-        callable.call<Map<String, dynamic>>({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workEndDateGteMs': todayStart.millisecondsSinceEpoch,
           'limit': 2000,
         }),
       ]);
 
-      List<ApplicationModel> parseApps(HttpsCallableResult<Map<String, dynamic>> r) =>
-          (r.data['applications'] as List? ?? [])
+      List<ApplicationModel> parseApps(List<Map<String, dynamic>> r) =>
+          (r)
               .whereType<Map>()
               .map((m) {
                 final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -828,18 +824,14 @@ extension AttendanceFirestore on FirestoreService {
       final today = DateTime.now();
       final todayOnly = DateTime(today.year, today.month, today.day);
 
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-
       // [P0-C] 단기: 날짜 제한 없이 전체 기간 confirmed 단기 지원 조회
       // 장기: 기존과 동일 (날짜 제한 없이 전체 장기 확정자 조회)
       final callResults = await Future.wait([
-        callable.call<Map<String, dynamic>>({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'limit': 2000,
         }),
-        callable.call<Map<String, dynamic>>({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'type': AppType.longTerm,
           'limit': 2000,
@@ -849,7 +841,7 @@ extension AttendanceFirestore on FirestoreService {
       final Map<String, List<ApplicationModel>> appsByDate = {};
 
       // 단기 확정자
-      for (final e in (callResults[0].data['applications'] as List? ?? [])) {
+      for (final e in (callResults[0])) {
         final m = Map<String, dynamic>.from(e as Map);
         final docId = m.remove('id') as String? ?? '';
         final app = ApplicationModel.tryFromMap(m, docId);
@@ -862,7 +854,7 @@ extension AttendanceFirestore on FirestoreService {
       }
 
       // 장기 확정자 — 해당 월 활성 날짜로 확장
-      for (final e in (callResults[1].data['applications'] as List? ?? [])) {
+      for (final e in (callResults[1])) {
         final m = Map<String, dynamic>.from(e as Map);
         final docId = m.remove('id') as String? ?? '';
         final app = ApplicationModel.tryFromMap(m, docId);
@@ -986,13 +978,9 @@ extension AttendanceFirestore on FirestoreService {
     }
 
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-
       final results = await Future.wait([
         // 단기: 해당 주 날짜 범위
-        callable.call({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workDateGteMs': weekStart.millisecondsSinceEpoch,
           'workDateLteMs': weekEnd
@@ -1002,7 +990,7 @@ extension AttendanceFirestore on FirestoreService {
           'limit': 500,
         }),
         // 장기: 종료일이 주 시작 이후인 것 (활성 계약)
-        callable.call({
+        fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workEndDateGteMs': weekStart.millisecondsSinceEpoch,
           'limit': 500,
@@ -1010,7 +998,7 @@ extension AttendanceFirestore on FirestoreService {
       ]);
 
       // 단기 확정자
-      for (final e in (results[0].data['applications'] as List? ?? [])) {
+      for (final e in (results[0])) {
         final m = Map<String, dynamic>.from(e as Map);
         final docId = m.remove('id') as String? ?? '';
         final app = ApplicationModel.tryFromMap(m, docId);
@@ -1022,7 +1010,7 @@ extension AttendanceFirestore on FirestoreService {
       }
 
       // 장기 확정자 — 요일 매칭
-      for (final e in (results[1].data['applications'] as List? ?? [])) {
+      for (final e in (results[1])) {
         final m = Map<String, dynamic>.from(e as Map);
         final docId = m.remove('id') as String? ?? '';
         final app = ApplicationModel.tryFromMap(m, docId);

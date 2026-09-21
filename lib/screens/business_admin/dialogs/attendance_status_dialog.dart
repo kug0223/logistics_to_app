@@ -416,17 +416,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
     // ✅ 1+2. 단기/장기 CF 동시 호출 (병렬화)
     // [CF 이전 2026-07-13] Firestore 보안규칙 PERMISSION_DENIED 근본 해결
-    final appCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetApplicationsByBiz',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    // [R8-P7.1] cap 에서 잘린 것을 전부로 오해하지 않도록 페이징 헬퍼 경유.
     final cfResults = await Future.wait([
-      appCallable.call<Map<String, dynamic>>({
+      fetchApplicationsByBizPaged({
         'businessId': _selectedBusinessId,
         'workDateGteMs': dateStart.millisecondsSinceEpoch,
         'workDateLtMs': dateEnd.millisecondsSinceEpoch,
         'limit': 2000,
       }),
-      appCallable.call<Map<String, dynamic>>({
+      fetchApplicationsByBizPaged({
         'businessId': _selectedBusinessId,
         'type': AppType.longTerm,
         'limit': 2000,
@@ -436,7 +434,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final longTermCFResult = cfResults[1];
 
     const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
-    for (final e in (shortTermCFResult.data['applications'] as List? ?? [])) {
+    for (final e in (shortTermCFResult)) {
       final m = Map<String, dynamic>.from(e as Map);
       final docId = m.remove('id') as String? ?? '';
       final app = ApplicationModel.tryFromMap(m, docId);
@@ -449,7 +447,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
     debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
     final longTermRaw = List.from(
-        longTermCFResult.data['applications'] as List? ?? []);
+        longTermCFResult);
 
     int longTermCount = 0;
     for (final e in longTermRaw) {

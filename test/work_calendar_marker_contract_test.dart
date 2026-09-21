@@ -78,12 +78,13 @@ void main() {
     test('범위 조회는 사업장당 고정 횟수다', () {
       final i = fs.indexOf('getSeatedWorkDatesInRange');
       final body = _flat(fs.substring(i, i + 3000));
-      expect('callable.call<Map<String, dynamic>>('.allMatches(body).length, 2,
+      // [R8-P7.1] 직접 호출 → fetchApplicationsByBizPaged. 횟수 계약은 그대로다.
+      expect('fetchApplicationsByBizPaged('.allMatches(body).length, 2,
           reason: '단기 범위 1회 + 장기 후보 1회 — 날짜 수와 무관해야 한다');
       // 루프 안에서 조회하면 N+1이 된다.
       final loopAt = body.indexOf('for (var d = rangeStart;');
       expect(loopAt > 0, true);
-      expect(body.substring(loopAt).contains('callable.call'), false,
+      expect(body.substring(loopAt).contains('fetchApplicationsByBizPaged('), false,
           reason: '날짜 루프 안에서 조회하면 N+1이다');
     });
 

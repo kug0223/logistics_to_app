@@ -2806,9 +2806,8 @@ class _SentInvitesSheetState extends State<_SentInvitesSheet> {
   Future<void> _loadInvites() async {
     // [BUG-07 수정] Firestore 직접 list → CF 경유 (SuperAdmin 전용 규칙 우회)
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsByBiz');
-      final result = await callable.call<Map<String, dynamic>>({
+      // [R8-P7.1] limit 100 에서 잘린 초대를 전부로 보지 않는다 — 헬퍼가 끝까지 읽는다.
+      final result = await fetchApplicationsByBizPaged({
         'businessId': widget.businessId,
         'toId': widget.toId,
         'status': 'INVITED',
@@ -2816,7 +2815,7 @@ class _SentInvitesSheetState extends State<_SentInvitesSheet> {
       });
 
       if (!mounted) return;
-      final raw = (result.data['applications'] as List? ?? [])
+      final raw = result
           .whereType<Map>()
           .map((m) => Map<String, dynamic>.from(m))
           .toList();
