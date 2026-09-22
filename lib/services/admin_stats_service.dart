@@ -688,12 +688,22 @@ class AdminStatsService {
 
     final infoMap = await _fetchUserInfoByRecords(attendance);
 
-    // (userId, workDate) 기준 중복 제거 — 동일 근무자·날짜 문서가 2개 이상이면 이중 계산 방지
+    // 중복 제거 — **같은 문서**가 두 번 들어온 경우만 거른다.
+    //
+    // 예전 키는 (userId, workDate)였다. 그런데 같은 날 같은 사업장에서 두 건을
+    // 근무하는 것은 정상이다(오전 사무, 오후 행사 — 각각 다른 지원서라 근태
+    // 문서도 별개다). 그 키로 거르면 두 번째 근무가 통째로 사라진다 —
+    // 정상/지각/결근 건수에서도, **급여 합계에서도**.
+    //
+    // DEV 실측(2026-09): 확정·이체 288,000원 중 120,000원이 이렇게 빠졌다.
+    // 같은 달 근태 Excel 은 rawAttendance 를 그대로 써서 12행을 냈고, 화면은
+    // 9건만 셌다. 한 사업장의 한 달을 두 자리가 다르게 말했다.
+    //
+    // 진짜 막아야 할 것은 사업장 병렬 조회가 같은 문서를 두 번 담는 경우이고,
+    // 그건 문서 id 로 거르면 된다.
     final seen = <String>{};
-    final dedupedAttendance = attendance.where((a) {
-      final key = '${a.userId}_${a.workDate.millisecondsSinceEpoch}';
-      return seen.add(key);
-    }).toList();
+    final dedupedAttendance =
+        attendance.where((a) => seen.add(a.id)).toList();
 
     // 직원별 집계
     final workerMap = <String, List<AttendanceModel>>{};
@@ -722,7 +732,13 @@ class AdminStatsService {
       return WorkerMonthSummary(
         userId: e.key,
         userName: infoMap[e.key]?.name ?? '알 수 없음',
-        totalDays: records.length,
+        // 화면이 '${totalDays}일' 로 찍는다 — 건수가 아니라 **날짜 수**여야 한다.
+        //   같은 날 두 건을 근무해도 그 사람이 나온 날은 하루다.
+        //   (금액·정상/지각/결근은 건 단위로 센다 — 위 dedup 참조.)
+        totalDays: records
+            .map((r) => r.workDate.millisecondsSinceEpoch)
+            .toSet()
+            .length,
         presentDays: present,
         lateDays: late,
         absentDays: absent,
@@ -765,7 +781,9 @@ class AdminStatsService {
       // [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE] impTagFreq: active consumer 없음
       // 신규 aggregate 엔드포인트에서 미반환. 기존 모델 필드는 유지 (구조 변경 최소화).
       impTagFreq: const {},
-      rawAttendance: attendance,
+      // Excel 이 이것을 그대로 쓴다. 화면 집계와 **같은 목록**이어야 한다 —
+      //   예전에는 비중복제거 원본이 들어가서 파일 행 수와 화면 건수가 달랐다.
+      rawAttendance: dedupedAttendance,
       userInfoMap: infoMap,
       reviewStatsState: reviewStatsState,
       attendanceStatsState: attendanceStatsState,

@@ -120,10 +120,16 @@ class PayrollExcelHelper {
 
   // ══════════════════════════════════════════════════════════
   // 이체현황 탭 — 회계/세무용 건별 상세 시트
-  // 컬럼: 이름 | 사업장 | 급여형태 | 근무일 | 세전금액 |
+  // 컬럼: 이름 | 사업장 | 업무 | 근무시간 | 급여형태 | 근무일 | 세전금액 |
   //        국민연금 | 건강보험 | 장기요양 | 고용보험 |
   //        세후금액 | 이체상태 | 이체일
   // 행 단위: 근무 건별 1행 + 합계 행
+  //
+  // [R7-PRE1] 업무·근무시간 두 컬럼은 **행을 구분하기 위한** 것이다.
+  //   한 사람이 같은 날 두 건을 근무하는 것은 정상이고(오전 사무, 오후 행사),
+  //   그때 예전 컬럼 구성으로는 두 행이 이름·사업장·급여형태·근무일까지
+  //   모두 같아 보였다. 금액만 다른 똑같은 행 두 개 — 받는 쪽에서는
+  //   중복 입력으로 읽힌다. DEV 실측으로 2026-09-20 에 3행이 그랬다.
   // ══════════════════════════════════════════════════════════
   static Future<void> exportPayrollDetail({
     required BuildContext context,
@@ -144,18 +150,18 @@ class PayrollExcelHelper {
     excel.delete('Sheet1');
 
     final sheet = excel['급여현황'];
-    _setColWidths(sheet, [12, 16, 10, 12, 12, 10, 10, 10, 10, 12, 10, 14]);
+    _setColWidths(sheet, [12, 16, 12, 14, 10, 12, 12, 10, 10, 10, 10, 12, 10, 14]);
 
     // 제목 행
     _cell(sheet, 0, 0, title, bold: true, fontSize: 13);
     sheet.merge(
       CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
-      CellIndex.indexByColumnRow(columnIndex: 11, rowIndex: 0),
+      CellIndex.indexByColumnRow(columnIndex: 13, rowIndex: 0),
     );
 
     // 헤더
     const headers = [
-      '이름', '사업장', '급여형태', '근무일',
+      '이름', '사업장', '업무', '근무시간', '급여형태', '근무일',
       '세전금액', '국민연금', '건강보험', '장기요양', '고용보험',
       '세후금액', '이체상태', '이체일',
     ];
@@ -170,7 +176,12 @@ class PayrollExcelHelper {
         final na = names[a.userId] ?? '이름 확인 불가';
         final nb = names[b.userId] ?? '이름 확인 불가';
         final nc = na.compareTo(nb);
-        return nc != 0 ? nc : a.workDate.compareTo(b.workDate);
+        if (nc != 0) return nc;
+        final dc = a.workDate.compareTo(b.workDate);
+        if (dc != 0) return dc;
+        // 같은 날 두 건이면 출근 시각 순 — 파일이 매번 같은 순서로 나와야
+        // 두 번 내보낸 파일을 비교할 수 있다.
+        return (a.checkIn ?? '').compareTo(b.checkIn ?? '');
       });
 
     // 합계 누산
@@ -197,30 +208,37 @@ class PayrollExcelHelper {
       sumEmploy  += employ;
       sumNet     += net;
 
+      // 출퇴근이 아직 없으면 '-' 로 둔다. 빈 칸은 "같은 근무"로 읽힌다.
+      final span = (r.checkIn == null && r.checkOut == null)
+          ? '-'
+          : '${r.checkIn ?? '-'}~${r.checkOut ?? '-'}';
+
       _cell(sheet, row, 0,  names[r.userId] ?? '이름 확인 불가');
       _cell(sheet, row, 1,  r.businessName);
-      _cell(sheet, row, 2,  _payTypeLabel(wd?.payScheduleType));
-      _cell(sheet, row, 3,  FormatHelper.formatDateDot(r.workDate));
-      _numCell(sheet, row, 4, gross);
-      if (pension > 0) _numCell(sheet, row, 5, pension);
-      if (health  > 0) _numCell(sheet, row, 6, health);
-      if (ltc     > 0) _numCell(sheet, row, 7, ltc);
-      if (employ  > 0) _numCell(sheet, row, 8, employ);
-      _numCell(sheet, row, 9, net);
-      _cell(sheet, row, 10, isXfer ? '이체완료' : '미이체');
-      _cell(sheet, row, 11,
+      _cell(sheet, row, 2,  r.workType);
+      _cell(sheet, row, 3,  span);
+      _cell(sheet, row, 4,  _payTypeLabel(wd?.payScheduleType));
+      _cell(sheet, row, 5,  FormatHelper.formatDateDot(r.workDate));
+      _numCell(sheet, row, 6, gross);
+      if (pension > 0) _numCell(sheet, row, 7, pension);
+      if (health  > 0) _numCell(sheet, row, 8, health);
+      if (ltc     > 0) _numCell(sheet, row, 9, ltc);
+      if (employ  > 0) _numCell(sheet, row, 10, employ);
+      _numCell(sheet, row, 11, net);
+      _cell(sheet, row, 12, isXfer ? '이체완료' : '미이체');
+      _cell(sheet, row, 13,
           r.transferDate != null ? FormatHelper.formatDateDot(r.transferDate!) : '');
     }
 
     // 합계 행
     final totalRow = 2 + sorted.length;
-    _cell(sheet, totalRow, 3,    '합계',    bold: true, bgHex: 'FFEAF4FF');
-    _numCell(sheet, totalRow, 4, sumGross,  bold: true, bgHex: 'FFEAF4FF');
-    if (sumPension > 0) _numCell(sheet, totalRow, 5, sumPension, bold: true, bgHex: 'FFEAF4FF');
-    if (sumHealth  > 0) _numCell(sheet, totalRow, 6, sumHealth,  bold: true, bgHex: 'FFEAF4FF');
-    if (sumLtc     > 0) _numCell(sheet, totalRow, 7, sumLtc,     bold: true, bgHex: 'FFEAF4FF');
-    if (sumEmploy  > 0) _numCell(sheet, totalRow, 8, sumEmploy,  bold: true, bgHex: 'FFEAF4FF');
-    _numCell(sheet, totalRow, 9, sumNet,    bold: true, bgHex: 'FFEAF4FF');
+    _cell(sheet, totalRow, 5,    '합계',    bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 6, sumGross,  bold: true, bgHex: 'FFEAF4FF');
+    if (sumPension > 0) _numCell(sheet, totalRow, 7, sumPension, bold: true, bgHex: 'FFEAF4FF');
+    if (sumHealth  > 0) _numCell(sheet, totalRow, 8, sumHealth,  bold: true, bgHex: 'FFEAF4FF');
+    if (sumLtc     > 0) _numCell(sheet, totalRow, 9, sumLtc,     bold: true, bgHex: 'FFEAF4FF');
+    if (sumEmploy  > 0) _numCell(sheet, totalRow, 10, sumEmploy, bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 11, sumNet,   bold: true, bgHex: 'FFEAF4FF');
 
     if (!context.mounted) return;
     await _shareExcel(context, excel, filename);
