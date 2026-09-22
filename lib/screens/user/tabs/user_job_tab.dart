@@ -379,13 +379,30 @@ class _UserJobTabState extends State<UserJobTab>
         }
       }
       if (rangeStart != null && rangeEnd != null) {
+        // [R8-P9D] flex 는 실제 슬롯 날짜와 겹치는지로 본다.
+        //
+        //   이전에는 `to.rangeEnd ?? to.date` 를 끝 경계로 썼는데, flex 는
+        //   rangeEnd 가 없는 경우가 많고 그러면 `to.date` = createdAt 으로
+        //   떨어진다. DEV 의 kcwGL5K4 는 오늘(9/22) 근무가 있는데 createdAt
+        //   이 9/15 라, "이번 주" 필터에서 `toEnd < rangeStart` 로 걸러졌다.
+        //   등록한 날짜가 근무 날짜를 대신할 수 없다.
+        if (!to.isLongTerm) {
+          if (to.slotDateKeys.isNotEmpty && to.slotDatesLookComplete) {
+            final fromKey = FormatHelper.toKstDateKey(rangeStart);
+            final toKey = FormatHelper.toKstDateKey(rangeEnd);
+            final hit = to.slotDateKeys.any((d) =>
+                d.compareTo(fromKey) >= 0 && d.compareTo(toKey) <= 0);
+            if (!hit) return false;
+          }
+          // 날짜를 모르면 걸러내지 않는다 — 모르는 것으로 숨기지 않는다.
+          return true;
+        }
+
         final toStart = FormatHelper.toKstDate(to.date);
-        // 신규 preset: workStartAvailableUntil / custom·legacy: endDate(=rangeEnd) / flex: rangeEnd
-        final toEndRaw = to.isLongTerm
-            ? (to.hasWorkStartAvailableRange
-                ? to.workStartAvailableUntil!
-                : (to.endDate ?? to.date))
-            : (to.rangeEnd ?? to.date);
+        // 신규 preset: workStartAvailableUntil / custom·legacy: endDate(=rangeEnd)
+        final toEndRaw = to.hasWorkStartAvailableRange
+            ? to.workStartAvailableUntil!
+            : (to.endDate ?? to.date);
         final toEnd = FormatHelper.toKstDate(toEndRaw);
         if (toStart.isAfter(rangeEnd) || toEnd.isBefore(rangeStart)) {
           return false;

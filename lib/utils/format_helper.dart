@@ -115,6 +115,30 @@ class FormatHelper {
     return DateTime.utc(kst.year, kst.month, kst.day);
   }
 
+  /// [R8-P9D] KST 달력일을 'YYYY-MM-DD' 문자열로.
+  ///
+  /// 공고 문서의 `dates` 필드가 이 포맷이다. 같은 포맷끼리는 문자열 비교만으로
+  /// 대소를 가릴 수 있어서, 날짜 판정에 DateTime 왕복을 만들지 않아도 된다.
+  static String toKstDateKey(DateTime dt) {
+    final d = toKstDate(dt);
+    return '${d.year.toString().padLeft(4, '0')}-'
+        '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+  }
+
+  /// [R8-P9D] 'YYYY-MM-DD' → [toKstDate]와 같은 비교 키.
+  ///
+  /// 형식이 어긋나면 null — 한 건 때문에 전체 집계를 깨지 않는다.
+  static DateTime? parseKstDateKey(String key) {
+    if (key.length != 10) return null;
+    final y = int.tryParse(key.substring(0, 4));
+    final m = int.tryParse(key.substring(5, 7));
+    final d = int.tryParse(key.substring(8, 10));
+    if (y == null || m == null || d == null) return null;
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return DateTime.utc(y, m, d);
+  }
+
   /// [R1.2.1] KST 영업일(business day) 구간 — device timezone 무관.
   ///
   /// 입력: 그 영업일에 속하는 아무 instant.

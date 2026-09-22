@@ -623,7 +623,18 @@ class MonthlyReviewService {
         if (!longTermIds.contains(docId)) continue;
         final uid = data['uid'] as String? ?? '';
         final workDaysList = data['workDays'] as List?;
-        if (uid.isEmpty || workDaysList == null || workDaysList.isEmpty) continue;
+        // [R8-P9D] workDays 가 비었다고 버리지 않는다.
+        //
+        //   위 분류(581-597)는 "workDays 가 없어도 workDate != workEndDate 면
+        //   장기"라고 판정한다. 그런데 여기서는 "workDays 가 있어야 장기"를
+        //   요구했다. 두 정의가 어긋나는 만큼이 통째로 사라진다 —
+        //   단기 집계(602행)는 이미 longTermIds 를 건너뛰었으므로
+        //   그 지원서는 어느 쪽에서도 세어지지 않았다.
+        //
+        //   빈 workDays 는 "요일 제한이 없다"는 뜻이다. 이 저장소의 다른
+        //   집계(user_home_screen 의 contract 날짜 집계·칩 필터)가 이미
+        //   같은 관례를 쓴다. 아래 _countWorkingDaysInMonth 가 그대로 받는다.
+        if (uid.isEmpty) continue;
         if (reviewedUserIds.contains(uid)) continue;
 
         final workDate = parseTimestampNullable(data['workDate']);
@@ -633,7 +644,7 @@ class MonthlyReviewService {
         if (workEndDate != null && workEndDate.isBefore(monthStart)) continue;
 
         final daysInMonth = _countWorkingDaysInMonth(
-          workDaysList.whereType<String>().toList(),
+          (workDaysList ?? const []).whereType<String>().toList(),
           year,
           month,
           workDate,
@@ -679,8 +690,13 @@ class MonthlyReviewService {
     int count = 0;
     DateTime cursor = effectiveStart;
     while (!cursor.isAfter(effectiveEnd)) {
-      final dayName = FormatHelper.weekday(cursor);
-      if (workDayNames.contains(dayName)) count++;
+      // [R8-P9D] 요일 목록이 비면 "요일 제한 없음" — 기간 안의 모든 날을 센다.
+      //   빈 목록을 "해당 요일 0개"로 읽으면 기간이 통째로 0일이 되고,
+      //   그 근로자는 리뷰 대상에서 사라진다.
+      if (workDayNames.isEmpty ||
+          workDayNames.contains(FormatHelper.weekday(cursor))) {
+        count++;
+      }
       cursor = cursor.add(const Duration(days: 1));
     }
     return count;

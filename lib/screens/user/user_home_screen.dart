@@ -191,11 +191,37 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       // _getRecommendedTos와 동일한 후보 필터
       if (to.status == TOStatus.closed ||
           to.status == TOStatus.expired ||
-          to.status == TOStatus.full ||
           to.status == TOStatus.scheduled) { continue; }
       if (to.isDeleted) { continue; }
-      if (to.totalRequired > 0 && to.totalConfirmed >= to.totalRequired) { continue; }
+      // [R8-P9D] 공고 전체 정원은 flex 를 닫는 근거가 아니다.
+      //   서버가 이미 그렇게 정해 두었다 — 슬롯 지원은 그 날짜의 정원을
+      //   직접 보고, 공고 전체 FULL 을 관문으로 쓰지 않는다.
+      //   한 날짜가 찼다고 다른 날짜 모집까지 사라지면 안 된다.
+      if (!to.isFlexType &&
+          (to.status == TOStatus.full ||
+              (to.totalRequired > 0 &&
+                  to.totalConfirmed >= to.totalRequired))) { continue; }
       if (appliedToIdsForCount.contains(to.id)) { continue; }
+
+      // [R8-P9D] flex 는 날짜 하나하나가 근무다 — 범위로 근사하지 않는다.
+      //
+      //   이전에는 rangeStart~rangeEnd 를 하루씩 훑어 집계했다. 그런데
+      //   DEV 에서 노출 가능한 flex 공고 4건이 전부 rangeStart 가 없어
+      //   `rawRangeS == null` 에서 통째로 빠졌다 — 오늘 근무가 있는 공고가
+      //   날짜칩에 한 번도 잡히지 않았다. 게다가 범위를 훑는 방식은 슬롯이
+      //   없는 중간 날짜까지 세므로 숫자 자체도 틀렸다.
+      //
+      //   공고 문서의 `dates` 가 슬롯 날짜를 그대로 들고 있다. 그것을 쓴다.
+      //   비어 있으면 세지 않는다 — 모르는 것을 지어내지 않는다.
+      if (to.isFlexType) {
+        for (final key in to.slotDateKeys) {
+          final d = FormatHelper.parseKstDateKey(key);
+          if (d == null) continue;
+          if (d.isBefore(today) || d.isAfter(cutoff)) continue;
+          _toDateCounts[d] = (_toDateCounts[d] ?? 0) + 1;
+        }
+        continue;
+      }
 
       // 신규 preset: workStartAvailableFrom ~ Until / custom·legacy: rangeStart ~ rangeEnd
       final rawRangeS = to.hasWorkStartAvailableRange
@@ -3234,10 +3260,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     var candidates = _publishedTos.where((to) {
       if (to.status == TOStatus.closed ||
           to.status == TOStatus.expired ||
-          to.status == TOStatus.full ||
           to.status == TOStatus.scheduled) { return false; }
       if (to.isDeleted) return false;
-      if (to.totalRequired > 0 && to.totalConfirmed >= to.totalRequired) {
+      // [R8-P9D] 위 집계와 같은 기준 — flex 는 공고 전체 정원으로 닫지 않는다.
+      if (!to.isFlexType &&
+          (to.status == TOStatus.full ||
+              (to.totalRequired > 0 &&
+                  to.totalConfirmed >= to.totalRequired))) {
         return false;
       }
       if (appliedToIds.contains(to.id)) return false;
@@ -3250,7 +3279,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       const dowLabels = ['월', '화', '수', '목', '금', '토', '일'];
       final dowLabel = dowLabels[sd.weekday - 1];
 
+      final sdKey = FormatHelper.toKstDateKey(sd);
+
       candidates = candidates.where((to) {
+        // [R8-P9D] flex 는 그 날짜에 슬롯이 있는지로 본다.
+        //   rangeStart 가 없다고 제외하면, DEV 의 노출 가능한 flex 4건이
+        //   날짜를 고르는 순간 전부 사라진다.
+        //   날짜를 확실히 알 때만 걸러내고, 모르면 남긴다 — 서버가 판정한다.
+        if (to.isFlexType) {
+          if (to.slotDateKeys.isEmpty || !to.slotDatesLookComplete) return true;
+          return to.slotDateKeys.contains(sdKey);
+        }
+
         // 신규 preset: workStartAvailableFrom ~ Until / custom·legacy: rangeStart ~ rangeEnd
         final rs = to.hasWorkStartAvailableRange
             ? to.workStartAvailableFrom
