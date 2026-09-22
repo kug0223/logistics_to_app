@@ -88,6 +88,14 @@ class AttendanceListData {
 class AttendanceListItem {
   final String workType;
   final String name;
+
+  /// [R7-PRE1A.1] 이 사업장에서의 사람 번호(`W-014`). 모르면 빈 문자열.
+  ///
+  ///   이 종이는 현장에서 사람을 호명하며 쓴다. 같은 이름 두 사람이 같은
+  ///   파트에 있으면 두 줄이 완전히 같아 보였다 — 이름·성별·연락처·시간이
+  ///   모두 같을 수 있기 때문이다.
+  final String personNo;
+
   final String gender;
   final String phone;
   final String workTime; // 'HH:mm~HH:mm' 형식 (PDF용)
@@ -97,6 +105,7 @@ class AttendanceListItem {
   AttendanceListItem({
     required this.workType,
     required this.name,
+    this.personNo = '',
     required this.gender,
     required this.phone,
     required this.workTime,
@@ -193,16 +202,17 @@ class AttendanceListPdf {
     final dateStr =
         '${data.date.year}년 ${data.date.month}월 ${data.date.day}일 (${FormatHelper.weekday(data.date)})';
 
-    // 열 너비 설정
-    sheet.setColumnWidth(0, 16);  // 사업장명
-    sheet.setColumnWidth(1, 14);  // 근무일자
-    sheet.setColumnWidth(2, 14);  // 파트
-    sheet.setColumnWidth(3, 14);  // 성명
-    sheet.setColumnWidth(4, 6);   // 성별
-    sheet.setColumnWidth(5, 18);  // 연락처
-    sheet.setColumnWidth(6, 12);  // 근무시작시간
-    sheet.setColumnWidth(7, 12);  // 퇴근시간
-    sheet.setColumnWidth(8, 20);  // 비고
+    // 열 너비 설정 — [R7-PRE1A.1] 근로자번호가 맨 앞에 붙어 한 칸씩 밀렸다.
+    sheet.setColumnWidth(0, 10);  // 근로자번호
+    sheet.setColumnWidth(1, 16);  // 사업장명
+    sheet.setColumnWidth(2, 14);  // 근무일자
+    sheet.setColumnWidth(3, 14);  // 파트
+    sheet.setColumnWidth(4, 14);  // 성명
+    sheet.setColumnWidth(5, 6);   // 성별
+    sheet.setColumnWidth(6, 18);  // 연락처
+    sheet.setColumnWidth(7, 12);  // 근무시작시간
+    sheet.setColumnWidth(8, 12);  // 퇴근시간
+    sheet.setColumnWidth(9, 20);  // 비고
 
     int row = 0;
 
@@ -214,7 +224,7 @@ class AttendanceListPdf {
         bold: true, fontSize: 14);
     sheet.merge(
       CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row),
-      CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: row),
+      CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: row),
     );
     row++;
 
@@ -222,13 +232,13 @@ class AttendanceListPdf {
     _excelCell(sheet, row, 0, '$dateStr   |   전체 ${data.totalCount}명');
     sheet.merge(
       CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row),
-      CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: row),
+      CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: row),
     );
     row++;
     row++; // 빈 행
 
     // 컬럼 헤더
-    const headers = ['사업장명', '근무일자', '파트', '성명', '성별', '연락처', '근무시작시간', '퇴근시간', '비고'];
+    const headers = ['근로자번호', '사업장명', '근무일자', '파트', '성명', '성별', '연락처', '근무시작시간', '퇴근시간', '비고'];
     for (int c = 0; c < headers.length; c++) {
       _excelCell(sheet, row, c, headers[c], bold: true, bgHex: 'FFD6E4F0');
     }
@@ -241,6 +251,7 @@ class AttendanceListPdf {
             ? '남'
             : (worker.gender == '여성' ? '여' : '-');
         final rowData = [
+          worker.personNo,
           data.businessName,
           workDateStr,
           worker.workType,
@@ -495,7 +506,9 @@ class AttendanceListPdf {
               ...workers.map((worker) => pw.TableRow(
                 children: [
                   _buildTableCell('□', bodyStyle),
-                  _buildTableCell(worker.name, bodyStyle),
+                  // [R7-PRE1A.1] 성명 칸에 번호를 붙인다 — 열을 늘리면
+                  //   인쇄물이 좁아진다. 같은 이름 두 줄을 가르는 것이 목적이다.
+                  _buildTableCell(_nameWithNo(worker), bodyStyle),
                   _buildTableCell(_formatGender(worker.gender), bodyStyle),
                   _buildTableCell(worker.phone, bodyStyle),
                   _buildTableCell(worker.workTime, bodyStyle),
@@ -649,6 +662,7 @@ class AttendanceListPdf {
         return AttendanceListItem(
           workType: workType,
           name: user?.name ?? app.applicantName ?? 'Unknown',
+          personNo: user?.personLabel ?? '',
           gender: user?.gender ?? '',
           phone: _formatPhone(user?.effectivePhone ?? ''),
           workTime: '${app.startTime}~${app.endTime}',
@@ -667,6 +681,11 @@ class AttendanceListPdf {
     );
   }
 
+
+  /// [R7-PRE1A.1] 인쇄물에서 사람을 가르는 표기 — `김지현 (W-014)`.
+  ///   번호가 없으면 이름만 — 괄호만 남은 이름을 만들지 않는다.
+  static String _nameWithNo(AttendanceListItem w) =>
+      w.personNo.isEmpty ? w.name : '${w.name} (${w.personNo})';
   /// 전화번호 포맷 (010-1234-5678)
   static String _formatPhone(String phone) {
     if (phone.isEmpty) return '-';

@@ -32,10 +32,11 @@ class PayrollExcelHelper {
     required List<AttendanceModel> records,
     required String businessId,
   }) async {
-    final names = await _loadWorkerNames(records, businessId);
+    final p = await _loadWorkerProfiles(records, businessId);
     return buildTransferExportPlan(
       records: records,
-      names: names,
+      names: p.names,
+      personNos: p.personNos,
       decrypt: EncryptionHelper.decrypt,
       formatDate: FormatHelper.formatDateDot,
     );
@@ -64,17 +65,29 @@ class PayrollExcelHelper {
     excel.delete('Sheet1');
 
     final sheet = excel['이체목록'];
-    _setColWidths(sheet, [12, 14, 22, 12, 12, 32]);
+    _setColWidths(sheet, [10, 12, 14, 22, 12, 12, 32]);
 
     // 제목 행
     _cell(sheet, 0, 0, title, bold: true, fontSize: 13);
     sheet.merge(
       CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
-      CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: 0),
+      CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: 0),
     );
 
     // 헤더
-    const headers = ['이름', '은행명', '계좌번호', '예금주', '이체금액', '메모'];
+    // [R7-PRE1A.1] 근로자번호가 맨 앞이다. 이 파일은 은행·회계로 넘어가고,
+    //   거기서는 "같은 이름이 둘인데 어느 쪽인가"를 물어볼 화면이 없다.
+    //
+    // 「이름」과 「예금주」는 **다른 사실**이다. 한쪽으로 통일하지 않는다.
+    //   이름   = 지금 이 사람의 이름        (누구에게 주는가)
+    //   예금주 = 급여 확정 시점 계좌의 명의  (어디로 보내는가)
+    //   개명(본인인증 재인증)하면 둘이 달라질 수 있고, 그건 오류가 아니다.
+    //   서버 어디에도 이 둘을 비교해 이체를 막는 로직은 없다 — 있어서도 안 된다.
+    //   달라 보이는 이유를 운영자가 알 수 있게 **머리글에 적는다.**
+    const headers = [
+      '근로자번호', '이름(현재)', '은행명', '계좌번호', '예금주(확정 시점)',
+      '이체금액', '메모',
+    ];
     for (int c = 0; c < headers.length; c++) {
       _cell(sheet, 1, c, headers[c], bold: true, bgHex: 'FFD6E4F0');
     }
@@ -82,19 +95,20 @@ class PayrollExcelHelper {
     // 데이터
     for (int i = 0; i < rows.length; i++) {
       final r = rows[i];
-      _cell(sheet, 2 + i, 0, r.workerName);
-      _cell(sheet, 2 + i, 1, r.bankName);
-      _cell(sheet, 2 + i, 2, r.accountNumber); // PAY-M3: TextCellValue가 수식 차단 보장 — _sanitizeField 불필요
-      _cell(sheet, 2 + i, 3, r.accountHolder);
-      _numCell(sheet, 2 + i, 4, r.netAmount);
-      _cell(sheet, 2 + i, 5, r.memo);
+      _cell(sheet, 2 + i, 0, r.personNo ?? '');
+      _cell(sheet, 2 + i, 1, r.workerName);
+      _cell(sheet, 2 + i, 2, r.bankName);
+      _cell(sheet, 2 + i, 3, r.accountNumber); // PAY-M3: TextCellValue가 수식 차단 보장 — _sanitizeField 불필요
+      _cell(sheet, 2 + i, 4, r.accountHolder);
+      _numCell(sheet, 2 + i, 5, r.netAmount);
+      _cell(sheet, 2 + i, 6, r.memo);
     }
 
     // 합계 행
     final totalRow = 2 + rows.length;
     final total = rows.fold<int>(0, (a, r) => a + r.netAmount);
-    _cell(sheet, totalRow, 3, '합계', bold: true, bgHex: 'FFEAF4FF');
-    _numCell(sheet, totalRow, 4, total, bold: true, bgHex: 'FFEAF4FF');
+    _cell(sheet, totalRow, 4, '합계', bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 5, total, bold: true, bgHex: 'FFEAF4FF');
 
     // [INV-3] 파일이 스스로 말하게 한다.
     //   이 파일은 화면을 떠나 은행·회계 담당에게 따로 간다. 거기서는 "몇 명이
@@ -144,24 +158,27 @@ class PayrollExcelHelper {
     }
 
     // [PII-DOC-R0.1] 이 시트는 이름만 필요하다 — 계좌 컬럼이 없다.
-    final names = await _loadWorkerNames(records, businessId);
+    // [R7-PRE1A.1] 사람 번호는 함께 읽는다 — 이름만으로는 동명이인이 구분되지 않는다.
+    final profiles = await _loadWorkerProfiles(records, businessId);
+    final names = profiles.names;
+    final personNos = profiles.personNos;
 
     final excel = Excel.createExcel();
     excel.delete('Sheet1');
 
     final sheet = excel['급여현황'];
-    _setColWidths(sheet, [12, 16, 12, 14, 10, 12, 12, 10, 10, 10, 10, 12, 10, 14]);
+    _setColWidths(sheet, [10, 12, 16, 12, 14, 10, 12, 12, 10, 10, 10, 10, 12, 10, 14]);
 
     // 제목 행
     _cell(sheet, 0, 0, title, bold: true, fontSize: 13);
     sheet.merge(
       CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0),
-      CellIndex.indexByColumnRow(columnIndex: 13, rowIndex: 0),
+      CellIndex.indexByColumnRow(columnIndex: 14, rowIndex: 0),
     );
 
     // 헤더
     const headers = [
-      '이름', '사업장', '업무', '근무시간', '급여형태', '근무일',
+      '근로자번호', '이름', '사업장', '업무', '근무시간', '급여형태', '근무일',
       '세전금액', '국민연금', '건강보험', '장기요양', '고용보험',
       '세후금액', '이체상태', '이체일',
     ];
@@ -181,7 +198,14 @@ class PayrollExcelHelper {
         if (dc != 0) return dc;
         // 같은 날 두 건이면 출근 시각 순 — 파일이 매번 같은 순서로 나와야
         // 두 번 내보낸 파일을 비교할 수 있다.
-        return (a.checkIn ?? '').compareTo(b.checkIn ?? '');
+        final t = (a.checkIn ?? '').compareTo(b.checkIn ?? '');
+        if (t != 0) return t;
+        // [R7-PRE1A.1] 동명이인이면 여기까지 와도 갈리지 않는다 — 번호로,
+        //   그래도 같으면 근태 문서 id 로 못을 박는다.
+        final p = (personNos[a.userId] ?? '').compareTo(
+            personNos[b.userId] ?? '');
+        if (p != 0) return p;
+        return a.id.compareTo(b.id);
       });
 
     // 합계 누산
@@ -213,32 +237,33 @@ class PayrollExcelHelper {
           ? '-'
           : '${r.checkIn ?? '-'}~${r.checkOut ?? '-'}';
 
-      _cell(sheet, row, 0,  names[r.userId] ?? '이름 확인 불가');
-      _cell(sheet, row, 1,  r.businessName);
-      _cell(sheet, row, 2,  r.workType);
-      _cell(sheet, row, 3,  span);
-      _cell(sheet, row, 4,  _payTypeLabel(wd?.payScheduleType));
-      _cell(sheet, row, 5,  FormatHelper.formatDateDot(r.workDate));
-      _numCell(sheet, row, 6, gross);
-      if (pension > 0) _numCell(sheet, row, 7, pension);
-      if (health  > 0) _numCell(sheet, row, 8, health);
-      if (ltc     > 0) _numCell(sheet, row, 9, ltc);
-      if (employ  > 0) _numCell(sheet, row, 10, employ);
-      _numCell(sheet, row, 11, net);
-      _cell(sheet, row, 12, isXfer ? '이체완료' : '미이체');
-      _cell(sheet, row, 13,
+      _cell(sheet, row, 0,  personNos[r.userId] ?? '');
+      _cell(sheet, row, 1,  names[r.userId] ?? '이름 확인 불가');
+      _cell(sheet, row, 2,  r.businessName);
+      _cell(sheet, row, 3,  r.workType);
+      _cell(sheet, row, 4,  span);
+      _cell(sheet, row, 5,  _payTypeLabel(wd?.payScheduleType));
+      _cell(sheet, row, 6,  FormatHelper.formatDateDot(r.workDate));
+      _numCell(sheet, row, 7, gross);
+      if (pension > 0) _numCell(sheet, row, 8, pension);
+      if (health  > 0) _numCell(sheet, row, 9, health);
+      if (ltc     > 0) _numCell(sheet, row, 10, ltc);
+      if (employ  > 0) _numCell(sheet, row, 11, employ);
+      _numCell(sheet, row, 12, net);
+      _cell(sheet, row, 13, isXfer ? '이체완료' : '미이체');
+      _cell(sheet, row, 14,
           r.transferDate != null ? FormatHelper.formatDateDot(r.transferDate!) : '');
     }
 
     // 합계 행
     final totalRow = 2 + sorted.length;
-    _cell(sheet, totalRow, 5,    '합계',    bold: true, bgHex: 'FFEAF4FF');
-    _numCell(sheet, totalRow, 6, sumGross,  bold: true, bgHex: 'FFEAF4FF');
-    if (sumPension > 0) _numCell(sheet, totalRow, 7, sumPension, bold: true, bgHex: 'FFEAF4FF');
-    if (sumHealth  > 0) _numCell(sheet, totalRow, 8, sumHealth,  bold: true, bgHex: 'FFEAF4FF');
-    if (sumLtc     > 0) _numCell(sheet, totalRow, 9, sumLtc,     bold: true, bgHex: 'FFEAF4FF');
-    if (sumEmploy  > 0) _numCell(sheet, totalRow, 10, sumEmploy, bold: true, bgHex: 'FFEAF4FF');
-    _numCell(sheet, totalRow, 11, sumNet,   bold: true, bgHex: 'FFEAF4FF');
+    _cell(sheet, totalRow, 6,    '합계',    bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 7, sumGross,  bold: true, bgHex: 'FFEAF4FF');
+    if (sumPension > 0) _numCell(sheet, totalRow, 8, sumPension, bold: true, bgHex: 'FFEAF4FF');
+    if (sumHealth  > 0) _numCell(sheet, totalRow, 9, sumHealth,  bold: true, bgHex: 'FFEAF4FF');
+    if (sumLtc     > 0) _numCell(sheet, totalRow, 10, sumLtc,    bold: true, bgHex: 'FFEAF4FF');
+    if (sumEmploy  > 0) _numCell(sheet, totalRow, 11, sumEmploy, bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 12, sumNet,   bold: true, bgHex: 'FFEAF4FF');
 
     if (!context.mounted) return;
     await _shareExcel(context, excel, filename);
@@ -255,7 +280,16 @@ class PayrollExcelHelper {
   ///   조회되지 않은 uid는 여기서 지우지 않는다. 이름을 모르는 것과 대상이
   ///   아닌 것은 다르고, 후자로 바꿔 버리면 그 사람이 파일에서 사라진다.
   ///   판정은 `buildTransferExportPlan`이 하고, 이름이 없으면 '이름 확인 불가'로 남는다.
-  static Future<Map<String, String>> _loadWorkerNames(
+  ///
+  /// [R7-PRE1A.1] 번호도 함께 읽는다. 파일에는 **이름 말고 사람을 가리키는 것**이
+  ///   하나는 있어야 한다 — 동명이인 두 사람의 급여가 한 파일에 있으면
+  ///   이름만으로는 어느 줄이 누구의 것인지 알 수 없고, 받는 쪽에는 물어볼
+  ///   화면이 없다. 번호는 사업장 범위 조회가 실어 준다.
+  ///
+  ///   번호가 row identity 를 대신하지는 않는다 — 한 사람이 여러 근무 행을
+  ///   가질 수 있다. 행은 업무·근무시간·근무일이 가르고, 번호는 사람을 가른다.
+  static Future<({Map<String, String> names, Map<String, String> personNos})>
+      _loadWorkerProfiles(
     List<AttendanceModel> records,
     String businessId,
   ) async {
@@ -266,9 +300,13 @@ class PayrollExcelHelper {
       businessId: businessId,
       purpose: FirestoreService.purposeWorkerDirectory,
     );
-    return {
-      for (final e in userMap.entries) e.key: e.value.name,
-    };
+    return (
+      names: {for (final e in userMap.entries) e.key: e.value.name},
+      personNos: {
+        for (final e in userMap.entries)
+          if (e.value.personLabel != null) e.key: e.value.personLabel!,
+      },
+    );
   }
 
   static Future<void> _shareExcel(

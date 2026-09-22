@@ -31,6 +31,7 @@ import '../../../services/firestore_service.dart';
 import '../../../services/contract_service.dart';
 
 // Utils
+import '../../../utils/person_label.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -605,8 +606,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       parts.add(genderShort);
     }
     
-    return parts.isNotEmpty ? '(${parts.join(', ')})' : '';
+    // [R7-PRE1A.1] 번호를 이 보조 줄 맨 앞에 둔다 — `(W-014, 30대, 여)`.
+    //   당일명단은 현장에서 사람을 호명하며 쓰는 화면이라, 동명이인이 있으면
+    //   이름만으로는 누구에게 출근을 찍는지 알 수 없다.
+    final withNo = PersonLabel.secondary(user.personNo, parts.join(', '));
+    return withNo.isNotEmpty ? '($withNo)' : '';
   }
+
+  /// 확인 문구용 — `김지현(W-014)`. 번호가 없으면 이름만.
+  String _getIdentifiedName(String uid) =>
+      _userMap[uid]?.nameWithPersonNo ?? '이름 없음';
 
   /// 캐시된 출퇴근 상태 반환 (build당 260회 호출 방지용)
   Map<String, dynamic> _getAttendanceStatus(ApplicationModel app) {
@@ -3215,7 +3224,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 현실적 최대 규모(하루 수백 명)는 단일 batch(500 ops)로 충분하다.
   Future<void> _showBatchNoShowDialog(List<ApplicationModel> targets) async {
     if (_isLoading) return; // 중복 실행 방어
-    final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
+    final names = targets.map((a) => _getIdentifiedName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '일괄 노쇼 처리',
@@ -3264,7 +3273,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 현실적 규모(하루 수백 명)로 단일 batch 범위 내이다.
   Future<void> _showBatchCancelNoShowDialog(List<ApplicationModel> targets) async {
     if (_isLoading) return; // 중복 실행 방어
-    final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
+    final names = targets.map((a) => _getIdentifiedName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '노쇼 취소',
@@ -3346,7 +3355,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final skipMsg = wageFinalized.isNotEmpty
         ? '\n\n⚠️ 급여 확정·이체 완료 ${wageFinalized.length}명은 제외됩니다.'
         : '';
-    final names = resetTargets.map((a) => _getDisplayName(a.uid)).join(', ');
+    final names = resetTargets.map((a) => _getIdentifiedName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '출퇴근 기록 리셋',

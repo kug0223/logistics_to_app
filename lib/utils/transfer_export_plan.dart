@@ -187,6 +187,12 @@ extension TransferBlockReasonLabel on TransferBlockReason {
 class TransferExportRow {
   final String uid;
   final String workerName;
+
+  /// [R7-PRE1A.1] 이 사업장에서의 사람 번호(`W-014`). 모르면 null.
+  ///
+  ///   은행에 올라가는 파일이다. 같은 이름 두 사람이 있으면 담당자가 계좌번호로
+  ///   사람을 구분하게 되는데, 계좌는 사람을 가리키는 값이 아니다.
+  final String? personNo;
   final String bankName;
   final String accountNumber;
   final String accountHolder;
@@ -197,6 +203,7 @@ class TransferExportRow {
   const TransferExportRow({
     required this.uid,
     required this.workerName,
+    this.personNo,
     required this.bankName,
     required this.accountNumber,
     required this.accountHolder,
@@ -397,6 +404,8 @@ TransferRecordVerdict classifyRecord(
 TransferExportPlan buildTransferExportPlan({
   required List<AttendanceModel> records,
   required Map<String, String> names,
+  /// uid → 사업장 내 사람 번호. 없는 사람은 키가 없다.
+  Map<String, String> personNos = const {},
   required String? Function(String) decrypt,
   required String Function(DateTime) formatDate,
 }) {
@@ -459,6 +468,7 @@ TransferExportPlan buildTransferExportPlan({
     rows.add(TransferExportRow(
       uid: uid,
       workerName: nameOf(uid),
+      personNo: personNos[uid],
       bankName: v.bankName!,
       accountNumber: v.accountNumber!,
       accountHolder: v.accountHolder!,

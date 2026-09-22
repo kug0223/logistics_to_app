@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../models/core/attendance_model.dart';
 import '../../services/admin_stats_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/person_label.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -83,8 +84,16 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
 
   // ─── Excel 내보내기 ──────────────────────────────────────────
 
+  // [R7-PRE1A.1] 근로자번호를 넣고 성별·연락처를 뺀다.
+  //
+  //   이 파일의 목적은 **월 근태 기록**이다. 사람을 구분할 수단이 이름뿐이라
+  //   연락처가 사실상 식별자로 쓰이고 있었는데, 그건 PII 를 identity 로 쓰는
+  //   모양이다. 번호가 그 일을 대신하면 연락처는 이 파일에 있을 이유가 없다.
+  //
+  //   당일명단 PDF 의 연락처는 남긴다 — 그쪽은 현장에서 사람에게 전화하려고
+  //   들고 다니는 문서다. 목적이 다른 파일을 같은 PII 정책으로 묶지 않는다.
   static const _excelHeaders = [
-    '사업장명', '근무일자', '파트', '이름', '성별', '연락처',
+    '근로자번호', '사업장명', '근무일자', '파트', '이름',
     '출근시간', '퇴근시간', '비고',
   ];
 
@@ -105,8 +114,17 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
         if (biz != 0) return biz;
         final d = a.workDate.compareTo(b.workDate);
         if (d != 0) return d;
-        return (infoMap[a.userId]?.name ?? '').compareTo(
+        final n = (infoMap[a.userId]?.name ?? '').compareTo(
             infoMap[b.userId]?.name ?? '');
+        if (n != 0) return n;
+        // [R7-PRE1A.1] 같은 이름·같은 날이면 여기서 순서가 정해지지 않았다.
+        //   같은 파일을 두 번 내보내면 행 순서가 달라져 비교할 수 없고,
+        //   동명이인이면 어느 줄이 누구인지도 매번 바뀐다.
+        //   번호 → 근태 문서 id 순으로 못을 박는다.
+        final p = (infoMap[a.userId]?.personNo ?? '').compareTo(
+            infoMap[b.userId]?.personNo ?? '');
+        if (p != 0) return p;
+        return a.id.compareTo(b.id);
       });
 
     int row = startRow;
@@ -119,12 +137,11 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
           (r.modifyReason?.isNotEmpty ?? false ? ' / ${r.modifyReason}' : '');
 
       final cells = [
+        info?.personNo ?? '',
         r.businessName,
         dateStr,
         r.workType,
         info?.name ?? '알 수 없음',
-        info?.gender ?? '',
-        info?.phone ?? '',
         checkIn,
         checkOut,
         note,
@@ -153,30 +170,52 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
         bizGroups.putIfAbsent(r.businessName, () => []).add(r);
       }
 
+      // [R7-PRE1A.1] 시트 이름은 사업장명에서 온다. Excel 은 31자를 넘거나
+      //   : \ / ? * [ ] 가 들어가면 파일을 거부하거나 시트를 조용히 버린다 —
+      //   내보내기는 성공한 것처럼 보이면서. 사업장명은 사용자 입력이다.
+      //   이름을 고치는 것이 아니라 **시트 이름만** 안전하게 만든다.
+      //   같은 이름으로 줄어든 시트가 겹치지 않게 뒤에 번호를 붙인다.
+      final usedSheetNames = <String>{};
+      String sheetNameFor(String raw) {
+        var name = PersonLabel.safeSheetName(raw);
+        if (!usedSheetNames.add(name)) {
+          for (var i = 2;; i++) {
+            final base = name.length > 27 ? name.substring(0, 27) : name;
+            final alt = '$base($i)';
+            if (usedSheetNames.add(alt)) { name = alt; break; }
+          }
+        }
+        return name;
+      }
+
       if (bizGroups.length <= 1) {
         // 단일 사업장(또는 필터 적용) — 시트 하나
-        final sheetName = bizGroups.keys.firstOrNull ?? '근태현황';
-        final sheet = excel[sheetName];
+        final sheet = excel[sheetNameFor(bizGroups.keys.firstOrNull ?? '근태현황')];
         _writeHeaderRow(sheet);
         _writeAttendanceRows(sheet, data.rawAttendance, data.userInfoMap, 1);
       } else {
         // 복수 사업장 — 사업장별 시트 + 전체 시트
-        final allSheet = excel['전체'];
+        final allSheet = excel[sheetNameFor('전체')];
         _writeHeaderRow(allSheet);
         int allRow = 1;
         for (final entry in bizGroups.entries) {
-          final bizSheet = excel[entry.key];
+          final bizSheet = excel[sheetNameFor(entry.key)];
           _writeHeaderRow(bizSheet);
           _writeAttendanceRows(bizSheet, entry.value, data.userInfoMap, 1);
           allRow = _writeAttendanceRows(
               allSheet, entry.value, data.userInfoMap, allRow);
         }
-        excel.setDefaultSheet('전체');
+        excel.setDefaultSheet(sheetNameFor('전체'));
       }
 
       // 파일 저장 + 공유
+      // [R7-PRE1A.1] 파일명에 사업장을 넣는다. 여러 사업장을 차례로 내보내면
+      //   받는 쪽에서 같은 이름의 파일이 겹쳐 하나가 덮인다.
       final dir = await getTemporaryDirectory();
-      final fileName = '근태현황_${widget.year}년${widget.month}월.xlsx';
+      final bizPart = bizGroups.length == 1
+          ? '${PersonLabel.safeFileName(bizGroups.keys.first)}_'
+          : '';
+      final fileName = '$bizPart근태현황_${widget.year}년${widget.month}월.xlsx';
       final file = File('${dir.path}/$fileName');
       final bytes = excel.encode();
       if (bytes == null) {

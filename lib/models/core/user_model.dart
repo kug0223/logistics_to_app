@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/encryption_helper.dart';
+import '../../utils/person_label.dart';
 // trust_score_helper: [5A.2A] 신뢰도 점수 시스템 폐기
 import 'user_region.dart';
 
@@ -24,6 +25,19 @@ class UserModel {
   
   // ── 필수 개인 정보 ──
   final String name;
+
+  /// [R7-PRE1A.1] 이 **사업장 안에서** 이 사람을 가리키는 번호.
+  ///
+  /// 이름은 표시값이지 사람을 가리키는 열쇠가 아니다. 시스템은 uid 로 정확히
+  /// 다루지만 화면과 운영 파일을 읽는 사람에게는 이름밖에 없어서, 동명이인이
+  /// 한 명단에 있으면 "김지현님을 확정하시겠습니까?"를 보고도 어느 쪽인지
+  /// 모른다. 그 자리를 메우는 번호다.
+  ///
+  /// **사업장 종속 값이다.** UserModel 은 원래 전역 문서를 담지만 이 필드만은
+  /// "어느 사업장에서 읽었는가"에 따라 달라진다 — 사업장 범위 조회
+  /// (`callableGetUsersBatch(businessId:)`)가 채워 주고, 그 밖의 경로에서는
+  /// null 이다. null 을 "번호가 없는 사람"으로 읽지 않는다.
+  final int? personNo;
   final String? phone;
   final String? gender;                  // '남성' | '여성'
   final DateTime? birthDate;             // 생년월일
@@ -218,6 +232,7 @@ class UserModel {
     required this.uid,
     required this.username,
     required this.name,
+    this.personNo,
     required this.email,           // systemEmail
     this.phone,
     required this.role,
@@ -353,6 +368,19 @@ class UserModel {
   String get officialName => (isForeign && legalName != null && legalName!.isNotEmpty)
       ? legalName!
       : name;
+
+  /// [R7-PRE1A.1] 화면·파일에 찍히는 사람 번호. 없으면 null — 빈 칸으로 둔다.
+  ///
+  /// 표기를 한 곳에 모은다. 접두사나 자릿수를 바꿀 일이 생겨도 여기만 고치면
+  /// 목록·다이얼로그·Excel·PDF·파일명이 한꺼번에 따라온다.
+  String? get personLabel => PersonLabel.of(personNo);
+
+  /// `김지현(W-014)` — 확인 문구처럼 **무엇을 하려는지** 말하는 자리에 쓴다.
+  /// 번호가 없으면 이름만 돌려준다 — 괄호만 남은 이름을 만들지 않는다.
+  String get nameWithPersonNo {
+    final label = personLabel;
+    return label == null ? displayName : '$displayName($label)';
+  }
 
   // ── 전화번호 getter ──
 
@@ -532,6 +560,8 @@ class UserModel {
       uid: uid,
       username: map['username'] ?? '',
       name: map['name'] ?? '',
+      // 사업장 범위 조회에서만 실려 온다 — users 문서의 필드가 아니다.
+      personNo: (map['personNo'] as num?)?.toInt(),
       email: map['email'] ?? '',           // systemEmail
       phone: map['phone'],
       role: role,
@@ -879,6 +909,10 @@ class UserModel {
       uid: uid ?? this.uid,
       username: username ?? this.username,
       name: name ?? this.name,
+      // [R7-PRE1A.1] copyWith 인자에 없다 — 사업장 조회가 채우는 값이라
+      //   화면이 바꿀 일이 없다. 대신 **떨어뜨리지 않는다**: 여기서 빠지면
+      //   한 번 copyWith 를 거친 순간 목록에서 번호가 사라진다.
+      personNo: personNo,
       email: email ?? this.email,
       phone: phone ?? this.phone,
       role: role ?? this.role,

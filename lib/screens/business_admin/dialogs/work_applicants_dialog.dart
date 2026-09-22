@@ -16,6 +16,7 @@ import '../../../models/core/user_model.dart';
 import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
+import '../../../utils/person_label.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -1405,11 +1406,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      if (user?.gender != null || user?.age != null) ...[
+                                      // [R7-PRE1A.1] 번호를 성별·나이와 같은 보조 줄에 둔다.
+                                      //   이름만 있는 목록에서는 동명이인 두 줄이 똑같아 보인다.
+                                      if (PersonLabel.secondary(
+                                            user?.personNo,
+                                            '${user?.gender ?? ''}'
+                                            '${user?.age != null ? ' · ${user?.age}세' : ''}',
+                                          ).isNotEmpty) ...[
                                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                         Flexible(
                                           child: Text(
-                                            '(${user?.gender ?? ''}${user?.age != null ? ' · ${user?.age}세' : ''})',
+                                            '(${PersonLabel.secondary(
+                                              user?.personNo,
+                                              '${user?.gender ?? ''}'
+                                              '${user?.age != null ? ' · ${user?.age}세' : ''}',
+                                            )})',
                                             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                                             overflow: TextOverflow.ellipsis,
                                           ),
@@ -2000,7 +2011,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (_isProcessing) return;
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
-    final workerName = user?.name ?? '지원자';
+    final workerName = _personLabelOf(user, '지원자');
     final currentWork = _getWorkForApp(app);
     final candidates = _offerableWorkDetails(app);
     if (candidates.isEmpty) {
@@ -2076,7 +2087,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final confirm = await DialogHelper.showConfirm(
         context,
         title: '지원 확정',
-        message: '${user?.name ?? '지원자'}님을 확정하시겠습니까?',
+        message: '${_personLabelOf(user, '지원자')}님을 확정하시겠습니까?',
         confirmText: '확정',
       );
 
@@ -2099,7 +2110,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 확정되었습니다. 계약서를 작성해 주세요.');
+      ToastHelper.showSuccess('${_personLabelOf(user, '지원자')}님이 확정되었습니다. 계약서를 작성해 주세요.');
       await _loadApplicants();
       if (!mounted) return;
       await _updateLocalStats();
@@ -2127,7 +2138,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final reason = await DialogHelper.showRejectReasonPicker(
         context,
         title: '지원 거절',
-        message: '${user?.name ?? '지원자'}님을 거절합니다.\n거절 사유를 선택해주세요.',
+        message: '${_personLabelOf(user, '지원자')}님을 거절합니다.\n거절 사유를 선택해주세요.',
       );
 
       if (reason == null || !mounted) return;
@@ -2142,7 +2153,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       );
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
+      ToastHelper.showSuccess('${_personLabelOf(user, '지원자')}님이 거절되었습니다');
       await _loadApplicants();
       if (!mounted) return;
       await _updateLocalStats();
@@ -2196,7 +2207,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (_isProcessing) return;
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
-    final workerName = user?.name ?? '근로자';
+    final workerName = _personLabelOf(user, '근로자');
     final candidates = _offerableWorkDetails(app);
     if (candidates.isEmpty) {
       ToastHelper.showWarning('변경할 수 있는 다른 업무가 없습니다.');
@@ -2274,7 +2285,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final reason = await DialogHelper.showRejectReasonPicker(
       context,
       title: '확정 취소',
-      message: '${user?.name ?? '근무자'}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
+      message: '${_personLabelOf(user, '근무자')}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
     );
 
     // [역전패턴 수정] 원래 "if (reason == null || !mounted)"였으나 !mounted 시에도 setState 호출되는 버그.
@@ -2294,7 +2305,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       );
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${user?.name ?? '근무자'}님의 확정이 취소되었습니다');
+      ToastHelper.showSuccess('${_personLabelOf(user, '근무자')}님의 확정이 취소되었습니다');
       await _loadApplicants();
       if (!mounted) return;
       await _updateLocalStats();
@@ -3218,4 +3229,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
     }
   }
+  /// [R7-PRE1A.1] 확인 문구·토스트에서 사람을 가리키는 표기.
+  ///
+  ///   `김지현(W-014)` — 동명이인이 있는 명단에서 관리자가 **무엇을 하려는지**
+  ///   확인할 수 있어야 한다. 이름만 적으면 두 사람 중 어느 쪽인지 알 수 없다.
+  ///   번호가 없으면 이름만 — 괄호만 남은 이름을 만들지 않는다.
+  String _personLabelOf(UserModel? user, String fallback) =>
+      user?.nameWithPersonNo ?? fallback;
 }

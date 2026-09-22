@@ -1025,7 +1025,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Widget _buildWorkerCard(_FixedWorkerItem item) {
     final app = item.application;
     final user = item.user;
-    final name = user?.name ?? '이름 없음';
+    // [R7-PRE1A.1] 동명이인이 있으면 이름만으로는 어느 근무자인지 알 수 없다.
+    final name = user?.nameWithPersonNo ?? '이름 없음';
 
     final hasResignRequest = app.resignStatus == AppStatus.pending;
     final hasTerminationRequest = app.terminationStatus == AppStatus.pending;
@@ -1651,7 +1652,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final confirm = await DialogHelper.showConfirm(
         context,
         title: '계약 연장',
-        message: '${user?.name ?? ''}님의 계약을 $renewalMonths개월 연장합니다.\n\n'
+        message: '${user?.nameWithPersonNo ?? ''}님의 계약을 $renewalMonths개월 연장합니다.\n\n'
             '새 계약 기간: ${newStart.month}/${newStart.day} ~ ${newEnd.month}/${newEnd.day}\n\n'
             '연장 후 근로계약서 작성 화면이 열립니다.',
         confirmText: '연장 및 계약서 작성',
@@ -1670,7 +1671,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final confirm = await DialogHelper.showConfirm(
         context,
         title: '계약 종료',
-        message: '${user?.name ?? ''}님의 계약을 ${app.workEndDate!.month}/${app.workEndDate!.day}에 종료하시겠습니까?\n근무자에게 종료 통보 알림이 발송됩니다.',
+        message: '${user?.nameWithPersonNo ?? ''}님의 계약을 ${app.workEndDate!.month}/${app.workEndDate!.day}에 종료하시겠습니까?\n근무자에게 종료 통보 알림이 발송됩니다.',
         confirmText: '종료',
         confirmColor: AppColors.error,
         icon: Icons.stop_circle_outlined,
@@ -1901,7 +1902,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   void _showWorkerActions(_FixedWorkerItem item) {
     final app = item.application;
     final user = item.user;
-    final name = user?.name ?? '이름 없음';
+    // [R7-PRE1A.1] 동명이인이 있으면 이름만으로는 어느 근무자인지 알 수 없다.
+    final name = user?.nameWithPersonNo ?? '이름 없음';
 
     DialogHelper.showSheet(
       context,

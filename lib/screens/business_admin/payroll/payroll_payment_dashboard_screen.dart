@@ -20,6 +20,7 @@ import '../../../providers/user_provider.dart';
 import '../../../services/payroll_payment_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/person_label.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
@@ -589,7 +590,15 @@ class _PayrollPaymentDashboardScreenState
       for (final uid in uncached) {
         final user = userMap[uid];
         if (user == null) continue;
-        _userBankCache[uid] = {'name': user.name};
+        // [R7-PRE1A.1] 표시 이름과 사람 번호를 함께 둔다.
+        //   급여는 돈이 오가는 자리다 — 동명이인 두 줄이 이름만 같으면
+        //   어느 쪽에 이체하는지 화면이 말해 주지 못한다.
+        //   검색(name)은 이름만 쓰고, 표시는 번호가 붙은 쪽을 쓴다.
+        _userBankCache[uid] = {
+          'name': user.name,
+          'label': user.nameWithPersonNo,
+          if (user.personLabel != null) 'personNo': user.personLabel!,
+        };
       }
     } catch (e) {
       debugPrint('❌ 근로자 이름 배치 로드 실패: $e');
@@ -712,7 +721,7 @@ class _PayrollPaymentDashboardScreenState
     final uid = recs.first.userId;
     final info = _readiness[uid];
     if (info == null) return;
-    final name = _userBankCache[uid]?['name'] ?? '이름 없음';
+    final name = _userBankCache[uid]?['label'] ?? '이름 없음';
     // [PII-DOC-R1.6.1B] 지금 보고 있는 **미지급** 건을 목적으로 지목한다.
     //   이미 이체된 건만 남았으면 서버가 원본을 열어주지 않는다.
     final unpaid = recs
@@ -784,7 +793,7 @@ class _PayrollPaymentDashboardScreenState
         .map((r) => r.id)
         .toList();
     if (ids.isEmpty) return;
-    final name = _userBankCache[recs.first.userId]?['name'] ?? '이름 없음';
+    final name = _userBankCache[recs.first.userId]?['label'] ?? '이름 없음';
     final ok = await DialogHelper.showConfirm(
       context,
       title: '지급정보 갱신',
@@ -1220,12 +1229,16 @@ class _PayrollPaymentDashboardScreenState
       final uid = context.read<UserProvider>().currentUser?.uid ?? '';
       if (uid.isEmpty) { ToastHelper.showError('로그인 정보를 확인해주세요'); return; }
 
+      // 서버로 가는 값은 사람 이름 그대로다 — 번호를 섞으면 기록이 오염된다.
       final workerName = _userBankCache[recs.first.userId]?['name'] ?? '이름 없음';
+      // 확인 문구에만 번호를 붙인다 — 이체는 되돌리기 어렵다.
+      final workerLabel =
+          _userBankCache[recs.first.userId]?['label'] ?? workerName;
       final net = _sumNet(recs);
       final confirmed = await DialogHelper.showConfirm(
         context,
         title: '이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
-        message: '$workerName님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
+        message: '$workerLabel님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
         confirmText: '이체 완료 처리',
         cancelText: '취소',
         icon: Icons.payment_outlined,

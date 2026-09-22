@@ -2150,6 +2150,23 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     // businesses/{businessId}/members 서브컬렉션 (하위 관리자 목록)
     // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // businesses/{bizId}/persons/{uid} — 사업장 안에서 사람을 가리키는 번호
+    // businesses/{bizId}/counters/{name} — 그 번호를 나눠 주는 카운터
+    // ═══════════════════════════════════════════════════════════
+    //
+    // [R7-PRE1A.1] 번호는 CF(Admin SDK)만 만든다. 클라이언트가 쓸 수 있으면
+    //   같은 번호를 두 사람이 갖거나, 남의 번호를 가져갈 수 있다 — 그러면
+    //   화면과 운영 파일에서 사람을 구분하려고 만든 것이 오히려 구분을 망친다.
+    //   읽기도 클라이언트는 하지 않는다: 번호는 callableGetUsersBatch 응답에
+    //   실려 오고, 그 CF 가 사업장 관계를 이미 검증한다.
+    match /businesses/{businessId}/persons/{uid} {
+      allow read, write: if false;
+    }
+    match /businesses/{businessId}/counters/{counterName} {
+      allow read, write: if false;
+    }
+
     match /businesses/{businessId}/members/{uid} {
 
       // 단일 문서 읽기: 해당 사업장 관리자 · 멤버 본인 · 하위 관리자 · 슈퍼어드민

@@ -323,7 +323,18 @@ class UserInfo {
   final String name;
   final String? gender;
   final String? phone;
-  const UserInfo({required this.name, this.gender, this.phone});
+  /// [R7-PRE1A.1] 이 사업장에서의 사람 번호(`W-014`). 모르면 null.
+  ///
+  ///   사업장 범위 조회가 실어 준다. 월 근태 파일이 사람을 가릴 수단이
+  ///   이름뿐이면 동명이인이 한 줄로 읽힌다.
+  final String? personNo;
+
+  const UserInfo({
+    required this.name,
+    this.gender,
+    this.phone,
+    this.personNo,
+  });
 }
 
 /// Level 2 — 월 상세
@@ -972,6 +983,8 @@ class AdminStatsService {
             name: e.value.name.isNotEmpty ? e.value.name : '알 수 없음',
             gender: e.value.gender,
             phone: e.value.effectivePhone,
+            // 사업장별 조회라 번호가 그 사업장 기준으로 온다.
+            personNo: e.value.personLabel,
           );
         }
       } catch (e) {

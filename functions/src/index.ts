@@ -18107,6 +18107,21 @@ export const callableGetUsersBatch = onCall(
       users[snap.id] = safeData;
     }
 
+    // [R7-PRE1A.1] 사업장 안에서 사람을 가리키는 번호.
+    //   여기가 유일한 배포 지점이다 — 지원자 목록·당일명단·계약·급여·근태·
+    //   Excel·PDF 가 전부 이 CF 로 사람을 읽는다. 각 화면이 따로 조회하면
+    //   어느 한 곳은 빠지고, 빠진 곳에서 동명이인이 합쳐진다.
+    //   validUids 만 대상이다 — 이 사업장과 관계가 없는 사람에게는 번호가 없다.
+    const personNos = await srvPersonNosFor(
+      businessId,
+      Object.keys(users).filter((u) => validUids.has(u)),
+      // 슈퍼어드민은 관계 검증 없이 임의 uid 를 조회할 수 있다 — 그 경로에서는
+      // 이미 있는 번호만 읽고 새로 주지 않는다.
+      {assign: !isSuperAdmin});
+    for (const [uid, no] of Object.entries(personNos)) {
+      if (users[uid]) users[uid]["personNo"] = no;
+    }
+
     return {users};
   }
 );
@@ -19857,6 +19872,134 @@ function _isConflictLongTerm(
 //   · AUTO_CANCELED는 reliability 패널티 대상이 아니다 — 근로자의 선택이 아니다.
 //   · 시간 겹침 판정은 _isConflictShortTerm / _isConflictLongTerm 하나만 쓴다
 //     (callableApplyToTO의 지원 시점 차단과 같은 규칙).
+
+// ─── personNo — 사업장 안에서 사람을 가리키는 번호 ────────────────────────
+//
+// [R7-PRE1A.1] 이름은 사람을 가리키는 열쇠가 아니다. 시스템은 uid 로 사람을
+//   정확히 다루고 있지만(감사 결과 mutation 경로 전부 canonical), **화면과
+//   운영 파일을 읽는 사람**에게는 이름밖에 없다. 동명이인이 한 명단에 있으면
+//   관리자는 "김지현님을 확정하시겠습니까?"를 보고도 어느 쪽인지 모른다.
+//
+//   번호는 사업장 안에서만 뜻을 가진다(business-local). 전역 번호를 주면
+//   두 사업장이 같은 번호를 보고 동일인임을 대조할 수 있게 되는데,
+//   그건 지금 없는 노출이다.
+//
+//   이름이 workerNo 가 아니라 personNo 인 이유: 번호는 **지원한 순간**
+//   생긴다. 아직 근무자가 아닌 지원자에게도 붙어야 동명이인을 지원 검토
+//   단계에서 구분할 수 있다. 번호를 아끼려고 확정까지 미루면 정작 필요한
+//   자리에서 없다.
+//
+//   번호 공백은 허용한다 — 지원만 하고 사라진 사람의 번호는 비워 둔다.
+
+/**
+ * `businesses/{bizId}/persons/{uid}` — 이 사업장에서 이 사람의 번호.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} uid 사람
+ * @return {FirebaseFirestore.DocumentReference} 번호 문서
+ */
+function srvPersonRef(businessId: string, uid: string) {
+  return db.collection("businesses").doc(businessId)
+    .collection("persons").doc(uid);
+}
+
+/**
+ * 이 사업장에서 이 사람의 personNo 를 보장한다. 있으면 그대로, 없으면 발급.
+ *
+ * 번호는 사업장 카운터를 트랜잭션으로 올려서 준다 — 동시에 두 명이 지원해도
+ * 같은 번호가 나가지 않는다. 한 번 준 번호는 재사용하지 않는다:
+ * 그 번호로 나간 급여·근태 파일이 이미 사업장 밖에 있다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} uid 사람
+ * @return {Promise<number>} 이 사업장에서의 번호
+ */
+async function srvEnsurePersonNo(
+  businessId: string,
+  uid: string,
+): Promise<number> {
+  const personRef = srvPersonRef(businessId, uid);
+  const pre = await personRef.get();
+  const preNo = pre.data()?.personNo as number | undefined;
+  if (typeof preNo === "number") return preNo;
+
+  const counterRef = db.collection("businesses").doc(businessId)
+    .collection("counters").doc("personNo");
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(personRef);
+    const existing = snap.data()?.personNo as number | undefined;
+    if (typeof existing === "number") return existing;
+    const cSnap = await tx.get(counterRef);
+    const next = ((cSnap.data()?.next as number | undefined) ?? 0) + 1;
+    tx.set(counterRef, {next}, {merge: true});
+    tx.set(personRef, {
+      uid,
+      businessId,
+      personNo: next,
+      assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return next;
+  });
+}
+
+/**
+ * 관계가 생긴 직후 번호를 붙인다. 실패해도 관계 생성은 되돌리지 않는다 —
+ * 번호는 사람이 읽기 위한 것이고, 조회 경로(callableGetUsersBatch)가
+ * 없으면 그때 채운다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} uid 사람
+ * @return {Promise<void>} 없음
+ */
+async function srvIssuePersonNoBestEffort(
+  businessId: string,
+  uid: string,
+): Promise<void> {
+  try {
+    await srvEnsurePersonNo(businessId, uid);
+  } catch (e) {
+    console.warn(`[personNo] 발급 실패 biz=${businessId}: ${String(e)}`);
+  }
+}
+
+/**
+ * 여러 사람의 personNo 를 한 번에 읽는다. 없는 사람은 그 자리에서 발급한다 —
+ * 지원 경로가 놓쳤거나 이 기능 이전에 생긴 관계를 스스로 메운다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string[]} uids 사람들
+ * @param {object} [opts] `assign:false` 면 없는 번호를 새로 주지 않는다
+ * @return {Promise<Record<string, number>>} uid → 번호
+ */
+async function srvPersonNosFor(
+  businessId: string,
+  uids: string[],
+  opts?: {assign?: boolean},
+): Promise<Record<string, number>> {
+  if (uids.length === 0) return {};
+  const assign = opts?.assign !== false;
+  const out: Record<string, number> = {};
+  const refs = uids.map((u) => srvPersonRef(businessId, u));
+  const snaps = await db.getAll(...refs);
+  const missing: string[] = [];
+  snaps.forEach((s, i) => {
+    const no = s.data()?.personNo as number | undefined;
+    if (typeof no === "number") out[uids[i]] = no;
+    else missing.push(uids[i]);
+  });
+  // 없는 사람은 순서대로 채운다 — 동시에 여러 요청이 와도 트랜잭션이 가른다.
+  // 관계가 확인되지 않은 조회(슈퍼어드민의 임의 uid 조회)는 읽기만 한다 —
+  // 지원한 적 없는 사람에게 번호를 발급하면 번호가 관계를 뜻하지 않게 된다.
+  if (!assign) return out;
+  for (const uid of missing) {
+    try {
+      out[uid] = await srvEnsurePersonNo(businessId, uid);
+    } catch (e) {
+      console.warn(`[personNo] 지연 발급 실패 biz=${businessId}: ${String(e)}`);
+    }
+  }
+  return out;
+}
 
 // [SYSTEM-INTEGRATION-R2.2] 지원 검토·초대 후보가 함께 쓰는 job-relevant allowlist.
 //   두 목적 모두 "이 사람을 이번 근무에 쓸지" 판단이고 capability도 canManageTo로
@@ -33144,6 +33287,12 @@ export const callableApplyToTO = onCall(
       }
     });
 
+    // [R7-PRE1A.1] 이 사업장과의 첫 관계가 여기서 생긴다 — 번호도 여기서 준다.
+    //   확정까지 미루지 않는다: 동명이인은 **지원 검토 단계에서** 구분돼야 한다.
+    //   트랜잭션 밖이다. 번호는 사람이 읽기 위한 것이라 지원 성공을 되돌릴
+    //   이유가 되지 못하고, 실패하면 조회 경로가 스스로 메운다.
+    await srvIssuePersonNoBestEffort(businessId, uid);
+
     // 트랜잭션 성공 후: 사업장 관리자에게 newApplication 알림 발송
     // Admin SDK 직접 쓰기 — 지원자는 members 서브컬렉션 비소속이므로 createNotification CF 불필요
     console.log(`🔔 [applyToTO] 알림 발송 시작: businessId=${businessId}, uid=${uid}`);
@@ -34384,6 +34533,9 @@ export const callableInviteWorker = onCall(
           console.error("[callableInviteWorker] 알림 실패:", err);
         }
       });
+
+    // [R7-PRE1A.1] 초대도 이 사업장과의 첫 관계가 될 수 있다 — 지원과 같게 준다.
+    await srvIssuePersonNoBestEffort(businessId, targetUid);
 
     return {success: true, applicationId: newAppRef.id};
   }

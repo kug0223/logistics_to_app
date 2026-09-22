@@ -25,6 +25,7 @@ import '../../../screens/contract/contract_sign_screen.dart' show ContractTempla
 import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/monthly_review_service.dart';
+import '../../../utils/person_label.dart';
 import '../../../utils/id_card_helper.dart';
 // trust_score_helper: 신뢰도 점수 시스템 제거 (5A.2A)
 import '../../../theme/app_colors.dart';
@@ -1645,9 +1646,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (_genderAge(user).isNotEmpty) ...[
+                      // [R7-PRE1A.1] 번호를 이름 옆 보조 문구로 — badge 가 아니다.
+                      //   동명이인이 한 명단에 있으면 이름만으로는 어느 쪽을
+                      //   고르는지 알 수 없다.
+                      if (PersonLabel.secondary(
+                              user?.personNo, _genderAge(user)).isNotEmpty) ...[
                         const SizedBox(width: 3),
-                        Text(_genderAge(user),
+                        Text(
+                            PersonLabel.secondary(
+                                user?.personNo, _genderAge(user)),
                             style: ResponsiveHelper.tinyStyle(context,
                                 color: AppColors.grey500)),
                       ],

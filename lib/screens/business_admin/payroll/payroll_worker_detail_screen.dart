@@ -22,6 +22,8 @@ import '../../../widgets/common/notification_badge.dart';
 import '../../../screens/common/notification_screen.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../services/firestore_service.dart';
+import '../../../utils/person_label.dart';
 
 class PayrollWorkerDetailScreen extends StatefulWidget {
   final String businessId;
@@ -56,7 +58,32 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadRecords();
+      _loadPersonNo();
     });
+  }
+
+  /// [R7-PRE1A.1] 이 사업장에서의 사람 번호 — 파일명에 들어간다.
+  ///
+  ///   호출부에서 받아 오지 않고 여기서 직접 읽는다. 진입 경로가 여럿이라
+  ///   한 곳이라도 빠지면 그 경로로 만든 파일만 번호가 없어지고, 그러면
+  ///   같은 사람의 파일이 두 이름으로 남는다.
+  ///
+  ///   실패해도 화면은 그대로다 — 번호가 없으면 파일명에서 빠질 뿐이다.
+  String? _personNo;
+
+  Future<void> _loadPersonNo() async {
+    try {
+      final users = await FirestoreService().getUsersBatch(
+        [widget.workerId],
+        businessId: widget.businessId,
+        purpose: FirestoreService.purposeWorkerDirectory,
+      );
+      final label = users[widget.workerId]?.personLabel;
+      if (!mounted || label == null) return;
+      setState(() => _personNo = label);
+    } catch (e) {
+      debugPrint('⚠️ 근로자번호 조회 실패 (파일명에서 생략): $e');
+    }
   }
 
   Future<void> _loadRecords() async {
@@ -611,6 +638,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         year: widget.year,
         month: widget.month,
         workerName: widget.workerName,
+        personNo: _personNo,
         records: _records,
       ),
     );
@@ -644,12 +672,17 @@ class _PayslipIssueSheet extends StatefulWidget {
   final int year;
   final int month;
   final String workerName;
+
+  /// [R7-PRE1A.1] 파일명 앞에 붙는 사업장 내 사람 번호. 모르면 null.
+  final String? personNo;
+
   final List<AttendanceModel> records;
 
   const _PayslipIssueSheet({
     required this.year,
     required this.month,
     required this.workerName,
+    this.personNo,
     required this.records,
   });
 
@@ -658,6 +691,17 @@ class _PayslipIssueSheet extends StatefulWidget {
 }
 
 class _PayslipIssueSheetState extends State<_PayslipIssueSheet> {
+  /// `W-014_김지현_` — 번호가 없으면 `김지현_`.
+  ///
+  ///   동명이인 둘의 명세서를 차례로 내보내면 받는 쪽에서 같은 파일명이 되어
+  ///   하나가 덮인다. raw uid 는 쓰지 않는다 — 28자 난수는 운영 문서에서
+  ///   읽히지 않고, 사업장 밖으로 나가는 파일에 내부 식별자를 실을 이유도 없다.
+  String get _fileNamePrefix {
+    final name = PersonLabel.safeFileName(widget.workerName);
+    final no = widget.personNo;
+    return no == null ? '${name}_' : '${no}_${name}_';
+  }
+
   PayslipIssueType _issueType = PayslipIssueType.monthly;
   int _selectedWeekNo = 1;
   bool _isGenerating = false;
@@ -712,8 +756,8 @@ class _PayslipIssueSheetState extends State<_PayslipIssueSheet> {
     try {
       final bytes = await PayslipPdfBuilder.buildAggregated(data);
       final filename = _issueType == PayslipIssueType.weekly
-          ? '${widget.workerName}_${widget.month}월$_selectedWeekNo주차_임금명세서.pdf'
-          : '${widget.workerName}_${widget.year}년${widget.month}월_임금명세서.pdf';
+          ? '$_fileNamePrefix${widget.month}월$_selectedWeekNo주차_임금명세서.pdf'
+          : '$_fileNamePrefix${widget.year}년${widget.month}월_임금명세서.pdf';
       if (!mounted) return;
       // [UX-FIX 2026-07-16] Navigator.pop을 sharePdf 이후로 이동
       //   pop이 먼저 실행되면 위젯이 언마운트 → catch의 if(mounted) 항상 false → 에러 토스트 무음 소멸

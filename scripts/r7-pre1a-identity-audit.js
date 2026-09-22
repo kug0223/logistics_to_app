@@ -293,11 +293,8 @@ async function auditRename() {
       '(USER PRODUCT POLICY 7). 개명해도 이미 확정된 건의 예금주는 그대로다.');
 
   // 그런데 Excel 의 이름은 현재 프로필에서 온다.
-  record('CORRECTION', 'D',
-      '이체 Excel 한 파일 안에서 「이름」은 현재 프로필(_loadWorkerNames → users/{uid}.name)이고 ' +
-      '「예금주」는 확정 시점 스냅샷이다. 개명 후 과거 급여를 내보내면 두 칸이 서로 다른 ' +
-      '이름으로 찍힌다 — 은행 쪽에서 명의 불일치로 읽히고, 운영자는 이유를 알 수 없다. ' +
-      '금액·계좌는 정확하므로 BLOCKER 는 아니다.');
+  // 두 칸의 의미 구분은 E 절에서 실제 헤더를 읽어 판정한다 —
+  // 여기서 문구만 반복하면 코드가 고쳐진 뒤에도 보고서가 옛말을 한다.
 
   record('NOTE', 'D',
       'payroll_summaries/{biz}_{YYYY-MM}/workers/{uid}.name 은 현재 프로필로 다시 쓰인다 ' +
@@ -311,44 +308,56 @@ async function auditRename() {
 async function auditExportIdentity(sameDayGroups) {
   head('E. Export row identity — 파일만 보고 사람과 행을 구분할 수 있는가');
 
-  const rows = [
-    ['은행 이체 xlsx', '이름 · 은행명 · 계좌번호 · 예금주 · 이체금액 · 메모',
-      '사람: 계좌번호(사실상) · 행: 근로자×계좌 합산',
-      '계좌번호가 사람을 가르지만 계좌는 identity 가 아니다. 같은 이름 두 사람이 ' +
-      '각자 계좌를 가지면 구분되지만, 운영자가 그것을 식별자로 읽게 된다.'],
-    ['급여현황 xlsx', '이름 · 사업장 · 업무 · 근무시간 · 급여형태 · 근무일 · 금액들 · 이체상태',
-      '사람: 이름뿐 · 행: 업무+근무시간+근무일(R7-PRE1 추가)',
-      '행은 구분되지만 **사람은 이름만으로 구분한다.**'],
-    ['근태현황 xlsx', '사업장명 · 근무일자 · 파트 · 이름 · 성별 · 연락처 · 출근 · 퇴근 · 비고',
-      '사람: 이름+연락처 · 행: 근무일자+파트+출퇴근',
-      '연락처가 사실상 식별자로 쓰이고 있다 — PII 를 identity 로 쓰는 형태.'],
-    ['당일명단 PDF', '이름 · 성별 · 연락처 · 근무시간',
-      '사람: 이름+연락처 · 행: 파트 그룹 내 순서',
-      'uid 가 전혀 없다. 같은 이름 두 사람이 같은 파트면 두 줄이 완전히 같아 보인다.'],
-    ['임금명세서 PDF', '근로자명 · 기간 · 일별 근무 · 금액',
-      '사람: 이름 · 행: 날짜',
-      '1인 1파일이라 파일 내 혼동은 없다. 파일명이 `{이름}_{연월}_임금명세서.pdf` 라 ' +
-      '동명이인 파일이 서로 덮어쓴다.'],
+  // 소스에서 실제 헤더를 읽는다 — 보고서가 코드보다 앞서 가지 않게.
+  const src = (p) => require("fs").readFileSync(p, "utf8");
+  const payroll = src("lib/utils/payroll_excel_helper.dart");
+  const monthly = src("lib/screens/business_admin/admin_month_detail_screen.dart");
+  const roster = src("lib/utils/attendance_list_pdf.dart");
+  const payslip = src(
+      "lib/screens/business_admin/payroll/payroll_worker_detail_screen.dart");
+
+  const checks = [
+    ["은행 이체 xlsx", payroll.includes("'근로자번호', '이름(현재)'")],
+    ["급여현황 xlsx", payroll.includes("'근로자번호', '이름', '사업장'")],
+    ["근태현황 xlsx", monthly.includes("'근로자번호', '사업장명'")],
+    ["당일명단 PDF/xlsx", roster.includes("_nameWithNo(worker)") &&
+        roster.includes("worker.personNo")],
+    ["임금명세서 파일명", payslip.includes("_fileNamePrefix")],
   ];
-  for (const [name, cols, ident, note] of rows) {
-    log(`   ${name}`);
-    log(`     컬럼   : ${cols}`);
-    log(`     식별   : ${ident}`);
-    log(`     비고   : ${note}`);
+  for (const [name, ok] of checks) {
+    log(`   ${ok ? 'OK  ' : '없음'} ${name}`);
+  }
+  const missing = checks.filter(([, ok]) => !ok).map(([n]) => n);
+  if (missing.length === 0) {
+    record('OK', 'E',
+        '운영 export 5종 모두 사람 식별용 번호를 싣는다(R7-PRE1A.1). ' +
+        '번호가 row identity 를 대신하지는 않는다 — 행은 업무·근무시간·근무일이 가른다.');
+  } else {
+    record('CORRECTION', 'E', '번호가 없는 export: ' + missing.join(', '));
   }
 
-  record('CORRECTION', 'E',
-      '운영 export 5종 중 **사람 식별용 stable ID 를 가진 파일이 하나도 없다.** ' +
-      '전부 이름(+연락처/계좌)으로 사람을 가른다. 동명이인이 생기면 ' +
-      '급여현황·근태현황·당일명단에서 두 사람이 같은 줄로 읽힌다.');
+  // 월 근태 파일의 PII
+  const dropped = !monthly.includes("info?.gender ??") &&
+      !monthly.includes("info?.phone ??");
+  record(dropped ? 'OK' : 'CORRECTION', 'E',
+      dropped
+        ? '월 근태 xlsx 에서 성별·연락처를 뺐다 — 번호가 식별을 대신한다. ' +
+          '당일명단 PDF 의 연락처는 유지한다(현장 연락 목적).'
+        : '월 근태 xlsx 에 성별·연락처가 남아 있다.');
 
-  record('CORRECTION', 'E',
-      '임금명세서 PDF 파일명이 `{이름}_{연월}_임금명세서.pdf` 다. 동명이인 두 명을 ' +
-      '차례로 내보내면 받는 쪽에서 같은 파일명이 되어 하나가 덮인다.');
+  // 이름 ↔ 예금주 의미 구분
+  const labelled = payroll.includes("'이름(현재)'") &&
+      payroll.includes("'예금주(확정 시점)'");
+  record(labelled ? 'OK' : 'CORRECTION', 'D',
+      labelled
+        ? '이체 파일이 「이름(현재)」과 「예금주(확정 시점)」을 나눠 적는다. ' +
+          '개명하면 둘이 달라질 수 있고 그건 오류가 아니다 — 한쪽으로 통일하지 않고, ' +
+          '서버에도 둘을 비교해 이체를 막는 로직이 없다.'
+        : '이체 파일의 두 이름 칸이 무엇을 뜻하는지 파일에 적혀 있지 않다.');
 
   if (sameDayGroups.length > 0) {
     record('OK', 'E',
-        `같은 사람 같은 날 복수 근무 ${sameDayGroups.length}조는 급여현황 xlsx 에서 ` +
+        '같은 사람 같은 날 복수 근무 ' + sameDayGroups.length + '조는 급여현황 xlsx 에서 ' +
         '업무·근무시간 컬럼으로 구분된다(R7-PRE1). 근태현황 xlsx 는 출퇴근 컬럼으로 구분된다.');
   }
 }
@@ -373,6 +382,18 @@ async function auditDisambiguators() {
   log(`     uid 앞 6자리     ${uniq((u) => u.uid.slice(0, 6))}개`);
   log(`     사업장 근로자번호  없음 (businesses/{}/members 는 관리자·서브관리자용)`);
 
+  // [R7-PRE1A.1 §3] 관계가 아직 없는 후보자 화면 — personNo 를 주지 않는다.
+  const cand = require('fs').readFileSync(
+      'lib/models/core/available_worker_model.dart', 'utf8');
+  const masked = cand.includes('maskedName');
+  const noPhone = !cand.includes('final String phone');
+  record(masked && noPhone ? 'OK' : 'CORRECTION', 'F',
+      masked && noPhone
+        ? '초대 후보 화면(callableGetAvailableWorkers)은 마스킹 이름 + 지역 + 경력으로 ' +
+          '사람을 보여주고 연락처를 싣지 않는다. 아직 이 사업장과 관계가 없는 사람이라 ' +
+          '번호를 주지 않는다 — 둘러보기만 해도 번호가 소모되면 번호가 관계를 뜻하지 않게 된다. ' +
+          '초대하면 그 순간 INVITED 관계가 생기고 거기서 번호가 나온다. mutation 은 uid 다.'
+        : '후보 화면의 표시 필드를 다시 봐야 한다.');
   record('NOTE', 'F',
       'username 은 이미 서버가 관리자에게 내려주고 있다 ' +
       '(APPLICANT_REVIEW_ALLOWED 에 포함). 화면에 표시만 안 한다. ' +

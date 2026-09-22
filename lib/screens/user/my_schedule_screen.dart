@@ -23,6 +23,7 @@ import 'user_tab_scope.dart';
 import '../../models/core/invite_region_preference.dart';
 import '../../services/invite_region_service.dart';
 import 'invite_region_settings_screen.dart';
+import '../../utils/person_label.dart';
 
 class MyScheduleScreen extends StatefulWidget {
   const MyScheduleScreen({super.key});
@@ -970,7 +971,15 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             : '',
       );
       final bytes = await PayslipPdfBuilder.buildAggregated(data);
-      final filename = '${uid.name}_${_focusedDay.year}년${_focusedDay.month}월_임금명세서.pdf';
+      // [R7-PRE1A.1] 파일명은 받는 사람 쪽에서 겹치면 하나가 덮인다.
+      //   근로자 본인 파일이라 동명이인 문제는 없지만, 두 사업장에서 같은 달
+      //   명세서를 받으면 이름이 같아진다 — 사업장으로 가른다.
+      //   이름·사업장명은 사용자 입력이라 파일명 금지문자를 걸러 낸다.
+      final bizPart = records.isNotEmpty && records.first.businessName.isNotEmpty
+          ? '${PersonLabel.safeFileName(records.first.businessName)}_'
+          : '';
+      final filename = '$bizPart${PersonLabel.safeFileName(uid.name)}_'
+          '${_focusedDay.year}년${_focusedDay.month}월_임금명세서.pdf';
       if (!mounted) return;
       await Printing.sharePdf(bytes: bytes, filename: filename);
     } catch (e) {
