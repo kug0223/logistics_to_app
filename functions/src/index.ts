@@ -9,22 +9,66 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {initializeApp} from "firebase-admin/app";
 import {getFirestore, Timestamp, Firestore} from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
-import * as nodemailer from "nodemailer";
+import type * as NodemailerNs from "nodemailer";
 import * as crypto from "crypto";
 import * as https from "https";
 
 initializeApp();
 const db = getFirestore();
 
-// nodemailer transporter — 콜드 스타트 1회만 생성 (핸들러마다 재생성 방지)
+// ── [R8-P8 / P8.1] 콜드 스타트에 대해 알아낸 것 ────────────────────
+//
+//   DEV TRUE COLD 3회 실측(2.5초 중앙)의 구성은 이랬다.
+//
+//     플랫폼 provisioning        ~1040ms   통제 불가
+//     Node 부팅 + 의존성 import   ~820ms   nodemailer 지연화로 일부 회수
+//     framework ready → handler  ~660ms   통제 불가
+//     첫 Firestore 호출           ~690ms   아래 참조
+//     우리 index.js 본문(2.2MB)     11ms   — 쪼갤 이유가 없다
+//
+//   첫 Firestore 호출 690ms 를 모듈 로드와 겹쳐 지우는 warmup 을 넣어 봤고,
+//   핸들러가 내는 비용은 690ms → 30ms 로 실제로 줄었다. 그런데 그 warmup 은
+//   존재하지 않는 문서를 read 하는 것이었고, Firestore 는 없는 문서 조회도
+//   document read 1건으로 과금한다. 콜드 인스턴스마다 read 가 하나씩 붙는다.
+//
+//   end-to-end 콜드가 줄었다는 증거는 끝내 얻지 못했다(플랫폼 편차 ±900ms).
+//   확인되지 않은 이득을 위해 확실한 과금을 떠안지 않기로 하고 되돌렸다.
+//
+//   [PROD 재판정] Production 에 실사용 트래픽이 생긴 뒤 다시 볼 것:
+//     · minInstances — 지금은 전 함수 0. 유휴 1개가 월 무료 CPU-초의 13배다.
+//     · memory/cpu   — 현재 256Mi/1. 콜드 rss 는 ~180MB 로 여유가 크지 않다.
+//     · 첫 진입 함수 — 홈 first-paint 가 콜러블 4~5개를 병렬로 부른다.
+//       체감은 그중 가장 느린 콜드 하나가 정한다.
+//
+//   [OPEN-R8P8-COLD-E2E-UNVERIFIED] BACKLOG-PERF
+
 const _gmailUser = process.env.GMAIL_USER;
 const _gmailPassword = process.env.GMAIL_APP_PASSWORD;
-const _emailTransporter = (_gmailUser && _gmailPassword)
-  ? nodemailer.createTransport({
+
+// [R8-P8] nodemailer 는 비밀번호 재설정 메일 한 곳에서만 쓴다.
+//   top-level import 로 두면 236개 함수가 전부 로드 비용을 낸다 —
+//   실측으로 콜드 스타트의 약 8%였다. 쓰는 핸들러에서만 가져온다.
+//
+//   transporter 는 여전히 인스턴스당 1회만 만든다. 모듈 캐시와 이 캐시가
+//   겹쳐서, warm 요청은 import 도 생성도 다시 하지 않는다.
+let _emailTransporterCache: NodemailerNs.Transporter | null | undefined;
+
+async function _getEmailTransporter(): Promise<NodemailerNs.Transporter | null> {
+  if (_emailTransporterCache !== undefined) return _emailTransporterCache;
+  if (!_gmailUser || !_gmailPassword) {
+    _emailTransporterCache = null;
+    return null;
+  }
+  const mod = await import("nodemailer");
+  // CJS 모듈을 동적 import 하면 named export 가 잡힐 때도, default 뒤에만
+  //   있을 때도 있다. 둘 다 받는다.
+  const createTransport = mod.createTransport ?? mod.default.createTransport;
+  _emailTransporterCache = createTransport({
     service: "gmail",
     auth: {user: _gmailUser, pass: _gmailPassword},
-  })
-  : null;
+  });
+  return _emailTransporterCache;
+}
 
 // 확정 상태 그룹 (CONFIRMED + CONTRACT_PENDING 동일 처리)
 const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
@@ -2205,7 +2249,9 @@ export const sendPasswordResetCode = onCall(
       throw new HttpsError("invalid-argument", "아이디 또는 이메일이 일치하지 않습니다.");
     }
 
-    if (!_emailTransporter || !_gmailUser) {
+    // [R8-P8] lazy import — 실패/미설정 판정은 이전과 같은 자리, 같은 메시지다.
+    const emailTransporter = await _getEmailTransporter();
+    if (!emailTransporter || !_gmailUser) {
       throw new HttpsError("internal", "이메일 서비스 설정이 누락되었습니다.");
     }
 
@@ -2236,7 +2282,7 @@ export const sendPasswordResetCode = onCall(
       });
     });
 
-    await _emailTransporter.sendMail({
+    await emailTransporter.sendMail({
       from: `"ALfit" <${_gmailUser}>`,
       to: storedEmail,
       subject: "[ALfit] 비밀번호 재설정 인증 코드",
