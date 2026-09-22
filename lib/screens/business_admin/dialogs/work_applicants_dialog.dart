@@ -269,6 +269,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final filtered = apps.where((app) {
         if (!activeStatuses.contains(app.status)) return false;
         if (widget.work != null) {
+          // [R7-PRE0] canonical identity 로 먼저 맞춘다.
+          //
+          //   예전에는 app.workDetailId 를 work.id(= workType_start_end
+          //   계산값)와 비교했다. 지원서의 workDetailId 는 문서형 ID 라
+          //   둘이 같을 수 없었고, 확정자가 있는 근무를 열면
+          //   `지원자가 없습니다`가 떴다 — 그 화면의 신분증 요청·계약서
+          //   일괄작성 CTA 도 함께 사라졌다.
+          final appWdId = app.wdId;
+          final workWdId = widget.work!.wdId;
+          if (appWdId != null && appWdId.isNotEmpty &&
+              workWdId != null && workWdId.isNotEmpty) {
+            return appWdId == workWdId;
+          }
+
+          // 아래는 wdId 가 없던 시절 데이터 — 기존 규칙 그대로 둔다.
           final wdId = app.workDetailId;
           if (wdId != null && wdId.isNotEmpty) {
             // 신규 compositeId 매칭
@@ -2043,7 +2058,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 인원 체크 (일괄 승인과 동일 기준)
     final effectiveWork = _getWorkForApp(app) ?? widget.work;
     final stats = (effectiveWork != null)
-        ? (widget.toItem.workDetailStats?[effectiveWork.id])
+        ? effectiveWork.lookupByIdentity(widget.toItem.workDetailStats)
         : null;
     final confirmedCount = (stats?['confirmed'] as int?) ?? 0;
     final remaining = (effectiveWork != null)
@@ -2476,7 +2491,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     // 인원 체크 (일괄 승인은 단일 업무 모드에서만 실행됨)
     if (widget.work != null) {
-      final stats = widget.toItem.workDetailStats?[widget.work!.id];
+      final stats = widget.work!.lookupByIdentity(widget.toItem.workDetailStats);
       final confirmedCount = stats?['confirmed'] ?? 0;
       final remaining = widget.work!.requiredCount - confirmedCount;
 

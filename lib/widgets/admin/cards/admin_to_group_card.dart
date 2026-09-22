@@ -615,7 +615,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         // 업무 목록
         ..._getSingleTOWorkDetails().map((work) {
-          final stats = _getSingleTOStats(work.id);
+          final stats = _getSingleTOStats(work);
           return WorkDetailRow(
             work: work,
             confirmedCount: stats?['confirmed'] ?? 0,
@@ -994,7 +994,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: workDetails.map((work) {
-                  final stats = toItem.workDetailStats?[work.id];
+                  // [R7-PRE0] canonical(wdId) 로 먼저 찾고 composite 로 폴백한다.
+                  //   work.id 만 보면 wdId 로 집계된 통계를 놓쳐 확정자가
+                  //   있는 근무가 `확정 0`으로 보인다.
+                  final stats = work.lookupByIdentity(toItem.workDetailStats);
                   return WorkDetailRow(
                     work: work,
                     confirmedCount: stats?['confirmed'] ?? 0,
@@ -2619,14 +2622,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
   // ─────────────────────────────────────────────────────────────────────────
 
   /// 단건 TO의 work별 통계
-  Map<String, int>? _getSingleTOStats(String workId) {
+  /// [R7-PRE0] canonical(wdId) → composite 순으로 찾는다.
+  ///   키 문자열 하나만 받던 것을 workDetail 자체로 바꿨다 — 호출부마다
+  ///   키를 고르게 두면 생산 측과 어긋나는 자리가 또 생긴다.
+  Map<String, int>? _getSingleTOStats(WorkDetailData work) {
     if (widget.calendarSlot != null) {
-      return widget.calendarSlot!.workDetailStats?[workId];
+      return work.lookupByIdentity(widget.calendarSlot!.workDetailStats);
     }
     if (widget.groupItem.groupTOs.isNotEmpty) {
-      return widget.groupItem.groupTOs.first.workDetailStats?[workId];
+      return work
+          .lookupByIdentity(widget.groupItem.groupTOs.first.workDetailStats);
     }
-    return widget.groupItem.workDetailStats?[workId];
+    return work.lookupByIdentity(widget.groupItem.workDetailStats);
   }
 
   /// WorkDetailRow에 전달할 TOItem 반환 (단건 TO는 합성 TOItem 생성)

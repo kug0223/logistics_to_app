@@ -73,7 +73,7 @@ class WorkDetailManagementDialog {
                   .firstOrNull
               : null;
           if (firstSelected != null) {
-            final stats = toItem.workDetailStats?[firstSelected.id];
+            final stats = firstSelected.lookupByIdentity(toItem.workDetailStats);
             final confirmed = stats?['confirmed'] ?? 0;
             selectedStatus = _getWorkStatus(firstSelected, confirmed);
           } else {
@@ -84,7 +84,7 @@ class WorkDetailManagementDialog {
           // 선택 가능한 업무들
           final selectableWorks = toItem.workDetails.where((work) {
             if (selectedStatus == null) return true;
-            final stats = toItem.workDetailStats?[work.id];
+            final stats = work.lookupByIdentity(toItem.workDetailStats);
             final confirmed = stats?['confirmed'] ?? 0;
             final workStatus = _getWorkStatus(work, confirmed);
             return workStatus == selectedStatus;
@@ -118,7 +118,7 @@ class WorkDetailManagementDialog {
 
                 // 업무 목록
                 ...toItem.workDetails.map((work) {
-                  final stats = toItem.workDetailStats?[work.id];
+                  final stats = work.lookupByIdentity(toItem.workDetailStats);
                   final confirmed = stats?['confirmed'] ?? 0;
                   final pending = stats?['pending'] ?? 0;
                   final workStatus = _getWorkStatus(work, confirmed);

@@ -569,12 +569,24 @@ class FirestoreService {
           ? allApps.where((a) => a.slotId == slotId && countsAsSeat(a)).toList()
           : allApps.where(countsAsSeat).toList();
       for (final app in apps) {
-        // workDetailId가 compositeId 형식(workType과 다름)이면 그대로 사용,
-        // 아니면 시간 정보로 composite key 생성 (레거시 데이터 호환)
-        final wdId = app.workDetailId;
-        final key = (wdId != null && wdId.isNotEmpty && wdId != app.selectedWorkType)
-            ? wdId
-            : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+        // [R7-PRE0] canonical key = wdId. WorkDetailData.canonicalId 와 같은 순서다.
+        //
+        //   예전에는 workDetailId 를 먼저 봤다. 그런데 소비부(카드)는
+        //   work.id(= workType_start_end 계산값)로 찾는다. 지원서의
+        //   workDetailId 는 문서형 ID 라 둘이 만나지 못했고, 확정자가 있는
+        //   근무가 업무 상세에서 `확정 0`으로 보였다. 같은 근무를 두고
+        //   공고 카드는 `확정 1`, 업무 상세는 `확정 0`이라고 말했다.
+        //
+        //   legacy 폴백(workDetailId → composite)은 그대로 둔다.
+        final canonical = app.wdId;
+        final legacyId = app.workDetailId;
+        final key = (canonical != null && canonical.isNotEmpty)
+            ? canonical
+            : (legacyId != null &&
+                    legacyId.isNotEmpty &&
+                    legacyId != app.selectedWorkType)
+                ? legacyId
+                : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
         workStats[key] ??= {'confirmed': 0, 'pending': 0};
         if (AppStatus.confirmedStatuses.contains(app.status)) {
           workStats[key]!['confirmed'] = (workStats[key]!['confirmed'] ?? 0) + 1;

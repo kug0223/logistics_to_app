@@ -792,9 +792,19 @@ extension TOFirestore on FirestoreService {
       final result = <String, int>{};
       for (final wd in workDetails.whereType<Map>()) {
         final map = Map<String, dynamic>.from(wd);
-        final id = (map['id'] as String?)?.isNotEmpty == true
-            ? map['id'] as String
-            : '${map['workType']}_${map['startTime']}_${map['endTime']}';
+        // [R7-PRE0] canonical key 는 wdId 다.
+        //
+        //   여기는 `map['id']` 를 먼저 봤는데, 슬롯 workDetail 에 그 필드는
+        //   없다(DEV 실측 259건 중 0건). 그래서 항상 composite 로 떨어졌고,
+        //   조회 측은 지원서의 문서형 id 로 찾아 120건 중 111건이 빗나갔다.
+        //   WorkDetailData.canonicalId(= wdId ?? composite)와 같은 순서로 맞춘다.
+        //
+        //   legacy 폴백은 남긴다 — wdId 가 없던 시절 슬롯이 아직 있다.
+        final id = (map['wdId'] as String?)?.isNotEmpty == true
+            ? map['wdId'] as String
+            : (map['id'] as String?)?.isNotEmpty == true
+                ? map['id'] as String
+                : '${map['workType']}_${map['startTime']}_${map['endTime']}';
         result[id] = (map['requiredCount'] as num?)?.toInt() ?? 0;
       }
       return result;

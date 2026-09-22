@@ -1311,7 +1311,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final theme = Theme.of(context);
     final workType = _workTypeMap[work.workType];
 
-    final workStats = widget.workDetailStats?[work.id];
+    final workStats = work.lookupByIdentity(widget.workDetailStats);
     final workConfirmed = workStats?['confirmed'] ?? 0;
     final workRequired = work.requiredCount;
     // [SYSTEM-INTEGRATION-R2.4.1 §2] 잔여 좌석에서 대기(PENDING)를 빼지 않는다.

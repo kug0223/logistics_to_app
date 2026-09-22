@@ -369,6 +369,19 @@ class WorkDetailData {
   /// 구 workType 전용 ID — stats 키 등 레거시 호환용
   String get legacyId => workType;
 
+  /// [R7-PRE0] 이 workDetail 을 키로 하는 맵에서 값을 찾는다.
+  ///
+  /// 새 identity 개념을 만들지 않는다 — 이미 있는 [canonicalId](= wdId ?? id)를
+  /// 먼저 보고, 없으면 composite [id] 로 한 번 더 본다.
+  ///
+  /// 생산 측(집계·정원 맵)이 wdId 를 쓰는 동안 소비 측이 composite [id] 만
+  /// 보면 둘이 만나지 못한다. 실제로 그래서 확정자가 있는 근무가 업무 상세에서
+  /// `확정 0`으로 보였다. 두 키를 같은 순서로 해석하는 곳은 여기 하나다.
+  V? lookupByIdentity<V>(Map<String, V>? map) {
+    if (map == null) return null;
+    return map[canonicalId] ?? map[id];
+  }
+
   /// 마감 여부
   bool get isClosed => isManualClosed || closedAt != null;
 

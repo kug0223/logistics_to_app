@@ -352,7 +352,7 @@ class TOItem {
     if (isWorkDetailLoaded && workDetails.isNotEmpty) {
       var c = 0, p = 0, r = 0;
       for (final work in workDetails) {
-        final stats = workDetailStats?[work.id];
+        final stats = work.lookupByIdentity(workDetailStats);
         c += (stats?['confirmed'] ?? 0);
         p += (stats?['pending'] ?? 0);
         r += work.requiredCount;

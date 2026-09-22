@@ -99,12 +99,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
 
   // ✅ workDetailId로 조회
   int get _confirmedCount {
-    final stats = widget.toItem.workDetailStats?[widget.work.id];
+    final stats = widget.work.lookupByIdentity(widget.toItem.workDetailStats);
     return stats?['confirmed'] ?? widget.confirmedCount;
   }
   
   int get _pendingCount {
-    final stats = widget.toItem.workDetailStats?[widget.work.id];
+    final stats = widget.work.lookupByIdentity(widget.toItem.workDetailStats);
     return stats?['pending'] ?? widget.pendingCount;
   }
   

@@ -21,7 +21,12 @@ import 'package:flutter_test/flutter_test.dart';
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
-  return f.readAsStringSync();
+  // [R7-PRE0] 줄바꿈을 LF 로 맞춘다.
+  //   core.autocrlf=true 인 Windows 에서 새로 checkout 하면 작업 트리가 CRLF 가
+  //   되는데, 아래 단정 중 일부는 `\n` 리터럴로 여러 줄을 대조한다. 그러면
+  //   제품 코드가 멀쩡해도 clone 한 사람에 따라 실패했다 — 테스트가 환경을
+  //   보고 있었던 것이다.
+  return f.readAsStringSync().replaceAll('\r\n', '\n');
 }
 
 String _codeOf(String b) =>

@@ -380,7 +380,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                           
                                           // 업무 목록
                                           ...widget.toItem.workDetails.map((work) {
-                                            final stats = widget.toItem.workDetailStats?[work.id];
+                                            final stats = work.lookupByIdentity(widget.toItem.workDetailStats);
                                             final workConfirmed = stats?['confirmed'] ?? 0;
                                             final workPending = stats?['pending'] ?? 0;
 

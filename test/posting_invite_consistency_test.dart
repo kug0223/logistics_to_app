@@ -658,13 +658,20 @@ void main() {
     });
 
     test('집계 키 규칙이 loadTOWorkDetails와 동일하다', () {
+      // [R7-PRE0] 규칙이 3단계로 바뀌었다: app.wdId → app.workDetailId → composite.
+      //   예전에는 workDetailId 를 먼저 봤는데, 소비부는 work.id(composite)로
+      //   찾았기 때문에 둘이 만나지 못했다. 위 _aggregationKey 재현식이
+      //   보는 wdId 가 이제 소스의 1순위와 같은 필드다.
       final body =
           _codeOf(_bodyOf(_src(_fsServicePath), 'Future<Map<String, dynamic>> loadTOWorkDetails('));
       final flat = _flat(body);
+      expect(flat.contains('final canonical = app.wdId;'), isTrue,
+          reason: '1순위가 app.wdId 가 아니다');
+      expect(flat.contains('final legacyId = app.workDetailId;'), isTrue,
+          reason: '2순위 legacy 폴백이 사라졌다');
       expect(
-        flat.contains(
-            "final key = (wdId != null && wdId.isNotEmpty && wdId != app.selectedWorkType) "
-            "? wdId : '\${app.selectedWorkType}_\${app.startTime}_\${app.endTime}';"),
+        flat.contains("legacyId != app.selectedWorkType) ? legacyId "
+            ": '\${app.selectedWorkType}_\${app.startTime}_\${app.endTime}';"),
         isTrue,
         reason: 'loadTOWorkDetails 집계 키 규칙이 바뀌었다 — 테스트 재현식도 함께 갱신 필요',
       );

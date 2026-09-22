@@ -685,10 +685,19 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               ? app.workDetailId!
               : '${app.selectedWorkType}_${app.startTime}_${app.endTime}');
       final key = '${app.toId ?? app.toTitle}_$wKey';
-      // capacity 맵 조회는 composite key 기반 (_workDetailCapacityMap 키 포맷 유지)
-      final compositeKey = app.workDetailId?.isNotEmpty == true
-          ? app.workDetailId!
-          : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      // [R7-PRE0] capacity 맵과 같은 canonical key 순서로 찾는다.
+      //
+      //   맵은 wdId 로 만들어진다(to_firestore.getSlotWorkDetailCapacities).
+      //   여기서 workDetailId 를 먼저 보면 둘이 다른 값을 가리켜 조회가
+      //   빗나가고, `?? 0` 때문에 "정원 0 = 더 뽑을 필요 없음"이 되어
+      //   충원 버튼이 사라진다. 위 그룹키(wKey)도 이미 wdId 를 먼저 본다.
+      //
+      //   workDetailId·composite 폴백은 남긴다 — legacy 지원서 호환.
+      final compositeKey = app.wdId?.isNotEmpty == true
+          ? app.wdId!
+          : (app.workDetailId?.isNotEmpty == true
+              ? app.workDetailId!
+              : '${app.selectedWorkType}_${app.startTime}_${app.endTime}');
       groups.putIfAbsent(
         key,
         () => _GroupData(
