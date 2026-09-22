@@ -138,10 +138,13 @@ const SCENARIOS = [
     surfaces: ['Posting'],
   },
   {
-    id: 'R7_FIX_LT_POSTING',
-    domain: 'posting',
-    expected: '장기(contract) 공고. LT 근무자 fixture 의 출처.',
-    surfaces: ['Posting'],
+    id: 'R7_FIX_LT_WORKER',
+    domain: 'attendance',
+    expected:
+      '장기 확정 근무자. 오늘도 근무일이다. 어제 근무 완료(checkOut 있음) + ' +
+      '오늘 attendance 문서 없음 → 오늘 카드와 체크인 CTA 가 살아 있어야 한다. ' +
+      '급여 pending/calculated/confirmed/transferred 네 상태가 각각 하루씩.',
+    surfaces: ['Worker Today', 'Admin Attendance', 'Payroll', 'Worker wage'],
   },
   {
     id: 'R7_FIX_APP_PENDING',
@@ -150,50 +153,49 @@ const SCENARIOS = [
     surfaces: ['DayApplicants', 'WorkApplicants', 'Worker My Applications'],
   },
   {
-    id: 'R7_FIX_APP_CONFIRMED',
-    domain: 'application',
-    expected: '확정 = 약속. 모든 표면에서 같은 확정 수.',
-    surfaces: ['Posting card', 'DayApplicants', 'WorkApplicants', 'Home'],
-  },
-  {
     id: 'R7_FIX_CONTRACT_PW',
     domain: 'contract',
     expected: 'pending_worker — 근로자 서명 CTA 가 보인다.',
     surfaces: ['Worker My Applications', 'Contract', 'Admin contract'],
   },
   {
-    id: 'R7_FIX_LT_WORKER',
-    domain: 'attendance',
-    expected: '장기 확정 근무자. 오늘도 근무일이다.',
-    surfaces: ['Worker Today', 'Admin Attendance'],
-  },
-  {
-    id: 'R7_FIX_ATT_YESTERDAY_COMPLETE',
-    domain: 'attendance',
+    id: 'R7_FIX_CONTRACT_DONE',
+    domain: 'contract',
     expected:
-      '어제 근무 완료(checkOut 있음) + 오늘 attendance 문서 없음. ' +
-      '오늘 근무 카드와 체크인 CTA 가 살아 있어야 한다. ' +
-      '어제 기록을 오늘 기록으로 쓰지 않는다.',
-    surfaces: ['Worker Today'],
+      'completed — 그리고 이때 지원서가 CONFIRMED 가 된다. ' +
+      'confirmed-family 커버리지를 이 경로로 대신한다(독립 CONFIRMED 생성 경로 없음).',
+    surfaces: ['Contract', 'Posting card', 'WorkApplicants', 'Home'],
   },
-  {
-    id: 'R7_FIX_PAY_PENDING',
-    domain: 'payroll',
-    expected: '근무는 있고 급여 미확정. 0원 지급완료처럼 보이면 안 된다.',
-    surfaces: ['Payroll', 'Worker wage'],
-  },
-  {
-    id: 'R7_FIX_PAY_CONFIRMED',
-    domain: 'payroll',
-    expected: '확정 금액 존재, 미이체.',
-    surfaces: ['Payroll'],
-  },
-  {
-    id: 'R7_FIX_PAY_TRANSFERRED',
-    domain: 'payroll',
-    expected: '이체 완료.',
-    surfaces: ['Payroll'],
-  },
+];
+
+// ── fixture 로 만들지 않는 것 ────────────────────────────────────────
+//
+//   canonical writer 가 없거나, seed 가 그 writer 를 대신할 수 없는 것들이다.
+//   "라벨을 채우려고" 문서를 만들지 않는다 — 만들면 제품이 만들 수 없는
+//   상태가 DEV 에 생기고, R7 에서 그것을 제품 버그로 읽게 된다.
+const NOT_SEEDED = [
+  ['APP_CONFIRMED (독립)',
+    'callableConfirmApplication 은 CONTRACT_PENDING 까지만 간다. ' +
+    'CONFIRMED 는 근로자 서명·초대 수락이 만든다 → R7_FIX_CONTRACT_DONE 이 대신한다.'],
+  ['REVIEW (작성된 리뷰)',
+    'canonical writer 가 CF 가 아니라 rules 로 보호되는 클라이언트 트랜잭션이다 ' +
+    '(monthly_review_service.createReviewForUser). Admin SDK 로 쓰면 rules 를 우회한다. ' +
+    'review_requests 는 스케줄 CF 가 완료 근무에서 자동 생성하므로 LT fixture 가 그 대상이 된다.'],
+  ['SubAdmin membership',
+    '실제 계정 초대 + 수락이 필요하고, 계정 생성은 본인인증을 거친다. ' +
+    'DEV 계정은 관리자 1 · 근로자 1 뿐이다. seed 로 우회하지 않는다.'],
+  ['NOTIFICATION (독립)',
+    'domain event 의 부수 효과다. 위 fixture 를 만드는 과정에서 실제로 발생한다 ' +
+    '(예: 계약 발송 → contractSignRequested). 독립 문서로 만들지 않는다.'],
+  ['CAP-UNKNOWN · USERMAP-PARTIAL',
+    'canonical state 를 깨는 synthetic document 다. R7 의 오류/실패 상태 확인 항목으로 남긴다.'],
+  ['RELIABILITY (새 노쇼)',
+    'canonical writer(callableBatchSetNoShow)는 있고 실제로 동작한다. 그런데 그 부수 효과가 ' +
+    'DEV 를 못 쓰게 만든다 — 90일 내 3회가 되면 users.restrictedUntil 이 서고 ' +
+    '그 계정은 지원 자체가 막힌다(callableApplyToTO PERMISSION_DENIED). ' +
+    'DEV 근로자 계정은 하나뿐이고 이미 노쇼 2건이 있어서, 한 건만 더 만들면 ' +
+    '나머지 fixture 를 seed 할 수 없다. 실제로 한 번 그렇게 막혔다. ' +
+    '기존 노쇼 2건(2026-09-14 · 2026-09-18)을 reliability 참조로 쓴다 — 새로 만들지 않는다.'],
 ];
 
 // ─── 진입 ───────────────────────────────────────────────────────────
@@ -210,21 +212,48 @@ async function main() {
   const {builders} = require('./r7-fixture-build');
   const {removeScenario} = require('./r7-fixture-cleanup');
   const {db} = require('./r7-fixture-lib');
+
+  // 사업장·근로자 정보는 DEV 문서에서 읽는다. 상수로 박아 두면 실제 값과
+  // 어긋나고(businessName 이 비어 있던 것이 그랬다), 공고 카드·계약서
+  // 스냅샷이 빈 이름으로 보인다.
+  const bizSnap = await db.collection('businesses').doc(DEV.businessId).get();
+  if (!bizSnap.exists) throw new Error('DEV 사업장 문서를 찾을 수 없습니다.');
+  const workerSnap = await db.collection('users').doc(DEV.workerUid).get();
+  if (!workerSnap.exists) throw new Error('DEV 근로자 문서를 찾을 수 없습니다.');
+  const biz = bizSnap.data();
+
   const ctx = {
     db,
     businessId: DEV.businessId,
-    businessName: DEV.businessName,
+    businessName: biz.name || '',
+    biz,
+    worker: workerSnap.data(),
     adminUid: DEV.adminUid,
     workerUid: DEV.workerUid,
     lat: DEV.lat,
     lng: DEV.lng,
     titleOf: {},
+    manifest,
   };
+  if (!ctx.businessName) throw new Error('사업장 이름이 비어 있습니다.');
 
   /** manifest 에 적힌 entity 가 실제로 살아 있는가. */
   async function stillAlive(entities) {
-    if (!entities || !entities.toId) return false;
-    return (await db.collection('tos').doc(entities.toId).get()).exists;
+    if (!entities) return false;
+    if (entities.toId) {
+      return (await db.collection('tos').doc(entities.toId).get()).exists;
+    }
+    // 공고를 새로 만들지 않는 시나리오는 자기 문서로 판정한다.
+    // 근태가 먼저다 — 노쇼 시나리오의 applicationId 는 다른 시나리오의
+    // 지원서라서 그것만 보면 항상 "살아 있음"이 된다.
+    for (const id of entities.attendanceIds || []) {
+      return (await db.collection('attendance').doc(id).get()).exists;
+    }
+    if (entities.applicationId) {
+      return (await db.collection('applications')
+          .doc(entities.applicationId).get()).exists;
+    }
+    return false;
   }
 
   if (MODE === 'seed') {
@@ -251,6 +280,8 @@ async function main() {
       saveManifest(manifest);           // 중간 실패에도 기록은 남긴다
       log(`           → ${JSON.stringify(r.entities).slice(0, 110)}`);
     }
+    step('fixture 로 만들지 않는 것 (canonical writer 없음 / seed 가 대신할 수 없음)');
+    for (const [what, why] of NOT_SEEDED) log(`   ·  ${what}\n        ${why}`);
   } else if (MODE === 'verify') {
     step('canonical sanity check');
     const {verifyAll} = require('./r7-fixture-verify');
@@ -258,13 +289,36 @@ async function main() {
     if (!ok) { log('\n검증 실패.'); process.exit(1); }
   } else if (MODE === 'cleanup') {
     step('정리 (manifest 기록분만)');
-    for (const [id, rec] of Object.entries(manifest.scenarios || {})) {
-      const n = await removeScenario(rec.entities, {execute: EXECUTE});
+    // 남의 공고를 빌려 쓴 시나리오부터 지운다. 공고 소유 시나리오를 먼저
+    // 지우면 그 공고에 달린 남의 지원서까지 함께 사라져 집계가 틀어진다.
+    const order = Object.entries(manifest.scenarios || {})
+        .sort((a, b) => ((b[1].entities || {}).sharedToId ? 1 : 0) -
+                        ((a[1].entities || {}).sharedToId ? 1 : 0));
+    const touchedMonths = new Set();
+    for (const [id, rec] of order) {
+      const n = await removeScenario(rec.entities, {
+        execute: EXECUTE, months: touchedMonths,
+        adminUid: DEV.adminUid, businessId: DEV.businessId,
+      });
       log(`   ${EXECUTE ? '삭제' : '[dry-run]'} ${id.padEnd(28)} ` +
-          `근태 ${n.attendance} · 지원서 ${n.applications} · 슬롯 ${n.slots} · 공고 ${n.tos}`);
+          `근태 ${n.attendance} · 지원서 ${n.applications} · 슬롯 ${n.slots} · ` +
+          `공고 ${n.tos} · 계약 ${n.contracts}`);
       if (EXECUTE) delete manifest.scenarios[id];
     }
     log('   쿼리로 훑어 지우지 않는다 — manifest 에 없는 것은 건드리지 않는다.');
+
+    // 삭제는 증분 집계를 되돌리지 않는다 — canonical 복구 CF 로 맞춘다.
+    if (touchedMonths.size > 0) {
+      step('급여 집계 복구 (확정 근태를 지웠으므로)');
+      const {callAs} = require('./r7-fixture-lib');
+      for (const ym of [...touchedMonths].sort()) {
+        if (!EXECUTE) { log(`   [dry-run] repairPayrollSummaries ${ym}`); continue; }
+        const r = await callAs(DEV.adminUid, 'callableRepairPayrollSummaries',
+            {businessId: DEV.businessId, yearMonth: ym});
+        log(`   ${ym}  → ${r.workerCount}명 / ${r.confirmedCount}건 / ` +
+            `${(r.totalPayout || 0).toLocaleString()}원`);
+      }
+    }
   }
 
   saveManifest(manifest);

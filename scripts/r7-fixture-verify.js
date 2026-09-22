@@ -115,6 +115,48 @@ checks.R7_FIX_LT_WORKER = async (e, say) => {
       finished && wagesOk;
 };
 
+checks.R7_FIX_APP_PENDING = async (e, say) => {
+  const app = (await db.collection('applications').doc(e.applicationId).get()).data();
+  if (!app) { say('     지원서 없음'); return false; }
+  const slot = (await db.collection('tos').doc(e.sharedToId)
+      .collection('slots').doc(e.slotId).get()).data();
+  const required = ((slot.workDetails || [])[0] || {}).requiredCount || 0;
+  say(`     ${e.dateKey} 지원서 ${app.status} · 이 슬롯 확정 ${slot.confirmedCount || 0}/${required}`);
+  // 지원은 확정이 아니다 — 이 날짜의 확정 카운터가 움직이면 안 된다.
+  return app.status === 'PENDING' && (slot.confirmedCount || 0) === 0;
+};
+
+/** 계약 상태 + 지원서 상태가 짝이 맞는지. */
+async function contractCheck(e, say, wantStatus, wantAppStatus) {
+  const c = (await db.collection('employment_contracts').doc(e.contractId).get()).data();
+  if (!c) { say('     계약서 없음'); return false; }
+  const app = (await db.collection('applications').doc(e.applicationId).get()).data();
+  say(`     계약 status=${c.status} · 사업주서명 ${c.employerSignatureUrl ? '있음' : '없음'}` +
+      ` · 근로자서명 ${c.workerSignatureUrl ? '있음' : '없음'} · PDF ${c.pdfUrl ? '있음' : '없음'}`);
+  say(`     지원서 ${app ? app.status : '없음'}`);
+  const snap = c.snapshot || {};
+  say(`     스냅샷 사업장="${snap.businessName || ''}" 대표="${snap.ownerName || ''}"` +
+      ` 근로자="${snap.workerName ? '있음' : '비어있음'}" 임금=${snap.wage}`);
+  const snapOk = !!snap.businessName && !!snap.ownerName && !!snap.workerName &&
+      (snap.wage || 0) > 0;
+  return c.status === wantStatus && !!app && app.status === wantAppStatus && snapOk;
+}
+
+checks.R7_FIX_CONTRACT_PW = (e, say) =>
+  contractCheck(e, say, 'pending_worker', 'CONTRACT_PENDING');
+
+checks.R7_FIX_CONTRACT_DONE = async (e, say) => {
+  const ok = await contractCheck(e, say, 'completed', 'CONFIRMED');
+  const c = (await db.collection('employment_contracts').doc(e.contractId).get()).data();
+  // 계약 완료가 지원서 CONFIRMED 를 만든 유일한 경로임을 이력으로 확인한다.
+  const app = (await db.collection('applications').doc(e.applicationId).get()).data();
+  const via = (app.statusHistory || [])
+      .filter((h) => h.status === 'CONFIRMED')
+      .map((h) => h.action).join(',');
+  say(`     CONFIRMED 경로: ${via || '(이력 없음)'}`);
+  return ok && !!c.workerSignatureUrl && !!c.pdfUrl && via.includes('CONTRACT_SIGNED');
+};
+
 async function verifyAll(manifest, log) {
   let allOk = true;
   for (const [id, rec] of Object.entries(manifest.scenarios || {})) {

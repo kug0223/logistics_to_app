@@ -91,7 +91,10 @@ async function buildPostShortage(ctx) {
   ctx.titleOf[toId] = '[R7FIX] 부족 남은 공고';
   return {
     entities: {toId, dates},
-    expected: `${dates.length}개 날짜 · 각 정원 3명 · 확정 0 → 모든 날짜 remaining 3`,
+    expected:
+      `${dates.length}개 날짜 · 각 정원 3명. 지원·계약 fixture 가 이 공고의 ` +
+      '남은 정원을 쓴다(활성 공고 4개 한도). 어느 날짜든 remaining > 0 이어야 하고, ' +
+      '한 날짜에 확정이 생겨도 공고가 마감으로 바뀌면 안 된다.',
   };
 }
 
@@ -297,6 +300,225 @@ async function buildLongTermWorker(ctx) {
   };
 }
 
+// ── 기존 공고 재사용 ────────────────────────────────────────────────
+//
+//   [MAX_ACTIVE_TO_LIMIT] 활성 공고 수는 제품이 오너 단위로 4개까지만
+//   허용한다(users/{owner}.maxActiveTOs 로 오너별 상향 가능, 기본 4).
+//   DEV 는 이미 R7FIX 3개 + 기존 테스트 공고 1개로 4를 채우고 있다.
+//
+//   한도를 올리는 것은 제품 설정 변경이고, 우회는 더 나쁘다. 그래서
+//   지원·계약 fixture 는 새 공고를 만들지 않고 SHORTAGE 공고의 남은
+//   정원을 쓴다. 정원이 날짜마다 3명이라 한 명씩 확정해도 여전히 부족이
+//   남는다 — SHORTAGE 의 계약(remaining > 0)이 깨지지 않는다.
+//   한도가 4인 사업장이 실제로 하는 일이기도 하다.
+
+/** SHORTAGE 공고의 n번째 날짜 슬롯. */
+async function shortageSlot(ctx, index) {
+  const rec = (ctx.manifest.scenarios || {}).R7_FIX_POST_SHORTAGE;
+  const toId = rec && rec.entities && rec.entities.toId;
+  if (!toId) throw new Error('R7_FIX_POST_SHORTAGE 가 먼저 있어야 합니다.');
+  const slots = await slotsOf(toId);
+  if (slots.length <= index) {
+    throw new Error(`SHORTAGE 공고에 ${index + 1}번째 슬롯이 없습니다.`);
+  }
+  const s = slots[index];
+  const to = (await db.collection('tos').doc(toId).get()).data();
+  ctx.titleOf[toId] = to.title || '[R7FIX] 부족 남은 공고';
+  return {
+    toId, slotId: s.id, wd: (s.workDetails || [])[0],
+    workDateMs: s.date.toMillis(),
+    dateKey: kstDateKey(0) && new Date(s.date.toMillis() + 9 * 3600e3)
+        .toISOString().slice(0, 10),
+  };
+}
+
+/**
+ * 지원만 하고 확정하지 않는다 — 지원 = 관심.
+ *
+ * 확정 인원과 지원 인원을 한 숫자로 합치는 표면이 있는지 보려면
+ * "확정 0 · 지원 1" 인 날짜가 하나 필요하다.
+ */
+async function buildAppPending(ctx) {
+  const s = await shortageSlot(ctx, 1);
+  const appId = await apply(ctx, {
+    toId: s.toId, slotId: s.slotId, wd: s.wd, workDateMs: s.workDateMs,
+  });
+  return {
+    entities: {
+      sharedToId: s.toId, slotId: s.slotId, dateKey: s.dateKey,
+      applicationId: appId,
+    },
+    expected:
+      `${s.dateKey} (SHORTAGE 공고) 정원 3명 · 확정 0 · 지원 1(PENDING). ` +
+      '지원자 명단에는 1명이 보이고 확정 인원은 0이어야 한다. ' +
+      '지원 1건을 확정 1건으로 세는 표면이 있으면 그것이 결함이다.',
+  };
+}
+
+// ── 계약 ────────────────────────────────────────────────────────────
+
+/**
+ * 계약서 한 벌.
+ *
+ * 클라이언트 ContractService._createNew 가 만드는 모양을 그대로 따른다.
+ * snapshot 은 사업장·근로자·근무조건의 서명 시점 사본이다 — 서버가
+ * 내용을 검증하지 않으므로 여기가 정확해야 계약서 화면이 정상으로 보인다.
+ */
+async function contractData(ctx, {applicationId, app, dateKey, wd, isLong}) {
+  const biz = ctx.biz;
+  const worker = ctx.worker;
+  const addr = [biz.address, biz.detailAddress].filter(Boolean).join(' ');
+  const workerAddr = [worker.address, worker.detailAddress].filter(Boolean).join(' ').trim();
+  const bn = String(biz.businessNumber || '').replace(/\D/g, '');
+  return {
+    applicationId,
+    businessId: ctx.businessId,
+    businessName: ctx.businessName,
+    workerId: ctx.workerUid,
+    isLongTerm: isLong,
+    toId: app.toId || '',
+    workDetailId: app.wdId || app.workDetailId || '',
+    slots: isLong ? [] : [{
+      applicationId,
+      workDate: dateKey,
+      startTime: wd.startTime,
+      endTime: wd.endTime,
+      wage: wd.wage,
+      wageType: wd.wageType,
+    }],
+    applicationIds: [applicationId],
+    snapshot: {
+      businessName: biz.name || '',
+      businessNumber: bn.length === 10
+        ? `${bn.slice(0, 3)}-${bn.slice(3, 5)}-${bn.slice(5)}` : bn,
+      businessAddress: addr,
+      businessPhone: biz.phone || null,
+      ownerName: biz.ownerName || '',
+      workerName: worker.name || '',
+      workerBirthDate: worker.birthDate
+        ? new Date(worker.birthDate.toMillis() + 9 * 3600e3)
+            .toISOString().slice(0, 10)
+        : null,
+      workerPhone: worker.authPhone || worker.phone || null,
+      workerAddress: workerAddr || null,
+      workType: wd.workType,
+      workPlace: biz.address || '',
+      isLongTerm: isLong,
+      contractStart: isLong ? dateKey : null,
+      contractEnd: null,
+      workDays: isLong ? (app.workDays || []) : null,
+      startTime: wd.startTime,
+      endTime: wd.endTime,
+      breakMinutes: wd.breakMinutes || 0,
+      wage: wd.wage,
+      wageType: wd.wageType,
+      wagePaymentDay: biz.wagePaymentDay ?? null,
+      paymentMethod: '계좌이체',
+      baseHourlyWage: null,
+      payScheduleType: wd.payScheduleType || 'same_day',
+    },
+    articles: [],
+    templateId: null,
+  };
+}
+
+/** 확정된 지원서 하나에 계약서를 만들고 사업주 서명까지 — pending_worker. */
+async function issueContract(ctx, {applicationId, dateKey, wd, isLong}) {
+  const app = (await db.collection('applications').doc(applicationId).get()).data();
+  // contractId 는 클라이언트가 정한다(Firestore auto-id). 같은 규칙을 쓴다.
+  const contractId = db.collection('employment_contracts').doc().id;
+  await callAs(ctx.adminUid, 'callableFinalizeEmployerSignature', {
+    contractId,
+    signatureBase64: S.signaturePng().toString('base64'),
+    isNewUnsaved: true,
+    contractData: await contractData(ctx, {applicationId, app, dateKey, wd, isLong}),
+  });
+  return contractId;
+}
+
+/** 근로자 서명 → 계약 completed + 지원서 CONFIRMED. */
+async function signAsWorker(ctx, contractId, pdfLines) {
+  await callAs(ctx.workerUid, 'callableFinalizeWorkerSignature', {
+    contractId,
+    signatureBase64: S.signaturePng(200, 80).toString('base64'),
+    pdfBase64: S.onePagePdf(pdfLines).toString('base64'),
+  });
+}
+
+/** 근로자 서명 대기 계약. */
+async function buildContractPendingWorker(ctx) {
+  const s = await shortageSlot(ctx, 0);
+  const appId = await apply(ctx, {
+    toId: s.toId, slotId: s.slotId, wd: s.wd, workDateMs: s.workDateMs,
+  });
+  await confirm(ctx, appId);
+  const contractId = await issueContract(ctx, {
+    applicationId: appId, dateKey: s.dateKey, wd: s.wd, isLong: false,
+  });
+
+  return {
+    entities: {
+      sharedToId: s.toId, slotId: s.slotId, dateKey: s.dateKey,
+      applicationId: appId, contractId,
+    },
+    expected:
+      'employment_contracts.status = pending_worker · 지원서 CONTRACT_PENDING. ' +
+      '근로자에게 서명 CTA 가 보이고, 관리자 계약 목록에는 "서명 대기"로 보인다. ' +
+      '계약 미완료를 확정 취소로 표시하면 안 된다.',
+  };
+}
+
+/**
+ * 계약 완료 — 지원서가 CONFIRMED 가 되는 유일한 정상 경로.
+ *
+ * 독립 CONFIRMED fixture 를 따로 만들지 않는다. callableConfirmApplication 은
+ * CONTRACT_PENDING 까지만 보내고, CONFIRMED 는 근로자 서명(또는 초대 수락)이
+ * 만든다. 그 전이를 실제로 태워서 확인하는 것이 confirmed-family 커버리지다.
+ */
+async function buildContractCompleted(ctx) {
+  const s = await shortageSlot(ctx, 2);
+  const appId = await apply(ctx, {
+    toId: s.toId, slotId: s.slotId, wd: s.wd, workDateMs: s.workDateMs,
+  });
+  await confirm(ctx, appId);
+  const contractId = await issueContract(ctx, {
+    applicationId: appId, dateKey: s.dateKey, wd: s.wd, isLong: false,
+  });
+  await signAsWorker(ctx, contractId, [
+    'ALfit R7 fixture - employment contract',
+    `contract: ${contractId}`,
+    `work date: ${s.dateKey}  ${s.wd.startTime}-${s.wd.endTime}`,
+    'This document is DEV test data. Not a real contract.',
+  ]);
+
+  const after = (await db.collection('applications').doc(appId).get()).data();
+  if (after.status !== 'CONFIRMED') {
+    throw new Error(
+        `계약 완료 후에도 지원서가 CONFIRMED 가 아닙니다: ${after.status}`);
+  }
+
+  return {
+    entities: {
+      sharedToId: s.toId, slotId: s.slotId, dateKey: s.dateKey,
+      applicationId: appId, contractId,
+    },
+    expected:
+      'employment_contracts.status = completed · 지원서 CONFIRMED. ' +
+      'CONFIRMED 는 이 경로(또는 초대 수락)로만 도달한다 — 독립 생성 경로가 없다. ' +
+      '확정 1명이 공고·지원명단·업무상세·Home 에서 모두 같은 1명이어야 한다.',
+  };
+}
+
+// ── 신뢰도 ──────────────────────────────────────────────────────────
+//
+//   노쇼 fixture 는 만들지 않는다. canonical writer(callableBatchSetNoShow)는
+//   있고 동작하지만, 그 부수 효과가 DEV 를 못 쓰게 만든다 —
+//   90일 내 3회가 되면 users.restrictedUntil 이 서고 그 계정은 지원이 막힌다.
+//   DEV 근로자 계정은 하나뿐이고 이미 노쇼 2건이 있어서, 한 건만 더 만들면
+//   나머지 fixture 를 seed 할 수 없다(실제로 한 번 그렇게 막혔다).
+//   기존 노쇼 2건을 reliability 참조로 쓴다. 자세한 이유는
+//   seed-r7-fixtures-dev.js 의 NOT_SEEDED 에 적어 뒀다.
+
 module.exports = {
   WORK_TYPE,
   slotsOf,
@@ -307,5 +529,8 @@ module.exports = {
     R7_FIX_POST_MIXED: buildPostMixed,
     R7_FIX_POST_CLOSED: buildPostClosed,
     R7_FIX_LT_WORKER: buildLongTermWorker,
+    R7_FIX_APP_PENDING: buildAppPending,
+    R7_FIX_CONTRACT_PW: buildContractPendingWorker,
+    R7_FIX_CONTRACT_DONE: buildContractCompleted,
   },
 };

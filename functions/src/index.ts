@@ -42309,6 +42309,42 @@ async function srvHomeUnpaidWage(
 
 // ─── Section 헬퍼: Unclosed (마감 미처리) ────────────────────────────────────
 
+/**
+ * [R7-PRE0] 장기 지원서의 실효 시작일.
+ *
+ * 클라이언트 canonical 규칙과 같아야 한다 — ApplicationModel.effectiveStart,
+ * 당일명단 _getConfirmedWorkersForDate, calendar_helper 가 모두 이 규칙을 쓴다:
+ *   desiredStartDate 가 있으면 그것.
+ *   없고 확정일(confirmedAt)이 workDate 보다 늦으면 **확정일**.
+ *
+ * 여기에만 이 보정이 없었다. custom 기간 장기 지원은 desiredStartDate 를
+ * 저장하지 않고 workDate 에 공고 rangeStart 를 넣는다
+ * (lib/widgets/dialogs/apply/longterm_apply_sheet.dart 의 _isCustom 분기).
+ * 공고를 연 뒤 며칠 지나 확정하는 것이 보통이므로, 보정이 없으면 확정 이전
+ * 날짜들이 모두 '마감 필요'로 잡힌다. 그 날들의 당일명단에는 아무도 없다 —
+ * 관리자가 열어도 할 일이 없는 Task 가 Home 에 쌓인다.
+ *
+ * @param {Record<string, unknown>} d applications 문서 데이터
+ * @return {admin.firestore.Timestamp | undefined} 실효 시작일
+ */
+function srvLongTermEffectiveStart(
+  d: Record<string, unknown>
+): admin.firestore.Timestamp | undefined {
+  type Ts = admin.firestore.Timestamp | undefined;
+  const desired = d["desiredStartDate"] as Ts;
+  if (desired) return desired;
+  const workDate = d["workDate"] as Ts;
+  const confirmedAt = d["confirmedAt"] as Ts;
+  if (!workDate) return confirmedAt;
+  if (!confirmedAt) return workDate;
+  // KST 달력 날짜로 비교한다 — 같은 날 안의 시각 차이로 하루 밀리지 않게.
+  const kstDay = (ts: admin.firestore.Timestamp) => {
+    const k = new Date(ts.toMillis() + 9 * 60 * 60 * 1000);
+    return Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate());
+  };
+  return kstDay(confirmedAt) > kstDay(workDate) ? confirmedAt : workDate;
+}
+
 async function srvHomeUnclosed(
   bizId: string,
   todayKSTMidnight: Date
@@ -42323,7 +42359,7 @@ async function srvHomeUnclosed(
   const appSnap = await db.collection("applications")
     .where("businessId", "==", bizId)
     .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-    .select("type", "workDate", "workEndDate", "desiredStartDate",
+    .select("type", "workDate", "workEndDate", "desiredStartDate", "confirmedAt",
             "actualResignDate", "workDays", "leaveDates", "extraWorkDates")
     .get();
   if (appSnap.empty) return {count: 0, oldestDate: null};
@@ -42349,7 +42385,8 @@ async function srvHomeUnclosed(
       if (!docDateMap.has(docId)) docDateMap.set(docId, midnight);
     } else {
       // 장기: 날짜 범위 펼치기
-      const startTs = (d["desiredStartDate"] ?? d["workDate"]) as admin.firestore.Timestamp | undefined;
+      // [R7-PRE0] 확정 이전 날짜는 그 사람의 근무일이 아니다 — 클라이언트와 같은 보정.
+      const startTs = srvLongTermEffectiveStart(d);
       const endTs   = (d["actualResignDate"] ?? d["workEndDate"]) as admin.firestore.Timestamp | undefined;
       // [PHASE-2B.1] open-ended(endTs==null) → yesterdayMidnight까지 확장
       // (getUnclosedDaysCount Flutter 동일 semantics: endOnly==null → yesterdayOnly까지 loop)
@@ -42478,7 +42515,7 @@ async function srvUnclosedQueueForBiz(
   const appSnap = await db.collection("applications")
     .where("businessId", "==", bizId)
     .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-    .select("type", "workDate", "workEndDate", "desiredStartDate",
+    .select("type", "workDate", "workEndDate", "desiredStartDate", "confirmedAt",
             "actualResignDate", "workDays", "leaveDates", "extraWorkDates")
     .get();
   if (appSnap.empty) return [];
@@ -42505,7 +42542,8 @@ async function srvUnclosedQueueForBiz(
 
     } else {
       // 장기 날짜 펼치기 — srvHomeUnclosed와 동일 로직 (PHASE-2B.1 open-ended 수정 포함)
-      const startTs = (d["desiredStartDate"] ?? d["workDate"]) as admin.firestore.Timestamp | undefined;
+      // [R7-PRE0] 실효 시작일 보정도 같다 — 두 집계가 갈라지면 Home 과 Queue 가 다른 수를 말한다.
+      const startTs = srvLongTermEffectiveStart(d);
       const endTs   = (d["actualResignDate"] ?? d["workEndDate"]) as admin.firestore.Timestamp | undefined;
       // [PHASE-2B.1] open-ended(endTs==null) → yesterdayMidnight까지 확장
       if (!startTs) continue;
