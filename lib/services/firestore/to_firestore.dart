@@ -775,7 +775,19 @@ extension TOFirestore on FirestoreService {
           .collection('tos').doc(toId)
           .collection('slots').doc(slotId)
           .get(const GetOptions(source: Source.server));
-      if (!doc.exists) return {};
+      // [R8-P9E] 슬롯 문서가 없는 것은 "정원 0"이 아니라 "모른다"이다.
+      //
+      //   P7.3 에서 catch 를 rethrow 로 바꿔 조회 실패가 UNKNOWN 으로
+      //   내려가게 했는데, 이 조기 반환이 그 경로를 비켜 갔다. 빈 맵은
+      //   소비부에서 `?? 0` 으로 읽혀 requiredCount 0 이 되고, 예외가 없으니
+      //   _capacityUnknown 도 서지 않는다. 결과는 "정원을 안다, 그리고 0이다" —
+      //   부족 인원이 0 이 되어 충원 버튼이 사라진다.
+      //
+      //   슬롯을 지우는 중이거나 stale slotId 로 들어왔을 때 실제로 발생한다.
+      if (!doc.exists) {
+        throw StateError(
+            'getSlotWorkDetailCapacities: 슬롯 문서를 찾지 못했다 [$toId/$slotId]');
+      }
       final workDetails = doc.data()?['workDetails'] as List? ?? [];
       final result = <String, int>{};
       for (final wd in workDetails.whereType<Map>()) {

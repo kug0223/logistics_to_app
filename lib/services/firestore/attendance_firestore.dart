@@ -147,6 +147,17 @@ extension AttendanceFirestore on FirestoreService {
   /// 오늘 내 출근 기록 조회
   ///
   /// docId는 `${applicationId}_yyyyMMdd`로 결정적이므로 오늘·어제 순으로 직접 조회.
+  /// [R8-P9E] 이 근무는 더 이상 진행 중이 아닌가.
+  ///
+  /// 퇴근했거나, 퇴근 누락으로 마감됐거나, 노쇼·결근으로 처리된 상태.
+  /// 소비부(attendance_check_screen)가 "어제 기록은 숨긴다"고 판단할 때 쓰는
+  /// 조건과 같은 집합이다 — 두 곳이 다른 말을 하면 안 된다.
+  static bool _isAttendanceFinished(AttendanceModel att) =>
+      att.checkOut != null ||
+      att.status == 'missed_checkout' ||
+      att.status == AttendanceModel.statusNoShow ||
+      att.status == AttendanceModel.statusAbsent;
+
   /// workDate 범위 쿼리 대신 docId 직접 조회를 사용해야 하는 이유:
   ///   - 단기 야간 근무: workDate = 어제(근무 시작일) → 어제 docId로 퇴근 전까지 유지
   ///   - 장기 근무: checkIn 시 workDate = 오늘 날짜 (시작일 아님) → 오늘 docId
@@ -165,7 +176,9 @@ extension AttendanceFirestore on FirestoreService {
       String dateStr(DateTime d) =>
           '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
 
-      for (final date in [todayStart, todayStart.subtract(const Duration(days: 1))]) {
+      final yesterday = todayStart.subtract(const Duration(days: 1));
+
+      for (final date in [todayStart, yesterday]) {
         final docId = '${applicationId}_${dateStr(date)}';
         final doc = await _firestore.collection('attendance').doc(docId).get();
         if (!doc.exists) continue;
@@ -173,6 +186,22 @@ extension AttendanceFirestore on FirestoreService {
         if (att == null) continue;
         // 소유자 검증 (타인 applicationId 조회 방지)
         if (att.userId != userId) continue;
+
+        // [R8-P9E] 전날 문서는 **아직 끝나지 않은 근무**일 때만 오늘의 답이다.
+        //
+        //   이 폴백은 야간 근무를 위한 것이다 — 어제 22시에 출근해 오늘
+        //   새벽에 퇴근하는 근무는 어제 docId 아래 살아 있고, 그 사람에게
+        //   오늘 필요한 것은 '퇴근하기'다.
+        //
+        //   그런데 조건이 없어서, 이미 끝난 어제 근무까지 오늘의 출근 기록인
+        //   것처럼 돌려줬다. 장기 근무자는 계약 하나로 매일 일하는데
+        //   오늘 문서는 출근 전까지 없으므로, 어제 정상 퇴근한 다음 날마다
+        //   이 폴백이 어제 문서를 집어 온다. 소비부는 그것을 보고 오늘
+        //   근무 카드를 통째로 지웠다 — 출근 버튼까지 함께.
+        //
+        //   끝난 근무는 오늘에 대해 아무것도 말해 주지 않는다. null 이 맞다.
+        if (date == yesterday && _isAttendanceFinished(att)) continue;
+
         return att;
       }
       return null;
