@@ -27,19 +27,30 @@ class BusinessPickerHelper {
       return null;
     }
 
+    // [R8-P7.4] 조회 실패를 '등록된 사업장이 없습니다'로 바꾸지 않는다.
+    //   여기는 공고 등록으로 들어가는 길목이다 — 못 읽은 것을 0개로 말하면
+    //   관리자는 사업장이 사라졌다고 읽고 다시 만들려 한다. OrThrow 변형은
+    //   이 구분을 위해 이미 있다(AH-V2-01).
     List<BusinessModel> businesses;
-    if (userProvider.isSubAdmin) {
-      final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
-      if (bizIds.isEmpty) {
-        ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
-        return null;
+    try {
+      if (userProvider.isSubAdmin) {
+        final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
+        if (bizIds.isEmpty) {
+          ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
+          return null;
+        }
+        businesses = await FirestoreService().getBusinessesByIdsOrThrow(bizIds);
+      } else {
+        // CF callableGetMyBusiness 대신 UserProvider에 이미 있는 managedBusinessIds로
+        // 병렬 doc.get — CF 콜드스타트(1–3초) 제거, Firestore 오프라인 캐시 활용
+        final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+        businesses =
+            await FirestoreService().getBusinessesByIdsOrThrow(managedIds);
       }
-      businesses = await FirestoreService().getBusinessesByIds(bizIds);
-    } else {
-      // CF callableGetMyBusiness 대신 UserProvider에 이미 있는 managedBusinessIds로
-      // 병렬 doc.get — CF 콜드스타트(1–3초) 제거, Firestore 오프라인 캐시 활용
-      final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
-      businesses = await FirestoreService().getBusinessesByIds(managedIds);
+    } catch (e) {
+      debugPrint('❌ [BusinessPicker] 사업장 조회 실패: $e');
+      ToastHelper.showError('사업장 목록을 불러오지 못했습니다. 다시 시도해주세요');
+      return null;
     }
 
     if (approvedOnly) {

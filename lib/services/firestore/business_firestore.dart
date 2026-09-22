@@ -255,8 +255,11 @@ extension BusinessFirestore on FirestoreService {
       debugPrint('🔍 Firestore 조회: ${workTypes.length}개');
       return workTypes;
     } catch (e) {
+      // [R8-P7.4] 못 읽은 것을 "업무 없음"으로 말하지 않는다.
+      //   빈 목록은 공고 준비 gate에서 "업무 유형 미등록"으로 굳어지고,
+      //   업무가 멀쩡히 있는 사업장에 등록하라는 안내가 뜬다.
       debugPrint('❌ getBusinessWorkTypes 오류: $e');
-      return [];
+      rethrow;
     }
   }
 

@@ -338,11 +338,14 @@ void main() {
 
     test('08-c 업무 CTA 우선순위가 소스에 그대로 있다', () {
       final code = _flat(_codeOf(_homePath));
+      // [R8-P7.4] 우선순위(라이선스 보유 → 승인만 → 미승인)는 그대로다.
+      //   결핍 판정만 `!hasActiveWorkTypes`에서 `isMissingWorkTypes`로 좁혔다 —
+      //   업무 목록을 못 읽은 사업장을 "업무 없음"으로 세던 자리다.
       expect(
           code.contains(
               'BusinessModel? get _workTypeCtaBusiness => _firstBusinessWhere((r) => '
-              'r != null && r.isApproved && r.hasLicense && !r.hasActiveWorkTypes) ?? '
-              '_firstBusinessWhere( (r) => r != null && r.isApproved && !r.hasActiveWorkTypes) ?? '
+              'r != null && r.isApproved && r.hasLicense && r.isMissingWorkTypes) ?? '
+              '_firstBusinessWhere( (r) => r != null && r.isApproved && r.isMissingWorkTypes) ?? '
               '_firstBusinessWhere((r) => r == null);'),
           true,
           reason: 'CTA 우선순위가 replica와 어긋남');

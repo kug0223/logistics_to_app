@@ -122,8 +122,10 @@ class MonthlyReviewService {
           .whereType<ReviewRequestModel>()
           .toList();
     } catch (e) {
+      // [R8-P7.4] 소비부(admin_review_list_screen)에 _hasError 분기가 이미 있다.
+      //   여기서 빈 목록을 돌려주면 마감일 맵이 통째로 비어 "마감 없음"이 된다.
       debugPrint('❌ 미공개 리뷰 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -449,8 +451,10 @@ class MonthlyReviewService {
           .toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
     } catch (e) {
+      // [R8-P7.4] "리뷰 없음"과 "리뷰를 못 읽음"은 다른 말이다.
+      //   소비부(worker_detail_dialog)에 _loadFailed 분기가 이미 있다.
       debugPrint('❌ 공개 리뷰 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 

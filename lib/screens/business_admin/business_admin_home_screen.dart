@@ -426,6 +426,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         //   any(hasActiveWorkTypes)로 보면 A(등록증만)와 B(업무만)를 합쳐
         //   어느 사업장으로도 공고를 낼 수 없는데 준비 완료로 판정된다.
         workTypesReady: BusinessPostingReadiness.hasReadyBusiness(readinessMap),
+        // [R8-P7.4] 준비된 사업장이 하나도 없을 때, 그것이 "업무가 없어서"인지
+        //   "업무를 못 읽어서"인지 구분한다. 후자면 등록하라고 말하지 않는다.
+        workTypesUnknown:
+            readinessMap.values.any((r) => r.workTypesUnknown) &&
+                !readinessMap.values.any((r) => r.isMissingWorkTypes),
         contractTemplateReady: hasTemplate,
         sealReady: sealReady,
       );
@@ -455,11 +460,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   ///   3순위 — 아직 승인 전이라 readiness를 알 수 없는 사업장
   ///           (승인 전에도 업무를 준비할 수 있다는 기존 계약 유지)
   /// 셋 다 없으면 null — 이동시키지 않고 '선행 필요'로 남긴다.
+  /// [R8-P7.4] 업무 상태를 못 읽은 사업장은 대상이 아니다 — 업무가 이미 있는
+  ///   사업장으로 보내면 "등록하라는데 이미 있다"가 된다.
   BusinessModel? get _workTypeCtaBusiness =>
       _firstBusinessWhere((r) =>
-          r != null && r.isApproved && r.hasLicense && !r.hasActiveWorkTypes) ??
+          r != null && r.isApproved && r.hasLicense && r.isMissingWorkTypes) ??
       _firstBusinessWhere(
-          (r) => r != null && r.isApproved && !r.hasActiveWorkTypes) ??
+          (r) => r != null && r.isApproved && r.isMissingWorkTypes) ??
       _firstBusinessWhere((r) => r == null);
 
   /// 사업장 task CTA 대상 — 승인이나 등록증이 빠진 사업장.
@@ -1938,7 +1945,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               task: FirstPostingTask.workType,
               icon: Icons.work_outline,
               label: '업무 등록',
-              lockedHint: '사업장 등록 후 가능',
+              // [R8-P7.4] 못 읽었을 때는 "등록하세요"가 아니라 못 읽었다고 말한다.
+              //   이동 대상(wtTarget)이 없어 locked로 떨어지는 경로도 같은 문장을
+              //   써야 한다 — 그때 '사업장 등록 후 가능'은 사실이 아니다.
+              lockedHint: r.workTypesUnknown
+                  ? '상태를 확인하지 못했어요'
+                  : '사업장 등록 후 가능',
+              pendingHint: r.workTypesUnknown ? '상태를 확인하지 못했어요' : null,
               onTap: wtTarget == null
                   ? null
                   : () => _safeNavigate(() async {

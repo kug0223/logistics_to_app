@@ -221,7 +221,10 @@ void main() {
         'lib/screens/business_admin/member_management_screen.dart',
         'lib/screens/business_admin/payroll/payroll_overview_screen.dart',
         'lib/screens/business_admin/to_management/create_to_screen.dart',
-        'lib/utils/business_picker_helper.dart',
+        // [R8-P7.4] business_picker_helper 는 이 목록에서 빠졌다.
+        //   AH-V2-01 당시에는 범위 밖이었고, R8-P7.4 에서 공고 등록 길목으로
+        //   정식 이관했다 — 조회 실패가 '등록된 사업장이 없습니다'로 보이던
+        //   자리다. 나머지 네 곳은 그대로 범위 밖이다.
       ]) {
         final src = _src(path);
         expect(src.contains('getBusinessesByIdsOrThrow'), isFalse,

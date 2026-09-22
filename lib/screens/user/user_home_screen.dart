@@ -58,6 +58,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   List<ApplicationModel> _applications = [];
   List<AttendanceModel> _attendances = [];
   List<TOModel> _publishedTos = [];
+
+  /// [R8-P7.4] 공고 목록을 **읽지 못했다**.
+  ///
+  /// `_publishedTos`가 비어 있는 이유가 "공고가 없어서"인지 "못 읽어서"인지
+  /// 구분한다. 구분하지 않으면 조회 실패가 "지원 가능한 일자리가 없어요"로
+  /// 보이고, 사용자는 앱이 정상이라고 믿은 채 공고를 놓친다.
+  bool _postingsFailed = false;
   /// businessId → BusinessModel 캐시 — 사업장 이미지·혜택 정보 표시용
   Map<String, BusinessModel> _businessCache = {};
   bool _isLoadingData = false;
@@ -392,7 +399,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         debugPrint('⚠️ 지원 내역 로드 실패: $appsErr');
       }
       if (attsErr == null) _attendances = results[1] as List<AttendanceModel>;
-      if (tosErr == null) _publishedTos = results[2] as List<TOModel>;
+      // [R8-P7.4] 실패했으면 이전 값을 유지하고, 비어 있는 이유를 기록해 둔다.
+      if (tosErr == null) {
+        _publishedTos = results[2] as List<TOModel>;
+        _postingsFailed = false;
+      } else {
+        debugPrint('⚠️ 공개 공고 로드 실패: $tosErr');
+        _postingsFailed = _publishedTos.isEmpty;
+      }
       if (idErr == null) {
         _idRequestSurface =
             PendingIdRequestSurface.from(results[3] as List<IdCardAccessRequestModel>);
@@ -2551,6 +2565,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(height: 8 * s),
               _recommendSkeletonCard(s),
             ])
+          // [R8-P7.4] 못 읽은 것을 "공고 없음"으로 말하지 않는다.
+          //   두 빈 화면 문구보다 먼저 온다 — 목록이 빈 이유가 실패라면
+          //   날짜별 문구든 전체 문구든 모두 사실이 아니다.
+          else if (_postingsFailed)
+            _postingsFailedCard(s)
           else if (_selectedDateChip != null && displayedTos.isEmpty)
             // 날짜 선택 + 해당 날짜 TO 없음
             Container(
@@ -3061,6 +3080,38 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   /// 스켈레톤 카드 — 시안 카드 구조와 동일한 placeholder
+  /// [R8-P7.4] 공고를 못 읽었을 때의 자리.
+  ///
+  /// "없어요"가 아니라 "못 불러왔어요"라고 말하고, 다시 시도할 길을 준다.
+  /// 빈 상태와 같은 여백·정렬을 쓴다 — 새 표현을 만들지 않는다.
+  Widget _postingsFailedCard(double s) {
+    return Container(
+      padding: EdgeInsets.symmetric(vertical: 20 * s),
+      alignment: Alignment.center,
+      child: Column(
+        children: [
+          Text(
+            '공고를 불러오지 못했어요',
+            style: TextStyle(
+                fontSize: 13,
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 4 * s),
+          Text(
+            '잠시 후 다시 시도해주세요.',
+            style: TextStyle(fontSize: 12, color: AppColors.textHint),
+          ),
+          SizedBox(height: 10 * s),
+          TextButton(
+            onPressed: _isLoadingData ? null : () => _loadHomeData(),
+            child: const Text('다시 시도'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _recommendSkeletonCard(double s) {
     final radius12 = BorderRadius.circular(12 * s);
     final radius20 = BorderRadius.circular(20 * s);

@@ -197,8 +197,11 @@ extension TOFirestore on FirestoreService {
       }
       return models;
     } catch (e) {
+      // [R8-P7.4] 못 읽은 것을 "공고 없음"으로 말하지 않는다.
+      //   호출부(create_to_screen)는 이미 실패 토스트를 준비해 두었는데,
+      //   여기서 빈 목록을 돌려주는 동안 그 분기는 한 번도 실행되지 않았다.
       debugPrint('❌ [TO] 사업장 공고 목록 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -232,8 +235,11 @@ extension TOFirestore on FirestoreService {
       _cachedPublishedTOsAt = now;
       return tos;
     } catch (e) {
+      // [R8-P7.4] 조회 실패는 "등록된 공고가 없습니다"가 아니다.
+      //   캐시도 세우지 않는다 — 실패한 결과를 2분 동안 정상값처럼 재사용하면
+      //   다음 진입까지 빈 목록이 고착된다.
       debugPrint('❌ [TO] 공개 공고 목록 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -277,8 +283,11 @@ extension TOFirestore on FirestoreService {
         'hasMore': result.data['hasMore'] as bool? ?? false,
       };
     } catch (e) {
+      // [R8-P7.4] 빈 페이지 + hasMore:false 는 "끝까지 다 읽었고 없다"는 말이다.
+      //   실패를 그 모양으로 돌려주면 목록이 비는 데서 그치지 않고 페이지네이션도
+      //   멈춰, 다시 시도할 길까지 닫힌다. 호출부에는 실패 토스트가 이미 있다.
       debugPrint('❌ [TO] 공개 공고 페이지네이션 조회 실패: $e');
-      return {'items': <TOModel>[], 'lastToId': null, 'hasMore': false};
+      rethrow;
     }
   }
 

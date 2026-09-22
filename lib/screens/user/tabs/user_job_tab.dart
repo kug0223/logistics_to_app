@@ -70,6 +70,13 @@ class _UserJobTabState extends State<UserJobTab>
 
   bool _isLoading = true;
   bool _fetchInProgress = false;
+
+  /// [R8-P7.4] 목록을 **읽지 못했다**.
+  ///
+  /// 빈 목록이 "등록된 공고가 없습니다"가 되는 자리라서, 비어 있는 이유를
+  /// 따로 들고 있어야 한다. 실패를 "공고 없음"으로 말하면 사용자는 앱이
+  /// 정상이라고 믿은 채 지원 기회를 놓친다.
+  bool _loadFailed = false;
   bool _myApplicationsLoaded = false;
 
   // ── 초기화 ──────────────────────────────────────────────────────
@@ -213,6 +220,7 @@ class _UserJobTabState extends State<UserJobTab>
         _districtMap = regionResult.districtMap;
         _displayList = displayList;
         _isLoading = false;
+        _loadFailed = false;
       });
       if (toList.isEmpty && hasMore) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -223,7 +231,12 @@ class _UserJobTabState extends State<UserJobTab>
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (!mounted) return;
       _fetchInProgress = false;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        // [R8-P7.4] 이전에 받아 둔 목록이 있으면 그대로 두고, 비어 있을 때만
+        //   빈 화면의 문장을 "없음"에서 "못 읽음"으로 바꾼다.
+        _loadFailed = _displayList.isEmpty;
+      });
       ToastHelper.showError('공고 목록을 불러오는데 실패했습니다.');
     }
   }
@@ -957,6 +970,19 @@ class _UserJobTabState extends State<UserJobTab>
   }
 
   Widget _buildEmptyState() {
+    // [R8-P7.4] 읽지 못한 것을 "없다"고 말하지 않는다. 즐겨찾기·필터 문구보다
+    //   먼저 온다 — 목록을 못 읽었으면 그 어떤 "없음"도 사실이 아니다.
+    if (_loadFailed) {
+      return AppEmptyState(
+        icon: Icons.cloud_off_rounded,
+        title: '공고를 불러오지 못했습니다',
+        subtitle: '네트워크 상태를 확인하고\n다시 시도해주세요',
+        action: TextButton(
+          onPressed: _loadAllTOs,
+          child: const Text('다시 시도'),
+        ),
+      );
+    }
     if (_filter.showFavoritesOnly) {
       return AppEmptyState(
         icon: Icons.favorite_border_rounded,

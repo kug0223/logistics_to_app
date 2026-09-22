@@ -26,12 +26,21 @@ class BusinessPostingReadiness {
   final bool hasOwnerLegacyLicense;
   final bool hasActiveWorkTypes;
 
+  /// [R8-P7.4] 업무 목록을 **읽지 못했다**.
+  ///
+  /// 이때 [hasActiveWorkTypes]는 false지만 그것은 "업무가 없다"는 뜻이 아니다.
+  /// [isReady]는 그대로 false로 둔다 — 서버가 최종 gate이므로 모를 때 열어 주면
+  /// 안 된다. 다만 "업무를 등록하세요"라고 **단정하는 안내**는 이 값이 true인
+  /// 동안 만들지 않는다.
+  final bool workTypesUnknown;
+
   const BusinessPostingReadiness({
     required this.bizId,
     required this.isApproved,
     required this.hasCanonicalLicense,
     required this.hasOwnerLegacyLicense,
     required this.hasActiveWorkTypes,
+    this.workTypesUnknown = false,
   });
 
   /// canonical OR owner legacy
@@ -39,6 +48,9 @@ class BusinessPostingReadiness {
 
   /// 공고 등록 가능 여부 (서버와 동일 로직)
   bool get isReady => isApproved && hasLicense && hasActiveWorkTypes;
+
+  /// 업무가 없다고 **말할 수 있는가**. 못 읽었으면 말하지 않는다.
+  bool get isMissingWorkTypes => !workTypesUnknown && !hasActiveWorkTypes;
 
   // ────────────────────────────────────────────────────
   // Static helpers
@@ -104,11 +116,16 @@ class BusinessPostingReadiness {
     }
 
     bool hasActiveWorkTypes = false;
+    // [R8-P7.4] 읽기 실패를 "업무 0개"로 접지 않는다.
+    bool workTypesUnknown = false;
     if (isApproved) {
       try {
         final wts = await firestoreService.getBusinessWorkTypes(biz.id);
         hasActiveWorkTypes = wts.isNotEmpty;
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ [readiness] 업무 유형 조회 실패 [${biz.id}]: $e');
+        workTypesUnknown = true;
+      }
     }
 
     return BusinessPostingReadiness(
@@ -117,6 +134,7 @@ class BusinessPostingReadiness {
       hasCanonicalLicense: hasCanonicalLicense,
       hasOwnerLegacyLicense: hasOwnerLegacyLicense,
       hasActiveWorkTypes: hasActiveWorkTypes,
+      workTypesUnknown: workTypesUnknown,
     );
   }
 
@@ -229,6 +247,13 @@ class FirstPostingReadiness {
   /// (`BusinessPostingReadiness.hasReadyBusiness`)
   final bool workTypesReady;
 
+  /// [R8-P7.4] 업무 상태를 읽지 못한 사업장이 있어 [workTypesReady]를
+  /// "아직 아니다"로 단정할 수 없다.
+  ///
+  /// 준비 완료로 올리지는 않는다(서버가 최종 gate). 대신 "업무를 등록하세요"라는
+  /// 안내를 만들지 않는다 — 업무가 이미 있는 관리자에게 그 문장은 거짓이다.
+  final bool workTypesUnknown;
+
   /// 신규 계약에 쓸 수 있는 템플릿이 있는가 (관리자 보유 전 사업장 합산)
   final bool contractTemplateReady;
 
@@ -241,6 +266,7 @@ class FirstPostingReadiness {
     required this.workTypesReady,
     required this.contractTemplateReady,
     required this.sealReady,
+    this.workTypesUnknown = false,
   });
 
   static const int totalTasks = 4;
