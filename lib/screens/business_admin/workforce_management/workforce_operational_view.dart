@@ -181,7 +181,32 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   _SummaryFilter _activeFilter = _SummaryFilter.all;
 
   // ── 사업장 캐시 ────────────────────────────────────────────────
+  //
+  // [R8-P7.5] 이 필드 하나가 네 가지 상태를 나눠 가진다. 값의 의미를 흐리면
+  //   조회 실패가 "사업장 0개"가 되어 그 아래 모든 화면이 거짓말을 한다.
+  //
+  //     null + !_businessesStale : NOT_LOADED   (아직 안 읽었다)
+  //     비어 있지 않은 목록       : LOADED_NONEMPTY
+  //     빈 목록                  : LOADED_EMPTY (성공했고 정말 0개다)
+  //     throw                    : ERROR        (캐시에 아무것도 쓰지 않는다)
+  //
+  //   ERROR 를 LOADED_EMPTY 로 적는 순간 구분이 영원히 사라진다 —
+  //   캐시가 살아 있는 한 성공한 재조회조차 그 빈 목록을 덮지 못했다.
   List<BusinessModel>? _cachedBusinesses;
+
+  /// 다음 조회에서 캐시를 다시 읽어야 하는가.
+  ///
+  /// [R8-P7.5] _reload 가 캐시를 즉시 null 로 지우면, 그 직후의 갱신이
+  /// 실패했을 때 멀쩡히 갖고 있던 사업장 목록까지 함께 사라진다.
+  /// 지우는 대신 stale 로 표시하고, **성공했을 때만** 교체한다.
+  bool _businessesStale = false;
+
+  /// 캐시가 어떤 사용자·사업장 범위에서 채워졌는가.
+  ///
+  /// [R8-P7.5] 갱신 실패 시 이전 캐시를 살려 두기로 했으므로, 그 캐시가
+  /// **지금과 같은 범위**의 것인지 확인해야 한다. SubAdmin 이 사업장을 바꾼
+  /// 직후 갱신이 실패하면, 키가 없을 때는 이전 사업장 목록이 그대로 남는다.
+  String? _cachedBusinessesScope;
 
   // ── 스크롤 ─────────────────────────────────────────────────────
   final ScrollController _scrollController = ScrollController();
@@ -344,22 +369,25 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     if (!force && _markerRangeAnchor == anchor && _workDates != null) return;
 
     final requestId = ++_markerRequestId;
-    final businesses = await _ensureBusinesses();
-    if (!mounted || requestId != _markerRequestId) return;
-    if (businesses.isEmpty) {
-      setState(() {
-        _workDates = const <DateTime>{};
-        _markerFailed = false;
-        _markerRangeAnchor = anchor;
-      });
-      return;
-    }
-
     final start = anchor.subtract(const Duration(days: 7));
     final end = DateTime(anchor.year, anchor.month + 1, 1)
         .add(const Duration(days: 7));
 
     try {
+      // [R8-P7.5] 사업장 조회를 try 안으로 들여왔다. 밖에 두면 실패가
+      //   빈 목록으로 내려와 아래 "일 없음" 분기를 그대로 통과한다.
+      final businesses = await _ensureBusinesses();
+      if (!mounted || requestId != _markerRequestId) return;
+      if (businesses.isEmpty) {
+        // 여기 도달했으면 조회는 성공했고 사업장이 정말 0개다.
+        setState(() {
+          _workDates = const <DateTime>{};
+          _markerFailed = false;
+          _markerRangeAnchor = anchor;
+        });
+        return;
+      }
+
       final sets = await Future.wait(businesses.map((b) =>
           _firestoreService.getSeatedWorkDatesInRange(
             start: start,
@@ -397,18 +425,6 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     // [P2-WF-02] 요청 번호 발급 — 이 함수가 반환하기 전 새 요청이 오면 현재 요청은 stale
     final requestId = ++_loadDayDataRequestId;
 
-    final businesses = await _ensureBusinesses();
-    if (!mounted || requestId != _loadDayDataRequestId) return;
-    if (businesses.isEmpty) {
-      setState(() {
-        _applications = [];
-        _attendances = [];
-        _sortedGroups = [];
-        _loadError = null;
-      });
-      return;
-    }
-
     setState(() {
       _isLoadingData = true;
       _loadError = null;
@@ -416,6 +432,24 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     });
 
     try {
+      // [R8-P7.5] 사업장 조회를 try 안으로 들여왔다. 밖에 두면 실패가
+      //   빈 목록으로 내려와 아래 early return 을 타고 _loadError = null 로
+      //   덮였다 — 이 화면이 P7.2 에서 갖춘 오류 상태가 그 경로에서만
+      //   통째로 우회되고 있었다.
+      final businesses = await _ensureBusinesses();
+      if (!mounted || requestId != _loadDayDataRequestId) return;
+      if (businesses.isEmpty) {
+        // 여기 도달했으면 조회는 성공했고 사업장이 정말 0개다.
+        setState(() {
+          _applications = [];
+          _attendances = [];
+          _sortedGroups = [];
+          _isLoadingData = false;
+          _loadError = null;
+        });
+        return;
+      }
+
       // 사업장이 여러 개인 경우 병렬 조회, 결과 합산
       // [R8-P7.2] 삼키는 변형 → OrThrow.
       //   이 화면은 _loadError 를 갖고 있는데, 서비스가 실패를 빈 목록으로
@@ -541,7 +575,9 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   }
 
   Future<void> _reload() async {
-    _cachedBusinesses = null; // 사업장 캐시 무효화
+    // [R8-P7.5] 지우지 않고 stale 로 표시한다 — 갱신이 실패해도 이전에
+    //   정상으로 읽어 둔 사업장 목록은 남아야 한다.
+    _businessesStale = true;
     // [PREDEVICE-WORK-CALENDAR] marker도 같은 mutation에서 갱신한다 —
     //   확정 한 건으로 그 날짜에 일이 생겼는데 달력만 예전 그대로면
     //   marker와 목록이 서로 다른 현실이 된다. 새 listener는 만들지 않고
@@ -552,20 +588,53 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     ]);
   }
 
+  /// 사업장 목록을 확보한다. **조회 실패는 throw 한다.**
+  ///
+  /// [R8-P7.5] 이 화면의 모든 조회가 이 목록을 전제로 돈다. 실패를 빈 목록으로
+  /// 바꿔 돌려주면 그 아래 전부가 "근무자 0 / 근무 없음 / 오늘 일정 없음"이 되고,
+  /// 이 화면이 이미 갖고 있는 _loadError·_markerFailed 는 한 번도 서지 않는다.
+  /// 호출부는 자기 자리에 맞는 오류 표현을 쓴다 — 삼키지 않는다.
   Future<List<BusinessModel>> _ensureBusinesses() async {
-    if (_cachedBusinesses != null) return _cachedBusinesses!;
     final up = context.read<UserProvider>();
     final uid = up.currentUser?.uid;
-    if (uid == null) return [];
-    List<BusinessModel> result;
+    // 로그인 정보가 없는 것은 조회 실패가 아니다 — 읽을 대상 자체가 없다.
+    if (uid == null) return const [];
+
     final effectiveBizId = up.effectiveBusinessId;
-    if (up.isSubAdmin && effectiveBizId != null) {
-      final biz = await _firestoreService.getBusinessById(effectiveBizId);
-      result = biz != null ? [biz] : [];
-    } else {
-      result = await _firestoreService.getMyBusiness(uid);
+    // 캐시가 지금과 같은 범위의 것일 때만 쓸 수 있다.
+    final scope = '$uid|${up.isSubAdmin}|$effectiveBizId';
+    final cached =
+        _cachedBusinessesScope == scope ? _cachedBusinesses : null;
+    if (cached != null && !_businessesStale) return cached;
+
+    List<BusinessModel> result;
+    try {
+      if (up.isSubAdmin && effectiveBizId != null) {
+        final biz =
+            await _firestoreService.getBusinessByIdOrThrow(effectiveBizId);
+        // null 은 "그 사업장이 없다"는 뜻이다 — 읽기 실패는 위에서 throw 됐다.
+        result = biz != null ? [biz] : const [];
+      } else {
+        result = await _firestoreService.getMyBusinessOrThrow(uid);
+      }
+    } catch (e) {
+      debugPrint('❌ [Workforce] 사업장 조회 실패: $e');
+      // [R8-P7.5 §9] 이전에 정상으로 읽어 둔 목록이 있으면 그것을 지키고
+      //   계속 쓴다. 갱신에 실패했다고 실재하는 사업장을 없애지 않는다.
+      if (cached != null) {
+        if (mounted) {
+          ToastHelper.showWarning('사업장 정보를 갱신하지 못했어요. 이전 정보로 표시합니다');
+        }
+        return cached;
+      }
+      // 첫 로드에서 실패했으면 아무것도 캐시하지 않고 그대로 올린다.
+      rethrow;
     }
+
+    // 성공했을 때만 캐시를 교체한다. 빈 목록도 여기서는 정상 결과다.
     _cachedBusinesses = result;
+    _cachedBusinessesScope = scope;
+    _businessesStale = false;
     return result;
   }
 
@@ -1528,7 +1597,15 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   // ── Dialog 진입 ────────────────────────────────────────────────
 
   Future<void> _openAttendanceDialog() async {
-    final businesses = await _ensureBusinesses();
+    // [R8-P7.5] 조회 실패를 '등록된 사업장이 없습니다'로 말하지 않는다.
+    final List<BusinessModel> businesses;
+    try {
+      businesses = await _ensureBusinesses();
+    } catch (e) {
+      debugPrint('❌ 사업장 조회 실패: $e');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      return;
+    }
     if (!mounted) return;
     if (businesses.isEmpty) {
       ToastHelper.showWarning('등록된 사업장이 없습니다');
@@ -1550,7 +1627,15 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Future<void> _openAttendanceDialogForWorker(_WorkerEntry worker) async {
     // [5B.2A] focused individual mode — worker의 applicationId를 전달해 해당 탭으로 자동 이동 + 행 강조
-    final businesses = await _ensureBusinesses();
+    // [R8-P7.5] 조회 실패를 '등록된 사업장이 없습니다'로 말하지 않는다.
+    final List<BusinessModel> businesses;
+    try {
+      businesses = await _ensureBusinesses();
+    } catch (e) {
+      debugPrint('❌ 사업장 조회 실패: $e');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      return;
+    }
     if (!mounted) return;
     if (businesses.isEmpty) {
       ToastHelper.showWarning('등록된 사업장이 없습니다');

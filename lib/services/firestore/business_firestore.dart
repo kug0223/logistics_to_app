@@ -10,16 +10,28 @@ extension BusinessFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
   
   /// 사업장 ID로 조회
+  /// [R8-P7.5] 조회 실패와 "그런 사업장 없음"을 구분하는 변형.
+  ///
+  /// null 은 오직 문서가 실제로 없을 때만 뜻한다. 읽기 실패는 throw 한다.
+  /// 둘을 같은 null 로 돌려주면 SubAdmin 의 사업장 하나가 조회 실패만으로
+  /// 사라지고, 그 위의 화면은 "사업장 없음"이라고 말하게 된다.
+  Future<BusinessModel?> getBusinessByIdOrThrow(String businessId) async {
+    final doc = await _firestore
+        .collection('businesses')
+        .doc(businessId)
+        .get(const GetOptions(source: Source.server));
+    if (!doc.exists) {
+      debugPrint('⚠️ 사업장을 찾을 수 없습니다: $businessId');
+      return null;
+    }
+    return BusinessModel.fromFirestore(doc);
+  }
+
+  /// 실패와 부재를 모두 null 로 돌려주는 기존 계약.
+  /// 둘을 구분해야 하는 호출부는 [getBusinessByIdOrThrow]를 쓴다.
   Future<BusinessModel?> getBusinessById(String businessId) async {
     try {
-      final doc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
-
-      if (!doc.exists) {
-        debugPrint('⚠️ 사업장을 찾을 수 없습니다: $businessId');
-        return null;
-      }
-      
-      return BusinessModel.fromFirestore(doc);
+      return await getBusinessByIdOrThrow(businessId);
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
       return null;
@@ -86,30 +98,43 @@ extension BusinessFirestore on FirestoreService {
   }
 
   /// 내 사업장 목록 조회 — CF callableGetMyBusiness (adminIds 노출 없이 서버 검증)
+  ///
+  /// [R8-P7.5] 조회 실패를 빈 목록으로 바꾸지 않는 변형.
+  ///
+  /// 호출부가 "조회 실패"와 "사업장 0개"를 구분해야 할 때 쓴다. 근무 관리처럼
+  /// 사업장 목록이 그 아래 모든 조회의 전제인 화면에서는 이 구분이 없으면
+  /// 읽기 실패 한 번이 "근무 없음"이라는 전혀 다른 사실로 번진다.
+  /// 개별 문서 파싱 실패는 기존대로 건너뛴다 — 한 건 손상이 전체를 막지 않는다.
+  Future<List<BusinessModel>> getMyBusinessOrThrow(String uid) async {
+    debugPrint('🔍 [FirestoreService] 내 사업장 조회 시작...');
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetMyBusiness',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+    final response = await callable.call<Map<String, dynamic>>({});
+    final list = (response.data['businesses'] as List?) ?? [];
+    final businesses = list
+        .whereType<Map>()
+        .map((e) {
+          final map = Map<String, dynamic>.from(e);
+          final id = map['id'] as String? ?? '';
+          try {
+            return BusinessModel.fromMap(map, id);
+          } catch (e) {
+            debugPrint('⚠️ BusinessModel 파싱 실패 [$id]: $e');
+            return null;
+          }
+        })
+        .whereType<BusinessModel>()
+        .toList();
+    debugPrint('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
+    return businesses;
+  }
+
+  /// 실패 시 빈 목록을 반환하는 기존 계약.
+  /// 실패와 0개를 구분해야 하는 호출부는 [getMyBusinessOrThrow]를 쓴다.
   Future<List<BusinessModel>> getMyBusiness(String uid) async {
     try {
-      debugPrint('🔍 [FirestoreService] 내 사업장 조회 시작...');
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetMyBusiness',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final response = await callable.call<Map<String, dynamic>>({});
-      final list = (response.data['businesses'] as List?) ?? [];
-      final businesses = list
-          .whereType<Map>()
-          .map((e) {
-            final map = Map<String, dynamic>.from(e);
-            final id = map['id'] as String? ?? '';
-            try {
-              return BusinessModel.fromMap(map, id);
-            } catch (e) {
-              debugPrint('⚠️ BusinessModel 파싱 실패 [$id]: $e');
-              return null;
-            }
-          })
-          .whereType<BusinessModel>()
-          .toList();
-      debugPrint('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
-      return businesses;
+      return await getMyBusinessOrThrow(uid);
     } catch (e) {
       debugPrint('❌ [FirestoreService] 내 사업장 조회 실패: $e');
       return [];
