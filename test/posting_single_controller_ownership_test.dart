@@ -416,11 +416,16 @@ void main() {
       expect(body.contains('return load(context);'), true);
     });
 
-    test('07-e FLEX preload 계약은 건드리지 않았다 (§23)', () {
+    test('07-e FLEX preload 계약 (R8-P9F 에서 범위만 좁혔다)', () {
       final body = _flat(_codeOf(
           _bodyOf(_src(_ctrlPath), 'Future<void> _runOneLoad(UserProvider userProvider)')));
       expect(body.contains('_service.loadFlexSlots('), true);
-      expect(body.contains('_items.where((g) => g.masterTO.isFlexType)'), true);
+      // [R8-P9F] 전체 수동 종료 공고는 preload 대상에서 뺐다. 탭 분류가
+      //   두 경로에서 같기 때문에 안전하다 — 자세한 근거와 나머지 경우는
+      //   posting_preload_scope_contract_test.dart 가 고정한다.
+      expect(
+          body.contains('_items .where((g) => g.masterTO.isFlexType && !g.masterTO.isManualClosed)'),
+          true);
     });
 
     test('07-f cascade close 후처리가 사이클 끝에 남아 있다 (§20)', () {

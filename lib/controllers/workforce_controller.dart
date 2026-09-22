@@ -457,8 +457,26 @@ class WorkforceController extends ChangeNotifier {
       //
       // 첫 렌더 전에 await한다 — slotDates가 비어 있으면 모든 슬롯이 지난
       // flex 공고가 진행중 탭에 잘못 남는다(TOGroupItem.isClosed 폴백).
-      final flexGroups =
-          _items.where((g) => g.masterTO.isFlexType).toList();
+      // [R8-P9F] 전체 수동 종료된 공고는 슬롯을 읽지 않는다.
+      //
+      //   DEV 실측에서 flex 64건 중 52건이 수동 종료였다. 진행중 2건을
+      //   보여주려고 종료된 52건의 슬롯까지 매번 읽고 있었다.
+      //
+      //   건너뛰어도 되는 근거는 탭 분류가 같기 때문이다.
+      //     슬롯 로드됨  → isToItemClosed 첫 줄이 masterTO.isManualClosed → 종료
+      //     슬롯 미로드  → singleTO.isClosed 가 isManualClosed 를 포함 → 종료
+      //   두 경로가 같은 답을 낸다. P9B 에서 확인한 Model C 의 절반이다 —
+      //   명시적 전체 종료는 슬롯보다 우선하고, 서버도 그 공고의 슬롯
+      //   재오픈을 거부한다.
+      //
+      //   masterTO.isClosed 로 거르면 안 된다. 그건 isFull 과 자동 EXPIRED 를
+      //   포함하는데, 그 둘은 살아 있는 슬롯에 우선하지 못한다(Model C).
+      //   isManualClosed 만이 안전한 부분집합이다.
+      //
+      //   펼치면 loadGroupDetails 가 그때 읽는다 — 정보가 사라지지 않는다.
+      final flexGroups = _items
+          .where((g) => g.masterTO.isFlexType && !g.masterTO.isManualClosed)
+          .toList();
       if (flexGroups.isNotEmpty) {
         await Future.wait(flexGroups.map((group) async {
           try {
