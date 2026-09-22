@@ -238,7 +238,9 @@ extension ApplicationFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ 슬롯 지원자 목록 조회 실패: $e');
-      return [];
+      // [R8-P7.3] 지원자 명단을 못 읽은 것을 "지원자 없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 
@@ -291,7 +293,9 @@ extension ApplicationFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ 미발송 지원서 조회 실패: $e');
-      return [];
+      // [R8-P7.3] 계약서를 보내야 할 건이 화면에서 사라지면 안 된다
+
+      rethrow;
     }
   }
 
@@ -1216,7 +1220,9 @@ extension ApplicationFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ 지원자 조회 실패: $e');
-      return [];
+      // [R8-P7.3] 그날 대기 중인 지원자를 못 읽은 것을 "대기 없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 
@@ -1327,7 +1333,9 @@ extension ApplicationFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ [계약종료예정] 조회 실패: $e');
-      return [];
+      // [R8-P7.3] 계약 종료가 다가온 건을 못 읽은 것을 "없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 

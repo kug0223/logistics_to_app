@@ -1091,7 +1091,9 @@ class FirestoreService {
           .toList());
     } catch (e) {
       debugPrint('⚠️ getMyConfirmedApplicationsForConflictCheck 실패: $e');
-      return [];
+      // [R8-P7.3] 충돌 확인용 확정 근무를 못 읽은 것을 "충돌 없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 

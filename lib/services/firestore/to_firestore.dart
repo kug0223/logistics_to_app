@@ -778,8 +778,11 @@ extension TOFirestore on FirestoreService {
       }
       return result;
     } catch (e) {
+      // [R8-P7.3] 빈 맵을 돌려주지 않는다. 소비부가 `?? 0` 으로 읽어
+      //   "정원 0"이 되고, 화면은 "확정 N / 0"이라고 단정한다.
+      //   호출부가 UNKNOWN 으로 내릴 수 있도록 실패를 그대로 올린다.
       debugPrint('⚠️ getSlotWorkDetailCapacities 조회 실패 [$toId/$slotId]: $e');
-      return {};
+      rethrow;
     }
   }
 

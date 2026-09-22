@@ -541,8 +541,12 @@ class ContractService {
           .whereType<EmploymentContractModel>()
           .toList();
     } catch (e) {
+      // [R8-P7.3] 빈 목록을 돌려주지 않는다. 계약은 약속이다 —
+      //   조회가 실패했는데 "계약 없음"으로 보이면 화면은 근로자에게
+      //   "관리자가 계약서를 준비 중"이라고 단정하고 서명 버튼을 숨긴다.
+      //   서명을 기다리는 계약이 실제로 있어도 근로자는 서명할 수 없다.
       debugPrint('❌ 근무자 계약서 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 

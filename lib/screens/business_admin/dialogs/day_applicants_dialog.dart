@@ -59,6 +59,11 @@ class _GroupData {
   final String? wdId;
   final String? workDetailId;   // composite WorkDetail ID (레거시/capacityKey 용)
   int requiredCount;             // 나중에 채움
+  /// [R8-P7.3] 정원을 실제로 읽었는가.
+  ///   슬롯 정원 조회가 실패하면 requiredCount 가 0 으로 남는데,
+  ///   그건 "정원 0"이 아니라 "모른다"다. 둘을 갈라 놓지 않으면
+  ///   화면이 "확정 N / 0"이라고 단정한다.
+  bool requiredCountKnown;
   /// [R2] slot canonical id. 지원자가 0명인 모집 단위에서도 초대 CTA가 서려면
   /// slotId를 지원서에서 유도하면 안 된다 — slot 자신이 알려줘야 한다.
   String? slotId;
@@ -99,6 +104,7 @@ class _GroupData {
     this.wdId,
     this.workDetailId,
     this.requiredCount = 0,
+    this.requiredCountKnown = true,
     this.slotId,
   });
 
@@ -128,11 +134,15 @@ class _GroupData {
   ///
   ///   근로자 화면의 `workInstanceFull`과 같은 식을 쓴다 — 관리자가 다른 식을
   ///   쓰면 한쪽은 `수락 불가`, 다른 쪽은 `초대 중`이 되는 모순이 생긴다.
-  InviteCapacityState get capacityState => inviteCapacityStateOf(
-        canonicalConfirmed: canonicalConfirmed,
-        requiredCount: requiredCount,
-        isClosed: canonicalClosed,
-      );
+  InviteCapacityState get capacityState => requiredCountKnown
+      // [R8-P7.3] 정원을 못 읽었으면 자리가 남았는지도 찼는지도 말할 수 없다.
+      //   기존 UNKNOWN 계약에 그대로 태운다 — 새 상태를 만들지 않는다.
+      ? inviteCapacityStateOf(
+          canonicalConfirmed: canonicalConfirmed,
+          requiredCount: requiredCount,
+          isClosed: canonicalClosed,
+        )
+      : InviteCapacityState.unknown;
 
   /// capacity를 알고 있고 자리가 남았다 — 이것만 `초대 중`이다.
   List<ApplicationModel> get activeInvites =>
@@ -239,6 +249,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Map<String, String?> _contractStatusMap = {};
   Map<String, int> _weeklyWorkCountMap = {};
   Map<String, int> _workDetailCapacityMap = {};
+  /// [R8-P7.3] 정원을 읽지 못했다 — "정원 0"과 다른 상태다.
+  bool _capacityUnknown = false;
 
   // [SYSTEM-INTEGRATION-R2] 이 날짜의 FLEX 모집 단위 전체 (slot canonical).
   //
@@ -351,6 +363,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       _idCardStatusMap = {};
       _reviewWrittenMap.clear();
       _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 시작 시 초기화 — 이전 날짜 잔류 방지
+      _capacityUnknown = false; // [R8-P7.3] 이번 로드의 판정으로 다시 정한다
       _noShowApplicationIds = {}; // [R5.1] 초기화
       _toCache.clear();   // 파트변경 후 재로드 시 TO 캐시 무효화
       _isBatchMode = false;
@@ -513,6 +526,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _contractStatusMap = contractMap;
           _weeklyWorkCountMap = weeklyMap;
           _workDetailCapacityMap = workDetailCapacityMap;
+          // 성공 경로에서만 UNKNOWN 을 내린다.
           _dayStaffingRows = staffingRows;
           _dayInvitations = invitations;
           _idCardStatusMap = idCardMap;
@@ -552,6 +566,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _contractStatusMap = {};
         _idCardStatusMap = {};
         _workDetailCapacityMap = {};
+        _capacityUnknown = true; // [R8-P7.3] 전체 로드 실패도 정원을 모르는 상태다
         _dayStaffingRows = null; // 전체 로드 실패 — 충원 영역도 UNKNOWN
         _dayInvitations = null;
         _weeklyWorkCountMap = {};
@@ -590,7 +605,23 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   /// 슬롯 문서의 workDetails별 requiredCount 맵 반환 (업무 단위 정원 표시용)
+  ///
+  ///   [R8-P7.3] 실패하면 빈 맵을 돌려주되 [_capacityUnknown] 을 세운다.
+  ///   지원자 명단은 유효하므로 다이얼로그 전체를 오류로 만들지 않는다 —
+  ///   대신 충원/정원 영역만 UNKNOWN 으로 내린다. 예전에는 실패가 빈 맵이 되고
+  ///   소비부가 `?? 0` 으로 읽어 "정원 0"이라고 단정했다.
   Future<Map<String, int>> _loadWorkDetailCapacities(List<ApplicationModel> allApps) async {
+    try {
+      return await _loadWorkDetailCapacitiesOrThrow(allApps);
+    } catch (e) {
+      debugPrint('⚠️ 업무별 정원 조회 실패 (충원 영역 UNKNOWN): $e');
+      _capacityUnknown = true;
+      return {};
+    }
+  }
+
+  Future<Map<String, int>> _loadWorkDetailCapacitiesOrThrow(
+      List<ApplicationModel> allApps) async {
     final toSlotMap = <String, String>{};
     for (final app in allApps) {
       if (app.toId != null && app.slotId != null && !toSlotMap.containsKey(app.toId!)) {
@@ -670,6 +701,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           wdId: app.wdId,
           workDetailId: app.workDetailId,
           requiredCount: _workDetailCapacityMap[compositeKey] ?? 0,
+          // [R8-P7.3] 정원을 못 읽었으면 0 이 아니라 "모른다"로 전달한다.
+          requiredCountKnown: !_capacityUnknown,
         ),
       );
       groups[key]!.slotId ??= app.slotId;
@@ -741,6 +774,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final existing = groups[key];
       if (existing != null) {
         existing.requiredCount = row.requiredCount;
+        // [R8-P7.3] 정원은 slot 이 진실이다. 앞선 capacity 조회가 실패했더라도
+        //   여기서 canonical 값을 받았으면 다시 "안다"가 된다.
+        existing.requiredCountKnown = true;
         existing.slotId ??= row.slotId;
         // [R2.2.1] 확정 수도 slot이 진실이다 — 초대가 지금 수락될 수 있는지는
         //   근로자 화면과 같은 canonical 값으로 판정해야 한다.

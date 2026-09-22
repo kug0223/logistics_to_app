@@ -324,7 +324,9 @@ extension AttendanceFirestore on FirestoreService {
           .toSet();
     } catch (e) {
       debugPrint('[AttendanceFirestore] getNoShowApplicationIdsByDate 실패: $e');
-      return {};
+      // [R8-P7.3] 노쇼 여부를 못 읽은 것을 "노쇼 없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 
@@ -566,7 +568,9 @@ extension AttendanceFirestore on FirestoreService {
         ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt)));
     } catch (e) {
       debugPrint('❌ 내 스케줄 변경 요청 조회 실패: $e');
-      return [];
+      // [R8-P7.3] 내 요청을 못 읽은 것을 "요청 없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 

@@ -132,6 +132,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   final Map<String, MonthlyReviewModel?> _reviewKeyCache = {};
   bool _contractsLoaded = false;
 
+  /// [R8-P7.3] 계약 조회가 실패했다 — "계약이 아직 없다"와 다른 상태다.
+  ///   실패를 빈 맵으로 두면 화면이 "관리자가 계약서를 준비 중"이라고
+  ///   단정하고 서명 버튼을 숨긴다. 그 둘을 갈라 놓는다.
+  bool _contractsFailed = false;
+
   bool   _isLoading      = true;
   bool   _fetchInProgress = false;
   bool   _isLoadingMore  = false;
@@ -212,6 +217,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       _lastDocId     = null;
       _hasMore       = true;
       _contractsLoaded = false;
+      _contractsFailed = false;
       _toCache.clear();
       _reviewKeyCache.clear();
       _cachedFiltered = null;
@@ -229,7 +235,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final appWithTOs = await _attachTOInfo(items);
 
       final initResults = await Future.wait([
-        _loadContracts(uid, appWithTOs).catchError((_) => <String, EmploymentContractModel>{}),
+        // 계약 조회가 실패해도 지원 목록 자체는 유효하다 — 전체를 ERROR 로
+        // 만들지 않는다. 대신 실패했다는 사실을 남겨 "계약 없음"과 구분한다.
+        _loadContracts(uid, appWithTOs).catchError((e) {
+          debugPrint('⚠️ 계약 조회 실패 (목록은 유지): $e');
+          _contractsFailed = true;
+          return <String, EmploymentContractModel>{};
+        }),
         _loadWrittenReviews(uid, appWithTOs).catchError((_) => <String, MonthlyReviewModel?>{}),
       ]);
       final contractMap = initResults[0] as Map<String, EmploymentContractModel>;
@@ -372,9 +384,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final items      = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
       final moreResults = await Future.wait([
+        // [R8-P7.3] 계약 조회 실패가 다음 페이지 전체를 날리지 않게 한다.
+        //   실패 사실만 남기고 목록은 이어 붙인다.
         _contractsLoaded
             ? Future.value(<String, EmploymentContractModel>{})
-            : _loadContracts(uid, appWithTOs),
+            : _loadContracts(uid, appWithTOs).catchError((e) {
+                debugPrint('⚠️ 계약 조회 실패 (목록은 유지): $e');
+                _contractsFailed = true;
+                return <String, EmploymentContractModel>{};
+              }),
         _loadWrittenReviews(uid, appWithTOs),
       ]);
       final newContracts = moreResults[0] as Map<String, EmploymentContractModel>;
@@ -460,6 +478,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
     }
     _contractsLoaded = true;
+    _contractsFailed = false;
     return result;
   }
 
@@ -1145,7 +1164,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         final String ctxText;
         final VoidCallback? action;
 
-        if (contract == null) {
+        if (contract == null && _contractsFailed) {
+          // [R8-P7.3] 계약이 없는 것과 계약을 못 읽은 것은 다르다.
+          //   못 읽었는데 "준비 중"이라고 말하면, 서명을 기다리는 계약이
+          //   있어도 근로자는 그 사실도 서명 버튼도 보지 못한다.
+          ctxText = '계약 정보를 불러오지 못했어요. 다시 시도해주세요';
+          action  = () => _refreshContracts();
+        } else if (contract == null) {
           ctxText = '관리자가 계약서를 준비 중이에요';
           action  = null;
         } else {
@@ -2132,12 +2157,32 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       if (mounted) setState(() => _isContractSignOpening = false);
     }
     if (!mounted) return;
+    await _refreshContracts();
+  }
+
+  /// 계약 맵만 다시 읽는다.
+  ///
+  ///   [R8-P7.3] 실패를 삼키지 않는다 — 실패하면 _contractsFailed 를 세워
+  ///   화면이 "계약 없음"이 아니라 "불러오지 못했다"라고 말하게 한다.
+  ///   지원 목록 자체는 유효하므로 화면 전체를 오류로 만들지는 않는다.
+  Future<void> _refreshContracts() async {
+    if (!mounted) return;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) return;
     _contractsLoaded = false;
-    final updated = await _loadContracts(uid, _applications);
-    if (!mounted) return;
-    setState(() => _contractMap = {..._contractMap, ...updated});
+    try {
+      final updated = await _loadContracts(uid, _applications);
+      if (!mounted) return;
+      setState(() {
+        _contractMap = {..._contractMap, ...updated};
+        _contractsFailed = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ 계약 재조회 실패: $e');
+      if (!mounted) return;
+      setState(() => _contractsFailed = true);
+      ToastHelper.showError('계약 정보를 불러오지 못했습니다');
+    }
   }
 
   Future<void> _openReviewDialog(ApplicationModel app, DateTime reviewDate) async {

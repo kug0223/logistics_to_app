@@ -243,7 +243,9 @@ extension IdCardFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ 계약해지 요청 조회 실패: $e');
-      return [];
+      // [R8-P7.3] 해지 요청을 못 읽은 것을 "요청 없음"으로 말하지 않는다
+
+      rethrow;
     }
   }
 
