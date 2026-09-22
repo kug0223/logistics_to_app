@@ -18111,13 +18111,11 @@ export const callableGetUsersBatch = onCall(
     //   여기가 유일한 배포 지점이다 — 지원자 목록·당일명단·계약·급여·근태·
     //   Excel·PDF 가 전부 이 CF 로 사람을 읽는다. 각 화면이 따로 조회하면
     //   어느 한 곳은 빠지고, 빠진 곳에서 동명이인이 합쳐진다.
-    //   validUids 만 대상이다 — 이 사업장과 관계가 없는 사람에게는 번호가 없다.
+    //
+    // [R7-PRE1A.2] **읽기만 한다.** 없는 번호를 여기서 만들지 않는다 —
+    //   조회가 상태를 바꾸면 번호가 "누가 먼저 화면을 열었는가"로 정해진다.
     const personNos = await srvPersonNosFor(
-      businessId,
-      Object.keys(users).filter((u) => validUids.has(u)),
-      // 슈퍼어드민은 관계 검증 없이 임의 uid 를 조회할 수 있다 — 그 경로에서는
-      // 이미 있는 번호만 읽고 새로 주지 않는다.
-      {assign: !isSuperAdmin});
+      businessId, Object.keys(users).filter((u) => validUids.has(u)));
     for (const [uid, no] of Object.entries(personNos)) {
       if (users[uid]) users[uid]["personNo"] = no;
     }
@@ -19963,41 +19961,33 @@ async function srvIssuePersonNoBestEffort(
 }
 
 /**
- * 여러 사람의 personNo 를 한 번에 읽는다. 없는 사람은 그 자리에서 발급한다 —
- * 지원 경로가 놓쳤거나 이 기능 이전에 생긴 관계를 스스로 메운다.
+ * 여러 사람의 personNo 를 **읽는다**. 없으면 없는 대로 둔다.
+ *
+ * [R7-PRE1A.2] 예전에는 여기서 없는 번호를 발급했다. 조회가 상태를 바꾼 것이다.
+ *   목록을 여는 것만으로 문서가 생기면, 누가 언제 번호를 받았는지가
+ *   "누가 화면을 열었는가"에 달린다 — 같은 데이터에서 실행 순서에 따라
+ *   다른 번호가 나가고, 그 번호는 이미 Excel 로 사업장 밖에 있다.
+ *
+ *   발급은 관계를 만드는 writer 만 한다(지원·초대). 그 이전에 생긴 관계는
+ *   결정적 backfill 로 복구한다 — scripts/backfill-person-no-dev.js 는
+ *   가장 이른 관계 시각 순으로 주므로 언제 돌려도 같은 결과가 나온다.
  *
  * @param {string} businessId 사업장
  * @param {string[]} uids 사람들
- * @param {object} [opts] `assign:false` 면 없는 번호를 새로 주지 않는다
- * @return {Promise<Record<string, number>>} uid → 번호
+ * @return {Promise<Record<string, number>>} uid → 번호 (없는 사람은 키 없음)
  */
 async function srvPersonNosFor(
   businessId: string,
   uids: string[],
-  opts?: {assign?: boolean},
 ): Promise<Record<string, number>> {
   if (uids.length === 0) return {};
-  const assign = opts?.assign !== false;
   const out: Record<string, number> = {};
   const refs = uids.map((u) => srvPersonRef(businessId, u));
   const snaps = await db.getAll(...refs);
-  const missing: string[] = [];
   snaps.forEach((s, i) => {
     const no = s.data()?.personNo as number | undefined;
     if (typeof no === "number") out[uids[i]] = no;
-    else missing.push(uids[i]);
   });
-  // 없는 사람은 순서대로 채운다 — 동시에 여러 요청이 와도 트랜잭션이 가른다.
-  // 관계가 확인되지 않은 조회(슈퍼어드민의 임의 uid 조회)는 읽기만 한다 —
-  // 지원한 적 없는 사람에게 번호를 발급하면 번호가 관계를 뜻하지 않게 된다.
-  if (!assign) return out;
-  for (const uid of missing) {
-    try {
-      out[uid] = await srvEnsurePersonNo(businessId, uid);
-    } catch (e) {
-      console.warn(`[personNo] 지연 발급 실패 biz=${businessId}: ${String(e)}`);
-    }
-  }
   return out;
 }
 
@@ -20006,7 +19996,13 @@ async function srvPersonNosFor(
 //   같다. 목록이 두 벌이면 한쪽만 늘어나 민감 필드가 새어 나간다.
 const APPLICANT_REVIEW_ALLOWED = new Set([
   // 신원 표시 — 누구인지
-  "name", "username", "koreanName", "legalName", "profileImageUrl",
+  //
+  // [R7-PRE1A.2] username 을 뺐다. 그것은 **로그인 ID** 다 — 자격증명의
+  //   절반을 모든 사업장에 실어 보낼 이유가 없었다. 읽는 곳을 전수로 찾아
+  //   보니 본인 프로필(@아이디 표시)·로그인·슈퍼어드민 전용 CF 뿐이고,
+  //   사업장 범위 조회 결과에서 이 값을 쓰는 화면은 하나도 없었다.
+  //   사람을 가르는 일은 personNo 가 한다.
+  "name", "koreanName", "legalName", "profileImageUrl",
   "gender", "birthDate", "bio",
   "phone", "contactPhone", "authPhone",
   "role", "accountStatus",

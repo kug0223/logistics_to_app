@@ -21,6 +21,7 @@ import 'encryption_helper.dart';
 import 'format_helper.dart';
 import 'toast_helper.dart';
 import 'transfer_export_plan.dart';
+import 'person_label.dart';
 
 class PayrollExcelHelper {
 
@@ -84,9 +85,9 @@ class PayrollExcelHelper {
     //   개명(본인인증 재인증)하면 둘이 달라질 수 있고, 그건 오류가 아니다.
     //   서버 어디에도 이 둘을 비교해 이체를 막는 로직은 없다 — 있어서도 안 된다.
     //   달라 보이는 이유를 운영자가 알 수 있게 **머리글에 적는다.**
-    const headers = [
-      '근로자번호', '이름(현재)', '은행명', '계좌번호', '예금주(확정 시점)',
-      '이체금액', '메모',
+    final headers = [
+      PersonLabel.fieldLabel, '근로자명(현재)', '은행명', '계좌번호',
+      '예금주(급여확정시)', '이체금액', '메모',
     ];
     for (int c = 0; c < headers.length; c++) {
       _cell(sheet, 1, c, headers[c], bold: true, bgHex: 'FFD6E4F0');
@@ -177,8 +178,8 @@ class PayrollExcelHelper {
     );
 
     // 헤더
-    const headers = [
-      '근로자번호', '이름', '사업장', '업무', '근무시간', '급여형태', '근무일',
+    final headers = [
+      PersonLabel.fieldLabel, '근로자명', '사업장', '업무', '근무시간', '급여형태', '근무일',
       '세전금액', '국민연금', '건강보험', '장기요양', '고용보험',
       '세후금액', '이체상태', '이체일',
     ];

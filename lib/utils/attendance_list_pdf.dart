@@ -22,6 +22,7 @@ import 'dialog_helper.dart';
 import 'format_helper.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
+import 'person_label.dart';
 
 /// 그룹(파트) 정렬 기준
 enum AttendanceGroupSort {
@@ -238,7 +239,7 @@ class AttendanceListPdf {
     row++; // 빈 행
 
     // 컬럼 헤더
-    const headers = ['근로자번호', '사업장명', '근무일자', '파트', '성명', '성별', '연락처', '근무시작시간', '퇴근시간', '비고'];
+    final headers = [PersonLabel.fieldLabel, '사업장명', '근무일자', '파트', '성명', '성별', '연락처', '근무시작시간', '퇴근시간', '비고'];
     for (int c = 0; c < headers.length; c++) {
       _excelCell(sheet, row, c, headers[c], bold: true, bgHex: 'FFD6E4F0');
     }

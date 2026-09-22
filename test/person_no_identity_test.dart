@@ -43,14 +43,14 @@ String _codeOf(String b) => b
 
 void main() {
   group('PNO-1x 표기', () {
-    test('PNO-10 번호는 W-000 으로 0채움', () {
-      expect(PersonLabel.of(14), 'W-014');
-      expect(PersonLabel.of(1), 'W-001');
-      expect(PersonLabel.of(999), 'W-999');
+    test('PNO-10 번호는 P-000 으로 0채움', () {
+      expect(PersonLabel.of(14), 'P-014');
+      expect(PersonLabel.of(1), 'P-001');
+      expect(PersonLabel.of(999), 'P-999');
     });
 
     test('PNO-11 1000 을 넘으면 자릿수가 자연히 늘어난다', () {
-      expect(PersonLabel.of(1000), 'W-1000');
+      expect(PersonLabel.of(1000), 'P-1000');
     });
 
     test('PNO-12 번호가 없으면 null — 빈 문자열이 아니다', () {
@@ -60,9 +60,9 @@ void main() {
       expect(PersonLabel.of(-1), isNull);
     });
 
-    test('PNO-13 보조 문구는 `W-014 · 30대`', () {
-      expect(PersonLabel.secondary(14, '30대'), 'W-014 · 30대');
-      expect(PersonLabel.secondary(14, ''), 'W-014');
+    test('PNO-13 보조 문구는 `P-014 · 30대`', () {
+      expect(PersonLabel.secondary(14, '30대'), 'P-014 · 30대');
+      expect(PersonLabel.secondary(14, ''), 'P-014');
       expect(PersonLabel.secondary(null, '30대'), '30대');
       expect(PersonLabel.secondary(null, ''), '');
     });
@@ -78,14 +78,14 @@ void main() {
     });
 
     test('PNO-21 표시 라벨이 둘을 가른다', () {
-      expect(a.personLabel, 'W-014');
-      expect(b.personLabel, 'W-027');
+      expect(a.personLabel, 'P-014');
+      expect(b.personLabel, 'P-027');
       expect(a.personLabel, isNot(b.personLabel));
     });
 
     test('PNO-22 확인 문구가 둘을 가른다', () {
-      expect(a.nameWithPersonNo, '김지현(W-014)');
-      expect(b.nameWithPersonNo, '김지현(W-027)');
+      expect(a.nameWithPersonNo, '김지현(P-014)');
+      expect(b.nameWithPersonNo, '김지현(P-027)');
       expect(a.nameWithPersonNo, isNot(b.nameWithPersonNo));
     });
 
@@ -141,31 +141,31 @@ void main() {
     });
 
     test('PNO-44 파일명 조각은 번호가 없으면 구분자도 없다', () {
-      expect(PersonLabel.filePart(14), 'W-014_');
+      expect(PersonLabel.filePart(14), 'P-014_');
       expect(PersonLabel.filePart(null), '');
     });
   });
 
   group('PNO-5x export 가 번호를 싣는다', () {
-    test('PNO-50 급여 Excel 두 시트 모두 근로자번호 컬럼', () {
+    test('PNO-50 급여 Excel 두 시트 모두 인력번호 컬럼', () {
       final s = _flat(_codeOf(_src('lib/utils/payroll_excel_helper.dart')));
-      expect(s.contains("'근로자번호', '이름(현재)'"), isTrue,
+      expect(s.contains("PersonLabel.fieldLabel, '근로자명(현재)'"), isTrue,
           reason: '은행 이체 시트 — 받는 쪽에는 물어볼 화면이 없다.');
-      expect(s.contains("'근로자번호', '이름', '사업장'"), isTrue,
+      expect(s.contains("PersonLabel.fieldLabel, '근로자명', '사업장'"), isTrue,
           reason: '급여현황 시트.');
     });
 
     test('PNO-51 이체 시트는 이름과 예금주를 구분해 적는다', () {
       // 한쪽으로 통일하지 않는다 — 서로 다른 사실이다.
       final s = _flat(_codeOf(_src('lib/utils/payroll_excel_helper.dart')));
-      expect(s.contains("'이름(현재)'"), isTrue);
-      expect(s.contains("'예금주(확정 시점)'"), isTrue);
+      expect(s.contains("'근로자명(현재)'"), isTrue);
+      expect(s.contains("'예금주(급여확정시)'"), isTrue);
     });
 
-    test('PNO-52 근태 Excel 은 번호를 넣고 성별·연락처를 뺐다', () {
+    test('PNO-52 근태 Excel 은 인력번호를 넣고 성별·연락처를 뺐다', () {
       final s = _flat(_codeOf(
           _src('lib/screens/business_admin/admin_month_detail_screen.dart')));
-      expect(s.contains("'근로자번호', '사업장명', '근무일자', '파트', '이름',"), isTrue);
+      expect(s.contains("PersonLabel.fieldLabel, '사업장명', '근무일자', '파트', '근로자명',"), isTrue);
       expect(s.contains("info?.gender ?? ''"), isFalse,
           reason: '월 근태 파일에서 성별을 뺐다.');
       expect(s.contains("info?.phone ?? ''"), isFalse,
@@ -200,12 +200,27 @@ void main() {
           isTrue, reason: '초대도 첫 관계가 될 수 있다.');
     });
 
-    test('PNO-61 조회 경로가 빠진 번호를 스스로 메운다', () {
+    test('PNO-61 조회는 읽기만 한다 — 상태를 바꾸지 않는다', () {
       final s = _flat(_codeOf(_src('functions/src/index.ts')));
       expect(s.contains('const personNos = await srvPersonNosFor('), isTrue);
-      expect(s.contains('{assign: !isSuperAdmin}'), isTrue,
-          reason: '관계가 확인되지 않은 조회에서는 발급하지 않는다 — '
-              '번호가 관계를 뜻하지 않게 된다.');
+      // [R7-PRE1A.2] 조회가 발급하면 번호가 "누가 먼저 화면을 열었는가"로
+      //   정해진다. 발급은 관계를 만드는 writer 만 한다.
+      final body = s.substring(
+          s.indexOf('async function srvPersonNosFor('),
+          s.indexOf('const APPLICANT_REVIEW_ALLOWED'));
+      expect(body.contains('srvEnsurePersonNo'), isFalse,
+          reason: 'reader 안에서 발급하면 안 된다.');
+      expect(body.contains('tx.set'), isFalse,
+          reason: 'reader 는 쓰지 않는다.');
+    });
+
+    test('PNO-64 발급은 관계를 만드는 writer 에만 있다', () {
+      final s = _flat(_codeOf(_src('functions/src/index.ts')));
+      // 호출부는 지원·초대 두 곳뿐이어야 한다. 늘어나면 그 경로가
+      // 정말 "첫 관계"를 만드는지 다시 봐야 한다.
+      final calls = 'srvIssuePersonNoBestEffort('.allMatches(s).length;
+      expect(calls, 3,
+          reason: '정의 1회 + 호출 2회(applyToTO · inviteWorker). 현재 $calls회.');
     });
 
     test('PNO-62 번호는 사업장 카운터를 트랜잭션으로 올려 준다', () {
@@ -214,6 +229,28 @@ void main() {
       expect(s.contains('return db.runTransaction(async (tx) => {'), isTrue);
     });
 
+    test('PNO-65 username 은 사업장 범위 조회에 실리지 않는다', () {
+      // 로그인 ID 다. 자격증명의 절반을 모든 사업장에 보낼 이유가 없고,
+      // 사람을 가르는 일은 personNo 가 한다.
+      final s = _flat(_codeOf(_src('functions/src/index.ts')));
+      final start = s.indexOf('const APPLICANT_REVIEW_ALLOWED');
+      final body = s.substring(start, s.indexOf(']);', start));
+      expect(body.contains('"username"'), isFalse,
+          reason: 'WORKER_DIRECTORY_ALLOWED 도 이 목록에서 파생된다.');
+    });
+
+    test('PNO-66 표기는 한 곳에서만 정해진다', () {
+      // 접두사·자릿수·라벨이 화면과 파일에서 갈리면 같은 사람이 두 표기로 남는다.
+      for (final p in [
+        'lib/utils/payroll_excel_helper.dart',
+        'lib/screens/business_admin/admin_month_detail_screen.dart',
+        'lib/utils/attendance_list_pdf.dart',
+      ]) {
+        final s = _flat(_codeOf(_src(p)));
+        expect(s.contains("'근로자번호'"), isFalse,
+            reason: ': 머리글을 직접 적지 않는다 — PersonLabel.fieldLabel 을 쓴다.');
+      }
+    });
     test('PNO-63 클라이언트는 번호를 쓰지도 읽지도 못한다', () {
       final rules = _src('firestore.rules');
       expect(

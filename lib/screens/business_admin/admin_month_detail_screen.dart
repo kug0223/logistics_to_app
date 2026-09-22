@@ -92,8 +92,8 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   //
   //   당일명단 PDF 의 연락처는 남긴다 — 그쪽은 현장에서 사람에게 전화하려고
   //   들고 다니는 문서다. 목적이 다른 파일을 같은 PII 정책으로 묶지 않는다.
-  static const _excelHeaders = [
-    '근로자번호', '사업장명', '근무일자', '파트', '이름',
+  static final _excelHeaders = [
+    PersonLabel.fieldLabel, '사업장명', '근무일자', '파트', '근로자명',
     '출근시간', '퇴근시간', '비고',
   ];
 

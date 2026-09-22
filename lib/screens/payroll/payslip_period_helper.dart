@@ -212,6 +212,24 @@ class AggregatedPayslipData {
   // 지급일
   final DateTime? paymentDate;
 
+  /// [R7-PRE1A.2] 지급 대상이 아니라서 일별 상세에서 빠진 날 수.
+  ///
+  ///   무단결근·결근으로 0원 마감된 날이다. 관리자 물리 노쇼
+  ///   (`callableBatchSetNoShow`)는 wageDetail 없이 wageStatus=confirmed 를
+  ///   쓰기 때문에, 명세서 모집단에는 들어오면서 집계에서는 빠진다.
+  ///   DEV 실측(2026-09): 모집단 7건 중 2건이 그랬다.
+  ///
+  ///   빼는 것 자체는 맞다 — 일하지 않은 날에 지급액이 없다. 다만 **말없이**
+  ///   빼면 안 된다. 임금명세서는 근로기준법 제48조 서면 교부 대상이고,
+  ///   받는 사람이 "내 근무일이 왜 하나 적지?"를 물어볼 화면이 없다.
+  final int notPayableDays;
+
+  /// 금액을 읽을 수 없어 빠진 날 수 — **오류다.**
+  ///
+  ///   지급 대상인데 wageDetail 이 없는 경우. 지금 알려진 경로는 없지만,
+  ///   생기면 0원으로 조용히 흡수되지 않고 이 숫자로 드러나야 한다.
+  final int unreadableDays;
+
   const AggregatedPayslipData({
     required this.businessName,
     this.businessNumber = '',
@@ -249,6 +267,8 @@ class AggregatedPayslipData {
     required this.taxDeductionTypeLabel,
     required this.dailyRecords,
     this.paymentDate,
+    this.notPayableDays = 0,
+    this.unreadableDays = 0,
   });
 
   /// AttendanceModel 리스트 → AggregatedPayslipData
@@ -271,6 +291,19 @@ class AggregatedPayslipData {
 
     // wageDetail이 있는 레코드만 집계
     final valid = records.where((r) => r.wageDetail != null).toList();
+
+    // [R7-PRE1A.2] 빠진 것을 **세어 둔다.** 예전에는 그냥 사라졌다.
+    //
+    //   빠지는 이유가 두 가지인데 뜻이 전혀 다르다:
+    //     · 무단결근·결근 0원  → 지급 대상이 아니다. 오류가 아니다.
+    //     · 그 밖에 금액을 못 읽음 → 오류다. 0원으로 흡수하면 안 된다.
+    //   하나로 뭉뚱그리면 둘 다 "그냥 없는 날"이 된다.
+    final missing = records.where((r) => r.wageDetail == null).toList();
+    final notPayable = missing.where((r) =>
+        (r.status == AttendanceModel.statusNoShow ||
+         r.status == AttendanceModel.statusAbsent) &&
+        (r.finalWage ?? 0) == 0).length;
+    final unreadable = missing.length - notPayable;
 
     int sumInt(int Function(AttendanceModel) f) =>
         valid.fold(0, (acc, r) => acc + f(r));
@@ -325,6 +358,8 @@ class AggregatedPayslipData {
       dailyRecords: valid.map((r) => DailyRecord.fromAttendance(r)).toList()
         ..sort((a, b) => a.workDate.compareTo(b.workDate)),
       paymentDate: paymentDate,
+      notPayableDays: notPayable,
+      unreadableDays: unreadable,
     );
   }
 

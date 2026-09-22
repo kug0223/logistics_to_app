@@ -317,9 +317,9 @@ async function auditExportIdentity(sameDayGroups) {
       "lib/screens/business_admin/payroll/payroll_worker_detail_screen.dart");
 
   const checks = [
-    ["은행 이체 xlsx", payroll.includes("'근로자번호', '이름(현재)'")],
-    ["급여현황 xlsx", payroll.includes("'근로자번호', '이름', '사업장'")],
-    ["근태현황 xlsx", monthly.includes("'근로자번호', '사업장명'")],
+    ["은행 이체 xlsx", payroll.includes("PersonLabel.fieldLabel, '근로자명(현재)'")],
+    ["급여현황 xlsx", payroll.includes("PersonLabel.fieldLabel, '근로자명', '사업장'")],
+    ["근태현황 xlsx", monthly.includes("PersonLabel.fieldLabel, '사업장명'")],
     ["당일명단 PDF/xlsx", roster.includes("_nameWithNo(worker)") &&
         roster.includes("worker.personNo")],
     ["임금명세서 파일명", payslip.includes("_fileNamePrefix")],
@@ -346,8 +346,8 @@ async function auditExportIdentity(sameDayGroups) {
         : '월 근태 xlsx 에 성별·연락처가 남아 있다.');
 
   // 이름 ↔ 예금주 의미 구분
-  const labelled = payroll.includes("'이름(현재)'") &&
-      payroll.includes("'예금주(확정 시점)'");
+  const labelled = payroll.includes("'근로자명(현재)'") &&
+      payroll.includes("'예금주(급여확정시)'");
   record(labelled ? 'OK' : 'CORRECTION', 'D',
       labelled
         ? '이체 파일이 「이름(현재)」과 「예금주(확정 시점)」을 나눠 적는다. ' +
@@ -394,11 +394,22 @@ async function auditDisambiguators() {
           '번호를 주지 않는다 — 둘러보기만 해도 번호가 소모되면 번호가 관계를 뜻하지 않게 된다. ' +
           '초대하면 그 순간 INVITED 관계가 생기고 거기서 번호가 나온다. mutation 은 uid 다.'
         : '후보 화면의 표시 필드를 다시 봐야 한다.');
-  record('NOTE', 'F',
-      'username 은 이미 서버가 관리자에게 내려주고 있다 ' +
-      '(APPLICANT_REVIEW_ALLOWED 에 포함). 화면에 표시만 안 한다. ' +
-      '다만 이것은 **로그인 ID** 다 — 자격증명의 절반을 사업장에 노출하는 셈이라 ' +
-      'disambiguator 로 쓰는 것은 권장하지 않는다.');
+  // username 이 실제로 응답에 실리는지 런타임으로 본다 — 소스 주석이 아니라.
+  const uids = users.slice(0, 5).map((u) => u.uid);
+  let exposed = -1;
+  try {
+    const r = await callAs(ADMIN, 'callableGetUsersBatch',
+        {uids, businessId: BIZ, purpose: 'workerDirectory'});
+    exposed = Object.values(r.users || {})
+        .filter((v) => v.username !== undefined).length;
+  } catch (e) { /* 권한 없으면 판정하지 않는다 */ }
+  if (exposed === 0) {
+    record('OK', 'F',
+        'username 은 사업장 범위 조회 응답에 실리지 않는다(R7-PRE1A.2). ' +
+        '로그인 ID 를 사람 식별 보조정보로 쓰지 않는다 — 그 일은 인력번호가 한다.');
+  } else if (exposed > 0) {
+    record('CORRECTION', 'F', 'username 이 여전히 ' + exposed + '건 실려 온다.');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

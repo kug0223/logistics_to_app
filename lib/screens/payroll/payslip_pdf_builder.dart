@@ -848,7 +848,10 @@ class PayslipPdfBuilder {
     );
 
     // ── 2페이지: 일별 상세 테이블 ─────────────────────────────────
-    if (data.dailyRecords.isNotEmpty) {
+    // 전부 지급 대상이 아니면 표는 비지만, 그 사실은 말해야 한다 —
+    //   페이지를 통째로 건너뛰면 제외 고지도 함께 사라진다.
+    if (data.dailyRecords.isNotEmpty ||
+        data.notPayableDays > 0 || data.unreadableDays > 0) {
       doc.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
@@ -862,7 +865,31 @@ class PayslipPdfBuilder {
               style: ts(8.0, color: grey),
             ),
             pw.SizedBox(height: 8),
-            _aggDailyTable(data, ts, primary, grey),
+            if (data.dailyRecords.isNotEmpty)
+              _aggDailyTable(data, ts, primary, grey),
+            // [R7-PRE1A.2] 표에서 빠진 날을 **적는다.**
+            //
+            //   무단결근·결근 0원은 지급 대상이 아니라 표에 없는 것이 맞다.
+            //   그런데 말없이 빼면, 받는 사람은 근무일이 하나 적은 이유를
+            //   물어볼 데가 없다. 임금명세서는 서면 교부 문서다.
+            //   금액을 못 읽은 날은 더 분명히 말한다 — 0원으로 흡수하지 않는다.
+            if (data.notPayableDays > 0 || data.unreadableDays > 0) ...[
+              pw.SizedBox(height: 8),
+              pw.Text(
+                [
+                  if (data.notPayableDays > 0)
+                    '지급 대상 아님(결근·무단결근) ${data.notPayableDays}일은 '
+                        '위 상세와 합계에서 제외되었습니다.',
+                  if (data.unreadableDays > 0)
+                    '금액을 확인할 수 없는 근무 ${data.unreadableDays}일이 있습니다. '
+                        '사업장에 문의해 주세요.',
+                ].join('\n'),
+                style: ts(8.0,
+                    color: data.unreadableDays > 0
+                        ? PdfColor.fromHex('#C62828')
+                        : grey),
+              ),
+            ],
           ],
         ),
       );
