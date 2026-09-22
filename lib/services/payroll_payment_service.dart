@@ -552,8 +552,12 @@ class PayrollPaymentService {
           .whereType<InterimSettlementRequestModel>()
           .toList();
     } catch (e) {
+      // [R8-P7.2] 빈 목록을 돌려주지 않는다. 이건 돈이다 —
+      //   조회가 실패했는데 "중간정산 없음"이라고 말하면 근로자는 신청이
+      //   사라진 줄 안다. 실제로 이 경로는 workerId+createdAt 복합 인덱스가
+      //   없어 계속 INTERNAL 이었고, 그 사실이 빈 목록에 가려져 있었다.
       debugPrint('❌ 내 중간정산 목록 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -616,8 +620,10 @@ class PayrollPaymentService {
           .whereType<InterimSettlementRequestModel>()
           .toList();
     } catch (e) {
+      // [R8-P7.2] 돈이다. 조회가 실패했는데 "정산 요청 없음"으로 보이면
+      //   관리자가 처리해야 할 요청이 화면에서 사라진다.
       debugPrint('❌ 중간정산 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 

@@ -599,8 +599,12 @@ extension AttendanceFirestore on FirestoreService {
           .whereType<ScheduleChangeRequestModel>()
           .toList();
     } catch (e) {
+      // [R8-P7.2] 빈 목록을 돌려주지 않는다. 조회가 실패했는데
+      //   "변경 요청 없음"이라고 말하면 관리자가 승인해야 할 일이 사라진다.
+      //   실제로 이 경로는 businessId+status+targetDate 복합 인덱스가 없어
+      //   계속 INTERNAL 이었고, 그 사실이 빈 목록에 가려져 있었다.
       debugPrint('❌ 날짜별 스케줄 변경 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -766,8 +770,10 @@ extension AttendanceFirestore on FirestoreService {
       }
       return map;
     } catch (e) {
+      // [R8-P7.2] 근태다. 조회가 실패했는데 빈 맵을 돌려주면
+      //   "그 주에 아무도 출근하지 않았다"와 구분되지 않는다.
       debugPrint('❌ 주간 출근 기록 조회 실패: $e');
-      return {};
+      rethrow;
     }
   }
 

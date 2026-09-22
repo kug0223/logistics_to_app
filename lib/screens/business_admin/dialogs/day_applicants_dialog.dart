@@ -361,10 +361,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     try {
       // Phase 1: 지원자 + 확정자 병렬 조회
+      // [R8-P7.2] 확정자는 OrThrow 변형을 쓴다. 이 목록이 그날 누가 일하는지를
+      //   말하는 자리라, 조회 실패를 "확정자 없음"으로 보여 주면 안 된다.
+      //   _load() 의 catch 가 오류 토스트를 띄운다.
       final phase1 = await Future.wait([
         _svc.getPendingApplicationsByDateAndBusiness(
             date: widget.date, businessId: bizId),
-        _svc.getConfirmedWorkersByDateAndBusiness(
+        _svc.getConfirmedWorkersByDateAndBusinessOrThrow(
             date: widget.date, businessId: bizId),
       ]);
       var pending = phase1[0] as List<ApplicationModel>;

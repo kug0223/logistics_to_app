@@ -417,8 +417,12 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
     try {
       // 사업장이 여러 개인 경우 병렬 조회, 결과 합산
+      // [R8-P7.2] 삼키는 변형 → OrThrow.
+      //   이 화면은 _loadError 를 갖고 있는데, 서비스가 실패를 빈 목록으로
+      //   바꿔 버려서 그 상태가 발동한 적이 없었다. 조회 실패와 "근무자 없음"은
+      //   같은 화면이 되면 안 된다.
       final appFutures = businesses.map((b) =>
-          _firestoreService.getConfirmedWorkersByDateAndBusiness(
+          _firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow(
             date: day,
             businessId: b.id,
           ));
