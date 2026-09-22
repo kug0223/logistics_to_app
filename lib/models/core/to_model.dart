@@ -50,6 +50,20 @@ class TOModel {
   /// 등록된 슬롯(날짜) 수
   final int totalSlots;
 
+  /// [R8-P9C] 공고 문서가 들고 있는 슬롯 날짜 키 (`dates`, "YYYY-MM-DD").
+  ///
+  /// 슬롯 서브컬렉션을 읽지 않고도 "이 공고에 어떤 날짜가 있었나"를 알 수 있는
+  /// 유일한 값이다. 근로자 목록은 슬롯을 읽지 않으므로 여기에 의존한다.
+  ///
+  /// **주의 — 이 값은 뒤처질 수 있다.**
+  /// 공고 생성 시점에 기록되고, `callableCreateFlexSlots`(슬롯 추가)와
+  /// `callableDeleteSlots`(삭제)는 이 필드를 갱신하지 않는다.
+  /// 그래서 "없는 날짜가 들어 있을" 수는 있어도(삭제 미반영),
+  /// "있는 날짜가 빠질" 수도 있다(추가 미반영).
+  /// 후자가 위험하므로, 이 값으로 **숨기는** 판단을 할 때는 반드시
+  /// [slotDatesLookComplete]로 신뢰 가능 여부를 먼저 확인한다.
+  final List<String> slotDateKeys;
+
   // ── contract 전용 ─────────────────────────────────
   final DateTime? rangeStart;
   final DateTime? rangeEnd;
@@ -120,6 +134,7 @@ class TOModel {
     this.description,
     this.workDetails = const [],
     this.totalSlots = 0,
+    this.slotDateKeys = const [],
     this.rangeStart,
     this.rangeEnd,
     this.workDays = const [],
@@ -181,6 +196,13 @@ class TOModel {
       // totalSlots=0 폴백 — 서버 FieldValue.increment 완료 전 순간 0으로 읽힐 수 있음
       // 크래시 없음, isFull 계산은 totalRequired 기준으로 별도 처리되므로 영향 없음
       totalSlots: (data['totalSlots'] as num?)?.toInt() ?? 0,
+      // [R8-P9C] 형식이 어긋난 항목은 버린다 — 한 건 때문에 파싱을 깨지 않는다.
+      slotDateKeys: (data['dates'] is List)
+          ? (data['dates'] as List)
+              .whereType<String>()
+              .where((s) => RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(s))
+              .toList()
+          : const [],
       rangeStart: parseTimestampNullable(data['rangeStart']),
       rangeEnd: parseTimestampNullable(data['rangeEnd']),
       workDays: data['workDays'] != null
@@ -434,6 +456,57 @@ class TOModel {
       status == TOStatus.closed ||
       status == TOStatus.expired ||
       (isContractType && (isPostingExpired || isDeadlinePassed));
+
+  // ── [R8-P9C] flex 공고의 근로자 노출 판정 ─────────────────────
+  //
+  //   근로자 목록은 슬롯 서브컬렉션을 읽지 않는다. 그래서 날짜 판단은
+  //   공고 문서가 들고 있는 값에만 기댈 수 있는데, 그 값들이 서로
+  //   신뢰도가 다르다.
+  //
+  //     isManualClosed / status / isPublished  — writer 가 항상 갱신한다
+  //     totalSlots                             — 슬롯 추가·삭제 때 증감한다
+  //     dates(slotDateKeys)                    — 생성 시 1회, 이후 갱신 없음
+  //     rangeEnd                               — 생성 시 1회, 이후 갱신 없음
+  //
+  //   뒤처질 수 있는 값으로 **숨기면** 살아 있는 일자리가 사라진다.
+  //   그래서 숨김 판단은 신뢰 가능한 값으로만 하고, 날짜는 "확실히 알 때"만
+  //   쓴다. 모르면 노출한다 — 최종 판정은 서버 지원 게이트가 한다.
+
+  /// `dates` 를 근거로 "이 공고는 과거 날짜뿐"이라고 단정해도 되는가.
+  ///
+  /// `totalSlots` 가 `dates` 길이보다 크면 기록되지 않은 슬롯이 있다는 뜻이다.
+  /// 그때는 `dates` 만 보고 숨기면 새로 추가된 미래 날짜를 놓친다.
+  bool get slotDatesLookComplete =>
+      slotDateKeys.isNotEmpty && totalSlots <= slotDateKeys.length;
+
+  /// 슬롯이 하나도 없다고 두 신호가 함께 말하는가.
+  ///
+  /// flex 지원은 서버에서 slotId 가 필수라, 슬롯이 없으면 지원할 대상 자체가
+  /// 없다. 두 값이 모두 비어 있을 때만 그렇게 본다 — `totalSlots` 는 증감
+  /// 반영 전 순간 0으로 읽힐 수 있어서 혼자서는 근거가 되지 못한다.
+  bool get hasNoSlotsAtAll => slotDateKeys.isEmpty && totalSlots == 0;
+
+  /// [todayKey]는 KST 기준 'YYYY-MM-DD'. 같은 포맷끼리의 문자열 비교다.
+  ///
+  /// 서버 `callableApplyToTO` 게이트와 같은 의미를 쓴다:
+  ///   isManualClosed / status CLOSED / status SCHEDULED → 전면 차단.
+  ///   status FULL 은 슬롯 공고에서 차단 사유가 아니다(다른 날짜가 살아 있다).
+  bool isVisibleToWorkerFlex(String todayKey) {
+    if (isManualClosed) return false;
+    if (!isPublished) return false;
+    if (status == TOStatus.closed ||
+        status == TOStatus.expired ||
+        status == TOStatus.scheduled) {
+      return false;
+    }
+    if (hasNoSlotsAtAll) return false;
+    // 날짜를 확실히 알 때만 "과거뿐"이라고 말한다.
+    if (slotDatesLookComplete &&
+        slotDateKeys.every((d) => d.compareTo(todayKey) < 0)) {
+      return false;
+    }
+    return true;
+  }
 
   /// [4J.0B] PENDING 지원자 승인 가능 여부 — isClosed보다 세분화된 판단
   ///

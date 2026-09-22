@@ -344,12 +344,25 @@ class _UserJobTabState extends State<UserJobTab>
         ? FormatHelper.toKstDate(dr.end)
         : null;
 
+    // [R8-P9C] flex 노출 판정용 오늘 날짜 키 — 공고 문서 `dates`와 같은 포맷.
+    final todayKey = '${today.year.toString().padLeft(4, '0')}-'
+        '${today.month.toString().padLeft(2, '0')}-'
+        '${today.day.toString().padLeft(2, '0')}';
+
     final result = toList.where((to) {
       if (to.isManualClosed) return false;
       if (!to.isLongTerm) {
-        if (to.rangeEnd == null) return false;
-        final toEnd = FormatHelper.toKstDate(to.rangeEnd!);
-        if (toEnd.isBefore(today)) return false;
+        // [R8-P9C] rangeEnd 로 flex 노출을 판단하지 않는다.
+        //
+        //   rangeEnd 는 공고 생성 때 한 번 기록되고 슬롯 추가·삭제로는
+        //   갱신되지 않는다. 그런데 이 자리는 `rangeEnd == null`이면 곧바로
+        //   제외했다 — DEV 에서 서버가 돌려준 공개 flex 공고 4건이 전부
+        //   rangeEnd 가 없어, 오늘 근무가 열려 있는 공고까지 목록에서
+        //   통째로 사라져 있었다.
+        //
+        //   판단은 갱신되는 값(isManualClosed·status·isPublished)으로 하고,
+        //   날짜는 확실히 알 때만 쓴다. 모르면 노출하고 서버가 판정한다.
+        if (!to.isVisibleToWorkerFlex(todayKey)) return false;
       } else {
         if (to.isPostingExpired || to.isDeadlinePassed) return false;
         if (to.endDate != null) {
