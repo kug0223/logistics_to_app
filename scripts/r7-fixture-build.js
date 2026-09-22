@@ -49,6 +49,27 @@ async function apply(ctx, {toId, slotId, wd, workDateMs, extra}) {
   return r.applicationId || r.id;
 }
 
+/**
+ * 배치 CF 는 항목 단위 실패를 200 안에 담아 돌려준다.
+ *
+ *   {success:true, processed:0, failed:1, failures:[{reason:'unknownError'}]}
+ *
+ * HTTP 상태만 보면 "성공"이라 seed 가 아무것도 만들지 않고 넘어간다.
+ * 실제로 그렇게 한 번 속았다 — 봉투를 열어 본다.
+ */
+function assertBatchOk(result, label) {
+  const failed = (result && result.failed) || 0;
+  if (failed > 0) {
+    const first = (result.failures || [])[0] || {};
+    throw new Error(
+        `${label}: ${failed}/${result.total}건 실패 (reason=${first.reason || '?'})`);
+  }
+  if (result && result.processed === 0) {
+    throw new Error(`${label}: 처리된 항목이 없습니다.`);
+  }
+  return result;
+}
+
 /** 관리자 확정 → CONFIRMED / CONTRACT_PENDING. */
 async function confirm(ctx, applicationId) {
   return callAs(ctx.adminUid, 'callableConfirmApplication', {
@@ -125,56 +146,154 @@ async function buildPostClosed(ctx) {
  *   → 오늘 카드와 체크인 CTA 가 살아 있어야 한다.
  */
 async function buildLongTermWorker(ctx) {
-  // 오늘과 어제가 모두 근무일이 되도록 두 요일을 넣는다.
-  const workDays = [...new Set([kstWeekday(0), kstWeekday(-1)])];
+  // 전 요일을 근무일로 둔다.
+  //   오늘·어제가 모두 근무일이어야 하고(LT-ATT-01), 급여 4상태를 만들려면
+  //   과거 근무일이 여러 날 필요하다. 한 근무자의 이력으로 묶는 편이
+  //   fixture 수를 늘리지 않으면서 실제 운영에 더 가깝다.
+  const workDays = ['월', '화', '수', '목', '금', '토', '일'];
+
+  // [중복 근무 가드] 서버는 같은 날 시간이 겹치는 확정 근무를 거절한다.
+  //   DEV 근로자에게는 09:00~18:00 · 13:00~19:00 대의 확정 근무가 이미 있다.
+  //   fixture 는 아무 데도 겹치지 않는 이른 시간대를 쓰고, 계약 기간도
+  //   어제부터로 좁혀 과거 확정 건과 부딪히지 않게 한다.
   const wds = [S.workDetail(
-      {workType: WORK_TYPE, start: '09:00', end: '18:00', required: 2})];
+      {workType: WORK_TYPE, start: '06:00', end: '08:00', required: 2})];
 
   const {toId} = await S.createContractPosting(ctx, {
     scenarioId: 'R7_FIX_LT_WORKER',
     title: '장기 근무 공고',
-    fromOffset: -7, toOffset: 30, workDays, wds,
+    fromOffset: -14, toOffset: 30, workDays, wds,
   });
   ctx.titleOf[toId] = '[R7FIX] 장기 근무 공고';
 
   const appId = await apply(ctx, {
-    toId, slotId: null, wd: wds[0], workDateMs: kstMidnightMs(-7),
+    toId, slotId: null, wd: wds[0], workDateMs: kstMidnightMs(-14),
   });
   await confirm(ctx, appId);
 
-  // 어제 근무 — canonical writer 로 만든다. workDateMs 가 문서 id 의 날짜다.
+  // ── 어제 근무를 완료 상태로 기록한다 ─────────────────────────────
+  //
+  //   근로자용 callableCheckIn/CheckOut 은 **서버 현재 시각**을 실제
+  //   출퇴근 시각으로 쓴다. 그래서 어제 근무를 그 경로로 완결할 수 없다 —
+  //   퇴근 시각(어제 08:00)이 출근 시각(오늘 지금)보다 앞서서 서버가 거절한다.
+  //
+  //   관리자 배치 경로는 시각을 명시로 받는다. 지난 근무를 관리자가
+  //   기록하는 것이 실제 운영이기도 하다. canonical writer 를 유지하면서
+  //   과거 시각을 쓸 수 있는 유일한 길이다.
   const yesterdayMs = kstMidnightMs(-1);
-  await callAs(ctx.workerUid, 'callableCheckIn', {
-    applicationId: appId,
+  const at = (hh, mm) => yesterdayMs + (hh * 60 + mm) * 60 * 1000;
+  const yesterdayAttendanceId =
+      `${appId}_${kstDateKey(-1).replace(/-/g, '')}`;
+
+  // attendanceId 는 **기존 레코드를 고칠 때만** 넘긴다(CF 주석). 새로 만들
+  //   때 넘기면 없는 문서를 고치려다 unknownError 로 조용히 실패한다.
+  //   문서 id 는 서버가 applicationId + workDateMs 로 만든다.
+  assertBatchOk(await callAs(ctx.adminUid, 'callableBatchCheckIn', {
     businessId: ctx.businessId,
-    businessName: ctx.businessName,
-    workDateMs: yesterdayMs,
-    workType: WORK_TYPE,
-    method: 'gps',
-    latitude: ctx.lat,
-    longitude: ctx.lng,
-    scheduledStartTime: '09:00',
-  });
-  await callAs(ctx.workerUid, 'callableCheckOut', {
-    applicationId: appId,
+    entries: [{
+      applicationId: appId,
+      workDateMs: yesterdayMs,
+      userId: ctx.workerUid,
+      businessId: ctx.businessId,
+      businessName: ctx.businessName,
+      workType: WORK_TYPE,
+      status: 'present',
+      checkInMs: at(6, 0),
+    }],
+  }), 'batchCheckIn');
+
+  assertBatchOk(await callAs(ctx.adminUid, 'callableBatchCheckOut', {
     businessId: ctx.businessId,
-    workDateMs: yesterdayMs,
-    method: 'gps',
-    latitude: ctx.lat,
-    longitude: ctx.lng,
-    scheduledStartTime: '09:00',
-  });
+    entries: [{
+      attendanceId: yesterdayAttendanceId,
+      checkOutMs: at(8, 0),
+      workHours: 2,
+      status: 'present',
+      resetWageDetail: false,
+    }],
+  }), 'batchCheckOut');
+
+  // ── 급여 4상태 ────────────────────────────────────────────────
+  //
+  //   한 근무자의 이력으로 묶는다. 지난 근무일 셋을 더 만들고 각각
+  //   다른 단계까지만 전이시킨다.
+  //     -1 pending      근태만 있고 정산 전 (wageDetail 자체가 없다)
+  //     -3 calculated   계산까지
+  //     -5 confirmed    확정까지
+  //     -7 transferred  이체까지
+  //
+  //   callableCalculateAndConfirmWage 는 이름과 달리 `calculated` 까지만
+  //   쓴다. `confirmed` 는 callableConfirmFinalWage 가 따로 한다.
+  //   그래서 calculated 가 독립 상태로 성립한다 — 직접 write 가 필요 없다.
+  const payroll = {pendingAttendanceId: yesterdayAttendanceId};
+  const stages = [
+    {offset: -3, upto: 'calculated', key: 'calculatedAttendanceId'},
+    {offset: -5, upto: 'confirmed', key: 'confirmedAttendanceId'},
+    {offset: -7, upto: 'transferred', key: 'transferredAttendanceId'},
+  ];
+
+  for (const s of stages) {
+    const ms = kstMidnightMs(s.offset);
+    const dayKey = kstDateKey(s.offset);
+    const attId = `${appId}_${dayKey.replace(/-/g, '')}`;
+    const atDay = (hh) => ms + hh * 3600 * 1000;
+
+    assertBatchOk(await callAs(ctx.adminUid, 'callableBatchCheckIn', {
+      businessId: ctx.businessId,
+      entries: [{
+        applicationId: appId, workDateMs: ms, userId: ctx.workerUid,
+        businessId: ctx.businessId, businessName: ctx.businessName,
+        workType: WORK_TYPE, status: 'present', checkInMs: atDay(6),
+      }],
+    }), `batchCheckIn(${dayKey})`);
+
+    assertBatchOk(await callAs(ctx.adminUid, 'callableBatchCheckOut', {
+      businessId: ctx.businessId,
+      entries: [{
+        attendanceId: attId, checkOutMs: atDay(8), workHours: 2,
+        status: 'present', resetWageDetail: false,
+      }],
+    }), `batchCheckOut(${dayKey})`);
+
+    await callAs(ctx.adminUid, 'callableCalculateAndConfirmWage', {
+      attendanceId: attId,
+      wageType: 'hourly', baseWage: wds[0].wage, workDate: dayKey,
+      scheduledStart: '06:00', scheduledEnd: '08:00',
+      actualStart: '06:00', actualEnd: '08:00',
+      breakMinutes: 0,
+      nightAllowanceApplied: true, nightIncluded: false,
+      taxDeductionType: 'none',
+      yearMonth: dayKey.slice(0, 7),
+      payScheduleType: 'same_day',
+    });
+
+    if (s.upto === 'confirmed' || s.upto === 'transferred') {
+      await callAs(ctx.adminUid, 'callableConfirmFinalWage',
+          {businessId: ctx.businessId, attendanceIds: [attId]});
+    }
+    if (s.upto === 'transferred') {
+      await callAs(ctx.adminUid, 'callableMarkTransferredBatch', {
+        businessId: ctx.businessId, attendanceIds: [attId],
+        transferNote: 'R7 fixture',
+      });
+    }
+    payroll[s.key] = attId;
+  }
 
   return {
     entities: {
       toId, applicationId: appId,
-      yesterdayAttendanceId: `${appId}_${kstDateKey(-1).replace(/-/g, '')}`,
+      yesterdayAttendanceId,
       workDays,
+      payroll,
     },
     expected:
       `어제(${kstDateKey(-1)}) 근무 완료 · 오늘(${kstDateKey(0)}) 근무일이고 ` +
       'attendance 문서 없음 → 오늘 카드와 체크인 CTA 가 보여야 한다. ' +
-      '어제 기록을 오늘 기록으로 쓰지 않는다.',
+      '어제 기록을 오늘 기록으로 쓰지 않는다. ' +
+      '급여는 pending/calculated/confirmed/transferred 네 상태가 각각 하루씩. ' +
+      '근무일·근무시간은 4일·8h 인데 확정분만 세는 화면은 2일·4h 로 보인다 ' +
+      '(금액은 맞다 — metric 정의 문제, R7 확인 항목).',
   };
 }
 

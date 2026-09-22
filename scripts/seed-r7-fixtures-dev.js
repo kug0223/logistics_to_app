@@ -207,21 +207,62 @@ async function main() {
   const known = Object.keys(manifest.scenarios || {}).length;
   log(`  기록된 시나리오: ${known}건`);
 
+  const {builders} = require('./r7-fixture-build');
+  const {removeScenario} = require('./r7-fixture-cleanup');
+  const {db} = require('./r7-fixture-lib');
+  const ctx = {
+    db,
+    businessId: DEV.businessId,
+    businessName: DEV.businessName,
+    adminUid: DEV.adminUid,
+    workerUid: DEV.workerUid,
+    lat: DEV.lat,
+    lng: DEV.lng,
+    titleOf: {},
+  };
+
+  /** manifest 에 적힌 entity 가 실제로 살아 있는가. */
+  async function stillAlive(entities) {
+    if (!entities || !entities.toId) return false;
+    return (await db.collection('tos').doc(entities.toId).get()).exists;
+  }
+
   if (MODE === 'seed') {
-    step('시나리오 계획');
+    step('시나리오');
     for (const s of SCENARIOS) {
-      const have = manifest.scenarios[s.id];
-      log(`   ${have ? '있음' : '없음'}  ${s.id.padEnd(30)} [${s.domain}]`);
-      if (!have) log(`          기대: ${s.expected}`);
+      const builder = builders[s.id];
+      if (!builder) { log(`   건너뜀  ${s.id}  (빌더 없음)`); continue; }
+
+      const recorded = manifest.scenarios[s.id];
+      if (recorded && await stillAlive(recorded.entities)) {
+        log(`   있음    ${s.id}  (다시 만들지 않는다)`);
+        continue;
+      }
+      if (!plan(`만든다  ${s.id}`)) continue;
+
+      const r = await builder(ctx);
+      manifest.scenarios[s.id] = {
+        domain: s.domain,
+        surfaces: s.surfaces,
+        entities: r.entities,
+        expected: r.expected,
+        seededAt: new Date().toISOString(),
+      };
+      saveManifest(manifest);           // 중간 실패에도 기록은 남긴다
+      log(`           → ${JSON.stringify(r.entities).slice(0, 110)}`);
     }
-    log('\n   (구현은 4~6단계에서 이어 붙인다 — 이 골격은 guard/manifest/모드만 담는다)');
   } else if (MODE === 'verify') {
     step('canonical sanity check');
-    log('   (7단계에서 구현)');
+    const {verifyAll} = require('./r7-fixture-verify');
+    const ok = await verifyAll(manifest, log);
+    if (!ok) { log('\n검증 실패.'); process.exit(1); }
   } else if (MODE === 'cleanup') {
-    step('정리 대상 (manifest 기록분만)');
-    for (const id of Object.keys(manifest.scenarios || {})) {
-      plan(`삭제 예정: ${id}`);
+    step('정리 (manifest 기록분만)');
+    for (const [id, rec] of Object.entries(manifest.scenarios || {})) {
+      const n = await removeScenario(rec.entities, {execute: EXECUTE});
+      log(`   ${EXECUTE ? '삭제' : '[dry-run]'} ${id.padEnd(28)} ` +
+          `근태 ${n.attendance} · 지원서 ${n.applications} · 슬롯 ${n.slots} · 공고 ${n.tos}`);
+      if (EXECUTE) delete manifest.scenarios[id];
     }
     log('   쿼리로 훑어 지우지 않는다 — manifest 에 없는 것은 건드리지 않는다.');
   }
