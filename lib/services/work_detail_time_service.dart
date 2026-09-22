@@ -19,6 +19,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/application_model.dart';
+import '../utils/work_detail_helper.dart';
 
 class WorkDetailTimeService {
   const WorkDetailTimeService._();
@@ -100,10 +101,32 @@ class WorkDetailTimeService {
         }
       }
 
-      // TO 마스터로 slotId 없는 경우의 workType 키 폴백 보정
+      // TO 마스터로 workType 단독 폴백키를 보정한다.
       // 슬롯 문서가 이미 데이터를 채웠으면 덮어쓰지 않음 (??=)
       // → 슬롯 수정 시 TO 마스터(구시간)가 최신 슬롯값을 되돌리는 버그 방지
-      final masterIds = slotPairs.keys.toSet();
+      //
+      // [R8-P10] **아직 풀리지 않은 지원서가 있을 때만** 읽는다.
+      //
+      //   이전에는 슬롯을 가진 모든 toId 의 마스터를 무조건 한 번 더 읽었다.
+      //   DEV 실측에서 그 10회가 맵에 더한 키는 0개였다 — 전체 읽기 25회 중
+      //   10회(40%)가 아무것도 바꾸지 않고 왕복만 했다.
+      //
+      //   이 라운드가 채우는 것은 `timeMap[workType]` 하나뿐이고,
+      //   그 키는 WorkDetailHelper._resolveLive 의 **마지막** 폴백이다.
+      //   앞의 두 키(복합키·workDetailId)로 이미 풀린 지원서에게는 쓰이지 않는다.
+      //   그러니 풀린 지원서만 있으면 읽을 이유가 없다.
+      //
+      //   슬롯이 없는 지원서는 여기 대상이 아니다 — 그쪽 TO 는 위에서 이미 읽었고,
+      //   거기서도 못 찾았다면 이 라운드가 읽을 문서가 같아서 달라지지 않는다.
+      final masterIds = <String>{};
+      for (final app in targetWorkers) {
+        final toId = app.toId;
+        if (toId == null || toId.isEmpty) continue;
+        if (app.slotId == null || app.slotId!.isEmpty) continue;
+        if (!slotPairs.containsKey(toId)) continue;
+        if (WorkDetailHelper.resolveLive(app, timeInfoMap) != null) continue;
+        masterIds.add(toId);
+      }
       if (masterIds.isNotEmpty) {
         final masterFutures = masterIds.map((id) =>
             FirebaseFirestore.instance.collection('tos').doc(id).get());

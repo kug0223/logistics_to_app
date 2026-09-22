@@ -89,6 +89,14 @@ class WorkDetailHelper {
         : WorkDetailData.baseHourlyAuto;
   }
 
+  /// [R8-P10] 이 지원서가 timeMap 으로 풀리는가 — 로더가 추가 조회 필요 여부를
+  /// 판단할 때 쓴다. 판정 기준이 한 곳에만 있어야 로더와 소비부가 갈리지 않는다.
+  static Map<String, dynamic>? resolveLive(
+    ApplicationModel app,
+    Map<String, dynamic> timeMap,
+  ) =>
+      _resolveLive(app, timeMap);
+
   /// 공고의 현재 조건만 조회 (약속 스냅샷 미반영).
   static Map<String, dynamic>? _resolveLive(
     ApplicationModel app,
