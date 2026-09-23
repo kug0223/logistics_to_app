@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../models/core/notification_model.dart';
 import '../../widgets/common/notification_card.dart';
+import '../../utils/notification_retention.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -449,6 +450,41 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   /// 날짜 기준으로 섹션 헤더(String) + 알림(NotificationModel) 혼합 리스트 생성
+  /// [R7-P1-8 §18] 알림을 치우고, 되돌릴 기회를 준다.
+  ///
+  /// SnackBar를 쓴다 — 토스트에는 누를 곳이 없다. 되돌릴 수 있다고 말하면서
+  /// 되돌릴 수단을 주지 않으면 말만 남는다.
+  ///
+  /// 이 흐름은 domain state를 전혀 건드리지 않는다. 지워지는 것은 알림
+  /// 문서 하나이고, 그것이 가리키던 계약·지원서·근무는 그대로 있다
+  /// (Notification != Task). 그래서 Undo도 알림만 되돌린다.
+  void _deleteWithUndo(
+    BuildContext context,
+    NotificationModel notification,
+    NotificationProvider provider,
+  ) {
+    provider.deleteNotificationDeferred(notification.id);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: const Text('알림이 삭제되었습니다'),
+        // 유예 창보다 짧으면 되돌릴 수 있는데 물어볼 곳이 사라진다.
+        duration: NotificationProvider.undoWindow,
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: '실행 취소',
+          onPressed: () {
+            final ok = provider.undoDeleteNotification(notification.id);
+            if (!mounted) return;
+            // 창이 지났으면 정말 지워졌다 — 취소했다고 말하지 않는다.
+            if (!ok) ToastHelper.showWarning('이미 삭제되어 되돌릴 수 없습니다');
+          },
+        ),
+      ),
+    );
+  }
+
   List<Object> _buildGroupedItems(List<NotificationModel> notifications, DateTime now) {
     final today = FormatHelper.toKstDate(now);
     final yesterday = today.subtract(const Duration(days: 1));
@@ -460,6 +496,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final olderItems = <NotificationModel>[];
 
     for (final n in notifications) {
+      // [R7-P1-9 §21] 시각을 모르는 legacy 알림을 `오늘`로 올리지 않는다.
+      //   NotificationModel.createdAt은 non-null이라 필드가 없으면
+      //   DateTime.now()로 채워지고, 그대로 두면 몇 년 전 알림이 방금 온
+      //   것처럼 맨 위에 선다. 모르는 것은 `이전`에 둔다 —
+      //   UNKNOWN != TODAY, 그리고 숨기지도 않는다(UNKNOWN != EMPTY).
+      if (!n.createdAtKnown) {
+        olderItems.add(n);
+        continue;
+      }
       final date = DateTime(n.createdAt.year, n.createdAt.month, n.createdAt.day);
       if (!date.isBefore(today)) {
         todayItems.add(n);
@@ -540,7 +585,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
           return false;
         },
         child: ListView.builder(
-          itemCount: grouped.length + (hasMore || showLoadMoreHint ? 1 : 0),
+          // [R7-P1-9 §22] 마지막에 창 안내 한 줄이 항상 붙는다.
+          //   더 볼 것이 없을 때 목록이 그냥 끝나면, 사용자는 그것이
+          //   `알림이 이것뿐`인지 `더 있는데 안 보여 주는 것`인지 알 수 없다.
+          itemCount: grouped.length + 1,
           // top은 FilterChip이 바로 위에 있어 4px만으로 충분
           padding: EdgeInsets.fromLTRB(
             ResponsiveHelper.spacing(context, 16),
@@ -566,19 +614,24 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   ),
                 );
               }
-              if (showLoadMoreHint) {
-                return Padding(
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 12),
-                    horizontal: ResponsiveHelper.spacing(context, 16),
-                  ),
-                  child: Text(
-                    '이전 알림은 전체 탭에서 더 불러올 수 있습니다',
-                    textAlign: TextAlign.center,
-                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-                  ),
-                );
-              }
+              // [R7-P1-9 §22] 목록 끝 low-emphasis 안내.
+              //   `알림 age-out != 그 일이 끝났다`이므로, 지난 기록은
+              //   각자의 canonical 화면에 있다는 것까지 말해 준다.
+              return Padding(
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                  horizontal: ResponsiveHelper.spacing(context, 16),
+                ),
+                child: Text(
+                  showLoadMoreHint
+                      ? '이전 알림은 전체 탭에서 더 불러올 수 있습니다'
+                      : '최근 ${NotificationRetention.visibleDays}일의 알림만 표시됩니다.\n'
+                          '지난 기록은 지원·계약·일정·근태·급여 화면에서 확인할 수 있어요.',
+                  textAlign: TextAlign.center,
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.grey400),
+                ),
+              );
             }
             final item = grouped[index];
             if (item is String) {
@@ -592,20 +645,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 notification: notification,
                 openCardIdNotifier: _openCardId,
                 onTap: () => _handleNotificationTap(context, notification, provider),
-                onDismiss: () async {
-                  try {
-                    final success = await provider.deleteNotification(notification.id);
-                    if (!mounted) return;
-                    if (success) {
-                      ToastHelper.showSuccess('알림이 삭제되었습니다');
-                    } else {
-                      ToastHelper.showError('알림 삭제에 실패했습니다');
-                    }
-                  } catch (e) {
-                    debugPrint('❌ 알림 삭제 오류: $e');
-                    if (mounted) ToastHelper.showError('알림 삭제에 실패했습니다');
-                  }
-                },
+                // [R7-P1-8 §17] 스와이프 패널의 `읽음` — 미읽음일 때만 뜬다.
+                //   domain state를 건드리지 않으므로 확인 없이 즉시 실행한다.
+                onMarkRead: notification.isRead
+                    ? null
+                    : () => provider.markAsRead(notification.id),
+                // [R7-P1-8 §18] 삭제 + 실행 취소.
+                //   지금 지우고 나중에 되살리는 것이 아니라, 화면에서만 치우고
+                //   유예 시간 뒤에 커밋한다. 취소하면 커밋이 없던 일이 되므로
+                //   복원할 것 자체가 없다 — 애초에 잃지 않는다.
+                onDismiss: () => _deleteWithUndo(context, notification, provider),
               ),
             );
           },

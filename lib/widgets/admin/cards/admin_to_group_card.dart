@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 // Models
 import '../../../models/core/business_model.dart';
 import '../../../models/core/to_model.dart';
+import '../../../utils/action_guard.dart';
 import '../../../utils/close_state_utils.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/work_detail_data.dart';
@@ -303,6 +304,61 @@ class _TOGroupCardState extends State<TOGroupCard> {
     }
   }
 
+  /// [R7-P1-3] 전체 마감 여부 — build와 ⋮ 메뉴가 **같은 판정**을 쓴다.
+  ///
+  /// build 안의 지역 변수로 두었더니 메뉴 쪽에서는 이 사실에 닿을 수 없었고,
+  /// 그래서 마감된 공고에서도 `인력 초대`가 그대로 떴다. 눌러 봐야 서버가
+  /// 거절하는데, 그때까지는 아직 뽑을 수 있는 것처럼 보였다.
+  bool _computeAllClosed(DateTime now) {
+    final masterTO = widget.groupItem.masterTO;
+    final targetTOs = _targetTOs;
+    final isMultiSlotCollapsed = widget.groupItem.groupTOs.isEmpty &&
+        !masterTO.isLongTerm && masterTO.totalSlots > 1;
+
+    // 슬롯 미로드 상태에서 HOURS_BEFORE 타입 폴백 (마지막 슬롯 기준 마감 여부)
+    bool multiSlotTimeExpired = false;
+    if (isMultiSlotCollapsed &&
+        masterTO.deadlineType == 'HOURS_BEFORE' &&
+        (masterTO.hoursBeforeStart ?? 0) > 0) {
+      final lastDate = masterTO.rangeEnd;
+      if (lastDate != null && masterTO.workDetails.isNotEmpty) {
+        multiSlotTimeExpired = masterTO.workDetails.every((d) {
+          final parts = d.startTime.split(':');
+          if (parts.length != 2) return false;
+          final h = int.tryParse(parts[0]);
+          final m = int.tryParse(parts[1]);
+          if (h == null || m == null) return false;
+          final deadline =
+              DateTime(lastDate.year, lastDate.month, lastDate.day, h, m)
+                  .subtract(Duration(hours: masterTO.hoursBeforeStart!));
+          return now.isAfter(deadline);
+        });
+      }
+    }
+
+    // TOModel.isClosed가 contract 게시만료 포함한 단일 판단
+    return targetTOs.isEmpty
+        ? (widget.groupItem.isClosed || multiSlotTimeExpired)
+        : targetTOs.every(
+            (toItem) => CloseStateUtils.isToItemClosed(toItem, masterTO, now),
+          );
+  }
+
+  /// [R7-P1-3 §6] 지금 이 공고에 초대를 보낼 수 있는가.
+  ///
+  /// FULL·CLOSED에서는 초대 진입 자체를 내린다. 서버가 거절할 것을 아는데도
+  /// 버튼을 남겨 두는 것은 실패에 UX를 의존하는 것이다 — 관리자는 눌러 보고서야
+  /// 안 된다는 걸 알게 된다. `CLOSED != DONE` / `FULL != DONE`이므로, 내리는
+  /// 것은 초대뿐이고 다른 후속 처리(계약·서류)는 그대로 둔다.
+  ///
+  /// capacity를 모르는 상태(UNKNOWN)에서는 **내리지 않는다** — 확인하지 못했다는
+  /// 이유로 할 수 있는 일을 막으면 그것도 거짓 주장이다.
+  bool _canInviteNow() {
+    if (_computeAllClosed(DateTime.now())) return false;
+    if (_isFull) return false;
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
@@ -322,35 +378,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         widget.groupItem.groupTOs.length > 1;
 
     // ✅ 전체 마감 여부 (WorkDetail 실제 상태 + isTimeExpired 포함)
-    final isMultiSlotCollapsed = widget.groupItem.groupTOs.isEmpty &&
-        !masterTO.isLongTerm && masterTO.totalSlots > 1;
-
-    // 슬롯 미로드 상태에서 HOURS_BEFORE 타입 폴백 (마지막 슬롯 기준 마감 여부)
-    bool multiSlotTimeExpired = false;
-    if (isMultiSlotCollapsed &&
-        masterTO.deadlineType == 'HOURS_BEFORE' &&
-        (masterTO.hoursBeforeStart ?? 0) > 0) {
-      final lastDate = masterTO.rangeEnd;
-      if (lastDate != null && masterTO.workDetails.isNotEmpty) {
-        multiSlotTimeExpired = masterTO.workDetails.every((d) {
-          final parts = d.startTime.split(':');
-          if (parts.length != 2) return false;
-          final h = int.tryParse(parts[0]);
-          final m = int.tryParse(parts[1]);
-          if (h == null || m == null) return false;
-          final deadline = DateTime(lastDate.year, lastDate.month, lastDate.day, h, m)
-              .subtract(Duration(hours: masterTO.hoursBeforeStart!));
-          return now.isAfter(deadline);
-        });
-      }
-    }
-
-    // 전체 마감 여부 — TOModel.isClosed가 contract 게시만료 포함한 단일 판단
-    final allClosed = targetTOs.isEmpty
-        ? (widget.groupItem.isClosed || multiSlotTimeExpired)
-        : targetTOs.every(
-            (toItem) => CloseStateUtils.isToItemClosed(toItem, masterTO, now),
-          );
+    final allClosed = _computeAllClosed(now);
 
     // [POSTING-V2-03S.1] 좌측 컬러바 제거.
     //   한 요소가 타입(단기=info / 고정=teal)과 lifecycle(마감=grey)을 겸해,
@@ -424,47 +452,50 @@ class _TOGroupCardState extends State<TOGroupCard> {
                             ),
                           ),
                           
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
 
-                          // 사업장명
-                          Expanded(
-                            child: Text(
-                              widget.groupItem.businessName,
-                              style: ResponsiveHelper.smallStyle(
+                          // [R7-P1-2] 모집 상태 배지 — 타입 옆으로 올렸다.
+                          //   제목이 1순위가 된 이상, 상태는 제목 위 메타 행에서
+                          //   말해야 제목보다 강해지지 않는다.
+                          Flexible(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: _buildStatusBadge(
                                 context,
-                                color: AppColors.grey600,
+                                allClosed: allClosed,
+                                targetTOs: targetTOs,
                               ),
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
+
+                          const Spacer(),
 
                           // 메뉴 버튼
                           _buildSingleTOMenu(context),
                         ],
                       ),
 
-                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-
-                      // [POSTING-V2-03R.1] 둘째 줄: 언제 — 목록 스캔의 1차 축.
-                      //   03Q.1이 목록을 근무 날짜순으로 바꾼 뒤, 관리자가 카드에서
-                      //   가장 먼저 찾아야 하는 값이 여기다. 관리용 제목에 있던
-                      //   시각적 1순위를 이 줄로 옮겼다.
-                      _buildWhenLine(
-                        context,
-                        masterTO: masterTO,
-                        allClosed: allClosed,
-                        targetTOs: targetTOs,
-                      ),
-
                       SizedBox(height: ResponsiveHelper.spacing(context, 5)),
 
-                      // [POSTING-V2-03R.1] 셋째 줄: 어떤 일 / 얼마나 남았나
-                      _buildWorkLine(context, masterTO: masterTO, now: now),
+                      // [R7-P1-2] 둘째 줄: **공고 제목** — 카드의 1순위.
+                      //
+                      //   이 카드의 entity는 posting group이다. 그런데 이전 구조는
+                      //   날짜를 가장 크게 띄우고 제목을 13px 회색 보조행으로
+                      //   내렸으며, 업무명과 같으면 그 행마저 통째로 생략했다.
+                      //   업무명이 곧 제목인 공고는 카드에 identity가 한 줄도
+                      //   없었다 — 목록에서 "무슨 공고인가"에 직답이 없었다.
+                      _buildTitleLine(context, masterTO: masterTO),
 
-                      // [POSTING-V2-03R.1] 넷째 줄: 관리용 카드명 — 보조 정보.
-                      //   관리자가 붙이는 식별값이라 지우지 않지만, 실제 업무명보다
-                      //   앞선 공고 정체성으로 쓰지 않는다.
-                      ..._buildManagedTitleLine(context),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+
+                      // [R7-P1-2] 셋째 줄: 언제 · 어디 — strong secondary.
+                      //   날짜는 여전히 스캔의 축이지만 identity는 아니다.
+                      _buildWhenLine(context, masterTO: masterTO),
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+
+                      // [POSTING-V2-03R.1] 넷째 줄: 어떤 일 / 얼마나 남았나
+                      _buildWorkLine(context, masterTO: masterTO, now: now),
 
                       SizedBox(height: ResponsiveHelper.spacing(context, 6)),
 
@@ -1189,43 +1220,102 @@ class _TOGroupCardState extends State<TOGroupCard> {
     return open <= 0 ? null : '남은 $open일';
   }
 
-  /// [4] 언제 — 날짜·시간 + 모집 상태.
+  /// [R7-P1-2][3] 공고 제목 — 카드의 1순위. **어떤 경우에도 생략하지 않는다.**
   ///
-  /// Wrap을 쓴다: 상태 배지가 길어도(`9/20 14:00 공개 예정`) 날짜를 0폭으로
-  /// 밀어내지 못하고 다음 줄로 내려간다.
+  /// canonical posting identity는 `displayGroupTitle`(= groupTitle ?? title)이다.
+  /// 그것이 비어 있을 때만 masterTO.title로 내려가고, 그마저 비면 침묵하지 않고
+  /// `제목 없는 공고`라고 말한다 — 빈 줄은 "제목이 없다"가 아니라 "카드가
+  /// 무엇인지 모르겠다"로 읽힌다.
+  ///
+  /// 업무명과 같아도 지우지 않는다. 같은 말이 두 번 나오는 비용보다,
+  /// 목록에서 공고를 못 알아보는 비용이 크다.
+  Widget _buildTitleLine(
+    BuildContext context, {
+    required TOModel masterTO,
+  }) {
+    var name = widget.groupItem.groupName.trim();
+    if (name.isEmpty) name = masterTO.title.trim();
+    final known = name.isNotEmpty;
+    return Text(
+      known ? name : '제목 없는 공고',
+      style: ResponsiveHelper.subtitleStyle(
+        context,
+        color: known ? AppColors.textPrimary : AppColors.grey500,
+        fontWeight: FontWeight.w700,
+      ).copyWith(height: 1.25),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  /// [4] 언제 · 어디 — strong secondary.
+  ///
+  /// [R7-P1-2] 상태 배지는 1행으로 올라갔고, 사업장명이 여기 tertiary로 내려왔다.
   Widget _buildWhenLine(
     BuildContext context, {
     required TOModel masterTO,
-    required bool allClosed,
-    required List<TOItem> targetTOs,
   }) {
-    final date = _collapsedDateText(masterTO);
-    final time = _collapsedTimeText(masterTO);
+    final date = _collapsedWhenText(masterTO);
     final String label;
-    if (date == null) {
+    final bool known = date != null;
+    if (!known) {
       // ERROR != UNKNOWN — 조회 실패를 '미정'으로 덮지 않는다.
       label = widget.hasGroupDetailError ? '근무일 확인 필요' : '근무일 미정';
     } else {
-      label = time == null ? date : '$date · $time';
+      label = date;
     }
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: ResponsiveHelper.spacing(context, 8),
-      runSpacing: ResponsiveHelper.spacing(context, 4),
-      children: [
-        Text(
-          label,
-          style: ResponsiveHelper.subtitleStyle(
-            context,
-            color: date == null ? AppColors.grey500 : AppColors.textPrimary,
-          ).copyWith(height: 1.25),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        _buildStatusBadge(
-            context, allClosed: allClosed, targetTOs: targetTOs),
-      ],
+    final biz = widget.groupItem.businessName.trim();
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: ResponsiveHelper.bodyStyle(
+          context,
+          color: known ? AppColors.textPrimary : AppColors.grey500,
+        ).copyWith(fontWeight: FontWeight.w600, height: 1.25),
+        children: [
+          TextSpan(text: label),
+          if (biz.isNotEmpty)
+            TextSpan(
+              text: '  ·  $biz',
+              style: ResponsiveHelper.bodyStyle(context,
+                  color: AppColors.grey600),
+            ),
+        ],
+      ),
     );
+  }
+
+  /// [R7-P1-2] collapsed 날짜·시간 문구.
+  ///
+  /// FLEX 다중 날짜에서는 날짜 하나를 공고 정체성처럼 보이게 하지 않는다 —
+  /// 실제로 여러 날 운영되는 공고인데 `9/24`만 크게 보이면 그 날짜만의
+  /// 공고로 읽힌다. 날짜 범위를 알 수 있으면 `9/24~9/26`으로 말하고,
+  /// 그때는 시간을 붙이지 않는다(그 시간은 한 날짜의 것이다).
+  /// 상세를 아직 못 읽었으면 범위를 **주장하지 않고** 운영 날짜만 쓴다.
+  String? _collapsedWhenText(TOModel masterTO) {
+    final range = _collapsedDateRangeText(masterTO);
+    if (range != null) return range;
+    final date = _collapsedDateText(masterTO);
+    if (date == null) return null;
+    final time = _collapsedTimeText(masterTO);
+    return time == null ? date : '$date · $time';
+  }
+
+  /// FLEX 다중 날짜 범위. 하나로 확정되거나 알 수 없으면 null.
+  String? _collapsedDateRangeText(TOModel masterTO) {
+    if (widget.calendarSlot != null) return null; // 날짜가 이미 선택된 문맥
+    if (masterTO.isLongTerm) return null; // 계약기간은 _collapsedDateText가 말한다
+    if (!widget.groupItem.isGroupDetailLoaded) return null;
+    final dates = <DateTime>{};
+    for (final item in widget.groupItem.groupTOs) {
+      final d = item.slot?.date;
+      if (d != null) dates.add(FormatHelper.toKstDate(d));
+    }
+    if (dates.length < 2) return null;
+    final sorted = dates.toList()..sort();
+    return '${FormatHelper.formatDateShort(sorted.first)}'
+        '~${FormatHelper.formatDateShort(sorted.last)}';
   }
 
   /// [5] 어떤 일 · 얼마나 남았나.
@@ -1246,27 +1336,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-  }
-
-  /// [6] 관리용 카드명 — 보조 정보.
-  ///
-  /// 지우지 않는다(관리자가 붙인 식별값이다). 다만 실제 업무명과 같은 말이면
-  /// 한 줄을 낭비할 뿐이므로 생략한다.
-  List<Widget> _buildManagedTitleLine(BuildContext context) {
-    final name = widget.groupItem.groupName;
-    if (name.isEmpty) return const [];
-    if (name == _collapsedWorkText(widget.groupItem.masterTO)) return const [];
-    return [
-      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-      Text(
-        name,
-        // [POSTING-V2-03S.1] grey500 → grey600. 위계는 그대로 secondary지만
-        //   흰 배경 위 13px grey500은 읽히지 않는 수준이었다. 크기·굵기는 유지.
-        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-    ];
   }
 
   /// [7] 인원 — 세 variant 공통 언어.
@@ -1346,7 +1415,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Flexible(
                       child: Text(
-                        '지원 현황',
+                        // [R7-P1-7 §15] 여는 화면의 이름과 같게 한다.
+                        '인력 현황',
                         style: ResponsiveHelper.smallStyle(context,
                                 color: Theme.of(context).primaryColor)
                             .copyWith(fontWeight: FontWeight.w600),
@@ -1400,7 +1470,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
     return _ApplicantTarget.work(_getSingleTOItem(), details.first);
   }
 
+  /// [R7-P1-CORR] 같은 대상의 명단은 하나만 뜬다. 빠른 연속 탭에서 명단
+  ///   다이얼로그가 두 겹 쌓이면, 아래 겹은 위에서 처리한 확정·거절을 모른 채
+  ///   낡은 목록을 들고 있다 — 거기서 누른 확정은 이미 찬 자리를 다시 채운다.
   Future<void> _openApplicants(
+          BuildContext context, _ApplicantTarget target) =>
+      ActionGuard.runVoid(
+        ActionGuard.keyOf('applicants', [
+          widget.groupItem.masterTO.id,
+          target.slot?.slot?.id,
+          target.work?.id,
+        ]),
+        () => _openApplicantsInner(context, target),
+      );
+
+  Future<void> _openApplicantsInner(
       BuildContext context, _ApplicantTarget target) async {
     final slot = target.slot;
     if (slot != null) {
@@ -1667,14 +1751,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
             ),
           ],
         // 근로자 초대 / 보낸 초대 관리 (canManageTo)
+        // [R7-P1-3 §6] FULL/CLOSED에서는 초대 진입을 내린다 — 서버 거절에
+        //   UX를 의존하지 않는다. `보낸 초대 관리`는 남긴다(이미 보낸 것의 결과다).
         if (canManageTo)
           [
-            AppMenuSheetItem(
-              icon: Icons.person_add_outlined,
-              label: '인력 초대',
-              color: AppColors.success,
-              onTap: () => _showInviteWorkerDialog(context),
-            ),
+            if (_canInviteNow())
+              AppMenuSheetItem(
+                icon: Icons.person_add_outlined,
+                label: '인력 초대',
+                color: AppColors.success,
+                onTap: () => _showInviteWorkerDialog(context),
+              ),
             AppMenuSheetItem(
               icon: Icons.mail_outline,
               label: '보낸 초대 관리',
@@ -1753,14 +1840,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   onTap: () => _handleSingleTOMenuAction(context, 'close'),
                 ),
             ],
+          // [R7-P1-3 §6] FULL/CLOSED에서는 초대 진입을 내린다.
           if (canManageTo)
             [
-              AppMenuSheetItem(
-                icon: Icons.person_add_outlined,
-                label: '인력 초대',
-                color: AppColors.success,
-                onTap: () => _showInviteWorkerDialog(context),
-              ),
+              if (_canInviteNow())
+                AppMenuSheetItem(
+                  icon: Icons.person_add_outlined,
+                  label: '인력 초대',
+                  color: AppColors.success,
+                  onTap: () => _showInviteWorkerDialog(context),
+                ),
               AppMenuSheetItem(
                 icon: Icons.mail_outline,
                 label: '보낸 초대 관리',
@@ -1810,14 +1899,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   onTap: () => _handleSingleTOMenuAction(context, 'delete'),
                 ),
             ],
+          // [R7-P1-3 §6] FULL/CLOSED에서는 초대 진입을 내린다.
           if (canManageTo)
             [
-              AppMenuSheetItem(
-                icon: Icons.person_add_outlined,
-                label: '인력 초대',
-                color: AppColors.success,
-                onTap: () => _showInviteWorkerDialog(context),
-              ),
+              if (_canInviteNow())
+                AppMenuSheetItem(
+                  icon: Icons.person_add_outlined,
+                  label: '인력 초대',
+                  color: AppColors.success,
+                  onTap: () => _showInviteWorkerDialog(context),
+                ),
               AppMenuSheetItem(
                 icon: Icons.mail_outline,
                 label: '보낸 초대 관리',
@@ -1848,7 +1939,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
   ///
   /// Home에는 알리지 않는다 — Home 인력 현황은 confirmed 기준이고
   /// 지원 검토 건수는 PENDING 기준이라 초대(INVITED)로 바뀌지 않는다.
-  Future<void> _showInviteWorkerDialog(BuildContext context) async {
+  /// [R7-P1-CORR] 같은 공고의 초대 다이얼로그는 하나만 뜬다.
+  Future<void> _showInviteWorkerDialog(BuildContext context) =>
+      ActionGuard.runVoid(
+        ActionGuard.keyOf('inviteWorker', [widget.groupItem.masterTO.id]),
+        () => _showInviteWorkerDialogInner(context),
+      );
+
+  Future<void> _showInviteWorkerDialogInner(BuildContext context) async {
     final masterTO = widget.groupItem.masterTO;
     final invited = await showDialog<bool>(
       context: context,
@@ -1863,7 +1961,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   /// 보낸 초대 관리 바텀시트 — INVITED 상태 지원서 목록 + 취소 버튼
-  Future<void> _showSentInvitesSheet(BuildContext context) async {
+  Future<void> _showSentInvitesSheet(BuildContext context) =>
+      ActionGuard.runVoid(
+        ActionGuard.keyOf('sentInvites', [widget.groupItem.masterTO.id]),
+        () => _showSentInvitesSheetInner(context),
+      );
+
+  Future<void> _showSentInvitesSheetInner(BuildContext context) async {
     final toId = widget.groupItem.masterTO.id;
     final businessId = widget.groupItem.masterTO.businessId;
     if (toId.isEmpty || businessId.isEmpty) return;

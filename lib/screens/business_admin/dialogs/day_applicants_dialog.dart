@@ -14,7 +14,6 @@ import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/employment_contract_model.dart';
-import '../../../models/core/monthly_review_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_data.dart';
@@ -24,11 +23,11 @@ import '../../../screens/common/settings_screen.dart';
 import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
 import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
-import '../../../services/monthly_review_service.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/id_card_helper.dart';
 // trust_score_helper: 신뢰도 점수 시스템 제거 (5A.2A)
 import '../../../theme/app_colors.dart';
+import '../../../utils/action_guard.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../models/ui/day_staffing_row.dart';
 import '../../../models/ui/invite_capacity_state.dart';
@@ -181,11 +180,17 @@ class _GroupData {
   ///   · 대기(PENDING)도 빼지 않는다 — 같은 이유.
   ///   · 종료된 모집 단위는 채울 수 없으므로 부족이 아니다
   ///     (callableGetStaffingReadiness·DayStaffingRow.shortage와 같은 계약).
-  int get shortage {
-    if (capacityState == InviteCapacityState.closed) return 0;
-    final n = requiredCount - seatedConfirmed;
-    return n > 0 ? n : 0;
-  }
+  ///   [R7-P1-3] 식 자체는 `staffingShortageOf`가 갖는다 — WorkApplicantsDialog가
+  ///   같은 모집 단위를 열 때 여기 있는 식을 다시 쓰기 위해서다.
+  ///   이 getter는 UNKNOWN을 0으로 내리지 않는다: 호출부가 이미
+  ///   `isCapacityUnknown`을 따로 분기하고 있고, 그 경로에서 CTA는 서지 않는다.
+  int get shortage =>
+      staffingShortageOf(
+        capacity: capacityState,
+        requiredCount: requiredCount,
+        seatedConfirmed: seatedConfirmed,
+      ) ??
+      0;
 
   /// capacity를 모른다 — 수락 가능한지도 찼는지도 말할 수 없다.
   List<ApplicationModel> get unknownInvites =>
@@ -219,7 +224,6 @@ class DayApplicantsDialog extends StatefulWidget {
 class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   final FirestoreService _svc = FirestoreService();
   final ContractService _contractSvc = ContractService();
-  final MonthlyReviewService _reviewSvc = MonthlyReviewService();
 
   bool _isLoading = true;
   bool _isProcessing = false;
@@ -277,7 +281,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   final Set<String> _selectedIds = {};
   final Set<String> _starredIds = {};
   Map<String, String> _idCardStatusMap = {};
-  final Map<String, bool> _reviewWrittenMap = {};
   // [BUG-CANCEL-01] 근무 이력 있는 확정자에게 확정취소 버튼 노출 방지용 맵
   // key = userId, value = 오늘 날짜에 checkIn 기록 존재 여부
   Map<String, bool> _hasWorkedMap = {};
@@ -362,7 +365,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       _selectedIds.clear();
       _starredIds.clear();
       _idCardStatusMap = {};
-      _reviewWrittenMap.clear();
       _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 시작 시 초기화 — 이전 날짜 잔류 방지
       _capacityUnknown = false; // [R8-P7.3] 이번 로드의 판정으로 다시 정한다
       _noShowApplicationIds = {}; // [R5.1] 초기화
@@ -466,18 +468,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               )
             : Future.value(<String, String>{});
 
-        final reviewFuture = confirmedUserIds.isNotEmpty
-            ? Future.wait(confirmedUserIds.map((uid) async {
-                final key = MonthlyReviewModel.generateKeyForUser(
-                  businessId: bizId,
-                  targetUserId: uid,
-                  year: widget.date.year,
-                  month: widget.date.month,
-                );
-                final exists = await _reviewSvc.getReviewById(key);
-                return MapEntry(uid, exists != null);
-              }))
-            : Future.value(<MapEntry<String, bool>>[]);
+        // [R7-P1-4 §11] 리뷰 작성 여부 조회 제거 — 확정자 1명당 1 read였고,
+        //   그 결과로 만든 배지가 근무 전 확정자에게 없는 업무를 만들었다.
 
         final hasWorkedFuture = confirmedUserIds.isNotEmpty
             ? _svc.loadHasWorkedMap(businessId: bizId, date: widget.date)
@@ -507,9 +499,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // Phase 3 결과 수집 (Phase 2와 병렬로 이미 실행 완료됐을 가능성 높음)
         final idCardMap = await idCardFuture;
 
-        final Map<String, bool> reviewMap = {};
-        reviewMap.addAll(Map.fromEntries(await reviewFuture));
-
         // [BUG-CANCEL-01] 당일 근무 여부 맵 — 확정취소 버튼 가드용
         final hasWorkedMap = await hasWorkedFuture;
 
@@ -531,7 +520,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _dayStaffingRows = staffingRows;
           _dayInvitations = invitations;
           _idCardStatusMap = idCardMap;
-          _reviewWrittenMap.addAll(reviewMap);
           _starredIds.addAll(starredFromFirestore);
           _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
           _noShowApplicationIds = noShowApplicationIds; // [R5.1]
@@ -850,7 +838,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             child: _isLoading
                 ? const Padding(
                     padding: EdgeInsets.all(40),
-                    child: LoadingWidget(message: '지원명단 불러오는 중...'),
+                    child: LoadingWidget(message: '인력 현황 불러오는 중...'),
                   )
                 : _buildBody(context),
           ),
@@ -866,7 +854,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Widget _buildHeader(BuildContext context) {
     return AppModalHeader(
-      title: '지원명단',
+      // [R7-P1-7 §15] `지원명단` → `인력 현황`.
+      //   WorkApplicantsDialog는 같은 역할을 `지원자 관리`라고 불렀다. 같은 일을
+      //   하는 두 화면이 서로 다른 이름을 갖고 있었고, 어느 쪽도 이 화면이
+      //   실제로 하는 일을 담지 못했다 — 여기서는 지원만 보는 게 아니라
+      //   확정·초대·계약·서류 후속까지 처리한다.
+      title: '인력 현황',
       subtitle: FormatHelper.formatDateLong(widget.date),
       onClose: () => Navigator.pop(context, _hasChanges),
       // [AH-V2-04B] 선택지 기준으로 판단한다. businesses(이름 조회용 전체 목록)로
@@ -902,8 +895,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     // [R2.4] 계산식은 _GroupData.shortage 하나다 — 반납 좌석·모집 종료 포함.
     final totalShortage =
         _cachedGroups.fold<int>(0, (acc, g) => acc + g.shortage);
+    // [R7-P1-6 §14] 부족은 **실패가 아니라 지금 처리 가능한 미완료**다.
+    //   red를 쓰면 NO_SHOW·이체 실패 같은 실제 문제와 같은 무게가 되고,
+    //   모집 초기의 정상 상태(아직 아무도 안 뽑음)가 사고처럼 보인다.
+    //   red는 실제 문제에 남겨 둔다.
     final shortageColor =
-        totalShortage > 0 ? AppColors.errorDark : AppColors.grey500;
+        totalShortage > 0 ? AppColors.warningDark : AppColors.grey500;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
@@ -1342,7 +1339,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               return IdCardHelper.isRequestable(
                   _idCardStatusMap[user.uid] ?? 'none');
             }).length;
-            if (requestableCount == 0) return const SizedBox.shrink();
+            // [R7-P1-5 §13] 1명이면 bulk UI를 세우지 않는다.
+            //   한 사람에게 보낼 요청을 "일괄 처리" 패널로 감싸면, row에도
+            //   같은 action이 있어 같은 일이 두 군데서 강하게 보인다.
+            //   1명은 개인 카드의 action이 이미 처리한다.
+            if (requestableCount < 2) return const SizedBox.shrink();
             return _buildIdCardRequestSection(ctx, g, requestableCount);
           }),
           Builder(builder: (ctx) {
@@ -1350,7 +1351,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               final status = _contractStatusMap[app.id];
               return status == null || status.isEmpty || status == 'voided';
             }).length;
-            if (noContractCount == 0) return const SizedBox.shrink();
+            // [R7-P1-5 §13] 1명이면 개인 카드 action만 — bulk 패널 없음.
+            if (noContractCount < 2) return const SizedBox.shrink();
             return _buildContractBatchSection(ctx, g, noContractCount);
           }),
           Padding(
@@ -1451,7 +1453,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Future<void> _openInviteMethod(_GroupData g, String slotId) async {
+  /// [R7-P1-CORR] 같은 모집 단위의 초대 시트는 하나만 뜬다.
+  Future<void> _openInviteMethod(_GroupData g, String slotId) =>
+      ActionGuard.runVoid(
+        ActionGuard.keyOf('inviteMethod', [g.toId, slotId, g.wdId]),
+        () => _openInviteMethodInner(g, slotId),
+      );
+
+  Future<void> _openInviteMethodInner(_GroupData g, String slotId) async {
     if (!mounted) return;
     // [R2.4] 통계 스트립·초대 CTA와 **같은 값**을 쓴다.
     final shortage = g.shortage;
@@ -1747,7 +1756,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               runSpacing: 3,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                if (!isPending) _buildReviewBadge(context, user?.uid),
+                // [R7-P1-4 §11] 리뷰 배지 제거.
+                //   두 가지 문제가 겹쳐 있었다.
+                //   (1) `_reviewWrittenMap`이 **확정자 전원**에 대해 만들어졌다.
+                //       아직 근무 전인 사람, NO_SHOW만 있는 사람에게도
+                //       `리뷰미작성`이 붙어 존재하지 않는 업무를 만들었다.
+                //       canonical 자격은 실근무 + 마감이다
+                //       (AttendanceModel.isActualFinalizedWork).
+                //   (2) 자격을 맞춰도 이 카드에 있을 정보가 아니다. 여기서
+                //       관리자가 판단하는 것은 충원이지 리뷰가 아니다.
+                //       리뷰는 전용 화면(admin_review_list_screen)이 맡는다.
                 _contractBadge(context, app.id, isPending: isPending),
                 if (!isPending)
                   IdCardHelper.buildStatusBadge(context, idCardStatus),
@@ -1988,10 +2006,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final status = _contractStatusMap[appId];
     if (status == null || status.isEmpty) {
       if (!isPending) {
+        // [R7-P1-6 §14] 실패가 아니라 지금 할 수 있는 다음 일 — orange.
         return _iconChip(context,
             icon: Icons.assignment_late_outlined,
-            label: '계약미작성',
-            color: AppColors.error);
+            label: '계약서 작성 필요',
+            color: AppColors.warningDark);
       }
       return const SizedBox.shrink();
     }
@@ -2006,11 +2025,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             label: '관리자서명',
             color: AppColors.warningDark,
             bgColor: AppColors.warningDark.withValues(alpha: 0.1));
+      // [R7-P1-6 §14] 끝난 것은 참고 정보 — gray. green은 `확정`에 쓴다.
       case 'completed':
         return _chip(context,
             label: '계약완료',
-            color: AppColors.successDark,
-            bgColor: AppColors.successDark.withValues(alpha: 0.1));
+            color: AppColors.grey600,
+            bgColor: AppColors.grey100);
       case 'voided':
         return _chip(context,
             label: '무효',
@@ -2052,42 +2072,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Widget _buildReviewBadge(BuildContext context, String? uid) {
-    if (uid == null || !_reviewWrittenMap.containsKey(uid)) {
-      return const SizedBox.shrink();
-    }
-    final written = _reviewWrittenMap[uid]!;
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 5),
-        vertical: ResponsiveHelper.spacing(context, 2),
-      ),
-      decoration: BoxDecoration(
-        color: written
-            ? AppColors.successDark.withValues(alpha: 0.12)
-            : AppColors.warningDark.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            written ? Icons.rate_review : Icons.rate_review_outlined,
-            size: ResponsiveHelper.iconSize(context, 10),
-            color: written ? AppColors.successDark : AppColors.warningDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            written ? '리뷰완료' : '리뷰미작성',
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: written ? AppColors.successDark : AppColors.warningDark,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _chip(BuildContext context,
       {required String label,
@@ -2428,7 +2412,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             child: Text(
               isActive
                   ? '${_selectedIdCardUserIds.length}명 선택됨'
-                  : '미요청 $requestableCount명',
+                  // [R7-P1-4 §12] `미요청`은 none·expired·rejected 셋을 한
+                  //   낱말로 덮었다. 거절당한 사람과 아직 요청하지 않은 사람이
+                  //   같아 보였고, 만료된 건은 다시 요청해야 한다는 사실이
+                  //   사라졌다. 이 숫자의 canonical 의미는
+                  //   IdCardHelper.isRequestable — `지금 요청할 수 있는 사람`이다.
+                  //   원천 상태는 건드리지 않고 집계 이름만 그 뜻에 맞춘다.
+                  : '요청 가능 $requestableCount명',
               style:
                   ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark),
             ),
@@ -3030,7 +3020,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   // ── [R5.1] 대체 인력 충원 ──────────────────────────────────────────────────
 
-  Future<void> _releaseNoshowSeat(ApplicationModel app) async {
+  /// [R7-P1-CORR] 좌석 반납은 정원 카운터를 움직인다 — 두 번 실행되면 정원이
+  ///   두 번 복구된다. `_isProcessing` 체크와 설정 사이에 확인 다이얼로그
+  ///   await가 있어 그 구간에 들어온 두 번째 탭이 통과할 수 있었다.
+  Future<void> _releaseNoshowSeat(ApplicationModel app) =>
+      ActionGuard.runVoid(
+        ActionGuard.keyOf('releaseNoshowSeat', [app.id]),
+        () => _releaseNoshowSeatInner(app),
+      );
+
+  Future<void> _releaseNoshowSeatInner(ApplicationModel app) async {
     if (_isProcessing) return;
     final user = _userMap[app.uid];
     final confirmed = await DialogHelper.showConfirm(
@@ -3044,6 +3043,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       confirmColor: AppColors.warning,
     );
     if (!confirmed || !mounted) return;
+    // [R7-P1-CORR] await 뒤 재확인. ActionGuard가 이미 막지만, 이 가드는
+    //   같은 화면의 **다른** 처리(일괄 확정 등)와도 겹치면 안 된다.
+    if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
       final success = await _svc.releaseNoshowSeat(applicationId: app.id);

@@ -146,10 +146,26 @@ void main() {
       expect(readiness.contains('w["closedAt"] != null'), isTrue);
     });
 
-    test('03-b 당일명단 부족도 종료를 읽는다', () {
-      final g = _after(dayRaw, 'int get shortage {', 400);
-      expect(g.contains('capacityState == InviteCapacityState.closed'), isTrue);
+    // [R7-P1-3] 종료 판정은 canonical `staffingShortageOf` 안으로 옮겨 갔다.
+    //   당일명단·업무명단이 같은 함수를 쓰므로 한쪽만 종료를 읽는 일이 없다.
+    test('03-b 부족 계산이 종료를 읽는다 — 두 명단이 같은 함수를 쓴다', () {
+      final canon = File('lib/models/ui/invite_capacity_state.dart')
+          .readAsStringSync();
+      final g = _after(canon, 'int? staffingShortageOf(', 500);
+      expect(g.contains('capacity == InviteCapacityState.closed'), isTrue);
       expect(g.contains('return 0;'), isTrue);
+      // UNKNOWN을 0으로 내리지 않는다 — 확인하지 못한 것과 부족 없음은 다르다.
+      expect(g.contains('capacity == InviteCapacityState.unknown'), isTrue);
+      expect(g.contains('return null;'), isTrue);
+
+      for (final p in const [
+        'lib/screens/business_admin/dialogs/day_applicants_dialog.dart',
+        'lib/screens/business_admin/dialogs/work_applicants_dialog.dart',
+      ]) {
+        expect(File(p).readAsStringSync().contains('staffingShortageOf('),
+            isTrue,
+            reason: p);
+      }
     });
 
     test('03-c 서버 두 reader가 같은 종료 신호를 쓴다', () {

@@ -558,21 +558,24 @@ void main() {
   group('10. typography · CTA · separator', () {
     final src = _src(_cardPath);
 
-    test('10-a 관리용 제목 grey500 → grey600 (§15)', () {
-      final body =
-          _codeOf(_bodyOf(src, 'List<Widget> _buildManagedTitleLine('));
-      expect(body.contains('color: AppColors.grey600'), true);
-      expect(body.contains('AppColors.grey500'), false);
-      // 크기·굵기는 유지
-      expect(body.contains('ResponsiveHelper.smallStyle('), true);
-      expect(body.contains('fontWeight'), false);
+    // [R7-P1-2] 관리용 제목을 회색 보조행으로 낮추던 구조가 사라졌다.
+    //   제목은 카드의 1순위 textPrimary가 됐고, 대신 사업장명이 그 자리의
+    //   tertiary로 내려왔다. 이 테스트는 그 자리의 색 계약을 이어받는다.
+    test('10-a 제목은 textPrimary, 사업장명은 grey600 tertiary (§15)', () {
+      final title = _codeOf(_bodyOf(src, 'Widget _buildTitleLine('));
+      expect(title.contains('color: known ? AppColors.textPrimary'), true);
+      expect(title.contains('FontWeight.w700'), true);
+
+      final when = _codeOf(_bodyOf(src, 'Widget _buildWhenLine('));
+      expect(when.contains('color: AppColors.grey600'), true,
+          reason: '사업장명은 날짜보다 약하다');
     });
 
     test('10-b CTA는 filled button이 아니다 (§18)', () {
       final body = _codeOf(_bodyOf(src, 'Widget _buildActionBar('));
       expect(body.contains('ElevatedButton'), false);
       expect(body.contains('FilledButton'), false);
-      expect(body.contains("'지원 현황'"), true);
+      expect(body.contains("'인력 현황'"), true); // [R7-P1-7 §15]
       expect(body.contains('Theme.of(context).primaryColor'), true);
     });
 
@@ -679,15 +682,19 @@ void main() {
     final src = _src(_cardPath);
     final build = _codeOf(_bodyOf(src, 'Widget build(BuildContext context)'));
 
-    test('12-a collapsed 줄 순서 무변경 (§26)', () {
+    // [R7-P1-2] 줄 순서가 바뀌었다 — 제목이 1순위로 올라왔다.
+    //   순서의 canonical 계약은 posting_card_ia_test 06-a가 갖는다.
+    //   여기서는 시각 위계가 그 순서와 어긋나지 않는지만 본다.
+    test('12-a collapsed 줄 순서: 제목 → 언제 → 업무 → 인원 → 액션 (§26)', () {
+      final title = build.indexOf('_buildTitleLine(');
       final when = build.indexOf('_buildWhenLine(');
       final work = build.indexOf('_buildWorkLine(');
-      final title = build.indexOf('_buildManagedTitleLine(');
       final staffing = build.indexOf('_buildStaffingLine(');
       final action = build.indexOf('_buildActionBar(');
+      expect(title, greaterThan(-1));
+      expect(title, lessThan(when));
       expect(when, lessThan(work));
-      expect(work, lessThan(title));
-      expect(title, lessThan(staffing));
+      expect(work, lessThan(staffing));
       expect(staffing, lessThan(action));
     });
 

@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../models/core/attendance_model.dart';
 import '../../utils/toast_helper.dart';
 
 // Utils
@@ -890,10 +891,17 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
       final cfResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
       final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
-      // wageStatus confirmed/transferred 인 건수만 근무일 수로 집계
+      // [R7-P1-4 §11] canonical 실근무 판정 — 서버 srvIsActualFinalizedWork와 같다.
+      //   이전에는 wageStatus만 봤다. 그런데 callableBatchSetNoShow는 노쇼에도
+      //   wageStatus를 confirmed로 쓰므로(0원 마감), 오지 않은 날이 근무일로
+      //   집계되고 있었다. 리뷰 작성자에게 보이는 `이번 달 N일 근무`가
+      //   실제보다 많아지는 경로다.
       workDaysInMonth = cfItems.where((e) {
-        final status = (e as Map)['wageStatus'] as String?;
-        return status == 'confirmed' || status == 'transferred';
+        final m = e as Map;
+        return AttendanceModel.isActualFinalizedWork(
+          m['status'] as String?,
+          m['wageStatus'] as String?,
+        );
       }).length;
     } catch (e) {
       debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');

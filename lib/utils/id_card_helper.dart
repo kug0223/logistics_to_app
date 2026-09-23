@@ -54,11 +54,15 @@ class IdCardHelper {
   /// 신분증 상태 정보 가져오기
   static IdCardStatusInfo getStatusInfo(String status) {
     switch (status) {
+      // [R7-P1-6 §14] 완료된 것은 참고 정보다 — gray.
+      //   green은 `확정`(약속이 섰다)에 쓴다. 서류가 갖춰진 사실까지 green으로
+      //   말하면 한 카드에 강한 색이 여러 개가 되고, 정작 지금 눌러야 하는
+      //   것이 묻힌다.
       case 'approved':
         return IdCardStatusInfo(
           icon: Icons.verified,
           label: '신분증완료',
-          color: AppColors.success,
+          color: AppColors.grey500,
         );
       case 'pending':
         return IdCardStatusInfo(
@@ -72,11 +76,15 @@ class IdCardHelper {
           label: '신분증만료',
           color: AppColors.grey500,
         );
+      // [R7-P1-6 §14] rejected는 **과거 사실**이다. red 배지로 계속 띄우면
+      //   그 사람이 문제인 것처럼 읽히는데, 실제로 해야 할 일은 다시 요청하는
+      //   것이다. 지금 할 수 있는 일이므로 orange, 문구도 다음 행동으로 쓴다.
+      //   실제 `[재요청]` 버튼은 action row가 갖는다(isRequestable에 포함).
       case 'rejected':
         return IdCardStatusInfo(
-          icon: Icons.cancel_outlined,
-          label: '신분증거절',
-          color: AppColors.error,
+          icon: Icons.replay,
+          label: '신분증 재요청 필요',
+          color: AppColors.warningDark,
         );
       case 'none':
       default:

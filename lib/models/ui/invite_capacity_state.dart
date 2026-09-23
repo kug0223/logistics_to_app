@@ -61,3 +61,28 @@ InviteCapacityState inviteCapacityStateOf({
   }
   return InviteCapacityState.available;
 }
+
+/// [R7-P1-3] 부족 — staffing을 말하는 **모든** 표면이 이 한 식을 쓴다.
+///
+/// DayApplicantsDialog가 `_GroupData.shortage`로 갖고 있던 식을 그대로 끌어
+/// 올렸다. WorkApplicantsDialog는 같은 모집 단위를 다른 진입경로로 여는
+/// 화면인데 부족을 아예 말하지 않았고, 그래서 어느 문으로 들어오느냐에 따라
+/// 같은 자리가 "2명 부족"이기도 하고 아무 말도 없기도 했다.
+///
+///   · 초대(INVITED)는 빼지 않는다 — 초대는 자리를 확보하지 않는다.
+///   · 대기(PENDING)도 빼지 않는다 — 같은 이유.
+///   · 종료된 모집 단위는 채울 수 없으므로 부족이 아니다.
+///   · capacity를 모르면 `0`이 아니라 **null**이다 (UNKNOWN != ZERO).
+///
+/// [seatedConfirmed]는 좌석을 실제로 차지한 확정 수다 — NO_SHOW 대체충원으로
+/// 좌석을 반납한 확정(`staffingReleasedAt`)은 빼고 센다.
+int? staffingShortageOf({
+  required InviteCapacityState capacity,
+  required int requiredCount,
+  required int seatedConfirmed,
+}) {
+  if (capacity == InviteCapacityState.unknown) return null;
+  if (capacity == InviteCapacityState.closed) return 0;
+  final n = requiredCount - seatedConfirmed;
+  return n > 0 ? n : 0;
+}

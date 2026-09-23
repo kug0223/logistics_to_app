@@ -26,6 +26,7 @@ import '../models/core/to_filter_state.dart';
 import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
 import '../utils/network_checker.dart';
+import '../utils/notification_retention.dart';
 import '../widgets/dialogs/apply/document_access_consent.dart';
 
 // ═══════════════════════════════════════════════════════════

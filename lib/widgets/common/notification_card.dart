@@ -5,8 +5,13 @@ import '../../theme/app_colors.dart';
 
 /// 알림 목록 아이템 카드
 ///
-/// 왼쪽으로 드래그 시 [취소 | 🗑 삭제] 패널이 드러나며,
-/// 휴지통 버튼을 눌러야만 실제 삭제가 실행된다.
+/// 왼쪽으로 드래그 시 액션 패널이 드러나며, 버튼을 눌러야만 실제로 실행된다.
+/// full swipe 즉시 삭제로 바꾸지 않는다 — 계약·확정·급여 알림을 손가락
+/// 한 번으로 잃을 수 있는 구조는 되돌릴 수단이 있어도 위험하다.
+///
+/// [R7-P1-8 §17] 패널 구성은 읽음 여부에 따라 다르다:
+///   미읽음 → [읽음 | 삭제]
+///   읽음   → [삭제]
 ///
 /// 레이아웃 — category에 따라 두 가지:
 ///   admin:    [사업장명] / [●제목] / 본문 / [단일 CTA?]
@@ -23,6 +28,13 @@ class NotificationCard extends StatefulWidget {
   final NotificationModel notification;
   final VoidCallback? onTap;
   final VoidCallback? onDismiss;
+
+  /// [R7-P1-8 §17] 스와이프 패널의 `읽음`. 미읽음 알림에서만 노출된다.
+  ///
+  /// 읽음 표시는 domain state를 건드리지 않는다 — 계약은 여전히 서명 대기이고
+  /// 지원서는 여전히 PENDING이다. 그래서 확인 없이 즉시 실행한다.
+  final VoidCallback? onMarkRead;
+
   final ValueNotifier<String?>? openCardIdNotifier;
 
   const NotificationCard({
@@ -30,6 +42,7 @@ class NotificationCard extends StatefulWidget {
     required this.notification,
     this.onTap,
     this.onDismiss,
+    this.onMarkRead,
     this.openCardIdNotifier,
   });
 
@@ -315,33 +328,53 @@ class _NotificationCardState extends State<NotificationCard>
       clipBehavior: Clip.hardEdge,
       children: [
         // ── 액션 패널 (스와이프로 드러남) ─────────────────────────────────
+        //
+        // [R7-P1-8 §17] `취소`를 `읽음`으로 바꿨다.
+        //
+        //   `취소`는 패널을 닫는 동작인데, 그건 바깥을 탭하거나 다른 카드를
+        //   스와이프해도 이미 된다. 두 칸짜리 패널의 절반을, 다른 방법이
+        //   얼마든지 있는 일에 쓰고 있었다.
+        //
+        //   그 자리에 `읽음`을 둔다. 알림 목록에서 실제로 하는 일은 둘이다 —
+        //   확인 표시하거나 치우거나. 읽음은 domain state를 건드리지 않으므로
+        //   (Notification != Task) 확인 없이 즉시 실행해도 안전하다.
+        //
+        //   이미 읽은 알림에는 `읽음`을 띄우지 않는다. 눌러도 아무 일이
+        //   없는 버튼을 자리만 채우게 두지 않는다 — 삭제가 패널 전체를 쓴다.
         Positioned.fill(
           child: Align(
             alignment: Alignment.centerRight,
             child: SizedBox(
-              width: _revealWidth,
+              width: isUnread ? _revealWidth : _revealWidth / 2,
               child: Row(
                 children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: _close,
-                      child: Container(
-                        color: AppColors.grey500,
-                        alignment: Alignment.center,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.close, color: Colors.white, size: 22),
-                            const SizedBox(height: 2),
-                            Text(
-                              '취소',
-                              style: ResponsiveHelper.tinyStyle(context, color: Colors.white),
-                            ),
-                          ],
+                  if (isUnread)
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          widget.onMarkRead?.call();
+                          _close();
+                        },
+                        child: Container(
+                          // [§14] 읽음은 navigation/selection 계열 — brand blue.
+                          color: AppColors.brand,
+                          alignment: Alignment.center,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.drafts_outlined,
+                                  color: Colors.white, size: 22),
+                              const SizedBox(height: 2),
+                              Text(
+                                '읽음',
+                                style: ResponsiveHelper.tinyStyle(context,
+                                    color: Colors.white),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
                   Expanded(
                     child: GestureDetector(
                       onTap: widget.onDismiss,

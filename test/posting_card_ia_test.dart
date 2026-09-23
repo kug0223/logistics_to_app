@@ -452,10 +452,22 @@ void main() {
       }
     });
 
-    test('05-g 날짜 줄은 Wrap이라 배지가 날짜를 밀어내지 못한다 (§22)', () {
-      final body = _codeOf(_bodyOf(_src(_cardPath), 'Widget _buildWhenLine('));
-      expect(body.contains('Wrap('), true);
-      expect(body.contains('_buildStatusBadge('), true);
+    // [R7-P1-2] 상태 배지가 날짜 줄을 떠나 1행(타입 배지 옆)으로 올라갔다.
+    //   날짜 줄은 이제 단일 RichText이므로 Wrap이 아니라 ellipsis가 방어한다.
+    test('05-g 날짜 줄과 상태 배지가 서로를 밀어내지 못한다 (§22)', () {
+      final src = _src(_cardPath);
+      final body = _codeOf(_bodyOf(src, 'Widget _buildWhenLine('));
+      expect(body.contains('_buildStatusBadge('), false,
+          reason: '배지는 1행 메타로 올라갔다');
+      expect(body.contains('maxLines: 1'), true);
+      expect(body.contains('TextOverflow.ellipsis'), true);
+      // 1행: 배지가 메뉴 버튼을 밀어내지 못하게 Flexible로 감쌌다.
+      final build = _flat(_codeOf(_bodyOf(src, 'Widget build(BuildContext context)')));
+      final badge = build.indexOf('_buildStatusBadge(');
+      final menu = build.indexOf('_buildSingleTOMenu(');
+      expect(badge, greaterThan(-1));
+      expect(badge, lessThan(menu));
+      expect(build.contains('Flexible( child: Align('), true);
     });
   });
 
@@ -466,29 +478,32 @@ void main() {
     final src = _src(_cardPath);
     final build = _codeOf(_bodyOf(src, 'Widget build(BuildContext context)'));
 
-    test('06-a 줄 순서: 언제 → 어떤 일 → 관리용 제목 → 인원 → 액션', () {
+    // [R7-P1-2] 카드의 entity는 posting group이다 — 제목이 1순위다.
+    test('06-a 줄 순서: 제목 → 언제 → 어떤 일 → 인원 → 액션', () {
+      final title = build.indexOf('_buildTitleLine(');
       final when = build.indexOf('_buildWhenLine(');
       final work = build.indexOf('_buildWorkLine(');
-      final title = build.indexOf('_buildManagedTitleLine(');
       final staffing = build.indexOf('_buildStaffingLine(');
       final action = build.indexOf('_buildActionBar(');
-      for (final i in [when, work, title, staffing, action]) {
+      for (final i in [title, when, work, staffing, action]) {
         expect(i, greaterThan(-1));
       }
+      expect(title, lessThan(when));
       expect(when, lessThan(work));
-      expect(work, lessThan(title));
-      expect(title, lessThan(staffing));
+      expect(work, lessThan(staffing));
       expect(staffing, lessThan(action));
     });
 
-    test('06-b 날짜가 관리용 제목보다 큰 typography다 (§5)', () {
+    test('06-b 제목이 날짜보다 강한 typography다 (§5)', () {
+      final titleBody = _codeOf(_bodyOf(src, 'Widget _buildTitleLine('));
       final whenBody = _codeOf(_bodyOf(src, 'Widget _buildWhenLine('));
-      final titleBody =
-          _codeOf(_bodyOf(src, 'List<Widget> _buildManagedTitleLine('));
-      expect(whenBody.contains('ResponsiveHelper.subtitleStyle('), true);
-      expect(titleBody.contains('ResponsiveHelper.smallStyle('), true);
-      expect(build.contains('ResponsiveHelper.titleStyle('), false,
-          reason: '19px bold 관리 제목이 1순위였던 구조가 사라져야 한다');
+      // 제목 = subtitleStyle(17) w700 / 날짜 = bodyStyle(15) w600
+      expect(titleBody.contains('ResponsiveHelper.subtitleStyle('), true);
+      expect(titleBody.contains('FontWeight.w700'), true);
+      expect(whenBody.contains('ResponsiveHelper.subtitleStyle('), false,
+          reason: '날짜가 제목과 같은 크기면 1순위가 둘이 된다');
+      expect(whenBody.contains('ResponsiveHelper.bodyStyle('), true);
+      expect(build.contains('ResponsiveHelper.titleStyle('), false);
     });
 
     test('06-c `N시간 전` 생성 시각이 collapsed에서 빠졌다 (§6)', () {
@@ -512,11 +527,20 @@ void main() {
       expect(body.contains('totalSlots'), false);
     });
 
-    test('06-f 관리용 제목은 업무명과 같으면 생략된다 (§9)', () {
-      final body =
-          _flat(_codeOf(_bodyOf(src, 'List<Widget> _buildManagedTitleLine(')));
-      expect(body.contains('if (name == _collapsedWorkText('), true);
-      expect(body.contains('maxLines: 1'), true);
+    // [R7-P1-2] 이전에는 제목이 업무명과 같으면 그 줄을 통째로 생략했다.
+    //   업무명이 곧 제목인 공고는 카드에 identity가 한 줄도 남지 않았다.
+    test('06-f 공고 제목은 어떤 경우에도 생략되지 않는다 (§3)', () {
+      final code = _codeOf(src);
+      expect(code.contains('_buildManagedTitleLine'), false,
+          reason: '조건부 생략 구조 자체가 사라져야 한다');
+      final body = _flat(_codeOf(_bodyOf(src, 'Widget _buildTitleLine(')));
+      expect(body.contains('_collapsedWorkText('), false,
+          reason: '업무명과 비교해 제목을 지우지 않는다');
+      expect(body.contains('return const []'), false);
+      // 비어 있어도 침묵하지 않는다 — UNKNOWN != EMPTY
+      expect(body.contains('제목 없는 공고'), true);
+      expect(body.contains('masterTO.title'), true,
+          reason: 'groupTitle이 비면 canonical title로 내려간다');
     });
 
     test('06-g FLEX 날짜는 operationalDate만 읽는다 — 재계산 없음 (§2)', () {
@@ -580,9 +604,12 @@ void main() {
   group('08. 지원 현황 CTA', () {
     final src = _src(_cardPath);
 
-    test('08-a 카피는 `지원 현황` — 집계 숫자를 넣지 않는다 (§15)', () {
+    // [R7-P1-7 §15] 열리는 화면의 이름과 같게 한다. 버튼은 `지원 현황`,
+    //   열린 화면은 `지원명단`, 다른 진입로는 `지원자 관리` — 같은 일에
+    //   이름이 셋이었다.
+    test('08-a 카피는 `인력 현황` — 집계 숫자를 넣지 않는다 (§15)', () {
       final body = _codeOf(_bodyOf(src, 'Widget _buildActionBar('));
-      expect(body.contains("'지원 현황'"), true);
+      expect(body.contains("'인력 현황'"), true);
       expect(body.contains('명 보기'), false);
     });
 

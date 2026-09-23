@@ -31,6 +31,29 @@ class AttendanceModel {
   static const String wageConfirmed   = 'confirmed';
   static const String wageTransferred = 'transferred';
 
+  /// [R7-P1-4 §11] **실제로 일했고 그 근무가 마감됐는가** — canonical 판정.
+  ///
+  /// 서버의 `srvIsActualFinalizedWork`와 **같은 식**이다. 리뷰 자격·실근무일
+  /// 집계처럼 "이 사람이 여기서 일한 적이 있는가"를 묻는 모든 곳이 이것 하나를
+  /// 쓴다. 클라이언트가 다른 식을 쓰면 서버는 리뷰를 거부하는데 화면은
+  /// `리뷰미작성`이라고 재촉하는 상태가 된다.
+  ///
+  /// 두 조건을 **함께** 본다:
+  ///   · status가 실제 출근 계열인가 (present·late·early_leave)
+  ///   · 그 근무의 급여가 마감됐는가 (confirmed·transferred)
+  ///
+  /// wageStatus만 보면 NO_SHOW가 실근무로 새어 들어온다.
+  /// `callableBatchSetNoShow`는 status를 NO_SHOW로 두면서 wageStatus는
+  /// `confirmed`로 쓰기 때문이다(금액 0으로 마감된 것은 맞다).
+  /// 반대로 status만 보면 아직 마감되지 않은 오늘 근무가 섞인다.
+  static bool isActualFinalizedWork(String? status, String? wageStatus) {
+    final worked = status == statusPresent ||
+        status == statusLate ||
+        status == statusEarlyLeave;
+    if (!worked) return false;
+    return wageStatus == wageConfirmed || wageStatus == wageTransferred;
+  }
+
   final String id;
   final String applicationId;
   final String userId;

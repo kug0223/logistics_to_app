@@ -200,9 +200,17 @@ void main() {
       //
       // [R2.4] 식은 그대로고 **계산 위치**만 한 곳으로 모였다. 통계 스트립·CTA·
       //   초대 방법 시트가 각자 계산해 같은 다이얼로그 안에서 숫자가 갈라졌다.
-      expect(s.contains('int get shortage {'), true);
-      expect(s.contains('final n = requiredCount - seatedConfirmed;'), true);
+      //
+      // [R7-P1-3] 그 한 곳이 이제 다이얼로그 바깥이다. WorkApplicantsDialog가
+      //   같은 모집 단위를 다른 문으로 열면서 부족을 아예 말하지 않았기 때문에,
+      //   식을 `staffingShortageOf`로 올리고 양쪽이 그것만 쓰게 했다.
+      expect(s.contains('int get shortage =>'), true);
+      expect(s.contains('staffingShortageOf('), true);
       expect(s.contains('!a.isStaffingReleased'), true);
+
+      // 식 자체는 여전히 한 벌이다 — 옮겨 간 곳에 있다.
+      final canon = _source('lib/models/ui/invite_capacity_state.dart');
+      expect(canon.contains('final n = requiredCount - seatedConfirmed;'), true);
     });
 
     test('AHV-34 노쇼 배지 무변경 (AHF-07 제외)', () {

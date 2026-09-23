@@ -252,6 +252,16 @@ class NotificationModel {
   final Map<String, dynamic>? data; // 추가 데이터 (이동할 화면 정보 등)
   final bool isRead;                // 읽음 여부
   final DateTime createdAt;         // 생성 시각
+
+  /// [R7-P1-9 §21] createdAt이 이 문서에 **실제로 있었는가**.
+  ///
+  /// createdAt은 non-null이라, 필드가 없으면 DateTime.now()로 채운다.
+  /// 그대로 두면 시각을 모르는 legacy 알림이 `오늘` 그룹 맨 위에 서서,
+  /// 몇 년 전 알림이 방금 온 것처럼 보인다. UNKNOWN != TODAY.
+  ///
+  /// 정렬 자체는 건드리지 않았다(목록 순서 계약을 이번에 바꾸지 않는다).
+  /// 대신 그룹핑과 visible window 판정이 이 플래그를 본다.
+  final bool createdAtKnown;
   final DateTime? readAt;           // 읽은 시각
   /// 수신 맥락 카테고리 — CF가 명시적으로 저장 (Phase 2). 없으면 resolvedCategory fallback
   final NotificationCategory? category;
@@ -267,6 +277,7 @@ class NotificationModel {
     this.data,
     this.isRead = false,
     required this.createdAt,
+    this.createdAtKnown = true,
     this.readAt,
     this.category,
     this.importance,
@@ -283,6 +294,7 @@ class NotificationModel {
       data: map['data'],
       isRead: map['isRead'] ?? false,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+      createdAtKnown: map['createdAt'] is Timestamp,
       readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),
       category: _categoryFromString(map['category']?.toString()),
       importance: _importanceFromString(map['importance']?.toString()),
@@ -345,6 +357,12 @@ class NotificationModel {
       data: data ?? this.data,
       isRead: isRead ?? this.isRead,
       createdAt: createdAt ?? this.createdAt,
+      // [R7-P1-9 §21] copyWith 파라미터로 두지 않는다 — 이것은 **읽어서 안
+      //   사실**이지 호출부가 정할 값이 아니다. 다만 빠뜨리면 기본값 true로
+      //   되돌아가므로 반드시 실어 보낸다. markAsRead가 copyWith로 새 인스턴스를
+      //   만드는데, 거기서 UNKNOWN이 조용히 `시각 있음`으로 바뀌면 그 알림은
+      //   읽는 순간 `오늘`로 올라온다.
+      createdAtKnown: createdAtKnown,
       readAt: readAt ?? this.readAt,
       category: category ?? this.category,
       importance: importance ?? this.importance,

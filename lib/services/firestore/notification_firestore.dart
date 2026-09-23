@@ -144,10 +144,15 @@ extension NotificationFirestore on FirestoreService {
     }
   }
 
-  /// 오래된 알림 삭제 (30일 이상)
+  /// 오래된 알림 삭제 — 기준은 [NotificationRetention.visibleDays].
+  ///
+  /// [R7-P1-9] 이 job은 원래 30일이었다. 그 위에 90일 visible window를 얹으면
+  /// 화면은 90일을 보여 준다고 말하면서 31일 전 알림은 존재조차 하지 않는
+  /// 상태가 된다. 새 job을 만들지 않고, 이미 있던 이 job의 기준을 선언한
+  /// 정책에 맞춘다 — 방향은 더 오래 보관하는 쪽이다.
   Future<int> deleteOldNotifications(String userId) async {
     try {
-      final cutoffDate = DateTime.now().subtract(const Duration(days: 30));
+      final cutoffDate = NotificationRetention.cutoffFrom(DateTime.now());
       int totalDeleted = 0;
 
       while (true) {
@@ -179,6 +184,17 @@ extension NotificationFirestore on FirestoreService {
   ///
   /// 31건 수신 시 NotificationProvider가 30건만 표시하고 _hasMore=true 설정.
   /// 31건 미만이면 _hasMore=false — 더 이상 오래된 알림 없음.
+  ///
+  /// [R7-P1-9 §21] visible window는 쿼리에 `where`로 넣지 않는다.
+  ///
+  ///   · `createdAt` 부등호 필터는 그 필드가 **없는** 문서를 통째로 누락시킨다.
+  ///     legacy row가 조용히 사라지는 것은 age-out이 아니라 은폐다.
+  ///   · limit(31)로 hasMore를 감지하는 기존 계약이 깨진다. 창 밖 문서가
+  ///     섞여 있으면 31건을 받아도 표시 가능한 것이 30건이 안 될 수 있고,
+  ///     그때 `hasMore`의 뜻이 달라진다.
+  ///
+  /// 그래서 쿼리는 그대로 두고, 창은 Provider가 **표시 직전에** 적용한다.
+  /// 읽기량은 같고, 판단은 한 곳(NotificationRetention)에 있다.
   Stream<List<NotificationModel>> watchUserNotifications(String userId) {
     return _notificationsFor(userId)
         .orderBy('createdAt', descending: true)
