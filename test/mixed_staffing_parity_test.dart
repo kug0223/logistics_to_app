@@ -230,6 +230,8 @@ void main() {
   _deadlineColor();
   _weeklyBadge();
   _population();
+  _residuals();
+  _inviteSnapshot();
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -697,6 +699,208 @@ void _population() {
       expect(longTermIdx, greaterThan(-1));
       expect(unknownIdx, lessThan(longTermIdx),
           reason: 'UNKNOWN 안내가 subtype 게이트보다 뒤에 있으면 장기에서 사라진다');
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// [R7-P1R.1] RESIDUAL-A · RESIDUAL-B
+// ════════════════════════════════════════════════════════════════════════
+
+void _residuals() {
+  group('16. RESIDUAL-A — CLOSED != UNKNOWN', () {
+    final cf = _codeOf(_src(_cfPath));
+    final detail =
+        cf.substring(cf.indexOf('export const callableGetDayStaffingDetail'));
+
+    test('16-a 직접 진입 reader가 CLOSED를 population에 담는다', () {
+      expect(
+          detail.contains('"status", "in", ["ACTIVE", "SCHEDULED", "FULL", "CLOSED"]'),
+          true);
+    });
+
+    test('16-b 공고 단위 종료가 row의 isClosed에 실린다', () {
+      expect(detail.contains('const toLevelClosed ='), true);
+      expect(detail.contains('const slotClosed = to.closed ||'), true);
+      // 장기 쪽도 같은 사실을 본다.
+      expect(detail.contains('const toClosed = to.data["isManualClosed"] === true'),
+          true);
+    });
+
+    test('16-c CLOSED는 shortage 0 — Home 부족에 더해지지 않는다', () {
+      expect(_row(required: 5, confirmed: 1, closed: true).shortage, 0);
+      expect(_row(required: 5, confirmed: 1, closed: true, longTerm: true).shortage, 0);
+      expect(
+        staffingShortageOf(
+            capacity: InviteCapacityState.closed,
+            requiredCount: 5,
+            seatedConfirmed: 1),
+        0,
+      );
+    });
+
+    test('16-d CLOSED와 UNKNOWN이 서로 섞이지 않는다', () {
+      // 종료는 아는 사실 — 정원을 읽었을 때만 CLOSED다.
+      expect(
+        inviteCapacityStateOf(
+            canonicalConfirmed: 1, requiredCount: 5, isClosed: true),
+        InviteCapacityState.closed,
+      );
+      // 정원을 못 읽었으면 종료 여부도 모른다.
+      expect(
+        inviteCapacityStateOf(
+            canonicalConfirmed: null, requiredCount: 5, isClosed: true),
+        InviteCapacityState.unknown,
+      );
+      // UNKNOWN은 shortage를 주장하지 않는다(0이 아니라 null).
+      expect(
+        staffingShortageOf(
+            capacity: InviteCapacityState.unknown,
+            requiredCount: 5,
+            seatedConfirmed: 0),
+        isNull,
+      );
+    });
+
+    test('16-e CLOSED가 지원자 0인 새 그룹을 만들지 않는다 — R2 FINAL 유지', () {
+      final day = _codeOf(_src(_dayPath));
+      expect(day.contains('if (row.isClosed) continue;'), true);
+    });
+
+    test('16-f 날짜 범위 밖 사전 차단은 fail-open이다', () {
+      // rangeStart/rangeEnd가 둘 다 있을 때만 거른다 — 모르면 거르지 않는다.
+      expect(detail.contains('if (fRs && fRe) {'), true);
+    });
+  });
+
+  group('17. RESIDUAL-B — CONTRACT canonical identity', () {
+    final cf = _codeOf(_src(_cfPath));
+
+    test('17-a wdId writer는 슬롯 경로에만 있다', () {
+      final calls = RegExp(r'generateWdId\(\)').allMatches(cf).length;
+      // 정의 1 + 호출 3 (createFlexSlots, updateSlotWorkDetails x2)
+      expect(calls, greaterThanOrEqualTo(3));
+      // 공고 생성/수정 경로에는 없다.
+      for (final name in [
+        'export const callableCreateTO',
+        'export const callableUpdateTO',
+      ]) {
+        final i = cf.indexOf(name);
+        expect(i, greaterThan(-1), reason: name);
+        final body = cf.substring(i, (i + 6000).clamp(0, cf.length));
+        expect(body.contains('generateWdId()'), false, reason: name);
+      }
+    });
+
+    test('17-b 장기 identity는 composite — canonicalId 규칙 그대로다', () {
+      final wd = _codeOf(
+          _src('lib/models/core/work_detail_data.dart'));
+      expect(wd.contains('String get canonicalId => wdId ?? id;'), true);
+      final row = _codeOf(_src('lib/models/ui/day_staffing_row.dart'));
+      expect(row.contains(r"'${workType}_${startTime}_$endTime'"), true);
+    });
+
+    test('17-c composite가 같은 TO 안의 다른 업무를 구분한다', () {
+      String key(String wt, String st, String et) {
+        final r = DayStaffingRow.tryFromMap({
+          'toId': 'to1',
+          'slotId': '',
+          'wdId': '',
+          'workType': wt,
+          'startTime': st,
+          'endTime': et,
+          'requiredCount': 1,
+          'confirmedCount': 0,
+          'isLongTerm': true,
+        });
+        return '${r!.toId}_${r.wdId}';
+      }
+
+      // 같은 업무 · 다른 시간
+      expect(key('사무업무', '09:00', '12:00'),
+          isNot(key('사무업무', '13:00', '18:00')));
+      // 다른 업무 · 같은 시간
+      expect(key('사무업무', '09:00', '18:00'),
+          isNot(key('포장', '09:00', '18:00')));
+      // 끝 시간만 다른 경우
+      expect(key('포장', '09:00', '18:00'), isNot(key('포장', '09:00', '19:00')));
+    });
+
+    test('17-d 지원서 그룹키와 row 키가 같은 형식이다', () {
+      // _GroupData.groupKey 의 fallback: '${toId}_${workType}_${start}_$end'
+      final day = _codeOf(_src(_dayPath));
+      expect(day.contains(r"'${workType}_${startTime}_$endTime'"), true);
+      expect(day.contains(r"final key = '${row.toId}_${row.wdId}';"), true);
+    });
+
+    test('17-e wdId가 있으면 그쪽이 우선이다 — composite로 덮어쓰지 않는다', () {
+      final r = DayStaffingRow.tryFromMap({
+        'toId': 'to1',
+        'slotId': 'slot1',
+        'wdId': 'realWdId',
+        'workType': '사무업무',
+        'startTime': '09:00',
+        'endTime': '18:00',
+        'requiredCount': 1,
+        'confirmedCount': 0,
+      });
+      expect(r!.wdId, 'realWdId');
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// [R7-P1R.1 RESIDUAL-C] 장기 contextual 초대가 만드는 약속.
+//
+// DEV golden mutation 실측(2026-09-23):
+//   toId=zqaJEjUV… target=kN2gNpEh…
+//   workDate 2026-09-26 / workEndDate 2026-10-23 / workDays 7일
+//   slotId 없음 / type=long_term / wage 12000 hourly / status INVITED
+//   Application 1건, 알림 1건, 중복 0, 부족 3 유지
+//   cleanup(callableCancelTOInvitation) 후 counters·shortage baseline 복귀
+// ════════════════════════════════════════════════════════════════════════
+
+void _inviteSnapshot() {
+  const invitePath =
+      'lib/screens/business_admin/dialogs/invite_worker_dialog.dart';
+
+  group('18. 장기 초대 snapshot 계약', () {
+    final invite = _codeOf(_src(invitePath));
+
+    test('18-a contextual과 일반 모드가 같은 키를 쓴다', () {
+      // 일반 모드 장기 분기
+      expect(invite.contains("'workEndDate': _endDate!.toIso8601String(),"), true);
+      expect(invite.contains("'workDays': widget.groupItem!.masterTO.workDays,"),
+          true);
+      // contextual 분기 — 같은 키
+      expect(invite.contains("'workEndDate': widget.prefilledWorkEndDate!"), true);
+      expect(invite.contains("'workDays': widget.prefilledWorkDays,"), true);
+    });
+
+    test('18-b 임금은 양쪽 모두 서버가 파생한다 — 클라이언트가 싣지 않는다', () {
+      final i = invite.indexOf('await callable.call({');
+      final body = invite.substring(i, (i + 2200).clamp(0, invite.length));
+      expect(body.contains("'wage'"), false);
+      expect(body.contains("'wageType'"), false);
+      // 업무 식별은 workType + 시작/종료 시각 3중 매칭으로만 보낸다.
+      expect(body.contains("'selectedWorkType'"), true);
+      expect(body.contains("'workDetailStartTime'"), true);
+    });
+
+    test('18-c 장기 payload에 slotId를 싣지 않는다', () {
+      // slotId는 값이 있을 때만 붙는다 — 장기는 null이라 생략된다.
+      expect(
+          invite.contains(
+              "if (widget.prefilledSlotId != null && widget.prefilledSlotId!.isNotEmpty)"),
+          true);
+    });
+
+    test('18-d 약속 범위를 모르면 CTA 자체가 서지 않는다', () {
+      final day = _codeOf(_src(_dayPath));
+      expect(
+          day.contains(
+              'if (g.workEndDate == null) return _buildLongTermInviteHint(ctx);'),
+          true);
     });
   });
 }

@@ -37312,13 +37312,31 @@ export const callableGetDayStaffingDetail = onCall(
 
     // 공개된 적 있는 공고만 — DRAFT는 확정 지원서가 존재할 수 없어
     // required만 더해지고 부족이 통째로 유령이 된다.
-    // (callableGetStaffingReadiness와 같은 population)
+    //
+    // [R7-P1R.1 RESIDUAL-A] CLOSED를 population에 **되돌렸다**.
+    //
+    //   이 reader는 readiness와 다른 일을 한다. readiness는 "몇 명 더
+    //   뽑아야 하는가"를 세므로 종료된 모집을 빼는 것이 맞다. 이 reader는
+    //   관리자가 **그 날짜의 모집 단위를 직접 열었을 때** 무엇을 보여 줄지를
+    //   정한다. 거기서 종료된 단위를 빼면 화면은 그 사실을 모르게 되고,
+    //   `canonicalConfirmed == null` → `정원 확인 불가`로 떨어졌다.
+    //
+    //     CLOSED = 모집 종료 (아는 사실)
+    //     UNKNOWN = 판단할 수 없음
+    //
+    //   둘은 다르다. 종료를 모른다고 말하면 관리자는 새로고침을 시도하고,
+    //   그래도 같은 화면을 본다.
+    //
+    //   Home의 `부족 N`은 이 변경에 영향받지 않는다 — 그 수치는 readiness가
+    //   만들고, 여기서 온 CLOSED row의 shortage는 0이다.
+    //   지원자 0명인 CLOSED 단위로 **새 그룹을 세우지도 않는다**
+    //   (클라이언트의 `if (row.isClosed) continue` — R2 FINAL 계약 유지).
     const tosSnap = await db.collection("tos")
       .where("businessId", "==", businessId)
-      .where("status", "in", ["ACTIVE", "SCHEDULED", "FULL"])
+      .where("status", "in", ["ACTIVE", "SCHEDULED", "FULL", "CLOSED"])
       .get();
 
-    const flexTOs: Array<{toId: string; title: string}> = [];
+    const flexTOs: Array<{toId: string; title: string; closed: boolean}> = [];
     // [R7-P1-PRODUCT] 장기(contract) 공고도 이 날짜의 모집 단위다.
     //
     //   여기서 `type !== "flex" → continue` 한 줄로 장기를 버리고 있었다.
@@ -37333,8 +37351,29 @@ export const callableGetDayStaffingDetail = onCall(
       if (d["isDeleted"] === true) continue;
       const toType = (d["type"] as string | undefined) ?? "";
       const toTitle = (d["title"] as string | undefined) ?? "";
+      // [R7-P1R.1] 공고 단위 종료 — 슬롯 문서가 아직 갱신되기 전에도 참이다.
+      const toLevelClosed = d["isManualClosed"] === true ||
+        (d["status"] as string | undefined) === "CLOSED";
       if (toType === "flex") {
-        flexTOs.push({toId: toDoc.id, title: toTitle});
+        // [R7-P1R.1] 날짜 범위 밖이면 이 날짜에 슬롯이 있을 수 없다.
+        //
+        //   CLOSED를 population에 되돌리면서 대상 TO가 13건에서 92건으로
+        //   늘었다. 각 TO마다 슬롯 subcollection을 하루치 조회하므로
+        //   그대로 두면 다이얼로그 한 번 여는 비용이 몇 배가 된다.
+        //
+        //   rangeStart/rangeEnd가 **둘 다 있을 때만** 거른다. 없으면
+        //   거르지 않는다 — 모르는 것을 근거로 빼면 그게 곧 silent
+        //   exclusion이다(fail-open).
+        const fRs = d["rangeStart"] as admin.firestore.Timestamp | undefined;
+        const fRe = d["rangeEnd"] as admin.firestore.Timestamp | undefined;
+        if (fRs && fRe) {
+          const dayNum0 = srvKstDateNum(new Date(dateMs));
+          if (dayNum0 < srvKstDateNum(fRs.toDate()) ||
+              dayNum0 > srvKstDateNum(fRe.toDate())) {
+            continue;
+          }
+        }
+        flexTOs.push({toId: toDoc.id, title: toTitle, closed: toLevelClosed});
       } else if (toType === "contract") {
         contractTOs.push({toId: toDoc.id, title: toTitle, data: d});
       }
@@ -37378,7 +37417,9 @@ export const callableGetDayStaffingDetail = onCall(
         //   종료된 모집 단위가 계속 `N명 부족`으로 세어지며 `인력 초대` CTA까지
         //   달고 있었다. canonical 신호로 바꾸되 건너뛰지는 않는다 —
         //   건너뛰면 관리자는 그 초대가 왜 수락되지 않는지 알 수 없다(UNKNOWN).
-        const slotClosed =
+        // [R7-P1R.1] 공고 전체 종료도 이 슬롯의 종료다. 다만 **다른 날짜를**
+        //   닫지는 않는다 — 이 값은 이 슬롯 row에만 실린다.
+        const slotClosed = to.closed ||
           sd["isManualClosed"] === true || sd["status"] === "closed";
         const wdc = (sd["workDetailCounts"] as Record<string, {
           confirmedCount?: number; pendingCount?: number;

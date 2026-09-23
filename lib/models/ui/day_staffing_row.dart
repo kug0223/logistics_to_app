@@ -25,8 +25,34 @@ class DayStaffingRow {
   /// [R7-P1-PRODUCT] 장기(고정) 공고의 모집 단위인가.
   ///
   /// 장기에는 슬롯이라는 개념이 없어 [slotId]가 빈 문자열이다. 그것은
-  /// "식별할 수 없다"가 아니라 "그런 것이 존재하지 않는다"는 뜻이다 —
-  /// 장기의 canonical target은 `toId × wdId`다.
+  /// "식별할 수 없다"가 아니라 "그런 것이 존재하지 않는다"는 뜻이다.
+  ///
+  /// ── [R7-P1R.1 RESIDUAL-B] 장기의 canonical identity ────────────────
+  ///
+  /// R7-P1R 보고서는 `CONTRACT = toId × wdId`라고 적었다. **틀렸다.**
+  ///
+  /// `wdId`는 서버의 `generateWdId()`로만 생기고, 그 호출은 전부 슬롯
+  /// 생성·수정 경로에 있다(`callableCreateFlexSlots`,
+  /// `callableUpdateSlotWorkDetails`). `callableCreateTO`도
+  /// `callableUpdateTO`도 wdId를 만들지 않는다 — 코드베이스가 이미
+  /// 그렇게 적어 두었다(POSTING-V2-03J.3).
+  ///
+  /// 즉 DEV의 장기 공고 3건에 wdId가 없는 것은 legacy가 아니라
+  /// **현재 writer의 정상 산출물**이다. 지원서도 마찬가지다.
+  ///
+  /// 그래서 장기의 canonical target은
+  ///
+  ///     toId × (workType_startTime_endTime)
+  ///
+  /// 이고, 이것은 `WorkDetailData.canonicalId`(= wdId ?? id)가 이미
+  /// 선언한 규칙 그대로다. reader fallback을 새로 늘린 것이 아니라
+  /// writer가 실제로 만드는 것을 따른다.
+  ///
+  /// 장기에 stable wdId를 **도입하지 않았다**. 도입하면 새 TO의
+  /// workDetails에는 wdId가 생기지만 그 이전에 만들어진 지원서에는
+  /// 없어서, 같은 업무가 두 키로 갈라져 그룹이 둘로 보인다. 식별자
+  /// 보강은 약속(임금·시간·업무) mutation과 분리해야 하고, 그 판단은
+  /// 이 phase의 범위가 아니다.
   final bool isLongTerm;
 
   /// [R7-P1R §14] 장기 초대가 만들어야 하는 약속의 범위.
