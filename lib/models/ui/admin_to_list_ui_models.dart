@@ -339,27 +339,46 @@ class TOItem {
   ///
   /// - workDetails 로드됨: workDetailStats 기준 (업무유형별 정확한 수치)
   /// - 미로드: slot 수준 confirmedCount/pendingCount 사용
-  ({int confirmed, int pending, int required}) resolveStats() {
+  /// [R7-P1-PRODUCT §9] `shortage`가 추가됐다 — **업무별로 세어 더한다.**
+  ///
+  ///   `required − confirmed`를 집계 수준에서 계산하면 과충원된 업무가 다른
+  ///   업무의 부족을 상쇄한다. 필요 3에 5명 확정된 업무와 필요 3에 0명인
+  ///   업무가 같이 있으면 합산식은 `6 − 5 = 1`이라고 말하지만 실제로는
+  ///   3명이 모자란다. 그래서 업무마다 clamp한 뒤 더한다
+  ///   (DayApplicantsDialog·callableGetStaffingReadiness와 같은 규칙).
+  ///
+  ///   업무별로 가를 수 없는 폴백 경로에서는 슬롯 카운터로만 계산한다 —
+  ///   그 경로에는 애초에 업무별 수치가 없다.
+  ({int confirmed, int pending, int required, int shortage}) resolveStats() {
+    int clamp(int n) => n > 0 ? n : 0;
     // [POSTING-V2-01B] 통계 조회가 실패했으면 전부 0인 workDetailStats를 쓰지 않는다.
     // 슬롯 문서의 denormalized counter는 별도 source라 그대로 유효하다 — 이쪽으로 폴백.
     if (workDetailStatsFailed) {
       return (
         confirmed: confirmedCount,
         pending: pendingCount,
-        required: totalRequired
+        required: totalRequired,
+        shortage: clamp(totalRequired - confirmedCount),
       );
     }
     if (isWorkDetailLoaded && workDetails.isNotEmpty) {
-      var c = 0, p = 0, r = 0;
+      var c = 0, p = 0, r = 0, s = 0;
       for (final work in workDetails) {
         final stats = work.lookupByIdentity(workDetailStats);
-        c += (stats?['confirmed'] ?? 0);
+        final wc = (stats?['confirmed'] ?? 0);
+        c += wc;
         p += (stats?['pending'] ?? 0);
         r += work.requiredCount;
+        s += clamp(work.requiredCount - wc);
       }
-      return (confirmed: c, pending: p, required: r);
+      return (confirmed: c, pending: p, required: r, shortage: s);
     }
-    return (confirmed: confirmedCount, pending: pendingCount, required: totalRequired);
+    return (
+      confirmed: confirmedCount,
+      pending: pendingCount,
+      required: totalRequired,
+      shortage: clamp(totalRequired - confirmedCount),
+    );
   }
 
   /// workDetailStats 기준 인원 충족 여부

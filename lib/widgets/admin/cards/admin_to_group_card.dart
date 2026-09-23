@@ -167,6 +167,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
   late int _totalConfirmed;
   late int _totalPending;
   late int _totalRequired;
+
+  /// [R7-P1-PRODUCT §9] 업무별로 clamp해 더한 부족.
+  ///
+  /// 집계 뺄셈(`Σrequired − Σconfirmed`)이 아니다. 그렇게 세면 과충원된
+  /// 업무가 다른 업무의 부족을 상쇄한다 — 필요 3에 5명, 필요 3에 0명이면
+  /// 합산식은 `1 부족`이라 하지만 실제로는 3명이 모자란다.
+  late int _totalShortage;
+
   late bool _isFull;
   DateTime _buildNow = DateTime.now();
   // [PERF-2] _getEarliestDeadline() 결과 캐시 — build()마다 workDetails 순회 방지
@@ -191,6 +199,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
       _totalConfirmed = g.totalConfirmed;
       _totalPending   = g.totalPending;
       _totalRequired  = g.totalRequired;
+      // 이 경로에는 업무별 수치가 없다 — 그룹 카운터로만 계산한다.
+      _totalShortage = (g.totalRequired - g.totalConfirmed) > 0
+          ? g.totalRequired - g.totalConfirmed
+          : 0;
       _isFull = g.isFull;
     } else {
       // [SYSTEM-INTEGRATION-R2.4 §9] 헤더와 날짜 칩이 같은 source를 쓴다.
@@ -204,16 +216,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
       //   PENDING만 세어 다시 내리는 값이라, 관리자에게 보여 줄 `대기`의
       //   truth가 아니다. `resolveStats()`는 이미 통계 실패를 알고
       //   (`workDetailStatsFailed`) 그때만 슬롯 카운터로 폴백한다.
-      int c = 0, p = 0, r = 0;
+      int c = 0, p = 0, r = 0, sh = 0;
       for (final t in _targetTOs) {
         final s = t.resolveStats();
         c += s.confirmed;
         p += s.pending;
         r += s.required;
+        sh += s.shortage;
       }
       _totalConfirmed = c;
       _totalPending   = p;
       _totalRequired  = r;
+      _totalShortage  = sh;
       _isFull = _targetTOs.every((t) => t.resolvedIsFull);
     }
     // [PERF-2] 마감시간 캐시 갱신
@@ -441,7 +455,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               ),
                             ),
                             child: Text(
-                              widget.groupItem.isLongTerm ? '고정' : '단기',
+                              widget.groupItem.isLongTerm ? '장기' : '단기',
                               style: ResponsiveHelper.smallStyle(
                                 context,
                                 color: widget.groupItem.isLongTerm 
@@ -508,6 +522,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         confirmed: totalConfirmed,
                         required: totalRequired,
                         pending: totalPending,
+                        shortage: _totalShortage,
                         isFull: isFull,
                       ),
 
@@ -1344,16 +1359,31 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// 둘을 더한 숫자는 채워지지 않은 자리를 채워진 것처럼 보이게 한다.
   /// `미충원`(required-confirmed-pending)은 여기서 쓰지 않는다 — 그 정의를
   /// 이번 IA에서 확대하지 않기 위해 원천 상태 셋만 말한다.
+  ///
+  /// [R7-P1-PRODUCT §9] `부족`을 직접 말한다.
+  ///
+  ///   `확정 2 / 필요 9 · 대기 1`은 관리자에게 9−2를 시킨다. R7의 방향은
+  ///   shortage를 운영 진입점으로 삼는 것이므로, 세어야 알 수 있는 것을
+  ///   세어서 보여 준다.
+  ///
+  ///   `미충원`과 다른 수다. 미충원은 `required−confirmed−pending`이라
+  ///   지원자를 채워진 자리로 쳤고, 그래서 이 카드에서 쫓아냈다(07-d).
+  ///   `부족`은 대기를 빼지 않는다 — staffingShortageOf와 같은 뜻이다.
+  ///
+  ///   정원을 모르면(필요 미설정) 부족도 주장하지 않는다. 다 찼으면
+  ///   `부족 0`을 덧붙이지 않는다 — 확정이 이미 green으로 그 사실을 말한다.
   Widget _buildStaffingLine(
     BuildContext context, {
     required int confirmed,
     required int required,
     required int pending,
+    required int shortage,
     required bool isFull,
   }) {
     // CF syncTOStats 교정 전 낙관적 increment가 음수로 보이는 순간 방어
     final safeConfirmed = confirmed < 0 ? 0 : confirmed;
     final base = ResponsiveHelper.bodyStyle(context, color: AppColors.grey700);
+    final showShortage = required > 0 && !isFull && shortage > 0;
     return RichText(
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -1368,6 +1398,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
         TextSpan(
           text: required == 0 ? ' / 필요 미설정' : ' / 필요 $required',
         ),
+        if (showShortage) ...[
+          const TextSpan(text: '  ·  '),
+          TextSpan(
+            // [§14] 부족은 지금 처리 가능한 미완료 — orange. red는 실패에 남긴다.
+            text: '부족 $shortage',
+            style: base.copyWith(
+              fontWeight: FontWeight.bold,
+              color: AppColors.warningDark,
+            ),
+          ),
+        ],
         const TextSpan(text: '  ·  '),
         TextSpan(
           text: '대기 $pending',
@@ -2606,7 +2647,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final expiry = !allClosed ? masterTO.formattedPostingExpiry : null;
     if (expiry == null) return const SizedBox.shrink();
     final isPast = masterTO.isPostingExpired;
-    final color = isPast ? AppColors.grey500 : AppColors.warningDark;
+    // [R7-P1-PRODUCT §20] 미래 마감이면 무조건 orange였다.
+    //
+    //   한 달 가까이 남은 `지원 마감 10/22`가 지금 처리해야 하는 일처럼
+    //   보였다. orange는 `지금 처리 가능한 미완료`에 쓰는 색인데
+    //   (§14 color contract), 한 달 뒤의 게시 만료일은 그것이 아니다.
+    //   관리자가 그 날짜를 보고 **지금** 할 일이 없다.
+    //
+    //   새 D-N 기준을 만들지 않았다. 이 줄이 보여 주는 것은 게시 만료일
+    //   (`postingExpiryDate`)이고, 거기에는 canonical 임박 개념이 아예
+    //   없다 — `isPostingExpired`(지났는가) 하나뿐이다. `isDeadlineUrgent`는
+    //   **다른 마감**(applicationDeadline)의 기준이라 여기 쓰면 두 마감을
+    //   섞게 된다.
+    //
+    //   그래서 없는 기준을 지어내는 대신 색만 내린다: 지나지 않은 게시
+    //   만료일은 참고 정보(grey)다.
+    final color = isPast ? AppColors.grey500 : AppColors.grey600;
     return Padding(
       padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
       child: Row(
@@ -2646,7 +2702,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
           Icon(
             Icons.timer_off_outlined,
             size: ResponsiveHelper.iconSize(context, 14),
-            color: isPast ? AppColors.grey500 : AppColors.warningDark,
+            // [R7-P1-PRODUCT §20] 임박했을 때만 orange.
+            //   새 기준을 만들지 않고 바로 위에서 이미 쓰는 `isSoon`을
+            //   그대로 쓴다 — `마감임박` 배지가 서는 조건과 같아진다.
+            color: isPast
+                ? AppColors.grey500
+                : (isSoon ? AppColors.warningDark : AppColors.grey600),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Flexible(
@@ -2654,7 +2715,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
               label,
               style: ResponsiveHelper.smallStyle(
                 context,
-                color: isPast ? AppColors.grey500 : AppColors.warningDark,
+                color: isPast
+                    ? AppColors.grey500
+                    : (isSoon ? AppColors.warningDark : AppColors.grey600),
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

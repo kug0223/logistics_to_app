@@ -110,7 +110,8 @@ class _TOItemCardState extends State<TOItemCard> {
     final to = widget.toItem.to;
     final theme = Theme.of(context);
     
-    final (:confirmed, :pending, :required) = widget.toItem.resolveStats();
+    final (:confirmed, :pending, :required, shortage: _) =
+        widget.toItem.resolveStats();
     final isFull = widget.toItem.resolvedIsFull;
     
     // 전체 마감 여부 — contract TO(slot=null)는 TO 레벨 isClosed 직접 사용
@@ -208,7 +209,7 @@ class _TOItemCardState extends State<TOItemCard> {
                                     ),
                                   ),
                                   child: Text(
-                                    widget.groupItem.isLongTerm ? '고정' : '단기',
+                                    widget.groupItem.isLongTerm ? '장기' : '단기',
                                     style: ResponsiveHelper.tinyStyle(
                                       context,
                                       color: widget.groupItem.isLongTerm

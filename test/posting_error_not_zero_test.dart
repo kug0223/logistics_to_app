@@ -410,7 +410,9 @@ void main() {
       expect(row.contains("Text('재시도',"), isTrue);
     });
 
-    test('실패 시 진행률 바와 지원자 칩을 숨긴다', () {
+    // [R7-P1-PRODUCT §10] 지원자 칩 자체가 사라졌다 — 확정+대기 합계를
+    //   라고 부르고 있었다. 숨길 필요 없이 존재하지 않는다.
+    test('실패 시 진행률 바를 숨긴다 — 지원자 칩은 아예 없다', () {
       final flat = _flat(_codeOf(_src(_rowPath)));
       expect(
         flat.contains('if (!widget.statsFailed) ...[ '
@@ -419,11 +421,9 @@ void main() {
         isTrue,
         reason: '0% 진행률 바가 그대로 그려진다',
       );
-      expect(
-        flat.contains('if (!widget.statsFailed && totalApplicants > 0) ...['),
-        isTrue,
-        reason: '지원자 칩이 통계 실패와 무관하게 표시된다',
-      );
+      expect(flat.contains('totalApplicants'), isFalse,
+          reason: '확정+대기를 합쳐 지원자라고 부르던 칩이 되살아났다');
+      expect(flat.contains('지원자'), isFalse);
     });
 
     test('실패 시 isFull을 판정하지 않는다', () {
@@ -496,11 +496,13 @@ void main() {
 
     test('resolveStats에 statsFailed 폴백이 실제로 들어 있다', () {
       final body = _codeOf(_bodyOf(_src(_modelPath),
-          '({int confirmed, int pending, int required}) resolveStats('));
+          '({int confirmed, int pending, int required, int shortage}) '
+          'resolveStats('));
       final flat = _flat(body);
       expect(flat.contains('if (workDetailStatsFailed) { return ( '
           'confirmed: confirmedCount, pending: pendingCount, '
-          'required: totalRequired ); }'), isTrue);
+          'required: totalRequired, '
+          'shortage: clamp(totalRequired - confirmedCount), ); }'), isTrue);
       // 폴백이 workDetailStats 분기보다 앞에 있어야 한다
       final failIdx = body.indexOf('if (workDetailStatsFailed)');
       final loadedIdx = body.indexOf('if (isWorkDetailLoaded');
@@ -512,7 +514,8 @@ void main() {
       // 슬롯 counter 기반 폴백 경로가 그대로 살아 있다
       expect(
         _flat(model).contains('return ( confirmed: confirmedCount, '
-            'pending: pendingCount, required: totalRequired ); }'),
+            'pending: pendingCount, required: totalRequired, '
+            'shortage: clamp(totalRequired - confirmedCount), );'),
         isTrue,
       );
     });

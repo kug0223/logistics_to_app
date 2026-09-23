@@ -843,7 +843,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            to.isContractType ? '고정' : '단기',
+                            to.isContractType ? '장기' : '단기',
                             style: ResponsiveHelper.tinyStyle(
                               ctx,
                               color: to.isContractType
@@ -1370,7 +1370,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         final label = isDraft
             ? '미공개로 저장되었습니다 (나중에 직접 공개하세요)'
             : _selectedJobType == TOType.contract
-                ? '고정 근무 공고가 등록되었습니다'
+                ? '장기 근무 공고가 등록되었습니다'
                 : _selectedDates.length > 1
                     ? '${_selectedDates.length}일 공고가 등록되었습니다'
                     : '공고가 등록되었습니다';
@@ -2061,7 +2061,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
               Expanded(
                 child: _buildJobTypeChip(
-                    label: '고정 근무', value: TOType.contract, icon: Icons.event_note),
+                    label: '장기 근무', value: TOType.contract, icon: Icons.event_note),
               ),
             ],
           ),

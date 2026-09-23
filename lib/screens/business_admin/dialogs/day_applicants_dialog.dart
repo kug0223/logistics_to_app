@@ -926,6 +926,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _statDivider(context),
           _statCell(
               context, '확정', _confirmedApps.length, AppColors.successDark),
+          // [R7-P1-PRODUCT §17] 일괄선택에는 아무 게이트도 없었다.
+          //   이 버튼의 bulk 대상은 PENDING 지원자다(일괄 확정·거절).
+          //   1명이면 그 사람 카드의 action이 이미 같은 일을 한다.
+          //   이미 들어가 있는 동안에는 계속 보여 준다 — `취소`가 여기 있다.
+          if (_pendingApps.length >= 2 || _isBatchMode) ...[
           _statDivider(context),
           Material(
             color: _isBatchMode
@@ -986,6 +991,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               ),
             ),
           ),
+          ],
         ],
       ),
     );
@@ -1965,23 +1971,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final Color color;
     final Color bgColor;
     final IconData icon;
-    if (count == 0) {
-      color = AppColors.grey500;
-      bgColor = AppColors.grey100;
-      icon = Icons.calendar_today_outlined;
-    } else if (count <= 2) {
-      color = AppColors.successDark;
-      bgColor = AppColors.successBg;
-      icon = Icons.calendar_today;
-    } else if (count <= 4) {
-      color = AppColors.infoDark;
-      bgColor = AppColors.infoBg;
-      icon = Icons.calendar_today;
-    } else {
-      color = AppColors.warningDark;
-      bgColor = AppColors.warningBg;
-      icon = Icons.calendar_today;
-    }
+    // [R7-P1-PRODUCT §13] green/blue/orange 4단계 의미색을 쓰고 있었다.
+    //
+    //   주N회는 **빈도 사실**이지 상태가 아니다. 색 계약(§14)에 비춰 보면
+    //   셋 다 오용이다 — green은 확정/성공, blue는 action/selection,
+    //   orange는 지금 처리 가능한 미완료다. 주2회가 성공은 아니고,
+    //   주3회가 누를 것도 아니며, 주5회가 처리할 일도 아니다.
+    //
+    //   한 카드에 strong color가 여러 개면 정작 눌러야 하는 것이 묻힌다.
+    //   숫자 자체가 이미 정보를 담으므로 색을 빼고 참고 정보로 내린다.
+    color = AppColors.grey600;
+    bgColor = AppColors.grey100;
+    icon = count == 0
+        ? Icons.calendar_today_outlined
+        : Icons.calendar_today;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 6),

@@ -410,6 +410,52 @@ class FormatHelper {
   /// - 단기 여러일: '11/28(목)~12/7(토) · 5일'
   /// - 장기: '11/28(목)~ · 월,수,금'
   /// - 장기 (요일 없음): '11/28(목)~ 장기'
+  /// [R7-P1-PRODUCT §6] 근무요일을 사람이 읽는 말로 압축한다.
+  ///
+  /// ── 무엇을 고치는가 ──────────────────────────────────────────────────
+  ///
+  /// `workDays.join(",")`이 `월,화,수,목,금,토,일` 13자를 그대로 내보냈다.
+  /// 장기 공고 카드에서 `9/9 ~ 10/23 · 월,화,수,목,금,토,일 · 06:00~0…`
+  /// 로 시간이 잘렸다. 글자 크기 문제가 아니라 **정보 선택** 문제다 —
+  /// 매일 일하는 공고에 요일 일곱 개를 세는 것은 읽는 쪽의 일이 아니다.
+  ///
+  /// ── 레퍼런스 ────────────────────────────────────────────────────────
+  ///
+  /// 알바몬은 근무요일을 `주5일`·`요일협의`처럼 **요약**해 적는다. 일곱 개를
+  /// 나열하지 않는다. 다만 `주N일`은 *어느 요일인지*를 잃는다 — 관리자는
+  /// 어느 요일에 사람이 필요한지 알아야 하므로 그대로 쓰지 않는다.
+  ///
+  /// 그래서 패턴에 **이름이 있을 때만** 그 이름을 쓰고, 없으면 나열한다.
+  /// 숫자로만 줄이지 않는다.
+  ///
+  ///   월화수목금토일 → 매일
+  ///   월화수목금     → 평일
+  ///   토일           → 주말
+  ///   그 외          → 월·수·금   (가운뎃점 — 쉼표보다 좁다)
+  ///
+  /// 비어 있으면 빈 문자열이다. `매일`도 `협의`도 아니다 — 모르는 것을
+  /// 아는 척하지 않는다.
+  ///
+  /// ── 같은 사실을 말하는 다른 표기 ────────────────────────────────────
+  ///
+  /// `TOModel.workDaysLabel`은 상세 화면용 장문이다
+  /// (`주 5일 (토, 일 휴무)`). 뜻은 같고 자세함만 다르다 —
+  /// `formatDate`와 `formatDateCompact`의 관계와 같다. 둘이 **다른 사실을
+  /// 말하게 되면 안 되므로**, 한쪽 규칙을 바꿀 때는 다른 쪽도 본다.
+  static String compactWorkDays(List<String>? workDays) {
+    if (workDays == null || workDays.isEmpty) return '';
+    // 중복·순서에 흔들리지 않게 집합으로 본다.
+    final set = workDays.toSet();
+    const weekday = {'월', '화', '수', '목', '금'};
+    const weekend = {'토', '일'};
+    if (set.length >= 7 && set.containsAll({..._weekdays})) return '매일';
+    if (set.length == 5 && set.containsAll(weekday)) return '평일';
+    if (set.length == 2 && set.containsAll(weekend)) return '주말';
+    // 입력 순서를 보존하되 요일 순으로 정렬한다 — `금,월,수`가 아니라 `월·수·금`.
+    final sorted = _weekdays.where(set.contains).toList();
+    return (sorted.isEmpty ? workDays : sorted).join('·');
+  }
+
   static String formatWorkPeriod({
     required DateTime startDate,
     DateTime? endDate,
@@ -422,8 +468,10 @@ class FormatHelper {
     // 장기 공고
     if (isLongTerm) {
       final endStr = endDate != null ? ' ~ ${formatDateCompact(endDate)}' : '~';
-      if (workDays != null && workDays.isNotEmpty) {
-        return '$startStr$endStr · ${workDays.join(",")}';
+      // [R7-P1-PRODUCT §6] 일곱 개를 나열하던 자리다.
+      final days = compactWorkDays(workDays);
+      if (days.isNotEmpty) {
+        return '$startStr$endStr · $days';
       }
       return '$startStr$endStr';
     }

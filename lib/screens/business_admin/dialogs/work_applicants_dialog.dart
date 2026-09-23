@@ -533,7 +533,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           _buildStatsBar(context, pending.length, confirmed.length),
           // [R7-P1-3] 부족 해소 진입 — Day와 같은 자리, 같은 조건.
           if (!isLoading) _buildStaffingActionRow(context),
-          if (pending.isNotEmpty && widget.work != null)
+          // [R7-P1-PRODUCT §17] 게이트가 `pending.isNotEmpty`였다 — 1명이어도
+          //   일괄선택이 떴다. 이 행의 bulk 대상은 PENDING 지원자(확정·거절
+          //   일괄)이고, 1명은 개인 카드의 action이 이미 처리한다. 같은 일이
+          //   두 군데서 강하게 보이는 것이 R7-P1-5에서 정한 계약 위반이다.
+          //
+          //   이미 bulk mode에 들어가 있는데 대상이 1명으로 줄면 계속 보여
+          //   준다 — 그러지 않으면 `취소` 버튼까지 사라져 빠져나갈 수 없다.
+          if (widget.work != null && (pending.length >= 2 || _isBatchMode))
             _buildSelectAllRow(context, pending.length),
           Expanded(
             child: isLoading
@@ -2105,9 +2112,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
-  /// 이번 주 근무 횟수 배지
-  /// null = 데이터 미로드, 0 = 이번 주 미근무
-  /// 색상: 0회=회색(여유), 1~2회=초록, 3~4회=파랑, 5+회=주황(다른 지원자 기회 고려)
+  /// 이번 주 근무 횟수 배지 — 참고 정보다.
+  ///
+  /// null = 데이터 미로드, 0 = 이번 주 미근무.
+  /// [R7-P1-PRODUCT §13] 색으로 등급을 매기지 않는다. 숫자가 사실이고,
+  /// 그 사실을 어떻게 볼지는 관리자가 정한다.
   Widget _buildWeeklyCountBadge(BuildContext context, int? count) {
     if (count == null) return const SizedBox.shrink();
 
@@ -2115,23 +2124,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final Color bgColor;
     final IconData icon;
 
-    if (count == 0) {
-      color = AppColors.grey500;
-      bgColor = AppColors.grey100;
-      icon = Icons.calendar_today_outlined;
-    } else if (count <= 2) {
-      color = AppColors.successDark;
-      bgColor = AppColors.successBg;
-      icon = Icons.calendar_today;
-    } else if (count <= 4) {
-      color = AppColors.infoDark;
-      bgColor = AppColors.infoBg;
-      icon = Icons.calendar_today;
-    } else {
-      color = AppColors.warningDark;
-      bgColor = AppColors.warningBg;
-      icon = Icons.calendar_today;
-    }
+    // [R7-P1-PRODUCT §13] green/blue/orange 4단계 의미색을 쓰고 있었다.
+    //
+    //   주N회는 **빈도 사실**이지 상태가 아니다. 색 계약(§14)에 비춰 보면
+    //   셋 다 오용이다 — green은 확정/성공, blue는 action/selection,
+    //   orange는 지금 처리 가능한 미완료다. 주2회가 성공은 아니고,
+    //   주3회가 누를 것도 아니며, 주5회가 처리할 일도 아니다.
+    //
+    //   한 카드에 strong color가 여러 개면 정작 눌러야 하는 것이 묻힌다.
+    //   숫자 자체가 이미 정보를 담으므로 색을 빼고 참고 정보로 내린다.
+    color = AppColors.grey600;
+    bgColor = AppColors.grey100;
+    icon = count == 0
+        ? Icons.calendar_today_outlined
+        : Icons.calendar_today;
 
     return Container(
       padding: EdgeInsets.symmetric(

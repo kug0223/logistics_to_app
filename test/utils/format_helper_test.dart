@@ -258,12 +258,13 @@ void main() {
       );
     });
 
+    // [R7-P1-PRODUCT §6] 이름 없는 패턴은 가운뎃점으로 나열한다.
     test('장기, workDays 있음 → "start~ · 요일나열"', () {
       expect(
         FormatHelper.formatWorkPeriod(
           startDate: d0, isLongTerm: true, workDays: ['월', '수', '금'],
         ),
-        '6/1(월)~ · 월,수,금',
+        '6/1(월)~ · 월·수·금',
       );
     });
 
@@ -272,7 +273,7 @@ void main() {
         FormatHelper.formatWorkPeriod(
           startDate: d0, endDate: d5, isLongTerm: true, workDays: ['월', '화'],
         ),
-        '6/1(월) ~ 6/6(토) · 월,화',
+        '6/1(월) ~ 6/6(토) · 월·화',
       );
     });
 

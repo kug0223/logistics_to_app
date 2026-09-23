@@ -75,8 +75,10 @@ void main() {
       expect(_make(type: TOType.flex).typeLabel, equals('단기 근무'));
     });
 
-    test('typeLabel: contract → "고정 근무"', () {
-      expect(_make(type: TOType.contract).typeLabel, equals('고정 근무'));
+    // [R7-P1-PRODUCT §8] 노출 어휘를 장기로 통일했다.
+    //   같은 타입이 공고 카드에서는 고정, 인력 현황에서는 장기였다.
+    test('typeLabel: contract → "장기 근무"', () {
+      expect(_make(type: TOType.contract).typeLabel, equals('장기 근무'));
     });
   });
 

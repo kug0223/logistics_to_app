@@ -110,7 +110,6 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     // [POSTING-V2-01B] 통계 실패 시 isFull을 판정하지 않는다.
     // 0/N을 근거로 '모집중'이나 '모집 완료'를 주장할 수 없다.
     final isFull =
@@ -136,7 +135,6 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     }
 
     final wageColor = _wageColor(isClosed);
-    final totalApplicants = _confirmedCount + _pendingCount;
     final missing = (widget.work.requiredCount - _confirmedCount).clamp(0, widget.work.requiredCount);
 
     return Container(
@@ -164,7 +162,23 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                // ① 업무명(소형아이콘 포함) + 지원자 칩
+                // ① 업무명(소형아이콘 포함)
+                //
+                // [R7-P1-PRODUCT §10] `지원자 N` 칩을 제거했다.
+                //
+                //   그 N은 `_confirmedCount + _pendingCount`였다. 확정된 사람을
+                //   지원자라고 부른 것이다. ALfit에서 지원은 관심이고 확정은
+                //   약속이라 둘은 다른 상태이며, 이 카드에서 이미 선언한
+                //   불변식이기도 하다 — admin_to_group_card의 staffing line:
+                //   "확정과 대기를 합치지 않는다. 둘을 더한 숫자는 채워지지
+                //   않은 자리를 채워진 것처럼 보이게 한다."
+                //
+                //   실기기에서 `확정 1 / 필요 2 · 대기 0`인 업무가 `지원자 1`로
+                //   보였다. 그 1은 지원자가 아니라 확정자였다.
+                //
+                //   라벨만 고쳐 PENDING을 세게 하면 아래 ⑤의 `대기 N`과 완전히
+                //   같은 말이 된다. 같은 사실을 한 줄 위에서 반복할 이유가 없어
+                //   칩을 없앤다 — 세던 값은 ⑤가 합치지 않고 그대로 말한다.
                 Row(
                   children: [
                     Container(
@@ -192,30 +206,6 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                         ),
                       ),
                     ),
-                    // [POSTING-V2-01B] 통계 실패 시 '지원자 0'을 만들지 않기 위해 숨김
-                    if (!widget.statsFailed && totalApplicants > 0) ...[
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: theme.primaryColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.people, size: 11, color: theme.primaryColor),
-                            const SizedBox(width: 3),
-                            Text(
-                              '지원자 $totalApplicants',
-                              style: ResponsiveHelper.tinyStyle(context,
-                                      color: theme.primaryColor)
-                                  .copyWith(fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                   ],
                 ),
                 // ② 데이터 바 — 통계 실패 시 진행률을 그리지 않는다

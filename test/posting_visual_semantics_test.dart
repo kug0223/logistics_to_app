@@ -719,7 +719,10 @@ void main() {
     test('12-d 타입 badge는 그대로 info / teal (§6)', () {
       expect(build.contains('AppColors.longTermBg'), true);
       expect(build.contains('AppColors.shortTermBg'), true);
-      expect(build.contains("'고정' : '단기'"), true);
+      // [R7-P1-PRODUCT §8] 색은 그대로, 낱말만 `고정` → `장기`.
+      //   같은 타입이 공고 카드에서는 `고정`, 인력 현황에서는 `장기`였다.
+      expect(build.contains("'장기' : '단기'"), true);
+      expect(build.contains("'고정'"), false);
     });
   });
 }

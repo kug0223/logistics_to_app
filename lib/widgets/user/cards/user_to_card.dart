@@ -1387,7 +1387,7 @@ class _UserTOCardState extends State<UserTOCard> {
     final long = widget.to.isLongTerm;
     return _pill(
       context,
-      long ? '고정' : '단기',
+      long ? '장기' : '단기',
       long ? AppColors.longTermBg : AppColors.shortTermBg,
       long ? AppColors.longTermDark : AppColors.shortTermDark,
       border: long ? AppColors.longTermLight : AppColors.shortTermLight,

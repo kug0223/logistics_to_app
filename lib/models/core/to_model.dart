@@ -410,7 +410,18 @@ class TOModel {
   String get displayGroupTitle =>
       (groupTitle?.isNotEmpty == true) ? groupTitle! : title;
 
-  String get typeLabel => isFlexType ? '단기 근무' : '고정 근무';
+  /// [R7-P1-PRODUCT §8] 사용자 노출 용어를 "장기"로 통일했다.
+  ///
+  ///   같은 isLongTerm 타입이 공고 카드에서는 "고정", 인력 현황에서는
+  ///   "장기"로 보였다. 코드베이스에서도 11곳은 "장기", 6곳은 "고정"이었다.
+  ///
+  ///   "고정"은 고정근무·고정시간·**고정 근무자**로도 읽혀 뜻이 갈린다.
+  ///   특히 "고정 근무자"는 상시 인력 명부라는 **다른 개념**이므로,
+  ///   공고 타입을 "장기"라고 부르면 둘이 오히려 또렷이 구분된다.
+  ///   그래서 명부 쪽 "고정 근무자"는 그대로 둔다.
+  ///
+  ///   enum·state 이름(TOType.contract)은 건드리지 않는다 — 노출 어휘만이다.
+  String get typeLabel => isFlexType ? '단기 근무' : '장기 근무';
 
   // ── workDetails 집계 (computed) ───────────────────
 

@@ -824,7 +824,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         children: [
           _legendDot(primaryColor, '확정', star: false),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          _legendDot(AppColors.amberDark, '고정', star: true),
+          _legendDot(AppColors.amberDark, '장기', star: true),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.warningMedium, '대기', star: false),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
