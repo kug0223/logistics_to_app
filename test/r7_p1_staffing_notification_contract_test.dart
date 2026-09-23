@@ -283,7 +283,8 @@ void main() {
       final s = _codeOf(_src(_notifCard));
       expect(s.contains("'읽음'"), true);
       expect(s.contains('if (isUnread)'), true);
-      expect(s.contains('isUnread ? _revealWidth : _revealWidth / 2'), true);
+      // [R7-P1-PRODUCT] 폭은 버튼 수에서 유도한다 — PP-a 참조.
+      expect(s.contains('double get _revealWidth =>'), true);
       // `취소`는 사라졌다 — 바깥 탭으로 이미 닫힌다.
       expect(s.contains("'취소',"), false);
     });
@@ -436,6 +437,56 @@ void main() {
       final scr = _codeOf(_src(_notifScreen));
       expect(scr.contains('최근 \${NotificationRetention.visibleDays}일의 알림만 표시됩니다'),
           true);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // R7-P1-PRODUCT — 실기기 검증 전 정적 점검에서 나온 것들
+  //
+  // 셋 다 "기기에서 보면 드러날 것"이 아니라 코드만 보고 확정할 수 있는
+  // 결함이었다. 기기 왕복을 한 번 줄이려고 먼저 닫았다.
+  // ══════════════════════════════════════════════════════════════
+  group('PRODUCT 사전 점검', () {
+    test('PP-a 카드가 밀려나는 거리 = 실제로 드러나는 패널 폭', () {
+      final s = _codeOf(_src(_notifCard));
+      // 128 고정이면 읽은 알림(버튼 1개)에서 64px 빈 공간이 드러난다.
+      expect(s.contains('static const double _revealWidth = 128.0;'), false);
+      expect(s.contains('double get _revealWidth =>'), true);
+      final i = s.indexOf('double get _revealWidth =>');
+      final seg = s.substring(i, i + 200);
+      expect(seg.contains('isRead'), true);
+      expect(seg.contains('_actionWidth'), true);
+      // 드래그와 렌더가 같은 값을 쓴다 — 둘이 갈라지면 같은 문제가 돌아온다.
+      expect(s.contains('d.delta.dx / _revealWidth'), true);
+      expect(s.contains('-_ctrl.value * _revealWidth'), true);
+      // 패널 폭도 같은 값이다.
+      expect(s.contains('width: _revealWidth,'), true);
+      expect(s.contains('_revealWidth / 2'), false);
+    });
+
+    test('PP-b 터치 타깃이 48dp 이상이다', () {
+      final s = _codeOf(_src(_notifCard));
+      final i = s.indexOf('static const double _actionWidth =');
+      final v = double.parse(
+          RegExp(r'=\s*([\d.]+)').firstMatch(s.substring(i, i + 80))!.group(1)!);
+      expect(v, greaterThanOrEqualTo(48.0));
+    });
+
+    test('PP-c Undo 버튼은 커밋 전에 사라진다', () {
+      // 같은 길이면 마지막 순간에 보이지만 눌러도 안 되는 구간이 생긴다.
+      final s = _codeOf(_src(_notifScreen));
+      expect(s.contains('NotificationProvider.undoWindow -'), true);
+      expect(s.contains('duration: NotificationProvider.undoWindow,'), false);
+    });
+
+    test('PP-d 통계 바가 좁은 화면에서 넘치지 않는다', () {
+      final s = _codeOf(_src(_work));
+      final i = s.indexOf('Widget _buildStatsBar(');
+      final seg = s.substring(i, i + 1800);
+      // Flexible 없는 Row + Spacer 조합은 줄어들 수 없다 — Wrap으로 바꿨다.
+      expect(seg.contains('child: Wrap('), true);
+      expect(seg.contains('const Spacer(),'), false);
+      expect(seg.contains('runSpacing:'), true);
     });
   });
 

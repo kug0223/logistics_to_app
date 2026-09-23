@@ -469,8 +469,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
     messenger.showSnackBar(
       SnackBar(
         content: const Text('알림이 삭제되었습니다'),
-        // 유예 창보다 짧으면 되돌릴 수 있는데 물어볼 곳이 사라진다.
-        duration: NotificationProvider.undoWindow,
+        // [R7-P1-PRODUCT] 유예 창보다 **조금 짧게** 둔다.
+        //
+        //   같은 5초로 두었더니, 커밋 타이머가 SnackBar보다 먼저 시작하는
+        //   만큼 마지막 몇 백 밀리초 동안 `실행 취소`가 화면에 보이는데
+        //   눌러도 `이미 삭제되어 되돌릴 수 없습니다`가 뜨는 구간이 생겼다.
+        //   사실을 말하고는 있지만, 누를 수 없는 버튼을 보여 주는 것은
+        //   되돌릴 수 있다고 말해 놓고 지키지 않는 것과 같다.
+        //
+        //   버튼이 사라진 뒤에 커밋되도록 순서를 고정한다.
+        duration: NotificationProvider.undoWindow -
+            const Duration(milliseconds: 600),
         behavior: SnackBarBehavior.floating,
         action: SnackBarAction(
           label: '실행 취소',

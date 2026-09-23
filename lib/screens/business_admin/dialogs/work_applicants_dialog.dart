@@ -696,25 +696,35 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         color: AppColors.grey50,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Row(
+      // [R7-P1-PRODUCT] Row → Wrap.
+      //
+      //   Row에 `지원 · 확정 · Spacer · 필요` 셋이 있던 자리에 `부족`을
+      //   더하면서 360dp에서 넘칠 수 있는 구조가 됐다. 이 Row에는
+      //   Flexible이 하나도 없어 Text가 줄지 못하고, Spacer는 0 아래로
+      //   내려가지 못한다 — 폰트 배율을 키우거나 `정원 확인 불가`가 뜨면
+      //   RenderFlex overflow다.
+      //
+      //   Wrap이면 좁을 때 둘째 줄로 흐르고 아무것도 잘리지 않는다.
+      //   (CLAUDE.md: 텍스트+아이콘 조합이 길어지면 Wrap으로 줄바꿈 허용)
+      //   우측 정렬 하나를 포기하는 대신 네 사실이 모두 남는다.
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: ResponsiveHelper.spacing(context, 14),
+        runSpacing: ResponsiveHelper.spacing(context, 6),
         children: [
           _buildStatItem(context, '지원', pendingCount, AppColors.warning),
-          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
           _buildStatItem(context, '확정', confirmedCount, AppColors.success),
-          if (work != null && shortage != null) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-            // [R7-P1-6] 부족은 실패가 아니라 **지금 처리 가능한 미완료**다.
-            //   red는 NO_SHOW·실패에 남겨 둔다.
+          // [R7-P1-6] 부족은 실패가 아니라 **지금 처리 가능한 미완료**다.
+          //   red는 NO_SHOW·실패에 남겨 둔다.
+          if (work != null && shortage != null)
             _buildStatItem(context, '부족', shortage,
                 shortage > 0 ? AppColors.warningDark : AppColors.grey500),
-          ],
-          const Spacer(),
           if (work != null)
             Text(
               // capacity를 못 읽었으면 `필요 N명`이라고 단정하지 않는다.
               capacity == InviteCapacityState.unknown
                   ? '정원 확인 불가'
-                  : '필요: ${work.requiredCount}명',
+                  : '필요 ${work.requiredCount}명',
               style: ResponsiveHelper.smallStyle(
                 context,
                 color: capacity == InviteCapacityState.unknown

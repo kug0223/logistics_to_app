@@ -52,7 +52,17 @@ class NotificationCard extends StatefulWidget {
 
 class _NotificationCardState extends State<NotificationCard>
     with SingleTickerProviderStateMixin {
-  static const double _revealWidth = 128.0;
+  /// 액션 버튼 하나의 폭. 48dp 최소 터치 타깃보다 넉넉하다.
+  static const double _actionWidth = 64.0;
+
+  /// [R7-P1-PRODUCT] 카드가 밀려나는 거리 = **실제로 드러날 패널의 폭**.
+  ///
+  /// 128 고정이었다. R7-P1에서 읽은 알림의 패널을 버튼 하나(64)로 줄이면서
+  /// 이 값을 그대로 두어, 읽은 알림은 카드가 128 밀리는데 패널은 64뿐인
+  /// 상태가 됐다 — 왼쪽에 64px 빈 공간이 드러나고, 버튼 하나를 꺼내는 데
+  /// 두 배의 드래그가 필요했다. 폭을 버튼 수에서 유도해 둘이 갈라지지 않게 한다.
+  double get _revealWidth =>
+      widget.notification.isRead ? _actionWidth : _actionWidth * 2;
 
   late final AnimationController _ctrl;
   // (1 - value*4).clamp(0,1): value 0→0.25 구간에서 1→0으로 페이드
@@ -345,7 +355,7 @@ class _NotificationCardState extends State<NotificationCard>
           child: Align(
             alignment: Alignment.centerRight,
             child: SizedBox(
-              width: isUnread ? _revealWidth : _revealWidth / 2,
+              width: _revealWidth,
               child: Row(
                 children: [
                   if (isUnread)
