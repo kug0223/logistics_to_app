@@ -365,15 +365,18 @@ void main() {
       expect(NotificationRetention.isVisible(null, now), true);
     });
 
-    test('P1-9-d 시각을 모르는 알림을 오늘로 취급하지 않는다', () {
+    // [R7-P1.1] `이전`으로 보내던 것을 전용 그룹으로 옮겼다 — UNKNOWN != OLD.
+    //   분류 동작 자체는 notification_unknown_time_group_test가 입력/출력으로
+    //   검증한다. 여기서는 플래그가 살아 있다는 것만 본다.
+    test('P1-9-d 시각을 모르는 알림을 어느 시간 그룹에도 넣지 않는다', () {
       final m = NotificationModel.fromMap(
           {'userId': 'u', 'type': 'other', 'title': 't', 'body': 'b'}, 'id1');
       expect(m.createdAtKnown, false);
-      // 그룹핑이 이 플래그를 본다.
       final scr = _codeOf(_src(_notifScreen));
       expect(scr.contains('if (!n.createdAtKnown) {'), true);
       final i = scr.indexOf('if (!n.createdAtKnown) {');
-      expect(scr.substring(i, i + 120).contains('olderItems.add(n)'), true);
+      expect(scr.substring(i, i + 120).contains('unknownTimeItems.add(n)'), true);
+      expect(scr.contains("kUnknownTimeGroup = '날짜 확인 불가'"), true);
     });
 
     test('P1-9-e copyWith가 UNKNOWN을 지우지 않는다', () {

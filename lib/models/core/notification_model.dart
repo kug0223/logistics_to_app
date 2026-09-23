@@ -285,6 +285,15 @@ class NotificationModel {
 
   /// Firestore에서 변환
   factory NotificationModel.fromMap(Map<String, dynamic> map, String id) {
+    // [R7-P1.1] `as Timestamp?` 하드 캐스트였다. 타입이 다른 값이 들어 있으면
+    //   여기서 던지고, tryFromFirestore의 격리(SCHEMA-09)가 그것을 잡아
+    //   **알림 자체를 목록에서 없앴다**. 깨진 시각 하나 때문에 알림이 통째로
+    //   사라지는 것은 UNKNOWN != EMPTY에 어긋난다 — 시각을 모를 뿐
+    //   그 일이 있었다는 사실은 유효하다.
+    //
+    //   타입을 확인해서, 아니면 UNKNOWN으로 내린다. 목록에는 남는다.
+    final rawCreatedAt = map['createdAt'];
+    final createdAtKnown = rawCreatedAt is Timestamp;
     return NotificationModel(
       id: id,
       userId: map['userId'] ?? '',
@@ -293,9 +302,12 @@ class NotificationModel {
       body: map['body'] ?? '',
       data: map['data'],
       isRead: map['isRead'] ?? false,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
-      createdAtKnown: map['createdAt'] is Timestamp,
-      readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),
+      createdAt:
+          createdAtKnown ? rawCreatedAt.toDate().toLocal() : DateTime.now(),
+      createdAtKnown: createdAtKnown,
+      readAt: map['readAt'] is Timestamp
+          ? (map['readAt'] as Timestamp).toDate().toLocal()
+          : null,
       category: _categoryFromString(map['category']?.toString()),
       importance: _importanceFromString(map['importance']?.toString()),
     );

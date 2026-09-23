@@ -485,59 +485,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
     );
   }
 
-  List<Object> _buildGroupedItems(List<NotificationModel> notifications, DateTime now) {
-    final today = FormatHelper.toKstDate(now);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final weekAgo = today.subtract(const Duration(days: 7));
-
-    final todayItems = <NotificationModel>[];
-    final yesterdayItems = <NotificationModel>[];
-    final thisWeekItems = <NotificationModel>[];
-    final olderItems = <NotificationModel>[];
-
-    for (final n in notifications) {
-      // [R7-P1-9 §21] 시각을 모르는 legacy 알림을 `오늘`로 올리지 않는다.
-      //   NotificationModel.createdAt은 non-null이라 필드가 없으면
-      //   DateTime.now()로 채워지고, 그대로 두면 몇 년 전 알림이 방금 온
-      //   것처럼 맨 위에 선다. 모르는 것은 `이전`에 둔다 —
-      //   UNKNOWN != TODAY, 그리고 숨기지도 않는다(UNKNOWN != EMPTY).
-      if (!n.createdAtKnown) {
-        olderItems.add(n);
-        continue;
-      }
-      final date = DateTime(n.createdAt.year, n.createdAt.month, n.createdAt.day);
-      if (!date.isBefore(today)) {
-        todayItems.add(n);
-      } else if (date == yesterday) {
-        yesterdayItems.add(n);
-      } else if (date.isAfter(weekAgo)) {
-        thisWeekItems.add(n);
-      } else {
-        olderItems.add(n);
-      }
-    }
-
-    final result = <Object>[];
-    if (todayItems.isNotEmpty) {
-      result.add('오늘');
-      result.addAll(todayItems);
-    }
-    if (yesterdayItems.isNotEmpty) {
-      result.add('어제');
-      result.addAll(yesterdayItems);
-    }
-    if (thisWeekItems.isNotEmpty) {
-      result.add('이번 주');
-      result.addAll(thisWeekItems);
-    }
-    if (olderItems.isNotEmpty) {
-      result.add('이전');
-      result.addAll(olderItems);
-    }
-    return result;
-  }
+  List<Object> _buildGroupedItems(
+          List<NotificationModel> notifications, DateTime now) =>
+      buildNotificationGroups(notifications, now);
 
   Widget _buildSectionHeader(BuildContext context, String label) {
+    // [R7-P1.1] `날짜 확인 불가`는 시간 그룹이 아니다 — 더 약하게 그린다.
+    //   시간 그룹들과 같은 무게로 보이면 그것도 하나의 시간대처럼 읽힌다.
+    final isUnknownTime = label == kUnknownTimeGroup;
     return Padding(
       padding: EdgeInsets.only(
         left: ResponsiveHelper.spacing(context, 16),
@@ -545,11 +500,28 @@ class _NotificationScreenState extends State<NotificationScreen> {
         top: ResponsiveHelper.spacing(context, 8),
         bottom: ResponsiveHelper.spacing(context, 6),
       ),
-      child: Text(
-        label,
-        style: ResponsiveHelper.smallStyle(context,
-            color: AppColors.grey500, fontWeight: FontWeight.w600),
-      ),
+      child: isUnknownTime
+          ? Row(
+              children: [
+                Icon(Icons.help_outline,
+                    size: ResponsiveHelper.iconSize(context, 13),
+                    color: AppColors.grey400),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Flexible(
+                  child: Text(
+                    label,
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey400),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            )
+          : Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey500, fontWeight: FontWeight.w600),
+            ),
     );
   }
 
@@ -2374,4 +2346,99 @@ class _NotificationScreenState extends State<NotificationScreen> {
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
     }
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// [R7-P1.1] 알림 목록 그룹핑 — 순수 함수
+//
+// State 안의 private 메서드였을 때는 이 분류를 테스트하려면 소스 문자열을
+// 뒤지는 수밖에 없었다. 그건 "코드에 이런 글자가 있다"를 확인하는 것이지
+// "이 입력에서 이 그룹이 나온다"를 확인하는 것이 아니다. 밖으로 꺼낸다.
+// ════════════════════════════════════════════════════════════════════════
+
+/// 시각을 모르는 알림이 들어가는 그룹의 라벨.
+///
+/// **시간 그룹이 아니다.** `오늘`·`어제`·`이번 주`·`이전`은 전부 언제인지
+/// 안다는 전제 위에 있는 이름이고, 모르는 것을 그중 아무 데나 넣으면 화면이
+/// 모르는 것을 아는 척하게 된다.
+const String kUnknownTimeGroup = '날짜 확인 불가';
+
+/// 알림을 시간 그룹으로 나눈다. 결과는 `String`(헤더)과 [NotificationModel]이
+/// 섞인 평탄한 목록이다.
+///
+/// [R7-P1.1] `createdAtKnown == false`는 **어느 시간 그룹에도 넣지 않는다.**
+///
+///   R7-P1에서는 이것을 `이전`에 넣었다. `오늘`로 올라오는 것보다는 나았지만,
+///   여전히 모르는 것을 아는 척하는 분류다. `이전`은 "7일보다 오래됐다"는
+///   주장이고, 시각이 없는 알림에 대해 그 주장을 할 근거가 없다 — 어제 온
+///   것일 수도 있다.
+///
+///   숨기지도 않는다. UNKNOWN != EMPTY.
+@visibleForTesting
+List<Object> buildNotificationGroups(
+    List<NotificationModel> notifications, DateTime now) {
+  final today = FormatHelper.toKstDate(now);
+  final yesterday = today.subtract(const Duration(days: 1));
+  final weekAgo = today.subtract(const Duration(days: 7));
+
+  final todayItems = <NotificationModel>[];
+  final yesterdayItems = <NotificationModel>[];
+  final thisWeekItems = <NotificationModel>[];
+  final olderItems = <NotificationModel>[];
+  final unknownTimeItems = <NotificationModel>[];
+
+  for (final n in notifications) {
+    if (!n.createdAtKnown) {
+      unknownTimeItems.add(n);
+      continue;
+    }
+    // [R7-P1.1] 두 값을 **같은 기준**으로 만든다.
+    //
+    //   여기에는 이런 버그가 있었다. `today`는 `FormatHelper.toKstDate`가
+    //   만든 UTC 플래그 비교 키(`DateTime.utc(y,m,d)`)인데, 이 줄은
+    //   `DateTime(...)`으로 **로컬** DateTime을 만들어 비교했다. 둘은
+    //   절대 시각이 다르다 — KST(+9) 기기에서 로컬 자정은 UTC 자정보다
+    //   9시간 이르다. 그래서 `date.isBefore(today)`가 늘 true가 되고,
+    //   `오늘`과 `어제` 그룹에는 **아무것도 들어가지 못했다**.
+    //   방금 온 알림도 `이번 주`로 떨어졌다.
+    //
+    //   날짜 축을 하나로 통일한다. toKstDate는 기기 timezone과 무관하게
+    //   KST 달력 날짜를 돌려주므로, 양쪽이 같은 종류의 키가 된다.
+    final date = FormatHelper.toKstDate(n.createdAt);
+    if (!date.isBefore(today)) {
+      todayItems.add(n);
+    } else if (date == yesterday) {
+      yesterdayItems.add(n);
+    } else if (date.isAfter(weekAgo)) {
+      thisWeekItems.add(n);
+    } else {
+      olderItems.add(n);
+    }
+  }
+
+  final result = <Object>[];
+  if (todayItems.isNotEmpty) {
+    result.add('오늘');
+    result.addAll(todayItems);
+  }
+  if (yesterdayItems.isNotEmpty) {
+    result.add('어제');
+    result.addAll(yesterdayItems);
+  }
+  if (thisWeekItems.isNotEmpty) {
+    result.add('이번 주');
+    result.addAll(thisWeekItems);
+  }
+  if (olderItems.isNotEmpty) {
+    result.add('이전');
+    result.addAll(olderItems);
+  }
+  // 맨 아래에 둔다. 오래돼서가 아니라, 지금 처리해야 하는 최근 알림과
+  // 자리를 다투지 않게 하기 위해서다 — 위치는 시간 주장이 아니고,
+  // 라벨이 그 사실을 말한다.
+  if (unknownTimeItems.isNotEmpty) {
+    result.add(kUnknownTimeGroup);
+    result.addAll(unknownTimeItems);
+  }
+  return result;
 }
