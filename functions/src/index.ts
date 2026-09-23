@@ -13511,23 +13511,42 @@ export const callableUpdateTO = onCall(
     /** 아직 정책을 검증하지 않은 필드가 바뀌었다 — 확정자가 있으면 막는다. */
     let touchesUnverifiedFields = false;
 
-    // [4H.0C-WORKDETAIL-VALIDATION] workDetails 변경 시 중복·identity·delete 통합 검증
+    // ── [R7-P1R.2] composite identity 고유성 — **역할과 무관하다** ──────────
+    //
+    //   이 검증은 아래 `!isSuperAdmin` 블록 안에 있었다. 그 블록의 다른
+    //   검사들(identity guard, 정원 축소, 삭제 가드)은 **기존 지원자를
+    //   보호하는 정책**이라 플랫폼 운영자가 넘어설 수 있게 둔 것이다.
+    //
+    //   그러나 composite 중복은 정책이 아니라 **키 계약**이다.
+    //   CONTRACT의 canonical identity가
+    //     toId × (workType_startTime_endTime)
+    //   인 이상(wdId는 슬롯 경로에서만 발급된다), 같은 키를 가진 두 행은
+    //   어떤 권한으로도 구분할 수 없다:
+    //
+    //     사무업무 06:00~08:00 시급 12,000 필요 2
+    //     사무업무 06:00~08:00 시급 15,000 필요 1
+    //
+    //   지원·초대·확정·정원·계약 snapshot이 모두 이 키로 연결되므로,
+    //   저장을 허용하면 사람과 돈이 잘못 묶인다. 권한이 높다고 해서
+    //   두 행이 구별되지는 않는다.
+    //
+    //   그래서 역할 게이트 **밖**으로 꺼내고, 생성 경로와 같은 helper를
+    //   쓴다(그동안 같은 규칙이 두 벌로 복사돼 있었다).
+    if (mutatesWorkDetails && Array.isArray(updates.workDetails)) {
+      srvAssertUniqueWorkDetailIds(updates.workDetails as unknown[]);
+    }
+
+    // [4H.0C-WORKDETAIL-VALIDATION] workDetails 변경 시 identity·delete 통합 검증
     if (!isSuperAdmin && mutatesWorkDetails) {
       const oldWDs = (toData.workDetails as unknown[] | undefined) ?? [];
       const newWDs = (updates.workDetails as unknown[]) ?? [];
-
-      // ── (A) duplicate composite ID 검증 ──
-      // 동일 workType_startTime_endTime 조합이 newWDs에 중복 존재하면 reject
-      const newIds = (newWDs as Record<string, unknown>[]).map(
-        (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
+      // 아래 identity guard가 "이 업무가 아직 남아 있는가"를 볼 때 쓰는 집합.
+      //   고유성 자체는 위에서 이미 강제됐다(역할 무관).
+      const newIdSet = new Set(
+        (newWDs as Record<string, unknown>[]).map(
+          (d) => `${d["workType"]}_${d["startTime"]}_${d["endTime"]}`
+        )
       );
-      const newIdSet = new Set(newIds);
-      if (newIdSet.size !== newIds.length) {
-        throw new HttpsError(
-          "invalid-argument",
-          "같은 업무 유형과 근무 시간의 업무가 중복되었습니다. 각 업무의 조합은 고유해야 합니다."
-        );
-      }
 
       // ── (A-2) 신규/변경 workType scope 검증 ──
       // 기존 unchanged compositeId의 workType은 면제 (나중에 inactive됐어도 regression 방지)
@@ -37331,6 +37350,15 @@ export const callableGetDayStaffingDetail = onCall(
     //   만들고, 여기서 온 CLOSED row의 shortage는 0이다.
     //   지원자 0명인 CLOSED 단위로 **새 그룹을 세우지도 않는다**
     //   (클라이언트의 `if (row.isClosed) continue` — R2 FINAL 계약 유지).
+    //
+    // [R8-RESIDUAL-DAY-STAFFING-CLOSED-READ-AMPLIFICATION]
+    //   이 변경으로 조회 대상이 DEV 기준 13 TO → 92 TO로 늘었다. 아래
+    //   날짜 범위 사전 차단이 대부분을 걸러내지만, 실제 read 수와 지연은
+    //   측정하지 않았다. R8 final residual/performance review에서
+    //   read count · latency · prefilter 효과를 재측정한다.
+    //
+    //   correctness를 위해 CLOSED를 다시 silent exclusion으로 되돌리지
+    //   않는다 — 그러면 `모집 종료`가 다시 `정원 확인 불가`가 된다.
     const tosSnap = await db.collection("tos")
       .where("businessId", "==", businessId)
       .where("status", "in", ["ACTIVE", "SCHEDULED", "FULL", "CLOSED"])
