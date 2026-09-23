@@ -60,6 +60,10 @@ const PROD_PROJECT_ID = 'alfit-prod';
 const projectId = args['project'] || null;
 const EXECUTE = args['execute'] === true;
 const MODE = args['cleanup'] ? 'cleanup' : (args['verify'] ? 'verify' : 'seed');
+// [CORRECTION-PRE0-LONGTERM-BACKDATED-ATTENDANCE-SEED] 한 시나리오만 손본다.
+//   fixture 하나가 어긋났다고 전체를 다시 만들면, 멀쩡한 나머지의 id 가
+//   전부 바뀌어 그것을 참조하던 검증 근거가 같이 날아간다.
+const ONLY = typeof args['only'] === 'string' ? args['only'] : null;
 
 // ─── HARD BLOCK: PROD ───────────────────────────────────────────────
 if (!projectId) {
@@ -259,6 +263,7 @@ async function main() {
   if (MODE === 'seed') {
     step('시나리오');
     for (const s of SCENARIOS) {
+      if (ONLY && s.id !== ONLY) continue;
       const builder = builders[s.id];
       if (!builder) { log(`   건너뜀  ${s.id}  (빌더 없음)`); continue; }
 
@@ -292,8 +297,10 @@ async function main() {
     // 남의 공고를 빌려 쓴 시나리오부터 지운다. 공고 소유 시나리오를 먼저
     // 지우면 그 공고에 달린 남의 지원서까지 함께 사라져 집계가 틀어진다.
     const order = Object.entries(manifest.scenarios || {})
+        .filter(([id]) => !ONLY || id === ONLY)
         .sort((a, b) => ((b[1].entities || {}).sharedToId ? 1 : 0) -
                         ((a[1].entities || {}).sharedToId ? 1 : 0));
+    if (ONLY) log(`   --only ${ONLY} — 나머지 기록은 건드리지 않는다.`);
     const touchedMonths = new Set();
     for (const [id, rec] of order) {
       const n = await removeScenario(rec.entities, {
@@ -303,6 +310,10 @@ async function main() {
       log(`   ${EXECUTE ? '삭제' : '[dry-run]'} ${id.padEnd(28)} ` +
           `근태 ${n.attendance} · 지원서 ${n.applications} · 슬롯 ${n.slots} · ` +
           `공고 ${n.tos} · 계약 ${n.contracts}`);
+      if (n.foreign > 0) {
+        log(`            fixture 소유가 아닌 지원서 ${n.foreign}건 — 남겼다. ` +
+            '그래서 공고도 남긴다(고아 방지).');
+      }
       if (EXECUTE) delete manifest.scenarios[id];
     }
     log('   쿼리로 훑어 지우지 않는다 — manifest 에 없는 것은 건드리지 않는다.');

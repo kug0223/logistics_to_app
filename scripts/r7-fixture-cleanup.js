@@ -39,7 +39,11 @@ async function cancelNoShowIfNeeded(snap, {execute, admin: adminUid, businessId}
 
 /** manifest 한 시나리오분을 지운다. 지운 개수를 돌려준다. */
 async function removeScenario(entities, {execute, months, adminUid, businessId}) {
-  const removed = {attendance: 0, applications: 0, slots: 0, tos: 0, contracts: 0};
+  const removed = {
+    attendance: 0, applications: 0, slots: 0, tos: 0, contracts: 0,
+    // fixture 소유가 아니어서 남긴 지원서 수. 0 이 아니면 공고도 남긴다.
+    foreign: 0,
+  };
   if (!entities) return removed;
 
   /**
@@ -101,13 +105,31 @@ async function removeScenario(entities, {execute, months, adminUid, businessId})
   // 2. 지원서 — 이 TO 에 달린 것 전부(fixture TO 이므로 범위가 닫혀 있다).
   //    sharedToId 인 시나리오는 자기 지원서만 지운다. 그 공고는 다른
   //    시나리오의 것이고, 아직 살아 있어야 한다.
+  //    [CORRECTION-PRE0-LONGTERM-BACKDATED-ATTENDANCE-SEED §19]
+  //    "fixture TO 이므로 범위가 닫혀 있다"는 더 이상 참이 아니다. DEV 의
+  //    다른 계정이 fixture 공고에 지원했다가 취소한 기록이 실제로 달려
+  //    있었다. 공고가 같다는 것은 소유의 근거가 아니다 — manifest 가 아는
+  //    근로자의 것만 지우고, 남의 것은 세어서 보고한다.
   const appIds = new Set();
-  if (entities.applicationId) appIds.add(entities.applicationId);
-  if (entities.confirmedApplicationId) appIds.add(entities.confirmedApplicationId);
+  const ownerUids = new Set();
+  for (const k of ['applicationId', 'confirmedApplicationId']) {
+    if (!entities[k]) continue;
+    appIds.add(entities[k]);
+    const s = await db.collection('applications').doc(entities[k]).get();
+    if (s.exists && s.data().uid) ownerUids.add(s.data().uid);
+  }
   if (entities.toId) {
     const snap = await db.collection('applications')
         .where('toId', '==', entities.toId).get();
-    snap.docs.forEach((d) => appIds.add(d.id));
+    for (const d of snap.docs) {
+      if (appIds.has(d.id)) continue;
+      // 소유자를 알 수 없으면(기록된 지원서가 없는 시나리오) 기존대로 fixture 것으로 본다.
+      if (ownerUids.size > 0 && !ownerUids.has(d.data().uid)) {
+        removed.foreign++;
+        continue;
+      }
+      appIds.add(d.id);
+    }
   }
   for (const id of appIds) {
     const ref = db.collection('applications').doc(id);
@@ -126,7 +148,9 @@ async function removeScenario(entities, {execute, months, adminUid, businessId})
   }
 
   // 3. 슬롯 → 4. TO
-  if (entities.toId) {
+  //    남의 지원서를 남겼다면 공고도 남긴다 — 공고를 지우면 그 기록이
+  //    가리킬 곳이 없어져 고아가 된다. 지우지 않은 이유는 호출자가 보고한다.
+  if (entities.toId && removed.foreign === 0) {
     const toRef = db.collection('tos').doc(entities.toId);
     const slots = await toRef.collection('slots').get();
     for (const s of slots.docs) {

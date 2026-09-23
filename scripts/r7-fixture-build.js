@@ -9,7 +9,60 @@
 const L = require('./r7-fixture-lib');
 const S = require('./r7-fixture-scenarios');
 
-const {callAs, db, kstDateKey, kstMidnightMs, kstWeekday} = L;
+const {admin, callAs, db, kstDateKey, kstMidnightMs, kstWeekday} = L;
+
+// ── 장기 fixture 의 근무일 계약 ──────────────────────────────────────
+//
+//   [CORRECTION-PRE0-LONGTERM-BACKDATED-ATTENDANCE-SEED]
+//
+//   fixture 는 "제품이 만들 수 있는 상태"만 만들어야 한다. 그러지 않으면
+//   이후 검증이 무엇을 근거로 통과했는지 알 수 없다.
+//
+//   장기 근무일은 서버 `srvLongTermEligibleOnDay` 가 정한다:
+//
+//       effectiveStart = desiredStartDate ?? workDate
+//         desiredStartDate 가 없고 확정일의 KST 날짜가 더 뒤면 확정일
+//       effectiveEnd   = actualResignDate ?? workEndDate   (inclusive)
+//       extraWorkDates → 근무 / leaveDates → 근무 아님 / else weekday ∈ workDays
+//
+//   seed 는 canonical callable 을 지나므로 서버가 결국 거절한다. 그때의
+//   실패 메시지는 배치 봉투 안의 reason 코드라 원인을 읽기 어렵다.
+//   무엇이 어긋났는지 **여기서** 먼저 말한다.
+
+/** KST 날짜 YYYYMMDD 숫자. */
+function kstDayNum(offsetOrMs) {
+  const ms = Math.abs(offsetOrMs) > 10000 ?
+    offsetOrMs : kstMidnightMs(offsetOrMs);
+  return Number(new Date(ms + 9 * 3600e3).toISOString().slice(0, 10)
+      .replace(/-/g, ''));
+}
+
+/**
+ * 이 장기 fixture 가 만들려는 근태 날짜들이 그 지원서의 실제 근무일인가.
+ * 어긋나면 던진다 — 반쯤 만들어진 fixture 를 남기지 않는다.
+ */
+function assertLongTermFixtureAttendanceEligible(label, {
+  offsets, confirmedAtMs, workDateOffset, workEndOffset, workDays,
+}) {
+  const startNum = Math.max(kstDayNum(workDateOffset), kstDayNum(confirmedAtMs));
+  const endNum = kstDayNum(workEndOffset);
+  for (const o of offsets) {
+    const d = kstDayNum(o);
+    const day = kstDateKey(o);
+    if (d < startNum) {
+      throw new Error(
+          `${label}: ${day} 는 실효 시작일(${startNum}) 이전이다 — ` +
+          '확정 전 근무를 만들지 않는다.');
+    }
+    if (d > endNum) {
+      throw new Error(`${label}: ${day} 는 계약 종료일(${endNum}) 이후다.`);
+    }
+    if (!workDays.includes(kstWeekday(o))) {
+      throw new Error(
+          `${label}: ${day}(${kstWeekday(o)}) 는 근무요일이 아니다.`);
+    }
+  }
+}
 
 // ── 공통 ────────────────────────────────────────────────────────────
 const WORK_TYPE = '사무업무'; // 사업장에 등록된 업무만 허용된다(서버 검증).
@@ -174,6 +227,41 @@ async function buildLongTermWorker(ctx) {
   });
   await confirm(ctx, appId);
 
+  // ── 확정 시점을 근무 이력 앞으로 되돌린다 ──────────────────────────
+  //
+  //   [CORRECTION-PRE0-LONGTERM-BACKDATED-ATTENDANCE-SEED]
+  //
+  //   이 fixture 가 표현하는 것은 **이미 확정되어 일해 온 장기 근로자**다.
+  //   그런데 확정은 seed 를 돌리는 지금 일어나므로 confirmedAt 이 오늘이
+  //   되고, 근태는 -1·-3·-5·-7 로 과거에 놓인다. 오늘 확정된 사람이
+  //   지난주에 일했다는 상태는 제품 경로로 만들어질 수 없다.
+  //
+  //   (이 모순은 오래 보이지 않았다. 확정일 보정이 서버 근무일 판정에
+  //    들어오기 전에는 아무도 confirmedAt 을 보지 않았기 때문이다.)
+  //
+  //   고칠 자리는 시각 하나다. 근태 날짜를 미래로 옮기면 "과거 근무 이력"
+  //   이라는 시나리오 목적 자체가 사라지므로, 확정 시각을 가장 이른
+  //   근무일 아침(그날 06:00 근무 시작 전)으로 되돌린다.
+  //
+  //   약속(workDate·workEndDate·workDays·임금·시간)은 건드리지 않는다 —
+  //   어긋난 것은 연대기뿐이다.
+  const attendanceOffsets = [-7, -5, -3, -1];
+  const seedAppliedAtMs = kstMidnightMs(-8) + 9 * 3600e3;   // -8일 09:00 KST
+  const seedConfirmedAtMs = kstMidnightMs(-7) + 5 * 3600e3; // -7일 05:00 KST
+
+  assertLongTermFixtureAttendanceEligible('장기 근무자 fixture', {
+    offsets: attendanceOffsets,
+    confirmedAtMs: seedConfirmedAtMs,
+    workDateOffset: -14,
+    workEndOffset: 30,
+    workDays,
+  });
+
+  await db.collection('applications').doc(appId).update({
+    appliedAt: admin.firestore.Timestamp.fromMillis(seedAppliedAtMs),
+    confirmedAt: admin.firestore.Timestamp.fromMillis(seedConfirmedAtMs),
+  });
+
   // ── 어제 근무를 완료 상태로 기록한다 ─────────────────────────────
   //
   //   근로자용 callableCheckIn/CheckOut 은 **서버 현재 시각**을 실제
@@ -234,6 +322,16 @@ async function buildLongTermWorker(ctx) {
     {offset: -5, upto: 'confirmed', key: 'confirmedAttendanceId'},
     {offset: -7, upto: 'transferred', key: 'transferredAttendanceId'},
   ];
+  // 위 assert 가 검사한 목록과 실제로 만드는 날짜가 같아야 한다 —
+  // 한쪽만 고치면 검사하지 않은 날짜가 조용히 생긴다.
+  {
+    const made = [-1, ...stages.map((s) => s.offset)].sort((a, b) => a - b);
+    const checked = [...attendanceOffsets].sort((a, b) => a - b);
+    if (made.join() !== checked.join()) {
+      throw new Error(
+          `장기 fixture: 검사한 날짜(${checked})와 만드는 날짜(${made})가 다르다.`);
+    }
+  }
 
   for (const s of stages) {
     const ms = kstMidnightMs(s.offset);
@@ -524,6 +622,9 @@ module.exports = {
   slotsOf,
   apply,
   confirm,
+  // 근무일 계약은 Firestore 없이도 확인할 수 있어야 한다 — 그래야
+  // seed 를 돌리지 않고도 이 규칙이 살아 있는지 볼 수 있다.
+  assertLongTermFixtureAttendanceEligible,
   builders: {
     R7_FIX_POST_SHORTAGE: buildPostShortage,
     R7_FIX_POST_MIXED: buildPostMixed,
