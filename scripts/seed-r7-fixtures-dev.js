@@ -203,6 +203,9 @@ const NOT_SEEDED = [
 ];
 
 // ─── 진입 ───────────────────────────────────────────────────────────
+/** Storage 정리가 일부라도 실패했는가 — 전체 결과를 PARTIAL 로 만든다. */
+let cleanupPartial = false;
+
 async function main() {
   log('R7-PRE0 DEV Product Fixture Pack');
   log(`  project : ${projectId}`);
@@ -302,6 +305,7 @@ async function main() {
                         ((a[1].entities || {}).sharedToId ? 1 : 0));
     if (ONLY) log(`   --only ${ONLY} — 나머지 기록은 건드리지 않는다.`);
     const touchedMonths = new Set();
+    const storageFailures = [];
     for (const [id, rec] of order) {
       const n = await removeScenario(rec.entities, {
         execute: EXECUTE, months: touchedMonths,
@@ -314,9 +318,31 @@ async function main() {
         log(`            fixture 소유가 아닌 지원서 ${n.foreign}건 — 남겼다. ` +
             '그래서 공고도 남긴다(고아 방지).');
       }
+      // [CORRECTION-DEV-CONTRACT-STORAGE-ORPHAN-CLEANUP]
+      //   Storage 결과를 따로 보여 준다. 예전에는 실패가 조용히 삼켜져
+      //   "삭제 완료"로 보였다.
+      if (n.storageDeleted || n.storageMissing || n.storageFailed) {
+        log(`            Storage  삭제 ${n.storageDeleted} · ` +
+            `이미 없음 ${n.storageMissing} · 실패 ${n.storageFailed}`);
+      }
+      if (n.storageFailed > 0) {
+        storageFailures.push(...n.storageErrors);
+      }
       if (EXECUTE) delete manifest.scenarios[id];
     }
     log('   쿼리로 훑어 지우지 않는다 — manifest 에 없는 것은 건드리지 않는다.');
+
+    // Storage 실패는 전체 결과를 PARTIAL 로 만든다. 성공처럼 넘어가면
+    // 계약 서명·PDF 가 남은 것을 아무도 모른다.
+    if (storageFailures.length > 0) {
+      log(`\n   ⚠️ CLEANUP PARTIAL — Storage 삭제 실패 ${storageFailures.length}건`);
+      storageFailures.slice(0, 5).forEach((e) => log(`      · ${e}`));
+      if (storageFailures.length > 5) {
+        log(`      … 외 ${storageFailures.length - 5}건`);
+      }
+      log('   Firestore 는 정리됐지만 Storage artifact 가 남아 있다.');
+      cleanupPartial = true;
+    }
 
     // 삭제는 증분 집계를 되돌리지 않는다 — canonical 복구 CF 로 맞춘다.
     if (touchedMonths.size > 0) {
@@ -333,6 +359,11 @@ async function main() {
   }
 
   saveManifest(manifest);
+  if (cleanupPartial) {
+    log('\nCLEANUP PARTIAL — 완료가 아니다.');
+    process.exitCode = 1;
+    return;
+  }
   log('\n완료.');
 }
 

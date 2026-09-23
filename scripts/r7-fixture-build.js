@@ -462,7 +462,19 @@ async function buildAppPending(ctx) {
  * snapshot 은 사업장·근로자·근무조건의 서명 시점 사본이다 — 서버가
  * 내용을 검증하지 않으므로 여기가 정확해야 계약서 화면이 정상으로 보인다.
  */
-async function contractData(ctx, {applicationId, app, dateKey, wd, isLong}) {
+async function contractDataShortTerm(ctx, {applicationId, app, dateKey, wd, isLong}) {
+  // [CORRECTION-DEV-CONTRACT-STORAGE-ORPHAN-CLEANUP §29] 이 헬퍼는 단기 전용이다.
+  //   contractEnd 가 null 로 고정돼 있고 contractStart 는 그 하루(dateKey)다.
+  //   장기에 쓰면 계약 기간이 통째로 사라지는데, 그건 제품 동작이 아니라
+  //   이 헬퍼의 한계다. 장기 계약 payload 는 클라이언트
+  //   contract_service._buildSnapshot 규칙을 따로 옮겨 쓴다
+  //   (scripts/lt-contract-dual-signature-runtime.js 참고).
+  //   여기서 장기를 일반화하지 않는다 — 조용히 잘못 만드는 대신 막는다.
+  if (isLong) {
+    throw new Error(
+        'contractDataShortTerm 은 단기 전용이다. 장기 계약 payload 는 ' +
+        '기간(contractStart/End)·workDays 를 지원서에서 가져와야 한다.');
+  }
   const biz = ctx.biz;
   const worker = ctx.worker;
   const addr = [biz.address, biz.detailAddress].filter(Boolean).join(' ');
@@ -529,7 +541,8 @@ async function issueContract(ctx, {applicationId, dateKey, wd, isLong}) {
     contractId,
     signatureBase64: S.signaturePng().toString('base64'),
     isNewUnsaved: true,
-    contractData: await contractData(ctx, {applicationId, app, dateKey, wd, isLong}),
+    contractData: await contractDataShortTerm(
+      ctx, {applicationId, app, dateKey, wd, isLong}),
   });
   return contractId;
 }

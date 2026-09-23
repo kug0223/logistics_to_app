@@ -50,12 +50,60 @@ function clientConfig() {
   return {appId: c.client_info.mobilesdk_app_id, apiKey: c.api_key[0].current_key};
 }
 
+// ── Storage 버킷 ────────────────────────────────────────────────────
+//
+//   [CORRECTION-DEV-CONTRACT-STORAGE-ORPHAN-CLEANUP]
+//
+//   initializeApp 에 storageBucket 을 주지 않았다. Cloud Functions 런타임은
+//   기본 버킷을 알아서 해상도하지만 스크립트는 그러지 못한다 —
+//   `admin.storage().bucket()` 이 매번 throw 했고, fixture cleanup 의
+//   `catch (_) {}` 가 그것을 삼켰다. 그래서 계약 서명·PDF artifact 는
+//   **한 번도 지워지지 않았다**(실측 orphan 229건).
+//
+//   이름을 추측하지 않는다. firebase.json 의 storage.bucket 이 이 프로젝트의
+//   canonical 값이고, 그것이 DEV 프로젝트의 것인지 확인한 뒤 쓴다.
+function canonicalBucket() {
+  const cfg = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'firebase.json'), 'utf8')
+          .replace(/^﻿/, ''));
+  const b = cfg && cfg.storage && cfg.storage.bucket;
+  if (typeof b !== 'string' || b.length === 0) {
+    throw new Error('firebase.json 에 storage.bucket 이 없습니다.');
+  }
+  if (!b.startsWith(`${EXPECTED_PROJECT}.`)) {
+    throw new Error(
+        `firebase.json 의 버킷("${b}")이 DEV 프로젝트의 것이 아닙니다.`);
+  }
+  return b;
+}
+
 const key = findServiceAccount();
 const admin = require(path.join(ROOT, 'functions', 'node_modules', 'firebase-admin'));
+const STORAGE_BUCKET = canonicalBucket();
 if (!admin.apps.length) {
-  admin.initializeApp({credential: admin.credential.cert(key)});
+  admin.initializeApp({
+    credential: admin.credential.cert(key),
+    projectId: EXPECTED_PROJECT,
+    storageBucket: STORAGE_BUCKET,
+  });
 }
 const db = admin.firestore();
+
+/**
+ * 삭제 직전 방어선. 버킷을 잘못 잡은 채로 지우는 일이 없게, 쓰기 경로는
+ * 반드시 이것을 통해 버킷을 얻는다.
+ * @return {import('@google-cloud/storage').Bucket} DEV canonical 버킷
+ */
+function devBucket() {
+  const b = admin.storage().bucket();
+  if (b.name !== STORAGE_BUCKET) {
+    throw new Error(`버킷이 예상과 다릅니다: ${b.name}`);
+  }
+  if (!b.name.startsWith(`${EXPECTED_PROJECT}.`)) {
+    throw new Error(`DEV 프로젝트의 버킷이 아닙니다: ${b.name}`);
+  }
+  return b;
+}
 const {appId: APP_ID, apiKey: API_KEY} = clientConfig();
 
 function post(host, urlPath, body, headers = {}) {
@@ -145,4 +193,5 @@ module.exports = {
   admin, db, callAs,
   kstMidnightMs, kstDateKey, kstWeekday,
   EXPECTED_PROJECT,
+  STORAGE_BUCKET, devBucket,
 };

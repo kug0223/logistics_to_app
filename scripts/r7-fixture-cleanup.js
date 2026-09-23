@@ -10,7 +10,7 @@
  */
 'use strict';
 
-const {db, admin, callAs} = require('./r7-fixture-lib');
+const {db, callAs, devBucket} = require('./r7-fixture-lib');
 
 /**
  * NO_SHOW 근태는 **지우기 전에 취소**해야 한다.
@@ -43,6 +43,9 @@ async function removeScenario(entities, {execute, months, adminUid, businessId})
     attendance: 0, applications: 0, slots: 0, tos: 0, contracts: 0,
     // fixture 소유가 아니어서 남긴 지원서 수. 0 이 아니면 공고도 남긴다.
     foreign: 0,
+    // Storage 결과는 셋으로 나눈다 — 실패를 성공에 섞지 않는다.
+    storageDeleted: 0, storageMissing: 0, storageFailed: 0,
+    storageErrors: [],
   };
   if (!entities) return removed;
 
@@ -77,15 +80,43 @@ async function removeScenario(entities, {execute, months, adminUid, businessId})
   //    Storage 산출물(서명·PDF)은 contracts/{contractId}/ 아래에 남는데,
   //    fixture 는 DEV 버킷에만 쓰고 재seed 때 새 contractId 를 받으므로
   //    누적되지 않게 함께 지운다.
+  //
+  //    [CORRECTION-DEV-CONTRACT-STORAGE-ORPHAN-CLEANUP]
+  //      이 자리에 `catch (_) {}` 가 있었다. 버킷 설정이 빠져 있어서
+  //      deleteFiles 가 매번 throw 했는데, 그 예외를 삼키고 성공처럼
+  //      넘어갔다. Firestore 계약서는 사라지고 서명·PDF 는 남았다 —
+  //      실측 orphan 229건이 그렇게 쌓였다.
+  //
+  //      실패를 성공처럼 적지 않는다. 결과를 셋으로 나누고, 실패가 있으면
+  //      호출자가 그것을 보고 PARTIAL 로 보고할 수 있게 한다.
   if (entities.contractId) {
     const ref = db.collection('employment_contracts').doc(entities.contractId);
     if ((await ref.get()).exists) {
       if (execute) {
         await ref.delete();
+        const prefix = `contracts/${entities.contractId}/`;
         try {
-          await admin.storage().bucket()
-              .deleteFiles({prefix: `contracts/${entities.contractId}/`});
-        } catch (_) { /* 파일이 없으면 그만이다 */ }
+          // 이 fixture 의 contractId prefix 뿐이다 — 범위가 닫혀 있다.
+          const [files] = await devBucket().getFiles({prefix});
+          for (const f of files) {
+            try {
+              await f.delete();
+              removed.storageDeleted++;
+            } catch (e) {
+              // 이미 없는 것은 멱등 성공. 그 밖은 실패로 남긴다.
+              if (e && e.code === 404) removed.storageMissing++;
+              else {
+                removed.storageFailed++;
+                removed.storageErrors.push(
+                    `${entities.contractId}: ${e && e.message ? e.message : e}`);
+              }
+            }
+          }
+        } catch (e) {
+          removed.storageFailed++;
+          removed.storageErrors.push(
+              `${entities.contractId} 목록 조회 실패: ${e && e.message ? e.message : e}`);
+        }
       }
       removed.contracts++;
     }
