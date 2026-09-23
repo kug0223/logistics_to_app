@@ -54,7 +54,9 @@ class _GroupData {
   final String workType;
   final String startTime;
   final String endTime;
-  final bool isLongTerm;
+  /// [R7-P1-PRODUCT] canonical row가 오면 덮어쓴다 — final이 아니다.
+  ///   지원서에서 유도한 값보다 서버가 준 공고 type이 우선이다.
+  bool isLongTerm;
   /// [8.1E.4] canonical workDetail ID (wdId, new-schema 슬롯)
   final String? wdId;
   final String? workDetailId;   // composite WorkDetail ID (레거시/capacityKey 용)
@@ -772,6 +774,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final existing = groups[key];
       if (existing != null) {
         existing.requiredCount = row.requiredCount;
+        // [R7-P1-PRODUCT] 지원서로 먼저 만들어진 그룹은 장기 여부를
+        //   지원서에서 유도했다. canonical row가 왔으면 그쪽이 진실이다.
+        existing.isLongTerm = row.isLongTerm;
         // [R8-P7.3] 정원은 slot 이 진실이다. 앞선 capacity 조회가 실패했더라도
         //   여기서 canonical 값을 받았으면 다시 "안다"가 된다.
         existing.requiredCountKnown = true;
@@ -794,10 +799,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         workType: row.workType,
         startTime: row.startTime,
         endTime: row.endTime,
-        isLongTerm: false,
+        // [R7-P1-PRODUCT] `false` 고정이었다. 서버가 장기 row를 보내기
+        //   시작하면 그 그룹이 단기로 표시되고, 초대 경로도 단기의 것을
+        //   쓰게 된다 — 장기에는 슬롯이 없으므로 그 초대는 서지 못한다.
+        isLongTerm: row.isLongTerm,
         wdId: row.wdId,
         requiredCount: row.requiredCount,
-        slotId: row.slotId,
+        slotId: row.slotId.isEmpty ? null : row.slotId,
       )..canonicalConfirmed = row.confirmedCount;
     }
 
@@ -1305,6 +1313,19 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         //   `인력 초대 (N명 부족)`을 띄우는 것은 확인하지 못한 부족을 확인한 것처럼
         //   말하는 것이고, 보내도 수락될 수 없는 초대를 낳을 수 있다.
         //   UNKNOWN일 때는 CTA 대신 `_buildCapacityUnknownNotice`가 선다.
+        //
+        // [R7-P1-PRODUCT] 장기는 여기서 **아직** 초대 CTA를 세우지 않는다.
+        //
+        //   서버(callableInviteWorker)는 slotId가 선택이고 슬롯이 없으면
+        //   TO.workDetails로 폴백하므로 장기 초대 자체는 지원된다. 막는 것은
+        //   이 화면이 쓰는 **경로**다: InviteWorkerDialog.contextual은
+        //   groupItem이 null이라 isLongTerm이 항상 false로 계산되고
+        //   (invite_worker_dialog.dart:141), workEndDate·workDays를 싣는
+        //   분기는 `groupItem!`에 의존한다(:357-358).
+        //
+        //   그대로 CTA를 띄우면 장기 공고에 **하루짜리 지원서**가 만들어진다.
+        //   없는 버튼보다 나쁜 결과이므로, 경로를 갖추기 전에는 세우지 않는다.
+        //   대신 부족 수치와 대상 자체는 이제 보인다 — Home과 같은 truth다.
         if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
             g.capacityState == InviteCapacityState.available &&
             g.shortage > 0)
@@ -1320,10 +1341,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             return _buildInviteButton(g, slotId);
           }),
 
+        // [R7-P1-PRODUCT] 장기 부족은 보이되, 충원 수단은 공고 카드에 있다.
+        //   ⋮ 메뉴의 `인력 초대`는 groupItem을 넘기므로 장기를 제대로 다룬다.
+        //   여기서 아무 말도 하지 않으면 관리자는 부족만 보고 막다른 길에 선다.
+        if (g.isLongTerm && g.toId != null &&
+            g.capacityState == InviteCapacityState.available &&
+            g.shortage > 0 && _canForSelectedBiz((p) => p.canManageTo))
+          _buildLongTermInviteHint(context),
+
         // [R2.2.1 CORRECTION] capacity UNKNOWN — 없는 것처럼 지나가지 않는다.
         //   충원 CTA를 내린 이유를 말해 준다. `부족 0`이라서가 아니라
         //   **읽지 못해서**다 (ERROR != ZERO).
-        if (!g.isLongTerm && g.toId != null && g.slotId != null &&
+        if (g.toId != null && (g.isLongTerm || g.slotId != null) &&
             g.isCapacityUnknown && _dayStaffingRows == null &&
             _canForSelectedBiz((p) => p.canManageTo))
           _buildCapacityUnknownNotice(context),
@@ -2174,6 +2203,41 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   /// [R2.2.1 CORRECTION] 인력 현황을 읽지 못했을 때 충원 CTA 자리에 서는 안내.
   ///
   ///   CTA가 사라진 이유가 `부족 0`이 아니라 `읽지 못함`임을 말한다.
+  /// [R7-P1-PRODUCT] 장기 부족의 충원 경로 안내.
+  ///
+  /// 이 화면에서 장기 초대를 보낼 수 없는 것은 권한이나 상태 때문이 아니라
+  /// **아직 그 경로가 없기 때문**이다. 이유를 말하지 않고 버튼만 없으면
+  /// 관리자는 부족을 보고 들어와 아무것도 하지 못한 채 되돌아간다.
+  Widget _buildLongTermInviteHint(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline, size: 16, color: AppColors.grey600),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '장기 공고 충원은 공고 목록의 ⋮ 메뉴에서 보낼 수 있어요.',
+              style:
+                  ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCapacityUnknownNotice(BuildContext context) {
     return Container(
       margin: EdgeInsets.symmetric(

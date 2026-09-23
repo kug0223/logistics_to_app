@@ -22,6 +22,13 @@ class DayStaffingRow {
   ///   `더 이상 뽑지 않는다`다. 충원 대상에서는 빠지지만, 이유는 다르게 말한다.
   final bool isClosed;
 
+  /// [R7-P1-PRODUCT] 장기(고정) 공고의 모집 단위인가.
+  ///
+  /// 장기에는 슬롯이라는 개념이 없어 [slotId]가 빈 문자열이다. 그것은
+  /// "식별할 수 없다"가 아니라 "그런 것이 존재하지 않는다"는 뜻이다 —
+  /// 장기의 canonical target은 `toId × wdId`다.
+  final bool isLongTerm;
+
   const DayStaffingRow({
     required this.toId,
     required this.toTitle,
@@ -34,6 +41,7 @@ class DayStaffingRow {
     required this.confirmedCount,
     required this.pendingCount,
     this.isClosed = false,
+    this.isLongTerm = false,
   });
 
   /// canonical shortage — 서버 staffing readiness와 같은 식.
@@ -52,14 +60,19 @@ class DayStaffingRow {
     final toId = m['toId'] as String?;
     final slotId = m['slotId'] as String?;
     final wdId = m['wdId'] as String?;
+    final isLongTerm = m['isLongTerm'] == true;
     if (toId == null || toId.isEmpty) return null;
-    if (slotId == null || slotId.isEmpty) return null;
+    // [R7-P1-PRODUCT] slotId 비어 있음을 버리는 조건이었다.
+    //   단기에서는 슬롯 없는 row가 곧 깨진 데이터지만, 장기에는 슬롯이
+    //   **애초에 없다**. 그래서 서버가 장기 row를 보내기 시작하면 여기서
+    //   전부 버려져, 고친 집계가 화면에 닿지 못한다.
+    if (!isLongTerm && (slotId == null || slotId.isEmpty)) return null;
     if (wdId == null || wdId.isEmpty) return null;
     int n(String k) => (m[k] as num?)?.toInt() ?? 0;
     return DayStaffingRow(
       toId: toId,
       toTitle: (m['toTitle'] as String?) ?? '',
-      slotId: slotId,
+      slotId: slotId ?? '',
       wdId: wdId,
       workType: (m['workType'] as String?) ?? '',
       startTime: (m['startTime'] as String?) ?? '',
@@ -68,6 +81,7 @@ class DayStaffingRow {
       confirmedCount: n('confirmedCount'),
       pendingCount: n('pendingCount'),
       isClosed: m['isClosed'] == true,
+      isLongTerm: isLongTerm,
     );
   }
 }

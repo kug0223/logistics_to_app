@@ -73,6 +73,113 @@ async function _getEmailTransporter(): Promise<NodemailerNs.Transporter | null> 
 // 확정 상태 그룹 (CONFIRMED + CONTRACT_PENDING 동일 처리)
 const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [R7-P1-PRODUCT] 장기(contract) 공고의 **하루치** staffing — 공용 규칙.
+//
+// 이 규칙은 callableGetStaffingReadiness 안에만 있었다. 그래서 Home은 장기
+// 공고의 부족을 세는데, 그 부족을 누르고 들어가는 callableGetDayStaffingDetail은
+// type !== "flex" 한 줄로 장기를 통째로 건너뛰었다. 같은 날짜 같은 공고를 두
+// reader가 다르게 말한 것이다 — Home은 "부족 1", 다이얼로그는 그 대상이 아예
+// 없음. 실기기에서 관찰된 그대로다(2026-09-23~30 매일 정확히 1 차이).
+//
+// 두 번째 사본을 만들지 않고 여기로 끌어올린다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SRV_KST_MS = 9 * 3600 * 1000;
+const SRV_KST_WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+
+/**
+ * KST 기준 날짜 번호 (YYYYMMDD). 대소 비교용이다.
+ * @param {Date} d 대상 시각
+ * @return {number} YYYYMMDD 정수
+ */
+function srvKstDateNum(d: Date): number {
+  const kst = new Date(d.getTime() + SRV_KST_MS);
+  return (
+    kst.getUTCFullYear() * 10000 +
+    (kst.getUTCMonth() + 1) * 100 +
+    kst.getUTCDate()
+  );
+}
+
+/**
+ * KST 기준 요일 한글. workDays 비교용이다.
+ * @param {Date} d 대상 시각
+ * @return {string} 일~토
+ */
+function srvKstWeekdayKo(d: Date): string {
+  const kst = new Date(d.getTime() + SRV_KST_MS);
+  return SRV_KST_WEEKDAY_KO[kst.getUTCDay()];
+}
+
+/**
+ * 이 장기 공고가 그 날짜에 운영되는가.
+ *
+ * 기간 안에 있다는 것만으로 근무일이라고 단정하지 않는다 — workDays가
+ * 있으면 그 요일에 해당해야 한다.
+ * @param {Record<string, unknown>} toData 공고 문서
+ * @param {number} dayNum YYYYMMDD
+ * @param {string} dayWkd 요일 한글
+ * @return {boolean} 그 날짜에 운영되면 true
+ */
+function srvContractActiveOnDay(
+  toData: Record<string, unknown>,
+  dayNum: number,
+  dayWkd: string
+): boolean {
+  const rs = toData["rangeStart"] as admin.firestore.Timestamp | undefined;
+  const re = toData["rangeEnd"] as admin.firestore.Timestamp | undefined;
+  const startNum = rs ? srvKstDateNum(rs.toDate()) : 0;
+  const endNum = re ? srvKstDateNum(re.toDate()) : 99991231;
+  if (dayNum < startNum || dayNum > endNum) return false;
+  const wd = toData["workDays"] as string[] | undefined;
+  if (wd && wd.length > 0 && !wd.includes(dayWkd)) return false;
+  return true;
+}
+
+/**
+ * 그 날짜에 **자리를 차지하고 있는** 확정 지원서 수.
+ *
+ * 지원서마다 기간·요일·휴무일·추가근무일이 다르므로 전부 본다.
+ * 기간 안에 있다는 이유만으로 그날 근무한다고 추정하지 않는다.
+ * @param {admin.firestore.QueryDocumentSnapshot[]} appDocs 확정 지원서들
+ * @param {number} dayNum YYYYMMDD
+ * @param {string} dayWkd 요일 한글
+ * @return {number} 그 날짜의 확정 인원
+ */
+function srvContractConfirmedOnDay(
+  appDocs: admin.firestore.QueryDocumentSnapshot[],
+  dayNum: number,
+  dayWkd: string
+): number {
+  let n = 0;
+  for (const appDoc of appDocs) {
+    const ad = appDoc.data();
+    const sTs = ad["workDate"] as admin.firestore.Timestamp | undefined;
+    const eTs = ad["workEndDate"] as admin.firestore.Timestamp | undefined;
+    const sNum = sTs ? srvKstDateNum(sTs.toDate()) : 0;
+    const eNum = eTs ? srvKstDateNum(eTs.toDate()) : 99991231;
+    if (dayNum < sNum || dayNum > eNum) continue;
+
+    const extras = ad["extraWorkDates"] as
+      admin.firestore.Timestamp[] | undefined;
+    const isExtra = Array.isArray(extras) &&
+      extras.some((ts) => srvKstDateNum(ts.toDate()) === dayNum);
+
+    if (!isExtra) {
+      const appWorkDays = ad["workDays"] as string[] | undefined;
+      if (appWorkDays && appWorkDays.length > 0 &&
+          !appWorkDays.includes(dayWkd)) continue;
+      const leaves = ad["leaveDates"] as
+        admin.firestore.Timestamp[] | undefined;
+      if (Array.isArray(leaves) &&
+          leaves.some((ts) => srvKstDateNum(ts.toDate()) === dayNum)) continue;
+    }
+    n++;
+  }
+  return n;
+}
+
 // [SYSTEM-INTEGRATION-POSTING-E2E] 대기 상태 그룹.
 //
 //   `[Phase 8.1E.2A]` 이후 초대(INVITED)도 자리를 잡아 두는 대기다 —
@@ -37212,12 +37319,25 @@ export const callableGetDayStaffingDetail = onCall(
       .get();
 
     const flexTOs: Array<{toId: string; title: string}> = [];
+    // [R7-P1-PRODUCT] 장기(contract) 공고도 이 날짜의 모집 단위다.
+    //
+    //   여기서 `type !== "flex" → continue` 한 줄로 장기를 버리고 있었다.
+    //   Home(callableGetStaffingReadiness)은 장기의 부족을 세므로, 관리자가
+    //   `부족 1 ›`을 누르고 들어오면 그 부족을 만든 대상이 화면에 없었다.
+    //   충원이 가장 필요한 상태에서 충원 수단이 사라지는 경로다.
+    const contractTOs: Array<{
+      toId: string; title: string; data: Record<string, unknown>;
+    }> = [];
     for (const toDoc of tosSnap.docs) {
       const d = toDoc.data();
       if (d["isDeleted"] === true) continue;
-      if (((d["type"] as string | undefined) ?? "") !== "flex") continue;
-      flexTOs.push({toId: toDoc.id,
-        title: (d["title"] as string | undefined) ?? ""});
+      const toType = (d["type"] as string | undefined) ?? "";
+      const toTitle = (d["title"] as string | undefined) ?? "";
+      if (toType === "flex") {
+        flexTOs.push({toId: toDoc.id, title: toTitle});
+      } else if (toType === "contract") {
+        contractTOs.push({toId: toDoc.id, title: toTitle, data: d});
+      }
     }
 
     type DsRow = {
@@ -37227,6 +37347,10 @@ export const callableGetDayStaffingDetail = onCall(
       // [R2 FINAL] 이 모집 단위가 종료됐는가. 정원이 찬 것과 다르다 —
       //   `필요 5 확정 2 종료`는 `모두 찼다`가 아니라 `더 이상 뽑지 않는다`다.
       isClosed: boolean;
+      // [R7-P1-PRODUCT] 장기 공고의 모집 단위인가.
+      //   화면은 단기와 같은 mental model로 그리되, 슬롯이 없다는 사실
+      //   (slotId 없음)과 초대 경로가 다르다는 것을 알아야 한다.
+      isLongTerm: boolean;
     };
     const rows: DsRow[] = [];
 
@@ -37282,8 +37406,91 @@ export const callableGetDayStaffingDetail = onCall(
             // 슬롯 전체 종료 또는 이 업무만 종료 — WorkDetailData.isClosed와 같은 판정.
             isClosed: slotClosed ||
               w["isManualClosed"] === true || w["closedAt"] != null,
+            isLongTerm: false,
           });
         }
+      }
+    }));
+
+    // ── [R7-P1-PRODUCT] 장기 공고 — 날짜 전개 기반 ──────────────────────
+    //
+    //   판정식은 callableGetStaffingReadiness와 **같은 함수**를 쓴다
+    //   (srvContractActiveOnDay / srvContractConfirmedOnDay). 여기서 다시
+    //   쓰면 Home과 이 화면이 또 갈라진다.
+    //
+    //   슬롯이 없으므로 slotId는 빈 문자열이다. 그것이 이 모집 단위를
+    //   식별하지 못한다는 뜻은 아니다 — 장기의 canonical target은
+    //   `toId × wdId`이고, 슬롯은 애초에 존재하지 않는 개념이다.
+    const dsDayDate = new Date(dateMs);
+    const dsDayNum = srvKstDateNum(dsDayDate);
+    const dsDayWkd = srvKstWeekdayKo(dsDayDate);
+
+    await Promise.all(contractTOs.map(async (to) => {
+      if (!srvContractActiveOnDay(to.data, dsDayNum, dsDayWkd)) return;
+
+      const rawWDs = (to.data["workDetails"] as unknown[] | undefined) ?? [];
+      if (rawWDs.length === 0) return;
+
+      const appsSnap = await db.collection("applications")
+        .where("toId", "==", to.toId)
+        .where("status", "in", CONFIRMED_STATUSES)
+        .get();
+      const confirmedOnDay =
+        srvContractConfirmedOnDay(appsSnap.docs, dsDayNum, dsDayWkd);
+
+      const pendingSnap = await db.collection("applications")
+        .where("toId", "==", to.toId)
+        .where("status", "==", "PENDING")
+        .get();
+
+      // 공고 단위 마감 — 장기에는 슬롯 마감이라는 개념이 없다.
+      const toClosed = to.data["isManualClosed"] === true ||
+        (to.data["status"] as string | undefined) === "CLOSED";
+
+      // 확정 인원은 공고 단위로 센다(지원서에 wdId가 없을 수 있다).
+      // 업무가 여럿이면 첫 업무에만 싣지 않는다 — 그러면 나머지 업무가
+      // 전원 미충원으로 보인다. 업무별 확정을 가를 수 없을 때는 그 사실을
+      // 숨기지 말고 wdId 기준으로 나눠 센다.
+      const byWdConfirmed = new Map<string, number>();
+      for (const a of appsSnap.docs) {
+        const ad = a.data();
+        const k = ((ad["wdId"] as string | undefined) ?? "").trim();
+        if (k.length === 0) continue;
+        byWdConfirmed.set(k, (byWdConfirmed.get(k) ?? 0) + 1);
+      }
+      const byWdPending = new Map<string, number>();
+      for (const a of pendingSnap.docs) {
+        const ad = a.data();
+        const k = ((ad["wdId"] as string | undefined) ?? "").trim();
+        if (k.length === 0) continue;
+        byWdPending.set(k, (byWdPending.get(k) ?? 0) + 1);
+      }
+      const canSplit = rawWDs.length > 1 && byWdConfirmed.size > 0;
+
+      for (const raw of rawWDs) {
+        if (typeof raw !== "object" || raw === null) continue;
+        const w = raw as Record<string, unknown>;
+        const wdId = ((w["wdId"] as string | undefined) ?? "").trim();
+        rows.push({
+          toId: to.toId,
+          toTitle: to.title,
+          slotId: "",
+          wdId,
+          workType: (w["workType"] as string | undefined) ?? "",
+          startTime: (w["startTime"] as string | undefined) ?? "",
+          endTime: (w["endTime"] as string | undefined) ?? "",
+          requiredCount: Math.max(
+            0, (w["requiredCount"] as number | undefined) ?? 0),
+          confirmedCount: canSplit && wdId.length > 0 ?
+            (byWdConfirmed.get(wdId) ?? 0) :
+            confirmedOnDay,
+          pendingCount: canSplit && wdId.length > 0 ?
+            (byWdPending.get(wdId) ?? 0) :
+            pendingSnap.size,
+          isClosed: toClosed ||
+            w["isManualClosed"] === true || w["closedAt"] != null,
+          isLongTerm: true,
+        });
       }
     }));
 
@@ -43659,23 +43866,12 @@ export const callableGetStaffingReadiness = onCall(
     const todayMs = todayKSTMidnight.getTime();
     const N_DAYS = 8; // D0~D+7 포함
 
-    const KST_MS = 9 * 3600 * 1000;
-    const KST_WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
-
-    // KST 기준 날짜 번호 (YYYYMMDD integer, 대소 비교용)
-    const srfKstDateNum = (d: Date): number => {
-      const kst = new Date(d.getTime() + KST_MS);
-      return (
-        kst.getUTCFullYear() * 10000 +
-        (kst.getUTCMonth() + 1) * 100 +
-        kst.getUTCDate()
-      );
-    };
-    // KST 기준 요일 한글 (workDays 비교용)
-    const srfKstWeekdayKo = (d: Date): string => {
-      const kst = new Date(d.getTime() + KST_MS);
-      return KST_WEEKDAY_KO[kst.getUTCDay()];
-    };
+    // [R7-P1-PRODUCT] 공용 helper로 위임한다.
+    //   callableGetDayStaffingDetail이 같은 판정을 해야 하는데 이 두 식이
+    //   이 함수 안의 지역 const라 닿을 수 없었다. 복사본을 만드는 대신
+    //   module-level로 올렸다 — 두 reader가 같은 날짜 규칙을 쓴다.
+    const srfKstDateNum = srvKstDateNum;
+    const srfKstWeekdayKo = srvKstWeekdayKo;
 
     const dateDates: Date[] = [];
     const dateLabels: string[] = [];
