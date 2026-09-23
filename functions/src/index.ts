@@ -137,11 +137,149 @@ function srvContractActiveOnDay(
   return true;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// [LONGTERM-DATE-ELIGIBILITY] 장기 worker-day resolver — 이 질문의 유일한 답.
+//
+//   장기에는 날짜별 slot이 없다. "이 사람이 그 날 일하는가"는
+//
+//       desiredStartDate · workDate · confirmedAt
+//       actualResignDate · workEndDate
+//       extraWorkDates · leaveDates · workDays
+//
+//   에서 **파생**된다. 그런데 그 파생을 서버 안에서 네 곳이 따로 하고
+//   있었고, 각자 규칙의 다른 부분집합만 썼다:
+//
+//       callableCheckIn               종료 상한 없음 · workDate fallback 없음
+//       _resolveAttendanceWorkContext 종료 상한 없음 · 퇴사일 없음 · fallback 없음
+//       자동 NO_SHOW                   퇴사일 없음 · fallback 없음
+//       srvContractConfirmedOnDay      퇴사일 없음 · 확정일 보정 없음
+//
+//   그래서 화면이 "근무 아님"이라고 말하는 날짜에 서버가 attendance를
+//   만들어 줄 수 있었고, 그것이 곧 wage와 이체로 이어졌다. 규칙을 한 벌
+//   더 베끼는 대신 **묻는 곳을 하나로** 만든다.
+//
+//   ── 경계 ────────────────────────────────────────────────────────
+//
+//   actualResignDate 는 **마지막 근무 가능일**이다(제품 정책).
+//   그러므로 D 당일은 근무일이고, D+1부터 근무하지 않는다.
+//   `>= actualResignDate` 로 막으면 마지막 날 하루를 지워 버린다.
+//
+//   workEndDate 가 없는 계약은 "무기한"이 아니라 **기간 미정**이다.
+//   클라이언트가 이미 그렇게 판단하므로(근무일 0) 서버도 같게 답한다.
+//   이 phase에서 open-ended 정책을 새로 만들지 않는다.
+//
+//   Firestore를 읽지 않는다 — 이미 읽은 appData만 본다.
+// ═══════════════════════════════════════════════════════════════════════
+
+/** 근무 대상이 아닌 이유. caller의 기존 문구를 보존하기 위해 구분한다. */
+type SrvWorkerDayReason =
+  | "ELIGIBLE"
+  | "BEFORE_START"
+  | "AFTER_RESIGN"
+  | "AFTER_END"
+  | "NO_END"
+  | "LEAVE"
+  | "NON_WORKDAY";
+
+/**
+ * 이 장기 지원서의 근로자가 그 KST 날짜에 근무 대상인가.
+ *
+ * status(CONFIRMED·CONTRACT_PENDING)는 보지 않는다 — lifecycle gate는
+ * caller의 책임이고, 여기에 넣으면 같은 정책이 두 곳에 생긴다.
+ * @param {Record<string, unknown>} appData 지원서 문서
+ * @param {number} dayNum 대상 날짜 KST YYYYMMDD
+ * @param {string} dayWkd 대상 날짜 KST 요일 한글
+ * @return {{eligible: boolean, reason: SrvWorkerDayReason}} 판정과 이유
+ */
+function srvLongTermEligibleOnDay(
+  appData: Record<string, unknown>,
+  dayNum: number,
+  dayWkd: string
+): {eligible: boolean; reason: SrvWorkerDayReason} {
+  const ts = (k: string) =>
+    appData[k] as admin.firestore.Timestamp | undefined;
+
+  // ── effectiveStart ──────────────────────────────────────────────
+  //   desiredStartDate가 없으면 workDate(= 공고 시작일)로 떨어진다.
+  //   다만 공고 시작 며칠 뒤에 확정된 사람에게 확정 이전 날짜를
+  //   근무일로 만들어 주면 안 되므로 확정일로 한 번 더 민다.
+  //   희망 시작일을 직접 고른 경우에는 그 의사를 덮지 않는다.
+  const desired = ts("desiredStartDate");
+  const workDate = ts("workDate");
+  let startNum = desired ?
+    srvKstDateNum(desired.toDate()) :
+    (workDate ? srvKstDateNum(workDate.toDate()) : 0);
+  if (!desired) {
+    const confirmed = ts("confirmedAt");
+    if (confirmed) {
+      const cNum = srvKstDateNum(confirmed.toDate());
+      if (cNum > startNum) startNum = cNum;
+    }
+  }
+  if (dayNum < startNum) return {eligible: false, reason: "BEFORE_START"};
+
+  // ── effectiveEnd ────────────────────────────────────────────────
+  const resign = ts("actualResignDate");
+  const end = resign ?? ts("workEndDate");
+  if (!end) return {eligible: false, reason: "NO_END"};
+  if (dayNum > srvKstDateNum(end.toDate())) {
+    return {eligible: false, reason: resign ? "AFTER_RESIGN" : "AFTER_END"};
+  }
+
+  // ── 날짜 예외 → 요일 ────────────────────────────────────────────
+  //   추가근무가 휴무보다 먼저다. 승인 writer가 교집합을 지우지만,
+  //   legacy dual-state가 남아 있어도 기존 reader와 같은 답을 낸다.
+  const hasDay = (k: string): boolean => {
+    const arr = appData[k];
+    if (!Array.isArray(arr)) return false;
+    return (arr as admin.firestore.Timestamp[]).some(
+      (t) => t != null && typeof t.toDate === "function" &&
+        srvKstDateNum(t.toDate()) === dayNum);
+  };
+  if (hasDay("extraWorkDates")) return {eligible: true, reason: "ELIGIBLE"};
+  if (hasDay("leaveDates")) return {eligible: false, reason: "LEAVE"};
+
+  const wd = appData["workDays"] as string[] | undefined;
+  if (!Array.isArray(wd) || wd.length === 0 || !wd.includes(dayWkd)) {
+    return {eligible: false, reason: "NON_WORKDAY"};
+  }
+  return {eligible: true, reason: "ELIGIBLE"};
+}
+
+/**
+ * 근무 대상이 아닌 이유의 사용자 문구. 기존 문구를 그대로 보존한다.
+ * @param {SrvWorkerDayReason} reason 판정 이유
+ * @param {string} dayWkd 대상 날짜 요일 한글
+ * @return {string} 사용자에게 보일 문장
+ */
+function srvWorkerDayMessage(
+  reason: SrvWorkerDayReason, dayWkd: string
+): string {
+  switch (reason) {
+  case "BEFORE_START":
+    return "계약 시작일 이전에는 출근할 수 없습니다.";
+  case "AFTER_RESIGN":
+    return "퇴직 이후 출근할 수 없습니다.";
+  case "AFTER_END":
+    return "계약 종료일 이후에는 출근할 수 없습니다.";
+  case "NO_END":
+    return "근무 종료일이 정해지지 않아 출근할 수 없습니다. 관리자에게 문의해주세요.";
+  case "LEAVE":
+    return "휴무일에는 출근할 수 없습니다.";
+  default:
+    return `오늘(${dayWkd})은 근무 요일이 아닙니다.`;
+  }
+}
+
 /**
  * 그 날짜에 **자리를 차지하고 있는** 확정 지원서 수.
  *
  * 지원서마다 기간·요일·휴무일·추가근무일이 다르므로 전부 본다.
  * 기간 안에 있다는 이유만으로 그날 근무한다고 추정하지 않는다.
+ *
+ * [LONGTERM-DATE-ELIGIBILITY] 판정을 직접 하지 않고 공용 resolver에
+ *   위임한다. 이전에는 퇴사 효력일과 확정일 보정을 몰라서, 이미 나간
+ *   사람이 좌석을 계속 차지한 것으로 세고 그만큼 부족이 덜 보였다.
  * @param {admin.firestore.QueryDocumentSnapshot[]} appDocs 확정 지원서들
  * @param {number} dayNum YYYYMMDD
  * @param {string} dayWkd 요일 한글
@@ -154,28 +292,7 @@ function srvContractConfirmedOnDay(
 ): number {
   let n = 0;
   for (const appDoc of appDocs) {
-    const ad = appDoc.data();
-    const sTs = ad["workDate"] as admin.firestore.Timestamp | undefined;
-    const eTs = ad["workEndDate"] as admin.firestore.Timestamp | undefined;
-    const sNum = sTs ? srvKstDateNum(sTs.toDate()) : 0;
-    const eNum = eTs ? srvKstDateNum(eTs.toDate()) : 99991231;
-    if (dayNum < sNum || dayNum > eNum) continue;
-
-    const extras = ad["extraWorkDates"] as
-      admin.firestore.Timestamp[] | undefined;
-    const isExtra = Array.isArray(extras) &&
-      extras.some((ts) => srvKstDateNum(ts.toDate()) === dayNum);
-
-    if (!isExtra) {
-      const appWorkDays = ad["workDays"] as string[] | undefined;
-      if (appWorkDays && appWorkDays.length > 0 &&
-          !appWorkDays.includes(dayWkd)) continue;
-      const leaves = ad["leaveDates"] as
-        admin.firestore.Timestamp[] | undefined;
-      if (Array.isArray(leaves) &&
-          leaves.some((ts) => srvKstDateNum(ts.toDate()) === dayNum)) continue;
-    }
-    n++;
+    if (srvLongTermEligibleOnDay(appDoc.data(), dayNum, dayWkd).eligible) n++;
   }
   return n;
 }
@@ -3782,8 +3899,8 @@ async function processAutoNoShow(now: Timestamp): Promise<void> {
   const dd   = String(yesterdayKSTMidnight.getDate()).padStart(2, "0");
   const dateStr   = `${year}${mm}${dd}`;
   const yearMonth = `${year}-${mm}`;
-  const KR_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-  const yesterdayWeekday = KR_WEEKDAYS[yesterdayKSTMidnight.getDay()];
+  // [LONGTERM-DATE-ELIGIBILITY] 요일은 공용 resolver가 srvKstWeekdayKo로
+  //   직접 구한다 — 여기서 또 만들면 두 벌이 된다.
   const workDateTs = Timestamp.fromDate(yesterdayStartUTC);
 
   let noShowCount = 0;
@@ -3852,27 +3969,18 @@ async function processAutoNoShow(now: Timestamp): Promise<void> {
     const d = appDoc.data();
     if (d.type !== "long_term") continue;
 
-    // 계약 시작일 이전이면 skip
-    const startTs = d.desiredStartDate as admin.firestore.Timestamp | undefined;
-    if (!startTs || startTs.toMillis() > yesterdayStartUTC.getTime()) continue;
-
-    // 어제가 정규 근무요일 또는 추가근무일인지 확인
-    const workDays        = d.workDays as string[] | undefined;
-    const extraWorkDates  = (d.extraWorkDates ?? []) as admin.firestore.Timestamp[];
-    const isRegularDay    = workDays?.includes(yesterdayWeekday) ?? false;
-    const isExtraDay      = extraWorkDates.some((ed) => {
-      const m = ed.toMillis();
-      return m >= yesterdayStartUTC.getTime() && m < todayStartUTC.getTime();
-    });
-    if (!isRegularDay && !isExtraDay) continue;
-
-    // 승인된 휴무일이면 skip
-    const leaveDates = (d.leaveDates ?? []) as admin.firestore.Timestamp[];
-    const isLeave = leaveDates.some((ld) => {
-      const m = ld.toMillis();
-      return m >= yesterdayStartUTC.getTime() && m < todayStartUTC.getTime();
-    });
-    if (isLeave) continue;
+    // [LONGTERM-DATE-ELIGIBILITY] 결근은 **근무일에만** 성립한다.
+    //   이 블록은 시작일을 desiredStartDate로만 보고(없으면 무조건 skip —
+    //   갱신 계약은 항상 그렇다) 퇴사 효력일을 전혀 보지 않았다. 그래서
+    //   이미 나간 사람에게 없는 결근이 기록될 수 있었다.
+    //   퇴사 효력일 D는 **마지막 근무 가능일**이므로 D 당일의 결근은
+    //   정상적으로 성립한다 — 막아야 하는 것은 D+1부터다.
+    const nsDayDate = new Date(yesterdayStartUTC.getTime());
+    if (!srvLongTermEligibleOnDay(
+      d as Record<string, unknown>,
+      srvKstDateNum(nsDayDate),
+      srvKstWeekdayKo(nsDayDate)
+    ).eligible) continue;
 
     const docId  = `${appDoc.id}_${dateStr}`;
     const attRef = db.collection("attendance").doc(docId);
@@ -26727,8 +26835,10 @@ async function _resolveAttendanceWorkContext(
     canonicalWorkType: null, snapshotWage: undefined, snapshotWageType: undefined,
   });
 
-  // 휴무일 차단 — short/long_term 모두 적용 (callableCheckInAttendance L19907~19915 동일)
-  if (Array.isArray(appData.leaveDates)) {
+  // [LONGTERM-DATE-ELIGIBILITY] 장기 휴무는 아래 공용 resolver가 본다.
+  //   단기는 기간·요일 개념이 없으므로 여기서 그대로 본다.
+  if ((appData.type as string) !== "long_term" &&
+      Array.isArray(appData.leaveDates)) {
     const isLeave = (appData.leaveDates as admin.firestore.Timestamp[]).some((d) => {
       const ldKST = new Date(d.toDate().getTime() + KST_OFFSET_MS);
       return Date.UTC(ldKST.getUTCFullYear(), ldKST.getUTCMonth(), ldKST.getUTCDate()) === requestedKSTDay;
@@ -26757,26 +26867,26 @@ async function _resolveAttendanceWorkContext(
     // canonicalWorkDate = slot.date (서버 권위 날짜)
     return {valid: true, reason: "ok", canonicalWorkDate: new Date(slotDateTs.toMillis()), canonicalWorkType, snapshotWage, snapshotWageType};
   } else if (appType === "long_term") {
-    // 계약 시작일 이전 차단 (HIGH-CHECKIN-02 동일)
-    const desiredStartDate = appData.desiredStartDate as admin.firestore.Timestamp | undefined;
-    if (desiredStartDate) {
-      const startKST = new Date(desiredStartDate.toMillis() + KST_OFFSET_MS);
-      const startKSTDay = Date.UTC(startKST.getUTCFullYear(), startKST.getUTCMonth(), startKST.getUTCDate());
-      if (requestedKSTDay < startKSTDay) return _fail("before_contract_start");
-    }
-    // 정규 근무 요일·추가근무 승인일 검증 (HIGH-CHECKIN-02 + BUG-H2 수정 동일)
-    const workDays = appData.workDays as string[] | undefined;
-    if (workDays && workDays.length > 0) {
-      const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
-      const dayOfWeek = WEEKDAY_KO[requestedKST.getUTCDay()];
-      if (!workDays.includes(dayOfWeek)) {
-        const extraWorkDates = appData.extraWorkDates as admin.firestore.Timestamp[] | undefined;
-        const isExtraWorkDate = (extraWorkDates ?? []).some((ts) => {
-          const d = new Date(ts.toMillis() + KST_OFFSET_MS);
-          return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) === requestedKSTDay;
-        });
-        if (!isExtraWorkDate) return _fail("not_work_day");
-      }
+    // [LONGTERM-DATE-ELIGIBILITY] 관리자 배치 경로가 개별 출근보다 느슨하면
+    //   그쪽이 우회로가 된다. 같은 지원서·같은 날짜에서 direct와 batch의
+    //   날짜 판정은 반드시 같아야 하므로 같은 함수를 쓴다.
+    //   이전에는 여기에 종료 상한도 퇴사일도 없었다.
+    const ctxDayDate = new Date(requestedWorkDateMs);
+    const ctxVerdict = srvLongTermEligibleOnDay(
+      appData as Record<string, unknown>,
+      srvKstDateNum(ctxDayDate),
+      srvKstWeekdayKo(ctxDayDate)
+    );
+    if (!ctxVerdict.eligible) {
+      const CTX_REASON: Record<string, string> = {
+        BEFORE_START: "before_contract_start",
+        AFTER_RESIGN: "after_resign_date",
+        AFTER_END: "after_contract_end",
+        NO_END: "no_contract_end",
+        LEAVE: "leave_date",
+        NON_WORKDAY: "not_work_day",
+      };
+      return _fail(CTX_REASON[ctxVerdict.reason] ?? "not_work_day");
     }
   }
   // valid (long_term or unknown type fallback)
@@ -31477,72 +31587,51 @@ export const callableCheckIn = onCall(
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const workDateKST = new Date(workDateMs + KST_OFFSET_MS);
 
-    // 퇴직 이후 출근 차단 (actualResignDate <= workDate)
-    if (appData.actualResignDate) {
-      const resignDate = (appData.actualResignDate as admin.firestore.Timestamp).toDate();
-      const resignDateKST = new Date(resignDate.getTime() + KST_OFFSET_MS);
-      const workDateKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
-      const resignDateKSTDay = Date.UTC(resignDateKST.getUTCFullYear(), resignDateKST.getUTCMonth(), resignDateKST.getUTCDate());
-      if (resignDateKSTDay <= workDateKSTDay) {
+    // ── [LONGTERM-DATE-ELIGIBILITY] 근무일 판정은 공용 resolver 하나로 한다 ──
+    //
+    //   이 자리에는 시작일·요일·추가근무·휴무·퇴사를 각각 보는 if문이
+    //   늘어서 있었고, 그 조합에서 **종료 상한이 빠져 있었다**. 만료된
+    //   장기 지원서는 status가 CONFIRMED로 남으므로(F-3), 계약이 끝난
+    //   뒤에도 요일만 맞으면 출근이 만들어졌다 — 그리고 그 근태가 곧
+    //   임금이 됐다. desiredStartDate가 없는 지원서(갱신 계약은 항상
+    //   그렇다)에서는 시작 하한마저 통째로 사라졌다.
+    //
+    //   규칙을 한 벌 더 베끼지 않는다. 화면이 쓰는 것과 같은 정의를
+    //   서버에서도 같은 함수로 묻는다.
+    const ciDayDate = new Date(workDateMs);
+    const ciDayNum = srvKstDateNum(ciDayDate);
+    const ciDayWkd = srvKstWeekdayKo(ciDayDate);
+
+    if ((appData.type as string) === "long_term") {
+      const ciVerdict = srvLongTermEligibleOnDay(
+        appData as Record<string, unknown>, ciDayNum, ciDayWkd);
+      if (!ciVerdict.eligible) {
+        throw new HttpsError(
+          ciVerdict.reason === "NO_END" ? "failed-precondition" : "permission-denied",
+          srvWorkerDayMessage(ciVerdict.reason, ciDayWkd)
+        );
+      }
+    } else {
+      // 단기 — 기간·요일이라는 개념이 없다. 그 날짜 하나가 약속 전부다.
+      // 퇴직 이후 출근 차단 (마지막 근무 가능일 = actualResignDate)
+      const shortResign =
+        appData.actualResignDate as admin.firestore.Timestamp | undefined;
+      if (shortResign && ciDayNum > srvKstDateNum(shortResign.toDate())) {
         throw new HttpsError("permission-denied", "퇴직 이후 출근할 수 없습니다.");
       }
-    }
-
-    // 휴무일 차단
-    if (Array.isArray(appData.leaveDates)) {
-      const isLeave = (appData.leaveDates as admin.firestore.Timestamp[]).some((d) => {
-        const ldKST = new Date(d.toDate().getTime() + KST_OFFSET_MS);
-        return ldKST.getUTCFullYear() === workDateKST.getUTCFullYear() &&
-               ldKST.getUTCMonth() === workDateKST.getUTCMonth() &&
-               ldKST.getUTCDate() === workDateKST.getUTCDate();
-      });
-      if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
-    }
-
-    // [HIGH-CHECKIN-01 수정 2026-07-14] 단기 지원서 workDate ↔ workDateMs 교차검증
-    // 기존: 검증 없음 → 7일 범위 내 임의 날짜에 출근 기록 생성 후 임금 이중 청구 가능
-    // [BUG-H1 수정 2026-07-27] applicationType(X) → type(O), "shortTerm"(X) → "short"(O)
-    if ((appData.type as string) === "short") {
-      const appWorkDate = appData.workDate as admin.firestore.Timestamp | undefined;
-      if (appWorkDate) {
-        const appWorkKST = new Date(appWorkDate.toMillis() + KST_OFFSET_MS);
-        const workKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
-        const appKSTDay = Date.UTC(appWorkKST.getUTCFullYear(), appWorkKST.getUTCMonth(), appWorkKST.getUTCDate());
-        if (workKSTDay !== appKSTDay) {
+      // 휴무일 차단
+      if (Array.isArray(appData.leaveDates)) {
+        const isLeave = (appData.leaveDates as admin.firestore.Timestamp[]).some(
+          (d) => srvKstDateNum(d.toDate()) === ciDayNum);
+        if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
+      }
+      // [HIGH-CHECKIN-01 수정 2026-07-14] 단기 지원서 workDate ↔ workDateMs 교차검증
+      // 기존: 검증 없음 → 7일 범위 내 임의 날짜에 출근 기록 생성 후 임금 이중 청구 가능
+      // [BUG-H1 수정 2026-07-27] applicationType(X) → type(O), "shortTerm"(X) → "short"(O)
+      if ((appData.type as string) === "short") {
+        const appWorkDate = appData.workDate as admin.firestore.Timestamp | undefined;
+        if (appWorkDate && srvKstDateNum(appWorkDate.toDate()) !== ciDayNum) {
           throw new HttpsError("permission-denied", "지원서에 지정된 날짜에만 출근할 수 있습니다.");
-        }
-      }
-    }
-
-    // [HIGH-CHECKIN-02 수정 2026-07-14] 장기 지원서 계약 시작일·근무 요일 교차검증
-    // 기존: 검증 없음 → 계약 시작 전/비근무일에 출근 기록 생성 후 초과 임금 청구 가능
-    // [BUG-H1 수정 2026-07-27] applicationType(X) → type(O), "longTerm"(X) → "long_term"(O)
-    if ((appData.type as string) === "long_term") {
-      const desiredStartDate = appData.desiredStartDate as admin.firestore.Timestamp | undefined;
-      if (desiredStartDate) {
-        const startKST = new Date(desiredStartDate.toMillis() + KST_OFFSET_MS);
-        const workKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
-        const startKSTDay = Date.UTC(startKST.getUTCFullYear(), startKST.getUTCMonth(), startKST.getUTCDate());
-        if (workKSTDay < startKSTDay) {
-          throw new HttpsError("permission-denied", "계약 시작일 이전에는 출근할 수 없습니다.");
-        }
-      }
-      const workDays = appData.workDays as string[] | undefined;
-      if (workDays && workDays.length > 0) {
-        // [HIGH-CHECKIN-02-FIXUP 2026-07-15] Firestore workDays는 한글 저장 — 영문 DOW 배열 한글로 수정
-        const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
-        const dayOfWeek = WEEKDAY_KO[workDateKST.getUTCDay()];
-        if (!workDays.includes(dayOfWeek)) {
-          // [BUG-H2 수정 2026-07-27] extraWorkDates(관리자 승인 추가 근무일)이면 요일 무관 허용
-          const extraWorkDates = appData.extraWorkDates as admin.firestore.Timestamp[] | undefined;
-          const workKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
-          const isExtraWorkDate = (extraWorkDates ?? []).some((ts) => {
-            const d = new Date(ts.toMillis() + KST_OFFSET_MS);
-            return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) === workKSTDay;
-          });
-          if (!isExtraWorkDate) {
-            throw new HttpsError("permission-denied", `오늘(${dayOfWeek})은 근무 요일이 아닙니다.`);
-          }
         }
       }
     }
@@ -44213,37 +44302,13 @@ export const callableGetStaffingReadiness = onCall(
 
               dayAcc[i].required += to.totalRequired;
 
-              // 해당 날짜에 활성인 확정 지원서 수
-              let confirmedOnDay = 0;
-              for (const appDoc of appsSnap.docs) {
-                const ad = appDoc.data();
-
-                // 지원서 날짜 범위
-                const appStartTs = ad["workDate"]    as admin.firestore.Timestamp | undefined;
-                const appEndTs   = ad["workEndDate"] as admin.firestore.Timestamp | undefined;
-                const appStartNum = appStartTs ? srfKstDateNum(appStartTs.toDate()) : 0;
-                const appEndNum   = appEndTs   ? srfKstDateNum(appEndTs.toDate())   : 99991231;
-                if (dayNum < appStartNum || dayNum > appEndNum) continue;
-
-                // extraWorkDates (workDays 무관 근무일)
-                const extras = ad["extraWorkDates"] as admin.firestore.Timestamp[] | undefined;
-                const isExtra = Array.isArray(extras) &&
-                  extras.some((ts) => srfKstDateNum(ts.toDate()) === dayNum);
-
-                if (!isExtra) {
-                  // 지원서 workDays 필터
-                  const appWorkDays = ad["workDays"] as string[] | undefined;
-                  if (appWorkDays && appWorkDays.length > 0 &&
-                      !appWorkDays.includes(dayWkd)) continue;
-
-                  // leaveDates 필터
-                  const leaves = ad["leaveDates"] as admin.firestore.Timestamp[] | undefined;
-                  if (Array.isArray(leaves) &&
-                      leaves.some((ts) => srfKstDateNum(ts.toDate()) === dayNum)) continue;
-                }
-
-                confirmedOnDay++;
-              }
+              // 해당 날짜에 활성인 확정 지원서 수.
+              // [LONGTERM-DATE-ELIGIBILITY] 여기에도 같은 판정의 사본이
+              //   있었다 — 퇴사 효력일과 확정일 보정을 몰라서, 홈의 부족
+              //   숫자가 하루 상세 화면과 다르게 나올 수 있었다.
+              //   같은 질문이므로 같은 함수에 묻는다.
+              const confirmedOnDay =
+                srvContractConfirmedOnDay(appsSnap.docs, dayNum, dayWkd);
 
               dayAcc[i].confirmed += confirmedOnDay;
               dayAcc[i].shortage  += Math.max(0, to.totalRequired - confirmedOnDay);

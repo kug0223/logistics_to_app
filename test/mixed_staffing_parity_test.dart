@@ -145,12 +145,26 @@ void main() {
     });
 
     test('02-c 확정 수는 지원서별 기간·요일·휴무를 전부 본다', () {
-      final body = _tsAfter(cf, 'function srvContractConfirmedOnDay(', 1600);
-      expect(body.contains('workDate'), true);
-      expect(body.contains('workEndDate'), true);
-      expect(body.contains('extraWorkDates'), true);
-      expect(body.contains('leaveDates'), true);
-      expect(body.contains('appWorkDays'), true);
+      // [LONGTERM-DATE-ELIGIBILITY] 이 판정은 더 이상 여기서 직접 하지 않는다.
+      //   같은 규칙을 여러 곳이 따로 베껴 쓰다 각자 다른 부분만 적용했고,
+      //   이 자리에는 퇴사 효력일과 확정일 보정이 빠져 있었다.
+      //   묻는 곳을 하나로 모았으므로, 확인할 것은 **그 함수에 묻는가**다.
+      final body = _tsAfter(cf, 'function srvContractConfirmedOnDay(', 700);
+      expect(body.contains('srvLongTermEligibleOnDay('), true);
+
+      final resolver = _tsAfter(cf, 'function srvLongTermEligibleOnDay(', 2200);
+      for (final f in [
+        'workDate',
+        'workEndDate',
+        'extraWorkDates',
+        'leaveDates',
+        'workDays',
+        'desiredStartDate',
+        'actualResignDate',
+        'confirmedAt',
+      ]) {
+        expect(resolver.contains(f), true, reason: f);
+      }
     });
 
     test('02-d detail이 더 이상 장기를 건너뛰지 않는다', () {

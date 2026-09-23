@@ -302,30 +302,39 @@ void main() {
       expect(ci.contains('지원서에 지정된 날짜에만 출근할 수 있습니다.'), true);
     });
 
-    test('06-b 장기는 근무요일 또는 추가근무일이어야 한다', () {
+    test('06-b 장기 날짜 판정은 공용 resolver가 한다', () {
+      // [LONGTERM-DATE-ELIGIBILITY] 요일·추가근무·휴무·시작·종료를 각각
+      //   보던 if문 더미를 걷어냈다. 경계 자체는
+      //   longterm_date_eligibility_test 가 A~R로 고정한다.
       final ci = _after(cf, 'export const callableCheckIn', 25000);
-      expect(ci.contains('const isExtraWorkDate = (extraWorkDates ?? []).some('),
-          true);
-      expect(ci.contains('은 근무 요일이 아닙니다.'), true);
+      expect(ci.contains('srvLongTermEligibleOnDay('), true);
+      expect(ci.contains('srvWorkerDayMessage('), true);
     });
 
     test('06-c 휴무일 출근은 거절된다', () {
-      final ci = _after(cf, 'export const callableCheckIn', 25000);
-      expect(ci.contains('휴무일에는 출근할 수 없습니다.'), true);
+      // 문구는 그대로 유지한다 — 장기는 resolver가, 단기는 각 경로가 본다.
+      expect(cf.contains('휴무일에는 출근할 수 없습니다.'), true);
     });
 
-    test('06-d 퇴사 효력일 이후 출근은 거절된다', () {
+    test('06-d 퇴사 효력일 **이후** 출근이 거절된다', () {
+      // 효력일 D는 마지막 근무 가능일이다. `>=`로 막으면 하루가 지워진다.
+      expect(cf.contains('퇴직 이후 출근할 수 없습니다.'), true);
+      expect(cf.contains('if (resignDateKSTDay <= workDateKSTDay)'), false);
       final ci = _after(cf, 'export const callableCheckIn', 25000);
-      expect(ci.contains('if (resignDateKSTDay <= workDateKSTDay)'), true);
-      expect(ci.contains('퇴직 이후 출근할 수 없습니다.'), true);
+      expect(
+        ci.contains('shortResign && ciDayNum > srvKstDateNum(shortResign.toDate())'),
+        true,
+        reason: '단기 경로도 같은 경계를 쓴다',
+      );
     });
 
     test('06-e 관리자 배치 경로도 같은 재검증을 쓴다', () {
       // 배치 출근/노쇼가 개별 출근보다 느슨하면 그쪽이 우회로가 된다.
       final r = _after(cf, 'async function _resolveAttendanceWorkContext(', 6000);
-      expect(r.contains('_fail("leave_date")'), true);
-      expect(r.contains('_fail("not_work_day")'), true);
+      expect(r.contains('srvLongTermEligibleOnDay('), true);
       expect(r.contains('_fail("wrong_date_flex")'), true);
+      expect(r.contains('LEAVE: "leave_date"'), true);
+      expect(r.contains('NON_WORKDAY: "not_work_day"'), true);
     });
   });
 
@@ -470,18 +479,21 @@ void main() {
     const noShowAnchor =
         '.where("workEndDate", ">=", Timestamp.fromDate(yesterdayStartUTC))';
 
-    test('10-a 기간 안이라는 이유만으로 노쇼를 만들지 않는다', () {
+    test('10-a 결근은 근무일에만 성립한다 — 공용 resolver가 판정한다', () {
       final seg = _after(cf, noShowAnchor, 1400);
-      expect(seg.contains('if (!isRegularDay && !isExtraDay) continue;'), true);
-      expect(seg.contains('if (isLeave) continue;'), true);
+      expect(seg.contains('srvLongTermEligibleOnDay('), true);
+      expect(seg.contains(').eligible) continue;'), true);
     });
 
-    test('10-b 계약 시작 전에는 노쇼를 만들지 않는다', () {
+    test('10-b 사본이 남아 있지 않다', () {
+      // 이 블록은 시작일을 desiredStartDate로만 보고 퇴사 효력일을 몰랐다.
       final seg = _after(cf, noShowAnchor, 1400);
+      expect(seg.contains('if (!isRegularDay && !isExtraDay) continue;'), false);
+      expect(seg.contains('const isRegularDay'), false);
       expect(
         seg.contains(
             'if (!startTs || startTs.toMillis() > yesterdayStartUTC.getTime()) continue;'),
-        true,
+        false,
       );
     });
 

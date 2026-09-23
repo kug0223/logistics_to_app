@@ -108,7 +108,15 @@ void main() {
       expect(_flat(code).contains('if (workDateMs > todayKSTStartMs) { skippedSet.add(resolvedId); return undefined; }'),
           true, reason: '[NS-02-FIX] 미래 NO_SHOW 선제 생성 차단이 사라졌다');
       // 자동 경로는 어제만 훑는다.
-      expect(code.contains('const yesterdayWeekday = KR_WEEKDAYS['), true);
+      //   [LONGTERM-DATE-ELIGIBILITY] 요일 계산이 공용 resolver로 올라가면서
+      //   지역 변수(yesterdayWeekday)는 사라졌다. 여기서 확인할 것은 요일
+      //   변수의 존재가 아니라 **훑는 창이 어제 하루**라는 사실이다.
+      expect(code.contains('.where("workDate", ">=", Timestamp.fromDate(yesterdayStartUTC))'),
+          true, reason: '단기 자동 노쇼가 어제 하루만 본다');
+      expect(code.contains('.where("workDate", "<",  Timestamp.fromDate(todayStartUTC))'),
+          true, reason: '오늘 이후는 훑지 않는다');
+      expect(code.contains('const nsDayDate = new Date(yesterdayStartUTC.getTime());'),
+          true, reason: '장기 자동 노쇼도 어제 날짜로만 판정한다');
     });
   });
 
