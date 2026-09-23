@@ -27,6 +27,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/renewal_decision_state.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -126,10 +127,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }).toList();
   }
 
-  List<_FixedWorkerItem> get _expiringWorkers => _fixedWorkers.where((item) =>
-    _isExpiringWithinDays(item.application, 15) &&
-    item.application.renewalDecision == null
-  ).toList();
+  /// 경고 배너·일괄 연장이 대상으로 삼는 사람들.
+  ///
+  /// [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+  ///   예전에는 `diff >= 0` 이라 종료일이 지난 사람이 여기서 빠졌다.
+  ///   일괄 연장 버튼은 그대로 있는데 정작 가장 늦은 사람이 대상에서
+  ///   빠져 있었다. 이제 홈·계약 확인 필요 화면과 같은 판정식을 쓴다.
+  List<_FixedWorkerItem> get _expiringWorkers {
+    final today = FormatHelper.toKstDate(DateTime.now());
+    return _fixedWorkers
+        .where((item) => needsRenewalDecision(item.application, today))
+        .toList();
+  }
 
   @override
   void initState() {
@@ -842,7 +851,22 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Widget _buildStatsBar(BuildContext context) {
     if (_isDateMode) return const SizedBox.shrink();
 
-    final activeCount = _fixedWorkers.where((w) => w.application.resignStatus == null).length;
+    // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+    //   계약이 끝났는데 아무도 결정하지 않은 사람을 `정상`으로 세고 있었다.
+    //   자동 연장이 종료일마다 결정을 대신 내려 주던 동안에는 이런 상태가
+    //   오래 남지 않았는데, 그것을 걷어낸 뒤로는([AUTO-RENEW-POLICY])
+    //   남는다. 만료된 사람은 **현재 근무자가 아니다** — 다만 처리해야 할
+    //   일이다. 목록에서 빼지는 않는다(빼면 연장 진입점이 사라진다).
+    final today = FormatHelper.toKstDate(DateTime.now());
+    bool isExpiredUndecided(_FixedWorkerItem w) =>
+        renewalDecisionStateOf(w.application, today) ==
+        RenewalDecisionState.expired;
+
+    final expiredDecisionCount = _fixedWorkers.where(isExpiredUndecided).length;
+    final activeCount = _fixedWorkers
+        .where((w) =>
+            w.application.resignStatus == null && !isExpiredUndecided(w))
+        .length;
     final pendingResignCount = _fixedWorkers.where((w) => w.application.resignStatus == AppStatus.pending).length;
     final terminationPendingCount = _fixedWorkers.where((w) => w.application.terminationStatus == AppStatus.pending).length;
 
@@ -860,6 +884,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           _buildStatChip(context, '전체', _fixedWorkers.length, AppColors.longTermDark),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           _buildStatChip(context, '정상', activeCount, AppColors.success),
+          if (expiredDecisionCount > 0) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            _buildStatChip(
+                context, '계약 확인', expiredDecisionCount, AppColors.error),
+          ],
           if (pendingResignCount > 0) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             _buildStatChip(context, '퇴사대기', pendingResignCount, AppColors.warning),
@@ -1056,8 +1085,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               if (app.status == AppStatus.contractPending)
                 _buildContractPendingBanner(context),
 
-              // 계약 만료 임박 배너 (D-15 이내, 미결정) — 리스트 모드에서만 (버튼 포함)
-              if (!_isDateMode && _isExpiringWithinDays(app, 15) && app.renewalDecision == null)
+              // 계약 결정 배너 (곧 종료 또는 이미 만료 · 미결정) — 리스트 모드에서만
+              // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+              //   예전 지역 판정은 diff >= 0 이라 종료일이 지나는 순간
+              //   배너가 꺼졌다. action 은 살아 있는데 신호만 사라진 것이다.
+              if (!_isDateMode && needsRenewalDecision(app, FormatHelper.toKstDate(DateTime.now())))
                 _buildRenewalBanner(context, app, item.user),
 
               // 계약 갱신 결정 완료 배너 (날짜 모드 포함 항상 표시)
@@ -1389,20 +1421,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     widget.onChanged();
   }
 
-  bool _isExpiringWithinDays(ApplicationModel app, int days) {
-    if (!app.isLongTermApplication) return false;
-    if (app.isTerminationApproved) return false;
-    final endDate = app.actualResignDate ?? app.workEndDate;
-    if (endDate == null) return false;
-    final today = DateTime.now();
-    final todayOnly = FormatHelper.toKstDate(today);
-    final endOnly = FormatHelper.toKstDate(endDate);
-    final diff = endOnly.difference(todayOnly).inDays;
-    return diff >= 0 && diff <= days;
-  }
+  // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+  //   지역 판정 `_isExpiringWithinDays` 는 삭제됐다. 화면마다 자기 날짜
+  //   조건을 들고 있으면 같은 사람을 두고 서로 다른 말을 한다.
+  //   판정은 renewal_decision_state.dart 한 곳에 있다.
 
   Widget _buildRenewalBanner(BuildContext context, ApplicationModel app, UserModel? user) {
-    // _isExpiringWithinDays()는 actualResignDate ?? workEndDate로 판단하므로
+    // needsRenewalDecision()은 actualResignDate ?? workEndDate로 판단하므로
     // workEndDate가 null이어도 true를 반환할 수 있음 → workEndDate! NPE 방지
     final endDate = app.actualResignDate ?? app.workEndDate;
     if (endDate == null) return const SizedBox.shrink();
@@ -1430,7 +1455,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               Icon(Icons.event_note, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.warningDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
-                '계약 만료 D-$daysLeft (${endDate.month}/${endDate.day})',
+                daysLeft < 0
+                    ? '계약 만료 · 결정 필요 — ${-daysLeft}일 지남 (${endDate.month}/${endDate.day})'
+                    : '계약 만료 D-$daysLeft (${endDate.month}/${endDate.day})',
                 style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
                     .copyWith(fontWeight: FontWeight.w600),
               ),

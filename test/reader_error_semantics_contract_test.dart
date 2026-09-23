@@ -70,7 +70,7 @@ void main() {
           '서명을 기다리는 계약이 있어도 근로자가 서명할 수 없게 된다');
     });
 
-    test('RS-2 계약 종료 예정 조회', () {
+    test('RS-2 계약 확인 필요 조회', () {
       _propagates(appSvc, 'Future<List<ApplicationModel>> getExpiringLongTermApplications(',
           '종료가 다가온 계약이 화면에서 사라진다');
     });

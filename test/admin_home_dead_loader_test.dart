@@ -258,7 +258,7 @@ void main() {
       final rows = _bodyOf(home, '_makeActionRows(BuildContext context');
       const order = [
         '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
-        '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 종료 예정',
+        '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
       ];
       var prev = -1;
       for (final label in order) {

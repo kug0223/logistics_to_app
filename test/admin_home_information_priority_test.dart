@@ -56,7 +56,7 @@ const _canonicalRowOrder = [
   '중간정산 요청',
   '급여 변경 요청',
   '이체 대기',
-  '계약 종료 예정',
+  '계약 확인 필요',
 ];
 
 /// 각 행이 걸린 permission (§12 부분 권한 검증용)
@@ -69,7 +69,7 @@ const _rowPermission = {
   '중간정산 요청': 'canManageWage',
   '급여 변경 요청': 'canManageWage',
   '이체 대기': 'canManageWage',
-  '계약 종료 예정': 'canManageContract',
+  '계약 확인 필요': 'canManageContract',
 };
 
 void main() {
@@ -183,8 +183,8 @@ void main() {
 
     test('deadline 있는 일이 예고성 정보보다 앞선다', () {
       final o = renderedRowOrder();
-      // 퇴사 요청(D+3 자동승인) < 계약 종료 예정(예고)
-      expect(o.indexOf('퇴사 요청'), lessThan(o.indexOf('계약 종료 예정')));
+      // 퇴사 요청(D+3 자동승인) < 계약 확인 필요(예고)
+      expect(o.indexOf('퇴사 요청'), lessThan(o.indexOf('계약 확인 필요')));
       // 근무일 지나면 의미 없어지는 요청들이 사후 처리보다 앞
       expect(o.indexOf('지원 검토'), lessThan(o.indexOf('마감 필요')));
       expect(o.indexOf('스케줄 변경 요청'), lessThan(o.indexOf('마감 필요')));
@@ -219,7 +219,7 @@ void main() {
     });
 
     test('canManageContract만', () {
-      expect(visibleUnder({'canManageContract'}), ['계약 미발송', '계약 종료 예정']);
+      expect(visibleUnder({'canManageContract'}), ['계약 미발송', '계약 확인 필요']);
     });
 
     test('canManageTo만', () {
@@ -228,7 +228,7 @@ void main() {
 
     test('혼합 — workers + contract', () {
       expect(visibleUnder({'canManageWorkers', 'canManageContract'}),
-          ['퇴사 요청', '스케줄 변경 요청', '계약 미발송', '계약 종료 예정']);
+          ['퇴사 요청', '스케줄 변경 요청', '계약 미발송', '계약 확인 필요']);
     });
 
     test('부분 권한이 다른 행의 상대 순서를 바꾸지 않는다', () {

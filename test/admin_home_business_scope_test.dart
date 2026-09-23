@@ -460,7 +460,7 @@ void main() {
       final rows = _bodyOf(home, '_makeActionRows(BuildContext context');
       for (final label in [
         '퇴사 요청', '지원 검토', '마감 필요', '급여 변경 요청', '중간정산 요청',
-        '스케줄 변경 요청', '계약 미발송', '계약 종료 예정', '이체 대기',
+        '스케줄 변경 요청', '계약 미발송', '계약 확인 필요', '이체 대기',
       ]) {
         expect(rows.contains("label: '$label'"), isTrue);
       }

@@ -48,11 +48,11 @@ String _bodyOf(String source, String signature) {
 // ── canonical 순서 ───────────────────────────────────────────
 const _normalOrder = [
   '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
-  '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 종료 예정',
+  '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
 ];
 const _overdueOrder = [
   '퇴사 요청', '이체 대기', '지원 검토', '스케줄 변경 요청', '계약 미발송',
-  '마감 필요', '중간정산 요청', '급여 변경 요청', '계약 종료 예정',
+  '마감 필요', '중간정산 요청', '급여 변경 요청', '계약 확인 필요',
 ];
 
 const _rowPermission = {
@@ -64,7 +64,7 @@ const _rowPermission = {
   '중간정산 요청': 'canManageWage',
   '급여 변경 요청': 'canManageWage',
   '이체 대기': 'canManageWage',
-  '계약 종료 예정': 'canManageContract',
+  '계약 확인 필요': 'canManageContract',
 };
 
 /// 서버 unpaidWage 섹션
@@ -131,7 +131,7 @@ List<String> _buildRows({
     }
   }
 
-  add('계약 종료 예정');
+  add('계약 확인 필요');
   return result;
 }
 
@@ -233,7 +233,7 @@ void main() {
         perms: {'canManageWorkers', 'canManageTo', 'canManageContract'},
       );
       expect(r.contains('이체 대기'), isFalse);
-      expect(r, ['퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '계약 종료 예정']);
+      expect(r, ['퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '계약 확인 필요']);
     });
 
     test('퇴사 요청이 숨겨지면 이체 대기가 맨 앞', () {
@@ -279,7 +279,7 @@ void main() {
     });
 
     test('0건 숨김이 섞여도 상대 순서 유지', () {
-      final counts = {'마감 필요': 0, '중간정산 요청': 0, '계약 종료 예정': 0};
+      final counts = {'마감 필요': 0, '중간정산 요청': 0, '계약 확인 필요': 0};
       final normal = _buildRows(wage: const _Wage(count: 3), counts: counts);
       final over = _buildRows(
           wage: const _Wage(count: 3, overdueCount: 1), counts: counts);

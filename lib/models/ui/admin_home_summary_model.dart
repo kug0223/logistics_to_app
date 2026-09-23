@@ -360,16 +360,28 @@ class AdminHomeActionsData {
 }
 
 class AdminHomeUpcomingData {
-  /// 계약 만료 예정 (D+15 이내)
+  /// 연장/종료 **결정이 남아 있는** 장기 근무관계.
+  ///
+  /// [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+  ///   예전에는 `workEndDate >= today` 인 건만 셌다. 종료일이 지나면
+  ///   결정이 남았는데도 목록에서 사라졌다 — 자동 연장이 그 순간 결정을
+  ///   대신 내려 주던 동안에는 드러나지 않던 결함이다.
+  ///   이제 만료된 미결정 건도 포함하고, 이미 결정한 건은 빠진다.
   final AdminHomeSimpleSection expiringContract;
 
-  const AdminHomeUpcomingData({required this.expiringContract});
+  /// 그 중 **이미 종료일이 지난** 건. 늦은 일이므로 따로 센다.
+  final int expiredContractCount;
+
+  const AdminHomeUpcomingData({
+    required this.expiringContract,
+    this.expiredContractCount = 0,
+  });
 
   factory AdminHomeUpcomingData.fromMap(Map<String, dynamic> map) {
+    final raw = Map<String, dynamic>.from((map['expiringContract'] as Map?) ?? {});
     return AdminHomeUpcomingData(
-      expiringContract: AdminHomeSimpleSection.fromMap(
-        Map<String, dynamic>.from((map['expiringContract'] as Map?) ?? {}),
-      ),
+      expiringContract: AdminHomeSimpleSection.fromMap(raw),
+      expiredContractCount: (raw['expiredCount'] as num?)?.toInt() ?? 0,
     );
   }
 }

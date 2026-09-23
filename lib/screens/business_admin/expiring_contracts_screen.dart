@@ -17,6 +17,7 @@ import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
+import '../../utils/renewal_decision_state.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_page_scaffold.dart';
@@ -60,8 +61,10 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
   bool _loading = true;
   bool _hasError = false;
 
-  // [PHASE 2D] canonical range: D-0 to D-15 inclusive (CF와 동일)
-  static const int _daysWindow = 15;
+  // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+  //   창은 이제 renewal_decision_state 가 정한다 — Home·이 화면·고정근무자가
+  //   각자 날짜 조건을 갖고 있으면 같은 사람을 두고 서로 다른 말을 한다.
+  //   ([PHASE 2D] 의 지역 상수 _daysWindow 는 그래서 사라졌다.)
 
   @override
   void initState() {
@@ -85,13 +88,14 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
             fromDate: todayOnly,
           );
 
-          final inWindow = apps.where((app) {
-            final end = app.actualResignDate ?? app.workEndDate;
-            if (end == null) return false;
-            final endOnly = FormatHelper.toKstDate(end);
-            final diff = endOnly.difference(todayOnly).inDays;
-            return diff >= 0 && diff <= _daysWindow;
-          }).toList();
+          // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+          //   `diff >= 0` 이라 종료일이 지나는 순간 그 사람이 사라졌다.
+          //   결정은 아직 남아 있는데 신호만 꺼진 것이다.
+          //   이제 Home 과 같은 하나의 판정식을 쓴다.
+          final inWindow = apps
+              .where((app) => needsRenewalDecision(app, todayOnly))
+              .toList()
+            ..sort((a, b) => compareRenewalUrgency(a, b, todayOnly));
 
           if (inWindow.isEmpty) return <_ExpiringItem>[];
 
@@ -143,10 +147,19 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
     return Theme.of(context).primaryColor;
   }
 
+  /// 만료와 예정을 한 숫자로 뭉치지 않는다 — 늦은 건이 있으면 먼저 말한다.
+  String _countHeaderText() {
+    final expired = _items.where((e) => e.daysRemaining < 0).length;
+    final upcoming = _items.length - expired;
+    if (expired == 0) return '곧 종료 $upcoming명';
+    if (upcoming == 0) return '만료 · 결정 필요 $expired명';
+    return '만료 · 결정 필요 $expired명 · 곧 종료 $upcoming명';
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppPageScaffold(
-      title: '계약 종료 예정',
+      title: '계약 확인 필요',
       actions: [
         IconButton(
           icon: const Icon(Icons.home_outlined),
@@ -206,7 +219,7 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
         vertical: ResponsiveHelper.spacing(context, 12),
       ),
       child: Text(
-        '계약 종료 예정 ${_items.length}명',
+        _countHeaderText(),
         style: ResponsiveHelper.bodyStyle(context).copyWith(
           color: AppColors.grey600,
           fontWeight: FontWeight.w500,
@@ -218,7 +231,7 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
   Widget _buildEmpty(BuildContext context) {
     return const AppEmptyState(
       icon: Icons.event_available,
-      title: '곧 종료되는 계약이 없어요',
+      title: '결정이 필요한 계약이 없어요',
     );
   }
 
@@ -243,7 +256,9 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
         ? DateFormat('M/d(E)', 'ko_KR').format(endDate)
         : '-';
     final dayLabel =
-        item.daysRemaining == 0 ? 'D-Day' : 'D-${item.daysRemaining}';
+        item.daysRemaining < 0
+            ? '만료 ${-item.daysRemaining}일'
+            : (item.daysRemaining == 0 ? 'D-Day' : 'D-${item.daysRemaining}');
 
     return InkWell(
       onTap: () async {

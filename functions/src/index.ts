@@ -43101,29 +43101,66 @@ async function srvHomeResignRequest(
 
 // ─── Section 헬퍼: Expiring Contract (D+15) ──────────────────────────────────
 
+/**
+ * 연장/종료 **결정이 남아 있는** 장기 근무관계 수.
+ *
+ * [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+ *
+ *   이 자리는 두 가지를 놓치고 있었다.
+ *
+ *   1) `workEndDate >= today` 로 조회하고 `diffDays >= 0` 으로 걸렀다.
+ *      종료일이 지나는 순간 그 사람이 목록에서 사라졌다. 자동 연장이
+ *      그 순간 결정을 대신 내려 주던 동안에는 드러나지 않았는데,
+ *      자동 연장을 걷어낸 뒤로는([AUTO-RENEW-POLICY]) 결정이 남은 채
+ *      신호만 꺼진다. **만료는 할 일이 없어진 것이 아니라 늦은 것이다.**
+ *
+ *   2) `renewalDecision` 을 보지 않았다. 이미 연장한 관계도 원래 종료일까지
+ *      계속 "종료 예정"으로 세었다.
+ *
+ *   판정식은 클라이언트 `renewalDecisionStateOf`(lib/utils/renewal_decision_state.dart)
+ *   와 같다. 셋이 각자 날짜 조건을 만들면 같은 사람을 두고 서로 다른 말을 한다.
+ *
+ *   renewalDecision 은 "없음"을 질의할 수 없어(Firestore 는 필드 부재를
+ *   매칭하지 못한다) 코드에서 거른다.
+ * @param {string} bizId 사업장
+ * @param {number} todayMs KST 오늘 자정
+ * @return {Promise<{count: number, upcoming: number, expired: number}>} 결정 대기 수
+ */
 async function srvHomeExpiringContract(
   bizId: string,
   todayMs: number
-): Promise<{count: number}> {
-  const todayTs    = Timestamp.fromMillis(todayMs);
+): Promise<{count: number; upcoming: number; expired: number}> {
   const in16DaysTs = Timestamp.fromMillis(todayMs + 16 * 24 * 60 * 60 * 1000);
 
-  // limit 제거: workEndDate 범위 [today, today+16)이 자연 상한이므로
-  // 임의 limit으로 인한 silent undercount 불필요
+  // 아래쪽 경계를 두지 않는다. 오래 전에 끝났는데 아무도 결정하지 않은
+  //   관계는 시간이 지났다고 없던 일이 되지 않는다.
+  //   [R8-RESIDUAL-HOME-RENEWAL-DECISION-BACKWARD-SCAN]
+  //   read 폭은 사업장의 장기 확정 지원서 수로 제한되고 projection 도
+  //   작지만, 오래된 사업장에서 실제 read 수는 측정하지 않았다.
   // 기존 composite index: (businessId ASC, status ASC, workEndDate ASC) 사용
+  //
+  //   CONTRACT_PENDING 을 함께 읽는다. 고정근무자 화면은 이 상태의 근무자에게도
+  //   연장·종료 결정 action 을 그대로 열어 준다(gate 는 workEndDate/renewalDecision
+  //   뿐이고 status 를 보지 않는다). CONFIRMED 만 세면 같은 사람이 한 화면에서는
+  //   결정 대상이고 홈에서는 없는 사람이 된다 — 이 Phase 가 없애려는 바로 그 어긋남.
   const snap = await db.collection("applications")
     .where("businessId", "==", bizId)
-    .where("status", "==", "CONFIRMED")
-    .where("workEndDate", ">=", todayTs)
-    .where("workEndDate", "<",  in16DaysTs)
+    .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+    .where("workEndDate", "<", in16DaysTs)
     // [6.1 HOME-EXPIRING-01] resignStatus 추가 — 퇴사 승인/자동승인 건 제외용
-    .select("type", "workEndDate", "actualResignDate", "terminationStatus", "resignStatus")
+    .select("type", "workEndDate", "actualResignDate", "terminationStatus",
+      "resignStatus", "renewalDecision", "workDays")
     .get();
 
-  let count = 0;
+  let upcoming = 0;
+  let expired = 0;
   for (const doc of snap.docs) {
     const d = doc.data();
-    if (d["type"] !== "long_term") continue;
+    const isLong = d["type"] === "long_term" ||
+      (Array.isArray(d["workDays"]) && (d["workDays"] as string[]).length > 0);
+    if (!isLong) continue;
+    // 이미 결정한 관계는 묻지 않는다 — EXTEND 든 TERMINATE 든.
+    if (d["renewalDecision"]) continue;
     // [6.1 HOME-EXPIRING-01] ExpiringContractsScreen.isTerminationApproved와 동일 exclusion semantics:
     //   terminationStatus: APPROVED | AUTO_APPROVED
     //   resignStatus:      APPROVED | AUTO_APPROVED
@@ -43132,10 +43169,26 @@ async function srvHomeExpiringContract(
     if (d["resignStatus"]       === "APPROVED" || d["resignStatus"]       === "AUTO_APPROVED") continue;
     const endTs = (d["actualResignDate"] ?? d["workEndDate"]) as admin.firestore.Timestamp | undefined;
     if (!endTs) continue;
-    const diffDays = Math.floor((endTs.toMillis() - todayMs) / (24 * 60 * 60 * 1000));
-    if (diffDays >= 0 && diffDays <= 15) count++;
+    // KST 달력 날짜로 비교한다 — ms 차이를 86400000 으로 나누면
+    //   저장 규약(KST 자정 / UTC 자정)에 따라 하루가 밀린다.
+    const endNum = srvKstDateNum(endTs.toDate());
+    const todayNum = srvKstDateNum(new Date(todayMs));
+    if (endNum < todayNum) expired++;
+    else if (srvKstDaysBetween(todayNum, endNum) <= 15) upcoming++;
   }
-  return {count};
+  return {count: upcoming + expired, upcoming, expired};
+}
+
+/**
+ * KST 날짜 숫자 두 개(YYYYMMDD) 사이의 일수. from <= to 를 가정한다.
+ * @param {number} fromNum 시작 YYYYMMDD
+ * @param {number} toNum 종료 YYYYMMDD
+ * @return {number} 일수 차이
+ */
+function srvKstDaysBetween(fromNum: number, toNum: number): number {
+  const parse = (n: number) =>
+    Date.UTC(Math.floor(n / 10000), Math.floor((n % 10000) / 100) - 1, n % 100);
+  return Math.round((parse(toNum) - parse(fromNum)) / 86400000);
 }
 
 // ─── Main CF ─────────────────────────────────────────────────────────────────
@@ -43259,7 +43312,7 @@ export const callableGetAdminHomeSummary = onCall(
       settlementRequest?: {count: number};
       resignRequest?:     {count: number; soonCount: number};
       scheduleChange?:    {count: number};
-      expiringContract?:  {count: number};
+      expiringContract?:  {count: number; upcoming: number; expired: number};
     }
 
     const bizResults: BizResult[] = await Promise.all(
@@ -43408,6 +43461,15 @@ export const callableGetAdminHomeSummary = onCall(
       resignSoonTotal += r.resignRequest?.soonCount ?? 0;
     }
 
+    // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+    //   이미 만료된 건은 늦은 것이다 — 합계에 섞어만 두면 화면이 그것을
+    //   "예정"이라고 부른다. 따로 세어 보낸다.
+    let expiredContractTotal = 0;
+    for (const r of bizResults) {
+      if (!hasBizPerm(r.bizId, "canManageContract")) continue;
+      expiredContractTotal += r.expiringContract?.expired ?? 0;
+    }
+
     // 최종 결과 조립
     return {
       scope: {businessCount: businessIds.length},
@@ -43440,7 +43502,10 @@ export const callableGetAdminHomeSummary = onCall(
           (r) => r.scheduleChange?.count),
       },
       upcoming: {
-        expiringContract: aggSimple("canManageContract", (r) => r.expiringContract?.count),
+        expiringContract: {
+          ...aggSimple("canManageContract", (r) => r.expiringContract?.count),
+          expiredCount: expiredContractTotal,
+        },
       },
       generatedAt: Date.now(),
     };

@@ -1307,15 +1307,25 @@ extension ApplicationFirestore on FirestoreService {
         .toList();
   }
 
-  /// 계약 종료 예정 장기 근무자 조회 (fromDate 이후 종료, 확정 상태)
+  /// 연장/종료 **결정이 남아 있을 수 있는** 장기 근무자 조회.
+  ///
+  /// [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+  ///   예전에는 `workEndDate >= fromDate` 로만 읽었다. 종료일이 지난
+  ///   미결정 건은 애초에 조회되지 않아, 화면 필터를 고쳐도 나타날 수
+  ///   없었다. 이제 지난 쪽으로도 읽는다.
+  ///
+  ///   최종 판정은 호출자가 `needsRenewalDecision` 으로 한다 —
+  ///   이 함수는 후보를 모으는 일만 한다.
   Future<List<ApplicationModel>> getExpiringLongTermApplications({
     required String businessId,
     required DateTime fromDate,
+    Duration lookBack = const Duration(days: 180),
   }) async {
     try {
       final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
-        'workEndDateGteMs': fromDate.millisecondsSinceEpoch,
+        'workEndDateGteMs':
+            fromDate.subtract(lookBack).millisecondsSinceEpoch,
         'limit': 200,
       });
       return (result)
@@ -1326,9 +1336,14 @@ extension ApplicationFirestore on FirestoreService {
             return ApplicationModel.tryFromMap(raw, id);
           })
           .whereType<ApplicationModel>()
+          // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+          //   CONTRACT_PENDING 도 남긴다 — 고정근무자 화면은 이 상태에도
+          //   연장·종료 action 을 열어 주고, 홈 집계도 같은 두 상태를 센다.
+          //   여기서만 CONFIRMED 로 좁히면 홈이 센 건수를 이 화면이 못 보여준다.
           .where((app) =>
               app.isLongTermApplication &&
-              app.status == AppStatus.confirmed &&
+              (app.status == AppStatus.confirmed ||
+                  app.status == AppStatus.contractPending) &&
               !app.isTerminationApproved)
           .toList();
     } catch (e) {

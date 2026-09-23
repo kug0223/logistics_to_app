@@ -329,7 +329,7 @@ void main() {
       for (final label in [
         "label: '퇴사 요청'", "label: '지원 검토'", "label: '스케줄 변경 요청'",
         "label: '계약 미발송'", "label: '마감 필요'", "label: '중간정산 요청'",
-        "label: '급여 변경 요청'", "label: '이체 대기'", "label: '계약 종료 예정'",
+        "label: '급여 변경 요청'", "label: '이체 대기'", "label: '계약 확인 필요'",
       ]) {
         expect(home.contains(label), true, reason: label);
       }

@@ -1,4 +1,4 @@
-// [HOME-V2-08D.5.1] `계약 종료 예정` permission truth
+// [HOME-V2-08D.5.1] `계약 확인 필요` permission truth
 //
 // 08D.5 Task Truth 감사에서 발견한 결함:
 //
@@ -6,7 +6,7 @@
 //     ...
 //     // 이체 대기
 //     if (canManageContract) {
-//       // 계약 종료 예정      ← 여기 중첩돼 있었다
+//       // 계약 확인 필요      ← 여기 중첩돼 있었다
 //     }
 //   }
 //
@@ -73,12 +73,12 @@ const rowPermission = <String, String>{
   '중간정산 요청': 'canManageWage',
   '급여 변경 요청': 'canManageWage',
   '이체 대기': 'canManageWage',
-  '계약 종료 예정': 'canManageContract',
+  '계약 확인 필요': 'canManageContract',
 };
 
 const canonicalOrder = <String>[
   '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
-  '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 종료 예정',
+  '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
 ];
 
 class Section {
@@ -118,7 +118,7 @@ List<String> buildRows({
   add('중간정산 요청');
   add('급여 변경 요청');
   add('이체 대기', atIndex: wageOverdue ? slot : null);
-  add('계약 종료 예정');
+  add('계약 확인 필요');
   return result;
 }
 
@@ -153,12 +153,14 @@ void main() {
     });
 
     test('01-b 서버 집계 permKey가 canManageContract다', () {
+      // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+      //   만료 건수를 따로 싣느라 spread 로 바뀌었다. permKey 는 그대로다.
       expect(cf,
-          contains('expiringContract: aggSimple("canManageContract", (r) => r.expiringContract?.count)'));
+          contains('...aggSimple("canManageContract", (r) => r.expiringContract?.count)'));
     });
 
     test('01-c 행 onTap 가드가 canManageContract다', () {
-      final seg = makeCode.substring(makeCode.indexOf("label: '계약 종료 예정'"));
+      final seg = makeCode.substring(makeCode.indexOf("label: '계약 확인 필요'"));
       expect(seg, contains("if (!_verified(up, (p) => p.canManageContract)) {"));
       expect(seg, contains("ToastHelper.showWarning('계약서 관리 권한이 없습니다.')"));
     });
@@ -184,17 +186,17 @@ void main() {
   // 02. root cause 제거 — §3, §4
   // ═══════════════════════════════════════════════════════════════
   group('[08D.5.1-02] nesting 제거', () {
-    test('02-a 계약 종료 예정 블록이 canManageWage 밖에 있다', () {
+    test('02-a 계약 확인 필요 블록이 canManageWage 밖에 있다', () {
       // block gate(`!isSub ||` 로 시작)만 본다 — onTap 안의 재검증 가드와 구분한다
       const wageGate = 'if (_verified(up, (p) => p.canManageWage))';
       const contractGate = 'if (_verified(up, (p) => p.canManageContract))';
       final wageGateAt = makeCode.lastIndexOf(wageGate);
       final expiringGateAt = makeCode.lastIndexOf(contractGate);
-      final labelAt = makeCode.indexOf("label: '계약 종료 예정'");
+      final labelAt = makeCode.indexOf("label: '계약 확인 필요'");
       expect(wageGateAt, isNot(-1));
       expect(wageGateAt, lessThan(expiringGateAt));
       expect(expiringGateAt, lessThan(labelAt));
-      // 이체 대기 블록이 계약 종료 예정 게이트 전에 닫힌다
+      // 이체 대기 블록이 계약 확인 필요 게이트 전에 닫힌다
       final wageRowAt = makeCode.indexOf("label: '이체 대기'");
       final seg = makeCode.substring(wageRowAt, expiringGateAt);
       expect(seg, contains('\n    }\n'), reason: 'wage if 블록이 먼저 닫혀야 한다');
@@ -222,25 +224,25 @@ void main() {
   group('[08D.5.1-03] permission matrix', () {
     test('03-a contract=true, wage=false, count>0 → 표시', () {
       final r = buildRows(perms: {'canManageContract'});
-      expect(r.contains('계약 종료 예정'), isTrue,
+      expect(r.contains('계약 확인 필요'), isTrue,
           reason: '이것이 이번 Phase가 고친 칸이다');
-      expect(r, ['계약 미발송', '계약 종료 예정']);
+      expect(r, ['계약 미발송', '계약 확인 필요']);
     });
 
     test('03-b contract=false, wage=true, count>0 → 미표시', () {
       final r = buildRows(perms: {'canManageWage'});
-      expect(r.contains('계약 종료 예정'), isFalse);
+      expect(r.contains('계약 확인 필요'), isFalse);
       expect(r, ['마감 필요', '중간정산 요청', '급여 변경 요청', '이체 대기']);
     });
 
     test('03-c contract=true, wage=true, count>0 → 정확히 1개', () {
       final r = buildRows(perms: {'canManageContract', 'canManageWage'});
-      expect(r.where((l) => l == '계약 종료 예정').length, 1);
+      expect(r.where((l) => l == '계약 확인 필요').length, 1);
     });
 
     test('03-d 둘 다 없으면 미표시', () {
       final r = buildRows(perms: {'canManageWorkers'});
-      expect(r.contains('계약 종료 예정'), isFalse);
+      expect(r.contains('계약 확인 필요'), isFalse);
     });
 
     test('03-e 전권 관리자는 9종 전부', () {
@@ -252,28 +254,28 @@ void main() {
   // ═══════════════════════════════════════════════════════════════
   // 04. task truth 유지 — §5
   // ═══════════════════════════════════════════════════════════════
-  group('[08D.5.1-04] 계약 종료 예정도 예외가 아니다', () {
+  group('[08D.5.1-04] 계약 확인 필요도 예외가 아니다', () {
     test('04-a count == 0이면 행 없음', () {
       final r = buildRows(
         perms: {'canManageContract'},
-        sections: {'계약 종료 예정': const Section(available: true, count: 0)},
+        sections: {'계약 확인 필요': const Section(available: true, count: 0)},
       );
-      expect(r.contains('계약 종료 예정'), isFalse);
+      expect(r.contains('계약 확인 필요'), isFalse);
     });
 
     test('04-b available == false면 named row 없음', () {
       final r = buildRows(
         perms: {'canManageContract'},
-        sections: {'계약 종료 예정': const Section(available: false, count: 3)},
+        sections: {'계약 확인 필요': const Section(available: false, count: 3)},
       );
-      expect(r.contains('계약 종료 예정'), isFalse);
+      expect(r.contains('계약 확인 필요'), isFalse);
     });
 
     test('04-c available == false는 data-health로 센다', () {
       expect(
         unknownCount(
           perms: {'canManageContract'},
-          sections: {'계약 종료 예정': const Section(available: false)},
+          sections: {'계약 확인 필요': const Section(available: false)},
         ),
         1,
       );
@@ -283,7 +285,7 @@ void main() {
       expect(
         unknownCount(
           perms: {'canManageWage'},
-          sections: {'계약 종료 예정': const Section(available: false)},
+          sections: {'계약 확인 필요': const Section(available: false)},
         ),
         0,
         reason: '권한 없음을 장애로 말하면 안 된다',
@@ -318,7 +320,7 @@ void main() {
       // _unknownTaskCount 쪽 개수
       expect(RegExp(r'chk\(permitted:').allMatches(unknownFn).length, 9);
       expect(RegExp(r'permitted: canContract').allMatches(unknownFn).length, 2,
-          reason: '계약 미발송 + 계약 종료 예정');
+          reason: '계약 미발송 + 계약 확인 필요');
       expect(RegExp(r'permitted: canWage').allMatches(unknownFn).length, 4,
           reason: '마감·중간정산·급여변경·이체');
       expect(RegExp(r'permitted: canWorkers').allMatches(unknownFn).length, 2);
@@ -339,17 +341,17 @@ void main() {
       }
     });
 
-    test('06-b 계약 종료 예정은 여전히 마지막에 append된다', () {
+    test('06-b 계약 확인 필요은 여전히 마지막에 append된다', () {
       final r = buildRows(perms: rowPermission.values.toSet());
-      expect(r.last, '계약 종료 예정');
+      expect(r.last, '계약 확인 필요');
     });
 
-    test('06-c 연체 승격이 있어도 계약 종료 예정은 마지막', () {
+    test('06-c 연체 승격이 있어도 계약 확인 필요은 마지막', () {
       final r =
           buildRows(perms: rowPermission.values.toSet(), wageOverdue: true);
       expect(r.first, '퇴사 요청');
       expect(r[1], '이체 대기', reason: '퇴사 요청 바로 뒤로 승격');
-      expect(r.last, '계약 종료 예정');
+      expect(r.last, '계약 확인 필요');
     });
 
     test('06-d 부분 권한에서도 canonical 부분수열', () {
@@ -378,15 +380,19 @@ void main() {
   group('[08D.5.1-07] 무회귀', () {
     test('07-a task 종류·라벨·count·destination 무변경', () {
       expect("label: '".allMatches(makeCode).length, 9);
-      final seg = makeCode.substring(makeCode.indexOf("label: '계약 종료 예정'"));
-      expect(seg, contains("countStr: '\${expiring?.count ?? 0}명'"));
+      final seg = makeCode.substring(makeCode.indexOf("label: '계약 확인 필요'"));
+      // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+      //   count 는 여전히 결정 대기 인원 수다. 늦은 건수만 뒤에 덧붙었다.
+      expect(seg, contains('count: totalDecisions,'));
+      expect(seg, contains("? '\$totalDecisions명 · 만료 \$expiredCount'"));
+      expect(seg, contains(": '\$totalDecisions명',"));
       expect(seg, contains('ExpiringContractsScreen('));
       // source 바인딩은 라벨 앞줄에 있다
       expect(makeCode, contains('final expiring = cs?.upcoming.expiringContract;'));
     });
 
     test('07-b scope / businessIds 계약 무변경', () {
-      final seg = makeCode.substring(makeCode.indexOf("label: '계약 종료 예정'"));
+      final seg = makeCode.substring(makeCode.indexOf("label: '계약 확인 필요'"));
       expect(seg, contains('sec.byBusiness'));
       expect(seg, contains('await _getBusinesses()'));
       expect(seg.contains('managedBusinessIds'), isFalse);

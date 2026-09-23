@@ -310,7 +310,7 @@ void main() {
       final resign = rows.indexOf("label: '퇴사 요청'");
       for (final label in [
         '지원 검토', '마감 필요', '급여 변경 요청', '중간정산 요청',
-        '계약 미발송', '계약 종료 예정', '이체 대기',
+        '계약 미발송', '계약 확인 필요', '이체 대기',
       ]) {
         expect(rows.indexOf("label: '$label'"), greaterThan(resign),
             reason: '$label 보다 위에 있어야 한다');
@@ -350,7 +350,7 @@ void main() {
     test('기존 7종 row가 그대로다', () {
       for (final label in [
         '지원 검토', '마감 필요', '급여 변경 요청', '중간정산 요청',
-        '계약 미발송', '계약 종료 예정', '이체 대기',
+        '계약 미발송', '계약 확인 필요', '이체 대기',
       ]) {
         expect(rows.contains("label: '$label'"), isTrue);
       }
@@ -360,7 +360,7 @@ void main() {
     test('기존 row가 새 우선순위 순서를 따른다', () {
       final order = [
         '지원 검토', '계약 미발송', '마감 필요', '중간정산 요청',
-        '급여 변경 요청', '이체 대기', '계약 종료 예정',
+        '급여 변경 요청', '이체 대기', '계약 확인 필요',
       ];
       var prev = -1;
       for (final label in order) {

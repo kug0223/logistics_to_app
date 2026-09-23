@@ -138,7 +138,7 @@ void main() {
     ['중간정산 요청',   'canManageWage',     'actions.settlementRequest'],
     ['급여 변경 요청',  'canManageWage',     'actions.wageChangeRequest'],
     ['이체 대기',      'canManageWage',     'actions.unpaidWage'],
-    ['계약 종료 예정',  'canManageContract', 'upcoming.expiringContract'],
+    ['계약 확인 필요',  'canManageContract', 'upcoming.expiringContract'],
   ];
 
   // ═══════════════════════════════════════════════════════════════
@@ -420,7 +420,7 @@ void main() {
     test('07-a 순서·재정렬 계약 유지', () {
       const order = [
         '퇴사 요청', '지원 검토', '스케줄 변경 요청', '계약 미발송', '마감 필요',
-        '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 종료 예정',
+        '중간정산 요청', '급여 변경 요청', '이체 대기', '계약 확인 필요',
       ];
       var prev = -1;
       for (final label in order) {

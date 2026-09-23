@@ -3148,7 +3148,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
     }
 
-    // 9. 계약 종료 예정 — canManageContract
+    // 9. 계약 확인 필요 — canManageContract
     // [GAP-CONTRACT-EXPIRING-UI-01 FIX] ExpiringContractsScreen 진입점 추가
     // 홈 upcoming.expiringContract 데이터가 계산되지만 UI 진입 경로가 없었던 P2 갭 수정
     //
@@ -3159,10 +3159,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   contractExpiringReminder 알림 모두 canManageContract 단독이다.
     if (_verified(up, (p) => p.canManageContract)) {
       final expiring = cs?.upcoming.expiringContract;
+      // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
+      //   `종료 예정`은 이미 끝난 계약을 부를 이름이 아니다. 만료된 미결정
+      //   건이 같은 줄에 들어오므로 우산 라벨을 쓰고, 늦은 건수는 따로 말한다.
+      final expiredCount = cs?.upcoming.expiredContractCount ?? 0;
+      final totalDecisions = expiring?.count ?? 0;
       add(
-        icon: Icons.event_busy_outlined, label: '계약 종료 예정',
-        color: AppColors.warning,
-        count: expiring?.count ?? 0, countStr: '${expiring?.count ?? 0}명',
+        icon: Icons.event_busy_outlined, label: '계약 확인 필요',
+        color: expiredCount > 0 ? AppColors.error : AppColors.warning,
+        count: totalDecisions,
+        countStr: expiredCount > 0
+            ? '$totalDecisions명 · 만료 $expiredCount'
+            : '$totalDecisions명',
         available: expiring?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageContract)) {
