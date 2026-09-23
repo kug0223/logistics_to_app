@@ -32103,13 +32103,33 @@ export const callableCreateContractRenewal = onCall(
     const originalData = originalSnap.data()!;
     const businessId = originalData.businessId as string;
 
-    // [CRN-02-FIX] 갱신 시작일 >= 원본 종료일 검증 — 중복 근무 기간 생성 방지
-    const originalEndDate = originalData.workEndDate as Timestamp | undefined;
-    if (originalEndDate && newStartDateMs < originalEndDate.toMillis()) {
-      throw new HttpsError(
-        "invalid-argument",
-        "갱신 계약 시작일은 원본 계약 종료일 이후여야 합니다."
-      );
+    // ── 갱신 시작일은 원본 종료일 **다음 날**부터 ──────────────────────
+    //
+    // [CRN-02-FIX] 는 `newStart < originalEnd` 만 막았다. 그래서 같은 날짜가
+    //   통과했고, workEndDate 는 inclusive 이므로 그 하루가 원본과 갱신
+    //   **양쪽의 근무일**이 됐다. 실측(DEV): 한 사람이 그 날 좌석을 둘
+    //   차지했다.
+    //
+    //   주석과 오류 문구는 처음부터 "종료일 이후"라고 말하고 있었다 —
+    //   어긋난 것은 비교 연산자 하나였다.
+    //
+    //   ms 가 아니라 KST 달력 날짜로 비교한다. workEndDate 는 KST 자정으로
+    //   저장되기도 하고 UTC 자정으로 저장되기도 해서, 밀리초 비교는 같은
+    //   날짜를 다른 날로 보거나 그 반대가 될 수 있다.
+    //
+    //   종료 기준은 canonical 과 같은 effectiveEnd 다. 퇴사 승인자는 아래
+    //   [RESIGN-GATE] 에서 따로 막히지만, 기준을 둘로 두지 않는다.
+    const originalEndDate = (originalData.actualResignDate ??
+      originalData.workEndDate) as Timestamp | undefined;
+    if (originalEndDate) {
+      const originalEndNum = srvKstDateNum(originalEndDate.toDate());
+      const newStartNum = srvKstDateNum(new Date(newStartDateMs));
+      if (newStartNum <= originalEndNum) {
+        throw new HttpsError(
+          "invalid-argument",
+          "갱신 계약 시작일은 원본 계약 종료일 다음 날부터여야 합니다."
+        );
+      }
     }
 
     // 2. 관리자 권한 검증

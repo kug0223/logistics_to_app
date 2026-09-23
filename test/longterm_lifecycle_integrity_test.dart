@@ -407,9 +407,14 @@ void main() {
       expect(seg.contains('workDate'), false);
     });
 
-    test('08-c 연장 시작일은 원본 종료일 이후여야 한다', () {
-      final r = _after(cf, 'export const callableCreateContractRenewal', 9000);
-      expect(r.contains('갱신 계약 시작일은 원본 계약 종료일 이후여야 합니다.'), true);
+    test('08-c 연장 시작일은 원본 종료일 **다음 날**부터다', () {
+      // workEndDate 는 inclusive 다. 예전 가드는 `newStart < oldEnd` 만
+      // 막아서 같은 날짜가 통과했고, 그 하루가 원본과 갱신 양쪽의
+      // 근무일이 됐다(DEV 실측: 그 날 좌석 2건).
+      //   경계 자체는 longterm_renewal_boundary_test 가 고정한다.
+      final r = _after(cf, 'export const callableCreateContractRenewal', 7668);
+      expect(r.contains('갱신 계약 시작일은 원본 계약 종료일 다음 날부터여야 합니다.'), true);
+      expect(r.contains('if (newStartNum <= originalEndNum) {'), true);
     });
 
     test('08-d 새 계약은 임금 집계와 휴무·추가근무를 물려받지 않는다', () {
