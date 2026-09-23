@@ -29,6 +29,17 @@ class DayStaffingRow {
   /// 장기의 canonical target은 `toId × wdId`다.
   final bool isLongTerm;
 
+  /// [R7-P1R §14] 장기 초대가 만들어야 하는 약속의 범위.
+  ///
+  /// 장기 초대는 하루가 아니라 **기간**에 대한 제안이다. 이 둘이 없으면
+  /// 서버는 하루짜리 지원서를 만든다 — 그래서 장기 CTA를 막아 두었다.
+  /// 클라이언트가 TO를 따로 읽어 조립하지 않는다. 이 row를 만든 reader가
+  /// 이미 TO를 읽었으므로 그쪽이 canonical source다.
+  ///
+  /// 단기에서는 null / 빈 목록이다 — 그 개념이 없다.
+  final DateTime? workEndDate;
+  final List<String> workDays;
+
   const DayStaffingRow({
     required this.toId,
     required this.toTitle,
@@ -42,6 +53,8 @@ class DayStaffingRow {
     required this.pendingCount,
     this.isClosed = false,
     this.isLongTerm = false,
+    this.workEndDate,
+    this.workDays = const [],
   });
 
   /// canonical shortage — 서버 staffing readiness와 같은 식.
@@ -67,21 +80,50 @@ class DayStaffingRow {
     //   **애초에 없다**. 그래서 서버가 장기 row를 보내기 시작하면 여기서
     //   전부 버려져, 고친 집계가 화면에 닿지 못한다.
     if (!isLongTerm && (slotId == null || slotId.isEmpty)) return null;
-    if (wdId == null || wdId.isEmpty) return null;
+    // [R7-P1R] wdId 비어 있음을 버리는 조건이었다.
+    //
+    //   장기 공고의 TO.workDetails에는 wdId가 없는 레코드가 있다(DEV 실측:
+    //   3건 전부). 서버가 장기 row를 보내기 시작한 뒤에도 여기서 전부
+    //   버려져, 고친 집계가 화면에 닿지 못했다 — 1차 검증은 스크립트가
+    //   서버 응답을 직접 읽어 통과한 것이라 이 층을 지나지 않았다.
+    //
+    //   단기는 그대로 거부한다. FLEX 슬롯의 workDetails에는 wdId가 항상
+    //   있고(없으면 서버가 WORKDETAIL_CONTRACT_BROKEN으로 던진다),
+    //   그 자리의 빈 wdId는 곧 깨진 데이터다.
+    //
+    //   장기는 코드베이스가 이미 쓰는 fallback 식별자로 대체한다 —
+    //   `workType_startTime_endTime`. WorkDetailData.id·_GroupData.groupKey·
+    //   loadTOWorkDetails의 workStats 키가 모두 같은 형식을 쓴다.
+    //   새 identity를 만드는 것이 아니라 있는 것을 따른다.
+    if (!isLongTerm && (wdId == null || wdId.isEmpty)) return null;
+    final workType = (m['workType'] as String?) ?? '';
+    final startTime = (m['startTime'] as String?) ?? '';
+    final endTime = (m['endTime'] as String?) ?? '';
+    // wdId가 없으면 코드베이스 공통 fallback 식별자를 쓴다.
+    final effectiveWdId = (wdId != null && wdId.isNotEmpty)
+        ? wdId
+        : '${workType}_${startTime}_$endTime';
     int n(String k) => (m[k] as num?)?.toInt() ?? 0;
     return DayStaffingRow(
       toId: toId,
       toTitle: (m['toTitle'] as String?) ?? '',
       slotId: slotId ?? '',
-      wdId: wdId,
-      workType: (m['workType'] as String?) ?? '',
-      startTime: (m['startTime'] as String?) ?? '',
-      endTime: (m['endTime'] as String?) ?? '',
+      wdId: effectiveWdId,
+      workType: workType,
+      startTime: startTime,
+      endTime: endTime,
       requiredCount: n('requiredCount'),
       confirmedCount: n('confirmedCount'),
       pendingCount: n('pendingCount'),
       isClosed: m['isClosed'] == true,
       isLongTerm: isLongTerm,
+      workEndDate: (m['workEndDateMs'] as num?) == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(
+              (m['workEndDateMs'] as num).toInt()),
+      workDays: ((m['workDays'] as List?) ?? const [])
+          .whereType<String>()
+          .toList(),
     );
   }
 }

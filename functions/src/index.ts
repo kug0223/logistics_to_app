@@ -37351,6 +37351,13 @@ export const callableGetDayStaffingDetail = onCall(
       //   화면은 단기와 같은 mental model로 그리되, 슬롯이 없다는 사실
       //   (slotId 없음)과 초대 경로가 다르다는 것을 알아야 한다.
       isLongTerm: boolean;
+      // [R7-P1R §14] 장기 초대에 필요한 약속 context.
+      //
+      //   클라이언트가 TO 문서를 따로 읽어 조립하면 같은 사실의 두 번째
+      //   출처가 생긴다. 이 reader는 이미 TO를 읽었으므로 여기서 실어 준다.
+      //   단기에서는 null/빈 배열이다 — 해당 개념이 없다.
+      workEndDateMs: number | null;
+      workDays: string[];
     };
     const rows: DsRow[] = [];
 
@@ -37407,6 +37414,8 @@ export const callableGetDayStaffingDetail = onCall(
             isClosed: slotClosed ||
               w["isManualClosed"] === true || w["closedAt"] != null,
             isLongTerm: false,
+            workEndDateMs: null,
+            workDays: [],
           });
         }
       }
@@ -37446,6 +37455,12 @@ export const callableGetDayStaffingDetail = onCall(
       // 공고 단위 마감 — 장기에는 슬롯 마감이라는 개념이 없다.
       const toClosed = to.data["isManualClosed"] === true ||
         (to.data["status"] as string | undefined) === "CLOSED";
+
+      // [R7-P1R §14] 장기 초대 snapshot에 필요한 약속 범위.
+      const dsRangeEnd =
+        to.data["rangeEnd"] as admin.firestore.Timestamp | undefined;
+      const dsWorkDays =
+        (to.data["workDays"] as string[] | undefined) ?? [];
 
       // 확정 인원은 공고 단위로 센다(지원서에 wdId가 없을 수 있다).
       // 업무가 여럿이면 첫 업무에만 싣지 않는다 — 그러면 나머지 업무가
@@ -37490,6 +37505,8 @@ export const callableGetDayStaffingDetail = onCall(
           isClosed: toClosed ||
             w["isManualClosed"] === true || w["closedAt"] != null,
           isLongTerm: true,
+          workEndDateMs: dsRangeEnd ? dsRangeEnd.toMillis() : null,
+          workDays: dsWorkDays,
         });
       }
     }));

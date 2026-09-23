@@ -753,12 +753,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final work = widget.work;
     if (work == null) return const SizedBox.shrink();
     if (!_canManageTo()) return const SizedBox.shrink();
-    if (widget.toItem.to.isLongTerm) return const SizedBox.shrink();
 
     final capacity = _capacityState;
+    // [R7-P1R] UNKNOWN 안내는 subtype과 무관하다.
+    //
+    //   여기에 `if (isLongTerm) return SizedBox.shrink()`가 있었다. 초대
+    //   CTA를 막으려던 것인데, 그 한 줄이 **왜 판단할 수 없는지**를 말하는
+    //   안내와 `다시 시도`까지 함께 지웠다. 장기 공고에서는 통계가 아직
+    //   로드되지 않았을 때 `정원 확인 불가`만 보이고 복구 수단이 없었다.
+    //   ERROR != ZERO를 지키려고 만든 표면이 subtype 때문에 사라진 것이다.
     if (capacity == InviteCapacityState.unknown) {
       return _buildCapacityUnknownNotice(context);
     }
+    // 초대 CTA만 단기로 제한한다 — 이 화면에는 장기 약속 범위가 없다.
+    //   장기 초대는 당일 명단(약속 범위를 canonical row로 받는다)과
+    //   공고 ⋮ 메뉴가 맡는다.
+    if (widget.toItem.to.isLongTerm) return const SizedBox.shrink();
     if (capacity != InviteCapacityState.available) {
       return const SizedBox.shrink();
     }

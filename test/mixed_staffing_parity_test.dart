@@ -211,15 +211,11 @@ void main() {
       expect(day.contains('existing.isLongTerm = row.isLongTerm;'), true);
     });
 
-    test('04-b 장기 초대 CTA는 아직 세우지 않는다 — 경로가 하루짜리를 만든다', () {
-      // InviteWorkerDialog.contextual은 groupItem이 null이라
-      // isLongTerm이 false로 계산되고 workEndDate/workDays를 싣지 못한다.
-      final invite = _codeOf(
-          _src('lib/screens/business_admin/dialogs/invite_worker_dialog.dart'));
-      expect(invite.contains('widget.groupItem?.isLongTerm ?? false'), true,
-          reason: '이 사실이 바뀌면 CTA 판단을 다시 해야 한다');
-      expect(day.contains('if (!g.isLongTerm && g.toId != null &&'), true);
-      // 대신 막다른 길로 두지 않는다.
+    // [R7-P1R §14] 임시 fail-safe가 해제됐다 — contextual이 약속 범위를
+    //   받으므로 장기도 그 자리에서 초대한다. 상세 계약은 group 14.
+    test('04-b 장기 초대는 약속 범위를 아는 경우에만 선다', () {
+      expect(day.contains('return _buildInviteButton(g, null);'), true);
+      // 범위를 모르면 여전히 다른 경로를 안내한다 — 막다른 길로 두지 않는다.
       expect(day.contains('_buildLongTermInviteHint('), true);
     });
 
@@ -233,6 +229,7 @@ void main() {
   _shortageSummary();
   _deadlineColor();
   _weeklyBadge();
+  _population();
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -557,6 +554,149 @@ void _weeklyBadge() {
 
     test('12-b 숫자 자체는 그대로 보여 준다 — 정보를 숨기지 않았다', () {
       expect(_codeOf(_src(workPath)).contains("'주\$count회'"), true);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// [R7-P1R] Silent exclusion — reader population.
+//
+// 1차 수정은 서버가 장기 row를 보내게 했지만, 그 검증은 스크립트가 서버
+// 응답을 직접 읽어 통과한 것이었다. 클라이언트 파서를 지나지 않았고,
+// 거기서 장기 row가 전부 버려지고 있었다.
+//
+//   Population before formula.
+// ════════════════════════════════════════════════════════════════════════
+
+void _population() {
+  Map<String, Object?> rowMap({
+    bool longTerm = false,
+    String slotId = 'slot1',
+    String wdId = 'wd1',
+    int required = 2,
+    int confirmed = 1,
+    int? workEndDateMs,
+    List<String>? workDays,
+  }) =>
+      {
+        'toId': 'to1',
+        'toTitle': 't',
+        'slotId': slotId,
+        'wdId': wdId,
+        'workType': '사무업무',
+        'startTime': '06:00',
+        'endTime': '08:00',
+        'requiredCount': required,
+        'confirmedCount': confirmed,
+        'pendingCount': 0,
+        'isLongTerm': longTerm,
+        if (workEndDateMs != null) 'workEndDateMs': workEndDateMs,
+        if (workDays != null) 'workDays': workDays,
+      };
+
+  group('13. reader population — 정상 entity가 조용히 탈락하지 않는다', () {
+    test('13-a 장기: slotId·wdId 둘 다 비어도 살아남는다', () {
+      // DEV 실측: contract TO 3건 전부 workDetails에 wdId가 없다.
+      final r = DayStaffingRow.tryFromMap(
+          rowMap(longTerm: true, slotId: '', wdId: ''));
+      expect(r, isNotNull);
+      expect(r!.shortage, 1);
+    });
+
+    test('13-b 장기 wdId 대체값은 코드베이스 공통 fallback이다', () {
+      final r = DayStaffingRow.tryFromMap(
+          rowMap(longTerm: true, slotId: '', wdId: ''));
+      // WorkDetailData.id · _GroupData.groupKey · workStats 키와 같은 형식.
+      expect(r!.wdId, '사무업무_06:00_08:00');
+    });
+
+    test('13-c 단기는 여전히 거부한다 — 그 자리의 빈 값은 깨진 데이터다', () {
+      expect(DayStaffingRow.tryFromMap(rowMap(slotId: '')), isNull);
+      expect(DayStaffingRow.tryFromMap(rowMap(wdId: '')), isNull);
+    });
+
+    test('13-d 장기 약속 범위가 row에 실린다', () {
+      final end = DateTime(2026, 10, 23).millisecondsSinceEpoch;
+      final r = DayStaffingRow.tryFromMap(rowMap(
+        longTerm: true,
+        slotId: '',
+        wdId: '',
+        workEndDateMs: end,
+        workDays: const ['월', '화'],
+      ));
+      expect(r!.workEndDate!.millisecondsSinceEpoch, end);
+      expect(r.workDays, ['월', '화']);
+    });
+
+    test('13-e 단기에는 약속 범위 개념이 없다', () {
+      final r = DayStaffingRow.tryFromMap(rowMap());
+      expect(r!.workEndDate, isNull);
+      expect(r.workDays, isEmpty);
+    });
+
+    test('13-f 서버가 장기 row에 약속 범위를 싣는다', () {
+      final cf = _codeOf(_src(_cfPath));
+      final i = cf.indexOf('export const callableGetDayStaffingDetail');
+      final body = cf.substring(i, (i + 12000).clamp(0, cf.length));
+      expect(body.contains('workEndDateMs: dsRangeEnd'), true);
+      expect(body.contains('workDays: dsWorkDays'), true);
+      // 단기에는 null/빈 배열 — 없는 개념을 지어내지 않는다.
+      expect(body.contains('workEndDateMs: null'), true);
+    });
+  });
+
+  group('14. §14 장기 contextual 초대', () {
+    const invitePath =
+        'lib/screens/business_admin/dialogs/invite_worker_dialog.dart';
+    final invite = _codeOf(_src(invitePath));
+    final day = _codeOf(_src(_dayPath));
+
+    test('14-a contextual이 약속 범위를 받는다 — groupItem 의존 없이', () {
+      expect(invite.contains('final DateTime? prefilledWorkEndDate;'), true);
+      expect(invite.contains('final List<String>? prefilledWorkDays;'), true);
+      // groupItem 전체를 끌어오지 않았다.
+      final i = invite.indexOf('static InviteWorkerDialog contextual(');
+      final body = invite.substring(i, (i + 900).clamp(0, invite.length));
+      expect(body.contains('groupItem'), false);
+    });
+
+    test('14-b payload가 일반 모드와 같은 키를 쓴다', () {
+      // 일반 모드 장기 분기: workDate / workEndDate / workDays
+      expect(invite.contains("'workEndDate': widget.prefilledWorkEndDate!"), true);
+      expect(invite.contains("'workDays': widget.prefilledWorkDays,"), true);
+    });
+
+    test('14-c 약속 범위를 모르면 초대하지 않는다 — 하루짜리를 만들지 않는다', () {
+      expect(day.contains('if (g.workEndDate == null) return _buildLongTermInviteHint(ctx);'),
+          true);
+    });
+
+    test('14-d 장기는 근무가능인력 시트로 가지 않는다 — slotId를 요구한다', () {
+      expect(day.contains("if (slotId == null) {\n      choice = 'direct';"), true);
+      expect(day.contains("if (choice == 'availability' && slotId != null)"), true);
+    });
+
+    test('14-e 장기 CTA가 다시 섰다', () {
+      // 1차에서는 `!g.isLongTerm &&`로 막혀 있었다.
+      expect(day.contains('if (!g.isLongTerm && g.toId != null && g.requiredCount > 0'),
+          false);
+      expect(day.contains('return _buildInviteButton(g, null);'), true);
+    });
+  });
+
+  group('15. §4 UNKNOWN 표면이 subtype 때문에 사라지지 않는다', () {
+    test('15-a 업무 명단: 장기에서도 정원 확인 불가 + 다시 시도', () {
+      const workPath =
+          'lib/screens/business_admin/dialogs/work_applicants_dialog.dart';
+      final s = _codeOf(_src(workPath));
+      final i = s.indexOf('Widget _buildStaffingActionRow(');
+      final body = s.substring(i, (i + 1400).clamp(0, s.length));
+      final unknownIdx = body.indexOf('capacity == InviteCapacityState.unknown');
+      final longTermIdx = body.indexOf('widget.toItem.to.isLongTerm');
+      expect(unknownIdx, greaterThan(-1));
+      expect(longTermIdx, greaterThan(-1));
+      expect(unknownIdx, lessThan(longTermIdx),
+          reason: 'UNKNOWN 안내가 subtype 게이트보다 뒤에 있으면 장기에서 사라진다');
     });
   });
 }

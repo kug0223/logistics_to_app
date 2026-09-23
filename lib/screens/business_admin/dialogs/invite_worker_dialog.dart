@@ -52,6 +52,22 @@ class InviteWorkerDialog extends StatefulWidget {
   final String? prefilledStartTime;
   final String? prefilledEndTime;
 
+  /// [R7-P1R §14] 장기 모집 단위의 약속 범위.
+  ///
+  ///   contextual 모드는 groupItem이 null이라 isLongTerm이 항상 false로
+  ///   계산됐고, workEndDate·workDays를 싣는 분기는 groupItem에 의존했다.
+  ///   그래서 이 경로로 장기 공고에 초대를 보내면 **하루짜리 지원서**가
+  ///   만들어졌고, 그 위험 때문에 장기 CTA 자체를 막아 두어야 했다.
+  ///
+  ///   groupItem 전체를 끌어오지 않는다 — 필요한 두 값만 받는다.
+  ///   null이면 단기다.
+  final DateTime? prefilledWorkEndDate;
+  final List<String>? prefilledWorkDays;
+
+  /// 이 contextual 초대가 장기 약속인가.
+  bool get isContextualLongTerm =>
+      isContextualMode && prefilledWorkEndDate != null;
+
   /// 컨텍스트 모드 여부 — [contextualToId] + [prefilledDate] 존재 시 true
   bool get isContextualMode =>
       contextualToId != null && prefilledDate != null;
@@ -67,7 +83,9 @@ class InviteWorkerDialog extends StatefulWidget {
         prefilledSlotId = null,
         prefilledWorkType = null,
         prefilledStartTime = null,
-        prefilledEndTime = null;
+        prefilledEndTime = null,
+        prefilledWorkEndDate = null,
+        prefilledWorkDays = null;
 
   /// 컨텍스트 모드 생성자 — DayApplicantsDialog exact work-group에서 사용.
   ///
@@ -83,6 +101,9 @@ class InviteWorkerDialog extends StatefulWidget {
     String? workType,
     String? startTime,
     String? endTime,
+    // [R7-P1R §14] 장기면 둘을 함께 넘긴다. 없으면 단기다.
+    DateTime? workEndDate,
+    List<String>? workDays,
   }) {
     return InviteWorkerDialog._contextual(
       key: key,
@@ -94,6 +115,8 @@ class InviteWorkerDialog extends StatefulWidget {
       prefilledWorkType: workType,
       prefilledStartTime: startTime,
       prefilledEndTime: endTime,
+      prefilledWorkEndDate: workEndDate,
+      prefilledWorkDays: workDays,
     );
   }
 
@@ -107,6 +130,8 @@ class InviteWorkerDialog extends StatefulWidget {
     this.prefilledWorkType,
     this.prefilledStartTime,
     this.prefilledEndTime,
+    this.prefilledWorkEndDate,
+    this.prefilledWorkDays,
   }) : groupItem = null;
 
   @override
@@ -337,6 +362,15 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
           'workDate': widget.prefilledDate!.toIso8601String(),
           if (widget.prefilledSlotId != null && widget.prefilledSlotId!.isNotEmpty)
             'slotId': widget.prefilledSlotId,
+          // [R7-P1R §14] 장기는 하루가 아니라 **기간**에 대한 제안이다.
+          //   이 두 줄이 없어서 장기 공고에 하루짜리 지원서가 만들어졌고,
+          //   그 때문에 장기 초대 CTA를 막아 두어야 했다. 일반 모드의
+          //   장기 분기와 **같은 키·같은 의미**를 쓴다.
+          if (widget.prefilledWorkEndDate != null)
+            'workEndDate': widget.prefilledWorkEndDate!.toIso8601String(),
+          if (widget.prefilledWorkDays != null &&
+              widget.prefilledWorkDays!.isNotEmpty)
+            'workDays': widget.prefilledWorkDays,
           // [6.1 INV-01/02] selectedWorkType → 서버가 wage/wageType 파생
           // [Phase 8.1B.4] workDetailStartTime/End → 동일 workType 복수 시 정확한 WorkDetail 식별
           if (widget.prefilledWorkType != null && widget.prefilledWorkType!.isNotEmpty)

@@ -57,6 +57,10 @@ class _GroupData {
   /// [R7-P1-PRODUCT] canonical row가 오면 덮어쓴다 — final이 아니다.
   ///   지원서에서 유도한 값보다 서버가 준 공고 type이 우선이다.
   bool isLongTerm;
+
+  /// [R7-P1R §14] 장기 초대가 만들어야 하는 약속 범위 — canonical row에서 온다.
+  DateTime? workEndDate;
+  List<String> workDays = const [];
   /// [8.1E.4] canonical workDetail ID (wdId, new-schema 슬롯)
   final String? wdId;
   final String? workDetailId;   // composite WorkDetail ID (레거시/capacityKey 용)
@@ -777,6 +781,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // [R7-P1-PRODUCT] 지원서로 먼저 만들어진 그룹은 장기 여부를
         //   지원서에서 유도했다. canonical row가 왔으면 그쪽이 진실이다.
         existing.isLongTerm = row.isLongTerm;
+        existing.workEndDate = row.workEndDate;
+        existing.workDays = row.workDays;
         // [R8-P7.3] 정원은 slot 이 진실이다. 앞선 capacity 조회가 실패했더라도
         //   여기서 canonical 값을 받았으면 다시 "안다"가 된다.
         existing.requiredCountKnown = true;
@@ -806,7 +812,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         wdId: row.wdId,
         requiredCount: row.requiredCount,
         slotId: row.slotId.isEmpty ? null : row.slotId,
-      )..canonicalConfirmed = row.confirmedCount;
+      )
+        ..canonicalConfirmed = row.confirmedCount
+        ..workEndDate = row.workEndDate
+        ..workDays = row.workDays;
     }
 
     int timeToMinutes(String t) {
@@ -1320,40 +1329,36 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         //   말하는 것이고, 보내도 수락될 수 없는 초대를 낳을 수 있다.
         //   UNKNOWN일 때는 CTA 대신 `_buildCapacityUnknownNotice`가 선다.
         //
-        // [R7-P1-PRODUCT] 장기는 여기서 **아직** 초대 CTA를 세우지 않는다.
+        // [R7-P1R §14] 장기도 여기서 초대할 수 있다.
         //
-        //   서버(callableInviteWorker)는 slotId가 선택이고 슬롯이 없으면
-        //   TO.workDetails로 폴백하므로 장기 초대 자체는 지원된다. 막는 것은
-        //   이 화면이 쓰는 **경로**다: InviteWorkerDialog.contextual은
-        //   groupItem이 null이라 isLongTerm이 항상 false로 계산되고
-        //   (invite_worker_dialog.dart:141), workEndDate·workDays를 싣는
-        //   분기는 `groupItem!`에 의존한다(:357-358).
+        //   직전까지는 막아 두었다. 이 화면이 쓰는 contextual 경로가
+        //   workEndDate·workDays를 싣지 못해 장기 공고에 하루짜리 지원서를
+        //   만들었기 때문이다. 이제 그 두 값을 canonical row가 실어 오고
+        //   contextual 생성자가 그대로 전달한다 — 일반 모드(⋮ 메뉴)와
+        //   같은 키, 같은 의미다.
         //
-        //   그대로 CTA를 띄우면 장기 공고에 **하루짜리 지원서**가 만들어진다.
-        //   없는 버튼보다 나쁜 결과이므로, 경로를 갖추기 전에는 세우지 않는다.
-        //   대신 부족 수치와 대상 자체는 이제 보인다 — Home과 같은 truth다.
-        if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
+        //   그래도 약속 범위를 **모르면** 세우지 않는다. 장기인데
+        //   workEndDate가 비어 있으면 하루짜리가 만들어지던 그 상태와
+        //   같으므로, 그때는 CTA 대신 다른 경로를 안내한다.
+        if (g.toId != null && g.requiredCount > 0 &&
             g.capacityState == InviteCapacityState.available &&
             g.shortage > 0)
           Builder(builder: (ctx) {
+            if (!_canForSelectedBiz((p) => p.canManageTo)) {
+              return const SizedBox.shrink();
+            }
+            if (g.isLongTerm) {
+              // 약속 범위를 모르면 초대하지 않는다 — 하루짜리가 만들어진다.
+              if (g.workEndDate == null) return _buildLongTermInviteHint(ctx);
+              return _buildInviteButton(g, null);
+            }
             // [R2] slotId는 그룹 자신이 안다. 이전에는 지원서에서 유도해
             //   지원자가 0명인 모집 단위에서 null이 되고 CTA가 사라졌다 —
             //   충원이 가장 필요한 상태에서 충원 수단이 없어지는 경로였다.
             final slotId = g.slotId;
             if (slotId == null) return const SizedBox.shrink();
-            if (!_canForSelectedBiz((p) => p.canManageTo)) {
-              return const SizedBox.shrink();
-            }
             return _buildInviteButton(g, slotId);
           }),
-
-        // [R7-P1-PRODUCT] 장기 부족은 보이되, 충원 수단은 공고 카드에 있다.
-        //   ⋮ 메뉴의 `인력 초대`는 groupItem을 넘기므로 장기를 제대로 다룬다.
-        //   여기서 아무 말도 하지 않으면 관리자는 부족만 보고 막다른 길에 선다.
-        if (g.isLongTerm && g.toId != null &&
-            g.capacityState == InviteCapacityState.available &&
-            g.shortage > 0 && _canForSelectedBiz((p) => p.canManageTo))
-          _buildLongTermInviteHint(context),
 
         // [R2.2.1 CORRECTION] capacity UNKNOWN — 없는 것처럼 지나가지 않는다.
         //   충원 CTA를 내린 이유를 말해 준다. `부족 0`이라서가 아니라
@@ -1448,7 +1453,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   // ── [Phase 8.1B.3] 인력 초대 버튼 + InviteMethodSheet 라우팅 ─────────────
 
-  Widget _buildInviteButton(_GroupData g, String slotId) {
+  Widget _buildInviteButton(_GroupData g, String? slotId) {
     // [R2.4] 같은 계산식 — 이 버튼의 숫자와 열리는 시트의 숫자가 갈라지지 않는다.
     final shortage = g.shortage;
     // [UX-D-03] pendingCount >= shortage: 현재 대기자 풀로 이론적 부족 충족 가능
@@ -1489,30 +1494,45 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   /// [R7-P1-CORR] 같은 모집 단위의 초대 시트는 하나만 뜬다.
-  Future<void> _openInviteMethod(_GroupData g, String slotId) =>
+  Future<void> _openInviteMethod(_GroupData g, String? slotId) =>
       ActionGuard.runVoid(
         ActionGuard.keyOf('inviteMethod', [g.toId, slotId, g.wdId]),
         () => _openInviteMethodInner(g, slotId),
       );
 
-  Future<void> _openInviteMethodInner(_GroupData g, String slotId) async {
+  Future<void> _openInviteMethodInner(_GroupData g, String? slotId) async {
     if (!mounted) return;
     // [R2.4] 통계 스트립·초대 CTA와 **같은 값**을 쓴다.
     final shortage = g.shortage;
 
     // 1. 인력 초대 방식 선택 시트 — State.context 사용 (mounted 보장)
-    final choice = await DialogHelper.showSheet<String>(
-      context,
-      builder: (ctx) => InviteMethodSheet(
-        workType: g.workType,
-        date: widget.date,
-        startTime: g.startTime,
-        endTime: g.endTime,
-        shortage: shortage,
-      ),
-    );
-
-    if (!mounted || choice == null) return;
+    //
+    // [R7-P1R §13] 장기는 방식 선택을 건너뛴다.
+    //
+    //   `근무 가능 인력` 시트(AvailableWorkersBottomSheet)와 그 뒤의
+    //   callableGetAvailableWorkers는 slotId를 요구한다. 장기에는 슬롯이
+    //   없고, 그 경로가 장기에서 올바른 결과를 주는지 확인되지 않았다.
+    //   고를 수 없는 선택지를 보여 주고 눌렀을 때 실패시키지 않는다.
+    //
+    //   직접 초대는 이제 장기 약속 범위를 그대로 싣는다(§14).
+    final String choice;
+    if (slotId == null) {
+      choice = 'direct';
+    } else {
+      final picked = await DialogHelper.showSheet<String>(
+        context,
+        builder: (ctx) => InviteMethodSheet(
+          workType: g.workType,
+          date: widget.date,
+          startTime: g.startTime,
+          endTime: g.endTime,
+          shortage: shortage,
+        ),
+      );
+      if (!mounted || picked == null) return;
+      choice = picked;
+    }
+    if (!mounted) return;
 
     // 사업장명 취득
     final biz = widget.businesses.where((b) => b.id == _selectedBusinessId)
@@ -1521,8 +1541,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         : (widget.businesses.isNotEmpty ? widget.businesses.first : null);
     final businessName = biz?.name ?? '';
 
-    if (choice == 'availability') {
-      // 2a. 근무 가능 인력 시트
+    if (choice == 'availability' && slotId != null) {
+      // 2a. 근무 가능 인력 시트 — 슬롯이 있는 단기 전용이다.
       if (!mounted) return;
       await DialogHelper.showSheet<void>(
         context,
@@ -1557,6 +1577,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           workType: g.workType,
           startTime: g.startTime,
           endTime: g.endTime,
+          // [R7-P1R §14] 장기면 약속 범위를 함께 넘긴다 — 없으면 단기다.
+          workEndDate: g.workEndDate,
+          workDays: g.workDays.isEmpty ? null : g.workDays,
         ),
       );
     }

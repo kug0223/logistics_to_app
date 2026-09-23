@@ -106,7 +106,9 @@ void main() {
       expect(day.contains('int? canonicalConfirmed;'), isTrue);
       expect(day.contains('existing.canonicalConfirmed = row.confirmedCount;'),
           isTrue);
-      expect(day.contains('..canonicalConfirmed = row.confirmedCount;'), isTrue);
+      // [R7-P1R] cascade가 늘어나 세미콜론이 옮겨 갔다. 계약은 '확정 수의
+      //   출처가 canonical row'라는 것이지 구두점이 아니다.
+      expect(day.contains('..canonicalConfirmed = row.confirmedCount'), isTrue);
     });
 
     test('01-b DayStaffingRow.confirmedCount는 workDetailCounts에서 온다', () {
