@@ -150,8 +150,10 @@ void main() {
       final inherits = RegExp(
         r'documentAccessConsentVersion:\s*\n?\s*freshData\.documentAccessConsentVersion',
       ).allMatches(code).length;
-      expect(inherits, greaterThanOrEqualTo(2),
-          reason: '자동·수동 갱신 두 경로');
+      // [AUTO-RENEW-POLICY] 자동 갱신이 Application 을 만들지 않게 된 뒤로
+      //   승계가 일어나는 경로는 수동 갱신 하나다. 승계 계약 자체는 그대로다.
+      expect(inherits, greaterThanOrEqualTo(1),
+          reason: '수동 갱신 경로 — 자동 경로는 새 Application 을 만들지 않는다');
     });
 
     test('갱신 경로가 v2 상수를 기록하지 않는다', () {
@@ -164,10 +166,15 @@ void main() {
     });
 
     test('legacy 미보유는 조건부 승계로 유지된다', () {
+      // 승계가 일어나는 곳은 수동 갱신이다.
+      final manual =
+          _codeOf(_callableBody(source, 'callableCreateContractRenewal'));
       expect(
-        autoRenewal.contains('documentAccessConsentVersion !== undefined'),
+        manual.contains('documentAccessConsentVersion !== undefined'),
         isTrue,
       );
+      // 자동 경로에는 승계할 문서 자체가 없다.
+      expect(autoRenewal.contains('documentAccessConsentVersion'), isFalse);
     });
   });
 
@@ -459,7 +466,9 @@ void main() {
       //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
       //   열람 사유가 아니다. 지금의 계약은
       //   test/tax_identity_review_contract_test.dart.
-      expect(autoRenewal.contains('status: "CONFIRMED"'), isTrue);
+      // [AUTO-RENEW-POLICY] 자동 갱신은 CONFIRMED TX 자체를 만들지 않는다.
+      //   침묵을 합의로 읽지 않기로 했고, 그래서 만들 grant 도 없다.
+      expect(autoRenewal.contains('status: "CONFIRMED"'), isFalse);
       expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
 
@@ -513,8 +522,10 @@ void main() {
       //   auto-grant를 전부 제거했다. 확정은 근무 약속이지 신분증
       //   열람 사유가 아니다. 지금의 계약은
       //   test/tax_identity_review_contract_test.dart.
-      expect(autoRenewal.contains('Timestamp.fromDate(newStartDate)'), isTrue);
-      expect(autoRenewal.contains('Timestamp.fromDate(newEndDate)'), isTrue);
+      // [AUTO-RENEW-POLICY] 새 근무 기간을 자동으로 만들지 않으므로
+      //   계산할 grant 도, 계산할 기간도 없다.
+      expect(autoRenewal.contains('Timestamp.fromDate(newStartDate)'), isFalse);
+      expect(autoRenewal.contains('Timestamp.fromDate(newEndDate)'), isFalse);
       expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
   });

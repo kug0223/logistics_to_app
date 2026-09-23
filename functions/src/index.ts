@@ -6547,13 +6547,16 @@ async function syncGroupMasterStatus(
 }
 
 // ═══════════════════════════════════════════════════════════
-// 🔄 고정근무 계약 만료 D-15 알림 및 D-0 자동 연장
+// 🔄 고정근무 계약 만료 D-15 알림 및 D-0 미결정 조정
+//    (자동 연장은 Core V1 에서 지원하지 않는다 — [AUTO-RENEW-POLICY])
 // ═══════════════════════════════════════════════════════════
 
 /**
  * 매 자정 실행:
  *   - D-15: 만료 15일 전 관리자에게 연장/종료 선택 알림
- *   - D-0 (무응답): 관리자 미결정 시 자동 1개월 연장 + 근무자 통보
+ *   - D-0 (무응답): **연장하지 않는다.** 결정이 필요한 건수만 남긴다.
+ *                   [AUTO-RENEW-POLICY] — 침묵은 합의가 아니다.
+ *   - D-0 (TERMINATE 결정): 종료 완료 알림
  * @param {Timestamp} now - 현재 시간
  */
 async function processContractRenewalChecks(now: Timestamp): Promise<void> {
@@ -6690,7 +6693,33 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
 
     console.log(`  ✅ [D-15 알림] ${d15Count}건 발송`);
 
-    // ── D-0: 무응답 자동 연장 ────────────────────────────────
+    // ── D-0: 미결정 만료 — 조정만 한다 ────────────────────────
+    //
+    // [AUTO-RENEW-POLICY]
+    //   Core V1 does not infer renewal consent from inactivity.
+    //   Renewal commitment is created only through the canonical
+    //   manual/batch renewal writer and contract-signing flow.
+    //   Scheduler may remind/reconcile, but must not create a
+    //   CONFIRMED renewed Application without explicit commitment.
+    //
+    //   여기서는 무응답을 **1개월 자동 연장**으로 해석해 새 Application 을
+    //   CONFIRMED 로 만들고 근로자에게 "자동 연장되었습니다" 를 보냈다.
+    //
+    //   그런데 수동 연장은 같은 사건을 이렇게 처리한다:
+    //
+    //       CONTRACT_PENDING → 사업주 서명 → 근로자 서명 → CONFIRMED
+    //
+    //   같은 "계약 연장"인데 한쪽만 근로자 합의 없이 확정됐다.
+    //   확정은 약속이고, 아무도 결정하지 않았다는 사실은 합의가 아니다.
+    //   미결정은 미결정이다 — TERMINATE 도 EXTEND 도 아니다.
+    //
+    //   그래서 이 자리는 이제 아무것도 쓰지 않는다. 관측만 남긴다.
+    //   연장이 필요하면 관리자가 FixedWorker 에서 연장하고, 그 경로는
+    //   만료 이후에도 열려 있다(행 액션 메뉴에는 날짜 창이 없다).
+    //
+    //   장래에 자동 연장을 지원하려면 사전 동의·조건 snapshot·사전 고지·
+    //   opt-out 같은 canonical state 가 먼저 있어야 한다. 그것이 없는 동안
+    //   침묵을 동의로 읽지 않는다.
     const d0Snap = await db.collection("applications")
       .where("status", "in", CONFIRMED_STATUSES)
       .where("workEndDate", ">=", d0Start)
@@ -6700,230 +6729,15 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     if (d0Snap.size >= 200) {
       console.warn("  ⚠️ [D-0] 200건 limit 도달 — 잔여 건 다음 실행에서 처리");
     }
-
-    // [PERF] D-0 배치 병렬화 — 각 doc이 독립된 application/notification 문서를 다루므로 Promise.allSettled 안전
-    const d0Results = await Promise.allSettled(d0Snap.docs.map(async (doc) => {
+    for (const doc of d0Snap.docs) {
       const app = doc.data();
-      if (!app.workDays || app.workDays.length === 0) return "skip";
-      if (app.renewalDecision) return "skip"; // 이미 결정됨
-      // [RESIGN-GATE] stale 초기 스킵 — TX 내 fresh read에서도 동일 predicate 재검증
-      const _approvedExitStatuses = ["APPROVED", "AUTO_APPROVED"];
-      if (_approvedExitStatuses.includes(app.resignStatus as string)) return "skip";
-      if (_approvedExitStatuses.includes(app.terminationStatus as string)) return "skip";
-
-      const oldEndDate = (app.workEndDate as Timestamp).toDate();
-      const origWorkDate = (app.workDate as Timestamp).toDate();
-
-      // [BUG-FIX] L-4: Use desiredStartDate (if present) as the base for month calculation,
-      // matching Flutter's createRenewedApplication() logic (application_firestore.dart:2236).
-      const startDate = app.desiredStartDate
-        ? (app.desiredStartDate as Timestamp).toDate()
-        : origWorkDate;
-
-      // KST 기준 날짜 변환 (개월 수 계산 + 새 계약 날짜 계산에 공통 사용)
-      // Flutter가 DateTime(y,m,d) KST 자정으로 저장 → UTC 전날 15:00이 됨.
-      // UTC 기준 getFullYear/getMonth는 월 경계에서 전달/전년도를 반환해 계산 오차 발생.
-      const oldEndDateKST = new Date(oldEndDate.getTime() + KST_OFFSET_MS);
-      const startDateKST  = new Date(startDate.getTime()  + KST_OFFSET_MS);
-
-      // Flutter와 동일한 개월 수 기반 계산 (KST 기준)
-      const contractMonths =
-        (oldEndDateKST.getUTCFullYear() - startDateKST.getUTCFullYear()) * 12 +
-        (oldEndDateKST.getUTCMonth() - startDateKST.getUTCMonth());
-      const renewalMonths = contractMonths > 0 ? contractMonths : 1;
-
-      // 새 계약 시작: 다음날 (KST 기준 +1일 후 UTC로 복원)
-      const newStartDateKST = new Date(oldEndDateKST);
-      newStartDateKST.setDate(newStartDateKST.getDate() + 1);
-      const newStartDate = new Date(newStartDateKST.getTime() - KST_OFFSET_MS);
-
-      // 새 계약 종료: 기존 종료일 기준 renewalMonths 개월 후 (같은 날짜, 월말 clamp) — KST 기준
-      const rawEndYear = oldEndDateKST.getFullYear() + Math.floor((oldEndDateKST.getMonth() + renewalMonths) / 12);
-      const rawEndMonthZero = (oldEndDateKST.getMonth() + renewalMonths) % 12; // 0-based
-      const lastDayOfMonth = new Date(rawEndYear, rawEndMonthZero + 1, 0).getDate();
-      const newEndDateKST = new Date(rawEndYear, rawEndMonthZero, Math.min(oldEndDateKST.getDate(), lastDayOfMonth));
-      const newEndDate = new Date(newEndDateKST.getTime() - KST_OFFSET_MS);
-
-      // [CONCURRENCY-FIX P1-B] 수동 renewal CF(callableCreateContractRenewal)와 동일 contention
-      // document(doc.ref)를 공유하는 TX로 직렬화.
-      // 수동 CF가 먼저 commit하면 TX retry 시 renewalDecision='EXTEND' 감지 → skip.
-      // doc refs를 TX callback 밖에서 사전 생성 → TX retry 시에도 동일 ID 유지.
-      const newAppRef = db.collection("applications").doc();
-      const renewNotifRef = db.collection("users").doc(app.uid as string).collection("notifications").doc();
-
-      // [PII-B4-R1] 갱신 근무관계용 신분증 auto-grant 제거.
-      //   갱신도 근무 약속이지 신분증 열람 사유가 아니다.
-
-      let schedulerCommitted = false;
-      await db.runTransaction(async (tx) => {
-        // 1. Fresh read — stale loop snapshot 대신 TX 격리 snapshot 사용
-        const freshSnap = await tx.get(doc.ref);
-        if (!freshSnap.exists) return;
-        const freshData = freshSnap.data()!;
-
-        // 2. Fresh state 재검증 (P1-A 수동/배치 renewal과 동일 predicate 집합)
-        if (!freshData.workDays || freshData.workDays.length === 0) return;
-        if (freshData.renewalDecision) return; // 수동 renewal이 먼저 commit됨 → skip
-        const approvedExitStatuses = ["APPROVED", "AUTO_APPROVED"];
-        if (approvedExitStatuses.includes(freshData.resignStatus as string)) return; // [RESIGN-GATE]
-        if (approvedExitStatuses.includes(freshData.terminationStatus as string)) return; // [RESIGN-GATE]
-
-        // 3. 원자적 writes — TX 실패 시 전체 미커밋 → 중복 연장 방지
-        // [CF-11 수정] ...app 스프레드 제거 → 화이트리스트 방식으로 필요 필드만 명시적 복사.
-        // 이전에는 ...app으로 wageDetail·finalWage·wageStatus 등 집계 필드가 새 application에
-        // 그대로 복사되었음. Flutter createRenewedApplication()도 copyWith+toMap() 화이트리스트 방식.
-        tx.set(newAppRef, {
-          // ── 사업장/공고 식별 ──
-          businessId: app.businessId,
-          businessName: app.businessName,
-          toTitle: app.toTitle ?? null,
-          toId: app.toId ?? null,
-          workDetailId: app.workDetailId ?? null,
-          slotId: app.slotId ?? null,
-          groupId: app.groupId ?? null,
-          // ── 근무자 식별 ──
-          uid: app.uid,
-          applicantName: app.applicantName ?? null,
-          // ── 근무 스케줄 (날짜는 새 기간으로 교체) ──
-          workDate: Timestamp.fromDate(newStartDate),
-          workEndDate: Timestamp.fromDate(newEndDate),
-          workDays: app.workDays ?? null,
-          startTime: app.startTime ?? null,
-          endTime: app.endTime ?? null,
-          // ── 업무 유형 ──
-          selectedWorkType: app.selectedWorkType ?? null,
-          originalWorkType: app.originalWorkType ?? null,
-          originalWage: app.originalWage ?? null,
-          changedAt: app.changedAt ?? null,
-          changedBy: app.changedBy ?? null,
-          workTypeIcon: app.workTypeIcon ?? null,
-          workTypeColor: app.workTypeColor ?? null,
-          workTypeBackgroundColor: app.workTypeBackgroundColor ?? null,
-          // ── 임금 기본값 (TO 레벨 고정값 유지, 집계 필드는 초기화) ──
-          wage: app.wage ?? 0,
-          wageType: app.wageType ?? null,
-          wageStatus: "pending",          // [CF-11] 집계 필드 초기화
-          finalWage: null,                // [CF-11] 집계 필드 초기화
-          wageDetail: null,               // [CF-11] 집계 필드 초기화
-          wageConfirmedAt: null,          // [CF-11] 집계 필드 초기화
-          wageTransferredAt: null,        // [CF-11] 집계 필드 초기화
-          interimSettledAmount: 0,        // [CF-11] 집계 필드 초기화
-          // ── 서류 접근 사전동의 (원본 snapshot 승계) ──
-          // [DOCUMENT-ACCESS-CONSENT-RENEWAL-POLICY]
-          // 동일 고용관계의 계약 갱신은 원 application의 동의를 그대로 이어받는다.
-          // 갱신마다 재동의를 받지 않으며, 수동 갱신
-          // (callableCreateContractRenewal)과 동일 semantics다.
-          // 값을 만들어내지 않는다 — 원본에 필드가 없으면 새 문서에도 없다.
-          // 확정·갱신됐다는 이유로 동의를 추정하면 안 된다.
-          // freshData 사용: 개인정보 접근을 좌우하는 필드라 TX 격리 snapshot을 읽는다.
-          ...(freshData.documentAccessConsentGiven !== undefined && {
-            documentAccessConsentGiven: freshData.documentAccessConsentGiven,
-          }),
-          ...(freshData.idCardConsentGiven !== undefined && {
-            idCardConsentGiven: freshData.idCardConsentGiven,
-          }),
-          ...(freshData.documentAccessConsentVersion !== undefined && {
-            documentAccessConsentVersion:
-              freshData.documentAccessConsentVersion,
-          }),
-          // ── 상태 ──
-          status: "CONFIRMED",
-          appliedAt: now,
-          confirmedAt: now,
-          confirmedBy: "SYSTEM",
-          // ── 지원/확정 메시지 (이전 계약 승계 안 함) ──
-          applicationMessage: null,
-          confirmMessage: null,
-          rejectMessage: null,
-          cancelMessage: null,
-          // ── 취소 관련 (초기화) ──
-          canceledAt: null,
-          cancelReason: null,
-          conflictingAppId: null,
-          conflictingBusiness: null,
-          conflictingTime: null,
-          // ── 연장 추적 ──
-          renewedFromApplicationId: doc.id,
-          renewalDecision: null,
-          renewalNotifiedAt: null,
-          renewedToApplicationId: null,
-          // ── 희망 시작일 (초기화) ──
-          desiredStartDate: null,
-          // ── 휴무/추가근무 (이전 계약 날짜 승계 안 함) ──
-          // [BUG-FIX] H-3: Flutter createRenewedApplication()과 동일하게 초기화.
-          leaveDates: [],
-          extraWorkDates: [],
-          // ── 퇴사/계약해지 (초기화) ──
-          resignStatus: null,
-          resignRequestedAt: null,
-          resignRequestDate: null,
-          resignApprovedAt: null,
-          resignApprovedBy: null,
-          resignRejectedAt: null,
-          resignRejectedBy: null,
-          resignRejectReason: null,
-          actualResignDate: null,
-          terminationStatus: null,
-          terminationRequestedAt: null,
-          terminationReason: null,
-          terminationEffectiveDate: null,
-          terminationRequestedByUid: null,
-          terminationRespondedAt: null,
-          terminationRejectReason: null,
-          // ── 기타 ──
-          statusHistory: [],
-          type: app.type ?? null,
-          isStarred: false,
-        });
-        // [STRUCT-08] 알림을 TX에 포함 — commit 후 별도 .add() 발송 시 중간 실패로 알림 누락 방지
-        tx.set(renewNotifRef, {
-          userId: app.uid,
-          type: "contractRenewed",
-          title: "계약 자동 연장",
-          body: `${app.businessName} 계약이 ` +
-            `${new Date(newEndDate.getTime() + KST_OFFSET_MS).getUTCMonth() + 1}/${new Date(newEndDate.getTime() + KST_OFFSET_MS).getUTCDate()}` +
-            "까지 자동 연장되었습니다.",
-          data: {
-            applicationId: newAppRef.id,
-            businessId: app.businessId,
-            screen: "mySchedule",
-          },
-          isRead: false,
-          createdAt: now,
-        });
-        // [PREDEVICE-CONTRACT-OBLIGATION] D-0 자동연장은 계약서 문서를 미리 만들지 않는다.
-        //   이전에는 여기서 status:"pending_employer" 문서를 하나 썼다. 그 문서는
-        //   snapshot·toId·isLongTerm·articles가 없어 EmploymentContractModel이 파싱을
-        //   거부했고(tryFromMap → null), 근로자 목록에도 관리자 목록에도 안 떴다.
-        //   서명 흐름도 그것을 쓰지 않는다 — 장기 계약의 findOrCreateContract는
-        //   번들 탐색 없이 항상 _createNew로 가고, 저장은
-        //   callableFinalizeEmployerSignature가 pending_worker로 새 문서에 한다.
-        //   renewedFromApplicationId를 읽는 코드도 없었다. 즉 아무도 쓰지 않는
-        //   고아였고, 남겨두면 srvContractIssuedFor가 "계약서 있음"으로 오판한다.
-        //   갱신 근무관계의 계약 의무는 srvNeedsContractIssue가 좌석으로 판정한다.
-        // [RENEWAL-001 수정] renewedToApplicationId 역참조 추가 — 원본→연장 양방향 추적
-        //
-        // [F-3 특이사항] 이전 application의 status가 CONFIRMED 그대로 남는 설계상 한계.
-        // RENEWED 전용 상태가 없으므로 status를 변경하지 않는다.
-        // 앱에서는 renewedToApplicationId != null 조건으로 "갱신된 이전 계약"을 식별 가능.
-        // sendWorkReminders는 workDate=내일 쿼리이므로 기간 만료된 이전 계약은 자연히 제외됨.
-        // processContractRenewalChecks도 workEndDate 기준이므로 다음 D-15/D-0에 이전 계약이 다시
-        // 걸리지 않음 (renewalDecision="EXTEND" 필드로 이미 처리 완료 표시됨).
-        // TODO: RENEWED 상태 추가 후 이전 application status 전환 필요 (Flutter+CF 동시 배포 필요)
-        tx.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
-
-        // [PII-B4-R1] 갱신 auto-grant 생성 블록 제거.
-        //   세무 identity 대조가 필요하면 관리자가 명시적으로 요청한다.
-        schedulerCommitted = true;
-      }); // TX 전체 원자적 처리 — 새 application + 계약서 + 알림 + 기존 상태 변경
-      return schedulerCommitted ? "ok" : "skip";
-    }));
-    d0Count = d0Results.filter((r) => r.status === "fulfilled" && (r as PromiseFulfilledResult<string>).value === "ok").length;
-    d0Results.filter((r) => r.status === "rejected").forEach((r, i) => {
-      console.error(`[D-0 자동연장] 문서 ${d0Snap.docs[i]?.id} 처리 실패 — 나머지 계속:`, (r as PromiseRejectedResult).reason);
-    });
-
-    console.log(`  ✅ [D-0 자동연장] ${d0Count}건 처리`);
+      if (!app.workDays || app.workDays.length === 0) continue;
+      if (app.renewalDecision) continue; // 이미 결정됨
+      d0Count++;
+    }
+    // 쓰지 않는다 — 결정이 필요한 건이 몇 건인지만 남긴다.
+    console.log(
+      `  ℹ️ [D-0 미결정] ${d0Count}건 — 자동 연장하지 않음 (AUTO-RENEW-POLICY)`);
 
     // ── D-0 종료 결정 완료 알림 ──────────────────────────────
     // renewalDecision='TERMINATE' + 어제 만료된 계약 → 근무자에게 종료 완료 알림

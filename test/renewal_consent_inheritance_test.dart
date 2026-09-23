@@ -69,14 +69,23 @@ bool _inheritsFromOriginal(String body, String field) =>
 void main() {
   late String source;
   late String autoRenewal;
+
+  /// D-0 '미결정' 블록만. [autoRenewal] 은 D-15 리마인더까지 포함하므로
+  /// "아무것도 쓰지 않는다" 를 그 창으로 보면 리마인더의 알림 write 에 걸린다.
+  late String d0NoDecision;
   late String manualRenewal;
 
   setUpAll(() {
     source = _source();
-    // 자동 갱신: 신규 application을 쓰는 tx.set 블록
+    // 갱신 스케줄러 전체 — D-15 리마인더 + D-0 미결정 조정
     autoRenewal = _codeOf(_between(
       source,
       'async function processContractRenewalChecks',
+      '"renewalDecision", "==", "TERMINATE"',
+    ));
+    d0NoDecision = _codeOf(_between(
+      source,
+      '.where("workEndDate", ">=", d0Start)',
       '"renewalDecision", "==", "TERMINATE"',
     ));
     manualRenewal =
@@ -84,26 +93,41 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────
-  group('DS08B3-01 자동 갱신 — 원본 동의 승계', () {
+  // ───────────────────────────────────────────────────────────
+  // [AUTO-RENEW-POLICY] 자동 갱신 경로는 이제 아무것도 만들지 않는다.
+  //
+  //   무응답을 1개월 자동 연장으로 읽던 블록을 걷어냈다. 침묵은 합의가
+  //   아니고, 확정은 약속이다. 그래서 **승계할 문서 자체가 없다** —
+  //   승계 계약은 수동 갱신 하나에만 남는다.
+  //
+  //   이 그룹들은 "자동도 승계한다"가 아니라 "자동은 만들지 않는다"를
+  //   고정한다. 자동 갱신이 되살아나면 여기가 먼저 깨진다.
+  // ───────────────────────────────────────────────────────────
+  group('DS08B3-01 자동 갱신 — 만들지 않으므로 승계도 없다', () {
     for (final field in _consentFields) {
-      test('$field 을 원본에서 복사한다', () {
-        expect(_inheritsFromOriginal(autoRenewal, field), isTrue,
-            reason: '자동 갱신 화이트리스트에 $field 승계가 있어야 한다');
+      test('$field 을 자동 경로가 복사하지 않는다', () {
+        expect(_inheritsFromOriginal(autoRenewal, field), isFalse,
+            reason: '자동 갱신은 새 Application 을 만들지 않는다');
       });
     }
 
-    test('원본 snapshot을 source로 쓴다 — users/신분증 등 다른 근거 사용 안 함', () {
-      final block = _between(
-        autoRenewal,
-        'documentAccessConsentGiven',
-        'status: "CONFIRMED"',
+    test('자동 경로가 새 Application 을 쓰지 않는다', () {
+      expect(d0NoDecision.contains('tx.set('), isFalse);
+      expect(d0NoDecision.contains('newAppRef'), isFalse);
+      expect(autoRenewal.contains('status: "CONFIRMED"'), isFalse);
+    });
+
+    test('정책이 코드에 적혀 있다', () {
+      // 주석까지 포함해 읽는다 — 정책 문장은 주석이 맞는 자리다.
+      expect(source.contains('[AUTO-RENEW-POLICY]'), isTrue);
+      expect(
+        source.contains('Core V1 does not infer renewal consent from inactivity.'),
+        isTrue,
       );
-      expect(block.contains('isIdVerified'), isFalse);
-      expect(block.contains('users'), isFalse);
     });
   });
 
-  group('DS08B3-02 자동 갱신 — false는 false로', () {
+  group('DS08B3-02 자동 갱신 — 동의를 만들어내지 않는다', () {
     test('true를 강제로 만들어내지 않는다', () {
       for (final field in _consentFields) {
         expect(autoRenewal.contains('$field: true'), isFalse,
@@ -116,21 +140,31 @@ void main() {
         expect(autoRenewal.contains('$field ?? true'), isFalse);
       }
     });
+
+    test('동의 필드를 아예 건드리지 않는다', () {
+      for (final field in _consentFields) {
+        expect(autoRenewal.contains(field), isFalse, reason: field);
+      }
+    });
   });
 
-  group('DS08B3-03 자동 갱신 — legacy 미보유는 그대로 미보유', () {
-    for (final field in _consentFields) {
-      test('$field 이 없으면 새 문서에도 만들지 않는다', () {
-        expect(autoRenewal.contains(_inheritGuard(field)), isTrue,
-            reason: '조건부 승계여야 한다 (undefined는 필드 자체를 생성하지 않음)');
-      });
-    }
-
-    test('null로 채워 넣지도 않는다', () {
-      for (final field in _consentFields) {
-        expect(autoRenewal.contains('$field: null'), isFalse);
-        expect(autoRenewal.contains('$field ?? null'), isFalse);
+  group('DS08B3-03 자동 갱신 — 쓰지 않는다', () {
+    test('어떤 write 도 하지 않는다', () {
+      for (final write in ['tx.set(', 'tx.update(', '.add(', '.delete()']) {
+        expect(d0NoDecision.contains(write), isFalse, reason: write);
       }
+    });
+
+    test('renewalDecision 을 추측해 기록하지 않는다', () {
+      expect(autoRenewal.contains('renewalDecision: "EXTEND"'), isFalse);
+      expect(autoRenewal.contains('renewalDecision: "TERMINATE"'), isFalse);
+      expect(autoRenewal.contains('renewedToApplicationId'), isFalse);
+    });
+
+    test('거짓 연장 알림을 보내지 않는다', () {
+      expect(d0NoDecision.contains('contractRenewed'), isFalse);
+      expect(autoRenewal.contains('type: "contractRenewed"'), isFalse);
+      expect(autoRenewal.contains('자동 연장되었습니다'), isFalse);
     });
   });
 
@@ -153,32 +187,37 @@ void main() {
     });
   });
 
-  group('DS08B3-05 두 경로 semantics 일치', () {
-    test('동일한 조건부 승계 형태를 쓴다', () {
+  group('DS08B3-05 승계 경로는 수동 하나다', () {
+    test('수동만 조건부 승계 형태를 쓴다', () {
       for (final field in _consentFields) {
-        expect(autoRenewal.contains(_inheritGuard(field)), isTrue);
-        expect(manualRenewal.contains(_inheritGuard(field)), isTrue);
+        expect(manualRenewal.contains(_inheritGuard(field)), isTrue,
+            reason: '$field — 수동 갱신은 승계한다');
+        expect(autoRenewal.contains(_inheritGuard(field)), isFalse,
+            reason: '$field — 자동 갱신은 만들지 않으므로 승계도 없다');
       }
     });
 
-    test('동일한 source(freshData)를 쓴다', () {
+    test('수동이 freshData 를 source 로 쓴다', () {
       for (final field in _consentFields) {
-        expect(autoRenewal.contains('freshData.$field'), isTrue);
         expect(manualRenewal.contains('freshData.$field'), isTrue);
       }
+    });
+
+    test('자동 경로가 다른 근거(users·신분증)로 동의를 추정하지 않는다', () {
+      expect(autoRenewal.contains('isIdVerified'), isFalse);
+      expect(autoRenewal.contains('idCardAccessRequests'), isFalse);
     });
   });
 
   group('DS08B3-06 version 동반 승계', () {
     test('given만 승계하고 version을 빠뜨리지 않는다', () {
-      for (final body in [autoRenewal, manualRenewal]) {
-        final hasGiven =
-            _inheritsFromOriginal(body, 'documentAccessConsentGiven');
-        final hasVersion =
-            _inheritsFromOriginal(body, 'documentAccessConsentVersion');
-        expect(hasGiven && hasVersion, isTrue,
-            reason: 'given과 version은 같은 snapshot으로 함께 움직여야 한다');
-      }
+      // [AUTO-RENEW-POLICY] 승계가 일어나는 경로는 수동 하나다.
+      final hasGiven =
+          _inheritsFromOriginal(manualRenewal, 'documentAccessConsentGiven');
+      final hasVersion =
+          _inheritsFromOriginal(manualRenewal, 'documentAccessConsentVersion');
+      expect(hasGiven && hasVersion, isTrue,
+          reason: 'given과 version은 같은 snapshot으로 함께 움직여야 한다');
     });
 
     test('새 consent version을 만들지 않는다', () {
@@ -249,9 +288,11 @@ void main() {
       }
     });
 
-    test('자동 갱신 알림 문구가 그대로다', () {
-      expect(autoRenewal.contains('"계약 자동 연장"'), isTrue);
-      expect(autoRenewal.contains('까지 자동 연장되었습니다.'), isTrue);
+    test('자동 갱신 알림 문구가 사라졌다', () {
+      // [AUTO-RENEW-POLICY] 연장이 일어나지 않는데 "연장되었습니다" 라고
+      //   말하면 그 자체가 거짓 통지다. 사건과 함께 문구도 없앴다.
+      expect(source.contains('"계약 자동 연장"'), isFalse);
+      expect(source.contains('까지 자동 연장되었습니다.'), isFalse);
     });
 
     test('갱신 경로에 재동의 UI가 추가되지 않았다', () {
@@ -263,24 +304,25 @@ void main() {
   });
 
   group('DS08B3 회귀 — 갱신 lifecycle 무변경', () {
-    test('자동 갱신은 CONFIRMED, 수동 갱신은 CONTRACT_PENDING 그대로다', () {
-      expect(autoRenewal.contains('status: "CONFIRMED"'), isTrue);
+    test('연장 확정은 수동 경로의 CONTRACT_PENDING 하나뿐이다', () {
+      // [AUTO-RENEW-POLICY] 자동 경로가 만들던 SYSTEM 확정이 사라졌다.
+      expect(autoRenewal.contains('status: "CONFIRMED"'), isFalse);
+      expect(autoRenewal.contains('confirmedBy: "SYSTEM"'), isFalse);
       expect(manualRenewal.contains('status: "CONTRACT_PENDING"'), isTrue);
     });
 
-    test('갱신 링크 필드가 유지된다', () {
-      expect(autoRenewal.contains('renewedFromApplicationId'), isTrue);
-      expect(autoRenewal.contains('renewedToApplicationId'), isTrue);
+    test('갱신 링크 필드가 수동 경로에 유지된다', () {
+      // 자동 경로에는 링크를 걸 대상 자체가 없다.
+      expect(d0NoDecision.contains('renewedFromApplicationId'), isFalse);
+      expect(d0NoDecision.contains('renewedToApplicationId'), isFalse);
       expect(manualRenewal.contains('renewedFromApplicationId'), isTrue);
       expect(manualRenewal.contains('renewedToApplicationId'), isTrue);
       expect(manualRenewal.contains('renewalDecision: "EXTEND"'), isTrue);
     });
 
-    test('근무 기간·확정 시각 기록이 유지된다', () {
-      for (final body in [autoRenewal, manualRenewal]) {
-        expect(body.contains('workEndDate'), isTrue);
-        expect(body.contains('confirmedAt'), isTrue);
-      }
+    test('근무 기간·확정 시각 기록이 수동 경로에 유지된다', () {
+      expect(manualRenewal.contains('workEndDate'), isTrue);
+      expect(manualRenewal.contains('confirmedAt'), isTrue);
     });
 
     // [PREDEVICE-CONTRACT-OBLIGATION] 이 계약은 뒤집혔다.
@@ -298,11 +340,9 @@ void main() {
           reason: 'parse 불가 고아 계약서를 다시 만들면 계약 의무 판정이 왜곡된다');
     });
 
-    test('집계 필드 초기화가 유지된다', () {
-      for (final body in [autoRenewal, manualRenewal]) {
-        expect(body.contains('wageStatus: "pending"'), isTrue);
-        expect(body.contains('finalWage: null'), isTrue);
-      }
+    test('집계 필드 초기화가 수동 경로에 유지된다', () {
+      expect(manualRenewal.contains('wageStatus: "pending"'), isTrue);
+      expect(manualRenewal.contains('finalWage: null'), isTrue);
     });
   });
 

@@ -293,52 +293,144 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   // 05. 자동 연장(D-0) — 같은 사건, 다른 writer
   // ══════════════════════════════════════════════════════════════
-  group('05. 자동 연장', () {
-    final auto = _after(
-        cf, '.where("workEndDate", ">=", d0Start)', 6000);
+  group('05. D-0 미결정 — 자동 연장하지 않는다', () {
+    // D-0 블록은 더 이상 쓰지 않는다. 남은 것은 조회와 카운트뿐이라
+    // 범위가 짧다 — 다음 섹션(종료 결정 알림)까지 넘어가지 않게 잡는다.
+    final d0 = _after(cf, '.where("workEndDate", ">=", d0Start)', 900);
+    final scheduler = _after(cf, 'async function processContractRenewalChecks(', 12000);
 
-    test('05-a 자동도 D+1 부터 시작한다', () {
-      expect(auto.contains('newStartDateKST.setDate(newStartDateKST.getDate() + 1);'),
-          true);
+    test('05-a 정책이 코드에 적혀 있다', () {
+      // 주석까지 포함해 읽는다 — 정책 문장은 주석이 맞는 자리다.
+      final raw = _src(_cfPath);
+      expect(raw.contains('[AUTO-RENEW-POLICY]'), true);
+      expect(
+        raw.contains(
+            'Core V1 does not infer renewal consent from inactivity.'),
+        true,
+      );
+      expect(
+        raw.contains('must not create a\n    //   CONFIRMED renewed Application '
+            'without explicit commitment.'),
+        true,
+      );
     });
 
-    test('05-b 자동도 이미 결정된 계약은 건너뛴다', () {
-      expect(auto.contains('if (freshData.renewalDecision) return;'), true);
+    test('05-b 무응답이 새 Application 을 만들지 않는다', () {
+      // 예전에는 여기서 tx.set(newAppRef, …) 로 한 벌을 통째로 썼다.
+      expect(d0.contains('newAppRef'), false);
+      expect(d0.contains('tx.set('), false);
+      expect(scheduler.contains('const newAppRef = db.collection("applications").doc();'),
+          false);
     });
 
-    test('05-c 수동이 먼저 커밋하면 자동이 재시도에서 비켜난다', () {
-      // 같은 원본 문서를 TX 안에서 읽으므로 충돌하면 재시도된다.
-      expect(auto.contains('const freshSnap = await tx.get(doc.ref);'), true);
+    test('05-c 무응답이 renewalDecision 을 추측해 쓰지 않는다', () {
+      expect(d0.contains('renewalDecision: "EXTEND"'), false);
+      expect(d0.contains('renewedToApplicationId'), false);
+      // 읽기만 한다 — 이미 결정된 건은 건너뛴다.
+      expect(d0.contains('if (app.renewalDecision) continue;'), true);
     });
 
-    test('05-d 자동도 퇴사·해지 승인자를 건너뛴다', () {
-      expect(auto.contains('approvedExitStatuses.includes(freshData.resignStatus as string)'),
-          true);
-      expect(auto.contains('approvedExitStatuses.includes(freshData.terminationStatus as string)'),
-          true);
+    test('05-d 무응답이 CONFIRMED 좌석을 만들지 않는다', () {
+      expect(d0.contains('status: "CONFIRMED"'), false);
+      expect(d0.contains('confirmedBy: "SYSTEM"'), false);
+      // 스케줄러 전체에서도 SYSTEM 확정이 사라졌다.
+      expect(scheduler.contains('confirmedBy: "SYSTEM"'), false);
     });
 
-    test('05-e 자동도 운영 state 를 물려받지 않는다', () {
-      for (final f in [
-        'leaveDates: [],', 'extraWorkDates: [],', 'wageStatus: "pending",',
-        'finalWage: null,', 'actualResignDate: null,',
-      ]) {
-        expect(auto.contains(f), true, reason: f);
+    test('05-e 거짓 contractRenewed 알림이 없다', () {
+      expect(d0.contains('contractRenewed'), false);
+      expect(scheduler.contains('type: "contractRenewed"'), false);
+      expect(scheduler.contains('계약 자동 연장'), false);
+      expect(scheduler.contains('자동 연장되었습니다'), false);
+    });
+
+    test('05-f 무응답 블록이 아무것도 쓰지 않는다', () {
+      for (final write in ['tx.update(', 'tx.set(', '.add(', '.delete()']) {
+        expect(d0.contains(write), false, reason: write);
       }
+      // 남은 것은 세는 일뿐이다.
+      expect(d0.contains('d0Count++;'), true);
     });
 
-    test('05-f 자동은 서명 없이 CONFIRMED 를 만든다 — 수동과 다르다', () {
-      // 이것이 manual/auto 의 유일한 의미 차이다. 결함 여부는 제품 판단이므로
-      // 여기서는 **현재 사실**을 고정한다. 바뀌면 이 테스트가 먼저 깨진다.
-      expect(auto.contains('status: "CONFIRMED",'), true);
-      expect(auto.contains('confirmedBy: "SYSTEM",'), true);
+    test('05-g 스케줄러 재실행이 멱등이다 — 쓰지 않으므로', () {
+      // 같은 날 두 번 돌아도 만들 것이 없다.
+      expect(d0.contains('runTransaction'), false);
+    });
+
+    test('05-h 명시적 TERMINATE 분기는 그대로다', () {
+      expect(scheduler.contains('.where("renewalDecision", "==", "TERMINATE")'),
+          true);
+      expect(scheduler.contains('type: "contractTerminating"'), true);
+      expect(scheduler.contains('계약 종료 완료'), true);
+    });
+
+    test('05-i D-15 리마인더는 그대로다', () {
+      expect(scheduler.contains('contractExpiringReminder'), true);
+    });
+
+    test('05-j 수동 연장이 canonical writer 로 남는다', () {
+      // 자동이 사라졌다고 관리자가 연장할 수 없게 되면 근로자가 갇힌다.
+      expect(cf.contains('export const callableCreateContractRenewal'), true);
       expect(renew.contains('status: "CONTRACT_PENDING",'), true);
     });
 
-    test('05-g 자동 연장은 계약서를 만들지 않는다', () {
-      // 계약 의무는 좌석 기준(srvNeedsContractIssue)으로 따로 떠오른다.
-      expect(auto.contains('callableFinalizeEmployerSignature'), false);
-      expect(auto.contains('employment_contracts'), false);
+    test('05-k 만료 이후에도 연장 진입점이 남아 있다', () {
+      // FixedWorker 행 액션 메뉴의 계약 연장에는 날짜 창이 없다 —
+      // 만료 배너(diff >= 0)와 달리 지난 계약에도 열려 있다.
+      final d = _codeOf(_src(_fixedWorkerPath));
+      expect(
+        d.contains('if (app.workEndDate != null &&\n'
+            '                    app.renewalDecision == null &&\n'
+            '                    !app.isTerminationApproved) ...['),
+        true,
+      );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // 05B. 미결정 만료의 날짜 truth
+  // ══════════════════════════════════════════════════════════════
+  group('05B. 미결정 만료', () {
+    // 종료일 D 까지만 근무. 새 약속이 없으므로 D+1 은 대상이 아니다.
+    test('05B-a D 는 마지막 근무 가능일이다', () {
+      expect(_old().isWorkingOnDate(d), true);
+    });
+
+    test('05B-b D+1 은 근무 대상이 아니다', () {
+      expect(_old().isWorkingOnDate(dPlus1), false);
+    });
+
+    test('05B-c 그것은 취소가 아니라 "새 약속 없음"이다', () {
+      // status 는 그대로다 — 스케줄러가 CANCELED 로 바꾸지 않는다.
+      expect(_old().status, AppStatus.confirmed);
+      expect(_old().renewalDecision, isNull);
+    });
+
+    test('05B-d 만료는 status 로 표현되지 않는다 — 기간으로 파생된다', () {
+      // 갱신 만료 전용 status 를 새로 만들지 않았다.
+      //   "EXPIRED" 는 예전부터 있는 **공고** status 이고
+      //   "AUTO_EXPIRED" 는 초대 만료의 cancelReason 이다 — 둘 다 이 축이 아니다.
+      expect(cf.contains('"RENEWAL_EXPIRED"'), false);
+      // 스케줄러가 지원서 status 를 쓰지 않는다 — 만료는 기간에서 파생된다.
+      final scheduler =
+          _after(cf, 'async function processContractRenewalChecks(', 12000);
+      for (final banned in [
+        'status: "CANCELED"', 'status: "EXPIRED"', 'status: "CONFIRMED"',
+      ]) {
+        expect(scheduler.contains(banned), false, reason: banned);
+      }
+    });
+
+    test('05B-e 출근 게이트가 그 경계를 닫는다', () {
+      final ci = _after(cf, 'export const callableCheckIn', 25000);
+      expect(ci.contains('srvLongTermEligibleOnDay('), true);
+      expect(cf.contains('계약 종료일 이후에는 출근할 수 없습니다.'), true);
+    });
+
+    test('05B-f 자동 노쇼도 같은 resolver 를 쓴다', () {
+      final ns = _after(
+          cf, '.where("workEndDate", ">=", Timestamp.fromDate(yesterdayStartUTC))', 1400);
+      expect(ns.contains('srvLongTermEligibleOnDay('), true);
     });
   });
 

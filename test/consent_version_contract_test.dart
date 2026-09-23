@@ -238,7 +238,9 @@ void main() {
       final inherits = RegExp(
         r'documentAccessConsentVersion:\s*\n?\s*freshData\.documentAccessConsentVersion',
       ).allMatches(code).length;
-      expect(inherits, greaterThanOrEqualTo(2));
+      // [AUTO-RENEW-POLICY] 자동 갱신이 Application 을 만들지 않으므로
+      //   승계 경로는 수동 갱신 하나다.
+      expect(inherits, greaterThanOrEqualTo(1));
     });
 
     test('갱신 경로가 버전을 새로 기록하지 않는다', () {
