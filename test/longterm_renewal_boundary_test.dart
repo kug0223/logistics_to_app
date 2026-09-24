@@ -225,10 +225,20 @@ void main() {
         'leaveDates: []', 'extraWorkDates: []', 'wageStatus: "pending"',
         'finalWage: null', 'wageDetail: null', 'actualResignDate: null',
         'resignStatus: null', 'terminationStatus: null',
-        'renewalDecision: null', 'desiredStartDate: null',
+        'renewalDecision: null',
       ]) {
         expect(renew.contains(f), true, reason: f);
       }
+      // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+      //   desiredStartDate 는 더 이상 null 이 아니다. null 이면 근무
+      //   가능 시작일이 confirmedAt 보정으로 정해져서, Application·
+      //   Contract 가 말하는 날짜와 어긋난다. 이제 효력일을 명시한다.
+      expect(renew.contains('desiredStartDate: null'), false);
+      expect(
+        renew.contains(
+            'desiredStartDate: admin.firestore.Timestamp.fromMillis(newStartDateMs)'),
+        true,
+      );
     });
 
     test('03-g 확정 카운터를 다시 올리지 않는다', () {
@@ -281,12 +291,17 @@ void main() {
       expect(d.contains('계약 연장 권한이 없습니다.'), true);
     });
 
-    test('04-g 클라이언트가 D+1 을 만든다', () {
+    test('04-g 클라이언트 시작일은 정책 helper 가 정한다', () {
+      // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+      //   예전에는 `workEndDate + 1일` 을 무조건 만들었다. 만료 뒤에
+      //   누르면 그 값이 과거가 된다 — 아무도 근무하지 않은 기간이
+      //   새 계약기간이 됐다. 만료 전 D+1 자체는 그대로다(미래이므로).
       final d = _codeOf(_src(_fixedWorkerPath));
       expect(
-        d.contains("final newStart = app.workEndDate!.add(const Duration(days: 1));"),
-        true,
+        d.contains("app.workEndDate!.add(const Duration(days: 1))"),
+        false,
       );
+      expect(d.contains('defaultRenewalPeriod(app, todayKst)'), true);
     });
   });
 

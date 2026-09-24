@@ -31935,13 +31935,42 @@ export const callableCreateContractRenewal = onCall(
     //   [RESIGN-GATE] 에서 따로 막히지만, 기준을 둘로 두지 않는다.
     const originalEndDate = (originalData.actualResignDate ??
       originalData.workEndDate) as Timestamp | undefined;
+    const newStartNum = srvKstDateNum(new Date(newStartDateMs));
     if (originalEndDate) {
       const originalEndNum = srvKstDateNum(originalEndDate.toDate());
-      const newStartNum = srvKstDateNum(new Date(newStartDateMs));
       if (newStartNum <= originalEndNum) {
         throw new HttpsError(
           "invalid-argument",
           "갱신 계약 시작일은 원본 계약 종료일 다음 날부터여야 합니다."
+        );
+      }
+
+      // ── [LATE-RENEW-EFFECTIVE-DATE-POLICY] ────────────────────────
+      //
+      //   Post-expiry renewal must use an explicit effective date.
+      //   Core V1 ordinary renewal does not silently infer retroactive
+      //   D+1 continuity.
+      //
+      //   This is a product-safety rule, not a legal determination that
+      //   employment continuity is broken by a calendar gap.
+      //
+      //   OLD 종료 9/20 · 오늘 9/26 에 연장하면 여태 9/21 로 시작할 수
+      //   있었다. 그런데 9/21~9/25 에는 근무 자격도 근태도 결근 의무도
+      //   좌석도 없었다. 나중에 버튼을 눌렀다는 이유로 그 기간이 새
+      //   계약기간이 되어서는 안 된다.
+      //
+      //   과거 효력일이 법적으로 불가능해서가 아니다. V1 에 과거 근무
+      //   reconciliation · 근태 보정 · NO_SHOW 제거 · 임금 재산정이
+      //   없기 때문에 택한 운영 제한이다. 실제로 공백 기간에 근무한
+      //   사실이 있었다면 그것은 별도의 reconciliation 문제다.
+      //
+      //   client 검증만 믿지 않는다. 다이얼로그를 열어 둔 채 자정을
+      //   넘겨도 여기서 걸린다.
+      const todayNum = srvKstDateNum(new Date());
+      if (todayNum > originalEndNum && newStartNum < todayNum) {
+        throw new HttpsError(
+          "invalid-argument",
+          "이미 계약이 만료되어 오늘 이후 날짜부터 새 계약을 시작할 수 있습니다."
         );
       }
     }
@@ -32033,7 +32062,27 @@ export const callableCreateContractRenewal = onCall(
         status: "CONTRACT_PENDING",
         renewalDecision: null,
         renewalNotifiedAt: null,
-        desiredStartDate: null,
+        // ── [LATE-RENEW-EFFECTIVE-DATE-POLICY] 명시적 효력일 ──────────
+        //
+        //   여기는 `null` 이었다. 그러면 근무 가능 시작일이
+        //   `srvLongTermEligibleOnDay` 의 confirmedAt 보정으로 결정된다:
+        //
+        //     desiredStartDate == null && confirmedAt > workDate
+        //       → effectiveStart = confirmedAt 날짜
+        //
+        //   그래서 만료 뒤 연장에서 세 값이 서로 다른 말을 했다.
+        //
+        //     Application.workDate   = 9/21   (소급)
+        //     Contract.contractStart = 9/21   (소급)
+        //     eligibility            = 9/26   (보정이 조용히 당김)
+        //
+        //   보정 기능 자체는 건드리지 않는다 — 예전 데이터를 지킨다.
+        //   다만 **정상 writer 가 그 보정에 기대지 않게** 한다. 효력일을
+        //   명시적으로 적으면 셋이 처음부터 같은 날을 말한다.
+        //
+        //   만료 전 연장(시작 = D+1, 미래)에서는 보정이 애초에 발동하지
+        //   않으므로 동작이 달라지지 않는다. 값이 드러날 뿐이다.
+        desiredStartDate: admin.firestore.Timestamp.fromMillis(newStartDateMs),
         statusHistory: [],
         resignStatus: null,
         resignRequestedAt: null,

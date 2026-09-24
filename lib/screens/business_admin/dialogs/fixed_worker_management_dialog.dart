@@ -28,6 +28,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/renewal_decision_state.dart';
+import '../../../utils/renewal_effective_date.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -92,6 +93,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   // 고정근무자 목록 (사용자 정보 포함)
   List<_FixedWorkerItem> _fixedWorkers = [];
+
+  /// 원본 지원서 id → 그것을 연장해 만들어진 신규 지원서.
+  ///
+  /// 연장으로 만들어진 계약의 **실제** 기간을 읽기 위한 것이다 —
+  /// 다시 계산하지 않는다.
+  Map<String, ApplicationModel> _renewedApps = const {};
   
   // 사업장 선택
   String? _selectedBusinessId;
@@ -348,6 +355,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       if (!mounted) return;
       setState(() {
         _fixedWorkers = results;
+        // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+        //   "다음 계약" 배너가 기간을 **다시 계산**하고 있었다. 만료 뒤
+        //   연장은 시작일이 오늘이라 그 계산이 틀린 날짜를 말한다.
+        //   추측하지 않고 실제로 만들어진 지원서를 읽는다.
+        _renewedApps = {
+          for (final a in allApps)
+            if (a.renewedFromApplicationId != null)
+              a.renewedFromApplicationId!: a,
+        };
       });
 
       // [5B.3B] applicationId 우선 포커스 → uid fallback
@@ -1335,23 +1351,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   /// 단일 연장 실행 (setLoading 미포함 — 일괄 처리에서 호출)
+  ///
+  /// [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+  ///   시작일을 `workEndDate + 1일` 로 고정하고 있었다. 이미 만료된
+  ///   근무자가 일괄 연장에 섞여 들어오면 그 하나가 과거 날짜로
+  ///   시작하는 계약이 된다 — 개별 연장과 같은 결함이 batch 에도
+  ///   있었다. 이제 같은 정책 helper 에서 기간을 받는다.
   Future<bool> _executeExtend(ApplicationModel app) async {
     if (app.workEndDate == null) return false;
     try {
-      final originalStart = app.desiredStartDate ?? app.workDate;
-      final contractMonths = (app.workEndDate!.year - originalStart.year) * 12
-          + (app.workEndDate!.month - originalStart.month);
-      final renewalMonths = contractMonths > 0 ? contractMonths : 1;
-      final newStart = app.workEndDate!.add(const Duration(days: 1));
-      final rawEndYear = app.workEndDate!.year + ((app.workEndDate!.month + renewalMonths - 1) ~/ 12);
-      final rawEndMonth = (app.workEndDate!.month + renewalMonths - 1) % 12 + 1;
-      final lastDayOfMonth = DateTime(rawEndYear, rawEndMonth + 1, 0).day;
-      final newEnd = DateTime(rawEndYear, rawEndMonth, app.workEndDate!.day.clamp(1, lastDayOfMonth));
-
+      final period =
+          defaultRenewalPeriod(app, FormatHelper.toKstDate(DateTime.now()));
       await _firestoreService.createRenewedApplication(
         original: app,
-        newStartDate: newStart,
-        newEndDate: newEnd,
+        newStartDate: period.start,
+        newEndDate: period.end,
       );
       // [R8-P3B.2] 연장 알림은 callableCreateContractRenewal 가 보낸다.
       return true;
@@ -1383,10 +1397,20 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final expiring = _expiringWorkers;
     if (expiring.isEmpty) return;
 
+    // [LATE-RENEW-EFFECTIVE-DATE-POLICY §21]
+    //   "동일 기간"이라고만 말하면 안 된다. 이미 만료된 근무자는 오늘부터
+    //   시작하고 아직 만료 전인 근무자는 종료일 다음 날부터 시작한다.
+    //   사람마다 시작일이 다르다는 사실을 숨기지 않는다.
+    final todayKstForBatch = FormatHelper.toKstDate(DateTime.now());
+    final lateCount = expiring
+        .where((item) => isLateRenewal(item.application, todayKstForBatch))
+        .length;
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '계약 일괄 연장',
-      message: '${expiring.length}명의 계약을 동일 기간으로 일괄 연장합니다.\n\n'
+      message: '${expiring.length}명의 계약을 기존 계약기간만큼 연장합니다.\n\n'
+          '${lateCount > 0 ? '· 기간이 이미 종료된 $lateCount명은 오늘부터 시작합니다.\n'
+              '· 나머지는 기존 종료일 다음 날부터 시작합니다.\n\n' : ''}'
           '각 근무자에게 연장 알림이 발송됩니다.\n'
           '(계약서는 각 근무자 카드에서 개별 작성 가능)',
       confirmText: '일괄 연장',
@@ -1501,19 +1525,19 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final bgColor = isExtend ? AppColors.successBg : AppColors.errorBg;
     final icon = isExtend ? Icons.autorenew : Icons.stop_circle_outlined;
 
-    // 연장됨: 다음 계약 기간 계산 (processRenewal과 동일 공식)
+    // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+    //   여기는 다음 계약 기간을 `workEndDate + 1일` 부터 다시 계산했다.
+    //   만료 뒤 연장은 시작일이 오늘이므로 그 계산은 **없는 기간**을
+    //   말한다. 실제로 만들어진 지원서를 읽고, 못 읽으면 날짜를 말하지
+    //   않는다 — 틀린 날짜보다 없는 날짜가 낫다.
     String label;
-    if (isExtend && app.workEndDate != null) {
-      final originalStart = app.desiredStartDate ?? app.workDate;
-      final contractMonths = (app.workEndDate!.year - originalStart.year) * 12
-          + (app.workEndDate!.month - originalStart.month);
-      final renewalMonths = contractMonths > 0 ? contractMonths : 1;
-      final newStart = app.workEndDate!.add(const Duration(days: 1));
-      final rawEndYear = app.workEndDate!.year + ((app.workEndDate!.month + renewalMonths - 1) ~/ 12);
-      final rawEndMonth = (app.workEndDate!.month + renewalMonths - 1) % 12 + 1;
-      final lastDay = DateTime(rawEndYear, rawEndMonth + 1, 0).day;
-      final newEnd = DateTime(rawEndYear, rawEndMonth, app.workEndDate!.day.clamp(1, lastDay));
-      label = '다음 계약 ${newStart.month}/${newStart.day} ~ ${newEnd.month}/${newEnd.day}';
+    final renewed = _renewedApps[app.id];
+    if (isExtend && renewed != null) {
+      final s = renewed.desiredStartDate ?? renewed.workDate;
+      final e = renewed.workEndDate;
+      label = e != null
+          ? '다음 계약 ${s.month}/${s.day} ~ ${e.month}/${e.day}'
+          : '다음 계약 ${s.month}/${s.day}~';
     } else {
       label = isExtend ? '다음 계약 연장됨' : '계약 종료 예정';
     }
@@ -1661,27 +1685,37 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             '계약 연장 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.');
         return;
       }
-      // 기존 계약 기간과 동일한 개월수로 종료일 자동 계산
-      final originalStart = app.desiredStartDate ?? app.workDate;
-      final contractMonths = (app.workEndDate!.year - originalStart.year) * 12
-          + (app.workEndDate!.month - originalStart.month);
-      final renewalMonths = contractMonths > 0 ? contractMonths : 1;
-      final newStart = app.workEndDate!.add(const Duration(days: 1));
-      final rawEndYear = app.workEndDate!.year + ((app.workEndDate!.month + renewalMonths - 1) ~/ 12);
-      final rawEndMonth = (app.workEndDate!.month + renewalMonths - 1) % 12 + 1;
-      final lastDayOfMonth = DateTime(rawEndYear, rawEndMonth + 1, 0).day;
-      final newEnd = DateTime(
-        rawEndYear,
-        rawEndMonth,
-        app.workEndDate!.day.clamp(1, lastDayOfMonth),
-      );
+      // 기존 계약 기간과 동일한 개월수를 승계한다 — 기간 정책은 그대로다.
+      //
+      // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+      //   시작일만 달라진다. 만료 전이면 D+1(아직 미래)로 기존 흐름
+      //   그대로, 만료 뒤라면 관리자가 시작일을 **명시적으로** 고른다.
+      final todayKst = FormatHelper.toKstDate(DateTime.now());
+      var period = defaultRenewalPeriod(app, todayKst);
+
+      if (period.isLate) {
+        final picked = await _pickLateRenewalStart(app, todayKst, period);
+        if (picked == null || !mounted) return;
+        period = picked;
+      }
+
+      final newStart = period.start;
+      final newEnd = period.end;
+      final confirmMessage = period.isLate
+          ? '${user?.nameWithPersonNo ?? ''}님의 기존 계약기간이 종료되었습니다.\n\n'
+              '새 계약 기간: ${newStart.month}/${newStart.day} ~ '
+              '${newEnd.month}/${newEnd.day} (${period.months}개월)\n'
+              '계약 시작일부터 새로운 근무 일정이 적용됩니다.\n\n'
+              '연장 후 근로계약서 작성 화면이 열립니다.'
+          : '${user?.nameWithPersonNo ?? ''}님의 계약을 ${period.months}개월 연장합니다.\n\n'
+              '새 계약 기간: ${newStart.month}/${newStart.day} ~ '
+              '${newEnd.month}/${newEnd.day}\n\n'
+              '연장 후 근로계약서 작성 화면이 열립니다.';
 
       final confirm = await DialogHelper.showConfirm(
         context,
-        title: '계약 연장',
-        message: '${user?.nameWithPersonNo ?? ''}님의 계약을 $renewalMonths개월 연장합니다.\n\n'
-            '새 계약 기간: ${newStart.month}/${newStart.day} ~ ${newEnd.month}/${newEnd.day}\n\n'
-            '연장 후 근로계약서 작성 화면이 열립니다.',
+        title: period.isLate ? '새 계약 시작' : '계약 연장',
+        message: confirmMessage,
         confirmText: '연장 및 계약서 작성',
         confirmColor: AppColors.success,
         icon: Icons.autorenew,
@@ -1689,7 +1723,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       );
       if (confirm != true || !mounted) return;
 
-      final newApp = await _processRenewal(app, user, newEndDate: newEnd);
+      final newApp = await _processRenewal(app, user,
+          newStartDate: newStart, newEndDate: newEnd);
       if (newApp != null && mounted) {
         await _createContractForRenewal(newApp, user);
       }
@@ -1710,7 +1745,39 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
   }
 
-  Future<ApplicationModel?> _processRenewal(ApplicationModel app, UserModel? user, {required DateTime newEndDate}) async {
+  /// 만료 뒤 연장에서 새 계약 시작일을 고른다.
+  ///
+  /// [LATE-RENEW-EFFECTIVE-DATE-POLICY §8·§9]
+  ///   기본값은 KST 오늘. 오늘·미래만 고를 수 있고 과거는 고를 수 없다.
+  ///   과거를 막는 것은 법적 판단이 아니라, V1 에 과거 근무·근태·임금을
+  ///   되짚는 기능이 없기 때문이다.
+  Future<RenewalPeriod?> _pickLateRenewalStart(
+    ApplicationModel app,
+    DateTime todayKst,
+    RenewalPeriod current,
+  ) async {
+    final minStart = earliestRenewalStart(app, todayKst);
+    final picked = await DatePickerBottomSheet.show(
+      context: context,
+      initialDate: current.start,
+      title: '새 계약 시작일',
+      subtitle: '기존 계약기간이 종료되었습니다.\n'
+          '계약 시작일부터 새로운 근무 일정이 적용됩니다.',
+      minDate: minStart,
+      maxDate: minStart.add(const Duration(days: 365)),
+      enabledDayPredicate: (date) =>
+          !FormatHelper.toKstDate(date).isBefore(minStart),
+    );
+    if (picked == null) return null;
+    return renewalPeriodFrom(app, picked, isLate: true);
+  }
+
+  Future<ApplicationModel?> _processRenewal(
+    ApplicationModel app,
+    UserModel? user, {
+    required DateTime newStartDate,
+    required DateTime newEndDate,
+  }) async {
     // [FC-FW-PERM] canManageWorkers guard — 계약 연장도 인력 관리 권한 필요
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
@@ -1730,10 +1797,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // 1. 신규 계약 생성 + 원본 renewalDecision=EXTEND 표시 (배치로 원자 처리)
       // createRenewedApplication 내부에서 원본 문서 업데이트까지 배치로 처리하므로
       // 여기서 별도로 updateApplicationFields(renewalDecision)를 호출하면 안 됨.
-      final newStart = app.workEndDate!.add(const Duration(days: 1));
+      // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
+      //   시작일은 호출자가 정책 helper 로 정한 값을 그대로 쓴다.
+      //   여기서 다시 `workEndDate + 1일` 을 만들면 만료 뒤 연장이
+      //   조용히 과거로 돌아간다 — 그게 이 BLOCKER 였다.
       final newApp = await _firestoreService.createRenewedApplication(
         original: app,
-        newStartDate: newStart,
+        newStartDate: newStartDate,
         newEndDate: newEndDate,
       );
 
