@@ -1316,39 +1316,61 @@ extension ApplicationFirestore on FirestoreService {
   ///
   ///   최종 판정은 호출자가 `needsRenewalDecision` 으로 한다 —
   ///   이 함수는 후보를 모으는 일만 한다.
+  ///
+  /// [BLOCKER-RENEWAL-DECISION-QUEUE-POPULATION-PARITY]
+  ///   그 뒤에도 하한 하나가 남아 있었다. `lookBack = 180일`.
+  ///   Home 의 서버 집계는 하한이 없어서, 종료 후 181일이 지난 미결정
+  ///   건을 Home 은 세고 이 조회는 못 찾았다. 같은 사람을 두고
+  ///   **Home 1건 · 목적지 0건**이 될 수 있었다.
+  ///
+  ///   하한을 키우지 않고 없앤다. 180을 365로 바꾸는 것은 같은 결함을
+  ///   미래로 미루는 것이고, 제품 규칙에 "180일 지나면 결정이 끝난다"
+  ///   같은 것은 없다. 결정 queue 에서 빠지는 근거는 domain state 다.
+  ///
+  ///   대신 **상한**(`workEndDate < today + 16일`)을 추가한다. 예전에는
+  ///   상한이 없어 먼 미래 계약까지 읽었다 — 서버 집계와 같은 창으로
+  ///   맞추면서 읽는 양은 오히려 줄어든다.
+  ///
+  ///   status 는 두 번의 질의로 나눠 서버에서 좁힌다. 이 callable 은
+  ///   `status ==` 하나만 받으므로 CONFIRMED · CONTRACT_PENDING 을
+  ///   각각 읽어 합친다(semantic union). 기존 복합 인덱스
+  ///   `(businessId, status, workEndDate)` 를 그대로 쓰고, 단기 지원서·
+  ///   취소 건을 읽지 않는다.
   Future<List<ApplicationModel>> getExpiringLongTermApplications({
     required String businessId,
     required DateTime fromDate,
-    Duration lookBack = const Duration(days: 180),
   }) async {
     try {
-      final result = await fetchApplicationsByBizPaged({
-        'businessId': businessId,
-        'workEndDateGteMs':
-            fromDate.subtract(lookBack).millisecondsSinceEpoch,
-        'limit': 200,
-      });
-      return (result)
-          .whereType<Map>()
-          .map((m) {
-            final raw = _cfHydrate(Map<String, dynamic>.from(m));
-            final id = raw.remove('id') as String? ?? '';
-            return ApplicationModel.tryFromMap(raw, id);
-          })
-          .whereType<ApplicationModel>()
-          // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
-          //   CONTRACT_PENDING 도 남긴다 — 고정근무자 화면은 이 상태에도
-          //   연장·종료 action 을 열어 주고, 홈 집계도 같은 두 상태를 센다.
-          //   여기서만 CONFIRMED 로 좁히면 홈이 센 건수를 이 화면이 못 보여준다.
-          .where((app) =>
-              app.isLongTermApplication &&
-              (app.status == AppStatus.confirmed ||
-                  app.status == AppStatus.contractPending) &&
-              !app.isTerminationApproved)
-          .toList();
+      final endBeforeMs =
+          renewalCandidateEndBefore(fromDate).millisecondsSinceEpoch;
+
+      // 두 status 를 각각 읽는다. 실패하면 던진다 — 한쪽만 읽고
+      // "그게 전부"라고 말하지 않는다.
+      final pages = await Future.wait(
+        kRenewalDecisionStatuses.map(
+          (status) => fetchApplicationsByBizPaged({
+            'businessId': businessId,
+            'status': status,
+            'workEndDateLtMs': endBeforeMs,
+            'limit': 200,
+          }),
+        ),
+      );
+
+      final byId = <String, ApplicationModel>{};
+      for (final raw in pages.expand((p) => p)) {
+        final map = _cfHydrate(Map<String, dynamic>.from(raw));
+        final id = map.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(map, id);
+        if (app == null) continue;
+        if (!app.isLongTermApplication) continue;
+        if (app.isTerminationApproved) continue;
+        byId[app.id] = app;
+      }
+      return byId.values.toList();
     } catch (e) {
-      debugPrint('❌ [계약종료예정] 조회 실패: $e');
-      // [R8-P7.3] 계약 종료가 다가온 건을 못 읽은 것을 "없음"으로 말하지 않는다
+      debugPrint('❌ [계약확인필요] 조회 실패: $e');
+      // [R8-P7.3] 계약 결정이 남은 건을 못 읽은 것을 "없음"으로 말하지 않는다
 
       rethrow;
     }

@@ -293,7 +293,14 @@ void main() {
 
     test('05-e 조회 자체가 만료 쪽으로도 열려 있다', () {
       // 필터를 고쳐도 조회되지 않으면 나타날 수 없다.
-      expect(appSvc.contains('fromDate.subtract(lookBack)'), true);
+      //
+      // [BLOCKER-RENEWAL-DECISION-QUEUE-POPULATION-PARITY]
+      //   처음에는 180일 하한으로 열었다. 그 하한마저 없앴다 —
+      //   더 자세한 고정은 renewal_queue_population_test.dart 에 있다.
+      final seg = appSvc.substring(
+          appSvc.indexOf('getExpiringLongTermApplications('));
+      expect(seg.substring(0, 1600).contains('workEndDateGteMs'), false);
+      expect(seg, contains('renewalCandidateEndBefore(fromDate)'));
     });
   });
 
@@ -444,8 +451,13 @@ void main() {
       expect(h.contains('.where("status", "==", "CONFIRMED")'), false);
     });
 
-    test('10-c 화면 조회도 두 상태를 남긴다', () {
-      expect(appSvc.contains('app.status == AppStatus.contractPending'), true);
+    test('10-c 화면 조회도 두 상태를 읽는다', () {
+      // [BLOCKER-RENEWAL-DECISION-QUEUE-POPULATION-PARITY]
+      //   post-filter 였던 것이 서버 질의로 내려갔다 — 두 status 를
+      //   각각 읽어 합친다. 집합은 그대로다.
+      expect(appSvc, contains('kRenewalDecisionStatuses.map('));
+      final rd = _codeOf(_src('lib/utils/renewal_decision_state.dart'));
+      expect(rd, contains('AppStatus.contractPending,'));
     });
 
     test('10-d CONTRACT_PENDING 만료 건이 결정 대상이다', () {

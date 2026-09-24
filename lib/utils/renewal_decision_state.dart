@@ -43,6 +43,40 @@ enum RenewalDecisionState {
 /// Home 이 "곧 종료"로 세는 창. 기존 D-15 알림과 같은 폭이다.
 const int kRenewalUpcomingWindowDays = 15;
 
+/// 결정 대상이 될 수 있는 근무관계의 status 집합.
+///
+/// 고정근무자 행의 연장 action gate 는 status 를 보지 않는다 — 그래서
+/// CONTRACT_PENDING 에서도 연장 버튼이 열려 있다. reader 가 CONFIRMED 만
+/// 세면 같은 사람이 한 화면에서는 결정 대상이고 다른 화면에서는 없는
+/// 사람이 된다.
+const List<String> kRenewalDecisionStatuses = [
+  AppStatus.confirmed,
+  AppStatus.contractPending,
+];
+
+/// 후보 조회의 **상한**. 이보다 뒤에 끝나는 계약은 아직 결정할 때가 아니다.
+///
+/// [BLOCKER-RENEWAL-DECISION-QUEUE-POPULATION-PARITY]
+///   하한은 없다. 결정 queue 에서 빠지는 근거는 시간 경과가 아니라
+///   domain state(EXTEND · TERMINATE · 퇴사/해지 승인)다. 종료 후
+///   181일이 지났다는 사실은 아무것도 결정하지 않는다.
+///
+///   서버 `srvHomeExpiringContract` 도 같은 상한을 쓰고 하한이 없다.
+///   같은 Application universe 를 읽어야 Home 의 숫자를 목적지에서
+///   찾을 수 있다.
+///
+/// 돌려주는 값은 **실제 KST 자정 instant** 다. `toKstDate` 는 device
+/// timezone 과 무관한 비교 **키**(UTC 자정)를 주는데, 그대로 질의에
+/// 넘기면 서버의 `todayMs + 16일`(KST 자정 기준)보다 9시간 뒤가 된다.
+/// 같은 창이라고 말하면서 경계가 다르면 언젠가 한 건이 갈린다.
+DateTime renewalCandidateEndBefore(
+  DateTime todayKst, {
+  int upcomingWindowDays = kRenewalUpcomingWindowDays,
+}) =>
+    FormatHelper.toKstDate(todayKst)
+        .add(Duration(days: upcomingWindowDays + 1))
+        .subtract(const Duration(hours: 9));
+
 /// 이 지원서에 연장/종료 결정이 남아 있는가.
 ///
 /// [today] 는 KST 달력 날짜여야 한다 — 호출자가 `FormatHelper.toKstDate`
