@@ -37,6 +37,13 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
   bool _hasError = false;
   bool _busy = false;
 
+  /// [RENEWAL-PROPOSAL-STALE-RECOVERY] 알림을 눌러 들어왔는데 그 제안이
+  /// 이미 시작일을 넘긴 경우.
+  ///
+  ///   "받은 제안이 없어요"라고 말하면 근로자는 제안이 온 적 없다고
+  ///   이해한다. 제안은 왔고, 답할 수 있는 기간이 지났을 뿐이다.
+  bool _focusExpired = false;
+
   @override
   void initState() {
     super.initState();
@@ -55,9 +62,17 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
       //   버튼을 보여주고 눌렀을 때 거절하는 것보다 낫다.
       final actionable = all.where((p) => p.isActionableAt(now)).toList()
         ..sort((a, b) => a.effectiveStart.compareTo(b.effectiveStart));
+
+      // 알림으로 지목된 제안이 목록에서 빠졌다면, 그것은 "없는 제안"이
+      //   아니라 **시작일이 지난 제안**이다. 그렇게 말한다.
+      final focusId = widget.focusProposalId;
+      final focusExpired = focusId != null &&
+          !actionable.any((p) => p.id == focusId);
+
       if (!mounted) return;
       setState(() {
         _proposals = actionable;
+        _focusExpired = focusExpired;
         _loading = false;
       });
     } catch (e) {
@@ -152,6 +167,14 @@ class _RenewalProposalScreenState extends State<RenewalProposalScreen> {
       );
     }
     if (_proposals.isEmpty) {
+      // 알림을 눌러 들어왔는데 그 제안이 만료됐다면, 없었다고 하지 않는다.
+      if (_focusExpired) {
+        return const AppEmptyState(
+          icon: Icons.hourglass_disabled,
+          title: '이 연장 제안은 계약 시작일이 지나 종료되었어요',
+          subtitle: '새 제안이 오면 다시 안내해 드릴게요.',
+        );
+      }
       return const AppEmptyState(
         icon: Icons.inbox_outlined,
         title: '받은 연장 제안이 없어요',

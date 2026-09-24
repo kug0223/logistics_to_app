@@ -32236,6 +32236,25 @@ export const callableCreateRenewalProposal = onCall(
           throw new HttpsError("already-exists",
             "이미 응답을 기다리는 연장 제안이 있습니다.");
         }
+        // ── [RENEWAL-PROPOSAL-STALE-RECOVERY] 여기서 은퇴시킨다 ──────
+        //
+        //   저장은 PENDING 인데 효력일이 지나 더 이상 수락할 수 없는
+        //   제안이다. 읽는 쪽은 모두 derived 판정을 하므로 correctness
+        //   는 이미 지켜지지만, 문서를 PENDING 인 채로 남겨 두면
+        //   "응답 대기 제안은 한 관계에 하나"라는 규칙이 저장 수준에서
+        //   깨지고, 나중에 보는 사람이 사실과 다른 상태를 읽는다.
+        //
+        //   SUPERSEDED 가 아니라 STALE 이다. SUPERSEDED 는 **아직
+        //   유효한** 제안을 관리자가 조건을 바꿔 대체한 경우이고,
+        //   이것은 아무도 대체하지 않았는데 시간이 지나 못 쓰게 된
+        //   경우다. 둘을 섞으면 나중에 이유를 구분할 수 없다.
+        //
+        //   `respondedAt` 을 쓰지 않는다 — 아무도 응답하지 않았다.
+        tx.update(d.ref, {
+          status: "STALE",
+          staledAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
       }
 
       // 조건을 바꿔 다시 보내는 경우 — 기존 제안을 명시적으로 대체한다.
@@ -32320,6 +32339,15 @@ export const callableDeclineRenewalProposal = onCall(
       if ((p.status as string) !== RENEWAL_PROPOSAL_PENDING) {
         throw new HttpsError("failed-precondition",
           "이미 처리된 연장 제안입니다.");
+      }
+      // [RENEWAL-PROPOSAL-STALE-RECOVERY] 효력일이 지난 제안은 거절도
+      //   할 수 없다. 이미 쓸 수 없게 된 제안에 뒤늦게 "거절"을 남기면,
+      //   근로자가 거절한 것처럼 보이고 관리자에게 거절 알림까지 간다.
+      //   아무도 거절하지 않았다 — 시간이 지났을 뿐이다.
+      if (srvRenewalProposalEffectiveStatus(p, new Date()) !==
+          RENEWAL_PROPOSAL_PENDING) {
+        throw new HttpsError("failed-precondition",
+          "이 연장 제안은 계약 시작일이 지나 더 이상 응답할 수 없습니다.");
       }
       tx.update(ref, {
         status: "DECLINED",
