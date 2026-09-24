@@ -70,35 +70,81 @@ checks.R7_FIX_POST_CLOSED = async (e, say) => {
   return to.isManualClosed === true && to.status === 'CLOSED';
 };
 
+/**
+ * [BLOCKER-PRE0-FIXTURE-SCHEDULER-CONTAMINATION]
+ *
+ *   이 fixture 는 원래 "오늘도 근무일"을 요구했다. 그런데 아무도
+ *   체크인하지 않는다 — fixture 니까. 그것이 정확히 auto NO_SHOW 의
+ *   조건이었고, 실제로 매일 하나씩 쌓였다.
+ *
+ *   검증이 그것을 못 잡은 이유도 같다. 검증은 **오늘** 문서가 없는지만
+ *   봤는데 scheduler 는 **어제** 자리에 쓴다. 그래서 오염이 늘어나는
+ *   동안에도 7/7 이었다.
+ *
+ *   이제 anchor 는 이미 끝난 관계이고, 검증은 scheduler 흔적을 직접
+ *   찾는다.
+ */
 checks.R7_FIX_LT_WORKER = async (e, say) => {
   const app = (await db.collection('applications').doc(e.applicationId).get()).data();
   if (!app) { say('     지원서 없음'); return false; }
 
   const today = kstDateKey(0);
-  const yest = kstDateKey(-1);
   say(`     지원서 ${app.status} · ${app.type} · ${app.startTime}-${app.endTime}`);
   say(`     기간 ${dayKeyOf(app.workDate)} ~ ${app.workEndDate ? dayKeyOf(app.workEndDate) : '없음'}`);
 
   const confirmedOk = CONFIRMED.has(app.status);
-  const workTodayOk = isWorkingOn(app, today);
-  say(`     오늘(${today}) 근무일? ${workTodayOk}`);
 
-  const yDoc = await db.collection('attendance').doc(e.yesterdayAttendanceId).get();
-  const y = yDoc.exists ? yDoc.data() : null;
-  const yesterdayDoneOk = !!y && y.checkOut != null;
-  say(`     어제(${yest}) 근태 ${y ? y.status : '없음'} · checkOut ${y && y.checkOut ? '있음' : '없음'}`);
+  // ── PRE0-SCHED-05 · 오늘과 그 이후 어느 날도 근무일이 아니다 ──────
+  //   오늘 하루만 보지 않는다. 계약 종료일까지(그리고 그 너머로 여유를
+  //   두고) 훑어서 mutation 대상이 되는 날이 하나도 없음을 증명한다.
+  const horizon = 45;
+  const eligibleDays = [];
+  for (let i = 0; i <= horizon; i++) {
+    const k = kstDateKey(i);
+    if (isWorkingOn(app, k)) eligibleDays.push(k);
+  }
+  const schedIsolatedOk = eligibleDays.length === 0;
+  say(`     PRE0-SCHED-05 오늘~+${horizon}일 근무 가능일 ${eligibleDays.length}일` +
+      `${eligibleDays.length ? ` (${eligibleDays.slice(0, 3).join(', ')}…)` : ''}`);
 
-  const todayId = `${e.applicationId}_${today.replace(/-/g, '')}`;
-  const todayMissing = !(await db.collection('attendance').doc(todayId).get()).exists;
-  say(`     오늘 근태 문서 없음? ${todayMissing}`);
+  // ── 마지막 근무일이 완결돼 있다 ──────────────────────────────────
+  const lastId = e.lastWorkAttendanceId || e.yesterdayAttendanceId;
+  const lDoc = await db.collection('attendance').doc(lastId).get();
+  const l = lDoc.exists ? lDoc.data() : null;
+  const lastDoneOk = !!l && l.checkOut != null;
+  say(`     마지막 근무 ${lastId.slice(-8)} ${l ? l.status : '없음'} · ` +
+      `checkOut ${l && l.checkOut ? '있음' : '없음'}`);
 
-  // 어제 기록이 오늘의 답으로 쓰이지 않아야 한다.
-  const finished = !!y && (y.checkOut != null ||
-      ['missed_checkout', 'NO_SHOW', 'absent'].includes(y.status));
-  say(`     → getTodayAttendance 는 ${todayMissing && finished ? 'null (어제 건너뜀)' : '?'} 을 돌려준다`);
-
-  // 급여 4상태
+  // ── PRE0-SCHED-01/02 · scheduler 흔적이 하나도 없어야 한다 ────────
   const p = e.payroll || {};
+  const anchorIds = new Set(Object.values(p));
+  const attSnap = await db.collection('attendance')
+      .where('applicationId', '==', e.applicationId).get();
+  const extra = attSnap.docs.filter((d) => !anchorIds.has(d.id));
+  const noShow = attSnap.docs.filter((d) => d.data().status === 'NO_SHOW');
+  const autoMade = attSnap.docs.filter((d) => !!d.data().autoNoShowAt);
+  const noExtraOk = extra.length === 0;
+  const noNoShowOk = noShow.length === 0 && autoMade.length === 0;
+  say(`     PRE0-SCHED-01 예상 밖 근태 ${extra.length}건` +
+      `${extra.length ? ` (${extra.map((d) => d.id.slice(-8)).join(', ')})` : ''}`);
+  say(`     PRE0-SCHED-02 NO_SHOW ${noShow.length}건 · 자동생성 ${autoMade.length}건`);
+
+  // ── PRE0-SCHED-03/04 · 신뢰도·지원제한에 기여하지 않는다 ──────────
+  const user = (await db.collection('users').doc(app.uid).get()).data() || {};
+  const ownedPenalties = attSnap.docs
+      .filter((d) => d.data().noShowPenaltyTimestamp).length;
+  const noPenaltyOk = ownedPenalties === 0;
+  say(`     PRE0-SCHED-03 fixture 발 신뢰도 사건 ${ownedPenalties}건`);
+  // 지원 제한이 걸려 있다면 그 근거가 fixture 밖에 있어야 한다.
+  let restrictionOk = true;
+  if (user.restrictedUntil && user.restrictedUntil.toDate() > new Date()) {
+    restrictionOk = ownedPenalties === 0;
+    say(`     PRE0-SCHED-04 지원 제한 있음 — fixture 기여 ${ownedPenalties}건`);
+  } else {
+    say('     PRE0-SCHED-04 지원 제한 없음');
+  }
+
+  // ── 급여 4상태 ───────────────────────────────────────────────────
   const states = {};
   for (const [k, id] of Object.entries(p)) {
     const v = (await db.collection('attendance').doc(id).get()).data();
@@ -111,8 +157,9 @@ checks.R7_FIX_LT_WORKER = async (e, say) => {
     (states.confirmedAttendanceId || '').startsWith('confirmed') &&
     (states.transferredAttendanceId || '').startsWith('transferred');
 
-  return confirmedOk && workTodayOk && yesterdayDoneOk && todayMissing &&
-      finished && wagesOk;
+  void today;
+  return confirmedOk && schedIsolatedOk && lastDoneOk && noExtraOk &&
+      noNoShowOk && noPenaltyOk && restrictionOk && wagesOk;
 };
 
 checks.R7_FIX_APP_PENDING = async (e, say) => {

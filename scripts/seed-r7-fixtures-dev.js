@@ -193,6 +193,14 @@ const NOT_SEEDED = [
     '(예: 계약 발송 → contractSignRequested). 독립 문서로 만들지 않는다.'],
   ['CAP-UNKNOWN · USERMAP-PARTIAL',
     'canonical state 를 깨는 synthetic document 다. R7 의 오류/실패 상태 확인 항목으로 남긴다.'],
+  ['ACTIVE LONG-TERM (오늘 근무일 · 체크인 CTA)',
+    '[BLOCKER-PRE0-FIXTURE-SCHEDULER-CONTAMINATION] 영원히 보호되는 fixture 와 ' +
+    '영원히 근태 대상인 상태는 원천적으로 충돌한다. "오늘도 근무일인데 아무도 ' +
+    '체크인하지 않는다"가 정확히 auto NO_SHOW 의 조건이고, 실제로 매일 하나씩 ' +
+    '쌓여 근로자에게 지원 제한까지 걸렸다. scheduler 는 잘못하지 않았다 — ' +
+    'fixture 의 현재 일정을 보고 정상적으로 행동했다. 그래서 제품에 예외를 넣지 ' +
+    '않고 역할을 나눈다: R7_FIX_LT_WORKER 는 **이미 끝난** 관계의 anchor 로 두고, ' +
+    '활성 체크인 CTA 가 필요한 Phase 가 runtime 에 만들고 정확히 지운다.'],
   ['RELIABILITY (새 노쇼)',
     'canonical writer(callableBatchSetNoShow)는 있고 실제로 동작한다. 그런데 그 부수 효과가 ' +
     'DEV 를 못 쓰게 만든다 — 90일 내 3회가 되면 users.restrictedUntil 이 서고 ' +

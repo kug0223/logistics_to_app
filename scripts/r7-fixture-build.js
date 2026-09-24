@@ -381,20 +381,54 @@ async function buildLongTermWorker(ctx) {
     payroll[s.key] = attId;
   }
 
+  // ── 기간을 닫는다 ───────────────────────────────────────────────
+  //
+  //   [BLOCKER-PRE0-FIXTURE-SCHEDULER-CONTAMINATION]
+  //
+  //   이 fixture 는 원래 "오늘도 근무일"이어야 했다. 그래야 체크인 CTA 를
+  //   증명한다. 그런데 아무도 체크인하지 않는다 — fixture 니까.
+  //   그것이 정확히 auto NO_SHOW 의 조건이다.
+  //
+  //       영원히 보호되는 fixture  AND  영원히 근태 대상
+  //
+  //   둘은 원천적으로 충돌한다. scheduler 는 잘못하지 않았다 — fixture 의
+  //   현재 일정을 보고 정상적으로 행동했다. 그래서 제품에 예외를 넣지
+  //   않고 **fixture 의 역할을 나눈다**.
+  //
+  //     여기(안정 anchor) → 이미 끝난 장기 근무관계 + 급여 4상태.
+  //                         어제·오늘·미래 어느 날도 근무일이 아니다.
+  //     활성 체크인 CTA   → 필요한 Phase 가 runtime 에 만들고 정확히 지운다.
+  //                         (NOT_SEEDED 에 적어 둔다)
+  //
+  //   마지막 근무일을 계약 종료일로 삼는다. 그 날까지의 이력은 그대로
+  //   말이 되고, 다음 날부터는 어떤 scheduler 도 근무일을 찾지 못한다.
+  //   `renewalDecision = TERMINATE` 는 "끝났고 연장하지 않았다"는 실제
+  //   상태다 — 적지 않으면 관리자 화면에 "계약 확인 필요"로 영원히 남는다.
+  //   마지막 근무일은 근태를 만든 날 중 가장 늦은 날이다 — 목록과 따로
+  //   적어 두면 한쪽만 고쳤을 때 조용히 어긋난다.
+  const lastWorkOffset = Math.max(...attendanceOffsets);
+  const lastWorkMs = kstMidnightMs(lastWorkOffset);
+  await db.collection('applications').doc(appId).update({
+    workEndDate: admin.firestore.Timestamp.fromMillis(lastWorkMs),
+    renewalDecision: 'TERMINATE',
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
   return {
     entities: {
       toId, applicationId: appId,
-      yesterdayAttendanceId,
+      lastWorkAttendanceId: yesterdayAttendanceId,
+      lastWorkDate: kstDateKey(lastWorkOffset),
       workDays,
       payroll,
     },
     expected:
-      `어제(${kstDateKey(-1)}) 근무 완료 · 오늘(${kstDateKey(0)}) 근무일이고 ` +
-      'attendance 문서 없음 → 오늘 카드와 체크인 CTA 가 보여야 한다. ' +
-      '어제 기록을 오늘 기록으로 쓰지 않는다. ' +
+      `이미 끝난 장기 근무관계. 기간은 ${kstDateKey(-14)} ~ ` +
+      `${kstDateKey(lastWorkOffset)} 이고 마지막 근무일에 checkOut 까지 ` +
+      '끝났다. 오늘과 그 이후 어느 날도 근무일이 아니다 — 보호 fixture 는 ' +
+      'scheduler 의 변이 대상이 되면 안 된다. ' +
       '급여는 pending/calculated/confirmed/transferred 네 상태가 각각 하루씩. ' +
-      '근무일·근무시간은 4일·8h 인데 확정분만 세는 화면은 2일·4h 로 보인다 ' +
-      '(금액은 맞다 — metric 정의 문제, R7 확인 항목).',
+      '활성 체크인 CTA 는 이 anchor 가 아니라 runtime 시나리오가 증명한다.',
   };
 }
 
