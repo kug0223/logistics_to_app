@@ -983,6 +983,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.renewalAccepted:
       case NotificationType.renewalDeclined:
+      // [WORKER-CONTRACT-EXPIRY-NOTICE] 계약 기간 정보 — 지금 상태를
+      //   확인할 수 있는 곳으로 보낸다. 수락/거절 action 은 여기 없다.
+      case NotificationType.workerContractExpiring:
+      case NotificationType.workerContractEnded:
       case NotificationType.contractRenewed:
       case NotificationType.contractTerminating:
         // CF screen='mySchedule' — 갱신/종료 후 남은 근무 일정 확인 (FCMService와 동일)

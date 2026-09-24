@@ -2830,6 +2830,8 @@ export const createNotification = onCall(
       "contractVoided", "contractExpiringReminder", "contractRenewed", "contractTerminating",
       // [RENEWAL-PROPOSAL-COMMITMENT] 제안 · 응답
       "renewalProposal", "renewalAccepted", "renewalDeclined",
+      // [WORKER-CONTRACT-EXPIRY-NOTICE] 근로자 본인에게 가는 정보성 알림
+      "workerContractExpiring", "workerContractEnded",
       // 퇴사/해지
       "terminationRequested", "terminationApproved", "terminationRejected",
       "resignRequested", "resignApproved", "resignRejected",
@@ -6383,6 +6385,8 @@ function _getNotifCategory(type: string): string | null {
     renewalProposal: "contractAlert",
     renewalAccepted: "contractAlert",
     renewalDeclined: "contractAlert",
+    workerContractExpiring: "contractAlert",
+    workerContractEnded: "contractAlert",
     terminationRequested:      "contractAlert",
     terminationApproved:       "contractAlert",
     resignRequested:           "contractAlert",
@@ -6555,6 +6559,202 @@ async function syncGroupMasterStatus(
 // 🔄 고정근무 계약 만료 D-15 알림 및 D-0 미결정 조정
 //    (자동 연장은 Core V1 에서 지원하지 않는다 — [AUTO-RENEW-POLICY])
 // ═══════════════════════════════════════════════════════════
+
+/**
+ * KST 달력일 'M/D'. 알림 문구는 근로자가 읽는 날짜로 말한다.
+ * @param {Date} d 대상 시각
+ * @return {string} M/D
+ */
+function srvKstMd(d: Date): string {
+  const k = new Date(d.getTime() + SRV_KST_MS);
+  return `${k.getUTCMonth() + 1}/${k.getUTCDate()}`;
+}
+
+/**
+ * 알림 중복 방지용 KST 날짜 키.
+ * @param {Date} d 대상 시각
+ * @return {string} YYYYMMDD
+ */
+function srvKstDateKey(d: Date): string {
+  return String(srvKstDateNum(d));
+}
+
+/**
+ * [WORKER-CONTRACT-EXPIRY-NOTICE] 계약 종료 **예정** — 근로자에게.
+ *
+ *   D-15 창은 관리자 알림과 같은 것을 쓴다. 다만 dedupe 는 따로 한다 —
+ *   `renewalNotifiedAt` 은 "관리자에게 보냈다"는 뜻이고, 한 필드가 두
+ *   수신자를 동시에 의미하게 만들면 한쪽이 조용히 누락된다.
+ *
+ *   보내기 직전 상태를 다시 본다. 이미 결정됐거나 퇴사·해지가 승인된
+ *   관계에 "종료 예정"을 보내면 사실과 다르다.
+ *
+ * @param {FirebaseFirestore.QueryDocumentSnapshot[]} docs D-15 후보
+ * @param {Timestamp} now 실행 시각
+ * @return {Promise<void>} 실패해도 계약 상태를 바꾸지 않는다
+ */
+async function srvNotifyWorkerContractExpiring(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  now: Timestamp
+): Promise<void> {
+  let sent = 0;
+  for (const doc of docs) {
+    try {
+      const app = doc.data();
+      const uid = app.uid as string | undefined;
+      const end = (app.actualResignDate ?? app.workEndDate) as
+        Timestamp | undefined;
+      if (!uid || !end) continue;
+      // 장기 근무관계만. 단기 지원서에 보내지 않는다.
+      if (!Array.isArray(app.workDays) || app.workDays.length === 0) continue;
+      // 이미 결정된 관계에는 "종료 예정"이 아니다.
+      if (app.renewalDecision) continue;
+      const done = ["APPROVED", "AUTO_APPROVED"];
+      if (done.includes(app.resignStatus as string)) continue;
+      if (done.includes(app.terminationStatus as string)) continue;
+      // 종료일이 바뀌어 더 이상 D-15 가 아니면 보내지 않는다.
+      const endNum = srvKstDateNum(end.toDate());
+      const targetNum = srvKstDateNum(
+        new Date(now.toDate().getTime() + 15 * 24 * 60 * 60 * 1000));
+      if (endNum !== targetNum) continue;
+
+      const dayKey = srvKstDateKey(end.toDate());
+      await db.collection("users").doc(uid).collection("notifications")
+        .doc(`worker_contract_expiring_${doc.id}_${dayKey}`)
+        .create({
+          userId: uid,
+          type: "workerContractExpiring",
+          title: "계약 종료 예정",
+          body: `${(app.businessName as string | undefined) ?? "사업장"} ` +
+            `근로계약은 ${srvKstMd(end.toDate())}까지입니다. ` +
+            "연장 여부가 결정되면 별도로 안내됩니다.",
+          data: {
+            applicationId: doc.id,
+            businessId: app.businessId,
+            expiryDate: new Date(end.toMillis()).toISOString(),
+            screen: "mySchedule",
+          },
+          category: "personal",
+          isRead: false,
+          createdAt: now,
+        });
+      sent++;
+    } catch (e) {
+      // 이미 보냈다(ALREADY_EXISTS) — scheduler 재시도에서 정상이다.
+      if ((e as {code?: number})?.code === 6) continue;
+      console.error(
+        `[worker 종료예정] ${doc.id} 실패 — 나머지 계속:`, e);
+    }
+  }
+  console.log(`  ✅ [worker 종료예정] ${sent}건 발송`);
+}
+
+/**
+ * [WORKER-CONTRACT-EXPIRY-NOTICE] 계약이 **끝났다** — 근로자에게.
+ *
+ *   D 는 마지막 근무 가능일이므로 D+1 에 말한다.
+ *
+ *   같은 D+1 이라도 관계의 상태가 다르다. 한 문장으로 뭉치면 거짓이
+ *   된다:
+ *
+ *     · 연장을 수락해 **내일부터 이어지는** 사람에게 "종료되었습니다"
+ *       만 보내면 새 약속을 부정하는 말이 된다      → 보내지 않는다
+ *     · 나중 날짜로 연장한 사람에게는 공백이 실제 정보다 → 시작일을 함께
+ *     · 아직 응답을 기다리는 제안이 있으면 그 사실을 함께
+ *     · 관리자가 종료를 결정한 건은 이미 contractTerminating 이 간다
+ *       → 중복해서 보내지 않는다
+ *
+ * @param {FirebaseFirestore.QueryDocumentSnapshot[]} docs 어제 만료 후보
+ * @param {Timestamp} now 실행 시각
+ * @return {Promise<void>} 실패해도 계약 상태를 바꾸지 않는다
+ */
+async function srvNotifyWorkerContractEnded(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  now: Timestamp
+): Promise<void> {
+  const nowDate = now.toDate();
+  const candidates = docs.filter((d) => {
+    const a = d.data();
+    if (!a.uid) return false;
+    if (!Array.isArray(a.workDays) || a.workDays.length === 0) return false;
+    // 관리자 종료 결정은 contractTerminating 이 이미 알린다.
+    if (a.renewalDecision === "TERMINATE") return false;
+    const done = ["APPROVED", "AUTO_APPROVED"];
+    // 퇴사·해지 효력일 경로는 이번 알림의 대상이 아니다(.5 범위).
+    if (done.includes(a.resignStatus as string)) return false;
+    if (done.includes(a.terminationStatus as string)) return false;
+    return true;
+  });
+  if (candidates.length === 0) {
+    console.log("  ✅ [worker 종료] 0건");
+    return;
+  }
+
+  // 응답을 기다리는 제안이 있는지 — 저장 상태가 아니라 **지금 유효한**
+  //   상태로 본다. 시작일이 지난 제안을 "확인 중"이라 말하면 안 된다.
+  const waiting = await srvOldAppsWithActiveProposal(
+    candidates.map((d) => d.id), nowDate);
+
+  let sent = 0;
+  for (const doc of candidates) {
+    try {
+      const app = doc.data();
+      const uid = app.uid as string;
+      const end = (app.actualResignDate ?? app.workEndDate) as Timestamp;
+      const bizName = (app.businessName as string | undefined) ?? "사업장";
+      const endMd = srvKstMd(end.toDate());
+
+      let body: string;
+      if (app.renewalDecision === "EXTEND") {
+        // 연장이 성립했다. 새 계약이 언제 시작하는지가 핵심 정보다.
+        const newId = app.renewedToApplicationId as string | undefined;
+        if (!newId) continue;
+        const newSnap = await db.collection("applications").doc(newId).get();
+        if (!newSnap.exists) continue;
+        const n = newSnap.data() ?? {};
+        const newStart = (n.desiredStartDate ?? n.workDate) as
+          Timestamp | undefined;
+        if (!newStart) continue;
+        const endNum = srvKstDateNum(end.toDate());
+        const startNum = srvKstDateNum(newStart.toDate());
+        // 하루도 끊기지 않고 이어지면 "종료되었습니다"는 오해다.
+        //   새 약속은 이미 renewal/계약 알림이 전한다.
+        if (startNum <= endNum + 1) continue;
+        body = `${bizName}의 기존 계약기간이 ${endMd}자로 종료되었습니다. ` +
+          `새 계약은 ${srvKstMd(newStart.toDate())}부터 시작됩니다.`;
+      } else if (waiting.has(doc.id)) {
+        body = `${bizName}의 기존 계약기간이 ${endMd}자로 종료되었습니다. ` +
+          "확인 중인 연장 제안은 별도로 처리할 수 있습니다.";
+      } else {
+        body = `${bizName}의 기존 계약기간이 ${endMd}자로 종료되었습니다. ` +
+          "새로운 근무 일정이 확정되면 다시 안내드립니다.";
+      }
+
+      await db.collection("users").doc(uid).collection("notifications")
+        .doc(`worker_contract_ended_${doc.id}_${srvKstDateKey(end.toDate())}`)
+        .create({
+          userId: uid,
+          type: "workerContractEnded",
+          title: "계약 종료",
+          body,
+          data: {
+            applicationId: doc.id,
+            businessId: app.businessId,
+            expiryDate: new Date(end.toMillis()).toISOString(),
+            screen: "mySchedule",
+          },
+          category: "personal",
+          isRead: false,
+          createdAt: now,
+        });
+      sent++;
+    } catch (e) {
+      if ((e as {code?: number})?.code === 6) continue; // 이미 보냈다
+      console.error(`[worker 종료] ${doc.id} 실패 — 나머지 계속:`, e);
+    }
+  }
+  console.log(`  ✅ [worker 종료] ${sent}건 발송`);
+}
 
 /**
  * 매 자정 실행:
@@ -6798,6 +6998,28 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       }
     }
     console.log(`  ✅ [D-0 종료알림] ${terminateD0Count}건 처리`);
+
+    // ── [WORKER-CONTRACT-EXPIRY-NOTICE] 근로자에게도 말한다 ──────
+    //
+    //   여태 계약 만료를 미리 듣는 사람은 **관리자뿐**이었다(D-15
+    //   contractExpiringReminder). 근로자는 자기 계약이 언제 끝나는지
+    //   앱 어디에서도 먼저 듣지 못했다.
+    //
+    //   실제로 끝났다는 통지도 `renewalDecision = TERMINATE` 인
+    //   경우에만 갔다(contractTerminating). 아무도 결정하지 않은 채
+    //   만료된 관계 — .4B 가 다룬 바로 그 상태 — 에서는 근로자에게
+    //   아무 말도 하지 않았다. 근로자 입장에서는 계약이 조용히
+    //   사라진다.
+    //
+    //   이것은 **정보**이지 할 일이 아니다. 연장 수락/거절은 별도의
+    //   renewalProposal flow 가 담당하고, 여기서 두 번째 수락 버튼을
+    //   만들지 않는다.
+    //
+    //   창은 새로 만들지 않는다 — 위에서 이미 계산한 D-15 / D+1 창을
+    //   그대로 쓴다. cadence 를 하나 더 만들면 그것이 또 한 벌의 진실이
+    //   된다.
+    await srvNotifyWorkerContractExpiring(d15Snap.docs, now);
+    await srvNotifyWorkerContractEnded(d0Snap.docs, now);
 
     // ── D+1 퇴사 대기 알림 (관리자에게 2일 남은 경고) ────────
     // 요청일로부터 1일 경과한 신청서 대상 (내일=D+2, 모레=D+3 자동승인)

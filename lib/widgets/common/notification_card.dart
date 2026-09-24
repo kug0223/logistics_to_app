@@ -159,6 +159,8 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.renewalProposal:           return Icons.autorenew;
       case NotificationType.renewalAccepted:           return Icons.task_alt;
       case NotificationType.renewalDeclined:           return Icons.block;
+      case NotificationType.workerContractExpiring:    return Icons.event_note;
+      case NotificationType.workerContractEnded:       return Icons.event_busy;
       case NotificationType.terminationRequested:
       case NotificationType.resignRequested:
       case NotificationType.contractRequested:         return Icons.exit_to_app;
@@ -246,6 +248,10 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.scheduleChangeRejected:
       case NotificationType.contractTerminating:
       case NotificationType.renewalProposal:
+      // [WORKER-CONTRACT-EXPIRY-NOTICE] 정보성이다 — 경고색으로 두되
+      //   할 일 색(빨강/초록)과 구분한다.
+      case NotificationType.workerContractExpiring:
+      case NotificationType.workerContractEnded:
       case NotificationType.wageCancelConfirmed:
       case NotificationType.retroactiveDeductionAlert:
       case NotificationType.workReminder:

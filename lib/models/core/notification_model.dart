@@ -55,6 +55,9 @@ enum NotificationType {
   renewalProposal,          // 계약 연장 제안됨 (근무자에게) — 행동 필요
   renewalAccepted,          // 근로자가 연장 수락 (관리자에게) — 정보
   renewalDeclined,          // 근로자가 연장 거절 (관리자에게) — 정보
+  // [WORKER-CONTRACT-EXPIRY-NOTICE] 근로자 본인 계약 기간 — 정보(Task 아님)
+  workerContractExpiring,   // 내 계약 종료 예정 D-15 (근로자에게)
+  workerContractEnded,      // 내 계약 기간 종료됨 D+1 (근로자에게)
   terminationRequested,     // 계약해지 요청됨
   terminationApproved,      // 계약해지 승인됨
   // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
@@ -491,6 +494,10 @@ class NotificationModel {
         return 'task_alt';
       case NotificationType.renewalDeclined:
         return 'block';
+      case NotificationType.workerContractExpiring:
+        return 'event_note';
+      case NotificationType.workerContractEnded:
+        return 'event_busy';
       case NotificationType.terminationRequested:
         return 'exit_to_app';
       case NotificationType.terminationApproved:
@@ -668,6 +675,10 @@ class NotificationModel {
       case 'renewalProposal': return NotificationType.renewalProposal;
       case 'renewalAccepted': return NotificationType.renewalAccepted;
       case 'renewalDeclined': return NotificationType.renewalDeclined;
+      case 'workerContractExpiring':
+        return NotificationType.workerContractExpiring;
+      case 'workerContractEnded':
+        return NotificationType.workerContractEnded;
       case 'terminationRequested': return NotificationType.terminationRequested;
       case 'terminationApproved': return NotificationType.terminationApproved;
       // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
@@ -755,6 +766,10 @@ class NotificationModel {
       case NotificationType.renewalProposal: return 'renewalProposal';
       case NotificationType.renewalAccepted: return 'renewalAccepted';
       case NotificationType.renewalDeclined: return 'renewalDeclined';
+      case NotificationType.workerContractExpiring:
+        return 'workerContractExpiring';
+      case NotificationType.workerContractEnded:
+        return 'workerContractEnded';
       case NotificationType.terminationRequested: return 'terminationRequested';
       case NotificationType.terminationApproved: return 'terminationApproved';
       // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
