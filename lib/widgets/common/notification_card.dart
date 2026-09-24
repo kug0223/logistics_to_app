@@ -156,6 +156,9 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.contractExpiringReminder:  return Icons.event_note;
       case NotificationType.contractRenewed:           return Icons.autorenew;
       case NotificationType.contractTerminating:       return Icons.event_busy;
+      case NotificationType.renewalProposal:           return Icons.autorenew;
+      case NotificationType.renewalAccepted:           return Icons.task_alt;
+      case NotificationType.renewalDeclined:           return Icons.block;
       case NotificationType.terminationRequested:
       case NotificationType.resignRequested:
       case NotificationType.contractRequested:         return Icons.exit_to_app;
@@ -224,10 +227,12 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.contractSigned:
       case NotificationType.toInviteAccepted:
       case NotificationType.workReassignmentAccepted:
+      case NotificationType.renewalAccepted:
         return AppColors.success;
 
       // ── 거절·무효·차단 → red ───────────────────────────────────────────
       case NotificationType.applicationRejected:
+      case NotificationType.renewalDeclined:
       case NotificationType.terminationRejected:
       case NotificationType.resignRejected:
       case NotificationType.contractVoided:
@@ -240,6 +245,7 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.workCanceled:
       case NotificationType.scheduleChangeRejected:
       case NotificationType.contractTerminating:
+      case NotificationType.renewalProposal:
       case NotificationType.wageCancelConfirmed:
       case NotificationType.retroactiveDeductionAlert:
       case NotificationType.workReminder:

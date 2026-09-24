@@ -169,7 +169,7 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('03. 서버가 마지막 판단을 한다', () {
     final renewal =
-        _after(cf, 'export const callableCreateContractRenewal', 7900);
+        _after(cf, 'export const callableAcceptRenewalProposal', 9500);
 
     test('03-a D 만료 후 과거 시작 요청을 거절한다', () {
       expect(renewal, contains('todayNum > originalEndNum && newStartNum < todayNum'));
@@ -207,7 +207,7 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('04. 세 값이 같은 E 를 말한다', () {
     final renewal =
-        _after(cf, 'export const callableCreateContractRenewal', 7900);
+        _after(cf, 'export const callableAcceptRenewalProposal', 9500);
 
     test('04-a 명시적 효력일을 저장한다 — desiredStartDate', () {
       expect(renewal,
@@ -244,7 +244,7 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('05. 공백 기간 = NO WORK', () {
     final renewal =
-        _after(cf, 'export const callableCreateContractRenewal', 7900);
+        _after(cf, 'export const callableAcceptRenewalProposal', 9500);
 
     test('05-a 연장 writer 가 과거 근태/임금을 만들지 않는다', () {
       for (final banned in [
@@ -300,9 +300,12 @@ void main() {
       expect(seg, contains("'다음 계약 연장됨'"));
     });
 
-    test('06-d 쓰기 경로는 호출자가 정한 시작일을 그대로 넘긴다', () {
-      final seg = _after(fixedWorker, 'Future<ApplicationModel?> _processRenewal(', 1700);
-      expect(seg, contains('newStartDate: newStartDate,'));
+    test('06-d 쓰기 경로는 호출자가 정한 기간을 그대로 넘긴다', () {
+      // [RENEWAL-PROPOSAL-COMMITMENT] 이 경로는 이제 commitment 가 아니라
+      //   **제안**을 보낸다. 시작일은 여전히 정책 helper 가 정한 값이다.
+      final seg = _after(fixedWorker, 'Future<void> _sendRenewalProposal(', 1500);
+      expect(seg, contains('effectiveStart: effectiveStart,'));
+      expect(seg, contains('effectiveEnd: effectiveEnd,'));
     });
 
     test('06-e 같은 fixture + 같은 오늘 → 같은 기간', () {
@@ -359,7 +362,7 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('08. 무회귀', () {
     final renewal =
-        _after(cf, 'export const callableCreateContractRenewal', 7900);
+        _after(cf, 'export const callableAcceptRenewalProposal', 9500);
 
     test('08-a NEW 는 여전히 CONTRACT_PENDING 이다', () {
       expect(renewal, contains('status: "CONTRACT_PENDING"'));
@@ -387,8 +390,12 @@ void main() {
       }
     });
 
-    test('08-e 권한은 canManageContract 그대로다', () {
-      expect(renewal, contains('memberPermsForRenewal.canManageContract'));
+    test('08-e 관리자 연장 권한은 canManageContract 그대로다', () {
+      // [RENEWAL-PROPOSAL-COMMITMENT] 관리자의 계약 권한은 이제 **제안**
+      //   writer 가 강제한다. 수락 writer 의 주체는 근로자 본인이다.
+      final propose =
+          _after(cf, 'export const callableCreateRenewalProposal', 3000);
+      expect(propose, contains('perms.canManageContract'));
       expect(fixedWorker, contains('_canManageContract()'));
     });
 

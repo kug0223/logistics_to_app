@@ -339,7 +339,7 @@ void main() {
     });
 
     test('06-f 화면은 여전히 공용 판정식으로 거른다', () {
-      expect(expiring, contains('needsRenewalDecision(app, todayOnly)'));
+      expect(expiring, contains('needsManagerRenewalAction(app, todayOnly, waiting)'));
     });
 
     test('06-g 새 persisted field 를 만들지 않았다', () {

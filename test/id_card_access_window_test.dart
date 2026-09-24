@@ -168,7 +168,7 @@ void main() {
     test('legacy 미보유는 조건부 승계로 유지된다', () {
       // 승계가 일어나는 곳은 수동 갱신이다.
       final manual =
-          _codeOf(_callableBody(source, 'callableCreateContractRenewal'));
+          _codeOf(_callableBody(source, 'callableAcceptRenewalProposal'));
       expect(
         manual.contains('documentAccessConsentVersion !== undefined'),
         isTrue,
@@ -474,7 +474,7 @@ void main() {
 
     test('DS08B4-61 수동 갱신 생성 시점에는 grant가 없다', () {
       final manual =
-          _codeOf(_callableBody(source, 'callableCreateContractRenewal'));
+          _codeOf(_callableBody(source, 'callableAcceptRenewalProposal'));
       expect(manual.contains('idCardAccessRequests'), isFalse);
     });
 

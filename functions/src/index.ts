@@ -2828,6 +2828,8 @@ export const createNotification = onCall(
       // 계약 관련
       "contractRequested", "contractSignRequested", "contractSigned",
       "contractVoided", "contractExpiringReminder", "contractRenewed", "contractTerminating",
+      // [RENEWAL-PROPOSAL-COMMITMENT] 제안 · 응답
+      "renewalProposal", "renewalAccepted", "renewalDeclined",
       // 퇴사/해지
       "terminationRequested", "terminationApproved", "terminationRejected",
       "resignRequested", "resignApproved", "resignRejected",
@@ -6378,6 +6380,9 @@ function _getNotifCategory(type: string): string | null {
     contractExpiringReminder:  "contractAlert",
     contractRenewed:           "contractAlert",
     contractTerminating:       "contractAlert",
+    renewalProposal: "contractAlert",
+    renewalAccepted: "contractAlert",
+    renewalDeclined: "contractAlert",
     terminationRequested:      "contractAlert",
     terminationApproved:       "contractAlert",
     resignRequested:           "contractAlert",
@@ -31830,6 +31835,239 @@ export const callableCheckOut = onCall(
 //   1. confirmedAt/appliedAt: DateTime.now() 클라이언트 조작 → 계약일자 위변조
 //   2. contractVoidedAt: DateTime.now() → 무효화 일자 위조
 //   3. WriteBatch에 원본 상태 검증 없음 → 이미 연장된 계약 이중 연장 가능
+// ════════════════════════════════════════════════════════════════════════════
+// [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 — canonical entity
+//
+//   관리자가 연장 버튼을 누르면 곧바로 NEW Application 이 CONTRACT_PENDING
+//   으로 만들어졌다. 그런데 ALfit 에서 CONTRACT_PENDING 은 좌석이 있고,
+//   출근할 수 있고, 결근 대상이 되고, 계약 발송 의무가 생기는 상태다.
+//
+//     관리자 혼자 누른 버튼이 근로자에게 새 근무 의무를 만들었다.
+//
+//   근로자는 새 기간에 아직 아무 말도 하지 않았는데.
+//
+//   그래서 writer 경계를 옮긴다.
+//
+//     관리자 제안   = proposal      (약속 아님 · 좌석 0 · 출근 0)
+//     근로자 수락   = commitment    (여기서부터 CONTRACT_PENDING)
+//     전자계약 서명 = 문서화·완료
+//
+//   Policy C(CONTRACT_PENDING 에서도 출근 가능)는 **바꾸지 않는다**.
+//   문제는 그 상태를 너무 일찍 만든 것이지 Policy C 자체가 아니다.
+//   이제 renewal 의 CONTRACT_PENDING 은 "근로자가 이미 수락한 상태"다.
+//
+//   INVITED 를 재사용하지 않은 이유(.4C.1 READ):
+//     · 초대 수락은 CONFIRMED 로 직행한다(CONTRACT_PENDING 을 건너뛴다)
+//     · 매시간 도는 초대 만료 sweeper 가 무관한 규칙으로 EXPIRED 처리한다
+//     · INVITED 생성이 공고의 totalPending/pendingCount 를 올린다
+//     · 초대 snapshot 은 **현재 공고 값**으로 만들어진다(승계가 아니다)
+//     · 근로자 화면이 일반 신규 초대로 보여준다
+// ════════════════════════════════════════════════════════════════════════════
+
+/** 아직 응답을 기다리는 제안. 한 OLD 관계에 최대 하나. */
+const RENEWAL_PROPOSAL_PENDING = "PENDING";
+
+/**
+ * 저장된 상태와 **지금 유효한** 상태는 다를 수 있다.
+ *
+ *   저장 = PENDING
+ *   그런데 효력일이 이미 지났다
+ *   → 지금 수락하면 아무도 근무하지 않은 날을 근무일로 만든다
+ *   → 유효 상태 = STALE
+ *
+ * scheduler 가 정리해 주기를 기다리지 않는다. 판정은 읽는 순간 한다 —
+ * 그래야 scheduler 가 늦어도 과거 의무가 생기지 않는다.
+ *
+ * @param {Record<string, unknown>} p 제안 문서
+ * @param {Date} now 서버 현재 시각
+ * @return {string} 지금 유효한 상태
+ */
+function srvRenewalProposalEffectiveStatus(
+  p: Record<string, unknown>,
+  now: Date
+): string {
+  const persisted = (p["status"] as string) ?? "";
+  if (persisted !== RENEWAL_PROPOSAL_PENDING) return persisted;
+
+  const start = p["effectiveStart"] as admin.firestore.Timestamp | undefined;
+  if (!start) return "STALE";
+  const startNum = srvKstDateNum(start.toDate());
+  const todayNum = srvKstDateNum(now);
+  if (startNum < todayNum) return "STALE";
+  if (startNum > todayNum) return RENEWAL_PROPOSAL_PENDING;
+
+  // 효력일 == 오늘. 날짜만 맞아서는 부족하다 — 오늘이 근무일이고 그 날의
+  //   근무 시작시각이 이미 지났다면, 수락은 **오늘 아침 근무**를 뒤늦게
+  //   의무로 만드는 일이 된다.
+  const workDays = p["workDays"] as string[] | undefined;
+  const isWorkDay = !Array.isArray(workDays) || workDays.length === 0 ||
+    workDays.includes(srvKstWeekdayKo(now));
+  if (!isWorkDay) return RENEWAL_PROPOSAL_PENDING;
+
+  const startTime = (p["startTime"] as string) ?? "";
+  const m = /^(\d{1,2}):(\d{2})$/.exec(startTime);
+  if (!m) return RENEWAL_PROPOSAL_PENDING;
+  const kstNow = new Date(now.getTime() + SRV_KST_MS);
+  const nowMinutes = kstNow.getUTCHours() * 60 + kstNow.getUTCMinutes();
+  const shiftMinutes = Number(m[1]) * 60 + Number(m[2]);
+  return nowMinutes > shiftMinutes ? "STALE" : RENEWAL_PROPOSAL_PENDING;
+}
+
+/**
+ * 이 OLD 관계에 지금 응답을 기다리는 제안이 있는가.
+ *
+ * 관리자 Home 이 "결정 필요"와 "응답 대기"를 가르는 기준이다 — 제안을
+ * 이미 보낸 건을 계속 할 일로 세면, 관리자는 같은 일을 또 하라는 말을
+ * 듣는다.
+ *
+ * @param {string[]} oldApplicationIds 원본 지원서 id 들
+ * @param {Date} now 서버 현재 시각
+ * @return {Promise<Set<string>>} 응답 대기 중인 원본 id 집합
+ */
+async function srvOldAppsWithActiveProposal(
+  oldApplicationIds: string[],
+  now: Date
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (oldApplicationIds.length === 0) return out;
+  const CHUNK = 30;
+  for (let i = 0; i < oldApplicationIds.length; i += CHUNK) {
+    const ids = oldApplicationIds.slice(i, i + CHUNK);
+    const snap = await db.collection("renewal_proposals")
+      .where("oldApplicationId", "in", ids)
+      .where("status", "==", RENEWAL_PROPOSAL_PENDING)
+      .get();
+    for (const d of snap.docs) {
+      const data = d.data();
+      // 저장은 PENDING 이어도 효력일이 지났으면 응답 대기가 아니다 —
+      //   그 건은 관리자가 새 날짜로 다시 제안해야 한다.
+      if (srvRenewalProposalEffectiveStatus(data, now) !==
+          RENEWAL_PROPOSAL_PENDING) continue;
+      out.add(data["oldApplicationId"] as string);
+    }
+  }
+  return out;
+}
+
+/**
+ * 제안이 담는 약속. **원본 Application 에서 승계한다.**
+ *
+ * 현재 공고 값으로 다시 만들지 않는다 — 공고는 그 사이에 바뀔 수 있고,
+ * 근로자가 수락한 것은 공고가 아니라 제안이다.
+ * @param {Record<string, unknown>} old 원본 지원서
+ * @return {Record<string, unknown>} 약속 snapshot
+ */
+function srvRenewalPromiseSnapshot(
+  old: Record<string, unknown>
+): Record<string, unknown> {
+  const keep = [
+    "selectedWorkType", "workDays", "startTime", "endTime",
+    "breakMinutes", "wage", "wageType", "taxDeductionType",
+    "payScheduleType", "payScheduleDay", "payScheduleTime",
+    "baseHourlyWage", "baseHourlyWageMode", "nightIncluded",
+    "nightAllowanceApplied", "wdId", "workDetailId", "toId", "toTitle",
+  ];
+  const out: Record<string, unknown> = {};
+  for (const k of keep) if (old[k] !== undefined) out[k] = old[k];
+  return out;
+}
+
+/**
+ * 근로자에게 연장 제안이 도착했다. **행동이 필요한** 알림이다.
+ *
+ * deep link 는 제안 하나를 정확히 가리킨다 — 일반 계약 목록만 열면
+ * 근로자가 어떤 제안에 답해야 하는지 스스로 찾아야 한다.
+ * @param {object} a 제안의 사실들
+ * @return {Promise<void>} 실패해도 제안 자체에는 영향이 없다
+ */
+async function srvNotifyRenewalProposal(a: {
+  proposalId: string;
+  workerUid: string;
+  businessId: string;
+  businessName: string;
+  effectiveStartMs: number;
+  effectiveEndMs: number;
+}): Promise<void> {
+  if (!a.workerUid) return;
+  const md = (ms: number) => {
+    const d = new Date(ms + SRV_KST_MS);
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  };
+  try {
+    await db.collection("users").doc(a.workerUid).collection("notifications")
+      .doc(`renewal_proposal_${a.proposalId}`)
+      .create({
+        userId: a.workerUid,
+        type: "renewalProposal",
+        title: "계약 연장 제안",
+        body: `${a.businessName}에서 ${md(a.effectiveStartMs)}~` +
+          `${md(a.effectiveEndMs)} 계약 연장을 제안했습니다.`,
+        data: {
+          proposalId: a.proposalId,
+          businessId: a.businessId,
+          screen: "renewalProposal",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+  } catch (e) {
+    if ((e as {code?: number})?.code === 6) return; // 이미 보냈다
+    console.error("⚠️ [renewalProposal] 알림 저장 실패:", e);
+  }
+}
+
+/**
+ * 근로자의 응답을 관리자에게 알린다. 정보이고, 할 일이 아니다 —
+ * 수락 뒤 계약서 발송은 Home 의 canonical task 가 말한다.
+ * @param {object} a 사업장과 원본 지원서
+ * @param {string} workerUid 응답한 근로자
+ * @param {boolean} accepted 수락 여부
+ * @return {Promise<void>} 실패해도 응답 처리에는 영향이 없다
+ */
+async function srvNotifyRenewalResponse(
+  a: {businessId: string; oldApplicationId: string},
+  workerUid: string,
+  accepted: boolean
+): Promise<void> {
+  try {
+    const bizSnap = await db.collection("businesses").doc(a.businessId).get();
+    const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
+    const ownerId = bizSnap.data()?.ownerId as string | undefined;
+    const targets = new Set<string>(adminIds);
+    if (ownerId) targets.add(ownerId);
+    if (targets.size === 0) return;
+    const userSnap = await db.collection("users").doc(workerUid).get();
+    const name = (userSnap.data()?.name as string | undefined) ?? "근무자";
+    const type = accepted ? "renewalAccepted" : "renewalDeclined";
+    await Promise.all([...targets].map((uid) =>
+      db.collection("users").doc(uid).collection("notifications")
+        .doc(`${type}_${a.oldApplicationId}_${workerUid}`)
+        .create({
+          userId: uid,
+          type,
+          title: accepted ? "연장 제안 수락" : "연장 제안 거절",
+          body: accepted ?
+            `${name}님이 계약 연장 제안을 수락했습니다.` :
+            `${name}님이 계약 연장 제안을 거절했습니다.`,
+          data: {
+            applicationId: a.oldApplicationId,
+            businessId: a.businessId,
+            screen: "fixedWorker",
+          },
+          category: "business",
+          isRead: false,
+          createdAt: admin.firestore.Timestamp.now(),
+        })
+        .catch((e) => {
+          if ((e as {code?: number})?.code !== 6) throw e;
+        })
+    ));
+  } catch (e) {
+    console.error("⚠️ [renewalResponse] 알림 저장 실패:", e);
+  }
+}
+
 /**
  * [R8-P3B.2] 계약 연장 확정 알림 — 근무자 본인에게.
  *
@@ -31879,28 +32117,406 @@ async function srvNotifyContractRenewed(a: {
   }
 }
 
-export const callableCreateContractRenewal = onCall(
+/**
+ * [RENEWAL-PROPOSAL-COMMITMENT] 관리자가 연장을 **제안**한다.
+ *
+ *   이 writer 는 제안 문서 하나만 만든다.
+ *
+ *   여기서 만들지 않는 것: NEW Application · renewalDecision=EXTEND ·
+ *   좌석 · 계약서 · 근태. 근로자가 수락하기 전까지 새 약속은 없다.
+ */
+export const callableCreateRenewalProposal = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
 
     const {
-      originalApplicationId,
-      newStartDateMs,
-      newEndDateMs,
+      oldApplicationId, effectiveStartMs, effectiveEndMs, supersedeProposalId,
     } = (request.data ?? {}) as {
-      originalApplicationId?: string;
-      newStartDateMs?: number;
-      newEndDateMs?: number;
+      oldApplicationId?: string;
+      effectiveStartMs?: number;
+      effectiveEndMs?: number;
+      supersedeProposalId?: string;
     };
-
-    if (!originalApplicationId || typeof originalApplicationId !== "string") {
-      throw new HttpsError("invalid-argument", "originalApplicationId가 필요합니다.");
+    if (!oldApplicationId || typeof oldApplicationId !== "string") {
+      throw new HttpsError("invalid-argument", "oldApplicationId가 필요합니다.");
     }
-    if (typeof newStartDateMs !== "number" || typeof newEndDateMs !== "number") {
+    if (typeof effectiveStartMs !== "number" ||
+        typeof effectiveEndMs !== "number") {
       throw new HttpsError("invalid-argument", "날짜 파라미터가 누락되었습니다.");
     }
+    if (effectiveStartMs >= effectiveEndMs) {
+      throw new HttpsError("invalid-argument", "종료일이 시작일보다 이후여야 합니다.");
+    }
+
+    const oldRef = db.collection("applications").doc(oldApplicationId);
+    const oldSnap = await oldRef.get();
+    if (!oldSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const oldData = oldSnap.data() ?? {};
+    const businessId = oldData.businessId as string;
+    const workerUid = oldData.uid as string;
+
+    const {callerData} = await assertBizAdmin(callerUid, businessId);
+    const callerRole = callerData?.role as string | undefined;
+    if (callerRole !== "BUSINESS_ADMIN" && callerRole !== "SUPER_ADMIN") {
+      const m = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!perms.canManageContract) {
+        throw new HttpsError("permission-denied", "계약 관리 권한이 없습니다.");
+      }
+    }
+
+    // ── 효력일 검증 — [LATE-RENEW-EFFECTIVE-DATE-POLICY] 그대로 ──────
+    const oldEnd = (oldData.actualResignDate ?? oldData.workEndDate) as
+      Timestamp | undefined;
+    const startNum = srvKstDateNum(new Date(effectiveStartMs));
+    if (oldEnd) {
+      const oldEndNum = srvKstDateNum(oldEnd.toDate());
+      if (startNum <= oldEndNum) {
+        throw new HttpsError("invalid-argument",
+          "갱신 계약 시작일은 원본 계약 종료일 다음 날부터여야 합니다.");
+      }
+      const todayNum = srvKstDateNum(new Date());
+      if (todayNum > oldEndNum && startNum < todayNum) {
+        throw new HttpsError("invalid-argument",
+          "이미 계약이 만료되어 오늘 이후 날짜부터 새 계약을 시작할 수 있습니다.");
+      }
+    }
+
+    const proposalRef = db.collection("renewal_proposals").doc();
+    const proposalId = proposalRef.id;
+
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(oldRef);
+      if (!fresh.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      const f = fresh.data() ?? {};
+
+      if (f.renewalDecision != null) {
+        throw new HttpsError("failed-precondition",
+          "이미 계약 갱신/종료 결정이 처리된 근무자입니다.");
+      }
+      const ended = ["APPROVED", "AUTO_APPROVED"];
+      if (ended.includes(f.resignStatus as string)) {
+        throw new HttpsError("failed-precondition",
+          "퇴사가 승인된 근무자의 계약은 연장할 수 없습니다.");
+      }
+      if (ended.includes(f.terminationStatus as string)) {
+        throw new HttpsError("failed-precondition",
+          "계약 해지가 승인된 근무자의 계약은 연장할 수 없습니다.");
+      }
+      if (!Array.isArray(f.workDays) || (f.workDays as string[]).length === 0) {
+        throw new HttpsError("failed-precondition",
+          "장기 근무 관계만 연장 제안할 수 있습니다.");
+      }
+      // 수락 writer 가 거절할 것을 여기서 먼저 말한다.
+      //
+      //   OLD 가 아직 CONTRACT_PENDING 이면 수락 단계에서 "확정 상태의
+      //   계약만 연장할 수 있습니다"로 막힌다. 제안은 보내지고 근로자는
+      //   수락 버튼을 눌렀는데 계속 실패하는 막다른 길이 된다 —
+      //   관리자가 지금 알아야 한다.
+      if ((f.status as string) !== "CONFIRMED") {
+        throw new HttpsError("failed-precondition",
+          "현재 계약서 서명이 끝난 뒤에 연장을 제안할 수 있습니다.");
+      }
+
+      // ── 한 관계에 응답 대기 제안은 하나 ─────────────────────────
+      //   client 질의만 믿지 않는다. 버튼 중복 탭·재시도·두 관리자의
+      //   동시 제안이 모두 여기를 지난다.
+      const activeSnap = await tx.get(
+        db.collection("renewal_proposals")
+          .where("oldApplicationId", "==", oldApplicationId)
+          .where("status", "==", RENEWAL_PROPOSAL_PENDING));
+      const now = new Date();
+      for (const d of activeSnap.docs) {
+        if (supersedeProposalId && d.id === supersedeProposalId) continue;
+        if (srvRenewalProposalEffectiveStatus(d.data(), now) ===
+            RENEWAL_PROPOSAL_PENDING) {
+          throw new HttpsError("already-exists",
+            "이미 응답을 기다리는 연장 제안이 있습니다.");
+        }
+      }
+
+      // 조건을 바꿔 다시 보내는 경우 — 기존 제안을 명시적으로 대체한다.
+      //   근로자가 본 조건과 수락되는 조건이 달라지면 안 되므로, 수정이
+      //   아니라 대체다.
+      if (supersedeProposalId) {
+        const supRef =
+          db.collection("renewal_proposals").doc(supersedeProposalId);
+        const sup = await tx.get(supRef);
+        if (sup.exists &&
+            sup.data()?.status === RENEWAL_PROPOSAL_PENDING &&
+            sup.data()?.oldApplicationId === oldApplicationId) {
+          tx.update(supRef, {
+            status: "SUPERSEDED",
+            supersededByProposalId: proposalId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      tx.set(proposalRef, {
+        businessId,
+        businessName: (f.businessName as string | undefined) ?? "",
+        workerUid,
+        oldApplicationId,
+        status: RENEWAL_PROPOSAL_PENDING,
+        effectiveStart: admin.firestore.Timestamp.fromMillis(effectiveStartMs),
+        effectiveEnd: admin.firestore.Timestamp.fromMillis(effectiveEndMs),
+        ...srvRenewalPromiseSnapshot(f),
+        proposedByUid: callerUid,
+        proposedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // OLD 에는 찾아가기 편하라고 두는 참조일 뿐이다.
+      //   진실은 renewal_proposals 문서에 있다.
+      tx.update(oldRef, {
+        renewalProposalId: proposalId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    try {
+      await srvNotifyRenewalProposal({
+        proposalId, workerUid, businessId,
+        businessName: (oldData.businessName as string | undefined) ?? "",
+        effectiveStartMs, effectiveEndMs,
+      });
+    } catch (e) {
+      console.error("⚠️ [renewalProposal] 알림 실패 (제안은 생성됨):", e);
+    }
+    return {success: true, proposalId};
+  }
+);
+
+/**
+ * [RENEWAL-PROPOSAL-COMMITMENT] 근로자가 연장 제안을 **거절**한다.
+ *
+ *   거절은 관리자의 계약 해지도, 근로자의 퇴사도, 결근도 아니다.
+ *   OLD 는 원래 종료일까지 그대로 유지되고, `renewalDecision` 은
+ *   여전히 비어 있다 — 관리자는 다시 결정할 수 있다.
+ */
+export const callableDeclineRenewalProposal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {proposalId} = (request.data ?? {}) as {proposalId?: string};
+    if (!proposalId || typeof proposalId !== "string") {
+      throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
+    }
+
+    const ref = db.collection("renewal_proposals").doc(proposalId);
+    let notify: {businessId: string; oldApplicationId: string} | null = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpsError("not-found", "연장 제안을 찾을 수 없습니다.");
+      const p = snap.data() ?? {};
+      if ((p.workerUid as string) !== callerUid) {
+        throw new HttpsError("permission-denied", "본인의 제안만 응답할 수 있습니다.");
+      }
+      if ((p.status as string) !== RENEWAL_PROPOSAL_PENDING) {
+        throw new HttpsError("failed-precondition",
+          "이미 처리된 연장 제안입니다.");
+      }
+      tx.update(ref, {
+        status: "DECLINED",
+        respondedByUid: callerUid,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      // OLD 의 편의 참조만 지운다. renewalDecision 은 건드리지 않는다 —
+      //   거절은 관리자의 결정이 아니다.
+      const oldAppRef = db.collection("applications")
+        .doc(p.oldApplicationId as string);
+      tx.update(oldAppRef, {
+        renewalProposalId: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      notify = {
+        businessId: p.businessId as string,
+        oldApplicationId: p.oldApplicationId as string,
+      };
+    });
+
+    if (notify) {
+      try {
+        await srvNotifyRenewalResponse(notify, callerUid, false);
+      } catch (e) {
+        console.error("⚠️ [renewalDeclined] 알림 실패 (거절은 처리됨):", e);
+      }
+    }
+    return {success: true};
+  }
+);
+
+/**
+ * [RENEWAL-PROPOSAL-COMMITMENT] 관리자가 아직 응답 없는 제안을 철회한다.
+ */
+export const callableCancelRenewalProposal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {proposalId} = (request.data ?? {}) as {proposalId?: string};
+    if (!proposalId || typeof proposalId !== "string") {
+      throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
+    }
+    const ref = db.collection("renewal_proposals").doc(proposalId);
+    const snap = await ref.get();
+    if (!snap.exists) throw new HttpsError("not-found", "연장 제안을 찾을 수 없습니다.");
+    const businessId = (snap.data() ?? {}).businessId as string;
+
+    const {callerData} = await assertBizAdmin(callerUid, businessId);
+    const role = callerData?.role as string | undefined;
+    if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN") {
+      const m = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!perms.canManageContract) {
+        throw new HttpsError("permission-denied", "계약 관리 권한이 없습니다.");
+      }
+    }
+
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(ref);
+      const p = fresh.data() ?? {};
+      // 근로자 수락과 경합해도 한쪽만 이긴다 — 이미 수락됐으면 철회 불가.
+      if ((p.status as string) !== RENEWAL_PROPOSAL_PENDING) {
+        throw new HttpsError("failed-precondition",
+          "이미 처리된 연장 제안입니다.");
+      }
+      tx.update(ref, {
+        status: "CANCELED",
+        canceledByUid: callerUid,
+        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      const oldAppRef = db.collection("applications")
+        .doc(p.oldApplicationId as string);
+      tx.update(oldAppRef, {
+        renewalProposalId: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    return {success: true};
+  }
+);
+
+/** 근로자가 자신의 응답 대기 제안을 읽는다. */
+export const callableGetMyRenewalProposals = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const snap = await db.collection("renewal_proposals")
+      .where("workerUid", "==", uid)
+      .where("status", "==", RENEWAL_PROPOSAL_PENDING)
+      .limit(50)
+      .get();
+    const now = new Date();
+    // 저장은 PENDING 이어도 효력일이 지난 것은 행동할 수 없다.
+    //   목록에서 빼되, 읽기 실패와 구분되도록 빈 배열은 빈 배열로만 쓴다.
+    const proposals = snap.docs
+      .filter((d) => srvRenewalProposalEffectiveStatus(d.data(), now) ===
+        RENEWAL_PROPOSAL_PENDING)
+      .map((d) => ({id: d.id, ...serializeFirestoreData(d.data())}));
+    return {proposals};
+  }
+);
+
+/** 관리자가 사업장의 응답 대기 제안을 읽는다. */
+export const callableGetRenewalProposalsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId} = (request.data ?? {}) as {businessId?: string};
+    if (!businessId || typeof businessId !== "string") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    await assertBizAdmin(callerUid, businessId);
+    const snap = await db.collection("renewal_proposals")
+      .where("businessId", "==", businessId)
+      .where("status", "==", RENEWAL_PROPOSAL_PENDING)
+      .limit(500)
+      .get();
+    const now = new Date();
+    return {
+      proposals: snap.docs.map((d) => ({
+        id: d.id,
+        ...serializeFirestoreData(d.data()),
+        effectiveStatus: srvRenewalProposalEffectiveStatus(d.data(), now),
+      })),
+    };
+  }
+);
+
+/**
+ * 예전 이름. 관리자가 이 함수 하나로 새 계약을 **혼자** 만들 수 있었다.
+ *
+ * 남겨 두되 막는다 — 구버전 앱이 조용히 우회로를 쓰는 것보다, 무슨 일이
+ * 일어났는지 말해 주는 편이 낫다.
+ */
+export const callableCreateContractRenewal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async () => {
+    throw new HttpsError(
+      "failed-precondition",
+      "계약 연장은 근무자의 수락이 필요합니다. 앱을 최신 버전으로 업데이트해주세요."
+    );
+  }
+);
+
+/**
+ * [RENEWAL-PROPOSAL-COMMITMENT] 근로자가 연장 제안을 **수락**한다.
+ *
+ *   여기가 새 기간에 대한 약속이 성립하는 자리다. 이 트랜잭션이 성공한
+ *   뒤에야 NEW Application 이 CONTRACT_PENDING 이 되고, 그때부터 기존
+ *   Policy C 대로 좌석·근무일정·근태 자격이 효력일부터 살아난다.
+ *
+ *   근로자의 전자서명은 이 약속의 **문서화**이지 약속 자체가 아니다.
+ *   그래서 서명 전에도 CONTRACT_PENDING 으로 둘 수 있다 — 근로자가
+ *   이미 수락했기 때문이다.
+ */
+export const callableAcceptRenewalProposal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {proposalId} = (request.data ?? {}) as {proposalId?: string};
+    if (!proposalId || typeof proposalId !== "string") {
+      throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
+    }
+    const proposalRef = db.collection("renewal_proposals").doc(proposalId);
+    const proposalSnap = await proposalRef.get();
+    if (!proposalSnap.exists) {
+      throw new HttpsError("not-found", "연장 제안을 찾을 수 없습니다.");
+    }
+    const proposal = proposalSnap.data()!;
+    if ((proposal.workerUid as string) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 제안만 응답할 수 있습니다.");
+    }
+    if ((proposal.status as string) !== RENEWAL_PROPOSAL_PENDING) {
+      throw new HttpsError("failed-precondition", "이미 처리된 연장 제안입니다.");
+    }
+    // 저장은 PENDING 이어도 효력일이 지났으면 수락을 막는다.
+    //   여기서 통과시키면 아무도 근무하지 않은 날이 근무일이 된다.
+    //   시작일을 오늘로 **조용히 당기지 않는다** — 그것도 관리자가 보낸
+    //   제안을 시스템이 고쳐 쓰는 일이다. 관리자가 다시 제안해야 한다.
+    if (srvRenewalProposalEffectiveStatus(proposal, new Date()) !==
+        RENEWAL_PROPOSAL_PENDING) {
+      throw new HttpsError("failed-precondition",
+        "제안한 계약 시작일이 지났습니다. 사업장에 새 시작일로 다시 요청해주세요.");
+    }
+
+    const originalApplicationId = proposal.oldApplicationId as string;
+    const newStartDateMs =
+      (proposal.effectiveStart as Timestamp).toMillis();
+    const newEndDateMs = (proposal.effectiveEnd as Timestamp).toMillis();
     if (newStartDateMs >= newEndDateMs) {
       throw new HttpsError("invalid-argument", "종료일이 시작일보다 이후여야 합니다.");
     }
@@ -31975,14 +32591,16 @@ export const callableCreateContractRenewal = onCall(
       }
     }
 
-    // 2. 관리자 권한 검증
-    const {callerData: renewalCallerData} = await assertBizAdmin(callerUid, businessId);
-    // [PERM-CONTRACT-01] 서브어드민 canManageContract 세부 권한 검증
-    const renewalCallerRole = renewalCallerData?.role as string | undefined;
-    if (renewalCallerRole !== "BUSINESS_ADMIN" && renewalCallerRole !== "SUPER_ADMIN") {
-      const memberSnapForRenewal = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
-      const memberPermsForRenewal = (memberSnapForRenewal.data()?.permissions as Record<string, boolean>) ?? {};
-      if (!memberPermsForRenewal.canManageContract) throw new HttpsError("permission-denied", "계약 관리 권한이 없습니다.");
+    // 2. 이 제안이 정말 이 관계의 것인가.
+    //
+    //   권한 검증은 위에서 끝났다 — 이 mutation 의 주체는 관리자가 아니라
+    //   **근로자 본인**이다. 여기서는 제안·원본·근로자가 한 관계를
+    //   가리키는지만 본다. 사업장이 어긋나면 남의 관계에 약속이 생긴다.
+    if ((proposal.businessId as string) !== businessId) {
+      throw new HttpsError("failed-precondition", "제안과 계약의 사업장이 다릅니다.");
+    }
+    if ((originalData.uid as string) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 계약만 연장할 수 있습니다.");
     }
 
     // 3. 서명 대기 계약서 사전 조회 (트랜잭션 외부)
@@ -32015,6 +32633,23 @@ export const callableCreateContractRenewal = onCall(
 
     // 5. 트랜잭션 실행
     await db.runTransaction(async (tx) => {
+      // 5-0. 제안 상태 재확인.
+      //
+      //   수락 × 철회, 수락 × 대체, 수락 × 두 번 누르기가 모두 여기서
+      //   갈린다. 부분 성공 — 제안은 ACCEPTED 인데 새 계약이 없는 상태 —
+      //   을 만들지 않으려면 제안 쓰기가 같은 트랜잭션에 있어야 한다.
+      const freshProposalSnap = await tx.get(proposalRef);
+      if (!freshProposalSnap.exists) {
+        throw new HttpsError("not-found", "연장 제안을 찾을 수 없습니다.");
+      }
+      const freshProposal = freshProposalSnap.data()!;
+      if ((freshProposal.status as string) !== RENEWAL_PROPOSAL_PENDING) {
+        throw new HttpsError("failed-precondition", "이미 처리된 연장 제안입니다.");
+      }
+      if ((freshProposal.oldApplicationId as string) !== originalApplicationId) {
+        throw new HttpsError("failed-precondition", "제안과 계약이 일치하지 않습니다.");
+      }
+
       // 5-1. TOCTOU 방지: 원본 상태 트랜잭션 내 재확인
       const freshSnap = await tx.get(originalRef);
       if (!freshSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
@@ -32052,6 +32687,11 @@ export const callableCreateContractRenewal = onCall(
       // 5-3. 신규 application 생성 (confirmedAt/appliedAt/createdAt: serverTimestamp)
       const newData: Record<string, unknown> = {
         ...freshData,
+        // ── 근로자가 수락한 것은 **제안**이다 ──────────────────────
+        //   지금 공고를 다시 읽어 약속을 재구성하지 않는다. 제안을 보낸
+        //   뒤 공고가 바뀌었어도, 근로자가 본 조건과 저장되는 조건은
+        //   같아야 한다.
+        ...srvRenewalPromiseSnapshot(freshProposal),
         workDate: admin.firestore.Timestamp.fromMillis(newStartDateMs),
         workEndDate: admin.firestore.Timestamp.fromMillis(newEndDateMs),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -32124,9 +32764,24 @@ export const callableCreateContractRenewal = onCall(
       tx.set(newRef, newData);
 
       // 5-4. 원본 renewalDecision=EXTEND + renewedToApplicationId 기록
+      //
+      //   [RENEWAL-PROPOSAL-COMMITMENT] EXTEND 는 **여기서만** 적는다.
+      //   제안을 보낸 시점에 적으면 "갱신 성립"이라는 기존 의미가
+      //   "관리자 의사"로 바뀌어, 이 값을 읽는 다섯 곳(.4B 세 화면 ·
+      //   D-0 스케줄러 · 해지요청 mutex)이 모두 다른 말을 하게 된다.
       tx.update(originalRef, {
         renewalDecision: "EXTEND",
         renewedToApplicationId: newApplicationId,
+        renewalProposalId: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // 5-5. 제안을 같은 트랜잭션에서 닫는다.
+      tx.update(proposalRef, {
+        status: "ACCEPTED",
+        newApplicationId,
+        respondedByUid: callerUid,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
@@ -32137,6 +32792,12 @@ export const callableCreateContractRenewal = onCall(
     });
 
     // [R8-P3B.2 §20] 연장은 이미 커밋됐다 — 알림 실패가 되돌리지 않는다.
+    try {
+      await srvNotifyRenewalResponse(
+        {businessId, oldApplicationId: originalApplicationId}, callerUid, true);
+    } catch (e) {
+      console.error("⚠️ [renewalAccepted] 알림 실패 (수락은 완료됨):", e);
+    }
     try {
       const bizSnapRenew =
         await db.collection("businesses").doc(businessId).get();
@@ -43201,10 +43862,29 @@ async function srvHomeExpiringContract(
       "resignStatus", "renewalDecision", "workDays")
     .get();
 
+  // ── [RENEWAL-PROPOSAL-COMMITMENT] 응답 대기는 관리자의 할 일이 아니다 ──
+  //
+  //   관리자는 이미 결정하고 제안을 보냈다. 그 건을 계속 "계약 확인 필요"
+  //   로 세면, 같은 일을 또 하라는 말이 된다.
+  //
+  //   Waiting ≠ Manager Action Required.
+  //
+  //   제안이 거절·철회·대체되거나 효력일이 지나면(derived STALE) 다시
+  //   관리자의 결정이 필요하므로 자동으로 이 목록에 돌아온다.
+  const candidateIds = snap.docs
+    .filter((d) => d.data()["renewalDecision"] == null)
+    .map((d) => d.id);
+  //   판정 시각은 **지금**이다. todayMs(KST 자정)를 쓰면 오늘 아침
+  //   근무 시작이 지나 이미 수락할 수 없게 된 제안을 여전히 응답 대기로
+  //   세어, 관리자 화면에서 그 건이 사라진 채로 남는다.
+  const waitingWorker =
+    await srvOldAppsWithActiveProposal(candidateIds, new Date());
+
   let upcoming = 0;
   let expired = 0;
   for (const doc of snap.docs) {
     const d = doc.data();
+    if (waitingWorker.has(doc.id)) continue;
     const isLong = d["type"] === "long_term" ||
       (Array.isArray(d["workDays"]) && (d["workDays"] as string[]).length > 0);
     if (!isLong) continue;

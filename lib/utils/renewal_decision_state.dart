@@ -129,6 +129,33 @@ bool needsRenewalDecision(ApplicationModel app, DateTime today) {
   return s == RenewalDecisionState.upcoming || s == RenewalDecisionState.expired;
 }
 
+/// [RENEWAL-PROPOSAL-COMMITMENT] 관리자가 지금 할 일이 남아 있는가.
+///
+/// 연장 제안을 이미 보냈다면 관리자는 할 일을 했다 — 기다리는 중이다.
+/// 그 건을 계속 "계약 확인 필요"로 세면 같은 일을 또 하라는 말이 된다.
+///
+///     Waiting  ≠  Manager Action Required
+///
+/// [activeProposalOldAppIds] 는 **지금 응답 가능한**(derived PENDING)
+/// 제안이 걸린 원본 지원서 id 들이다. 거절·철회·대체되거나 효력일이
+/// 지나면 여기서 빠지므로 자동으로 다시 관리자의 할 일이 된다.
+bool needsManagerRenewalAction(
+  ApplicationModel app,
+  DateTime today,
+  Set<String> activeProposalOldAppIds,
+) =>
+    needsRenewalDecision(app, today) &&
+    !activeProposalOldAppIds.contains(app.id);
+
+/// 이 관계가 근로자의 응답을 기다리는 중인가.
+bool isWaitingWorkerRenewalResponse(
+  ApplicationModel app,
+  DateTime today,
+  Set<String> activeProposalOldAppIds,
+) =>
+    needsRenewalDecision(app, today) &&
+    activeProposalOldAppIds.contains(app.id);
+
 /// 지난 일수. 만료 건에서만 의미가 있다(양수 = 며칠 지났다).
 int? renewalOverdueDays(ApplicationModel app, DateTime today) {
   if (renewalDecisionStateOf(app, today) != RenewalDecisionState.expired) {

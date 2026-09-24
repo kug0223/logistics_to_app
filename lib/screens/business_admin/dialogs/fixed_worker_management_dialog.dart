@@ -99,6 +99,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 연장으로 만들어진 계약의 **실제** 기간을 읽기 위한 것이다 —
   /// 다시 계산하지 않는다.
   Map<String, ApplicationModel> _renewedApps = const {};
+
+  /// [RENEWAL-PROPOSAL-COMMITMENT] 근로자의 응답을 기다리는 원본 지원서.
+  ///
+  ///   관리자는 이미 제안을 보냈다 — 이 건들은 "결정 필요"가 아니라
+  ///   "응답 대기"다. Waiting ≠ Manager Action Required.
+  Set<String> _waitingProposalOldAppIds = const {};
   
   // 사업장 선택
   String? _selectedBusinessId;
@@ -143,7 +149,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   List<_FixedWorkerItem> get _expiringWorkers {
     final today = FormatHelper.toKstDate(DateTime.now());
     return _fixedWorkers
-        .where((item) => needsRenewalDecision(item.application, today))
+        .where((item) => needsManagerRenewalAction(
+            item.application, today, _waitingProposalOldAppIds))
         .toList();
   }
 
@@ -262,6 +269,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final allApps = await appsFuture;
 
+    // [RENEWAL-PROPOSAL-COMMITMENT] 근로자의 응답을 기다리는 건.
+    //   읽지 못한 것을 "제안 없음"으로 말하면 관리자가 같은 제안을
+    //   또 보내게 된다 — 실패하면 던진다.
+    final waitingProposals =
+        (await _firestoreService.getPendingRenewalProposals(businessId))
+            .where((p) => p.isActionableAt(DateTime.now()))
+            .map((p) => p.oldApplicationId)
+            .toSet();
+
       // 기본 필터: 장기 확정자 중 퇴사/해지 완료 제외
       final allFiltered = allApps.where((app) {
         if (!(app.status == AppStatus.confirmed || app.status == AppStatus.contractPending)) return false;
@@ -364,6 +380,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             if (a.renewedFromApplicationId != null)
               a.renewedFromApplicationId!: a,
         };
+        _waitingProposalOldAppIds = waitingProposals;
       });
 
       // [5B.3B] applicationId 우선 포커스 → uid fallback
@@ -1105,7 +1122,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
               //   예전 지역 판정은 diff >= 0 이라 종료일이 지나는 순간
               //   배너가 꺼졌다. action 은 살아 있는데 신호만 사라진 것이다.
-              if (!_isDateMode && needsRenewalDecision(app, FormatHelper.toKstDate(DateTime.now())))
+              //   제안을 보낸 뒤에는 "응답 대기"다 — 관리자에게 같은
+              //   결정을 또 하라고 말하지 않는다.
+              if (!_isDateMode &&
+                  _waitingProposalOldAppIds.contains(app.id))
+                _buildWaitingProposalBanner(context),
+              if (!_isDateMode &&
+                  needsManagerRenewalAction(
+                      app,
+                      FormatHelper.toKstDate(DateTime.now()),
+                      _waitingProposalOldAppIds))
                 _buildRenewalBanner(context, app, item.user),
 
               // 계약 갱신 결정 완료 배너 (날짜 모드 포함 항상 표시)
@@ -1362,12 +1388,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     try {
       final period =
           defaultRenewalPeriod(app, FormatHelper.toKstDate(DateTime.now()));
-      await _firestoreService.createRenewedApplication(
-        original: app,
-        newStartDate: period.start,
-        newEndDate: period.end,
+      // [RENEWAL-PROPOSAL-COMMITMENT] 일괄 연장도 **제안**이다.
+      //   한 사람이 수락했다고 다른 사람까지 약속이 생기지 않는다.
+      await _firestoreService.createRenewalProposal(
+        oldApplicationId: app.id,
+        effectiveStart: period.start,
+        effectiveEnd: period.end,
       );
-      // [R8-P3B.2] 연장 알림은 callableCreateContractRenewal 가 보낸다.
       return true;
     } catch (e) {
       debugPrint('❌ 계약 연장 실패 (${app.uid}): $e');
@@ -1376,7 +1403,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   /// [PERM-CONTRACT-DEADEND-01] 계약 연장은 canManageContract 액션 —
-  /// callableCreateContractRenewal이 서버에서 동일 권한을 강제한다.
+  /// callableCreateRenewalProposal이 서버에서 동일 권한을 강제한다.
   /// BUSINESS_ADMIN은 UserProvider.can()이 항상 true.
   bool _canManageContract() =>
       _canForThisBiz((p) => p.canManageContract);
@@ -1449,6 +1476,38 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   //   지역 판정 `_isExpiringWithinDays` 는 삭제됐다. 화면마다 자기 날짜
   //   조건을 들고 있으면 같은 사람을 두고 서로 다른 말을 한다.
   //   판정은 renewal_decision_state.dart 한 곳에 있다.
+
+  /// [RENEWAL-PROPOSAL-COMMITMENT] 관리자는 이미 제안을 보냈다.
+  ///
+  ///   할 일이 아니라 **상태**다. 정보로만 말한다.
+  Widget _buildWaitingProposalBanner(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.hourglass_empty,
+              size: ResponsiveHelper.iconSize(context, 13),
+              color: AppColors.info),
+          SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+          Flexible(
+            child: Text('연장 응답 대기 — 근무자가 제안을 확인하고 있습니다',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.info)),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildRenewalBanner(BuildContext context, ApplicationModel app, UserModel? user) {
     // needsRenewalDecision()은 actualResignDate ?? workEndDate로 판단하므로
@@ -1701,33 +1760,38 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
       final newStart = period.start;
       final newEnd = period.end;
-      final confirmMessage = period.isLate
-          ? '${user?.nameWithPersonNo ?? ''}님의 기존 계약기간이 종료되었습니다.\n\n'
-              '새 계약 기간: ${newStart.month}/${newStart.day} ~ '
-              '${newEnd.month}/${newEnd.day} (${period.months}개월)\n'
-              '계약 시작일부터 새로운 근무 일정이 적용됩니다.\n\n'
-              '연장 후 근로계약서 작성 화면이 열립니다.'
-          : '${user?.nameWithPersonNo ?? ''}님의 계약을 ${period.months}개월 연장합니다.\n\n'
-              '새 계약 기간: ${newStart.month}/${newStart.day} ~ '
-              '${newEnd.month}/${newEnd.day}\n\n'
-              '연장 후 근로계약서 작성 화면이 열립니다.';
+      // [RENEWAL-PROPOSAL-COMMITMENT] 이 버튼은 **제안**을 보낸다.
+      //   근로자가 수락해야 새 계약 절차가 시작된다. 그때까지 좌석도
+      //   근무 일정도 생기지 않는다.
+      final days = (app.workDays ?? const <String>[]).join(' · ');
+      final wageText =
+          FormatHelper.formatWageWithType(app.wage, app.wageType ?? 'hourly');
+      final confirmMessage = [
+        '${user?.nameWithPersonNo ?? ''}님에게 계약 연장을 제안합니다.',
+        if (period.isLate) '기존 계약기간이 종료되었습니다.',
+        '',
+        '새 계약 기간  ${newStart.month}/${newStart.day} ~ '
+            '${newEnd.month}/${newEnd.day} (${period.months}개월)',
+        '업무          ${app.selectedWorkType}',
+        if (days.isNotEmpty) '근무요일      $days',
+        '근무시간      ${app.startTime} ~ ${app.endTime}',
+        '임금          $wageText',
+        '',
+        '근무자가 연장 제안을 수락하면 새 계약 절차가 시작됩니다.',
+      ].join('\n');
 
       final confirm = await DialogHelper.showConfirm(
         context,
-        title: period.isLate ? '새 계약 시작' : '계약 연장',
+        title: '계약 연장 제안',
         message: confirmMessage,
-        confirmText: '연장 및 계약서 작성',
+        confirmText: '연장 제안 보내기',
         confirmColor: AppColors.success,
         icon: Icons.autorenew,
         iconColor: AppColors.success,
       );
       if (confirm != true || !mounted) return;
 
-      final newApp = await _processRenewal(app, user,
-          newStartDate: newStart, newEndDate: newEnd);
-      if (newApp != null && mounted) {
-        await _createContractForRenewal(newApp, user);
-      }
+      await _sendRenewalProposal(app, newStart, newEnd);
     } else {
       // 종료: 확인 후 처리
       final confirm = await DialogHelper.showConfirm(
@@ -1772,56 +1836,48 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     return renewalPeriodFrom(app, picked, isLate: true);
   }
 
-  Future<ApplicationModel?> _processRenewal(
+  /// [RENEWAL-PROPOSAL-COMMITMENT] 연장 **제안**을 보낸다.
+  ///
+  ///   예전에는 여기서 새 계약(CONTRACT_PENDING)을 바로 만들고 계약서
+  ///   작성 화면까지 열었다. 근로자는 아직 아무 말도 하지 않았는데
+  ///   좌석과 출근 의무가 생겼다.
+  ///
+  ///   이제 보내는 것은 제안 하나뿐이다. 계약서는 근로자가 수락한 뒤
+  ///   기존 계약 파이프라인에서 만든다 — 그 흐름은 바꾸지 않았다.
+  Future<void> _sendRenewalProposal(
     ApplicationModel app,
-    UserModel? user, {
-    required DateTime newStartDate,
-    required DateTime newEndDate,
-  }) async {
-    // [FC-FW-PERM] canManageWorkers guard — 계약 연장도 인력 관리 권한 필요
+    DateTime effectiveStart,
+    DateTime effectiveEnd,
+  ) async {
     if (!_canForThisBiz((p) => p.canManageWorkers)) {
       ToastHelper.showWarning('인력 관리 권한이 없습니다.');
-      return null;
+      return;
     }
-    // [PERM-CONTRACT-DEADEND-01] 계약 연장은 서버(callableCreateContractRenewal)가
-    // canManageContract를 요구하는 계약 액션이다. 클라이언트 가드를 정렬해
-    // 템플릿 선택 시트까지 진입한 뒤 거부되는 dead-end를 차단한다.
     if (!_canManageContract()) {
       ToastHelper.showWarning(
           '계약 연장 권한이 없습니다.\n계약 관리 권한이 있는 관리자에게 요청해주세요.');
-      return null;
+      return;
     }
-    if (!mounted || isLoading) return null;
+    if (!mounted || isLoading) return;
     setLoading(true);
     try {
-      // 1. 신규 계약 생성 + 원본 renewalDecision=EXTEND 표시 (배치로 원자 처리)
-      // createRenewedApplication 내부에서 원본 문서 업데이트까지 배치로 처리하므로
-      // 여기서 별도로 updateApplicationFields(renewalDecision)를 호출하면 안 됨.
-      // [LATE-RENEW-EFFECTIVE-DATE-POLICY]
-      //   시작일은 호출자가 정책 helper 로 정한 값을 그대로 쓴다.
-      //   여기서 다시 `workEndDate + 1일` 을 만들면 만료 뒤 연장이
-      //   조용히 과거로 돌아간다 — 그게 이 BLOCKER 였다.
-      final newApp = await _firestoreService.createRenewedApplication(
-        original: app,
-        newStartDate: newStartDate,
-        newEndDate: newEndDate,
+      await _firestoreService.createRenewalProposal(
+        oldApplicationId: app.id,
+        effectiveStart: effectiveStart,
+        effectiveEnd: effectiveEnd,
       );
-
-      // 2. 연장 알림 — [R8-P3B.2] callableCreateContractRenewal 가 보낸다.
-      //   연장 문서를 만든 뒤 알림 callable 을 다시 부르면, 근무자가 반드시
-      //   알아야 할 사실의 통지가 관리자 앱의 생존에 달린다.
-
-      if (mounted) {
-        _loadFixedWorkers();
-        widget.onChanged();
-      }
-      return newApp;
+      if (!mounted) return;
+      ToastHelper.showSuccess('연장 제안을 보냈습니다. 근무자의 응답을 기다립니다');
+      _loadFixedWorkers();
+      widget.onChanged();
     } catch (e) {
-      debugPrint('❌ 계약 연장 실패: $e');
-      if (mounted) ToastHelper.showError('계약 연장에 실패했습니다');
-      return null;
+      debugPrint('❌ 연장 제안 실패: $e');
+      if (mounted) {
+        ToastHelper.showError(
+            e.toString().replaceFirst('Exception: ', ''));
+      }
     } finally {
-      setLoading(false);
+      if (mounted) setLoading(false);
     }
   }
 
@@ -2132,18 +2188,36 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   const Divider(height: 1, color: AppColors.border),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
 
-                  // 계약 연장
+                  // 계약 연장 제안
+                  // [RENEWAL-PROPOSAL-COMMITMENT] 버튼 이름이 하는 일과
+                  //   같아야 한다 — 이것은 제안이고, 약속은 근무자가
+                  //   수락할 때 성립한다.
                   _buildActionItem(
                     context,
                     icon: Icons.autorenew,
-                    title: '계약 연장',
-                    subtitle: '계약 기간을 연장합니다',
+                    title: '계약 연장 제안',
+                    subtitle: '근무자가 수락하면 새 계약 절차가 시작됩니다',
                     color: AppColors.success,
                     onTap: () {
                       Navigator.pop(context);
                       WidgetsBinding.instance.addPostFrameCallback((_) => _showRenewalDecisionDialog(app, user, extend: true));
                     },
                   ),
+
+                  // 수락된 연장 계약의 계약서 작성 — 기존 파이프라인 그대로.
+                  if (app.status == AppStatus.contractPending)
+                    _buildActionItem(
+                      context,
+                      icon: Icons.draw_outlined,
+                      title: '근로계약서 작성',
+                      subtitle: '서명 후 근무자에게 발송됩니다',
+                      color: AppColors.info,
+                      onTap: () {
+                        Navigator.pop(context);
+                        WidgetsBinding.instance.addPostFrameCallback(
+                            (_) => _createContractForRenewal(app, user));
+                      },
+                    ),
 
                   // 계약 만료 후 종료
                   // [FC-FW-TERM-RACE] terminationStatus==PENDING 시 숨김 — 두 종료 경로 동시 진행 차단

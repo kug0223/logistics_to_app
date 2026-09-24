@@ -43,6 +43,8 @@ import '../../utils/calendar_helper.dart';
 import 'income_detail_screen.dart';
 import '../auth/pass_auth_recovery_screen.dart';
 import '../../services/payroll_correction_service.dart';
+import '../../models/core/renewal_proposal_model.dart';
+import 'renewal_proposal_screen.dart';
 
 // ── 지원자 홈 화면 ────────────────────────────────────────────────
 class UserHomeScreen extends StatefulWidget {
@@ -275,6 +277,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   DocumentCorrectionSurface _correctionSurface =
       DocumentCorrectionSurface.empty;
   bool _correctionsLoaded = false;
+
+  /// [RENEWAL-PROPOSAL-COMMITMENT] 지금 응답할 수 있는 연장 제안.
+  ///
+  ///   출처는 제안 문서다 — 알림을 읽거나 지워도 할 일은 남는다.
+  List<RenewalProposalModel> _renewalProposals = const [];
+  bool _renewalProposalsLoaded = false;
   // 첫 조회 완료 전(LOADING)에는 아무것도 그리지 않는다.
   // 대부분의 사용자는 요청이 0건이라 skeleton을 두면 빈 자리만 깜빡인다.
   bool _idRequestsLoaded = false;
@@ -449,6 +457,26 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           _correctionSurface = s;
           _correctionsLoaded = true;
         });
+      }));
+
+      // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안은 **근로자가 할 일**이다.
+      //
+      //   관리자가 제안을 보내면 근로자가 수락하거나 거절해야 새 기간이
+      //   정해진다. 알림을 읽거나 지워도 그 일은 사라지지 않는다 —
+      //   출처는 알림이 아니라 제안 문서다.
+      //
+      //   실패를 "제안 없음"으로 바꾸지 않는다: 못 읽었으면 카드를
+      //   숨기고 다음 조회를 기다린다. 없는 할 일을 지어내지도 않는다.
+      unawaited(_appFirestore.getMyRenewalProposals().then((list) {
+        if (!mounted) return;
+        final now = DateTime.now();
+        setState(() {
+          _renewalProposals =
+              list.where((p) => p.isActionableAt(now)).toList();
+          _renewalProposalsLoaded = true;
+        });
+      }).catchError((Object e) {
+        debugPrint('⚠️ [연장제안] 홈 조회 실패: $e');
       }));
 
       // 지원 내역은 홈의 숫자를 만드는 축이다 — 그것만 오류 상태로 올린다.
@@ -790,6 +818,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         // Priority Card 계산에는 참여하지 않는다 (Hero 우선순위 불변).
         // 상대방이 기다리는 요청이므로 자기 서류 준비(아래)보다 위에 둔다.
         _buildIdRequestCard(context, s, up),
+        // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 — 사업장이 근로자의
+        //   대답을 기다리고 있다. 서류 보완보다 위에 둔다.
+        _buildRenewalProposalCard(context, s),
         // [PII-DOC-R1.6.1] 서류 보완 할 일 — 이미 일한 급여가 막혀 있을 수
         //   있으므로 지원 준비보다 위에 둔다.
         _buildCorrectionTaskCard(context, s),
@@ -2195,6 +2226,90 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///
   ///   지급이 막힌 건은 이미 일한 대가가 멈춰 있다는 뜻이므로 가장 먼저
   ///   보여준다. 금액이 사라진 것은 아니라는 말도 함께 한다.
+  /// [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 할 일 카드.
+  ///
+  ///   source 는 알림이 아니라 제안 문서다. 알림을 읽거나 지워도, 앱을
+  ///   다시 켜도 수락/거절하기 전까지 이 카드는 남는다.
+  Widget _buildRenewalProposalCard(BuildContext context, double s) {
+    if (!_renewalProposalsLoaded) return const SizedBox.shrink();
+    if (_renewalProposals.isEmpty) return const SizedBox.shrink();
+    final first = _renewalProposals.first;
+    final more = _renewalProposals.length - 1;
+    const accent = AppColors.success;
+    final start = FormatHelper.toKstDate(first.effectiveStart);
+    final end = FormatHelper.toKstDate(first.effectiveEnd);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      child: GestureDetector(
+        onTap: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  RenewalProposalScreen(focusProposalId: first.id),
+            ),
+          );
+          if (mounted) _loadHomeData();
+        },
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.30)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38 * s,
+                height: 38 * s,
+                decoration:
+                    const BoxDecoration(color: accent, shape: BoxShape.circle),
+                child: Icon(Icons.autorenew,
+                    size: 20 * s, color: Colors.white),
+              ),
+              SizedBox(width: 12 * s),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      more > 0 ? '계약 연장 제안 ${more + 1}건' : '계약 연장 제안',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 3 * s),
+                    Text(
+                      '${first.businessName} · '
+                      '${start.month}/${start.day}~${end.month}/${end.day}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              const Text('확인하기',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: accent)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCorrectionTaskCard(BuildContext context, double s) {
     if (!_correctionsLoaded) return const SizedBox.shrink();
     // 조회 실패는 "할 일 없음"이 아니다 — 다만 없는 할 일을 지어내지도

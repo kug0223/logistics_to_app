@@ -388,7 +388,7 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('08. 계약 연장', () {
     test('08-a 연장은 기존 계약 수정이 아니라 새 Application 생성이다', () {
-      final r = _after(cf, 'export const callableCreateContractRenewal', 9000);
+      final r = _after(cf, 'export const callableAcceptRenewalProposal', 9500);
       expect(r.contains('const newRef = db.collection("applications").doc();'),
           true);
       expect(r.contains('renewedFromApplicationId: originalApplicationId'), true);
@@ -396,7 +396,7 @@ void main() {
     });
 
     test('08-b 원본은 기간이 바뀌지 않고 역참조만 남는다', () {
-      final r = _after(cf, 'export const callableCreateContractRenewal', 9000);
+      final r = _after(cf, 'export const callableAcceptRenewalProposal', 9500);
       final i = r.indexOf('tx.update(originalRef, {');
       expect(i, greaterThan(-1));
       final seg = r.substring(i, i + 300);
@@ -412,13 +412,13 @@ void main() {
       // 막아서 같은 날짜가 통과했고, 그 하루가 원본과 갱신 양쪽의
       // 근무일이 됐다(DEV 실측: 그 날 좌석 2건).
       //   경계 자체는 longterm_renewal_boundary_test 가 고정한다.
-      final r = _after(cf, 'export const callableCreateContractRenewal', 7668);
+      final r = _after(cf, 'export const callableAcceptRenewalProposal', 9500);
       expect(r.contains('갱신 계약 시작일은 원본 계약 종료일 다음 날부터여야 합니다.'), true);
       expect(r.contains('if (newStartNum <= originalEndNum) {'), true);
     });
 
     test('08-d 새 계약은 임금 집계와 휴무·추가근무를 물려받지 않는다', () {
-      final r = _after(cf, 'export const callableCreateContractRenewal', 9000);
+      final r = _after(cf, 'export const callableAcceptRenewalProposal', 9500);
       for (final f in [
         'wageStatus: "pending"',
         'finalWage: null',
@@ -470,7 +470,7 @@ void main() {
     });
 
     test('09-d 퇴사 승인된 근무자는 연장되지 않는다', () {
-      final r = _after(cf, 'export const callableCreateContractRenewal', 9000);
+      final r = _after(cf, 'export const callableAcceptRenewalProposal', 9500);
       expect(r.contains('퇴사가 승인된 근무자의 계약은 연장할 수 없습니다.'), true);
       expect(r.contains('계약 해지가 승인된 근무자의 계약은 연장할 수 없습니다.'), true);
     });

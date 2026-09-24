@@ -89,7 +89,7 @@ void main() {
       '"renewalDecision", "==", "TERMINATE"',
     ));
     manualRenewal =
-        _codeOf(_callableBody(source, 'callableCreateContractRenewal'));
+        _codeOf(_callableBody(source, 'callableAcceptRenewalProposal'));
   });
 
   // ───────────────────────────────────────────────────────────

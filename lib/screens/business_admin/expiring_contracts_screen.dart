@@ -88,12 +88,21 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
             fromDate: todayOnly,
           );
 
+          // [RENEWAL-PROPOSAL-COMMITMENT] 이미 제안을 보낸 건은 관리자가
+          //   지금 할 일이 아니다. 거절·철회·대체되거나 시작일이 지나면
+          //   다시 결정이 필요해지므로 자동으로 목록에 돌아온다.
+          final waiting = (await _svc.getPendingRenewalProposals(bizId))
+              .where((p) => p.isActionableAt(today))
+              .map((p) => p.oldApplicationId)
+              .toSet();
+
           // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
           //   `diff >= 0` 이라 종료일이 지나는 순간 그 사람이 사라졌다.
           //   결정은 아직 남아 있는데 신호만 꺼진 것이다.
           //   이제 Home 과 같은 하나의 판정식을 쓴다.
           final inWindow = apps
-              .where((app) => needsRenewalDecision(app, todayOnly))
+              .where((app) =>
+                  needsManagerRenewalAction(app, todayOnly, waiting))
               .toList()
             ..sort((a, b) => compareRenewalUrgency(a, b, todayOnly));
 

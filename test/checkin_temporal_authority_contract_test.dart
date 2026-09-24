@@ -231,14 +231,14 @@ void main() {
 
     test('TA-52 조퇴는 실제 근무 상태로 남는다 — scheduled end 이전이라고 막지 않는다', () {
       final out = _sliceOf(raw, 'export const callableCheckOut = onCall(',
-          'export const callableCreateContractRenewal');
+          'export const callableAcceptRenewalProposal');
       expect(_flat(_codeOf(out)), contains('status = "early_leave"'));
     });
 
     test('TA-53 원본 punch 는 반올림으로 덮이지 않는다', () {
       expect(flat, contains('originalCheckIn: admin.firestore.Timestamp.fromDate(now)'));
       final out = _sliceOf(raw, 'export const callableCheckOut = onCall(',
-          'export const callableCreateContractRenewal');
+          'export const callableAcceptRenewalProposal');
       expect(_flat(_codeOf(out)), contains('if (data.originalCheckOut == null)'));
     });
   });

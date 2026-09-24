@@ -11,6 +11,7 @@ import '../../providers/user_provider.dart';
 // 네비게이션 대상 화면들
 import '../user/my_applications_screen.dart';
 import '../user/my_schedule_screen.dart';
+import '../user/renewal_proposal_screen.dart';
 import '../user/user_contracts_screen.dart';
 import '../user/dialogs/my_requests_dialog.dart';
 import '../business_admin/jobs_root_screen.dart';
@@ -966,6 +967,22 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
         break;
 
+      case NotificationType.renewalProposal:
+        // [RENEWAL-PROPOSAL-COMMITMENT] 정확히 그 제안으로 간다 —
+        //   일반 계약 목록만 열면 어디에 답해야 할지 근로자가 찾아야 한다.
+        //   제안의 현재 상태는 화면이 다시 읽는다(payload 는 과거다).
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => RenewalProposalScreen(
+              focusProposalId: notification.data?['proposalId'] as String?,
+            ),
+          ),
+        );
+        break;
+
+      case NotificationType.renewalAccepted:
+      case NotificationType.renewalDeclined:
       case NotificationType.contractRenewed:
       case NotificationType.contractTerminating:
         // CF screen='mySchedule' — 갱신/종료 후 남은 근무 일정 확인 (FCMService와 동일)

@@ -89,7 +89,7 @@ void main() {
       // 창이 넓으면 다음 함수(callableCloseTOManually)가 섞여 들어와
       // '연장이 공고를 건드리지 않는다' 같은 단언이 거짓으로 깨진다.
       // 실측 길이(주석 제외) 7,668자.
-      _after(cf, 'export const callableCreateContractRenewal', 7668);
+      _after(cf, 'export const callableAcceptRenewalProposal', 9500);
 
   final dMinus1 = _d(2026, 9, 25); // 금
   final d = _d(2026, 9, 28); // 월 — OLD 종료일
@@ -279,10 +279,16 @@ void main() {
       );
     });
 
-    test('04-e 연장 권한은 canManageContract 다', () {
-      expect(renew.contains('assertBizAdmin(callerUid, businessId)'), true);
-      expect(renew.contains('memberPermsForRenewal.canManageContract'), true);
-      expect(renew.contains('계약 관리 권한이 없습니다.'), true);
+    test('04-e 관리자 연장 권한은 canManageContract 다', () {
+      // [RENEWAL-PROPOSAL-COMMITMENT] 관리자의 계약 권한은 **제안** writer
+      //   가 강제한다. 수락 writer 의 주체는 근로자 본인이므로 그쪽에는
+      //   관리자 권한 검사가 없다 — 대신 본인 확인이 있다.
+      final propose =
+          _after(cf, 'export const callableCreateRenewalProposal', 3000);
+      expect(propose.contains('assertBizAdmin(callerUid, businessId)'), true);
+      expect(propose.contains('perms.canManageContract'), true);
+      expect(propose.contains('계약 관리 권한이 없습니다.'), true);
+      expect(renew.contains('본인의 계약만 연장할 수 있습니다.'), true);
     });
 
     test('04-f 클라이언트 가드도 같은 capability 다', () {

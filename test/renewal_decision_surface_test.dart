@@ -253,7 +253,7 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('05. 하나의 판정식', () {
     test('05-a 만료 화면이 공용 판정식을 쓴다', () {
-      expect(expiring.contains('needsRenewalDecision(app, todayOnly)'), true);
+      expect(expiring.contains('needsManagerRenewalAction(app, todayOnly, waiting)'), true);
       expect(expiring.contains('compareRenewalUrgency(a, b, todayOnly)'), true);
       // 자체 날짜 조건이 남아 있지 않다.
       expect(expiring.contains('diff >= 0 && diff <= _daysWindow'), false);
@@ -265,11 +265,7 @@ void main() {
     });
 
     test('05-c 배너가 만료 후에도 뜬다', () {
-      expect(
-        fixedWorker.contains(
-            'needsRenewalDecision(app, FormatHelper.toKstDate(DateTime.now()))'),
-        true,
-      );
+      expect(fixedWorker.contains('needsManagerRenewalAction('), true);
       // 예전 게이트(diff >= 0)가 배너를 끄던 자리.
       expect(
         fixedWorker.contains(

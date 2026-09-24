@@ -2029,47 +2029,130 @@ extension ApplicationFirestore on FirestoreService {
     await _firestore.collection('applications').doc(applicationId).update(fields);
   }
 
-  /// 계약 연장: 기존 Application 기반으로 새 Application 생성
-  ///
-  /// [M7-FIX] callableCreateContractRenewal CF 이전
-  /// - confirmedAt/appliedAt/contractVoidedAt: serverTimestamp() 강제
-  /// - TOCTOU 방지: 트랜잭션 내 원본 상태 재확인 (이중 연장 차단)
-  /// - 알림은 각 호출부(_executeExtend, _processRenewal)에서 발송
-  Future<ApplicationModel> createRenewedApplication({
-    required ApplicationModel original,
-    required DateTime newStartDate,
-    required DateTime newEndDate,
+  // [RENEWAL-PROPOSAL-COMMITMENT] `createRenewedApplication` 은 삭제됐다.
+  //
+  //   그 메서드는 관리자 혼자 새 계약(CONTRACT_PENDING)을 만들었다.
+  //   그런데 그 상태는 좌석이 있고 출근할 수 있고 결근 대상이 되는
+  //   상태다 — 근로자는 아직 아무 말도 하지 않았는데.
+  //
+  //   이제 관리자는 `createRenewalProposal` 로 **제안**만 하고, 약속은
+  //   근로자가 `acceptRenewalProposal` 로 수락할 때 성립한다.
+  //   서버의 옛 callable 은 남아 있되 거절한다 — 구버전 앱이 조용히
+  //   우회하는 것보다 이유를 말해 주는 편이 낫다.
+
+  // ── [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 ────────────────────────
+  //
+  //   `createRenewedApplication` 은 관리자 혼자 새 계약을 만들었다.
+  //   이제 관리자는 **제안**만 하고, 약속은 근로자가 수락할 때 성립한다.
+
+  Future<String> createRenewalProposal({
+    required String oldApplicationId,
+    required DateTime effectiveStart,
+    required DateTime effectiveEnd,
+    String? supersedeProposalId,
   }) async {
-    NetworkChecker.instance.assertOnline('계약 연장 중 네트워크 연결이 필요합니다.');
-    GlobalLoadingController.show('계약 연장 중...');
+    NetworkChecker.instance.assertOnline('연장 제안 중 네트워크 연결이 필요합니다.');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableCreateContractRenewal',
+          .httpsCallable('callableCreateRenewalProposal',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call({
-        'originalApplicationId': original.id,
-        'newStartDateMs': newStartDate.millisecondsSinceEpoch,
-        'newEndDateMs': newEndDate.millisecondsSinceEpoch,
+      final r = await callable.call({
+        'oldApplicationId': oldApplicationId,
+        'effectiveStartMs': effectiveStart.millisecondsSinceEpoch,
+        'effectiveEndMs': effectiveEnd.millisecondsSinceEpoch,
+        if (supersedeProposalId != null)
+          'supersedeProposalId': supersedeProposalId,
       });
-      final data = (result.data as Map<dynamic, dynamic>?) ?? {};
-      final newApplicationId = data['newApplicationId'] as String? ?? '';
-      if (newApplicationId.isEmpty) throw Exception('계약 연장 응답에 지원서 ID가 없습니다.');
-      // CF 완료 후 신규 application 문서 fetch
-      final newDoc = await _firestore
-          .collection('applications')
-          .doc(newApplicationId)
-          .get();
-      if (!newDoc.exists) throw Exception('계약 연장 후 지원서를 찾을 수 없습니다.');
-      if (original.toId != null) clearCache(toId: original.toId!);
-      // [BUG-H1 수정 2026-07-14] fromMap → tryFromFirestore (CLAUDE.md tryFromFirestore 패턴 적용)
-      // 기존: fromMap 직접 호출 → 필드 누락/타입 불일치 시 Exception → 계약 연장 기능 중단
-      final parsed = ApplicationModel.tryFromFirestore(newDoc);
-      if (parsed == null) throw Exception('계약 연장 후 지원서 파싱에 실패했습니다.');
-      return parsed;
+      final data = (r.data as Map<dynamic, dynamic>?) ?? {};
+      final id = data['proposalId'] as String? ?? '';
+      if (id.isEmpty) throw Exception('연장 제안 응답에 제안 ID가 없습니다.');
+      return id;
     } on FirebaseFunctionsException catch (e) {
-      throw Exception(e.message ?? '계약 연장 중 오류가 발생했습니다.');
+      throw Exception(e.message ?? '연장 제안 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// 관리자: 이 사업장에서 응답을 기다리는 제안.
+  ///
+  /// 실패를 "제안 없음"으로 바꾸지 않는다 — 그러면 이미 보낸 제안을
+  /// 관리자가 또 보내게 된다.
+  Future<List<RenewalProposalModel>> getPendingRenewalProposals(
+      String businessId) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetRenewalProposalsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final r = await callable.call<Map<String, dynamic>>({
+      'businessId': businessId,
+    });
+    return ((r.data['proposals'] as List?) ?? [])
+        .whereType<Map>()
+        .map((m) {
+          final raw = _cfHydrate(Map<String, dynamic>.from(m));
+          final id = raw.remove('id') as String? ?? '';
+          return RenewalProposalModel.tryFromMap(raw, id);
+        })
+        .whereType<RenewalProposalModel>()
+        .toList();
+  }
+
+  /// 근로자: 내가 응답해야 할 제안.
+  Future<List<RenewalProposalModel>> getMyRenewalProposals() async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetMyRenewalProposals',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final r = await callable.call<Map<String, dynamic>>({});
+    return ((r.data['proposals'] as List?) ?? [])
+        .whereType<Map>()
+        .map((m) {
+          final raw = _cfHydrate(Map<String, dynamic>.from(m));
+          final id = raw.remove('id') as String? ?? '';
+          return RenewalProposalModel.tryFromMap(raw, id);
+        })
+        .whereType<RenewalProposalModel>()
+        .toList();
+  }
+
+  /// 근로자 수락 — 여기서 약속이 성립한다.
+  Future<String> acceptRenewalProposal(String proposalId) async {
+    NetworkChecker.instance.assertOnline('연장 수락 중 네트워크 연결이 필요합니다.');
+    GlobalLoadingController.show('연장 수락 중...');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableAcceptRenewalProposal',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final r = await callable.call({'proposalId': proposalId});
+      final data = (r.data as Map<dynamic, dynamic>?) ?? {};
+      return data['newApplicationId'] as String? ?? '';
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? '연장 수락 중 오류가 발생했습니다.');
     } finally {
       GlobalLoadingController.hide();
+    }
+  }
+
+  /// 근로자 거절 — 해지도 퇴사도 아니다. 기존 계약은 종료일까지 유지된다.
+  Future<void> declineRenewalProposal(String proposalId) async {
+    NetworkChecker.instance.assertOnline('연장 거절 중 네트워크 연결이 필요합니다.');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableDeclineRenewalProposal',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      await callable.call({'proposalId': proposalId});
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? '연장 거절 중 오류가 발생했습니다.');
+    }
+  }
+
+  /// 관리자 철회 — 근로자가 이미 수락했으면 실패한다.
+  Future<void> cancelRenewalProposal(String proposalId) async {
+    NetworkChecker.instance.assertOnline('제안 철회 중 네트워크 연결이 필요합니다.');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelRenewalProposal',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      await callable.call({'proposalId': proposalId});
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? '제안 철회 중 오류가 발생했습니다.');
     }
   }
 

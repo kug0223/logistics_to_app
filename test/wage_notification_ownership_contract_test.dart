@@ -53,9 +53,11 @@ void main() {
   final retroHelper = _codeOf(_sliceOf(fn,
       'async function srvNotifyRetroactiveDeduction(',
       'export const callableCalculateAndConfirmWage = onCall('));
+  // [RENEWAL-PROPOSAL-COMMITMENT] 연장 알림은 이제 근로자가 수락한 뒤에
+  //   나간다 — 알림의 주인이 서버라는 사실은 그대로다.
   final renewHelper = _codeOf(_sliceOf(fn,
       'async function srvNotifyContractRenewed(',
-      'export const callableCreateContractRenewal = onCall('));
+      'export const callableCreateRenewalProposal = onCall('));
 
   final wageDialog = _codeOf(
       _read('lib/screens/business_admin/dialogs/wage_confirm_dialog.dart'));
@@ -106,7 +108,7 @@ void main() {
     });
 
     test('CN3-22 계약 연장은 연장 CF 가 알린다', () {
-      final renew = _codeOf(_cfBody(fn, 'callableCreateContractRenewal'));
+      final renew = _codeOf(_cfBody(fn, 'callableAcceptRenewalProposal'));
       expect(_flat(renew), contains('await srvNotifyContractRenewed({'));
       expect(_flat(renewHelper), contains('type: "contractRenewed"'));
       expect(_flat(renewHelper), contains('screen: "mySchedule"'));
