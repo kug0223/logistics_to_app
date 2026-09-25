@@ -89,10 +89,8 @@ void main() {
     });
 
     test('T-02 actualResignDate = terminationEffectiveDate (D 를 확정한다)', () {
-      expect(
-        approve.contains('actualResignDate:\n          terminationEffectiveDate ??'),
-        isTrue,
-      );
+      // [.5-PATCH.1] fallback 이 제거되면서 D 를 **그대로** 복사한다.
+      expect(approve.contains('actualResignDate: terminationEffectiveDate,'), isTrue);
     });
 
     test('T-03 status 를 CANCELED 로 바꾸지 않는다', () {
@@ -124,6 +122,128 @@ void main() {
 
     test('T-09 요청자 자기승인 차단이 남아 있다', () {
       expect(approve.contains('requestedBy === callerUid'), isTrue);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // [.5-PATCH.1] MISSING-D FAIL-CLOSED
+  //
+  //   `terminationEffectiveDate ?? serverTimestamp()` 는 D 를 모를 때
+  //   **승인을 누른 순간**을 마지막 근무일로 만들었다. 모르는 값을
+  //   그럴듯한 정상값으로 바꾼 것이다 — UNKNOWN ≠ 추론된 정상값.
+  group('§2–8 종료일이 없으면 승인하지 않는다', () {
+    // 측정된 실제 span: callableApproveTermination → callableApproveResignation
+    final approve = _after(cf, 'callableApproveTermination = onCall', 7050);
+
+    test('P1-01 D 가 없으면 failed-precondition 으로 닫힌다', () {
+      expect(approve.contains('if (!terminationEffectiveDate) {'), isTrue);
+      expect(approve.contains('"failed-precondition"'), isTrue);
+    });
+
+    test('P1-02 §30 timestamp fallback 리터럴이 사라졌다', () {
+      expect(
+        approve.contains(
+            'terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp()'),
+        isFalse,
+      );
+    });
+
+    test('P1-03 D 를 그대로 복사한다 — 재계산하지 않는다', () {
+      expect(approve.contains('actualResignDate: terminationEffectiveDate,'), isTrue);
+    });
+
+    test('P1-04 §5 today / requestedAt+N / workEndDate 로 보정하지 않는다', () {
+      final guardToWrite = approve.substring(
+        approve.indexOf('if (!terminationEffectiveDate) {'),
+        approve.indexOf('actualResignDate: terminationEffectiveDate,'),
+      );
+      expect(guardToWrite.contains('Date.now()'), isFalse);
+      expect(guardToWrite.contains('workEndDate'), isFalse);
+      expect(guardToWrite.contains('24 * 60 * 60 * 1000'), isFalse);
+    });
+
+    test('P1-05 §29 guard 가 모든 write 앞에 있다 — 상태 변화 0', () {
+      expect(
+        approve.indexOf('if (!terminationEffectiveDate) {') <
+            approve.indexOf('tx.update(appRef'),
+        isTrue,
+      );
+    });
+
+    test('P1-06 신분증 창 단축도 근사치를 쓰지 않는다', () {
+      expect(approve.contains('terminationEffectiveDate.toMillis()'), isTrue);
+      expect(approve.contains('?? Date.now()'), isFalse);
+    });
+
+    test('P1-07 §7 legacy malformed 문서를 조용히 복구하지 않는다', () {
+      // 승인이 실패해야 데이터 문제가 드러난다 — 로그만 남긴다.
+      expect(approve.contains('terminationEffectiveDate 없음 — 승인 거부'), isTrue);
+    });
+
+    test('P1-08 §6 D 의 writer 는 요청 경로다 (회귀)', () {
+      final req = _after(cf, 'callableRequestTermination = onCall', 9200);
+      expect(req.contains('terminationEffectiveDate: terminationDate'), isTrue);
+    });
+
+    test('P1-09 §4 manual/auto 가 같은 fail-closed 정책을 쓴다', () {
+      final auto = _after(cf, 'const pendingTerminationSnap', 1450);
+      expect(auto.contains('if (!d3Effective)'), isTrue);
+      expect(approve.contains('if (!terminationEffectiveDate) {'), isTrue);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // [.5-PATCH.1] BUSINESS-SCOPED EXIT SESSION
+  //
+  //   종료되는 것은 한 사업장과의 근무 관계인데, revokeRefreshTokens 는
+  //   ALfit 계정 전체의 세션을 끊는다. 범위가 다르다.
+  group('§9–20 종료는 계정 세션 사건이 아니다', () {
+    final tr = _after(cf, 'async function processExitEffectiveTransition', 11350);
+
+    test('P1-10 §32 효력 전환이 계정 세션을 끊지 않는다', () {
+      expect(tr.contains('revokeRefreshTokens'), isFalse);
+    });
+
+    test('P1-11 실패 재시도 큐에도 넣지 않는다', () {
+      expect(tr.contains('pending_token_revocations'), isFalse);
+    });
+
+    test('P1-12 §15 퇴사·해지 모두 동일하다 — 한쪽만 남기지 않았다', () {
+      // 공용 전환이므로 exitKind 분기 안에도 세션 조작이 없다.
+      expect(tr.contains('admin.auth()'), isFalse);
+    });
+
+    test('P1-13 §21 관계 종료 책임은 그대로 남아 있다', () {
+      expect(tr.contains('status: "CANCELED"'), isTrue);
+      expect(tr.contains('confirmedDecrementedAt'), isTrue);
+      expect(tr.contains('voidablePendingStatuses'), isTrue);
+    });
+
+    test('P1-14 §33 계정 보안 경로의 무효화는 보존됐다', () {
+      // 블랙리스트(계정 정지) · 비밀번호 재설정 · 본인 세션 무효화
+      expect(cf.contains('export const callableBlacklistUser'), isTrue);
+      final bl = _after(cf, 'callableBlacklistUser = onCall', 3000);
+      expect(bl.contains('revokeRefreshTokens'), isTrue);
+
+      final pw = _after(cf, 'resetPasswordWithCode', 4000);
+      expect(pw.contains('revokeRefreshTokens'), isTrue);
+
+      final self = _after(cf, 'export const revokeUserSession', 600);
+      expect(self.contains('revokeRefreshTokens'), isTrue);
+    });
+
+    test('P1-15 §16 종료된 관계의 접근은 authorization 이 막는다', () {
+      // check-in: 소유권 · businessId · 확정상태 · 마지막 근무일
+      final ci = _after(cf, 'export const callableCheckIn', 4000);
+      expect(ci.contains('appData.businessId !== businessId'), isTrue);
+      expect(ci.contains('confirmedStatuses.includes(appData.status'), isTrue);
+      expect(ci.contains('actualResignDate'), isTrue);
+    });
+
+    test('P1-16 §18 다른 사업장 관계를 건드리지 않는다', () {
+      // 전환이 쓰는 대상은 이 Application 과 그 TO/slot/계약서뿐이다.
+      expect(tr.contains('collection("users")'), isFalse);
+      expect(tr.contains('subAdminBusinessIds'), isFalse);
     });
   });
 
@@ -235,8 +355,13 @@ void main() {
       expect(tr.contains('cancelReason: `\${exitKind}_EFFECTIVE`'), isTrue);
     });
 
-    test('T-27 §11 세션 무효화는 D+1 로 옮겨졌다', () {
-      expect(tr.contains('revokeRefreshTokens'), isTrue);
+    test('T-27 §11 승인 시점에 세션을 끊지 않는다', () {
+      // [.5-PATCH] 승인 → D+1 이동. [.5-PATCH.1] D+1 에서도 제거 —
+      //   종료는 사업장 관계 사건이지 계정 세션 사건이 아니다.
+      //   자세한 단정은 P1-10~P1-16.
+      final approveWindow =
+          _after(cf, 'callableApproveTermination = onCall', 7050);
+      expect(approveWindow.contains('revokeRefreshTokens'), isFalse);
     });
 
     test('T-28 §54 D 이전 실제 근태는 건드리지 않는다 — strict > 만 absent', () {

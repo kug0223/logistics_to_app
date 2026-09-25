@@ -3438,19 +3438,23 @@ async function processExitEffectiveTransition(now: Timestamp): Promise<void> {
           }
         }
 
-        // [TOKEN_REVOKE_AT_EFFECTIVE_D1] attendance 정리 후 Auth 토큰 무효화
-        // (TX commit 이후 + attendance 완료 후 실행 — critical state commit 이후 best-effort)
-        try {
-          await admin.auth().revokeRefreshTokens(app.uid as string);
-        } catch (tokenErr) {
-          console.warn(`[종료 D+1] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
-          await db.collection("pending_token_revocations").doc(app.uid as string).set({
-            uid: app.uid,
-            reason: `${exitKind}_EFFECTIVE`,
-            applicationId: doc.id,
-            failedAt: now,
-          }).catch(() => {/* 기록 실패는 무시 */});
-        }
+        // [EXIT-SESSION-SCOPE] 여기서 계정 세션을 끊지 않는다.
+        //
+        //   이 자리에는 revokeRefreshTokens(app.uid) 가 있었다. 그런데 종료되는
+        //   것은 **한 사업장과의 근무 관계**이고, refresh token revoke 는
+        //   ALfit **계정 전체**의 사건이다. 범위가 다르다.
+        //
+        //   A 사업장 계약이 끝났다고 B 사업장에서 여전히 근무 중인 사람의
+        //   세션까지 끊으면, 아무 일도 없던 관계가 함께 로그아웃된다.
+        //   사업장이 하나뿐인 사람에게도 보통의 퇴사·해지는 계정 정지가 아니다.
+        //
+        //   종료된 관계의 접근은 authorization 이 막는다 — Application.status
+        //   = CANCELED, check-in 의 소유권·businessId·확정상태·actualResignDate
+        //   게이트, worker-day resolver 의 AFTER_RESIGN, 승인 시 이미 수행되는
+        //   SubAdmin 권한 회수. 로그아웃은 authorization rule 이 아니다.
+        //
+        //   계정 전역 무효화는 실제 계정 보안 사건에만 남는다 —
+        //   블랙리스트 등록, 비밀번호 재설정, 본인 세션 무효화.
 
         // [STARVATION-SAFE] 출근기록 정리 완료 마커 — null→serverTimestamp 전환으로 재시도 쿼리에서 제외
         await doc.ref.update({
@@ -23260,6 +23264,29 @@ export const callableApproveTermination = onCall(
 
       const terminationEffectiveDate =
         (d.terminationEffectiveDate as admin.firestore.Timestamp | null) ?? null;
+      // [MISSING-D-FAIL-CLOSED] 종료일을 모르면 승인하지 않는다.
+      //
+      //   여기에는 `terminationEffectiveDate ?? serverTimestamp()` 가 있었다.
+      //   D 가 없으면 **승인을 누른 순간**이 마지막 근무일이 됐다 — 모르는 값을
+      //   그럴듯한 정상값으로 바꾼 것이다. UNKNOWN ≠ 추론된 정상값.
+      //
+      //   D 를 정하는 writer 는 요청 경로(callableRequestTermination)다.
+      //   승인은 이미 저장된 D 에 **응답**하는 writer지 날짜를 만드는 writer 가
+      //   아니다. 자동 승인 경로도 같은 이유로 이미 보류한다 — 응답 방식만
+      //   다르고 날짜를 추론하지 않는 정책은 같다.
+      //
+      //   과거 malformed 문서(PENDING 인데 D 없음)도 여기서 조용히 고치지
+      //   않는다. 승인이 실패해야 데이터 문제가 드러난다.
+      if (!terminationEffectiveDate) {
+        console.error(
+          "[approveTermination] terminationEffectiveDate 없음 — 승인 거부: " +
+          `app=${applicationId} biz=${businessId}`);
+        throw new HttpsError(
+          "failed-precondition",
+          "계약해지 예정일이 없어 승인할 수 없습니다. " +
+          "해지 요청을 다시 등록해주세요."
+        );
+      }
       resolvedData = {
         toId: (d.toId as string | null) ?? null,
         slotId: (d.slotId as string | null) ?? null,
@@ -23285,14 +23312,12 @@ export const callableApproveTermination = onCall(
         terminationStatus: "APPROVED",
         terminationRespondedAt: admin.firestore.FieldValue.serverTimestamp(),
         terminationApprovedBy: callerUid,
-        actualResignDate:
-          terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp(),
+        actualResignDate: terminationEffectiveDate,
       });
       // [DS-08B.4] 해지 효력일 기준으로 신분증 접근 창 단축 (동일 TX).
-      // terminationEffectiveDate가 없으면 serverTimestamp로 즉시 종료되므로
-      // 그 근사치인 현재 시각을 기준으로 삼는다.
-      const termResignMs =
-        terminationEffectiveDate?.toMillis() ?? Date.now();
+      //   위 fail-closed guard 를 지난 이상 D 는 반드시 있다 — 근사치를
+      //   쓰던 fallback 도 함께 없앴다.
+      const termResignMs = terminationEffectiveDate.toMillis();
       const termShortened = shortenedPreConsentExpiry(
         termGrantSnap, termResignMs);
       if (termShortened) {
