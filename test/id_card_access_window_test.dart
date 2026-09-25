@@ -133,7 +133,8 @@ void main() {
       // "클라이언트가 표시한 버전"을 해석해 쓰도록 바꿨다.
       expect(code.contains('const DOCUMENT_ACCESS_CONSENT_V2 = "$_v2"'), isTrue);
       final apply = _codeOf(_callableBody(source, 'callableApplyToTO'));
-      expect(apply.contains('resolveDocumentAccessConsentVersion('), isTrue);
+      // [DOC-S1A.3] 해석은 그대로 payload 기준이되, 버전이 비면 거절한다.
+      expect(apply.contains('srvResolveCommitmentConsentVersion('), isTrue);
       final writes = 'resolvedConsentVersion'.allMatches(apply).length;
       expect(writes, greaterThanOrEqualTo(3),
           reason: '해석 1곳 + 신규 지원 기록 + 재지원 기록');

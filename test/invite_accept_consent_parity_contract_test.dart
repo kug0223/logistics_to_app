@@ -154,12 +154,17 @@ void main() {
     });
 
     test('버전은 지원 경로와 같은 resolver로 검증한다', () {
+      // [DOC-S1A.3] 같은 resolver 를 쓰되, 약속을 만드는 경로라서
+      //   "버전 없음"까지 거절하는 wrapper 를 쓴다. 지원 경로와 동일하다.
       expect(
           accept.contains('const acceptConsentVersion = '
-              'resolveDocumentAccessConsentVersion( acceptDocConsentVersionRaw, '
+              'srvResolveCommitmentConsentVersion( acceptDocConsentVersionRaw, '
               'acceptDocConsentGiven);'),
           true,
           reason: '미지원 버전을 조용히 최신으로 치환하지 않는다');
+      expect(accept.contains('resolveDocumentAccessConsentVersion( '
+          'acceptDocConsentVersionRaw'), false,
+          reason: '추론하는 resolver 를 직접 부르면 버전 없는 동의가 다시 생긴다');
     });
 
     test('동의를 CONFIRMED와 같은 트랜잭션에 쓴다', () {

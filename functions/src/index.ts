@@ -17539,6 +17539,41 @@ function resolveDocumentAccessConsentVersion(
   return raw;
 }
 
+/**
+ * [DOC-S1A.3] **약속을 만드는 writer** 전용 — 명시적 버전을 요구한다.
+ *
+ *   resolveDocumentAccessConsentVersion 은 "버전 없음 + given=true"를 v1 으로
+ *   기록한다. 그것은 기록 규칙이지 증거가 아니다. 서버는 그 요청이 정말 v1
+ *   문구를 보고 왔는지 알 방법이 없고, 저장되고 나면 명시적 v1 과 구분되지
+ *   않는다. read 쪽은 DOC-S1A.2 에서 막았지만 write 쪽이 남아 있었다.
+ *
+ *   그래서 지원·초대수락·재배치수락처럼 **좌석·계약·동의 자격을 만드는**
+ *   경로에서는 버전을 추론하지 않는다. 없으면 거절한다.
+ *
+ *   구 클라이언트를 조용히 최신 버전으로 올려주지 않는다 — 사용자가 보지
+ *   않은 문구에 동의한 것으로 만드는 일이기 때문이다. 업데이트를 요구한다.
+ *
+ *   resolveDocumentAccessConsentVersion 자체는 그대로 둔다(§5).
+ *
+ * @param {string|undefined} raw 클라이언트가 보낸 버전
+ * @param {boolean} given 동의 여부
+ * @return {string | null} 기록할 버전. 동의하지 않았으면 null.
+ */
+function srvResolveCommitmentConsentVersion(
+  raw: string | undefined, given: boolean
+): string | null {
+  if (!given) return null;
+  if (raw === undefined || raw === null) {
+    throw new HttpsError(
+      "failed-precondition",
+      "서류 접근 동의 문구의 버전이 확인되지 않았습니다. " +
+      "앱을 최신 버전으로 업데이트해주세요."
+    );
+  }
+  // 미지원·변조 버전 거절은 기존 규칙을 그대로 쓴다.
+  return resolveDocumentAccessConsentVersion(raw, given);
+}
+
 // [PII-B4-R1] isDocumentAccessConsentV2 제거 — v2 한정 grant 분기가 없어졌다.
 
 // [PII-B4-R1] calcPreConsentIdCardExpiryMs 제거 — 만들 grant가 없다.
@@ -33724,9 +33759,12 @@ export const callableApplyToTO = onCall(
     const desiredStartDateMs = data.desiredStartDateMs ?? null;
     const idCardConsentGiven = data.idCardConsentGiven === true; // [ID-CONSENT]
     // [DS-08B.5] 기록할 동의 버전 = 사용자가 실제로 본 문구의 버전.
-    const resolvedConsentVersion = resolveDocumentAccessConsentVersion(
+    // [DOC-S1A.3] 이 경로는 좌석·동의 자격을 만든다 — 버전을 추론하지 않는다.
+    //   저장부가 documentAccessConsentGiven: true 를 무조건 쓰므로,
+    //   여기서 막지 않으면 버전 없는 "동의함" 행이 생긴다.
+    const resolvedConsentVersion = srvResolveCommitmentConsentVersion(
       data.documentAccessConsentVersion,
-      data.documentAccessConsentGiven === true
+      true
     );
 
     if (!toId || typeof toId !== "string" || toId.trim() === "") {
@@ -36265,7 +36303,9 @@ export const callableAcceptTOInvitation = onCall(
     }
     const acceptDocConsentGiven = acceptDocConsentRaw === true;
     // 미지원·변조 버전을 조용히 최신으로 치환하지 않는다(지원 경로와 같은 규칙).
-    const acceptConsentVersion = resolveDocumentAccessConsentVersion(
+    // [DOC-S1A.3] 초대 수락은 확정이다 — 버전 없는 동의로 좌석을 만들지 않는다.
+    //   여기서 던지면 초대는 INVITED 로 남고 카운터도 움직이지 않는다.
+    const acceptConsentVersion = srvResolveCommitmentConsentVersion(
       acceptDocConsentVersionRaw, acceptDocConsentGiven);
 
     const appRef  = db.collection("applications").doc(applicationId);
@@ -37668,8 +37708,9 @@ export const callableAcceptConfirmedReassignment = onCall(
       throw new HttpsError("invalid-argument", "proposalId가 필요합니다.");
     }
     const crDocConsent = crDocConsentRaw === true;
+    // [DOC-S1A.3] 재배치 수락도 확정 관계를 만든다 — 같은 규칙.
     const crConsentVersion =
-      resolveDocumentAccessConsentVersion(crDocVersionRaw, crDocConsent);
+      srvResolveCommitmentConsentVersion(crDocVersionRaw, crDocConsent);
 
     const acProposalRef = db.collection(CR_PROPOSAL_COL).doc(proposalId);
     const acProposalSnap = await acProposalRef.get();

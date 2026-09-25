@@ -257,11 +257,24 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('DS08B5 서버 계약', () {
     test('서버가 클라이언트 payload를 source로 쓴다', () {
+      // [DOC-S1A.3] source 는 여전히 클라이언트 payload 다. 달라진 것은
+      //   payload 에 버전이 없을 때다 — v1 으로 짐작하지 않고 거절한다.
       expect(
-        applyToTO.contains('resolveDocumentAccessConsentVersion(') &&
+        applyToTO.contains('srvResolveCommitmentConsentVersion(') &&
             applyToTO.contains('data.documentAccessConsentVersion'),
         isTrue,
       );
+    });
+
+    test('[DOC-S1A.3] 버전 없는 payload를 v1으로 짐작하지 않는다', () {
+      expect(applyToTO.contains('resolveDocumentAccessConsentVersion( '
+          'data.documentAccessConsentVersion'), isFalse,
+          reason: '추론 resolver 직접 호출이 남아 있으면 안 된다');
+      final w = _codeOf(_between(source,
+          'function srvResolveCommitmentConsentVersion',
+          'return resolveDocumentAccessConsentVersion(raw, given);'));
+      expect(w.contains('throw new HttpsError('), isTrue,
+          reason: '버전이 없으면 던져야 한다');
     });
 
     test('서버 최신 상수를 무조건 기록하지 않는다', () {

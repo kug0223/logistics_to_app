@@ -369,6 +369,92 @@ void main() {
           reason: '버전 없음·미지원 버전은 기본 기준점 없이 닫힌다');
     });
 
+    test('S1A-30w [DOC-S1A.3] 약속 writer 는 명시적 버전을 요구한다', () {
+      final h = _after(code, 'function srvResolveCommitmentConsentVersion', 700);
+      expect(h.contains('if (!given) return null'), isTrue,
+          reason: '동의하지 않으면 기록도 자격도 없다');
+      expect(RegExp(r'raw === undefined[\s\S]{0,200}?throw new HttpsError')
+          .hasMatch(h), isTrue,
+          reason: '버전 없음은 추론하지 않고 거절한다');
+      expect(h.contains('resolveDocumentAccessConsentVersion(raw, given)'),
+          isTrue, reason: '미지원 버전 거절은 기존 규칙 재사용');
+    });
+
+    test('S1A-31w [DOC-S1A.3] 세 commitment writer 가 그 술어를 쓴다', () {
+      for (final f in [
+        'export const callableApplyToTO',
+        'callableAcceptTOInvitation',
+        'CR_PROPOSAL_COL',
+      ]) {
+        final i = code.indexOf(f);
+        expect(i, greaterThan(-1), reason: f);
+      }
+      // resolver 직접 호출은 wrapper 정의 안에만 남아야 한다.
+      final direct = RegExp(r'(?<!srvResolveCommitmentConsentVersion\()'
+          r'\bresolveDocumentAccessConsentVersion\(')
+          .allMatches(code).length;
+      expect(direct, lessThanOrEqualTo(2),
+          reason: '정의 1 + wrapper 내부 1 외에 직접 호출이 남으면 안 된다');
+      expect(
+        RegExp(r'srvResolveCommitmentConsentVersion\(').allMatches(code).length,
+        greaterThanOrEqualTo(4),
+        reason: '정의 1 + 호출 3 (지원·초대수락·재배치수락)',
+      );
+    });
+
+    test('S1A-32w [DOC-S1A.3] 자격을 만들기 **전에** 막는다', () {
+      // 지원 경로: 버전 판정이 좌석 트랜잭션보다 앞에 있어야 한다.
+      //   함수가 길어 창을 넉넉히 잡는다 — 다음 export 전까지.
+      final start = code.indexOf('export const callableApplyToTO');
+      expect(start, greaterThan(-1));
+      final next = code.indexOf('\nexport const ', start + 10);
+      final a = code.substring(start, next > 0 ? next : code.length);
+      final gate = a.indexOf('srvResolveCommitmentConsentVersion');
+      final tx = a.indexOf('runTransaction');
+      expect(gate, greaterThan(-1), reason: '지원 경로에 gate 가 없다');
+      expect(tx, greaterThan(-1), reason: '좌석 트랜잭션을 찾지 못했다');
+      expect(tx, greaterThan(gate),
+          reason: '좌석 트랜잭션 이전에 거절되어야 한다');
+    });
+
+    test('S1A-33w [DOC-S1A.3] 세 저장부가 모두 "동의함"을 못박는다', () {
+      // 이게 이 패치의 전제다. 저장부가 given 을 무조건 true 로 쓰기 때문에
+      //   버전만 비면 "버전 없는 동의" 행이 남는다 — DEV 에 실제로 2건 있었다.
+      //   그래서 세 경로 모두 버전을 요구해야 한다.
+      for (final f in <String>[
+        'export const callableApplyToTO',
+        'export const callableAcceptTOInvitation',
+        'export const callableAcceptConfirmedReassignment',
+      ]) {
+        final s = code.indexOf(f);
+        expect(s, greaterThan(-1), reason: f);
+        final n = code.indexOf('\nexport const ', s + 10);
+        final body = code.substring(s, n > 0 ? n : code.length);
+        expect(body.contains('documentAccessConsentGiven: true'), isTrue,
+            reason: '$f 저장부가 동의를 못박지 않는다면 전제가 바뀐 것이다');
+      }
+    });
+
+    test('S1A-34w [DOC-S1A.3] 두 수락 경로는 미동의를 먼저 거절한다', () {
+      // 지원 경로는 given 을 true 로 고정해 넘기지만, 수락 두 경로는
+      //   raw given 을 그대로 넘긴다. 그래도 안전한 이유는 미동의를
+      //   좌석 확정 전에 거절하기 때문이다 — 그 가드를 고정한다.
+      for (final f in <String>[
+        'export const callableAcceptTOInvitation',
+        'export const callableAcceptConfirmedReassignment',
+      ]) {
+        final s = code.indexOf(f);
+        final n = code.indexOf('\nexport const ', s + 10);
+        final body = code.substring(s, n > 0 ? n : code.length);
+        expect(
+          body.contains('동의해야 초대를 수락할 수 있습니다') ||
+              body.contains('동의해야 변경을 수락할 수 있습니다'),
+          isTrue,
+          reason: '$f 에 미동의 거절이 없다',
+        );
+      }
+    });
+
     test('S1A-29 [DOC-S1A.2] resolve 규칙 자체는 그대로 둔다', () {
       // 기록 규칙을 전역으로 바꾸면 다른 legacy 호환 경로가 깨진다.
       expect(code.contains('function resolveDocumentAccessConsentVersion'),
