@@ -2450,13 +2450,19 @@ function srvIdWindowOpen(
   app: FirebaseFirestore.DocumentData, nowMs: number
 ): boolean {
   const v = app["documentAccessConsentVersion"] as string | undefined;
-  const anchoredToLastWorkDay =
-    v === DOCUMENT_ACCESS_CONSENT_V2 || v === DOCUMENT_ACCESS_CONSENT_V3;
 
-  const base = anchoredToLastWorkDay ?
-    srvIdWindowLastWorkDay(app) :
-    // v1·legacy 는 확정일이 기준이다. 확정 전이면 창 자체가 없다.
-    ((app["confirmedAt"] as admin.firestore.Timestamp | undefined) ?? null);
+  let base: admin.firestore.Timestamp | null;
+  if (v === DOCUMENT_ACCESS_CONSENT_V2 || v === DOCUMENT_ACCESS_CONSENT_V3) {
+    base = srvIdWindowLastWorkDay(app);
+  } else if (v === DOCUMENT_ACCESS_CONSENT_V1) {
+    // v1 은 확정일이 기준이다. 확정 전이면 창 자체가 없다.
+    base =
+      (app["confirmedAt"] as admin.firestore.Timestamp | undefined) ?? null;
+  } else {
+    // [DOC-S1A.2] 버전 없음·미지원 버전 → 어떤 문구를 보았는지 모른다.
+    //   기본 기준점을 고르지 않는다. 호출부가 이미 걸러내지만 여기서도 닫는다.
+    return false;
+  }
 
   if (!base) return false; // NO_END / 미확정 / malformed → fail closed
   return nowMs < srvKstMidnightMsOf(base) + ID_CARD_ACCESS_WINDOW_MS;
@@ -2484,8 +2490,18 @@ async function srvHasActiveIdentityDocumentPurpose(
 ): Promise<boolean> {
   // 동의는 **목적을 만든 그 지원서**에서 본다. 다른 지원서의 동의를
   //   가져다 쓰지 않는다(srvApplicantReviewAccessBlock 과 같은 축).
-  const consented = (a: FirebaseFirestore.DocumentData) =>
-    a["documentAccessConsentGiven"] === true;
+  // [DOC-S1A.2] 원본 신분증 문에서는 **명시적으로 기록된 버전**만 근거가 된다.
+  //   `given=true` + 버전 없음을 v1 으로 읽는 것은 추론이다. 그 행이
+  //   정말 v1 문구를 보고 만들어졌다는 증거가 데이터에 없다.
+  //   민감 원본은 추론으로 열지 않는다 — 모르면 닫는다.
+  //   (resolveDocumentAccessConsentVersion 의 기록 규칙은 그대로 둔다.
+  //    다른 legacy 호환 경로가 쓰고, 여기서 바꿀 범위가 아니다.)
+  const consented = (a: FirebaseFirestore.DocumentData) => {
+    if (a["documentAccessConsentGiven"] !== true) return false;
+    const v = a["documentAccessConsentVersion"];
+    return typeof v === "string" &&
+      SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(v);
+  };
 
   // A. 활성 지원 검토 — 채용 검토 목적 열람은 v3 문구에만 있다.
   const active = await db.collection("applications")
@@ -2500,9 +2516,8 @@ async function srvHasActiveIdentityDocumentPurpose(
   })) return true;
 
   // B. 고지된 창. 재직·종료 모두 같은 식으로 판정된다.
-  //   여기는 v1/v2 도 인정한다 — 확정 후 신분증 접근창은 그 문구들이
-  //   이미 고지한 범위다(v1 확정일+7일, v2 마지막 근무일+7일).
-  //   창 길이는 srvIdWindowOpen 이 마지막 근무일 기준으로 통일한다.
+  //   v1·v2 도 인정한다 — 확정 후 신분증 접근창은 그 문구들이 이미
+  //   고지한 범위다. 다만 각자의 기준점을 쓴다(srvIdWindowOpen).
   for (const st of [
     ["CONFIRMED", "CONTRACT_PENDING"],
     ["CANCELED", "AUTO_CANCELED"],

@@ -72,6 +72,12 @@ const _v3 = '2026-09-18-v3';
 
 /// [DS-08B.4] 창의 기준점은 동의 버전마다 다르다.
 ///   v2/v3 → 마지막 근무일 · v1/legacy → 확정일
+const _supported = {_v1, _v2, _v3};
+
+/// [DOC-S1A.2] 원본 신분증 문은 **명시적으로 기록된** 지원 버전만 근거로 본다.
+bool explicitConsent({bool given = true, String? consentVersion}) =>
+    given && consentVersion != null && _supported.contains(consentVersion);
+
 DateTime? windowBase({
   String? consentVersion,
   DateTime? confirmedAt,
@@ -81,16 +87,18 @@ DateTime? windowBase({
   DateTime? workDate,
   List<String>? workDays,
 }) {
-  final anchoredToLastWorkDay =
-      consentVersion == _v2 || consentVersion == _v3;
-  if (!anchoredToLastWorkDay) return confirmedAt;
-  return idWindowLastWorkDay(
-    type: type,
-    actualResignDate: actualResignDate,
-    workEndDate: workEndDate,
-    workDate: workDate,
-    workDays: workDays,
-  );
+  if (consentVersion == _v2 || consentVersion == _v3) {
+    return idWindowLastWorkDay(
+      type: type,
+      actualResignDate: actualResignDate,
+      workEndDate: workEndDate,
+      workDate: workDate,
+      workDays: workDays,
+    );
+  }
+  if (consentVersion == _v1) return confirmedAt;
+  // 버전 없음 · 미지원 버전 → 기준점을 고르지 않는다.
+  return null;
 }
 
 /// KST 기준 시각 → UTC DateTime.
@@ -239,13 +247,36 @@ void main() {
           reason: 'v2 기준이었다면 열려 있었을 시점');
     });
 
-    test('S1A-16 버전 없는 legacy 도 확정일 기준', () {
+    // ── [DOC-S1A.2] 버전 없는 동의는 근거가 아니다 ──────────────
+    test('S1A-16 버전 없음 → 기준점 없음 → DENY', () {
       final b = windowBase(
         confirmedAt: _kst(2026, 8, 25),
         type: 'long_term',
         workEndDate: _kst(2026, 10, 31),
       );
-      expect(b, _kst(2026, 8, 25));
+      expect(b, isNull, reason: '어떤 문구를 보았는지 모르면 기준을 고르지 않는다');
+      expect(idWindowOpen(b, _kst(2026, 8, 26)), isFalse);
+      expect(explicitConsent(consentVersion: null), isFalse);
+    });
+
+    test('S1A-18 미지원 버전 → DENY', () {
+      expect(explicitConsent(consentVersion: '2026-08-v1'), isFalse,
+          reason: 'idCardConsentVersion 계열을 documentAccessConsentVersion 로 읽지 않는다');
+      expect(explicitConsent(consentVersion: '2099-01-v9'), isFalse);
+      expect(windowBase(
+        consentVersion: '2026-08-v1',
+        confirmedAt: _kst(2026, 8, 25),
+      ), isNull);
+    });
+
+    test('S1A-19 given=false 면 버전이 있어도 근거가 아니다', () {
+      expect(explicitConsent(given: false, consentVersion: _v3), isFalse);
+    });
+
+    test('S1A-19b 명시적 v1/v2/v3 는 근거가 된다', () {
+      for (final v in [_v1, _v2, _v3]) {
+        expect(explicitConsent(consentVersion: v), isTrue, reason: v);
+      }
     });
 
     test('S1A-17 v1 인데 미확정이면 창이 없다', () {
@@ -313,14 +344,38 @@ void main() {
     });
 
     test('S1A-27 [DOC-S1A.1] 창 기준점이 동의 버전에 묶여 있다', () {
-      final body = _after(code, 'function srvIdWindowOpen', 1200);
+      final body = _after(code, 'function srvIdWindowOpen', 1400);
       expect(body.contains('documentAccessConsentVersion'), isTrue,
           reason: '사용자가 본 문구의 범위를 적용해야 한다');
       expect(body.contains('DOCUMENT_ACCESS_CONSENT_V2'), isTrue);
       expect(body.contains('DOCUMENT_ACCESS_CONSENT_V3'), isTrue);
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V1'), isTrue);
       expect(body.contains('confirmedAt'), isTrue,
-          reason: 'v1·legacy 는 확정일 기준이다');
+          reason: 'v1 은 확정일 기준이다');
       expect(body.contains('srvIdWindowLastWorkDay'), isTrue);
+    });
+
+    test('S1A-28 [DOC-S1A.2] 원본 문은 명시적 버전만 근거로 본다', () {
+      final p = _after(code, 'srvHasActiveIdentityDocumentPurpose', 2400);
+      expect(
+        p.contains('SUPPORTED_DOCUMENT_ACCESS_CONSENT_VERSIONS.includes(v)'),
+        isTrue,
+        reason: 'given=true + 버전 없음을 v1 으로 추론하면 안 된다',
+      );
+      // 창 함수에도 이중 방어가 있다 — 미지원 버전은 기준점을 고르지 않는다.
+      final w = _after(code, 'function srvIdWindowOpen', 1400);
+      expect(RegExp(r'\}\s*else\s*\{[\s\S]{0,300}?return false;').hasMatch(w),
+          isTrue,
+          reason: '버전 없음·미지원 버전은 기본 기준점 없이 닫힌다');
+    });
+
+    test('S1A-29 [DOC-S1A.2] resolve 규칙 자체는 그대로 둔다', () {
+      // 기록 규칙을 전역으로 바꾸면 다른 legacy 호환 경로가 깨진다.
+      expect(code.contains('function resolveDocumentAccessConsentVersion'),
+          isTrue);
+      final r = _after(code, 'function resolveDocumentAccessConsentVersion', 700);
+      expect(r.contains('DOCUMENT_ACCESS_CONSENT_V1'), isTrue,
+          reason: '기록 시 v1 폴백은 유지 — 원본 문에서만 거부한다');
     });
 
     test('S1A-25 기준을 모르면 양쪽 술어 모두 거부한다 (fail closed)', () {
