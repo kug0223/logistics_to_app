@@ -66,6 +66,33 @@ bool idWindowOpen(DateTime? end, DateTime now) {
   return now.toUtc().millisecondsSinceEpoch < midnightKstAsUtcMs + _windowMs;
 }
 
+const _v1 = '2026-08-21-v1';
+const _v2 = '2026-09-12-v2';
+const _v3 = '2026-09-18-v3';
+
+/// [DS-08B.4] 창의 기준점은 동의 버전마다 다르다.
+///   v2/v3 → 마지막 근무일 · v1/legacy → 확정일
+DateTime? windowBase({
+  String? consentVersion,
+  DateTime? confirmedAt,
+  String? type,
+  DateTime? actualResignDate,
+  DateTime? workEndDate,
+  DateTime? workDate,
+  List<String>? workDays,
+}) {
+  final anchoredToLastWorkDay =
+      consentVersion == _v2 || consentVersion == _v3;
+  if (!anchoredToLastWorkDay) return confirmedAt;
+  return idWindowLastWorkDay(
+    type: type,
+    actualResignDate: actualResignDate,
+    workEndDate: workEndDate,
+    workDate: workDate,
+    workDays: workDays,
+  );
+}
+
 /// KST 기준 시각 → UTC DateTime.
 DateTime _kst(int y, int m, int d, [int h = 0, int mi = 0]) =>
     DateTime.utc(y, m, d, h, mi).subtract(const Duration(milliseconds: _kstMs));
@@ -174,6 +201,60 @@ void main() {
       expect(end, _kst(2026, 9, 1), reason: 'workDays 가 없으면 단기로 읽는다');
     });
 
+    // ── [DOC-S1A.1] 버전별 기준점 ──────────────────────────────
+    test('S1A-13 v2 는 마지막 근무일이 기준 — 문구 그대로', () {
+      final b = windowBase(
+        consentVersion: _v2,
+        confirmedAt: _kst(2026, 8, 25),
+        type: 'long_term',
+        workDate: _kst(2026, 9, 1),
+        workEndDate: _kst(2026, 10, 31),
+      );
+      expect(b, _kst(2026, 10, 31));
+    });
+
+    test('S1A-14 v3 도 마지막 근무일', () {
+      final b = windowBase(
+        consentVersion: _v3,
+        confirmedAt: _kst(2026, 8, 25),
+        type: 'long_term',
+        workEndDate: _kst(2026, 10, 31),
+      );
+      expect(b, _kst(2026, 10, 31));
+    });
+
+    test('S1A-15 v1 은 확정일이 기준 — 장기라도 늘어나지 않는다', () {
+      final b = windowBase(
+        consentVersion: _v1,
+        confirmedAt: _kst(2026, 8, 25),
+        type: 'long_term',
+        workDate: _kst(2026, 9, 1),
+        workEndDate: _kst(2026, 10, 31),
+      );
+      expect(b, _kst(2026, 8, 25),
+          reason: 'v1 문구는 "확정일로부터 7일간"이다');
+      // 고지하지 않은 범위로 넓어지지 않는다.
+      expect(idWindowOpen(b, _kst(2026, 9, 2)), isFalse);
+      expect(idWindowOpen(_kst(2026, 10, 31), _kst(2026, 9, 2)), isTrue,
+          reason: 'v2 기준이었다면 열려 있었을 시점');
+    });
+
+    test('S1A-16 버전 없는 legacy 도 확정일 기준', () {
+      final b = windowBase(
+        confirmedAt: _kst(2026, 8, 25),
+        type: 'long_term',
+        workEndDate: _kst(2026, 10, 31),
+      );
+      expect(b, _kst(2026, 8, 25));
+    });
+
+    test('S1A-17 v1 인데 미확정이면 창이 없다', () {
+      final b = windowBase(consentVersion: _v1, type: 'long_term',
+          workEndDate: _kst(2026, 10, 31));
+      expect(b, isNull);
+      expect(idWindowOpen(b, _kst(2026, 9, 1)), isFalse);
+    });
+
     test('S1A-12 explicit type 이 structural 추론을 이긴다', () {
       // 단기인데 workDays 를 물려받은 경우 — 공고 종료일로 늘어나면 안 된다.
       final end = idWindowLastWorkDay(
@@ -231,11 +312,25 @@ void main() {
       expect(body.contains('RESUBMITTED'), isFalse);
     });
 
-    test('S1A-25 NO_END 는 양쪽 술어 모두에서 거부된다', () {
-      expect(_after(code, 'srvIdWindowOpen', 600).contains('if (!end) return false'),
-          isTrue);
-      expect(_after(code, 'srvHasCurrentTaxIdentityPurpose', 1600)
-          .contains('if (!end) return false'), isTrue);
+    test('S1A-27 [DOC-S1A.1] 창 기준점이 동의 버전에 묶여 있다', () {
+      final body = _after(code, 'function srvIdWindowOpen', 1200);
+      expect(body.contains('documentAccessConsentVersion'), isTrue,
+          reason: '사용자가 본 문구의 범위를 적용해야 한다');
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V2'), isTrue);
+      expect(body.contains('DOCUMENT_ACCESS_CONSENT_V3'), isTrue);
+      expect(body.contains('confirmedAt'), isTrue,
+          reason: 'v1·legacy 는 확정일 기준이다');
+      expect(body.contains('srvIdWindowLastWorkDay'), isTrue);
+    });
+
+    test('S1A-25 기준을 모르면 양쪽 술어 모두 거부한다 (fail closed)', () {
+      // 이름이 아니라 동작을 고정한다 — 기준 timestamp 가 없으면 false.
+      final w = _after(code, 'function srvIdWindowOpen', 1200);
+      expect(RegExp(r'if \(!\w+\) return false;').hasMatch(w), isTrue,
+          reason: 'NO_END·미확정·malformed 는 창을 주지 않는다');
+      final t = _after(code, 'srvHasCurrentTaxIdentityPurpose', 1600);
+      expect(RegExp(r'if \(!\w+\) return false;').hasMatch(t), isTrue,
+          reason: '약속의 끝을 모르면 세무 목적을 인정하지 않는다');
     });
 
     test('S1A-26 거부 문구가 단일화돼 존재를 누설하지 않는다', () {

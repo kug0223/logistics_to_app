@@ -2415,10 +2415,32 @@ function srvIdWindowLastWorkDay(
 }
 
 /**
+ * 그 Timestamp 가 속한 KST 날짜의 자정(ms).
+ *
+ * @param {admin.firestore.Timestamp} t 기준 시각
+ * @return {number} 그 날 KST 00:00 의 epoch ms
+ */
+function srvKstMidnightMsOf(t: admin.firestore.Timestamp): number {
+  const k = new Date(t.toDate().getTime() + SRV_KST_MS);
+  k.setUTCHours(0, 0, 0, 0);
+  return k.getTime() - SRV_KST_MS;
+}
+
+/**
  * 그 지원서의 신분증 접근창이 지금 열려 있는가.
  *
- *   창 = 마지막 근무일 KST 자정 + 7일. V3 동의 문구가 고지한 범위다:
- *   "신분증은 해당 근무관계의 마지막 근무일로부터 7일 후 자동 종료".
+ *   [DS-08B.4] 창의 **기준점은 동의 버전마다 다르다.** 사용자가 보지 않은
+ *   문구의 범위를 적용하면 고지 없이 접근 기간을 늘리는 것이 된다.
+ *
+ *     v2 "2026-09-12-v2" / v3 "2026-09-18-v3"
+ *        "해당 근무관계의 마지막 근무일로부터 7일 후 자동 종료"
+ *        → 마지막 근무일 + 7일
+ *
+ *     v1 "2026-08-21-v1" / 버전 없음(legacy)
+ *        "· 신분증: 확정일로부터 7일간"
+ *        → 확정일 + 7일. 장기 근무라도 늘어나지 않는다.
+ *
+ *   7일이라는 길이는 세 버전 공통이고, 다른 것은 기준점뿐이다.
  *
  * @param {FirebaseFirestore.DocumentData} app 지원서 문서
  * @param {number} nowMs 현재 시각(ms)
@@ -2427,14 +2449,17 @@ function srvIdWindowLastWorkDay(
 function srvIdWindowOpen(
   app: FirebaseFirestore.DocumentData, nowMs: number
 ): boolean {
-  const end = srvIdWindowLastWorkDay(app);
-  if (!end) return false; // NO_END / malformed → fail closed
-  const kstMidnight = (() => {
-    const k = new Date(end.toDate().getTime() + SRV_KST_MS);
-    k.setUTCHours(0, 0, 0, 0);
-    return k.getTime() - SRV_KST_MS;
-  })();
-  return nowMs < kstMidnight + ID_CARD_ACCESS_WINDOW_MS;
+  const v = app["documentAccessConsentVersion"] as string | undefined;
+  const anchoredToLastWorkDay =
+    v === DOCUMENT_ACCESS_CONSENT_V2 || v === DOCUMENT_ACCESS_CONSENT_V3;
+
+  const base = anchoredToLastWorkDay ?
+    srvIdWindowLastWorkDay(app) :
+    // v1·legacy 는 확정일이 기준이다. 확정 전이면 창 자체가 없다.
+    ((app["confirmedAt"] as admin.firestore.Timestamp | undefined) ?? null);
+
+  if (!base) return false; // NO_END / 미확정 / malformed → fail closed
+  return nowMs < srvKstMidnightMsOf(base) + ID_CARD_ACCESS_WINDOW_MS;
 }
 
 /**
