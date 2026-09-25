@@ -2456,18 +2456,26 @@ void _runWorkforceCalendarPermTests() {
 }
 
 // ════════════════════════════════════════════════════════════
-// AI. 퇴직/계약해지 시 SubAdmin 권한 자동 제거 시뮬레이션
-//     (SEC-SUBADMIN-CLEAR — arrayRemove(businessId))
+// AI. SubAdmin 멤버십 제거 시뮬레이션 — arrayRemove(businessId) 범위
 // ════════════════════════════════════════════════════════════
+//
+// [.5-PATCH.2] 이 그룹은 원래 "퇴직/계약해지 승인 시 자동 제거"라고
+//   적혀 있었지만, 근로 종료 writer 는 더 이상 멤버십을 건드리지 않는다.
+//   멤버십 제거의 canonical writer 는 callableRemoveMember(사업장 관리자)
+//   와 callableLeaveAsSubAdmin(본인)이다.
+//
+//   이 테스트들이 실제로 지키는 invariant 는 바뀌지 않았다:
+//   arrayRemove 가 **해당 사업장만** 제거하고 다른 사업장 멤버십은
+//   건드리지 않는다는 것.
 
-/// CF SEC-SUBADMIN-CLEAR: 퇴직/계약해지 승인 시 해당 사업장 ID 제거
+/// canonical member removal 의 모델 수준 효과: 해당 사업장 ID만 제거.
 UserModel removeSubAdminBiz(UserModel user, String businessId) {
   final updated = user.subAdminBusinessIds.where((id) => id != businessId).toList();
   return user.copyWith(subAdminBusinessIds: updated);
 }
 
 void _runAutoPermissionRemovalTests() {
-  group('AI. 퇴직/계약해지 시 SubAdmin 권한 자동 제거 (SEC-SUBADMIN-CLEAR)', () {
+  group('AI. SubAdmin 멤버십 제거 — 사업장 범위', () {
     group('AI1. 단일 사업장 SubAdmin 퇴직', () {
       test('AI1-01 단일 사업장 제거 → isSubAdmin=false', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');

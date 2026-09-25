@@ -248,6 +248,169 @@ void main() {
   });
 
   // ════════════════════════════════════════════════════════════════
+  // [.5-PATCH.2] EXIT ≠ MEMBERSHIP
+  //
+  //   SubAdmin 멤버십은 근로계약에서 생기지 않는다. member_invitations
+  //   (관리자 초대) 수락으로만 만들어지고, member 문서는 invitationId 를
+  //   가리킬 뿐 applicationId 를 갖지 않는다. 서로 다른 entity 다.
+  //
+  //   그런데 종료 writer 들이 그 멤버십을 말없이 지우고 있었다. 게다가
+  //   해지 승인은 근로자 본인도 호출할 수 있어서, callableRemoveMember 가
+  //   사업장 관리자 전용으로 막아 둔 제거를 우회했다.
+  group('§3–8 근로 종료는 관리자 멤버십을 건드리지 않는다', () {
+    // 측정된 실제 span (주석 제거 기준)
+    final approveTerm = _after(cf, 'callableApproveTermination = onCall', 6200);
+    final approveResign = _after(cf, 'callableApproveResignation = onCall', 4150);
+    final autoResign =
+        _after(cf, '.where("resignRequestedAt", "<=", threeDaysAgoUTC)', 3200);
+    final autoTerm = _after(cf, 'const pendingTerminationSnap', 1450);
+    final transition =
+        _after(cf, 'async function processExitEffectiveTransition', 11350);
+
+    // mutation 마커만 본다. 호출자 **자신의** 권한 조회
+    //   (`collection("members").doc(callerUid).get()`) 는 authorization 이므로
+    //   남아 있어야 한다 — 그것까지 금지하면 권한 검증이 사라진다.
+    const forbidden = [
+      'subAdminBusinessIds',
+      'SEC-SUBADMIN-CLEAR',
+      'revokeBatch',
+      'arrayRemove',
+    ];
+
+    test('P2-01 §3 수동 해지 승인에 멤버십 변경이 없다', () {
+      for (final f in forbidden) {
+        expect(approveTerm.contains(f), isFalse, reason: f);
+      }
+    });
+
+    test('P2-02 §4 수동 퇴사 승인에 멤버십 변경이 없다', () {
+      for (final f in forbidden) {
+        expect(approveResign.contains(f), isFalse, reason: f);
+      }
+    });
+
+    test('P2-03 §5 D+3 자동 퇴사 승인에 멤버십 변경이 없다', () {
+      for (final f in forbidden) {
+        expect(autoResign.contains(f), isFalse, reason: f);
+      }
+    });
+
+    test('P2-04 §6·§39 자동 해지 승인에 멤버십 변경을 새로 넣지 않았다', () {
+      for (final f in forbidden) {
+        expect(autoTerm.contains(f), isFalse, reason: f);
+      }
+    });
+
+    test('P2-05 §7·§40 D+1 효력 전환에도 멤버십 변경이 없다', () {
+      for (final f in forbidden) {
+        expect(transition.contains(f), isFalse, reason: f);
+      }
+      // Model B(권한을 D+1 로 이동)로 가지 않았다는 확인이기도 하다.
+    });
+
+    test('P2-06 §18 legacy subAdminOf 정리도 종료 writer 가 하지 않는다', () {
+      for (final w in [approveTerm, approveResign, autoResign, autoTerm]) {
+        expect(w.contains('subAdminOf'), isFalse);
+      }
+    });
+
+    test('P2-07 §13·§29·§32 manual/auto parity — 양쪽 모두 unchanged', () {
+      // 같은 forbidden 집합이 네 경로 모두에서 부재 = 결과 동일.
+      for (final w in [approveTerm, autoTerm, approveResign, autoResign]) {
+        expect(w.contains('subAdminBusinessIds'), isFalse);
+        expect(w.contains('arrayRemove'), isFalse);
+      }
+    });
+
+    test('P2-07b 남은 members 접근은 호출자 자신의 권한 조회뿐이다', () {
+      for (final w in [approveTerm, approveResign]) {
+        final refs = w
+            .split('\n')
+            .where((l) => l.contains('collection("members")'))
+            .toList();
+        expect(refs.length, 1);
+        expect(refs.single.contains('doc(callerUid).get()'), isTrue);
+      }
+    });
+
+    test('P2-08 §15·§52 종료 성공 / 권한정리 실패 partial 경로가 사라졌다', () {
+      // post-TX db.batch() + try/catch warn 조합 자체가 없어졌다.
+      expect(cf.contains('subAdminBusinessIds 초기화 실패'), isFalse);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  group('§8·§34·§35 canonical membership writer 는 그대로다', () {
+    final removeMember = _after(cf, 'callableRemoveMember = onCall', 2300);
+    final leave = _after(cf, 'callableLeaveAsSubAdmin = onCall', 1200);
+
+    test('P2-09 §34 관리자 멤버 제거가 여전히 멤버십을 지운다', () {
+      expect(removeMember.contains('tx.delete(memberRef)'), isTrue);
+      expect(
+        removeMember.contains(
+            'subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)'),
+        isTrue,
+      );
+    });
+
+    test('P2-10 제거 권한은 사업장 관리자에 머문다 — 근로자 우회 없음', () {
+      expect(
+        removeMember.contains('해당 사업장 관리자만 멤버를 제거할 수 있습니다'),
+        isTrue,
+      );
+    });
+
+    test('P2-11 §35 본인 직책 해제가 여전히 동작한다', () {
+      expect(leave.contains('tx.delete(memberRef)'), isTrue);
+      expect(
+        leave.contains(
+            'subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)'),
+        isTrue,
+      );
+    });
+
+    test('P2-12 §1 멤버십 생성은 초대 수락이 소유한다 (회귀)', () {
+      expect(cf.contains('export const onMemberInvitationAccepted'), isTrue);
+      expect(
+        cf.contains(
+            'subAdminBusinessIds: admin.firestore.FieldValue.arrayUnion(businessId)'),
+        isTrue,
+      );
+    });
+
+    test('P2-13 §42 member 문서는 고용이 아니라 초대를 가리킨다', () {
+      final accept = _after(cf, 'tx.set(memberRef, {', 400);
+      expect(accept.contains('invitationId'), isTrue);
+      expect(accept.contains('applicationId'), isFalse);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  group('§9–17 종료 후에도 남아야 하는 것', () {
+    test('P2-14 §22·§23 종료 lifecycle 자체는 그대로다', () {
+      final approveTerm =
+          _after(cf, 'callableApproveTermination = onCall', 6200);
+      expect(approveTerm.contains('terminationStatus: "APPROVED"'), isTrue);
+      expect(approveTerm.contains('actualResignDate: terminationEffectiveDate,'), isTrue);
+      final approveResign =
+          _after(cf, 'callableApproveResignation = onCall', 4150);
+      expect(approveResign.contains('resignStatus: "APPROVED"'), isTrue);
+    });
+
+    test('P2-15 §24 exit-side 계정 세션 무효화는 여전히 없다 (.5-PATCH.1 유지)', () {
+      final transition =
+          _after(cf, 'async function processExitEffectiveTransition', 11350);
+      expect(transition.contains('revokeRefreshTokens'), isFalse);
+    });
+
+    test('P2-16 §14·§15 capability 게이트는 멤버 문서에 그대로 의존한다', () {
+      // 멤버 문서가 남으므로 canManage* 판정 경로도 그대로다.
+      expect(cf.contains('memberPerms.canManageWage'), isTrue);
+      expect(cf.contains('atPerms.canManageWorkers'), isTrue);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
   group('§49 D+3 자동 승인 — manual 과 같은 operational truth', () {
     // 측정된 span: 이 블록의 마지막 단정 대상(actualResignDate: d3Effective)이
     //   +1305 에 있고, 금지 토큰(status:"CANCELED" 등)은 +19,246 이후다.

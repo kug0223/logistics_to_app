@@ -7217,26 +7217,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         });
 
         // [DEFERRED-RESIGN] TOKEN_REVOKE_AT_EFFECTIVE_D1 — 토큰 무효화는 D+1에서 처리
-        // [SEC-SUBADMIN-CLEAR] subAdminBusinessIds 초기화 + member doc 삭제 — 퇴직 후 SubAdmin 권한 잔류 방지
-        // [1D-REVOKE-FIX] member doc 원자 삭제 → client _startMemberPermsListener data==null 감지 → _isAdminMode=false 즉시
-        try {
-          const resignWorkerSnap = await db.collection("users").doc(app.uid as string).get();
-          const resignSubAdminBusinessIds = (resignWorkerSnap.data()?.subAdminBusinessIds ?? []) as string[];
-          if (resignSubAdminBusinessIds.includes(app.businessId as string)) {
-            const revokeBatch = db.batch();
-            revokeBatch.update(db.collection("users").doc(app.uid as string), {
-              subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(app.businessId),
-              subAdminOf: admin.firestore.FieldValue.delete(),
-            });
-            revokeBatch.delete(
-              db.collection("businesses").doc(app.businessId as string)
-                .collection("members").doc(app.uid as string)
-            );
-            await revokeBatch.commit();
-          }
-        } catch (e) {
-          console.warn(`[퇴직-D+3] subAdminBusinessIds 초기화 실패 uid=${app.uid}:`, e);
-        }
+        // [EXIT-MEMBERSHIP-OWNERSHIP] 관리자 멤버십은 근로 종료가 지우지 않는다.
+        //   멤버십은 관리자 초대 수락으로만 생기는 별도 entity 다 — canonical
+        //   제거 writer 는 callableRemoveMember / callableLeaveAsSubAdmin.
 
         // [DEFERRED-RESIGN] 카운터·계약·attendance 정리는 D+1 processResignEffectiveTransition이 담당
 
@@ -23338,26 +23321,22 @@ export const callableApproveTermination = onCall(
     //   다른 사업장 관계까지 함께 끊긴다. 퇴사 경로가 이미 D+1 에서 하는 것과
     //   같은 자리로 옮긴다.
 
-    // [SEC-SUBADMIN-CLEAR] subAdminBusinessIds 초기화 + member doc 삭제 — 해지 후 SubAdmin 권한 잔류 방지
-    // [1D-REVOKE-FIX] member doc 원자 삭제 → client _startMemberPermsListener data==null 감지 → _isAdminMode=false 즉시
-    try {
-      const terminationWorkerSnap = await db.collection("users").doc(workerUid).get();
-      const terminationSubAdminBusinessIds = (terminationWorkerSnap.data()?.subAdminBusinessIds ?? []) as string[];
-      if (terminationSubAdminBusinessIds.includes(businessId)) {
-        const revokeBatch = db.batch();
-        revokeBatch.update(db.collection("users").doc(workerUid), {
-          subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId),
-          subAdminOf: admin.firestore.FieldValue.delete(),
-        });
-        revokeBatch.delete(
-          db.collection("businesses").doc(businessId)
-            .collection("members").doc(workerUid)
-        );
-        await revokeBatch.commit();
-      }
-    } catch (e) {
-      console.warn(`[해지승인] subAdminBusinessIds 초기화 실패 uid=${workerUid}:`, e);
-    }
+    // [EXIT-MEMBERSHIP-OWNERSHIP] 사업장 관리자 멤버십은 여기서 건드리지 않는다.
+    //
+    //   이 자리에는 subAdminBusinessIds arrayRemove + member doc 삭제가 있었다.
+    //   그런데 SubAdmin 멤버십은 근로계약에서 생기지 않는다 — member_invitations
+    //   (관리자 초대) 수락으로만 만들어지고, member 문서는 invitationId 를
+    //   가리킬 뿐 applicationId 를 갖지 않는다. 서로 다른 entity 다.
+    //
+    //   그래서 근로계약이 끝났다는 사실만으로 멤버십을 지우면, 한 writer 가
+    //   자기 것이 아닌 truth 를 말없이 삭제하는 셈이 된다. 게다가 이 승인은
+    //   근로자 본인도 호출할 수 있어서, callableRemoveMember 가 사업장
+    //   관리자 전용으로 막아 둔 제거를 우회했다.
+    //
+    //   멤버십을 끝내는 canonical writer 는 따로 있다:
+    //     callableRemoveMember      — 사업장 관리자가 제거
+    //     callableLeaveAsSubAdmin   — 본인이 직책 해제
+    //   종료된 사람의 관리 권한을 정리해야 한다면 그 경로로 한다.
 
     const terminationDateStr = app.terminationEffectiveDate
       ? (() => { const KST_OFFSET_MS = 9 * 60 * 60 * 1000; const dKST = new Date(app.terminationEffectiveDate!.toDate().getTime() + KST_OFFSET_MS); return `${dKST.getUTCMonth()+1}/${dKST.getUTCDate()}`; })()
@@ -23502,26 +23481,11 @@ export const callableApproveResignation = onCall(
 
     // [DEFERRED-RESIGN] TOKEN_REVOKE_AT_EFFECTIVE_D1 — 토큰 무효화는 D+1에서 처리
     // [DEFERRED-RESIGN] 카운터·계약·attendance 정리는 D+1 processResignEffectiveTransition이 담당
-    // [SEC-SUBADMIN-CLEAR] subAdminBusinessIds 초기화 + member doc 삭제 — 퇴사 후 SubAdmin 권한 잔류 방지
-    // [1D-REVOKE-FIX] member doc 원자 삭제 → client _startMemberPermsListener data==null 감지 → _isAdminMode=false 즉시
-    try {
-      const resignationWorkerSnap = await db.collection("users").doc(app.uid).get();
-      const resignationSubAdminBusinessIds = (resignationWorkerSnap.data()?.subAdminBusinessIds ?? []) as string[];
-      if (resignationSubAdminBusinessIds.includes(app.businessId as string)) {
-        const revokeBatch = db.batch();
-        revokeBatch.update(db.collection("users").doc(app.uid), {
-          subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(app.businessId),
-          subAdminOf: admin.firestore.FieldValue.delete(),
-        });
-        revokeBatch.delete(
-          db.collection("businesses").doc(app.businessId as string)
-            .collection("members").doc(app.uid)
-        );
-        await revokeBatch.commit();
-      }
-    } catch (e) {
-      console.warn(`[퇴사승인] subAdminBusinessIds 초기화 실패 uid=${app.uid}:`, e);
-    }
+    // [EXIT-MEMBERSHIP-OWNERSHIP] 관리자 멤버십은 근로 종료가 지우지 않는다.
+    //   퇴사를 승인했다는 것은 근로관계가 끝난다는 뜻이지, 이 사람이 이
+    //   사업장의 관리자가 아니게 된다는 뜻이 아니다. 두 관계는 각자의
+    //   writer 를 가진다 — canonical 제거는 callableRemoveMember /
+    //   callableLeaveAsSubAdmin.
 
     // [DEFERRED-RESIGN] attendance 정리는 D+1에서 processResignEffectiveTransition이 담당
 
