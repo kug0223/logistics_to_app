@@ -266,6 +266,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       context,
       imageUrl: url,
       title: isId ? '신분증' : '통장사본',
+      // [DOC-S1A] 신분증·통장사본 원본은 관리자 기기 disk 에 남기지 않는다.
+      //   Signed URL 은 1시간이면 만료되는데 CachedNetworkImage 가 이미지를
+      //   영구 캐시에 써 두면 만료 뒤에도 파일이 남는다. _viewBankbook 과
+      //   세무 대조 시트는 이미 같은 계약을 지키고 있었다.
+      noCache: true,
     );
   }
 

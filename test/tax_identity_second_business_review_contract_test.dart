@@ -43,7 +43,9 @@ void main() {
           'export const callableGetTaxIdentityReview',
           'async function srvValidateKoreanTaxIdentifierOrThrow(')));
       expect(rv, contains('srvAssertTaxIdentityAuthority(callerUid, businessId)'));
-      expect(rv, contains('srvHasBusinessWorkerRelationship(businessId, targetUid)'));
+      // [DOC-S1A] 관계 존재(srvHasBusinessWorkerRelationship)에서 **현재 목적**으로
+      //   좁혔다. 사업장 경계를 보는 축은 그대로다 — businessId 로 판정한다.
+      expect(rv, contains('srvHasCurrentTaxIdentityPurpose(businessId, targetUid)'));
     });
 
     test('02 권한 판정이 사업장 소속을 본다', () {

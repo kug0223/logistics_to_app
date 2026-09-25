@@ -47,8 +47,10 @@ void main() {
       _sliceOf(rawCf, 'function srvResolveTaxIdentityReview(', '\n}'));
   final authz = _codeOf(
       _sliceOf(rawCf, 'async function srvAssertTaxIdentityAuthority(', '\n}'));
+  // [DOC-S1A] srvHasBusinessWorkerRelationship 제거 — 기한 없는 관계가 아니라
+  //   현재 세무 목적이 접근 근거다. 같은 자리를 이 술어가 대신한다.
   final rel = _codeOf(_sliceOf(rawCf,
-      'async function srvHasBusinessWorkerRelationship(', '\n}'));
+      'async function srvHasCurrentTaxIdentityPurpose(', '\n}'));
   final urlCf = _codeOf(_sliceOf(rawCf,
       'export const callableGetTaxIdentityIdCardUrl = onCall(', '\n);'));
   final review = _codeOf(_sliceOf(rawCf,
@@ -153,10 +155,21 @@ void main() {
       expect(review, contains('TAX_REVIEW_PURPOSE'));
     });
 
-    test('14 §31 — Application 상태를 검토 조건으로 쓰지 않는다', () {
-      expect(rel, contains('collection("applications")'));
-      expect(rel, isNot(contains('"status"')));
+    test('14 §31 — 검토 **기록**은 Application 상태와 별개다', () {
+      // 판정 writer 자체는 여전히 상태를 보지 않는다. 한 사업장이 남긴
+      //   확인 사실이 지원서 상태 변화로 뒤집히지 않는다.
       expect(review, isNot(contains('CONFIRMED')));
+    });
+
+    test('14b [DOC-S1A] 그러나 **접근**은 현재 목적을 본다', () {
+      // §31 은 기록의 독립성이지 무기한 열람권이 아니었다. 목적 술어는
+      //   실근무(attendance) 또는 아직 남은 근무 약속(status)을 본다.
+      expect(rel, contains('collection("attendance")'));
+      expect(rel, contains('"present", "late", "earlyLeave"'));
+      expect(rel, contains('collection("applications")'));
+      expect(rel, contains('CONTRACT_PENDING'));
+      // 급여 확정을 기다리지 않는다 — 지급 전에 불일치를 잡아야 한다.
+      expect(rel, isNot(contains('wageStatus')));
     });
 
     test('15 §11 — 가짜 버전을 만들지 않는다 (값에서 파생)', () {
@@ -299,11 +312,19 @@ void main() {
       expect(authz, isNot(contains('callerData?.businessId')));
     });
 
-    test('28 세 CF 모두 같은 가드를 쓴다', () {
-      for (final body in [urlCf, review]) {
-        expect(body, contains('srvAssertTaxIdentityAuthority('));
-        expect(body, contains('srvHasBusinessWorkerRelationship('));
-      }
+    test('28 [DOC-S1A] 신분증 원본은 더 엄격한 문이다 — 같은 가드가 아니다', () {
+      // 세무 판정(review)은 canManageWage + 현재 세무 목적.
+      expect(review, contains('srvAssertTaxIdentityAuthority('));
+      expect(review, contains('srvHasCurrentTaxIdentityPurpose('));
+
+      // 원본 이미지(urlCf)는 상위 권한 + 고지된 창.
+      //   canManageWage 단독으로 열리면 "채용과 무관한 급여 담당자가
+      //   지원자 신분증을 보게 된다" — srvCanReviewApplicantDocuments 가
+      //   두 권한을 함께 요구하는 이유 그대로다.
+      expect(urlCf, contains('srvCanReviewApplicantDocuments('));
+      expect(urlCf, contains('srvHasActiveIdentityDocumentPurpose('));
+      expect(urlCf, isNot(contains('srvAssertTaxIdentityAuthority(')),
+          reason: '세무 권한만으로 원본이 열리면 안 된다');
     });
 
     test('29 §37 — 감사 로그에 목적·버전·사업장', () {

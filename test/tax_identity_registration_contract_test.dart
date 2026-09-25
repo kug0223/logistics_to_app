@@ -242,7 +242,8 @@ void main() {
           'export const callableGetTaxIdentityNumber',
           'export const callableGetTaxIdentityIdCardUrl')));
       expect(n, contains('srvAssertTaxIdentityAuthority(callerUid, businessId)'));
-      expect(n, contains('srvHasBusinessWorkerRelationship(businessId, targetUid)'));
+      // [DOC-S1A] 관계 존재 → 현재 세무 목적. 지원 이력만으로는 번호가 열리지 않는다.
+      expect(n, contains('srvHasCurrentTaxIdentityPurpose(businessId, targetUid)'));
       expect(n, contains('expectedIdDocumentVersion !== srvDocumentVersionsOf(ud).id'));
       expect(n, contains('expectedTaxIdentityFingerprint !== srvTaxIdentityFingerprint(ud, t.data())'));
       // 열람도 감사에 남는다.

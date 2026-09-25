@@ -1960,14 +1960,24 @@ async function srvAssertTaxIdentityCollectionEnabled(): Promise<void> {
 /**
  * [§56] 세무 identity 변경 감사 기록. 식별번호 원문·암호문 모두 담지 않는다.
  *
+ * [DOC-S1A] 같은 helper 를 두 성격이 함께 쓴다 — 그래서 실패 처리를 하나로
+ *   둘 수 없다.
+ *
+ *     REGISTER / UPDATE / RECOVER  쓰기가 **이미 끝난 뒤**의 기록이다.
+ *                                  여기서 던지면 성공한 작업이 실패로 보고된다.
+ *                                  → 삼킨다(기존 동작 유지).
+ *     VIEW(번호 열람)               기록이 곧 열람의 조건이다.
+ *                                  → failClosed 로 호출해 실패 시 던진다.
+ *
  * @param {object} e 기록할 사건
- * @return {Promise<void>} 실패해도 본작업을 막지 않는다
+ * @param {object} [opts] failClosed=true 면 기록 실패를 throw 한다
+ * @return {Promise<void>} failClosed 가 아니면 실패해도 본작업을 막지 않는다
  */
 async function srvLogTaxIdentityAudit(e: {
   actorUid: string; targetUid: string; action: string;
   identifierType: string;
   oldFingerprint?: string | null; newFingerprint?: string | null;
-}): Promise<void> {
+}, opts?: {failClosed?: boolean}): Promise<void> {
   try {
     await db.collection(TAX_ID_AUDIT_COL).add({
       actorUid: e.actorUid, targetUid: e.targetUid, action: e.action,
@@ -1978,10 +1988,27 @@ async function srvLogTaxIdentityAudit(e: {
     });
   } catch (err) {
     console.error("[taxIdentity] 감사 기록 실패:", err);
+    if (opts?.failClosed) {
+      // [DOC-S1A] 감사 없이 민감정보를 내보내지 않는다.
+      //   내부 사정을 응답으로 흘리지 않기 위해 원문 오류를 싣지 않는다.
+      throw new HttpsError(
+        "internal", "세무정보를 열지 못했습니다. 잠시 후 다시 시도해주세요.");
+    }
   }
 }
 
 const TAX_REVIEW_PURPOSE = "TAX_IDENTITY_REVIEW";
+
+/**
+ * [DOC-S1A] 권한·관계·목적 실패를 같은 문장으로 답한다.
+ *
+ *   문구가 갈리면 "이 사람이 이 사업장에서 실제로 일했는가"를 응답 차이로
+ *   알아낼 수 있다. 자격 없는 호출자에게는 어느 쪽이든 같은 답을 준다.
+ */
+const TAX_PURPOSE_DENY_MSG = "세무정보를 열람할 권한이 없습니다.";
+
+/** [DOC-S1A] 신분증 원본 door 공통 거부 문구. 존재 여부를 누설하지 않는다. */
+const ID_DOC_DENY_MSG = "신분증을 열람할 권한이 없거나 열람 기간이 종료되었습니다.";
 
 const TAX_REVIEW_UNREVIEWED = "UNREVIEWED";
 const TAX_REVIEW_OK = "REVIEWED_OK";
@@ -2118,28 +2145,13 @@ function srvResolveTaxIdentityReview(
   return {...base, state: TAX_REVIEW_UNREVIEWED, valid: false};
 }
 
-/**
- * 이 사업장과 이 근로자 사이에 실제 관계가 있는가 (지원 또는 근무).
- *
- *   지원서 상태를 묻지 않는다 — 검토 사실은 Application 상태와 별개다(§31).
- *
- * @param {string} businessId 사업장
- * @param {string} workerUid 근로자
- * @return {Promise<boolean>} 관계 존재 여부
- */
-async function srvHasBusinessWorkerRelationship(
-  businessId: string, workerUid: string
-): Promise<boolean> {
-  const [apps, atts] = await Promise.all([
-    db.collection("applications")
-      .where("businessId", "==", businessId)
-      .where("uid", "==", workerUid).limit(1).get(),
-    db.collection("attendance")
-      .where("businessId", "==", businessId)
-      .where("userId", "==", workerUid).limit(1).get(),
-  ]);
-  return !apps.empty || !atts.empty;
-}
+// [DOC-S1A] srvHasBusinessWorkerRelationship 제거.
+//
+//   "이 사업장에 이 사람의 지원서나 근태가 하나라도 있는가"만 묻던 술어다.
+//   세무 door 4곳이 유일한 소비자였는데, 그 자리를 목적 술어가 대신한다:
+//     신분증 원본 → srvHasActiveIdentityDocumentPurpose (고지된 창)
+//     세무 identity → srvHasCurrentTaxIdentityPurpose   (실근무 또는 남은 약속)
+//   기한 없는 관계를 접근 근거로 쓰던 경로가 이것뿐이었으므로 함께 지운다.
 
 // ═══════════════════════════════════════════════════════════
 // [PII-DOC-R1.6.1] 누가 이 문제를 풀 수 있는가
@@ -2346,6 +2358,186 @@ function srvApplicantReviewAccessBlock(
     return "근로자의 서류 열람 동의(최신 버전)가 필요합니다.";
   }
   return null;
+}
+
+// ═══════════════════════════════════════════════════════════
+// [DOC-S1A] 민감문서 접근의 **목적** 판정
+//
+//   권한(누가)과 목적(지금 왜)을 분리한다. 권한만으로는 열리지 않고,
+//   관계가 있었다는 사실만으로도 열리지 않는다.
+//
+//   authority 는 새로 만들지 않는다 — srvCanReviewApplicantDocuments 가
+//   이미 `BUSINESS_ADMIN owner/admin | SUPER_ADMIN |
+//   (canManageTo ∧ canManageWage)` 이고 status/consent 를 보지 않는
+//   순수 권한 판정이다. 그대로 쓴다.
+// ═══════════════════════════════════════════════════════════
+
+/** Application.type 어휘 — 장기. (TO 어휘 flex/contract 와 다른 축) */
+const ID_LONG_TERM_TYPES = new Set(["long_term", "contract"]);
+/** Application.type 어휘 — 단기. */
+const ID_SHORT_TERM_TYPES = new Set(["short", "flex"]);
+
+/**
+ * 이 지원서가 신분증 접근창에 기여하는 **마지막 근무일**.
+ *
+ *   단기와 장기를 같은 fallback 공식으로 처리하지 않는다. 장기에서
+ *   `workDate`는 **시작일**이라, 첫 non-null 규칙을 쓰면 무기한 계약이
+ *   "시작 7일 뒤 종료"로 해석된다.
+ *
+ *   조기 종료(actualResignDate)는 최우선이다 — 단축 방향만 허용한다.
+ *
+ * @param {FirebaseFirestore.DocumentData} app 지원서 문서
+ * @return {admin.firestore.Timestamp | null} 마지막 근무일. 모르면 null(=창 없음).
+ */
+function srvIdWindowLastWorkDay(
+  app: FirebaseFirestore.DocumentData
+): admin.firestore.Timestamp | null {
+  const ts = (k: string) =>
+    (app[k] as admin.firestore.Timestamp | undefined) ?? null;
+
+  // 조기 종료가 확정됐으면 그것이 마지막 근무 가능일이다(.5 semantics: D).
+  const resign = ts("actualResignDate");
+  if (resign) return resign;
+
+  const t = app["type"] as string | undefined;
+  if (t && ID_SHORT_TERM_TYPES.has(t)) return ts("workDate");
+  // 장기: 종료일이 없으면 NO_END — 판정 불가이므로 창을 주지 않는다.
+  //   srvLongTermEligibleOnDay 가 NO_END 를 "근무 대상 아님"으로 보는 것과 같다.
+  if (t && ID_LONG_TERM_TYPES.has(t)) return ts("workEndDate");
+
+  // type 이 없는 legacy 만 구조 추론을 쓴다. 애매하면 가장 좁게.
+  const wd = app["workDays"];
+  const we = ts("workEndDate");
+  const w = ts("workDate");
+  const looksLong = Array.isArray(wd) && wd.length > 0 && we && w &&
+    srvKstDateNum(we.toDate()) !== srvKstDateNum(w.toDate());
+  return looksLong ? we : w;
+}
+
+/**
+ * 그 지원서의 신분증 접근창이 지금 열려 있는가.
+ *
+ *   창 = 마지막 근무일 KST 자정 + 7일. V3 동의 문구가 고지한 범위다:
+ *   "신분증은 해당 근무관계의 마지막 근무일로부터 7일 후 자동 종료".
+ *
+ * @param {FirebaseFirestore.DocumentData} app 지원서 문서
+ * @param {number} nowMs 현재 시각(ms)
+ * @return {boolean} 열려 있으면 true
+ */
+function srvIdWindowOpen(
+  app: FirebaseFirestore.DocumentData, nowMs: number
+): boolean {
+  const end = srvIdWindowLastWorkDay(app);
+  if (!end) return false; // NO_END / malformed → fail closed
+  const kstMidnight = (() => {
+    const k = new Date(end.toDate().getTime() + SRV_KST_MS);
+    k.setUTCHours(0, 0, 0, 0);
+    return k.getTime() - SRV_KST_MS;
+  })();
+  return nowMs < kstMidnight + ID_CARD_ACCESS_WINDOW_MS;
+}
+
+/**
+ * [DOC-S1A] 지금 이 사업장이 이 근로자의 **신분증 원본**을 볼 이유가 있는가.
+ *
+ *   두 갈래뿐이다:
+ *     A. 검토 중인 지원이 살아 있다 (채용 판단)
+ *     B. 고지된 접근창 안이다   (재직 중 또는 마지막 근무일 + 7일)
+ *
+ *   correction / mismatch / RESUBMITTED 는 **창을 연장하지도 재개하지도
+ *   않는다.** 동의 문구에 연장 조항이 없고, 보완 요청은 관리자가 확인할
+ *   때까지 무기한 남으므로 접근 수명을 맡길 수 없다. 창이 닫힌 뒤의
+ *   해결 경로는 근로자 측 재등록이다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} targetUid 근로자
+ * @param {number} nowMs 현재 시각(ms)
+ * @return {Promise<boolean>} 목적이 있으면 true
+ */
+async function srvHasActiveIdentityDocumentPurpose(
+  businessId: string, targetUid: string, nowMs: number
+): Promise<boolean> {
+  // 동의는 **목적을 만든 그 지원서**에서 본다. 다른 지원서의 동의를
+  //   가져다 쓰지 않는다(srvApplicantReviewAccessBlock 과 같은 축).
+  const consented = (a: FirebaseFirestore.DocumentData) =>
+    a["documentAccessConsentGiven"] === true;
+
+  // A. 활성 지원 검토 — 채용 검토 목적 열람은 v3 문구에만 있다.
+  const active = await db.collection("applications")
+    .where("businessId", "==", businessId)
+    .where("status", "in", APPLICANT_REVIEW_STATUSES)
+    .where("uid", "==", targetUid)
+    .limit(20).get();
+  if (active.docs.some((d) => {
+    const a = d.data();
+    return consented(a) &&
+      a["documentAccessConsentVersion"] === DOCUMENT_ACCESS_CONSENT_V3;
+  })) return true;
+
+  // B. 고지된 창. 재직·종료 모두 같은 식으로 판정된다.
+  //   여기는 v1/v2 도 인정한다 — 확정 후 신분증 접근창은 그 문구들이
+  //   이미 고지한 범위다(v1 확정일+7일, v2 마지막 근무일+7일).
+  //   창 길이는 srvIdWindowOpen 이 마지막 근무일 기준으로 통일한다.
+  for (const st of [
+    ["CONFIRMED", "CONTRACT_PENDING"],
+    ["CANCELED", "AUTO_CANCELED"],
+  ]) {
+    const snap = await db.collection("applications")
+      .where("businessId", "==", businessId)
+      .where("status", "in", st)
+      .where("uid", "==", targetUid)
+      .orderBy("workDate", "desc")
+      .limit(20).get();
+    if (snap.docs.some((d) =>
+      consented(d.data()) && srvIdWindowOpen(d.data(), nowMs))) return true;
+  }
+  return false;
+}
+
+/**
+ * [DOC-S1A] 지금 이 사업장이 이 근로자의 **세무 identity**를 다룰 이유가 있는가.
+ *
+ *   신분증 원본과 다른 축이다. 세무는 소득에서 나오고, 소득은 근무에서
+ *   나온다. 그래서 묻는 것은 "관계가 있었나"가 아니라 두 가지다:
+ *
+ *     A. 실제로 근무했다            → 소득이 발생했다
+ *     B. 아직 수행되지 않은 근무 약속이 남아 있다 → 소득이 예정돼 있다
+ *
+ *   A 에 wageStatus 를 요구하지 않는다. 급여 확정은 사업장 내부 처리
+ *   단계이지 세무 의무 발생 요건이 아니고, 요구하면 **첫 급여를 확정하기
+ *   전까지 대조 자체가 불가능**해 불일치를 지급 전에 잡을 수 없다.
+ *
+ *   B 는 srvIdWindowLastWorkDay 로 종료일을 구한다. NO_END/malformed 면
+ *   약속의 끝을 모르므로 목적을 인정하지 않는다.
+ *
+ * @param {string} businessId 사업장
+ * @param {string} targetUid 근로자
+ * @return {Promise<boolean>} 목적이 있으면 true
+ */
+async function srvHasCurrentTaxIdentityPurpose(
+  businessId: string, targetUid: string
+): Promise<boolean> {
+  // A. 실제 근무 이력. NO_SHOW·absent 는 이 집합에 없다.
+  const worked = await db.collection("attendance")
+    .where("businessId", "==", businessId)
+    .where("userId", "==", targetUid)
+    .where("status", "in", ["present", "late", "earlyLeave"])
+    .limit(1).get();
+  if (!worked.empty) return true;
+
+  // B. 아직 남아 있는 근무 약속.
+  const todayNum = srvKstDateNum(new Date());
+  const promised = await db.collection("applications")
+    .where("businessId", "==", businessId)
+    .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+    .where("uid", "==", targetUid)
+    .orderBy("workDate", "desc")
+    .limit(20).get();
+  return promised.docs.some((d) => {
+    const end = srvIdWindowLastWorkDay(d.data());
+    if (!end) return false; // NO_END → 약속의 끝을 모른다 → 목적 없음
+    return srvKstDateNum(end.toDate()) >= todayNum;
+  });
 }
 
 /**
@@ -10887,13 +11079,23 @@ export const callableGetApplicantDocumentUrl = onCall(
     });
 
     const versions = srvDocumentVersionsOf(w);
-    await db.collection("applicant_document_access_logs").add({
-      viewerId: callerUid, targetUserId: targetUid, businessId,
-      applicationId, documentType, purpose: "APPLICANT_REVIEW",
-      documentVersion:
-        documentType === DOC_TYPE_ID ? versions.id : versions.bankbook,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    }).catch((e) => console.error("[applicantDocumentUrl] 감사 로그 실패:", e));
+    // [DOC-S1A] 감사 기록이 곧 열람의 조건이다 — 기록에 실패하면 URL 을
+    //   내보내지 않는다. URL 은 이미 만들어졌지만 서버 메모리에만 있고
+    //   client 로 전달되지 않는다. (다른 raw document door 3곳과 같은 계약)
+    try {
+      await db.collection("applicant_document_access_logs").add({
+        viewerId: callerUid, targetUserId: targetUid, businessId,
+        applicationId, documentType, purpose: "APPLICANT_REVIEW",
+        documentVersion:
+          documentType === DOC_TYPE_ID ? versions.id : versions.bankbook,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("[applicantDocumentUrl] 감사 로그 실패:", e);
+      // 내부 사정을 응답으로 흘리지 않는다.
+      throw new HttpsError(
+        "internal", "서류를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+    }
 
     return {
       signedUrl,
@@ -28730,8 +28932,9 @@ export const callableGetTaxIdentityReview = onCall(
       throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
     }
     await srvAssertTaxIdentityAuthority(callerUid, businessId);
-    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
-      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    // [DOC-S1A] 관계가 있었다는 사실이 아니라 **지금 세무 처리 사유**가 있어야 한다.
+    if (!await srvHasCurrentTaxIdentityPurpose(businessId, targetUid)) {
+      throw new HttpsError("permission-denied", TAX_PURPOSE_DENY_MSG);
     }
     const [u, r, t] = await Promise.all([
       db.collection("users").doc(targetUid).get(),
@@ -29080,8 +29283,9 @@ export const callableGetTaxIdentityNumber = onCall(
       throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
     }
     await srvAssertTaxIdentityAuthority(callerUid, businessId);
-    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
-      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    // [DOC-S1A] 지원 이력만으로는 열리지 않는다 — 지금 세무 처리 사유가 있어야 한다.
+    if (!await srvHasCurrentTaxIdentityPurpose(businessId, targetUid)) {
+      throw new HttpsError("permission-denied", TAX_PURPOSE_DENY_MSG);
     }
     const [u, t] = await Promise.all([
       db.collection("users").doc(targetUid).get(),
@@ -29103,11 +29307,13 @@ export const callableGetTaxIdentityNumber = onCall(
     const identifier =
       srvDecryptTaxIdentifier(t.get("encryptedIdentifier") as string);
     // 감사: 누가 누구의 번호를 열었는가. 번호 자체는 남기지 않는다.
+    // [DOC-S1A] 기록이 곧 열람의 조건이다 — 실패하면 번호를 내보내지 않는다.
+    //   복호화는 이미 끝났지만 서버 메모리에만 있고 client 로 가지 않는다.
     await srvLogTaxIdentityAudit({
       actorUid: callerUid, targetUid, action: "VIEW",
       identifierType: (t.get("identifierType") as string) ?? "",
       newFingerprint: (t.get("identifierFingerprint") as string) ?? null,
-    });
+    }, {failClosed: true});
     return {identifier, identifierType: t.get("identifierType") ?? null};
   }
 );
@@ -29128,9 +29334,20 @@ export const callableGetTaxIdentityIdCardUrl = onCall(
     if (!businessId || !targetUid) {
       throw new HttpsError("invalid-argument", "businessId와 targetUid가 필요합니다.");
     }
-    await srvAssertTaxIdentityAuthority(callerUid, businessId);
-    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
-      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    // [DOC-S1A] 신분증 **원본**은 구조화 세무번호보다 엄격한 문이다.
+    //   canManageWage 단독으로 열리지 않는다 — 지원자 서류 검토와 같은
+    //   상위 권한(canManageTo ∧ canManageWage 또는 owner/admin)을 요구한다.
+    //   그 근거는 srvCanReviewApplicantDocuments 주석에 이미 적혀 있다:
+    //   "채용과 무관한 급여 담당자가 지원자 신분증을 보게 된다."
+    await assertBizAdmin(callerUid, businessId);
+    if (!await srvCanReviewApplicantDocuments(callerUid, businessId)) {
+      throw new HttpsError("permission-denied", ID_DOC_DENY_MSG);
+    }
+    // [DOC-S1A] 그리고 고지된 접근창 안이어야 한다 — 관계가 있었다는
+    //   사실만으로 무기한 열리지 않는다. correction 은 창을 연장하지 않는다.
+    if (!await srvHasActiveIdentityDocumentPurpose(
+      businessId, targetUid, Date.now())) {
+      throw new HttpsError("permission-denied", ID_DOC_DENY_MSG);
     }
     const u = await db.collection("users").doc(targetUid).get();
     if (!u.exists) throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
@@ -29201,8 +29418,9 @@ export const callableReviewTaxIdentity = onCall(
       throw new HttpsError("invalid-argument", "메모는 500자 이하여야 합니다.");
     }
     await srvAssertTaxIdentityAuthority(callerUid, businessId);
-    if (!await srvHasBusinessWorkerRelationship(businessId, targetUid)) {
-      throw new HttpsError("not-found", "이 사업장의 근로자가 아닙니다.");
+    // [DOC-S1A] 판정 기록도 세무 처리 사유가 있을 때만 남긴다.
+    if (!await srvHasCurrentTaxIdentityPurpose(businessId, targetUid)) {
+      throw new HttpsError("permission-denied", TAX_PURPOSE_DENY_MSG);
     }
 
     const reviewRef = db.collection(BIZ_DOC_REVIEW_COL)
