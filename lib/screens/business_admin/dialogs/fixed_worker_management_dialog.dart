@@ -278,12 +278,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             .map((p) => p.oldApplicationId)
             .toSet();
 
-      // 기본 필터: 장기 확정자 중 퇴사/해지 완료 제외
+      // 기본 필터: 장기 확정자 중 **종료가 발효된** 사람만 제외
+      //
+      //   퇴사·해지가 승인됐다는 것과 그 사람이 지금 없다는 것은 다르다.
+      //   효력일 D 까지는 출근하고 좌석을 차지하고 근태 의무가 있는
+      //   현재 근무자다 — 관리자가 D 전에 명단에서 찾지 못하면 그 기간의
+      //   근태·급여·연락을 아무도 처리할 수 없다.
+      //   날짜 모드에서는 보고 있는 그 날짜 기준으로 판정한다.
       final allFiltered = allApps.where((app) {
         if (!(app.status == AppStatus.confirmed || app.status == AppStatus.contractPending)) return false;
         if (!app.isLongTermApplication) return false;
-        if (app.isTerminationApproved) return false;
-        if (app.resignStatus == AppStatus.approved || app.resignStatus == AppStatus.autoApproved) return false;
+        final exitAsOf = _isDateMode ? widget.focusDate! : DateTime.now();
+        if (app.isExitEffectiveOn(exitAsOf)) return false;
 
         // EXTEND(연장된 구 계약):
         // - 일반 목록: 항상 제외 (신규 계약이 대체)
@@ -1214,8 +1220,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           final effectiveStartDate = app.desiredStartDate ?? app.workDate;
                           final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
                           int? daysLeft;
+                          // 종료가 발효되기 전까지는 남은 일수를 보여준다 —
+                          // 승인된 해지도 D 까지는 "며칠 남았는지"가 정보다.
                           if (effectiveEndDate != null &&
-                              !app.isTerminationApproved) {
+                              !app.isExitEffectiveNow) {
                             final todayOnly = DateTime.now();
                             final today = FormatHelper.toKstDate(todayOnly);
                             final end = FormatHelper.toKstDate(effectiveEndDate);

@@ -89,8 +89,10 @@ class CalendarHelper {
 
   /// 필터 통과 여부
   static bool _passesFilter(ApplicationModel app, String selectedFilter) {
-    // 퇴사/해지 완료된 장기 근무는 모든 필터에서 제외
-    if (app.isLongTermApplication && app.isTerminationApproved) return false;
+    // 종료가 **발효된** 장기 근무만 제외한다.
+    //   승인만 된 상태(미래 효력일 D)는 D 까지 여전히 근무 일정이다 —
+    //   승인됐다는 이유로 아직 남은 근무를 달력에서 지우지 않는다.
+    if (app.isLongTermApplication && app.isExitEffectiveNow) return false;
 
     if (selectedFilter == AppStatus.confirmed) {
       return AppStatus.confirmedStatuses.contains(app.status);
@@ -136,8 +138,9 @@ class CalendarHelper {
       }
 
       // 장기 확정: 계약 기간이 이번 달과 겹치는지
-      // isTerminationApproved=true(퇴사·해지 완료) 이면 통계에서 완전 제외
-      if (app.isTerminationApproved) return false;
+      // 종료가 발효된 뒤에만 통계에서 제외한다. 승인만 된 미래 D 는
+      // 아래 endDate(= actualResignDate ?? workEndDate) 범위 판정이 맡는다.
+      if (app.isExitEffectiveNow) return false;
       final endDate = app.actualResignDate ?? app.workEndDate;
       if (endDate == null) return false; // workEndDate=null → 제외 (isWorkingOnDate도 동일)
       final startDate = app.desiredStartDate ?? app.workDate;

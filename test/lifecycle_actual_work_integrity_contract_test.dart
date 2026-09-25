@@ -243,10 +243,13 @@ void main() {
     });
 
     test('28 퇴사·해지 경로를 건드리지 않았다', () {
-      expect(cf, contains('cancelReason: "RESIGNATION_EFFECTIVE"'));
-      expect(cf, contains('cancelReason: "TERMINATION_APPROVED"'));
+      // [.5-PATCH] 두 종료가 하나의 효력 전환을 공유하게 되면서
+      //   cancelReason 이 exitKind 로 분기한다. 이 테스트의 관심사는
+      //   lifecycle bulk-cancel 이 종료 경로로 새지 않는 것이다 — 그대로다.
+      expect(cf, contains(r'cancelReason: `${exitKind}_EFFECTIVE`'));
+      expect(cf, contains('exitQuery("terminationStatus", "APPROVED"'));
       final resign = _flat(_codeOf(_sliceOf(cfRaw,
-          'cancelReason: "RESIGNATION_EFFECTIVE"', 'contractFreshSnaps')));
+          r'cancelReason: `${exitKind}_EFFECTIVE`', 'contractFreshSnaps')));
       expect(resign, isNot(contains('srvLifecycleCancelBulk')));
     });
   });

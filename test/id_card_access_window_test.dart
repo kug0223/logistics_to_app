@@ -448,7 +448,8 @@ void main() {
     test('D+1 CANCELED 전환은 grant를 revoke하지 않는다', () {
       final d1 = _between(
         code,
-        'async function processResignEffectiveTransition',
+        // [.5-PATCH] 퇴사·해지가 같은 전환을 쓰면서 이름이 바뀌었다.
+        'async function processExitEffectiveTransition',
         'async function ',
       );
       expect(d1.contains('idCardAccessRequests'), isFalse,

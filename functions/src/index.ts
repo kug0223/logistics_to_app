@@ -73,6 +73,12 @@ async function _getEmailTransporter(): Promise<NodemailerNs.Transporter | null> 
 // 확정 상태 그룹 (CONFIRMED + CONTRACT_PENDING 동일 처리)
 const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 
+// [EXIT-MUTEX] 종료 절차가 **살아 있는** 상태.
+//   하나의 지원서에 퇴사와 해지가 동시에 이 상태로 있으면, 같은 관계의
+//   종료일에 두 개의 답이 생긴다. REJECTED/CANCELED/null 은 끝난 절차이므로
+//   재요청을 영구히 막지 않는다.
+const EXIT_CONFLICT_STATUSES = ["PENDING", "APPROVED", "AUTO_APPROVED"];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // [R7-P1-PRODUCT] 장기(contract) 공고의 **하루치** staffing — 공용 규칙.
 //
@@ -3184,57 +3190,81 @@ export const onNotificationCreated = onDocumentCreated(
 
 // ═══════════════════════════════════════════════════════════
 
-// ─── [DEFERRED-RESIGN] D+1 퇴사 효력 전환 ─────────────────
+// ─── [DEFERRED-EXIT] D+1 종료(퇴사·해지) 효력 전환 ─────────
 // 승인된 퇴사 신청(resignStatus=APPROVED|AUTO_APPROVED, status=CONFIRMED|CONTRACT_PENDING)을
 // actualResignDate(D) 경과 후 실제 CANCELED로 전환.
 // 매일 자정 processContractRenewalChecks와 병렬 실행.
 // ──────────────────────────────────────────────────────────
-async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
+async function processExitEffectiveTransition(now: Timestamp): Promise<void> {
   const nowDate = now.toDate();
   const pendingContractStatuses = ["pending_employer", "pending_worker"];
+  const nowDateNum = srvKstDateNum(nowDate);
 
-  // [STARVATION-SAFE] 4-쿼리: resignStatus×status 2×2 복합 인덱스 활용 (in-memory 필터 없음)
-  const [q1, q2, q3, q4] = await Promise.all([
+  // [EXIT-KST-BOUNDARY] 종료는 **KST 달력 하루** 단위로 성립한다.
+  //
+  //   예전 조건은 `actualResignDate < now` 였다. actualResignDate 가 그날
+  //   한낮의 시각으로 들어오면 같은 D 의 저녁에 이미 종료로 잡혔다 —
+  //   D 는 마지막 **근무 가능일**인데 D 당일에 관계가 끝나 버린다.
+  //
+  //   오늘 KST 자정을 경계로 쓰면 의미가 정확히 맞는다:
+  //     D < 오늘 자정  ⟺  D 는 어제 이전  ⟺  오늘 > D
+  //   쿼리 경계이므로 기존 인덱스를 그대로 쓴다.
+  const todayKstMidnight = Timestamp.fromMillis(
+    (() => {
+      const k = new Date(nowDate.getTime() + SRV_KST_MS);
+      k.setUTCHours(0, 0, 0, 0);
+      return k.getTime() - SRV_KST_MS;
+    })()
+  );
+
+  // [STARVATION-SAFE] exitField×status 복합 인덱스 활용 (in-memory 필터 없음)
+  //   퇴사와 해지는 같은 종료 사건이다 — 같은 전환을 쓴다.
+  const exitQuery = (field: string, statusValue: string, appStatus: string) =>
     db.collection("applications")
-      .where("resignStatus", "==", "APPROVED")
-      .where("status", "==", "CONFIRMED")
-      .where("actualResignDate", "<", now)
-      .limit(100).get(),
-    db.collection("applications")
-      .where("resignStatus", "==", "APPROVED")
-      .where("status", "==", "CONTRACT_PENDING")
-      .where("actualResignDate", "<", now)
-      .limit(100).get(),
-    db.collection("applications")
-      .where("resignStatus", "==", "AUTO_APPROVED")
-      .where("status", "==", "CONFIRMED")
-      .where("actualResignDate", "<", now)
-      .limit(100).get(),
-    db.collection("applications")
-      .where("resignStatus", "==", "AUTO_APPROVED")
-      .where("status", "==", "CONTRACT_PENDING")
-      .where("actualResignDate", "<", now)
-      .limit(100).get(),
+      .where(field, "==", statusValue)
+      .where("status", "==", appStatus)
+      .where("actualResignDate", "<", todayKstMidnight)
+      .limit(100).get();
+
+  const snaps = await Promise.all([
+    exitQuery("resignStatus", "APPROVED", "CONFIRMED"),
+    exitQuery("resignStatus", "APPROVED", "CONTRACT_PENDING"),
+    exitQuery("resignStatus", "AUTO_APPROVED", "CONFIRMED"),
+    exitQuery("resignStatus", "AUTO_APPROVED", "CONTRACT_PENDING"),
+    exitQuery("terminationStatus", "APPROVED", "CONFIRMED"),
+    exitQuery("terminationStatus", "APPROVED", "CONTRACT_PENDING"),
+    exitQuery("terminationStatus", "AUTO_APPROVED", "CONFIRMED"),
+    exitQuery("terminationStatus", "AUTO_APPROVED", "CONTRACT_PENDING"),
   ]);
 
   const seen = new Set<string>();
   const allDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
-  for (const snap of [q1, q2, q3, q4]) {
+  for (const snap of snaps) {
     for (const doc of snap.docs) {
       if (!seen.has(doc.id)) { seen.add(doc.id); allDocs.push(doc); }
     }
   }
 
+  // 승인 경로만 다르고 전환 자체는 같다 — 문구/사유만 분기한다.
+  const exitKindOf = (d: FirebaseFirestore.DocumentData): "RESIGNATION" | "TERMINATION" => {
+    const approved = ["APPROVED", "AUTO_APPROVED"];
+    return approved.includes(d.resignStatus as string) ?
+      "RESIGNATION" : "TERMINATION";
+  };
+
   if (allDocs.length === 0) {
-    console.log("  ✅ [퇴사 효력 전환] 처리 대상 없음");
+    console.log("  ✅ [종료 효력 전환] 처리 대상 없음");
   } else {
-    console.log(`  🔄 [퇴사 효력 전환] 처리 대상: ${allDocs.length}건`);
+    console.log(`  🔄 [종료 효력 전환] 처리 대상: ${allDocs.length}건`);
 
     const results = await Promise.allSettled(allDocs.map(async (doc) => {
       try {
         const app = doc.data();
+        const exitKind = exitKindOf(app);
         const actualResignDate = (app.actualResignDate as Timestamp | undefined)?.toDate();
-        if (!actualResignDate || actualResignDate >= nowDate) return;
+        // [EXIT-KST-BOUNDARY] D 당일은 아직 종료가 아니다 — 오늘 > D 일 때만.
+        if (!actualResignDate ||
+            nowDateNum <= srvKstDateNum(actualResignDate)) return;
 
         // 계약서 사전 조회 (TX 외부 — TX 내에서 voiding에만 사용)
         const contractQ = await db.collection("employment_contracts")
@@ -3258,7 +3288,13 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
           if (freshStatus !== "CONFIRMED" && freshStatus !== "CONTRACT_PENDING") return;
           if (freshApp.confirmedDecrementedAt) return;
           const freshActualResignDate = (freshApp.actualResignDate as Timestamp | undefined)?.toDate();
-          if (!freshActualResignDate || freshActualResignDate >= nowDate) return;
+          // [EXIT-KST-BOUNDARY] 트랜잭션 안에서도 같은 KST 달력 기준으로 본다.
+          if (!freshActualResignDate ||
+              nowDateNum <= srvKstDateNum(freshActualResignDate)) return;
+          // 승인된 종료만 전환한다 — fresh 상태로 다시 확인한다.
+          const freshApproved = ["APPROVED", "AUTO_APPROVED"];
+          if (!freshApproved.includes(freshApp.resignStatus as string) &&
+              !freshApproved.includes(freshApp.terminationStatus as string)) return;
 
           const toId = app.toId as string | undefined;
           const slotId = app.slotId as string | undefined;
@@ -3294,7 +3330,7 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
           tx.update(doc.ref, {
             status: "CANCELED",
             canceledAt: now,
-            cancelReason: "RESIGNATION_EFFECTIVE",
+            cancelReason: `${exitKind}_EFFECTIVE`,
             resignAttendanceNormalizedAt: null,
             confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -3313,7 +3349,7 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
               tx.update(freshContractSnap.ref, {
                 status: "voided",
                 contractVoidedAt: now,
-                voidReason: "RESIGNATION",
+                voidReason: exitKind,
               });
             }
             // completed / voided / canceled / 기타 → skip (법적 증거 보존)
@@ -3407,10 +3443,10 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
         try {
           await admin.auth().revokeRefreshTokens(app.uid as string);
         } catch (tokenErr) {
-          console.warn(`[퇴사 D+1] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+          console.warn(`[종료 D+1] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
           await db.collection("pending_token_revocations").doc(app.uid as string).set({
             uid: app.uid,
-            reason: "RESIGNATION_EFFECTIVE",
+            reason: `${exitKind}_EFFECTIVE`,
             applicationId: doc.id,
             failedAt: now,
           }).catch(() => {/* 기록 실패는 무시 */});
@@ -3419,29 +3455,30 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
         // [STARVATION-SAFE] 출근기록 정리 완료 마커 — null→serverTimestamp 전환으로 재시도 쿼리에서 제외
         await doc.ref.update({
           resignAttendanceNormalizedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }).catch((e) => console.warn(`[퇴사 D+1] 마커 기록 실패 ${doc.id}: ${e}`));
+        }).catch((e) => console.warn(`[종료 D+1] 마커 기록 실패 ${doc.id}: ${e}`));
 
-        console.log(`  ✅ [퇴사 D+1] ${doc.id} 처리 완료`);
+        console.log(`  ✅ [종료 D+1/${exitKind}] ${doc.id} 처리 완료`);
       } catch (err) {
-        console.error(`[퇴사 D+1] 문서 ${doc.id} 처리 실패: ${err}`);
+        console.error(`[종료 D+1] 문서 ${doc.id} 처리 실패: ${err}`);
         throw err;
       }
     }));
 
     const successCount = results.filter((r) => r.status === "fulfilled").length;
-    console.log(`  ✅ [퇴사 효력 전환] ${successCount}/${allDocs.length}건 처리 완료`);
+    console.log(`  ✅ [종료 효력 전환] ${successCount}/${allDocs.length}건 처리 완료`);
   }
 
   // [ATTENDANCE-RETRY] TX 성공 후 attendance 처리 실패한 문서 재처리
   // resignAttendanceNormalizedAt==null인 CANCELED+RESIGNATION_EFFECTIVE 대상
   const retrySnap = await db.collection("applications")
-    .where("cancelReason", "==", "RESIGNATION_EFFECTIVE")
+    .where("cancelReason", "in",
+      ["RESIGNATION_EFFECTIVE", "TERMINATION_EFFECTIVE"])
     .where("status", "==", "CANCELED")
     .where("resignAttendanceNormalizedAt", "==", null)
     .limit(50).get();
 
   if (!retrySnap.empty) {
-    console.log(`  🔄 [퇴사 D+1 재시도] attendance 미완료 ${retrySnap.size}건`);
+    console.log(`  🔄 [종료 D+1 재시도] attendance 미완료 ${retrySnap.size}건`);
     await Promise.allSettled(retrySnap.docs.map(async (doc) => {
       try {
         const app = doc.data();
@@ -3474,9 +3511,9 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
         await doc.ref.update({
           resignAttendanceNormalizedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        console.log(`  ✅ [퇴사 D+1 재시도] ${doc.id} attendance 정리 완료`);
+        console.log(`  ✅ [종료 D+1 재시도] ${doc.id} attendance 정리 완료`);
       } catch (e) {
-        console.error(`[퇴사 D+1 재시도] ${doc.id} 실패: ${e}`);
+        console.error(`[종료 D+1 재시도] ${doc.id} 실패: ${e}`);
       }
     }));
   }
@@ -3544,9 +3581,9 @@ export const masterScheduler = onSchedule(
         processExpiredReviewRequests(timestamp),
         processContractRenewalChecks(timestamp),
         processExpiredIdCardAccess(timestamp),
-        processResignEffectiveTransition(timestamp),
+        processExitEffectiveTransition(timestamp),
       ]);
-      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료", "퇴사 효력 전환"];
+      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료", "종료 효력 전환"];
       midnightResults.forEach((r, i) => {
         if (r.status === "rejected") console.error(`❌ [${midnightNames[i]}] 실패:`, r.reason);
         else console.log(`✅ [${midnightNames[i]}] 완료`);
@@ -7260,101 +7297,44 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       try {
         const app = doc.data();
 
-        // effectiveDate: 요청일+1일 (근무자 응답 없으면 바로 다음날 효력)
-        const effectiveDate = new Date(
-          (app.terminationRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
-        );
-
+        // [DEFERRED-TERMINATION] D+3 은 **응답 시한**이지 종료일 계산식이 아니다.
+        //
+        //   예전에는 여기서 requestedAt + 24h 를 새 terminationEffectiveDate 로
+        //   덮어썼다. 같은 해지 요청인데 근로자가 수락하면 D, 응답을 안 하면
+        //   전혀 다른 날이 마지막 근무일이 됐다. 승인 방법이 종료일을 바꿔서는
+        //   안 된다 — 요청이 이미 가진 D 를 그대로 쓴다.
+        //
+        //   requestedAt + 3일  = 응답이 없어 승인되는 시점
+        //   terminationEffectiveDate = D = 마지막 근무 가능일
+        //   서로 다른 business clock 이다.
+        //
+        // [C04 정정] 예전 주석은 "계약해지는 terminationEffectiveDate 기반
+        //   isWorkingOnDate 로 처리되므로 attendance 정리가 불필요하다"고 적혀
+        //   있었다. 실제 canonical resolver 는 그 필드를 읽지 않는다:
+        //       operational effective end = actualResignDate ?? workEndDate
+        //   그래서 승인이 actualResignDate 를 확정하고, 계약서·정원·attendance
+        //   정리는 퇴사와 **같은** D+1 전환이 담당한다.
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(doc.ref);
-          if (snap.data()?.terminationStatus !== "PENDING") return;
-          const freshD3 = snap.data()!;
-          // [D3-CANCELREASON-FIX] cancelReason 명시 — 퇴사와 구분 가능하도록
+          const freshD3 = snap.data();
+          if (!freshD3 || freshD3.terminationStatus !== "PENDING") return;
+          const d3Effective =
+            (freshD3.terminationEffectiveDate as Timestamp | undefined) ?? null;
+          if (!d3Effective) {
+            // 요청 writer 가 항상 넣는 값이다. 없으면 종료일을 발명하지 않고
+            // 그대로 둔다 — 다음 실행에서 다시 대상이 된다.
+            console.error(
+              `[D+3 계약해지] terminationEffectiveDate 없음 — 자동승인 보류 ${doc.id}`);
+            return;
+          }
+          // [DEFERRED-TERMINATION] manual 과 동일한 canonical state 만 쓴다.
+          //   status·정원·계약서·토큰은 D+1 효력 전환 소유다.
           tx.update(doc.ref, {
             terminationStatus: "AUTO_APPROVED",
             terminationRespondedAt: now,
-            terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
-            status: "CANCELED",
-            cancelReason: "TERMINATION_APPROVED",
-            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-            confirmedDecrementedAt: now, // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX]
+            actualResignDate: d3Effective,
           });
-          // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX]
-          // capacity decrement을 main TX에 통합 — terminationStatus guard(≠PENDING 시 return)로 멱등 보장
-          // freshD3.status = TX write 이전의 확정 상태 (CONFIRMED / CONTRACT_PENDING)
-          const termD3ConfirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
-          if (app.toId && termD3ConfirmedStatuses.includes(freshD3.status as string)) {
-            const termD3ToRef = db.collection("tos").doc(app.toId as string);
-            const termD3ToUpdate: {[key: string]: admin.firestore.FieldValue} = {
-              totalConfirmed: admin.firestore.FieldValue.increment(-1),
-            };
-            if (!app.slotId && app.selectedWorkType) {
-              termD3ToUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
-                admin.firestore.FieldValue.increment(-1);
-            }
-            tx.update(termD3ToRef, termD3ToUpdate);
-            if (app.slotId) {
-              const termD3SlotUpdate: {[key: string]: admin.firestore.FieldValue} = {
-                confirmedCount: admin.firestore.FieldValue.increment(-1),
-              };
-              if (app.wdId) {
-                termD3SlotUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
-                  admin.firestore.FieldValue.increment(-1);
-              }
-              tx.update(termD3ToRef.collection("slots").doc(app.slotId as string), termD3SlotUpdate);
-            }
-          }
         });
-
-        // 퇴직 확정 → Auth 토큰 즉시 무효화 (로그아웃 없이도 접근 차단)
-        try {
-          await admin.auth().revokeRefreshTokens(app.uid as string);
-        } catch (tokenErr) {
-          console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
-          await db.collection("pending_token_revocations").doc(app.uid as string).set({
-            uid: app.uid,
-            reason: "TERMINATION_AUTO_APPROVED",
-            applicationId: doc.id, // [APP-ID-FIX] app = doc.data() → app.id = undefined
-            failedAt: now,
-          }).catch(() => {/* 기록 실패는 무시 */});
-        }
-
-        // [R-H5/H6-FIX] AUTO_APPROVED 수동 approveTermination()과 동일하게 계약서+카운터 정리
-        // [C04 설계 의도] 계약해지는 terminationEffectiveDate 기반 isWorkingOnDate 처리
-        //                 → scheduled attendance 정리는 불필요 (퇴사와 다름)
-        try {
-          const termPendingStatuses = ["pending_employer", "pending_worker"];
-          const termCleanupBatch = db.batch();
-
-          // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX] capacity decrement 이전됨 → main TX 내 원자 처리 완료
-          // TO/slot/workDetailCounts 감소는 위 runTransaction 내부에서 처리됨
-
-          // [R-H5] 서명 대기 계약서 voided 전환
-          const termContractQ1 = await db.collection("employment_contracts")
-            .where("applicationId", "==", doc.id)
-            .where("businessId", "==", app.businessId)
-            .limit(5).get();
-          let termContractsToVoid = termContractQ1.docs.filter(
-            (d) => termPendingStatuses.includes(d.data().status as string)
-          );
-          if (termContractsToVoid.length === 0) {
-            const termContractQ2 = await db.collection("employment_contracts")
-              .where("applicationIds", "array-contains", doc.id)
-              .where("businessId", "==", app.businessId)
-              .limit(5).get();
-            termContractsToVoid = termContractQ2.docs.filter(
-              (d) => termPendingStatuses.includes(d.data().status as string)
-            );
-          }
-          for (const contractDoc of termContractsToVoid) {
-            termCleanupBatch.update(contractDoc.ref, {
-              status: "voided", contractVoidedAt: now, voidReason: "TERMINATION",
-            });
-          }
-          await termCleanupBatch.commit();
-        } catch (cleanupErr) {
-          console.error(`[D+3 계약해지 AUTO_APPROVED] 정리 실패 ${doc.id}:`, cleanupErr);
-        }
 
         // 근무자에게 자동 승인 알림 (best-effort)
         db.collection("users").doc(app.uid as string).collection("notifications").add({
@@ -23029,6 +23009,15 @@ export const callableRequestTermination = onCall(
       if (currentTermStatus != null && currentTermStatus !== "REJECTED") {
         throw new HttpsError("failed-precondition", `계약해지 재요청 불가 — 현재 상태: ${currentTermStatus}`);
       }
+      // [EXIT-MUTEX] 반대 방향도 같다 — 진행 중인 퇴사 요청이 있으면 해지 불가.
+      //   근로자가 먼저 낸 퇴사 요청을 관리자 해지가 덮어쓰지 못하게 한다.
+      if (EXIT_CONFLICT_STATUSES.includes(
+        (snap.data()?.resignStatus as string | null) ?? "")) {
+        throw new HttpsError(
+          "failed-precondition",
+          "근로자가 신청한 퇴사 요청이 진행 중입니다. 해당 요청을 먼저 처리해주세요."
+        );
+      }
       // [5B.3A.2-TERM-MUTEX] renewalDecision non-null 차단 — 갱신/종료 결정 중 termination 요청 불가
       // Rules FIX-D와 함께 양방향 mutual exclusion 보장 (transaction 재시도 시 재체크)
       const currentRenewalDecision = snap.data()?.renewalDecision as string | null | undefined;
@@ -23222,27 +23211,9 @@ export const callableApproveTermination = onCall(
       }
     }
 
-    // [PERF-M5] 계약서 사전 쿼리 병렬화 — cq1 + cq2 동시 실행 (2 RTT → 1 RTT)
-    const pendingContractStatuses = ["pending_employer", "pending_worker"];
-    let contractRef: admin.firestore.DocumentReference | null = null;
-    const [cq1, cq2] = await Promise.all([
-      db.collection("employment_contracts")
-        .where("applicationId", "==", applicationId)
-        .where("businessId", "==", businessId)
-        .limit(5).get(),
-      db.collection("employment_contracts")
-        .where("applicationIds", "array-contains", applicationId)
-        .where("businessId", "==", businessId)
-        .limit(5).get(),
-    ]);
-    const cq1Match = cq1.docs.find((d) =>
-      pendingContractStatuses.includes(d.data().status as string)
-    );
-    const cq2Match = cq1Match ? null : cq2.docs.find((d) =>
-      pendingContractStatuses.includes(d.data().status as string)
-    );
-    if (cq1Match) contractRef = cq1Match.ref;
-    else if (cq2Match) contractRef = cq2Match.ref;
+    // [DEFERRED-TERMINATION] 계약서 사전 조회 불필요 —
+    //   CONTRACT_VOID_AT_EFFECTIVE_D1: processExitEffectiveTransition 이 담당한다.
+    //   (callableApproveResignation 과 같은 구조다.)
 
     type TerminationResolved = {
       toId: string | null;
@@ -23282,15 +23253,6 @@ export const callableApproveTermination = onCall(
         }
       }
 
-      // [VOID-01] contractRef tx 내 재읽기 — 외부 쿼리 이후 completed 전환 방어
-      let freshContractStatus: string | null = null;
-      if (contractRef) {
-        const freshContract = await tx.get(contractRef);
-        freshContractStatus = freshContract.exists
-          ? ((freshContract.data()?.status as string | undefined) ?? null)
-          : null;
-      }
-
       // [DS-08B.4] 신분증 접근 창 단축 — read-before-write 구간에서 읽는다.
       const termGrantRef = db
         .collection("idCardAccessRequests").doc(`auto_${applicationId}`);
@@ -23310,14 +23272,21 @@ export const callableApproveTermination = onCall(
         wdId: (d.wdId as string | null) ?? null, // [GAP-TERMINATION-WDID-01 FIX]
         selectedWorkType: (d.selectedWorkType as string | null) ?? null, // [GAP-TERMINATION-WDID-01 FIX]
       };
+      // [DEFERRED-TERMINATION] 승인은 **결정**이다. 효력이 아니다.
+      //
+      //   예전에는 미래 효력일 D 를 적으면서 같은 트랜잭션에서 status 를
+      //   CANCELED 로 바꾸고 정원을 줄이고 계약서를 void 했다. 그래서 canonical
+      //   worker-day 는 D 까지 ELIGIBLE 이라고 말하는데 좌석·달력·고정근무자는
+      //   승인 즉시 끝났다고 말했다. 같은 관계에 두 개의 진실이 있었다.
+      //
+      //   APPROVED ≠ EFFECTIVE. status·정원·계약서·토큰은 전부 D+1 효력 전환
+      //   (processExitEffectiveTransition) 소유다. 여기서는 종료일만 확정한다.
       tx.update(appRef, {
         terminationStatus: "APPROVED",
         terminationRespondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        terminationApprovedBy: callerUid,
         actualResignDate:
           terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp(),
-        status: "CANCELED",
-        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-        confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(), // [GAP-TERMINATION-WDID-01 FIX] double-decrement 방지
       });
       // [DS-08B.4] 해지 효력일 기준으로 신분증 접근 창 단축 (동일 TX).
       // terminationEffectiveDate가 없으면 serverTimestamp로 즉시 종료되므로
@@ -23329,57 +23298,21 @@ export const callableApproveTermination = onCall(
       if (termShortened) {
         tx.update(termGrantRef, {expiresAt: termShortened});
       }
-      // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
-      if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
-        tx.update(contractRef, {
-          status: "voided",
-          contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
-          voidReason: "TERMINATION",
-        });
-      }
-      // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX]
-      // capacity decrement을 main TX에 통합 — confirmedDecrementedAt marker와 원자적 커밋
-      // TX 재시도 시 Firestore가 fresh counter에 FieldValue.increment 재적용 (자동 idempotent)
-      if (d.toId && CONFIRMED_STATUSES.includes(d.status as string)) {
-        const termToRef = db.collection("tos").doc(d.toId as string);
-        const termToUpdate: {[key: string]: admin.firestore.FieldValue} = {
-          totalConfirmed: admin.firestore.FieldValue.increment(-1),
-        };
-        if (!d.slotId && d.selectedWorkType) {
-          termToUpdate[`workTypeConfirmedCounts.${d.selectedWorkType as string}`] =
-            admin.firestore.FieldValue.increment(-1);
-        }
-        tx.update(termToRef, termToUpdate);
-        if (d.slotId) {
-          const termSlotUpdate: {[key: string]: admin.firestore.FieldValue} = {
-            confirmedCount: admin.firestore.FieldValue.increment(-1),
-          };
-          if (d.wdId) {
-            termSlotUpdate[`workDetailCounts.${d.wdId as string}.confirmedCount`] =
-              admin.firestore.FieldValue.increment(-1);
-          }
-          tx.update(termToRef.collection("slots").doc(d.slotId as string), termSlotUpdate);
-        }
-      }
+      // [DEFERRED-TERMINATION] 계약서 void·정원 감소는 여기서 하지 않는다.
+      //   D 까지는 근무 관계가 살아 있어야 하므로 좌석도 계약서도 그대로 둔다.
+      //   D+1 processExitEffectiveTransition 이 정확히 한 번 처리한다.
     });
 
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const app = resolvedData as TerminationResolved;
 
-    // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX] capacity decrement 이전됨 → main TX 내 원자 처리 완료
+    // [DEFERRED-TERMINATION] TOKEN_REVOKE_AT_EFFECTIVE_D1 — 토큰 무효화는 D+1 에서 처리.
+    //
+    //   revokeRefreshTokens 는 ALfit **계정 전체**의 세션을 끊는다. 미래 D 승인
+    //   시점에 이걸 부르면 아직 D 까지 근무해야 하는 사람이 앱에서 튕기고,
+    //   다른 사업장 관계까지 함께 끊긴다. 퇴사 경로가 이미 D+1 에서 하는 것과
+    //   같은 자리로 옮긴다.
 
-    // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 해지 경로 — D+3 자동 승인과 동일 패턴)
-    try {
-      await admin.auth().revokeRefreshTokens(workerUid);
-    } catch (tokenErr) {
-      console.warn(`[해지승인] revokeRefreshTokens 실패 uid=${workerUid}: ${tokenErr}`);
-      await db.collection("pending_token_revocations").doc(workerUid).set({
-        uid: workerUid,
-        reason: "TERMINATION_MANUALLY_APPROVED",
-        applicationId,
-        failedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }).catch(() => {/* 기록 실패는 무시 */});
-    }
     // [SEC-SUBADMIN-CLEAR] subAdminBusinessIds 초기화 + member doc 삭제 — 해지 후 SubAdmin 권한 잔류 방지
     // [1D-REVOKE-FIX] member doc 원자 삭제 → client _startMemberPermsListener data==null 감지 → _isAdminMode=false 즉시
     try {
@@ -25247,6 +25180,22 @@ export const callableRequestResignation = onCall(
         throw new HttpsError(
           "failed-precondition",
           `이미 진행 중인 퇴사 요청이 있습니다: ${currentResignStatus}`
+        );
+      }
+      // [EXIT-MUTEX] 한 관계에 종료 절차는 하나만 살아 있을 수 있다.
+      //
+      //   예전에는 이쪽이 resignStatus 만, 해지 writer 가 terminationStatus 만
+      //   봤다. 그래서 같은 지원서에 퇴사 PENDING 과 해지 PENDING 이 동시에
+      //   존재할 수 있었고, 둘이 서로 다른 종료일을 actualResignDate 에 쓰려고
+      //   경쟁했다. 같은 관계가 언제 끝나는지 두 개의 답을 갖게 된다.
+      //
+      //   트랜잭션 안에서 fresh read 로 본다 — 클라이언트 비활성화에 기대지 않는다.
+      if (EXIT_CONFLICT_STATUSES.includes(
+        (data.terminationStatus as string | null) ?? "")) {
+        throw new HttpsError(
+          "failed-precondition",
+          "진행 중인 계약해지 요청이 있어 퇴사를 신청할 수 없습니다. " +
+          "계약해지 요청을 먼저 처리해주세요."
         );
       }
       let effectiveDate: FirebaseFirestore.Timestamp;

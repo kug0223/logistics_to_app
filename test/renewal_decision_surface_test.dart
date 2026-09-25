@@ -361,7 +361,10 @@ void main() {
       final load = _after(fixedWorker, 'final allFiltered = allApps.where((app)', 700);
       expect(load.contains('renewalDecisionStateOf'), false);
       expect(load.contains('RenewalDecisionState'), false);
-      expect(load.contains('isTerminationApproved'), true);
+      // [.5-PATCH] 종료 판정이 승인 기준에서 **효력 기준**으로 바뀌었다.
+      //   이 테스트의 관심사(만료 여부로 목록에서 빼지 않는다)는 그대로고,
+      //   오히려 승인만 된 미래 D 근무자도 남게 되어 더 강해졌다.
+      expect(load.contains('isExitEffectiveOn'), true);
     });
 
     test('07-d 행 액션의 계약 연장에는 날짜 창이 없다', () {

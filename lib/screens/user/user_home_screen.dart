@@ -15,6 +15,7 @@ import '../../models/core/to_model.dart';
 import '../../models/core/user_model.dart';
 import '../../models/core/user_region.dart';
 import '../../models/ui/pending_id_request_surface.dart';
+import '../../models/ui/pending_termination_surface.dart';
 import '../../utils/format_helper.dart';
 import '../../providers/user_provider.dart';
 import '../../services/firestore_service.dart';
@@ -818,6 +819,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         // Priority Card 계산에는 참여하지 않는다 (Hero 우선순위 불변).
         // 상대방이 기다리는 요청이므로 자기 서류 준비(아래)보다 위에 둔다.
         _buildIdRequestCard(context, s, up),
+        // 계약해지 응답 — 신분증 요청과 **별도** 표면 (의미가 다르다)
+        _buildTerminationRequestCard(context, s, up),
         // [RENEWAL-PROPOSAL-COMMITMENT] 연장 제안 — 사업장이 근로자의
         //   대답을 기다리고 있다. 서류 보완보다 위에 둔다.
         _buildRenewalProposalCard(context, s),
@@ -2445,6 +2448,138 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     SizedBox(height: 3 * s),
                     Text(
                       _idRequestSurface.subtitle,
+                      style: TextStyle(fontSize: 13, color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              Text('요청 확인',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: accent,
+                  )),
+              Icon(Icons.chevron_right, color: accent, size: 20 * s),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 계약해지 응답 카드 ──────────────────────────────────────
+  //
+  // [BLOCKER-TERMINATION-REQUEST-NO-WORKER-TASK]
+  //
+  //   관리자가 계약해지를 요청하면 승인·거절할 사람은 근로자다. 그런데
+  //   홈에는 그 일이 없었고 알림 하나가 유일한 경로였다. 알림을 읽거나
+  //   지우면 길이 사라지는데 요청은 D+3 에 자동 승인된다 — 자기 고용이
+  //   끝나는 일에 대한 동의가 알림 수명에 묶여 있었다.
+  //
+  //   `Notification ≠ Task`: 이 카드는 canonical 도메인 상태
+  //   (terminationStatus == PENDING) 에서만 파생된다.
+  //
+  //   신분증 열람 요청 카드와 합치지 않는다 — 정보 제공 동의와 고용 종료
+  //   동의는 같은 사건이 아니다.
+  Widget _buildTerminationRequestCard(
+      BuildContext context, double s, UserProvider up) {
+    // LOADING: 첫 조회 전에는 자리 차지 없음
+    if (_isLoadingData) return const SizedBox.shrink();
+    final uid = up.currentUser?.uid;
+    if (uid == null) return const SizedBox.shrink();
+
+    final surface = PendingTerminationSurface.from(
+      _applications,
+      available: !_homeLoadFailed,
+    );
+
+    // [ERROR ≠ EMPTY] 확인하지 못한 것을 "요청 없음"으로 접지 않는다.
+    //   응답하지 않으면 자동 승인되는 일이라 침묵이 가장 위험하다.
+    if (surface.isUnavailable) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+        child: GestureDetector(
+          onTap: _isLoadingData ? null : () => _loadHomeData(),
+          child: Container(
+            padding:
+                EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Row(children: [
+              Icon(Icons.cloud_off_outlined,
+                  size: 20 * s, color: AppColors.textSecondary),
+              SizedBox(width: 10 * s),
+              Expanded(
+                child: Text(
+                  '계약해지 요청이 있는지 확인하지 못했어요',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              Text('다시 시도',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.infoDark,
+                  )),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    if (!surface.isVisible) return const SizedBox.shrink();
+
+    // 고용이 끝나는 일이다 — 신분증 요청보다 한 단계 강한 색을 쓴다.
+    const accent = AppColors.error;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      child: GestureDetector(
+        onTap: () => _openMyRequests(uid),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.32)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38 * s,
+                height: 38 * s,
+                decoration:
+                    const BoxDecoration(color: accent, shape: BoxShape.circle),
+                child: Icon(Icons.event_busy_outlined,
+                    size: 20 * s, color: Colors.white),
+              ),
+              SizedBox(width: 12 * s),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      surface.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 3 * s),
+                    Text(
+                      surface.subtitle,
                       style: TextStyle(fontSize: 13, color: AppColors.grey500),
                     ),
                   ],

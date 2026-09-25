@@ -1113,12 +1113,48 @@ class ApplicationModel {
   /// 퇴사 또는 계약해지가 승인 완료된 상태 (APPROVED / AUTO_APPROVED)
   /// [DEFERRED-RESIGN] 퇴사는 status==CANCELED와 동시에 참이 돼야 함
   /// — 승인됐지만 아직 고용 중인 D-기간에는 false → 퇴사 버튼 표시 안 함
+  ///
+  /// 이름 그대로 **결정이 내려졌는가**를 뜻한다. "지금 끝났는가"가 아니다.
+  /// 종료가 실제로 발효됐는지는 [isExitEffectiveOn] / [isExitEffectiveNow].
   bool get isTerminationApproved =>
       ((resignStatus == AppStatus.approved ||
         resignStatus == AppStatus.autoApproved) &&
        status == AppStatus.canceled) ||
       terminationStatus == AppStatus.approved ||
       terminationStatus == AppStatus.autoApproved;
+
+  /// 종료 결정이 내려졌는가 — 퇴사·해지 어느 쪽이든.
+  ///
+  /// [isTerminationApproved] 와 달리 퇴사 쪽에 status==CANCELED 를 요구하지
+  /// 않는다. 승인 시점과 효력 시점을 가르기 위한 것이므로, 여기서는 오직
+  /// "승인됐는가"만 본다.
+  bool get isExitDecided =>
+      resignStatus == AppStatus.approved ||
+      resignStatus == AppStatus.autoApproved ||
+      terminationStatus == AppStatus.approved ||
+      terminationStatus == AppStatus.autoApproved;
+
+  /// [targetDate] 기준으로 종료가 **이미 발효됐는가**.
+  ///
+  /// ALfit Core V1: `APPROVED ≠ EFFECTIVE`.
+  ///   actualResignDate = D = 마지막으로 일할 수 있는 날 (inclusive)
+  ///   targetDate <= D  → 아직 근무 관계
+  ///   targetDate >  D  → 종료 효력
+  ///
+  /// 승인은 됐는데 D 가 아직 오지 않았다면 이 사람은 **현재 근무자**다.
+  /// 달력·고정근무자 같은 운영 화면은 승인 여부가 아니라 이 판정을 써야 한다.
+  /// 서버 `processExitEffectiveTransition` 의 KST 달력 기준과 같다.
+  bool isExitEffectiveOn(DateTime targetDate) {
+    if (!isExitDecided) return false;
+    final end = actualResignDate ?? workEndDate;
+    // 종료일을 모르면 "이미 끝났다"고 단정하지 않는다 — UNKNOWN ≠ ENDED.
+    if (end == null) return false;
+    return FormatHelper.toKstDate(targetDate)
+        .isAfter(FormatHelper.toKstDate(end));
+  }
+
+  /// 오늘(KST) 기준 종료 발효 여부.
+  bool get isExitEffectiveNow => isExitEffectiveOn(DateTime.now());
 
   static bool _isSameDay(DateTime a, DateTime b) {
     final ka = FormatHelper.toKstDate(a);
