@@ -45,7 +45,11 @@ void main() {
       _sliceOf(rawCf, 'function srvTaxIdentityFingerprint(', '\n}'));
   final resolver = _codeOf(
       _sliceOf(rawCf, 'function srvResolveTaxIdentityReview(', '\n}'));
+  // [R5-D1] 판정 자체는 급여 도메인 canonical helper 로 옮겼다. 세무 문은
+  //   그것에 얹혀 있다 — 급여 권한이 두 벌이 되면 한쪽만 고쳐지는 날이 온다.
   final authz = _codeOf(
+      _sliceOf(rawCf, 'async function srvAssertWageAuthority(', '\n}'));
+  final taxAuthz = _codeOf(
       _sliceOf(rawCf, 'async function srvAssertTaxIdentityAuthority(', '\n}'));
   // [DOC-S1A] srvHasBusinessWorkerRelationship 제거 — 기한 없는 관계가 아니라
   //   현재 세무 목적이 접근 근거다. 같은 자리를 이 술어가 대신한다.
@@ -310,6 +314,13 @@ void main() {
       expect(authz, contains('biz["ownerId"]'));
       expect(authz, contains('adminIds.includes(callerUid)'));
       expect(authz, isNot(contains('callerData?.businessId')));
+    });
+
+    test('26b [R5-D1] 세무 문은 급여 판정에 얹혀 있다', () {
+      // 판정을 복사해 두 벌로 만들면 한쪽만 고쳐지는 날이 온다.
+      expect(taxAuthz, contains('srvAssertWageAuthority(callerUid, businessId)'));
+      expect(taxAuthz, isNot(contains('canManageWage !== true')),
+          reason: '세무 문이 판정을 따로 들고 있으면 안 된다');
     });
 
     test('28 [DOC-S1A] 신분증 원본은 더 엄격한 문이다 — 같은 가드가 아니다', () {

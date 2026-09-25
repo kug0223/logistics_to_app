@@ -49,19 +49,24 @@ void main() {
     });
 
     test('02 권한 판정이 사업장 소속을 본다', () {
+      // [R5-D1] 판정은 급여 도메인 canonical helper 에 있다. 세무 문은
+      //   그것을 부른다 — 사업장 경계를 보는 축은 그대로다.
       final a = _flat(_codeOf(_sliceOf(cfRaw,
-          'async function srvAssertTaxIdentityAuthority(', '\n}')));
+          'async function srvAssertWageAuthority(', '\n}')));
       // 소유자 / 관리자 / canManageWage 멤버.
       expect(a, contains('ownerId'));
       expect(a, contains('adminIds'));
       expect(a, contains('canManageWage'));
+      final t = _flat(_codeOf(_sliceOf(cfRaw,
+          'async function srvAssertTaxIdentityAuthority(', '\n}')));
+      expect(t, contains('srvAssertWageAuthority(callerUid, businessId)'));
     });
 
     test('03 권한 거부와 미확인은 다른 응답이다', () {
       // 권한 없음 = throw, 미확인 = state 값. 하나로 뭉개지 않는다.
       expect(cf, contains('const TAX_REVIEW_UNREVIEWED = "UNREVIEWED";'));
       final a = _flat(_codeOf(_sliceOf(cfRaw,
-          'async function srvAssertTaxIdentityAuthority(', '\n}')));
+          'async function srvAssertWageAuthority(', '\n}')));
       expect(a, contains('permission-denied'));
       expect(a, isNot(contains('UNREVIEWED')));
     });

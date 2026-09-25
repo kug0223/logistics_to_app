@@ -28974,7 +28974,22 @@ async function srvAssertCurrentPayrollPurpose(
  * @param {string} businessId 사업장
  * @return {Promise<void>} 권한 없으면 throw
  */
-async function srvAssertTaxIdentityAuthority(
+/**
+ * [R5-D1] 급여·임금 도메인 권한.
+ *
+ *   firestore.rules 의 payroll_summaries 게이트와 **같은 모양**이다:
+ *     SUPER_ADMIN → owner/adminIds → members.permissions.canManageWage
+ *   CF 로 읽든 직접 읽든 같은 답이 나와야 한다. 한쪽만 조이면 UI 만 막히고
+ *   문은 열려 있다.
+ *
+ *   assertBizAdmin 은 "이 사업장 사람인가"까지만 본다. 급여는 그 위에
+ *   capability 가 하나 더 필요하다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 대상 사업장 — target entity 기준이어야 한다
+ * @return {Promise<void>} 권한이 없으면 throw
+ */
+async function srvAssertWageAuthority(
   callerUid: string, businessId: string
 ): Promise<void> {
   const {callerData} = await assertBizAdmin(callerUid, businessId);
@@ -28991,6 +29006,52 @@ async function srvAssertTaxIdentityAuthority(
   if (perms.canManageWage !== true) {
     throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
   }
+}
+
+/**
+ * [R5-D1] TO·인력 운영 권한 — wage 쪽과 대칭.
+ *
+ *   SUPER_ADMIN → owner/adminIds → members.permissions.canManageTo
+ *   TO 생성·수정 경로가 인라인으로 쓰던 판정과 같은 규칙이다. 타인의
+ *   초대를 건드리는 일도 같은 자격을 요구한다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 대상 사업장 — target entity 기준이어야 한다
+ * @return {Promise<void>} 권한이 없으면 throw
+ */
+async function srvAssertToAuthority(
+  callerUid: string, businessId: string
+): Promise<void> {
+  const {callerData} = await assertBizAdmin(callerUid, businessId);
+  const role = callerData?.role as string | undefined;
+  if (role === "SUPER_ADMIN") return;
+  const bizSnap = await db.collection("businesses").doc(businessId).get();
+  const biz = bizSnap.data() ?? {};
+  const ownerId = biz["ownerId"] as string | undefined;
+  const adminIds = (biz["adminIds"] as string[] | undefined) ?? [];
+  if (ownerId === callerUid || adminIds.includes(callerUid)) return;
+  const m = await db.collection("businesses").doc(businessId)
+    .collection("members").doc(callerUid).get();
+  const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+  if (perms.canManageTo !== true) {
+    throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+  }
+}
+
+/**
+ * 세무 신원 열람 권한 — 급여 도메인 권한과 같다.
+ *
+ *   이름을 남겨 둔다. 부르는 쪽이 "왜 이 문이 급여 권한을 요구하는가"를
+ *   읽을 수 있어야 하기 때문이다. 판정 자체는 한 곳에만 있다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 대상 사업장
+ * @return {Promise<void>} 권한이 없으면 throw
+ */
+async function srvAssertTaxIdentityAuthority(
+  callerUid: string, businessId: string
+): Promise<void> {
+  await srvAssertWageAuthority(callerUid, businessId);
 }
 
 // ── callableGetTaxIdentityReview ──────────────────────────────
@@ -30442,7 +30503,8 @@ export const callableRepairPayrollSummaries = onCall(
     if (!businessId || !yearMonth || !/^\d{4}-\d{2}$/.test(yearMonth)) {
       throw new HttpsError("invalid-argument", "businessId와 yearMonth(YYYY-MM)가 필요합니다.");
     }
-    await assertBizAdmin(request.auth.uid, businessId);
+    // [R5-D1] 급여 projection 을 다시 쓰는 일이다 — 사업장 소속만으로는 부족하다.
+    await srvAssertWageAuthority(request.auth.uid, businessId);
 
     // 해당 월 확정 근태 전체 조회 — 페이지네이션으로 건수 제한 없음
     const baseQuery = db.collection("attendance")
@@ -30545,7 +30607,10 @@ export const callableGetPayrollSummaries = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    // [R5-D1] payroll summary 는 통째로 급여 데이터다. direct read 를 막는
+    //   firestore.rules 와 같은 자격을 여기서도 요구한다 — CF 가 우회로가
+    //   되면 rule 을 조인 의미가 없다.
+    await srvAssertWageAuthority(callerUid, businessId);
 
     let q: admin.firestore.Query = db
       .collection("payroll_summaries")
@@ -42998,13 +43063,15 @@ export const callableCancelTOInvitation = onCall(
     if (!appSnap.exists) throw new HttpsError("not-found", "초대를 찾을 수 없습니다.");
     const appData = appSnap.data()!;
 
-    // ── 1. 권한 검증: invitedBy 본인 또는 사업장 관리자 ─────────────────────
+    // ── 1. 권한 검증 ────────────────────────────────────────────────────────
+    //   businessId 는 **초대 문서**에서 온다 — 호출자가 고른 사업장이 아니다.
     const businessId = appData.businessId as string | undefined;
     const invitedBy  = appData.invitedBy  as string | undefined;
     if (!businessId) throw new HttpsError("internal", "초대 문서에 businessId가 없습니다.");
 
-    // assertBizAdmin으로 관리자 권한 확인 (SUPER_ADMIN 포함 처리됨)
-    await assertBizAdmin(callerUid, businessId);
+    // [R5-D1] 남의 초대를 취소하는 일이다 — 사업장 소속만으로는 부족하고
+    //   TO 를 만들 때와 같은 자격(canManageTo)을 요구한다.
+    await srvAssertToAuthority(callerUid, businessId);
 
     // ── 2. 상태 검증 ─────────────────────────────────────────────────────────
     const currentStatus = appData.status as string | undefined;
