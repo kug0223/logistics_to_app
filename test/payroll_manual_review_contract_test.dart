@@ -267,7 +267,9 @@ void main() {
     test('27 P2·§6 — 과거 근태 존재만으로 열리지 않는다', () {
       // 목적 판정이 반드시 지급 상태를 본다.
       expect(purpose, contains('"wageStatus", "==", "confirmed"'));
-      expect(purpose, contains('d.wageStatus !== "confirmed"'));
+      // [DOC-P2] wageStatus 단독이 아니라 canonical 지급 대상 판정을 쓴다 —
+      //   0원으로 마감된 노쇼·결근도 confirmed 이기 때문이다.
+      expect(purpose, contains('srvPayableForTransfer('));
       // 옛 helper(상태 무관)는 사라졌다.
       expect(rawCf, isNot(contains('srvHasPayrollRelationship')));
     });
@@ -275,7 +277,17 @@ void main() {
     test('28 §7 — 이체 완료 건은 목적이 되지 않는다', () {
       // confirmed 만 통과하므로 transferred 는 자동으로 제외된다.
       expect(purpose, isNot(contains('"transferred"')));
-      expect(_flat(purpose), contains('if (d.wageStatus !== "confirmed") throw deny();'));
+      // [DOC-P2] 지목 경로도 같은 식으로 막는다.
+      expect(_flat(purpose),
+          contains('if (!srvPayableForTransfer( d.wageStatus'));
+    });
+
+    test('28b [DOC-P2] 0원 노쇼·결근도 목적이 되지 않는다', () {
+      // 두 경로(지목·탐색) 모두 canonical 판정을 쓴다.
+      expect('srvPayableForTransfer('.allMatches(purpose).length, 2);
+      expect(_flat(purpose),
+          contains('.select("wageStatus", "status", "finalWage")'),
+          reason: 'status·finalWage 를 함께 봐야 하므로 where 로는 못 한다');
     });
 
     test('29 §8 — 화면이 보는 행과 서버가 허용하는 이유가 같다', () {
@@ -284,7 +296,10 @@ void main() {
       final f = _codeOf(
           _sliceOf(dash, 'Future<void> _reviewBankDocument(', '\n  }'));
       expect(f, contains('attendanceId: target.id'));
-      expect(f, contains('AttendanceModel.wageConfirmed'));
+      // [DOC-P2] 화면도 canonical 지급 대상 행을 고른다 — confirmed 첫 건을
+      //   집으면 0원 노쇼가 목적으로 지목된다.
+      expect(f, contains('_payablePurposeRow(recs)'));
+      expect(f, isNot(contains('unpaid.first')));
     });
 
     test('30 §14 — 열람과 판정이 같은 목적 helper 를 쓴다', () {
@@ -325,8 +340,10 @@ void main() {
 
     test('36 §20 — 정상 미지급 회복 경로는 막히지 않는다', () {
       // 미지급 confirmed 가 있으면 목적이 성립한다.
-      expect(purpose, contains('q.docs[0].id'));
+      // [DOC-P2] 첫 건을 그대로 쓰지 않고 지급 대상인 건을 찾아 돌려준다.
+      expect(purpose, contains('return doc.id;'));
       expect(purpose, isNot(contains('isIdVerified')));
+      // §7 지원서 상태를 목적의 단독 조건으로 쓰지 않는다.
       expect(purpose, isNot(contains('applicationId')));
     });
   });

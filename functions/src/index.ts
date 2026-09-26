@@ -29198,17 +29198,38 @@ async function srvAssertCurrentPayrollPurpose(
     if (!s.exists || !d) throw deny();
     if (d.businessId !== businessId || d.userId !== workerUid) throw deny();
     // [§6·§7] 이미 보낸 급여는 목적이 되지 않는다.
-    if (d.wageStatus !== "confirmed") throw deny();
+    // [DOC-P2] wageStatus 만으로는 부족하다. 노쇼·결근으로 0원 마감된 건도
+    //   confirmed 가 된다(callableBatchSetNoShow 가 그렇게 쓴다). 그 건은
+    //   보낼 돈이 없으므로 통장사본을 열 이유도 없다. .6-P1 이 정한 지급
+    //   대상 판정과 같은 식을 쓴다 — 돈의 진실과 문서 접근 이유가 어긋나면
+    //   한쪽을 고칠 때마다 다른 쪽이 낡는다.
+    if (!srvPayableForTransfer(
+      d.wageStatus as string | undefined,
+      d.status as string | undefined,
+      d.finalWage as number | undefined
+    )) throw deny();
     return s.id;
   }
 
+  // [DOC-P2] 지급 대상 판정은 status·finalWage 를 함께 보므로 where 절로
+  //   표현할 수 없다. 세 필드만 select 해 서버에서 고른다.
   const q = await db.collection("attendance")
     .where("businessId", "==", businessId)
     .where("userId", "==", workerUid)
     .where("wageStatus", "==", "confirmed")
-    .limit(1).get();
-  if (q.empty) throw deny();
-  return q.docs[0].id;
+    .select("wageStatus", "status", "finalWage")
+    .get();
+  for (const doc of q.docs) {
+    const d = doc.data();
+    if (srvPayableForTransfer(
+      d["wageStatus"] as string | undefined,
+      d["status"] as string | undefined,
+      d["finalWage"] as number | undefined
+    )) {
+      return doc.id;
+    }
+  }
+  throw deny();
 }
 
 // ── 세무 identity 검토 — 권한/관계 공통 가드 ───────────────────

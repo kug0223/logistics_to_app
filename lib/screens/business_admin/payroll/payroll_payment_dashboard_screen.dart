@@ -717,6 +717,36 @@ class _PayrollPaymentDashboardScreenState
     return info != null && !info.ready && info.needsManualReview;
   }
 
+  /// [DOC-P2] 지금 지급해야 할 건 — 통장사본을 열 이유가 되는 행.
+  ///
+  ///   예전에는 `wageStatus == confirmed` 중 첫 건을 집었다. 노쇼·결근으로
+  ///   0원 마감된 건도 confirmed 이므로, 보낼 돈이 없는 행이 목적으로
+  ///   지목될 수 있었다. 서버가 쓰는 판정과 같은 식으로 고른다.
+  AttendanceModel? _payablePurposeRow(List<AttendanceModel> recs) {
+    for (final r in recs) {
+      if (r.isPayableForTransfer) return r;
+    }
+    return null;
+  }
+
+  /// [DOC-P2] 통장사본을 볼 수 있는가 — 예외 상태가 아니라 **지급 사유**로.
+  ///
+  ///   예전에는 자동 판정이 실패한 경우(`_needsManualReview`)에만 버튼이
+  ///   났다. 그래서 정상적으로 지급을 준비하는 담당자는 통장사본을 확인할
+  ///   길이 없었고, 예외 상태에서만 열 수 있었다. 예외는 접근 자격이
+  ///   아니라 주의 표시다.
+  ///
+  ///   지원서가 취소·종료됐는지는 보지 않는다. 지급할 돈이 남아 있으면
+  ///   이유는 여전히 있다.
+  bool _bankViewEligible(List<AttendanceModel> recs) {
+    if (recs.isEmpty) return false;
+    final uid = recs.first.userId;
+    // 조회 실패는 "없음"이 아니다 — 모르는 상태로 원본을 열지 않는다.
+    if (_readinessUnknown.contains(uid)) return false;
+    if (_readiness[uid] == null) return false;
+    return _payablePurposeRow(recs) != null;
+  }
+
   /// [§9·§11] 관리자가 명시적으로 눌렀을 때만 원본을 열고 판정을 받는다.
   Future<void> _reviewBankDocument(List<AttendanceModel> recs) async {
     if (recs.isEmpty) return;
@@ -726,11 +756,9 @@ class _PayrollPaymentDashboardScreenState
     final name = _userBankCache[uid]?['label'] ?? '이름 없음';
     // [PII-DOC-R1.6.1B] 지금 보고 있는 **미지급** 건을 목적으로 지목한다.
     //   이미 이체된 건만 남았으면 서버가 원본을 열어주지 않는다.
-    final unpaid = recs
-        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
-        .toList();
-    if (unpaid.isEmpty) return;
-    final target = unpaid.first;
+    // [DOC-P2] 0원으로 마감된 노쇼·결근은 지급 사유가 아니다.
+    final target = _payablePurposeRow(recs);
+    if (target == null) return;
 
     String? url;
     try {
@@ -2138,9 +2166,10 @@ class _PayrollPaymentDashboardScreenState
                       onRefreshSnapshot: _needsSnapshotRefresh(recs)
                           ? () => _refreshSnapshots(recs)
                           : null,
-                      onReviewBankDocument: _needsManualReview(recs)
+                      onReviewBankDocument: _bankViewEligible(recs)
                           ? () => _reviewBankDocument(recs)
                           : null,
+                      bankViewAttention: _needsManualReview(recs),
                       waitLabel: _payrollWaitLabel(recs),
                     ));
                   },
@@ -2395,9 +2424,11 @@ class _PayrollPaymentDashboardScreenState
                           ? () => _refreshSnapshots(recs)
                           : null,
                       onReviewBankDocument:
-                          !_batchMode && _needsManualReview(recs)
+                          !_batchMode && _bankViewEligible(recs)
                               ? () => _reviewBankDocument(recs)
                               : null,
+                      bankViewAttention:
+                          !_batchMode && _needsManualReview(recs),
                       waitLabel: !_batchMode ? _payrollWaitLabel(recs) : null,
                     ));
                   },
@@ -2849,8 +2880,12 @@ class _WorkerPayCard extends StatelessWidget {
   /// [PII-DOC-R1.6.1] 스냅샷만 갱신하면 이체 가능한 경우에만 non-null.
   final VoidCallback? onRefreshSnapshot;
 
-  /// [PII-DOC-R1.6.1A] 권한자가 원본을 보고 판단할 수 있을 때만 non-null.
+  /// [DOC-P2] 지급할 돈이 남아 있으면 non-null — 예외 상태와 무관하다.
   final VoidCallback? onReviewBankDocument;
+
+  /// [DOC-P2] 자동 판정이 못 읽어 사람이 봐야 하는 경우. 접근 자격이 아니라
+  ///   주의 표시다 — 같은 버튼의 문구와 색만 달라진다.
+  final bool bankViewAttention;
 
   /// 관리자가 풀 수 없는 경우 보여줄 상태 문구.
   final String? waitLabel;
@@ -2876,6 +2911,7 @@ class _WorkerPayCard extends StatelessWidget {
     this.onCardTap,
     this.onRefreshSnapshot,
     this.onReviewBankDocument,
+    this.bankViewAttention = false,
     this.waitLabel,
   });
 
@@ -3049,9 +3085,14 @@ class _WorkerPayCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 6),
-                            // [PII-DOC-R1.6.1A §10] 자동이 못 읽은 통장사본 —
-                            //   권한자가 원본을 보고 판단할 수 있다.
-                            //   '계좌 인증'이 아니라 '통장사본 확인'이다.
+                            // [DOC-P2] 지급 준비의 일상 동작이다 — 예외일
+                            //   때만 열리던 것을 지급할 돈이 남아 있으면
+                            //   열리게 바꿨다. '계좌 인증'이 아니라
+                            //   '통장사본'을 보는 일이다.
+                            //
+                            //   자동이 못 읽은 건은 같은 버튼에 주의 색과
+                            //   '확인' 문구를 준다 — 접근 자격이 아니라
+                            //   봐야 한다는 표시다.
                             if (!isTransferred && !isBatchMode &&
                                 onReviewBankDocument != null)
                               SizedBox(
@@ -3059,16 +3100,22 @@ class _WorkerPayCard extends StatelessWidget {
                                 child: OutlinedButton(
                                   onPressed: onReviewBankDocument,
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: AppColors.infoDark,
-                                    side: const BorderSide(
-                                        color: AppColors.infoDark),
+                                    foregroundColor: bankViewAttention
+                                        ? AppColors.infoDark
+                                        : AppColors.textSecondary,
+                                    side: BorderSide(
+                                        color: bankViewAttention
+                                            ? AppColors.infoDark
+                                            : AppColors.grey300),
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
                                     textStyle: ResponsiveHelper.tinyStyle(context,
                                         fontWeight: FontWeight.w600),
                                     shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(6)),
                                   ),
-                                  child: const Text('통장사본 확인'),
+                                  child: Text(bankViewAttention
+                                      ? '통장사본 확인'
+                                      : '통장사본 보기'),
                                 ),
                               )
                             // [PII-DOC-R1.6.1 §5] 지급정보는 멀쩡한데
