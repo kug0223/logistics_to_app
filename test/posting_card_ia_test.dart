@@ -563,8 +563,10 @@ void main() {
     final src = _src(_cardPath);
     final body = _flat(_codeOf(_bodyOf(src, 'Widget _buildStaffingLine(')));
 
-    test('07-a 확정 / 필요 / 대기 셋을 모두 말한다', () {
-      expect(body.contains("'확정 \$safeConfirmed'"), true);
+    // [R7-P1-2 DEVICE.1C] 운영 집계의 이름이 `확정` → `충원` 이 됐다.
+    //   지키려던 것은 "셋을 각각 말한다" 이지 단어가 아니다.
+    test('07-a 충원 / 필요 / 대기 셋을 모두 말한다', () {
+      expect(body.contains("'충원 \$safeConfirmed'"), true);
       expect(body.contains("' / 필요 \$required'"), true);
       expect(body.contains("'대기 \$pending'"), true);
     });
@@ -573,10 +575,13 @@ void main() {
       expect(body.contains("required == 0 ? ' / 필요 미설정'"), true);
     });
 
-    test('07-c 확정과 대기를 합치지 않는다 (§12)', () {
+    // [R7-P1-2 DEVICE.1C] `충원` 이라는 단어를 금지하고 있었다. 금지의 이유는
+    //   단어가 아니라 **합치지 않는다**는 계약이다 — 그쪽만 남긴다.
+    test('07-c 충원과 대기를 합치지 않는다 (§12)', () {
       expect(body.contains('confirmed + pending'), false);
       expect(body.contains('safeConfirmed + pending'), false);
-      expect(body.contains('충원'), false);
+      // 사람 상태(`확정`)와 운영 집계(`충원`)를 한 줄에서 섞지 않는다.
+      expect(body.contains('확정'), false);
     });
 
     test('07-d 미충원을 정렬·요약 수치로 승격하지 않는다 (§11)', () {

@@ -353,7 +353,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       children: [
         _buildDot(confirmedColor),
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text('확정 $_confirmedCount',
+        // [R7-P1-2 DEVICE.1C] 업무 상세도 공고 요약과 같은 말을 쓴다 — 운영 집계는 `충원`.
+        Text('충원 $_confirmedCount',
             style: ResponsiveHelper.tinyStyle(context, color: textColor)),
         SizedBox(width: ResponsiveHelper.spacing(context, 8)),
         _buildDot(pendingColor),

@@ -549,7 +549,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               Icon(Icons.event, size: ResponsiveHelper.iconSize(context, 15), color: AppColors.tealDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
-                '${date.month}월 ${date.day}일(${FormatHelper.weekday(date)}) 근무 현황',
+                // [R7-P1-2 DEVICE.1C] 날짜와 요일이 같은 달력에서 나온다.
+                '${FormatHelper.formatDate(date)} 근무 현황',
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: isWeekend ? AppColors.errorDark : AppColors.tealDark,
@@ -902,10 +903,25 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         RenewalDecisionState.expired;
 
     final expiredDecisionCount = _fixedWorkers.where(isExpiredUndecided).length;
+
+    // [R7-P1-2 DEVICE.1C] 기간이 끝난 관계는 `근무중`이 아니다.
+    //
+    //   이 집계는 `resignStatus == null && !expired` 만 봤다. 그래서
+    //   9/22 에 종료된 TERMINATE 근무자가 9/27 에도 `정상 1` 로 잡혔다 —
+    //   관리자는 사람이 없는데 한 명이 일하고 있다고 읽는다.
+    //
+    //   판정식은 공고 좌석과 같은 `occupiesSeatOn` 하나다. 이력은 그대로
+    //   두고 현재 인원에서만 뺀다.
+    final now = DateTime.now();
+    bool isEnded(_FixedWorkerItem w) => !w.application.occupiesSeatOn(now);
+
     final activeCount = _fixedWorkers
         .where((w) =>
-            w.application.resignStatus == null && !isExpiredUndecided(w))
+            w.application.resignStatus == null &&
+            !isExpiredUndecided(w) &&
+            !isEnded(w))
         .length;
+    final endedCount = _fixedWorkers.where(isEnded).length;
     final pendingResignCount = _fixedWorkers.where((w) => w.application.resignStatus == AppStatus.pending).length;
     final terminationPendingCount = _fixedWorkers.where((w) => w.application.terminationStatus == AppStatus.pending).length;
 
@@ -922,7 +938,16 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         children: [
           _buildStatChip(context, '전체', _fixedWorkers.length, AppColors.longTermDark),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          _buildStatChip(context, '정상', activeCount, AppColors.success),
+          // [R7-P1-2 DEVICE.1C] `정상`은 지금 일하고 있는 사람 수다.
+          //   `근무중`이 그 뜻을 더 바로 말한다 — 같은 화면의 `계약 종료`와
+          //   같은 축(현재 관계 상태)으로 읽힌다.
+          _buildStatChip(context, '근무중', activeCount, AppColors.success),
+          // 끝난 관계도 세어 둔다. 현재 목록에서 빠지더라도 이 공고에
+          //   누가 있었는지 찾을 수 있어야 한다.
+          if (endedCount > 0) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            _buildStatChip(context, '계약 종료', endedCount, AppColors.grey500),
+          ],
           if (expiredDecisionCount > 0) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             _buildStatChip(
@@ -1121,7 +1146,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 _buildStatusBanner(app, hasResignRequest, hasTerminationRequest),
 
               // 계약서 서명 대기 배너 (연장 후 근무자 미서명)
-              if (app.status == AppStatus.contractPending)
+              // [R7-P1-2 DEVICE.1C] 이미 끝난 관계에는 처리할 계약이 없다.
+              //   status 는 CONTRACT_PENDING 으로 남지만(이력), 기간이
+              //   지났으면 관리자가 할 일은 사라진다. 끝난 일을 할 일로
+              //   계속 띄우면 실제 할 일이 묻힌다.
+              if (app.status == AppStatus.contractPending &&
+                  app.occupiesSeatOn(DateTime.now()))
                 _buildContractPendingBanner(context),
 
               // 계약 결정 배너 (곧 종료 또는 이미 만료 · 미결정) — 리스트 모드에서만
@@ -1547,8 +1577,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
                 daysLeft < 0
-                    ? '계약 만료 · 결정 필요 — ${-daysLeft}일 지남 (${endDate.month}/${endDate.day})'
-                    : '계약 만료 D-$daysLeft (${endDate.month}/${endDate.day})',
+                    ? '계약 만료 · 결정 필요 — ${-daysLeft}일 지남 (${FormatHelper.formatDateShort(endDate)})'
+                    : '계약 만료 D-$daysLeft (${FormatHelper.formatDateShort(endDate)})',
                 style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
                     .copyWith(fontWeight: FontWeight.w600),
               ),
@@ -1603,10 +1633,18 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final s = renewed.desiredStartDate ?? renewed.workDate;
       final e = renewed.workEndDate;
       label = e != null
-          ? '다음 계약 ${s.month}/${s.day} ~ ${e.month}/${e.day}'
-          : '다음 계약 ${s.month}/${s.day}~';
+          // [R7-P1-2 DEVICE.1C] 계약 기간은 KST 달력이다 — UTC 기기에서
+          //   `9/9~9/22` 가 `9/8~9/21` 로 보였다(실기기 제보와 일치).
+          ? '다음 계약 ${FormatHelper.formatDateShort(s)} ~ ${FormatHelper.formatDateShort(e)}'
+          : '다음 계약 ${FormatHelper.formatDateShort(s)}~';
+    } else if (isExtend) {
+      label = '다음 계약 연장됨';
     } else {
-      label = isExtend ? '다음 계약 연장됨' : '계약 종료 예정';
+      // [R7-P1-2 DEVICE.1C] `종료 예정`은 아직 오지 않은 일이다.
+      //   D 가 지났으면 이미 끝난 관계이므로 그렇게 말한다.
+      //   결정(TERMINATE)과 효력(D+1)을 구분한다 — 결정만으로 종료라고
+      //   말하지 않고, 시간이 지났다는 이유로 결정을 추측하지도 않는다.
+      label = app.occupiesSeatOn(DateTime.now()) ? '계약 종료 예정' : '계약 종료';
     }
 
     return Container(
@@ -1778,8 +1816,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         '${user?.nameWithPersonNo ?? ''}님에게 계약 연장을 제안합니다.',
         if (period.isLate) '기존 계약기간이 종료되었습니다.',
         '',
-        '새 계약 기간  ${newStart.month}/${newStart.day} ~ '
-            '${newEnd.month}/${newEnd.day} (${period.months}개월)',
+        '새 계약 기간  ${FormatHelper.formatDateShort(newStart)} ~ '
+            '${FormatHelper.formatDateShort(newEnd)} (${period.months}개월)',
         '업무          ${app.selectedWorkType}',
         if (days.isNotEmpty) '근무요일      $days',
         '근무시간      ${app.startTime} ~ ${app.endTime}',
@@ -1805,7 +1843,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final confirm = await DialogHelper.showConfirm(
         context,
         title: '계약 종료',
-        message: '${user?.nameWithPersonNo ?? ''}님의 계약을 ${app.workEndDate!.month}/${app.workEndDate!.day}에 종료하시겠습니까?\n근무자에게 종료 통보 알림이 발송됩니다.',
+        message: '${user?.nameWithPersonNo ?? ''}님의 계약을 ${FormatHelper.formatDateShort(app.workEndDate!)}에 종료하시겠습니까?\n근무자에게 종료 통보 알림이 발송됩니다.',
         confirmText: '종료',
         confirmColor: AppColors.error,
         icon: Icons.stop_circle_outlined,

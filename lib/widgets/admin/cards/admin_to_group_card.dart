@@ -1440,7 +1440,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
       overflow: TextOverflow.ellipsis,
       text: TextSpan(style: base, children: [
         TextSpan(
-          text: '확정 $safeConfirmed',
+          // [R7-P1-2 DEVICE.1C] 이 숫자는 **지금 자리를 채우고 있는 사람 수**다.
+          //
+          //   `확정`이라고 부르면 사람의 상태(지원=관심, 확정=약속)와 같은
+          //   말이 된다. 계약이 끝난 사람도 확정됐던 것은 사실이라, 같은
+          //   단어로 두 가지를 말하면 `확정 0`이 과거를 부정하는 것처럼
+          //   읽힌다. 운영 집계는 `충원`으로 부른다 — 사람의 `확정`은
+          //   그대로 둔다.
+          text: '충원 $safeConfirmed',
           style: base.copyWith(
             fontWeight: FontWeight.bold,
             color: isFull ? AppColors.successDark : AppColors.textPrimary,

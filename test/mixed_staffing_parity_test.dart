@@ -280,10 +280,22 @@ void _extra() {
           reason: '이 위젯에서 지원자라는 낱말이 쓰일 자리가 없다');
     });
 
-    test('05-c 확정·대기·미충원은 여전히 각각 말한다', () {
-      expect(detail.contains("'확정 \$_confirmedCount'"), true);
+    // [R7-P1-2 DEVICE.1C] 운영 집계의 이름이 `확정` → `충원` 으로 바뀌었다.
+    //   지키려던 것은 "셋을 합치지 않고 각각 말한다" 이지 단어가 아니다.
+    //   사람의 `확정`(지원=관심, 확정=약속)은 그대로다 — 아래 05-d 가 본다.
+    test('05-c 충원·대기·미충원은 여전히 각각 말한다', () {
+      expect(detail.contains("'충원 \$_confirmedCount'"), true);
       expect(detail.contains("'대기 \$_pendingCount'"), true);
       expect(detail.contains("'미충원 \$missing'"), true);
+      // 합친 숫자를 **텍스트로** 말하지 않는다. (미니바 비율 계산은 별개다)
+      expect(detail.contains("'지원 \${_confirmedCount + _pendingCount}'"), false);
+    });
+
+    test('05-d 사람의 확정 상태는 그대로다', () {
+      final work = _codeOf(_src(workPath));
+      expect(work.contains("_buildSectionHeader(context, '확정'"), true,
+          reason: '확정된 사람 목록의 머리말은 사람 상태다');
+      expect(work.contains("label: '확정'"), true, reason: '확정 action 유지');
     });
   });
 
@@ -475,13 +487,20 @@ void _shortageSummary() {
       expect(seg.contains('shortage > 0'), true);
     });
 
-    test('10-e 기존 계약 유지 — 미충원/충원은 여전히 쓰지 않는다', () {
-      // 부족은 대기를 빼지 않는다. 미충원(required−confirmed−pending)과 다르다.
+    // [R7-P1-2 DEVICE.1C] 이 앵커는 `충원` 이라는 단어 자체를 금지하고 있었다.
+    //
+    //   금지의 이유는 단어가 아니라 **계산식**이었다 — `미충원`
+    //   (required−confirmed−pending)을 `부족`(required−confirmed)과 섞지
+    //   말라는 것. 공고 요약의 운영 집계 이름이 `충원`이 된 지금도 그
+    //   계산식 계약은 그대로다. 앵커를 식 쪽으로 다시 쓴다.
+    test('10-e 부족은 대기를 빼지 않는다 — 미충원과 다른 수다', () {
       final i = card.indexOf('Widget _buildStaffingLine(');
       final body = card.substring(i, i + 2000);
-      expect(body.contains('미충원'), false);
-      expect(body.contains('충원'), false);
+      expect(body.contains('미충원'), false, reason: '요약은 부족을 말한다');
       expect(body.contains('- pending'), false);
+      expect(body.contains('충원 \$safeConfirmed'), true,
+          reason: '운영 집계 이름은 충원');
+      expect(body.contains('부족 \$shortage'), true);
     });
 
     test('10-f 부족은 orange — red는 실패에 남긴다', () {
