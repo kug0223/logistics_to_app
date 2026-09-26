@@ -63,12 +63,13 @@ void main() {
   // ══════════════════════════════════════════════════════════════
 
   group('SAP-A 서버 권한 계약', () {
+    // [R7-P1-2.3] 옛 `if (isApplicantReview)` 분기를 고정하고 있었다.
+    //   목적→권한이 map 으로 바뀌었다. 지키는 의미는 같다.
     test('SAP-A1 applicantReview 는 canManageTo 를 strict 로 본다', () {
-      expect(getApps, contains('const isApplicantReview = purpose === "applicantReview";'));
-      final branch =
-          _slice(getApps, 'if (isApplicantReview) {', '} else {');
-      expect(branch, contains('appsPerms?.canManageTo !== true'));
-      expect(branch, contains('"permission-denied"'));
+      expect(getApps, contains('applicantReview: ["canManageTo"],'));
+      expect(getApps, contains('required.some((p) => appsPerms?.[p] === true)'));
+      expect(getApps, contains('"permission-denied"'));
+      expect(getApps, contains('applicantReview: "TO 관리 권한이 없습니다."'));
     });
 
     test('SAP-B payload 를 만들기 전에 막는다', () {
@@ -98,8 +99,10 @@ void main() {
     });
 
     test('SAP-E2 알 수 없는 purpose 는 거부된다', () {
-      expect(getApps, contains('허용되지 않는 purpose 값'));
+      // [R7-P1-2.3] 생략도 거부다 — 목적 없는 조회 자체를 받지 않는다.
+      expect(getApps, contains('지원서 조회 목적(purpose)이 필요합니다.'));
       expect(getApps, contains('"invalid-argument"'));
+      expect(getApps, contains('hasOwnProperty.call(APPLICATION_READ_PURPOSES'));
     });
   });
 
@@ -155,33 +158,44 @@ void main() {
   // ══════════════════════════════════════════════════════════════
 
   group('SAP-H 비-staffing 회귀', () {
-    test('SAP-H1 네 권한 OR 분기가 그대로다', () {
-      final other = _slice(getApps, '} else {', 'const cap =');
-      expect(other, contains('APPLICATION_READ_PERMISSIONS'));
+    // [R7-P1-2.3] 이 둘은 "purpose 없으면 네 권한 중 하나로 통과" 라는
+    //   **폐기된 구조**를 고정하고 있었다. 그 fallback 이 곧 우회였다.
+    //   지키려던 의미 — 다른 도메인 reader 를 잃지 않는다 — 는 그대로 두고,
+    //   목적별 권한 분리라는 새 구조로 다시 쓴다.
+    test('SAP-H1 다른 도메인 reader 가 각자의 권한으로 살아 있다', () {
+      final map = _slice(getApps,
+          'const APPLICATION_READ_PURPOSES: Record<string, string[]> = {', '};');
+      expect(map, contains('workerOperation: ["canManageWorkers"],'));
+      expect(map, contains('contractReview: ["canManageContract"],'));
+      final cap = _slice(map, 'capacity: [', '],');
       for (final p in [
         '"canManageTo"',
         '"canManageWorkers"',
         '"canManageWage"',
         '"canManageContract"',
       ]) {
-        expect(other, contains(p), reason: '정상 reader 를 잃었다: $p');
+        expect(cap, contains(p), reason: '정원 조회에서 정상 reader 를 잃었다: $p');
       }
-      expect(other, contains('"지원서 조회 권한이 없습니다."'));
     });
 
     test('SAP-H2 blanket canManageTo 로 바꾸지 않았다', () {
-      // purpose 가 없으면 canManageTo 를 요구하지 않는다.
-      final other = _slice(getApps, '} else {', 'const cap =');
-      expect(other, contains('.some((p) => appsPerms?.[p] === true)'),
-          reason: '넷 중 하나 OR 가 아니라 단일 권한 강제로 바뀌었다');
+      final map = _slice(getApps,
+          'const APPLICATION_READ_PURPOSES: Record<string, string[]> = {', '};');
+      // 근무·계약 목적은 canManageTo 를 요구하지 않는다.
+      final worker = _slice(map, 'workerOperation: [', '],');
+      final contract = _slice(map, 'contractReview: [', '],');
+      expect(worker, isNot(contains('canManageTo')));
+      expect(contract, isNot(contains('canManageTo')));
     });
 
-    test('SAP-H3 확정 근무자 reader 는 purpose 를 넘기지 않는다', () {
+    test('SAP-H3 확정 근무자 reader 는 근무 권한으로 읽는다', () {
       // Home·근무 운영 화면이 같은 reader 를 쓴다 — canManageWorkers 가 정상이다.
+      //   목적은 밝히되, 그 목적이 canManageTo 를 요구해서는 안 된다.
       final confirmed = _slice(appService,
           'Future<List<ApplicationModel>> getConfirmedWorkersByDateAndBusinessOrThrow(',
           'Future<Set<DateTime>> getSeatedWorkDatesInRange(');
-      expect(confirmed, isNot(contains('purpose')));
+      expect(confirmed, contains("'purpose': 'workerOperation'"));
+      expect(confirmed, isNot(contains('applicantReview')));
 
       for (final path in [
         'lib/screens/business_admin/business_admin_home_screen.dart',

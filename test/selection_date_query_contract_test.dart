@@ -259,28 +259,43 @@ void main() {
       expect(s.contains('reviewPerms?.canManageTo !== true'), isTrue);
     });
 
+    // [R7-P1-2.3] 아래 셋은 옛 분기 구조를 문자열로 고정하고 있었다.
+    //   `purpose 생략 → 네 권한 중 하나면 통과`가 그 구조였고, 그것이
+    //   고쳐진 결함이다. 지키려던 **의미**는 그대로 두고 새 구조로 다시 쓴다.
     test('05-b 지원서 조회의 applicantReview도 canManageTo', () {
       final s = _tsSliceOf(cf, 'export const callableGetApplicationsByBiz = onCall',
           'const cap = Math.min(');
-      expect(s.contains('appsPerms?.canManageTo !== true'), isTrue);
+      expect(s.contains('applicantReview: ["canManageTo"],'), isTrue);
     });
 
     test('05-c membership만으로 지원서를 읽을 수 없다', () {
       // UI에 진입 경로가 없다는 것은 서버 authorization이 아니다.
+      //   이제는 목적을 말하지 않으면 조회 자체가 거부된다.
       final s = _tsSliceOf(cf, 'export const callableGetApplicationsByBiz = onCall',
           'const cap = Math.min(');
-      expect(s.contains('APPLICATION_READ_PERMISSIONS'), isTrue);
+      expect(s.contains('APPLICATION_READ_PURPOSES'), isTrue);
+      expect(s.contains('지원서 조회 목적(purpose)이 필요합니다.'), isTrue);
+      // 어떤 목적도 권한 없이 열리지 않는다 — 빈 배열이 없어야 한다.
+      final map = s.substring(
+          s.indexOf('const APPLICATION_READ_PURPOSES'),
+          s.indexOf('const purposeKnown'));
+      expect(RegExp(r':\s*\[\s*\]').hasMatch(map), isFalse,
+          reason: '권한 없이 열리는 목적이 생겼다');
       for (final p in [
         'canManageTo', 'canManageWorkers', 'canManageWage', 'canManageContract',
       ]) {
-        expect(s.contains('"$p"'), isTrue);
+        expect(map.contains('"$p"'), isTrue);
       }
-      expect(s.contains('"지원서 조회 권한이 없습니다."'), isTrue);
     });
 
     test('05-d purpose 값은 allowlist 검증을 거친다', () {
-      final n = RegExp(r'허용되지 않는 purpose 값').allMatches(cf).length;
-      expect(n, greaterThanOrEqualTo(2));
+      // 두 callable 모두 목적을 검증한다 — 지원서 조회 / 사용자 일괄 조회.
+      expect(cf.contains('허용되지 않는 purpose 값'), isTrue,
+          reason: 'callableGetUsersBatch 쪽 검증');
+      final s = _tsSliceOf(cf, 'export const callableGetApplicationsByBiz = onCall',
+          'const cap = Math.min(');
+      expect(s.contains('hasOwnProperty.call(APPLICATION_READ_PURPOSES'), isTrue);
+      expect(s.contains('"invalid-argument"'), isTrue);
     });
 
     test('05-e 클라이언트가 지원 검토 경로에서 purpose를 실제로 보낸다', () {

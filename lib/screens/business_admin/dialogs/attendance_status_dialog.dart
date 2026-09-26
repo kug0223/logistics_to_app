@@ -419,15 +419,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     // [CF 이전 2026-07-13] Firestore 보안규칙 PERMISSION_DENIED 근본 해결
     // [R8-P7.1] cap 에서 잘린 것을 전부로 오해하지 않도록 페이징 헬퍼 경유.
     final cfResults = await Future.wait([
+      // [R7-P1-2.3] 근태 현황 — 이 화면의 조작 게이트와 같은 canManageWorkers.
       fetchApplicationsByBizPaged({
         'businessId': _selectedBusinessId,
         'workDateGteMs': dateStart.millisecondsSinceEpoch,
         'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+        'purpose': FirestoreService.purposeWorkerOperation,
         'limit': 2000,
       }),
       fetchApplicationsByBizPaged({
         'businessId': _selectedBusinessId,
         'type': AppType.longTerm,
+        'purpose': FirestoreService.purposeWorkerOperation,
         'limit': 2000,
       }),
     ]);

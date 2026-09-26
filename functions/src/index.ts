@@ -22266,12 +22266,48 @@ export const callableGetApplicationsByBiz = onCall(
     if (resignStatus !== undefined && !VALID_RESIGN_STATUSES.has(resignStatus)) {
       throw new HttpsError("invalid-argument", `허용되지 않는 resignStatus 값입니다: ${resignStatus}`);
     }
-    // [R1.2.1] purpose-scoped 호출 — callableGetUsersBatch와 같은 계약.
-    const isApplicantReview = purpose === "applicantReview";
-    if (purpose !== undefined && !isApplicantReview) {
+    // [R7-P1-2.3] purpose 는 caller 의 편의 값이 아니라 **authorization 경계**다.
+    //
+    //   이전에는 purpose 를 생략하면 "지원서를 읽을 이유가 있는 네 권한 중
+    //   하나"로 통과했고, 그렇게 통과한 호출이 applicantReview 와 **같은
+    //   전체 payload** 를 받았다. 즉 canManageWorkers 만 가진 SubAdmin 이
+    //   purpose 를 빼는 것만으로 지원자 명단 전체를 가져갈 수 있었다.
+    //   caller 가 정직하게 목적을 밝힐 것이라는 가정 위에 권한이 서 있었다.
+    //
+    //   그래서 purpose 를 필수로 만들고, 목적마다 canonical capability 를
+    //   붙인다. 새 권한을 만들지 않는다 — 이미 있는 네 개로 나눌 뿐이다.
+    const APPLICATION_READ_PURPOSES: Record<string, string[]> = {
+      // 지원자 검토·확정·거절 — 사람을 뽑는 일.
+      applicantReview: ["canManageTo"],
+      // 근무자 운영(근태·당일 명단·고정 인력) — 이미 뽑힌 사람을 다루는 일.
+      workerOperation: ["canManageWorkers"],
+      // 계약 만료·갱신.
+      contractReview: ["canManageContract"],
+      // 정원·부족 계산. 여러 화면이 공유하므로 네 권한 중 하나면 되지만,
+      //   그 대신 사람을 식별하는 field 를 돌려주지 않는다(아래 projection).
+      capacity: [
+        "canManageTo", "canManageWorkers",
+        "canManageWage", "canManageContract",
+      ],
+    };
+    const purposeKnown = typeof purpose === "string" &&
+      Object.prototype.hasOwnProperty.call(APPLICATION_READ_PURPOSES, purpose);
+    if (!purposeKnown) {
       throw new HttpsError(
-        "invalid-argument", `허용되지 않는 purpose 값: ${purpose}`);
+        "invalid-argument",
+        "지원서 조회 목적(purpose)이 필요합니다.");
     }
+    const isCapacityRead = purpose === "capacity";
+
+    // [R7-P1-2.3] 정원 계산에 필요한 field 만. 이름·연락처·임금·서류 동의·
+    //   신뢰도 같은 값은 좌석을 세는 데 쓰이지 않는다.
+    const CAPACITY_ALLOWED_FIELDS = new Set([
+      "businessId", "toId", "slotId", "workDetailId", "wdId",
+      "status", "type", "selectedWorkType",
+      "startTime", "endTime", "workDate", "workEndDate",
+      "staffingReleasedAt", "isLongTermApplication",
+      "requiredCount", "resignStatus", "terminationStatus",
+    ]);
 
     const {callerData: appsCallerData, bizData: appsBizData} =
       await assertBizAdmin(callerUid, businessId);
@@ -22285,11 +22321,8 @@ export const callableGetApplicationsByBiz = onCall(
     //   UI에 진입 경로가 없다는 것은 서버 authorization이 아니다.
     //
     //   generic endpoint라 attendance/workforce/payroll caller가 함께 쓰므로
-    //   canManageTo를 전역 강제하면 REGRESSION이다. 대신:
-    //     (1) purpose=applicantReview → canManageTo strict
-    //     (2) 그 외 → 지원서를 읽을 이유가 있는 권한 중 하나는 있어야 한다.
-    //         넷 다 없는 SubAdmin은 관리자 UI에서 할 수 있는 일이 없으므로
-    //         이 검증으로 잃는 정상 caller가 없다.
+    //   canManageTo를 전역 강제하면 REGRESSION이다. 대신 [R7-P1-2.3] 에서
+    //   purpose 를 필수로 만들고 목적별 canonical capability 로 나눴다.
     const appsAdminIds = (appsBizData?.adminIds as string[] | undefined) ?? [];
     const appsOwnerId = appsBizData?.ownerId as string | undefined;
     const appsIsFullAccess =
@@ -22302,20 +22335,17 @@ export const callableGetApplicationsByBiz = onCall(
       const appsPerms =
         appsMemberSnap.data()?.permissions as
           Record<string, boolean> | undefined;
-      if (isApplicantReview) {
-        if (appsPerms?.canManageTo !== true) {
-          throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
-        }
-      } else {
-        const APPLICATION_READ_PERMISSIONS = [
-          "canManageTo", "canManageWorkers",
-          "canManageWage", "canManageContract",
-        ];
-        const hasAny = APPLICATION_READ_PERMISSIONS
-          .some((p) => appsPerms?.[p] === true);
-        if (!hasAny) {
-          throw new HttpsError("permission-denied", "지원서 조회 권한이 없습니다.");
-        }
+      const required = APPLICATION_READ_PURPOSES[purpose];
+      if (!required.some((p) => appsPerms?.[p] === true)) {
+        // 목적마다 무엇이 없어서 막혔는지 말한다 — 관리자가 누구에게
+        //   무엇을 요청해야 하는지 알 수 있어야 한다.
+        const deny: Record<string, string> = {
+          applicantReview: "TO 관리 권한이 없습니다.",
+          workerOperation: "인력 관리 권한이 없습니다.",
+          contractReview: "계약 관리 권한이 없습니다.",
+          capacity: "지원서 조회 권한이 없습니다.",
+        };
+        throw new HttpsError("permission-denied", deny[purpose]);
       }
     }
 
@@ -22386,7 +22416,17 @@ export const callableGetApplicationsByBiz = onCall(
     const pageDocs = hasMore ? snap.docs.slice(0, cap) : snap.docs;
 
     return {
-      applications: pageDocs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      // [R7-P1-2.3] 정원 계산은 좌석만 센다 — 사람을 식별하는 field 를
+      //   내보내지 않는다. 다른 목적은 지금까지와 같은 전체 문서다.
+      applications: pageDocs.map((d) => {
+        const data = serializeFirestoreData(d.data()) as Record<string, unknown>;
+        if (!isCapacityRead) return {id: d.id, ...data};
+        const slim: Record<string, unknown> = {id: d.id};
+        for (const [k, v] of Object.entries(data)) {
+          if (CAPACITY_ALLOWED_FIELDS.has(k)) slim[k] = v;
+        }
+        return slim;
+      }),
       hasMore,
       lastDocId: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null,
     };

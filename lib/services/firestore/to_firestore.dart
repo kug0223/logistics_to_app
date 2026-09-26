@@ -671,7 +671,9 @@ extension TOFirestore on FirestoreService {
   }) async {
     try {
       // [BUGFIX] statuses whereIn 제거 → 전체 조회 후 클라이언트 필터링
-      final allApps = await getApplicationsByTOId(toId, businessId: businessId);
+      // [R7-P1-2.3] 삭제 전 관계 확인 — 세는 것은 status 뿐이다.
+      final allApps = await getApplicationsByTOId(toId,
+          businessId: businessId, purpose: 'capacity');
       final apps = allApps.where((a) => AppStatus.activeStates.contains(a.status)).toList();
       final confirmed = apps.where((a) =>
           AppStatus.confirmedStatuses.contains(a.status)).length;

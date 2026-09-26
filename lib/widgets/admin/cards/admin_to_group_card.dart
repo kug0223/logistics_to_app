@@ -2985,6 +2985,8 @@ class _SentInvitesSheetState extends State<_SentInvitesSheet> {
         'businessId': widget.businessId,
         'toId': widget.toId,
         'status': 'INVITED',
+        // [R7-P1-2.3] 초대 현황은 사람을 뽑는 일의 일부다 — canManageTo.
+        'purpose': 'applicantReview',
         'limit': 100,
       });
 

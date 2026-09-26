@@ -318,6 +318,8 @@ extension ApplicationFirestore on FirestoreService {
       final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'orderByAppliedAtDesc': true,
+        // [R7-P1-2.3] 고정 인력 관리 화면이 쓴다 — canManageWorkers 도메인.
+        'purpose': 'workerOperation',
         'limit': 1000,
       });
       return (result)
@@ -1254,6 +1256,8 @@ extension ApplicationFirestore on FirestoreService {
         'businessId': businessId,
         'workDateGteMs': monthStart.millisecondsSinceEpoch,
         'workDateLtMs': monthEnd.millisecondsSinceEpoch,
+        // [R7-P1-2.3] 대기 지원자 월별 조회 — 검토 목적이다.
+        'purpose': 'applicantReview',
         'limit': 2000,
       });
       return (result)
@@ -1367,6 +1371,8 @@ extension ApplicationFirestore on FirestoreService {
             'businessId': businessId,
             'status': status,
             'workEndDateLtMs': endBeforeMs,
+            // [R7-P1-2.3] 계약 만료·갱신 — canManageContract 도메인.
+            'purpose': 'contractReview',
             'limit': 200,
           }),
         ),
@@ -1400,6 +1406,8 @@ extension ApplicationFirestore on FirestoreService {
       final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'status': AppStatus.pending,
+        // [R7-P1-2.3] 대기 지원자 수 — 검토 목적이다.
+        'purpose': 'applicantReview',
         'limit': 500,
       });
       return (result)
@@ -1452,16 +1460,21 @@ extension ApplicationFirestore on FirestoreService {
     final (dateStart, dateEnd) = FormatHelper.kstDayRange(date);
 
     {
+      // [R7-P1-2.3] 확정 근무자 명단 — Home·당일 명단·근무 운영이 공유한다.
+      //   canManageWorkers 도메인이다. 여기에 canManageTo 를 요구하면
+      //   근무 운영만 맡은 관리자가 자기 화면을 잃는다.
       final futures = await Future.wait([
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workDateGteMs': dateStart.millisecondsSinceEpoch,
           'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+          'purpose': 'workerOperation',
           'limit': 2000,
         }),
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workEndDateGteMs': dateStart.millisecondsSinceEpoch,
+          'purpose': 'workerOperation',
           'limit': 2000,
         }),
       ]);
@@ -1583,12 +1596,15 @@ extension ApplicationFirestore on FirestoreService {
         'businessId': businessId,
         'workDateGteMs': rangeStart.millisecondsSinceEpoch,
         'workDateLtMs': rangeEnd.millisecondsSinceEpoch,
+        // [R7-P1-2.3] 근무 달력 — canManageWorkers 도메인.
+        'purpose': 'workerOperation',
         'limit': 2000,
       }),
       // 장기: 범위 시작 이후 종료되는 계약 후보 (당일 조회와 같은 조건)
       fetchApplicationsByBizPaged({
         'businessId': businessId,
         'workEndDateGteMs': rangeStart.millisecondsSinceEpoch,
+        'purpose': 'workerOperation',
         'limit': 2000,
       }),
     ]);

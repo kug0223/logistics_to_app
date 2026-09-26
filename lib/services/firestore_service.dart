@@ -253,6 +253,23 @@ class FirestoreService {
   /// [PII-DOC-R0.1] 목록·운영 조회 — 이름·연락처·이력까지. 계좌 없음.
   static const String purposeWorkerDirectory = 'workerDirectory';
 
+  // ── [R7-P1-2.3] 지원서 조회 목적 ─────────────────────────────
+  //
+  //   `callableGetApplicationsByBiz` 는 목적마다 다른 권한을 본다.
+  //   목적을 말하지 않으면 서버가 거부한다 — 생략이 곧 우회이던 시절을
+  //   끝내기 위해서다. 아래 네 값이 서버의 허용 목록과 짝이다.
+
+  //   (지원자 검토는 위 `purposeApplicantReview` — `canManageTo`.)
+
+  /// 근무자 운영(근태·당일 확정자·고정 인력) → `canManageWorkers`.
+  static const String purposeWorkerOperation = 'workerOperation';
+
+  /// 계약 만료·갱신 → `canManageContract`.
+  static const String purposeContractReview = 'contractReview';
+
+  /// 정원·부족 계산 → 네 권한 중 하나. 대신 사람을 식별하는 field 가 오지 않는다.
+  static const String purposeCapacity = 'capacity';
+
   // ═══════════════════════════════════════════════════════════
   // 캐시 관리
   // ═══════════════════════════════════════════════════════════
@@ -553,10 +570,14 @@ class FirestoreService {
       //   CF 는 slotId 를 이미 받는다. 한 슬롯의 좌석을 세려고 그 TO 의 모든 날짜
       //   지원서를 받아오고 있었다 — DEV 실측에서 18건 중 1건만 쓰고 있었다.
       //   statuses 는 CF 가 단일 equality 만 받아 계속 클라이언트에서 거른다.
+      // [R7-P1-2.3] 좌석을 세는 조회다 — 사람을 식별하는 field 를 받지 않는다.
+      //   여러 화면(Home·공고 카드·근무 목록)이 공유하므로 네 권한 중 하나면
+      //   통과하되, 그 대신 projection 을 정원 계산에 필요한 값으로 줄인다.
       final allApps = await getApplicationsByTOId(
         to.id,
         businessId: to.businessId,
         slotId: slotId,
+        purpose: purposeCapacity,
       );
       // [SYSTEM-INTEGRATION-R2.4 §4/§19] 좌석을 반납한 확정은 정원을 소모하지 않는다.
       //
@@ -1324,6 +1345,8 @@ class FirestoreService {
       final result = await fetchApplicationsByBizPaged({
         'businessId': businessId,
         'resignStatus': AppStatus.pending,
+        // [R7-P1-2.3] 퇴사 요청 처리 — Home 진입 게이트와 같은 canManageWorkers.
+        'purpose': purposeWorkerOperation,
         'limit': 200,
       });
       final raw = (result).whereType<Map>().toList();

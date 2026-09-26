@@ -246,16 +246,19 @@ extension AttendanceFirestore on FirestoreService {
 
       final results = await Future.wait([
         // 1. 오늘 단기 근무 (workDate == today)
+        // [R7-P1-2.3] 근태 도메인 — canManageWorkers.
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workDateGteMs': todayStart.millisecondsSinceEpoch,
           'workDateLtMs': todayEnd.millisecondsSinceEpoch,
+          'purpose': 'workerOperation',
           'limit': 2000,
         }),
         // 2. 장기 근무자 (workEndDate >= todayStart, 클라이언트에서 isWorkingOnDate 필터)
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workEndDateGteMs': todayStart.millisecondsSinceEpoch,
+          'purpose': 'workerOperation',
           'limit': 2000,
         }),
       ]);
@@ -865,14 +868,17 @@ extension AttendanceFirestore on FirestoreService {
 
       // [P0-C] 단기: 날짜 제한 없이 전체 기간 confirmed 단기 지원 조회
       // 장기: 기존과 동일 (날짜 제한 없이 전체 장기 확정자 조회)
+      // [R7-P1-2.3] 근태 도메인 — canManageWorkers.
       final callResults = await Future.wait([
         fetchApplicationsByBizPaged({
           'businessId': businessId,
+          'purpose': 'workerOperation',
           'limit': 2000,
         }),
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'type': AppType.longTerm,
+          'purpose': 'workerOperation',
           'limit': 2000,
         }),
       ]);
@@ -1019,6 +1025,7 @@ extension AttendanceFirestore on FirestoreService {
     try {
       final results = await Future.wait([
         // 단기: 해당 주 날짜 범위
+        // [R7-P1-2.3] 근태 도메인 — canManageWorkers.
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workDateGteMs': weekStart.millisecondsSinceEpoch,
@@ -1026,12 +1033,14 @@ extension AttendanceFirestore on FirestoreService {
               .add(const Duration(days: 1))
               .subtract(const Duration(milliseconds: 1))
               .millisecondsSinceEpoch,
+          'purpose': 'workerOperation',
           'limit': 500,
         }),
         // 장기: 종료일이 주 시작 이후인 것 (활성 계약)
         fetchApplicationsByBizPaged({
           'businessId': businessId,
           'workEndDateGteMs': weekStart.millisecondsSinceEpoch,
+          'purpose': 'workerOperation',
           'limit': 500,
         }),
       ]);

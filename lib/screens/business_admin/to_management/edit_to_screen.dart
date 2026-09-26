@@ -608,9 +608,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Future<List<Map<String, dynamic>>> _fetchApplications() async {
     // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
     // [R8-P7.1] cap 에서 잘린 것을 전부로 오해하지 않도록 페이징 헬퍼 경유.
+    // [R7-P1-2.3] 업무 변경의 영향 범위를 세는 조회다. 쓰는 값은 status ·
+    //   workDetailId/wdId · slotId · 시간뿐이라 정원 projection 으로 충분하다.
+    //   사람 이름·연락처를 받지 않는다.
     return fetchApplicationsByBizPaged({
       'businessId': widget.to.businessId,
       'toId': widget.to.id,
+      'purpose': FirestoreService.purposeCapacity,
       'limit': 2000,
     }, timeout: const Duration(seconds: 15));
   }
