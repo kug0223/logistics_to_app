@@ -278,29 +278,30 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('서버 구현 배선', () {
     test('terminal non-payable predicate가 존재한다', () {
+      // [.6-P1] 판정이 canonical helper 로 옮겨갔다. Home 이 지급 대상을
+      //   직접 가린다는 사실은 그대로이고, 이제 이체목록·배지·카운트가
+      //   같은 식을 쓴다.
       final fn = _codeOf(_fnBody(cf, 'async function srvHomeUnpaidWage('));
-      expect(
-        fn.contains(
-            'const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;'),
-        isTrue,
-      );
-      expect(fn.contains('if (nonPayable) continue;'), isTrue);
+      expect(fn.contains('srvPayableForTransfer('), isTrue);
+      expect(fn.contains(')) continue;'), isTrue);
     });
 
     test('§3 finalWage만으로 제외하지 않는다', () {
-      final fn = _codeOf(_fnBody(cf, 'async function srvHomeUnpaidWage('));
-      // 제외 조건은 status AND finalWage 둘 다를 요구한다
-      expect(fn.contains('&& fw === 0;'), isTrue);
-      expect(fn.contains('st === "NO_SHOW"'), isTrue);
-      expect(fn.contains('st === "absent"'), isTrue);
+      // 제외 조건은 status AND finalWage 둘 다를 요구한다 — 판정 정의를 본다.
+      final p = _codeOf(_fnBody(cf, 'function srvIsNonPayableZero('));
+      expect(p.contains('=== 0'), isTrue);
+      expect(p.contains('"NO_SHOW"'), isTrue);
+      expect(p.contains('"absent"'), isTrue);
       // status를 보지 않고 finalWage만으로 거르는 분기는 없다
+      final fn = _codeOf(_fnBody(cf, 'async function srvHomeUnpaidWage('));
       expect(fn.contains('if (fw === 0) continue;'), isFalse);
     });
 
     test('§13 projection만 넓혔고 쿼리는 그대로다', () {
       final fn = _codeOf(_fnBody(cf, 'async function srvHomeUnpaidWage('));
       expect(
-        fn.contains('.select("userId", "paymentDueDate", "status", "finalWage")'),
+        fn.contains('.select("userId", "paymentDueDate", "wageStatus", '
+            '"status", "finalWage")'),
         isTrue,
       );
       expect('db.collection('.allMatches(fn).length, 1, reason: '쿼리 1개 유지');

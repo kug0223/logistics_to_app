@@ -273,8 +273,9 @@ class _PayrollPaymentDashboardScreenState
   void _recomputeDerived() {
     _pendingGroups    = _getPendingGroups();
     _filteredGroups   = _getFilteredGroups();
+    // [.6-P1] 배지는 목록과 같은 population 을 센다 — 노쇼·결근 0원은 제외.
     _pendingBadgeCount = _allRecords
-        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
+        .where((r) => r.isPayableForTransfer)
         .map((r) => r.userId).toSet().length;
     _pendingIsUrgent  = _pendingBadgeCount > 0;
 
@@ -518,8 +519,9 @@ class _PayrollPaymentDashboardScreenState
 
   /// [PHASE-2C] 전체 미이체 그룹 — 날짜 필터 없음, userId × paymentDueDate grouping
   List<MapEntry<String, List<AttendanceModel>>> _getPendingGroupsAll() {
+    // [.6-P1] 서버 srvHomeUnpaidWage 와 같은 population.
     final recs = _outstandingAll
-        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
+        .where((r) => r.isPayableForTransfer)
         .toList();
 
     final map = <String, List<AttendanceModel>>{};
@@ -1072,7 +1074,7 @@ class _PayrollPaymentDashboardScreenState
   Map<DateTime, int> _buildPendingCountByDate() {
     final usersByDate = <DateTime, Set<String>>{};
     for (final r in _allRecords) {
-      if (r.wageStatus != AttendanceModel.wageConfirmed) continue;
+      if (!r.isPayableForTransfer) continue; // [.6-P1]
       final due = r.paymentDueDate;
       if (due == null) continue;
       final key = FormatHelper.toKstDate(due);
@@ -1145,7 +1147,7 @@ class _PayrollPaymentDashboardScreenState
   List<MapEntry<String, List<AttendanceModel>>> _getPendingGroups() {
     final target = _selectedTransferDate;
     final recs = _allRecords.where((r) {
-      if (r.wageStatus != AttendanceModel.wageConfirmed) return false;
+      if (!r.isPayableForTransfer) return false; // [.6-P1]
       final due = r.paymentDueDate;
       if (due == null) return false;
       return FormatHelper.toKstDate(due) == target;

@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
+import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/payroll_summary_model.dart';
 import '../../../providers/user_provider.dart';
@@ -232,6 +233,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         if (ws == 'pending' || ws == 'calculated') {
           pendingByMonth[idx]++;
         } else if (ws == 'confirmed' || ws == 'transferred') {
+          // [.6-P1] 서버 srvPayrollContribution 과 같은 식 — 노쇼·결근 0원은
+          //   근무일도 미이체 건수도 만들지 않는다. 금액이 남은 비정상
+          //   기록은 그대로 집계해 관리자가 볼 수 있게 둔다.
+          if (AttendanceModel.isNonPayableZeroOf(
+              data['status'] as String?, data['finalWage'] as num?)) {
+            continue;
+          }
           // payroll_summaries 미생성 시 attendance에서 직접 집계
           // confirmed(미이체) + transferred(이체완료) 모두 월별 인건비에 포함
           if (ws == 'confirmed') {

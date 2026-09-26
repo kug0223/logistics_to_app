@@ -366,8 +366,10 @@ void main() {
 
     test('§24 Functions 미변경', () {
       final cf = _src('functions/src/index.ts');
-      expect(cf.contains('const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;'),
-          isTrue);
+      // [.6-P1] 인라인 판정이 canonical helper 로 옮겨갔다. 지키려던 것은
+      //   "Home 이 지급 대상을 직접 가린다"는 사실이므로 그 자리를 본다.
+      expect(cf.contains('function srvPayableForTransfer('), isTrue);
+      expect(cf.contains('srvPayableForTransfer('), isTrue);
       expect(cf.contains('available: failedBusinessCount === 0,'), isTrue);
     });
   });

@@ -5037,6 +5037,80 @@ export const onWageConfirmed = onDocumentUpdated(
 // ═══════════════════════════════════════════════════════════
 
 /**
+ * [.6-P1] 지급할 것이 없는 종결 상태.
+ *
+ *   노쇼·결근은 finalWage 0 으로 마감되면서 wageStatus 가 confirmed 가 된다.
+ *   wageStatus 만 보는 자리는 그 둘을 "미이체 급여"로 읽는다 — 보낼 돈이
+ *   0원인데 Home 에 Task 가 서고, 이체 목록에 줄이 서고, 배지 숫자가 오른다.
+ *
+ *   finalWage 가 0 일 때만이다. 노쇼인데 금액이 남아 있는 기록은 비정상이고,
+ *   비정상은 조용히 지우는 것이 아니라 보이게 둬야 관리자가 고칠 수 있다.
+ *   status 를 모르는 문서도 제외하지 않는다 — 모른다는 것은 0 이 아니다.
+ *
+ * @param {string|undefined} status attendance.status
+ * @param {number|undefined} finalWage attendance.finalWage
+ * @return {boolean} 지급 대상이 아니고 금액도 0 이면 true
+ */
+function srvIsNonPayableZero(
+  status: string | undefined, finalWage: number | undefined
+): boolean {
+  return (status === "NO_SHOW" || status === "absent") &&
+    ((finalWage ?? 0) === 0);
+}
+
+/**
+ * [.6-P1] 이체 대상인가 — Home·이체목록·배지·카운트가 같이 쓰는 하나의 식.
+ *
+ * @param {string|undefined} wageStatus attendance.wageStatus
+ * @param {string|undefined} status attendance.status
+ * @param {number|undefined} finalWage attendance.finalWage
+ * @return {boolean} 확정됐고 지급할 금액이 있으면 true
+ */
+function srvPayableForTransfer(
+  wageStatus: string | undefined,
+  status: string | undefined,
+  finalWage: number | undefined
+): boolean {
+  return wageStatus === "confirmed" && !srvIsNonPayableZero(status, finalWage);
+}
+
+/** payroll_summaries 에 한 attendance 가 기여하는 몫. */
+type SrvPayrollContribution = {
+  count: number; workDays: number; payout: number; notTransferred: number;
+};
+
+const SRV_ZERO_CONTRIBUTION: SrvPayrollContribution =
+  {count: 0, workDays: 0, payout: 0, notTransferred: 0};
+
+/**
+ * [.6-P1] before/after 를 **같은 식**으로 계산한다.
+ *
+ *   예전에는 after 만 보고 `if (absent) return` 으로 빠져나갔다. 그래서
+ *   지급 대상이던 기록이 결근으로 바뀌면 이전 기여가 summary 에 남았고,
+ *   결근 기록이 pending 으로 돌아가면 넣은 적 없는 몫을 빼려 들었다.
+ *   양쪽을 같은 식으로 계산해 빼면 두 경우 모두 저절로 맞는다.
+ *
+ * @param {Record<string, unknown>|undefined} d attendance 문서 데이터
+ * @return {SrvPayrollContribution} 기여분. 대상이 아니면 전부 0.
+ */
+function srvPayrollContribution(
+  d: Record<string, unknown> | undefined
+): SrvPayrollContribution {
+  if (!d) return SRV_ZERO_CONTRIBUTION;
+  const ws = d["wageStatus"] as string | undefined;
+  if (ws !== "confirmed" && ws !== "transferred") return SRV_ZERO_CONTRIBUTION;
+  const status = d["status"] as string | undefined;
+  const wage = d["finalWage"] as number | undefined;
+  if (srvIsNonPayableZero(status, wage)) return SRV_ZERO_CONTRIBUTION;
+  return {
+    count: 1,
+    workDays: 1,
+    payout: wage ?? 0,
+    notTransferred: ws === "confirmed" ? 1 : 0,
+  };
+}
+
+/**
  * attendance.wageStatus 변경 시 payroll_summaries 집계를 트랜잭션으로 갱신.
  * - 루트 문서: totalPayout, confirmedCount, workerCount (집계 필드만)
  * - 서브컬렉션 workers/{userId}: 근무자별 상세 (1MB 문서 한계 회피)
@@ -5057,20 +5131,13 @@ export const onAttendanceWageChanged = onDocumentUpdated(
     const after = event.data?.after.data();
     if (!before || !after) return;
 
-    const beforeStatus = (before.wageStatus as string | undefined) ?? "pending";
-    const afterStatus = (after.wageStatus as string | undefined) ?? "pending";
-
-    // confirmed + transferred 모두 집계 대상
-    // transferred 전환 시 summary에서 제거되지 않도록 동일 그룹으로 처리
-    const SUMMARY_STATUSES = ["confirmed", "transferred"];
-    const wasConfirmed = SUMMARY_STATUSES.includes(beforeStatus);
-    const isConfirmed = SUMMARY_STATUSES.includes(afterStatus);
-
-    if (!wasConfirmed && !isConfirmed) return;
-
-    // absent 기록(processAutoAbsent 처리)은 finalWage=0이므로 payroll_summaries 집계 제외
-    const docStatus = (after.status as string | undefined) ?? "";
-    if (docStatus === "absent") return;
+    // [.6-P1] confirmed + transferred 모두 집계 대상이고, 노쇼·결근 0원은
+    //   양쪽 모두에서 빠진다. 같은 식을 before/after 에 각각 적용한다.
+    const cBefore = srvPayrollContribution(before);
+    const cAfter = srvPayrollContribution(after);
+    // 둘 다 기여가 없으면 바꿀 것이 없다 — 노쇼 0원끼리의 전이도 여기서 끝난다.
+    if (cBefore.count === 0 && cAfter.count === 0) return;
+    const isConfirmed = cAfter.count > 0;
 
     const businessId = after.businessId as string | undefined;
     const userId = after.userId as string | undefined;
@@ -5103,15 +5170,13 @@ export const onAttendanceWageChanged = onDocumentUpdated(
       console.warn(`[onAttendanceWageChanged] 근무자 이름 조회 실패 (빈 문자열 유지) userId=${userId}:`, e);
     }
 
-    const beforeWage =
-      wasConfirmed ? ((before.finalWage as number | undefined) ?? 0) : 0;
-    const afterWage =
-      isConfirmed ? ((after.finalWage as number | undefined) ?? 0) : 0;
-    const payoutDelta = afterWage - beforeWage;
-    const confirmedCountDelta = (isConfirmed ? 1 : 0) - (wasConfirmed ? 1 : 0);
-    // notTransferredCount: wageStatus==='confirmed' 인 건만 카운트 (transferred 제외)
-    const notTransferredDelta =
-      (afterStatus === "confirmed" ? 1 : 0) - (beforeStatus === "confirmed" ? 1 : 0);
+    // [.6-P1] delta = contribution(after) - contribution(before). 한 방향으로만
+    //   계산하므로 "넣은 적 없는 몫을 빼는" 경우가 생기지 않는다.
+    const payoutDelta = cAfter.payout - cBefore.payout;
+    const confirmedCountDelta = cAfter.count - cBefore.count;
+    const workDaysDelta = cAfter.workDays - cBefore.workDays;
+    // notTransferredCount: wageStatus==='confirmed' 인 지급 대상만 (transferred 제외)
+    const notTransferredDelta = cAfter.notTransferred - cBefore.notTransferred;
 
     type WorkerEntry = {name: string; totalPayout: number; workDays: number};
 
@@ -5132,9 +5197,11 @@ export const onAttendanceWageChanged = onDocumentUpdated(
         ? (workerSnap.data() as WorkerEntry)
         : {name: workerName, totalPayout: 0, workDays: 0};
       const newPayout = existingWorker.totalPayout + payoutDelta;
-      const newDays = existingWorker.workDays + confirmedCountDelta;
+      const newDays = existingWorker.workDays + workDaysDelta;
 
       if (!summarySnap.exists) {
+        // [.6-P1] 문서가 없다는 것은 뺄 이전 기여도 없다는 뜻이다.
+        //   after 가 기여하지 않으면 만들 것이 없다.
         if (!isConfirmed) return;
         // 루트 문서: 집계 필드만 (workers Map 없음)
         tx.set(summaryRef, {
@@ -5142,18 +5209,18 @@ export const onAttendanceWageChanged = onDocumentUpdated(
           yearMonth,
           year,
           month: monthNum,
-          totalPayout: afterWage,
-          confirmedCount: 1,
+          totalPayout: cAfter.payout,
+          confirmedCount: cAfter.count,
           workerCount: 1,
-          notTransferredCount: afterStatus === "confirmed" ? 1 : 0,
+          notTransferredCount: cAfter.notTransferred,
           createdAt: now,
           updatedAt: now,
         });
         // 서브컬렉션에 근무자 상세 기록
         tx.set(workerRef, {
           name: workerName,
-          totalPayout: afterWage,
-          workDays: 1,
+          totalPayout: cAfter.payout,
+          workDays: cAfter.workDays,
           updatedAt: now,
         });
         tx.set(processedRef, {processedAt: now, attendanceId: event.params.attendanceId});
@@ -30136,9 +30203,12 @@ export const callableMarkTransferredBatch = onCall(
         //
         //   미이체 집계(srvHomeUnpaidWage)가 쓰는 것과 같은 식이다 — 화면이
         //   목록에서 빼 주는 것에 기대지 않고 서버가 직접 판정한다.
-        const attStatus = (data.status as string | undefined) ?? "";
-        const fw = (data.finalWage as number | undefined) ?? 0;
-        if ((attStatus === "NO_SHOW" || attStatus === "absent") && fw === 0) {
+        // [.6-P1] 인라인 판정을 canonical helper 로 바꿨다 — Home·배지·카운트·
+        //   summary 가 모두 이 식 하나를 본다.
+        if (srvIsNonPayableZero(
+          data.status as string | undefined,
+          data.finalWage as number | undefined
+        )) {
           blocked[id] = XFER_NOT_PAYABLE;
           skipped.push(id);
           continue;
@@ -30372,14 +30442,27 @@ export const callableGetNotTransferredCount = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
     await assertBizAdmin(request.auth.uid, businessId);
-    // [PERF-H5] 전체 문서 읽기 → count() 서버 집계로 교체 (문서 전송 없음)
-    const countSnap = await db
+    // [.6-P1] 배지 숫자는 Home·이체목록과 같은 population 이어야 한다.
+    //   count() 집계로는 노쇼·결근 0원을 뺄 수 없다 — 그 판정이 두 필드를
+    //   같이 보기 때문이다. 세 필드만 select 해 서버에서 센다.
+    //   단위는 그대로 attendance 문서 수다.
+    const snap = await db
       .collection("attendance")
       .where("businessId", "==", businessId)
       .where("wageStatus", "==", "confirmed")
-      .count()
+      .select("wageStatus", "status", "finalWage")
       .get();
-    return {count: countSnap.data().count};
+    let count = 0;
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      if (!srvPayableForTransfer(
+        d["wageStatus"] as string | undefined,
+        d["status"] as string | undefined,
+        d["finalWage"] as number | undefined
+      )) continue;
+      count++;
+    }
+    return {count};
   }
 );
 
@@ -30524,11 +30607,13 @@ export const callableRepairPayrollSummaries = onCall(
       lastDoc = page.docs[page.size - 1];
     }
 
-    // absent / NO_SHOW 제외
-    const docs = allDocs.filter(d => {
-      const s = (d.data().status as string | undefined) ?? "";
-      return s !== "absent" && s !== "NO_SHOW";
-    });
+    // [.6-P1] 트리거와 **같은 식**으로 제외한다. 예전에는 금액을 보지 않고
+    //   노쇼·결근을 모두 뺐다 — 노쇼인데 금액이 남은 비정상 기록이 재집계
+    //   한 번으로 조용히 사라졌다. 비정상은 보이게 둔다.
+    const docs = allDocs.filter(d => !srvIsNonPayableZero(
+      d.data().status as string | undefined,
+      d.data().finalWage as number | undefined
+    ));
 
     // userId별 집계
     const byWorker: Record<string, {name: string; totalPayout: number; workDays: number}> = {};
@@ -43895,7 +43980,7 @@ async function srvHomeUnpaidWage(
     .where("businessId", "==", bizId)
     .where("wageStatus", "==", "confirmed")
     // [AH-V2-05B.2] status/finalWage는 terminal non-payable 판별용 — 추가 쿼리 없음
-    .select("userId", "paymentDueDate", "status", "finalWage")
+    .select("userId", "paymentDueDate", "wageStatus", "status", "finalWage")
     .get();
 
   const groups = new Map<string, number>(); // groupKey → dueDate millis
@@ -43906,6 +43991,15 @@ async function srvHomeUnpaidWage(
   for (const doc of snap.docs) {
     const d = doc.data();
     const uid = (d["userId"] as string | undefined) ?? "";
+    // [.6-P1] 지급 대상 판정은 지급일이 있든 없든 **먼저** 한다.
+    //   예전에는 지급일이 없는 갈래에서만 걸러서, 노쇼 0원에 지급일이 붙어
+    //   있으면 미이체 Task 로 세어졌다. 이체 목록은 같은 건을 빼 주므로
+    //   Home 숫자와 목록 건수가 어긋났다.
+    if (!srvPayableForTransfer(
+      d["wageStatus"] as string | undefined,
+      d["status"] as string | undefined,
+      d["finalWage"] as number | undefined
+    )) continue;
     // [HOME-WAGE-01] top-level 필드에서 직접 읽기 (wageDetail 내부 아님)
     const pdTs = d["paymentDueDate"] as admin.firestore.Timestamp | undefined;
     if (!pdTs) {
@@ -43917,10 +44011,6 @@ async function srvHomeUnpaidWage(
       //
       //   확실한 false positive만 제거한다 — status를 알 수 없거나 finalWage가
       //   0이 아닌 문서는 계속 포함해 관리자가 확인하게 둔다.
-      const st = d["status"] as string | undefined;
-      const fw = (d["finalWage"] as number | undefined) ?? 0;
-      const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;
-      if (nonPayable) continue;
       missingUserIds.add(uid); // doc-count 아님 — unique userId 집계
       continue;
     }

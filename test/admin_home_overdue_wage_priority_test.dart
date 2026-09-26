@@ -416,10 +416,13 @@ void main() {
 
     test('§18 Functions를 건드리지 않았다', () {
       final cf = _src('functions/src/index.ts');
-      expect(cf.contains('const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;'),
-          isTrue);
+      // [.6-P1] 판정이 canonical helper 로 옮겨가고, 그 식이 wageStatus 도
+      //   보므로 projection 에 한 필드가 늘었다. overdue 계약은 그대로다.
+      expect(cf.contains('function srvPayableForTransfer('), isTrue);
       expect(cf.contains('if (ms < todayMs) overdue++;'), isTrue);
-      expect(cf.contains('.select("userId", "paymentDueDate", "status", "finalWage")'),
+      expect(
+          cf.contains('.select("userId", "paymentDueDate", "wageStatus", '
+              '"status", "finalWage")'),
           isTrue);
     });
 

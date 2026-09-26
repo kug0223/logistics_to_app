@@ -470,8 +470,8 @@ void main() {
 
     test('attendance writer·Functions 미변경', () {
       final cf = _src('functions/src/index.ts');
-      expect(cf.contains('const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;'),
-          isTrue);
+      // [.6-P1] 판정이 canonical helper 로 옮겨갔다 — 자리는 그대로다.
+      expect(cf.contains('function srvPayableForTransfer('), isTrue);
       expect(cf.contains('if (ms < todayMs) overdue++;'), isTrue);
     });
   });

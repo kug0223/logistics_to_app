@@ -527,6 +527,27 @@ class AttendanceModel {
   bool get isAbsent      => status == statusAbsent;
   bool get isMissedCheckout => hasCheckedIn && !hasCheckedOut && !isNoShow;
 
+  /// [.6-P1] 지급할 것이 없는 종결 상태.
+  ///
+  /// 서버 `srvIsNonPayableZero` 와 **같은 식**이다. 노쇼·결근은 finalWage 0
+  /// 으로 마감되면서 wageStatus 가 confirmed 가 되므로, wageStatus 만 보는
+  /// 자리는 그 둘을 "미이체 급여"로 읽는다.
+  ///
+  /// 금액이 0 일 때만이다. 노쇼인데 금액이 남아 있는 기록은 비정상이고,
+  /// 비정상은 목록에서 지우지 않고 보이게 둔다.
+  bool get isNonPayableZero => isNonPayableZeroOf(status, finalWage);
+
+  /// 원시 map 에서도 같은 식을 쓰기 위한 진입점 — 판정은 여기 하나뿐이다.
+  static bool isNonPayableZeroOf(String? status, num? finalWage) =>
+      (status == statusNoShow || status == statusAbsent) &&
+      (finalWage ?? 0) == 0;
+
+  /// [.6-P1] 이체 대상인가 — Home·이체목록·배지·카운트가 같이 쓰는 하나의 식.
+  ///
+  /// 서버 `srvPayableForTransfer` 와 같다.
+  bool get isPayableForTransfer =>
+      wageStatus == wageConfirmed && !isNonPayableZero;
+
   String get statusLabel {
     switch (status) {
       case statusPresent:    return '출근';

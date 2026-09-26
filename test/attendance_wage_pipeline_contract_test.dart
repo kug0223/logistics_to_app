@@ -185,11 +185,11 @@ void main() {
     });
 
     test('미이체 집계에서 0원 비지급 건을 제외한다', () {
-      expect(
-        _flat(code).contains(
-            'const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;'),
-        true,
-      );
+      // [.6-P1] 판정이 canonical helper 로 옮겨가고, Home·이체목록·배지·
+      //   카운트·summary 가 모두 그것을 쓴다.
+      final flat = _flat(code);
+      expect(flat.contains('function srvIsNonPayableZero('), true);
+      expect(flat.contains('srvPayableForTransfer('), true);
     });
   });
 

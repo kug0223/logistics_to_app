@@ -58,25 +58,28 @@ void main() {
 
   group('지급 대상이 아닌 기록은 이체하지 않는다', () {
     test('서버가 status와 finalWage를 직접 본다', () {
+      // [.6-P1] 인라인 판정이 canonical helper 로 옮겨갔다. 서버가 두 필드를
+      //   직접 본다는 사실은 그대로다.
       expect(
-        trFlat.contains(
-            'if ((attStatus === "NO_SHOW" || attStatus === "absent") && fw === 0)'),
+        trFlat.contains('srvIsNonPayableZero('),
         true,
         reason: '화면이 목록에서 빼 주는 것에 기대면 직접 호출로 뚫린다',
       );
-      final i = trFlat.indexOf('attStatus === "NO_SHOW"');
+      final i = trFlat.indexOf('srvIsNonPayableZero(');
       final w = trFlat.indexOf('wageStatus: "transferred"');
       expect(i > 0 && w > i, true, reason: '쓰기 전에 걸러야 한다');
     });
 
     test('미이체 집계와 같은 식을 쓴다', () {
-      // srvHomeUnpaidWage의 nonPayable 판정과 같은 조건이어야 한다 —
-      // 목록에서 빠진 건이 이체에서는 통과하면 두 화면이 다른 말을 한다.
-      expect(
-        _flat(_codeOf(raw)).contains(
-            'const nonPayable = (st === "NO_SHOW" || st === "absent") && fw === 0;'),
-        true,
-      );
+      // [.6-P1] 이제 문자 그대로 같은 함수다 — Home·이체목록·배지·카운트·
+      //   summary 가 한 식을 본다. 목록에서 빠진 건이 이체에서 통과하면
+      //   두 화면이 다른 말을 한다.
+      final flat = _flat(_codeOf(raw));
+      expect(flat.contains('function srvIsNonPayableZero('), true);
+      expect(flat.contains('function srvPayableForTransfer('), true);
+      // 판정 본문이 두 조건을 모두 요구한다.
+      final p = flat.substring(flat.indexOf('function srvIsNonPayableZero('));
+      expect(p.substring(0, 260).contains('=== 0'), true);
     });
 
     test('confirmed가 아닌 건은 여전히 건너뛴다', () {
