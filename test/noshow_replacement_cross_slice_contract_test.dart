@@ -75,7 +75,13 @@ void main() {
       // 집계 쿼리는 "필드가 있는 문서"를 셀 수 없다 — == null 은 명시적 null만
       // 잡고, != null·orderBy 는 새 인덱스를 요구한다(실측). 그래서 읽고 거른다.
       expect(fnsFlat.contains('if (d.get("staffingReleasedAt") != null) continue;'), true);
-      expect(fnsFlat.contains('.select("slotId", "staffingReleasedAt")'), true);
+      // [R7-P1-2 DEVICE.1C] select 목록 자체를 고정하고 있었다. 좌석 판정에
+      //   기간 종료 축이 더해지면서 필드가 늘었다 — 지키려던 것은 "반납
+      //   표식을 문서에서 직접 읽는다"이지 목록의 글자가 아니다.
+      expect(fnsFlat.contains('.select("slotId", "staffingReleasedAt"'), true,
+          reason: '반납 표식을 문서에서 직접 읽어야 한다');
+      expect(fnsFlat.contains('"type", "workEndDate", "actualResignDate"'), true,
+          reason: '기간이 끝난 좌석도 같은 읽기에서 걸러진다');
       expect(fnsFlat.contains('const confirmedCount = seats.bySlot.get(slotId) ?? 0;'), true);
       expect(fnsFlat.contains('const flexConfirmedCnt = seats.to;'), true);
       expect(fnsFlat.contains('const confirmedCnt = seats.to;'), true);

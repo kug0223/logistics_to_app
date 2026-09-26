@@ -3889,6 +3889,66 @@ async function processExitEffectiveTransition(now: Timestamp): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════
+// 🚪 계약 기간 만료 D+1 — 좌석 카운터 재조정
+// ═══════════════════════════════════════════════════════════
+/**
+ * [R7-P1-2 DEVICE.1C] 기간이 끝난 장기 약속이 정원을 계속 막는 것을 푼다.
+ *
+ * 퇴사·해지는 `processExitEffectiveTransition` 이 status 를 바꾸고, 그
+ * 변경이 `syncTOStats` 트리거를 깨워 카운터가 다시 계산된다. 그런데
+ * **계약 기간이 그냥 끝난 경우**에는 아무 status 도 바뀌지 않는다 —
+ * 취소된 것이 아니기 때문이다. 트리거는 `beforeStatus === afterStatus`
+ * 면 skip 하므로 재계산이 영영 일어나지 않고, 확정 가드가 읽는
+ * `workTypeConfirmedCounts` 가 끝난 관계를 영구히 세고 있었다.
+ *
+ * DEV 실측: 현재 좌석 0 인 공고가 `사무업무: 1` 을 들고 있어, 2명이
+ * 필요한 자리에 1명만 확정할 수 있었다. 정원과 같은 수가 끝나 있으면
+ * 대체 확정이 아예 막히고, 막히면 status 변경도 없어 스스로 풀리지
+ * 않는다.
+ *
+ * 그래서 시간 축에서 한 번 깨워 준다. 여기서 바꾸는 것은 **카운터뿐**이고
+ * 지원서·계약·근태·급여는 건드리지 않는다. 재계산 자체가 멱등이라
+ * 중복 실행해도 같은 값이 된다.
+ *
+ * @param {Timestamp} now 스케줄러 기준 시각
+ */
+async function processExpiredSeatReconciliation(now: Timestamp): Promise<void> {
+  const nowDateNum = srvKstDateNum(now.toDate());
+  // 어제 끝난 약속만 본다 — 매일 돌므로 경계 하나면 충분하다.
+  //   범위 하나짜리 쿼리라 복합 인덱스를 요구하지 않는다.
+  const yStart = new Date(now.toDate().getTime() - 2 * 24 * 60 * 60 * 1000);
+  const snap = await db.collection("applications")
+    .where("workEndDate", ">=", admin.firestore.Timestamp.fromDate(yStart))
+    .where("workEndDate", "<", now)
+    .select("toId", "type", "status", "workEndDate", "actualResignDate")
+    .limit(500)
+    .get();
+
+  const toIds = new Set<string>();
+  for (const d of snap.docs) {
+    if (d.get("type") !== "long_term") continue;
+    if (!CONFIRMED_STATUSES.includes(d.get("status") as string)) continue;
+    const end = (d.get("actualResignDate") ??
+      d.get("workEndDate")) as Timestamp | undefined;
+    if (!end || typeof end.toDate !== "function") continue;
+    // D 당일은 아직 좌석이다 — 오늘이 D 보다 커야 한다.
+    if (nowDateNum <= srvKstDateNum(end.toDate())) continue;
+    const toId = d.get("toId") as string | undefined;
+    if (toId) toIds.add(toId);
+  }
+
+  if (toIds.size === 0) return;
+  console.log(`[좌석 재조정] 대상 TO ${toIds.size}건`);
+  await Promise.allSettled([...toIds].map(async (toId) => {
+    try {
+      await _syncTOCounters(toId);
+    } catch (e) {
+      console.error(`[좌석 재조정] ${toId} 실패: ${e}`);
+    }
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════
 // 🔥 통합 마스터 스케줄러 (매 시간 정각 실행)
 // ═══════════════════════════════════════════════════════════
 // - Cloud Scheduler 1개만 사용 (비용 최적화)
@@ -3951,8 +4011,9 @@ export const masterScheduler = onSchedule(
         processContractRenewalChecks(timestamp),
         processExpiredIdCardAccess(timestamp),
         processExitEffectiveTransition(timestamp),
+        processExpiredSeatReconciliation(timestamp),
       ]);
-      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료", "종료 효력 전환"];
+      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료", "종료 효력 전환", "좌석 재조정"];
       midnightResults.forEach((r, i) => {
         if (r.status === "rejected") console.error(`❌ [${midnightNames[i]}] 실패:`, r.reason);
         else console.log(`✅ [${midnightNames[i]}] 완료`);
@@ -17377,30 +17438,57 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   //   그래서 확정 상태 문서를 직접 읽고 걸러 센다. 읽는 범위는 이 공고의
   //   확정 지원서뿐이고, 필요한 두 필드만 가져온다. 한 번 읽어 공고 단위와
   //   슬롯 단위를 함께 만든다 — 이전의 count() 4번을 대체한다.
+  // [R7-P1-2 DEVICE.1C] 기간이 끝난 장기 약속은 좌석을 차지하지 않는다.
+  //
+  //   좌석 반납(staffingReleasedAt)과 같은 이유다 — status 는 이력이라
+  //   그대로 두고, 좌석만 비운다. 다만 종료는 **날짜로** 일어난다.
+  //   취소된 것이 아니므로 상태 전이가 없고, 그래서 status 만 세면
+  //   9/22 에 끝난 계약이 9/27 의 정원을 영원히 차지한다.
+  //
+  //   effectiveEnd = actualResignDate ?? workEndDate — 클라이언트
+  //   `ApplicationModel.occupiesSeatOn` 및 `srvLongTermEligibleOnDay` 와
+  //   같은 식이다. 새 판정 규칙을 만들지 않는다.
+  const seatTodayNum = srvKstDateNum(new Date());
+  const occupiesSeatToday = (d: FirebaseFirestore.DocumentSnapshot): boolean => {
+    if (d.get("type") !== "long_term") return true;
+    const end = (d.get("actualResignDate") ??
+      d.get("workEndDate")) as admin.firestore.Timestamp | undefined;
+    // 기간을 모르면 좌석을 빼앗지 않는다 — 확인 못 한 것으로 정원을 늘리지 않는다.
+    if (!end || typeof end.toDate !== "function") return true;
+    return srvKstDateNum(end.toDate()) >= seatTodayNum;
+  };
+
   const countCommittedSeats = async (): Promise<{
-    to: number; bySlot: Map<string, number>;
+    to: number;
+    bySlot: Map<string, number>;
+    byWorkType: Map<string, number>;
   }> => {
     const bySlot = new Map<string, number>();
+    const byWorkType = new Map<string, number>();
     let to = 0;
     let cursor: FirebaseFirestore.DocumentSnapshot | undefined;
     for (;;) {
       let q = appsRef
         .where("status", "in", CONFIRMED_STATUSES)
-        .select("slotId", "staffingReleasedAt")
+        .select("slotId", "staffingReleasedAt", "selectedWorkType",
+          "type", "workEndDate", "actualResignDate")
         .limit(500);
       if (cursor) q = q.startAfter(cursor);
       const page = await q.get();
       if (page.empty) break;
       for (const d of page.docs) {
         if (d.get("staffingReleasedAt") != null) continue; // 반납된 자리
+        if (!occupiesSeatToday(d)) continue; // 기간이 끝난 약속
         to++;
         const sid = d.get("slotId") as string | undefined;
         if (sid) bySlot.set(sid, (bySlot.get(sid) ?? 0) + 1);
+        const wt = d.get("selectedWorkType") as string | undefined;
+        if (wt) byWorkType.set(wt, (byWorkType.get(wt) ?? 0) + 1);
       }
       if (page.size < 500) break;
       cursor = page.docs[page.size - 1];
     }
-    return {to, bySlot};
+    return {to, bySlot, byWorkType};
   };
 
   if (!slotId) {
@@ -17416,22 +17504,25 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       ),
     ];
 
-    const [seats, pendingSnap, ...wtSnaps] = await Promise.all([
+    // [R7-P1-2 DEVICE.1C] 업무별 카운터도 같은 좌석 정의를 쓴다.
+    //
+    //   이 값은 확정 가드가 직접 읽는다(`conf >= req` → 정원 초과).
+    //   그런데 status 만 세는 `count()` 였다 — 좌석 반납도, 기간 종료도
+    //   보지 못했다. DEV 실측: 현재 좌석 0 인 공고가 `사무업무: 1` 을 들고
+    //   있어 2명이 필요한 자리에 1명만 확정할 수 있었다.
+    //
+    //   `countCommittedSeats` 가 이미 확정 문서를 한 번 훑으므로 거기서
+    //   업무별로도 센다 — count() 질의 N 개가 함께 사라진다.
+    const [seats, pendingSnap] = await Promise.all([
       countCommittedSeats(),
       appsRef.where("status", "in", PENDING_STATUSES).count().get(),
-      ...contractWorkTypes.map((wt) =>
-        appsRef
-          .where("selectedWorkType", "==", wt)
-          .where("status", "in", CONFIRMED_STATUSES)
-          .count()
-          .get()
-      ),
     ]);
 
     const workTypeConfirmedUpdate: Record<string, number> = {};
-    contractWorkTypes.forEach((wt, i) => {
-      workTypeConfirmedUpdate[`workTypeConfirmedCounts.${wt}`] = wtSnaps[i].data().count;
-    });
+    for (const wt of contractWorkTypes) {
+      workTypeConfirmedUpdate[`workTypeConfirmedCounts.${wt}`] =
+        seats.byWorkType.get(wt) ?? 0;
+    }
 
     const confirmedCnt = seats.to;
     const totalRequired = (toData?.totalRequired as number) ?? 0;
