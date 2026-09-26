@@ -61,8 +61,10 @@ void main() {
       expect(f, contains('workDateKst: string'));
       final wage = _sliceOf(raw, 'export const callableCalculateAndConfirmWage = onCall(',
           'function assertBizAdmin(');
+      // [.6-P3] 그 근무일은 근태에서 파생한다 — 클라이언트 payload 가 아니다.
       expect(_flat(_codeOf(wage)), contains(
-          'await srvResolveEffectivePaySchedule( promisedPaySchedule, wageAppId, d.workDate)'));
+          'await srvResolveEffectivePaySchedule( promisedPaySchedule, wageAppId, canon.date)'));
+      expect(_flat(_codeOf(wage)), contains('srvWorkDateParts(canonWorkTs)'));
     });
 
     test('PA-22 형식이 아닌 effectiveFrom 은 무시한다', () {

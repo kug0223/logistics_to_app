@@ -356,12 +356,15 @@ void main() {
       expect(around.contains('srvIsNonPayableZero('), isTrue);
     });
 
-    test('P1-38 .6-P3 소관을 건드리지 않았다', () {
-      // count callable 의 권한은 .6-P3 이다 — D-1 helper 로 바꾸지 않았다.
+    test('P1-38 [.6-P3] count 권한이 급여 자격으로 올라갔다', () {
+      // .6-P1 때는 권한이 .6-P3 소관이라 membership-only 를 그대로 뒀다.
+      //   .6-P3 에서 canonical wage 자격으로 교체했고, population 은 그대로다.
       final f = _fn(code, 'export const callableGetNotTransferredCount');
-      expect(f.contains('assertBizAdmin(request.auth.uid, businessId)'), isTrue);
-      expect(f.contains('srvAssertWageAuthority('), isFalse,
-          reason: 'permission scope 확대는 이번 Phase 범위가 아니다');
+      expect(f.contains('srvAssertWageAuthority('), isTrue);
+      expect(f.contains('assertBizAdmin(request.auth.uid, businessId)'),
+          isFalse);
+      expect(f.contains('srvPayableForTransfer('), isTrue,
+          reason: 'population 은 .6-P1 그대로다');
     });
   });
 

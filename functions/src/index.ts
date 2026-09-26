@@ -109,6 +109,34 @@ function srvKstDateNum(d: Date): number {
 }
 
 /**
+ * [.6-P3] 근무 한 건의 canonical 달력 값 (KST).
+ *
+ *   돈이 어느 날·어느 달의 것인지는 attendance.workDate 하나가 정한다.
+ *   클라이언트가 보내는 workDate/yearMonth 는 화면이 만든 값이라
+ *   기기 시간대·자정 근처 오차·위조로 얼마든지 달라진다. 그 값으로
+ *   최저임금 연도를 고르거나 월 집계 통을 정하면 같은 근무가 다른 달의
+ *   돈이 된다.
+ *
+ *   파싱 규칙을 새로 만들지 않는다 — 기존 KST 보정(SRV_KST_MS + getUTC*)을
+ *   그대로 쓴다. 그래서 23:xx UTC / 00:xx KST, 월말, 연말에서도 같은 답을
+ *   낸다.
+ *
+ * @param {admin.firestore.Timestamp} ts attendance.workDate
+ * @return {{year: number, month: number, date: string, yearMonth: string}}
+ *   KST 기준 연·월·YYYY-MM-DD·YYYY-MM
+ */
+function srvWorkDateParts(ts: admin.firestore.Timestamp): {
+  year: number; month: number; date: string; yearMonth: string;
+} {
+  const kst = new Date(ts.toDate().getTime() + SRV_KST_MS);
+  const year = kst.getUTCFullYear();
+  const month = kst.getUTCMonth() + 1;
+  const mm = String(month).padStart(2, "0");
+  const dd = String(kst.getUTCDate()).padStart(2, "0");
+  return {year, month, date: `${year}-${mm}-${dd}`, yearMonth: `${year}-${mm}`};
+}
+
+/**
  * KST 기준 요일 한글. workDays 비교용이다.
  * @param {Date} d 대상 시각
  * @return {string} 일~토
@@ -21511,6 +21539,27 @@ export const callableCalculateAndConfirmWage = onCall(
     ]);
     if (!attSnap2.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
     const attData2 = attSnap2.data()!;
+
+    // [.6-P3] 이 돈이 어느 날·어느 달의 것인지는 근태가 정한다.
+    //
+    //   클라이언트가 보낸 workDate/yearMonth 는 계속 받는다(구버전 호환).
+    //   다만 **권위로 쓰지 않는다** — 아래 계산·저장·집계·안내는 전부
+    //   근태에서 파생한 값을 쓴다. 값이 다르면 기록만 남긴다.
+    const canonWorkTs =
+      attData2.workDate as admin.firestore.Timestamp | undefined;
+    if (!canonWorkTs || typeof canonWorkTs.toDate !== "function") {
+      // 근무일을 모르는 채로 돈의 기간을 정할 수는 없다.
+      throw new HttpsError(
+        "failed-precondition",
+        "근태에 근무일이 없어 급여를 확정할 수 없습니다.");
+    }
+    const canon = srvWorkDateParts(canonWorkTs);
+    if (d.workDate !== canon.date || d.yearMonth !== canon.yearMonth) {
+      console.warn(
+        `[.6-P3] 클라이언트 날짜가 근태와 다르다 — 근태 기준으로 처리한다. ` +
+        `att=${d.attendanceId} client=${d.workDate}/${d.yearMonth} ` +
+        `canonical=${canon.date}/${canon.yearMonth}`);
+    }
     // [WAGE-M1] 체크인 시 저장된 snapshotWage를 권위 있는 기준으로 사용
     // 클라이언트 d.baseWage와 차이가 있으면 스냅샷 우선 (TO 레벨 고정 임금 보장)
     const snapshotWage = attData2.snapshotWage as number | undefined;
@@ -21575,7 +21624,8 @@ export const callableCalculateAndConfirmWage = onCall(
     }
     // [R6.4] 승인된 변경이 있으면 그것이 이 근무의 지급일정이다.
     const effectivePaySchedule = await srvResolveEffectivePaySchedule(
-      promisedPaySchedule, wageAppId, d.workDate);
+      // [.6-P3] 비교 기준 근무일은 근태가 정한다.
+      promisedPaySchedule, wageAppId, canon.date);
     if (effectivePaySchedule.amended) {
       console.log(
         `[R6.4] 승인된 지급일정 변경 적용: att=${d.attendanceId} ` +
@@ -21624,7 +21674,8 @@ export const callableCalculateAndConfirmWage = onCall(
     }
 
     // 4. 계산
-    const workYear2 = parseInt(d.workDate.substring(0, 4), 10);
+    // [.6-P3] 최저임금 연도는 근태의 KST 연도다 — 연말 경계에서 갈린다.
+    const workYear2 = canon.year;
     const minimumWage2 = srvGetMinimumWage(workYear2, fsMinWages);
     // [WAG-02] 시급제: baseWage가 해당 연도 법적 최저임금 미만이면 차단
     if (promised.wageType === "hourly" && minimumWage2 > 0 && effectiveBaseWage < minimumWage2) {
@@ -21691,7 +21742,10 @@ export const callableCalculateAndConfirmWage = onCall(
       // [M-4] daily_auto_8: prevDays/prevGross를 트랜잭션 내부에서 조회 — 동시 확정 경쟁 차단
       // [PERF-H4] srvGetMonthlyStatsTx 한 번 호출로 workDays+prevGrossTotal 동시 계산 (6→3회 tx.get)
       if (promised.taxDeductionType === "daily_auto_8") {
-        const {workDays: prevDays, prevGrossTotal: prevGross} = await srvGetMonthlyStatsTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
+        // [.6-P3] 월 공제 모집단은 근태가 속한 달이다.
+        const {workDays: prevDays, prevGrossTotal: prevGross} =
+          await srvGetMonthlyStatsTx(
+            tx, userId2, businessId2, canon.yearMonth, d.attendanceId);
         if (prevDays + 1 === 8) {
           wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
         } else if (prevDays + 1 > 8) {
@@ -21761,7 +21815,7 @@ export const callableCalculateAndConfirmWage = onCall(
         wageStatus: "calculated",
         finalWage: effectiveNetWage2,
         wageDetail: wd,
-        yearMonth: d.yearMonth,
+        yearMonth: canon.yearMonth, // [.6-P3] 근태에서 파생
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
@@ -21773,7 +21827,7 @@ export const callableCalculateAndConfirmWage = onCall(
           attendanceId: d.attendanceId,
           userId: userId2,
           businessId: businessId2,
-          workDate: d.workDate,
+          workDate: canon.date, // [.6-P3] 사용자에게 다른 날짜를 말하지 않는다
           retroactiveAmount: wageResult2.retroactiveDeduction,
           netWage: effectiveNetWage2,
         });
@@ -30447,7 +30501,9 @@ export const callableGetNotTransferredCount = onCall(
     if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
-    await assertBizAdmin(request.auth.uid, businessId);
+    // [.6-P3] 미이체 건수는 급여 도메인 숫자다 — 사업장 소속만으로는 부족하다.
+    //   payroll summary 문(D-1)과 같은 자격을 쓴다.
+    await srvAssertWageAuthority(request.auth.uid, businessId);
     // [.6-P1] 배지 숫자는 Home·이체목록과 같은 population 이어야 한다.
     //   count() 집계로는 노쇼·결근 0원을 뺄 수 없다 — 그 판정이 두 필드를
     //   같이 보기 때문이다. 세 필드만 select 해 서버에서 센다.

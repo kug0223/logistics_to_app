@@ -108,8 +108,10 @@ void main() {
       expect(f, isNot(contains('wd.payScheduleType = d.payScheduleType')));
       expect(f, isNot(contains('wd.payScheduleDay = d.payScheduleDay')));
       // 실효값의 출발점은 약속이다
+      // [.6-P3] 비교 기준 근무일은 클라이언트가 아니라 근태가 정한다.
       expect(f, contains(
-          'await srvResolveEffectivePaySchedule( promisedPaySchedule, wageAppId, d.workDate)'));
+          'await srvResolveEffectivePaySchedule( promisedPaySchedule, wageAppId, canon.date)'));
+      expect(f, isNot(contains('wageAppId, d.workDate)')));
     });
 
     test('PP-32 약속이 없으면 그 사실을 로그로 남긴다', () {
