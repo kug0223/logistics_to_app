@@ -87,9 +87,9 @@ node scripts/operator-delete-account.js ... --apply
    - `foreignIdFingerprints/{fingerprint}_{role}` 삭제
    - `taxIdentities/{uid}` 삭제
    - `idCardAccessRequests` 중 해당 사용자 건 삭제
-   - `member_invitations` 중 수신 건 삭제, 발신 건은 `invitedBy` 익명화
+   - `member_invitations` 중 수신 건 삭제, 발신 건은 `invitedBy` 식별자 대체
    - `review_requests.workerId`, `monthly_reviews.targetUserId`/`reviewerId`,
-     `trust_score_history.userId` 익명화
+     `trust_score_history.userId` 식별자 대체
 2. `callableDeleteAccountApplications` 가 하는 일을 동일하게 수행
    - 활성 `applications`(CONFIRMED / CONTRACT_PENDING / PENDING) → `CANCELED`
    - 예정 `attendance`(`status == scheduled`) → `absent`
@@ -113,7 +113,8 @@ node scripts/operator-delete-account.js ... --apply
 - 근무 사실, 임금 산정 결과(`finalWage`), 지급 여부,
   이체·취소·재이체 이력과 `money_audit`
 - 계약과 근태·임금의 연결 관계, 세무·회계 증빙
-- 식별자를 제거한 평가·신뢰도·초대 발송 기록
+- 직접 식별정보를 제거한 평가·신뢰도·초대 발송 기록
+  (식별자 대체이며 완전한 비식별 처리는 아니다)
 - 재가입 제한용 `deleted_accounts` 기록 (30일)
 
 > **민감 원본과 지급 기록을 같은 묶음으로 다루지 않는다.**

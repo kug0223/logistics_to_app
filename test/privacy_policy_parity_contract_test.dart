@@ -158,7 +158,6 @@ void main() {
       expect(body.contains('3년 (근로기준법 제42조)'), isTrue,
           reason: '근로자 명부·근로계약 중요 서류의 근거와 기간');
       // 모든 항목을 3년으로 일괄 수정하지도 않았다.
-      expect(body.contains('5년 (전자상거래법)'), isTrue);
       expect(body.contains('3개월 (통신비밀보호법)'), isTrue);
     });
 
@@ -180,11 +179,91 @@ void main() {
       expect(body.contains('출퇴근 기록: 3년'), isFalse);
     });
 
-    test('1A-A4 민감 원본과 지급 기록을 구분한다', () {
+    test('1A-A4 민감 원본과 지급 기록을 구분한다 (§9)', () {
       expect(body.contains('[민감 원본과 근무·지급 기록의 구분]'), isTrue);
       expect(body.contains('이용 목적이 끝나면 지체 없이 파기하며'), isTrue);
-      expect(body.contains('같은 기준으로 지우지 않습니다'), isTrue);
-      expect(body.contains('임금을 지급했다는 사실 자체가 법적 증빙'), isTrue);
+      expect(
+        body.contains('민감 원본을 목적 종료 시 삭제한다고 해서, '
+            '위 지급 증빙이 함께 삭제된다는'),
+        isTrue,
+        reason: '전자의 삭제가 후자의 삭제를 뜻하지 않는다',
+      );
+    });
+
+    test('1B-A "삭제 대상 아님" 표현이 없다 (§3)', () {
+      // "함께 삭제되지 않습니다"는 §3 이 지정한 표현이라 금지 대상이 아니다.
+      //   금지하는 것은 보존 의무를 단정하거나 영구성을 암시하는 쪽이다.
+      for (final s in <String>[
+        '삭제 대상 아님', '지워지지 않습니다', '같은 기준으로 지우지 않습니다',
+        '삭제하지 않습니다.',
+      ]) {
+        expect(body.contains(s), isFalse, reason: s);
+        expect(deletionHtml.contains(s), isFalse, reason: 's/$s');
+      }
+    });
+
+    test('1B-A2 지급 증빙 문구가 지정된 방향을 따른다 (§3)', () {
+      expect(body.contains('법적·세무·분쟁 대응 목적의 별도 보존 대상이며'), isTrue);
+      expect(body.contains('현재 자동 삭제는 적용하지 않습니다'), isTrue);
+      expect(
+        body.contains('구체적인 보존기간·기산점·삭제 방식은\n'
+            '  관련 법령 및 세무·법률 검토에 따라 확정합니다'),
+        isTrue,
+      );
+    });
+
+    test('1B-C 전자상거래법 blanket 귀속이 없다 (§4)', () {
+      expect(body.contains('전자상거래법'), isFalse,
+          reason: '소비자 거래 기록으로 묶을 근거를 확인하지 못했다');
+      expect(body.contains('청약철회'), isFalse);
+      // 대신 근거 미확정을 밝힌다.
+      expect(body.contains('근거가 확인되지 않은 기간을'), isTrue);
+    });
+
+    test('1B-D·E 삭제 처리 기록이 공개되고 최소화돼 있다 (§5)', () {
+      expect(body.contains('[삭제 처리 기록]'), isTrue);
+      expect(body.contains('계정 삭제 요청 처리 기록'), isTrue);
+      expect(body.contains('요청번호, 처리자,\n  처리 사유, 처리 시각'), isTrue);
+      // 민감 원본을 담지 않는다고 명시.
+      expect(body.contains('신분증·통장 사본·계좌번호·\n  세무 식별번호는 포함하지 않습니다'),
+          isTrue);
+      // 실제 기록기도 민감 필드를 쓰지 않는다.
+      final tool = _read('scripts/operator-delete-account.js');
+      final i = tool.indexOf("collection('account_deletion_records')");
+      expect(i, greaterThan(-1));
+      final w = tool.substring(i, i + 420);
+      for (final pii in <String>[
+        'ciHash', 'phoneHash', 'accountNumber', 'idCard', 'bankbook',
+        'taxIdentifier', 'foreignIdentityFingerprint',
+      ]) {
+        expect(w.contains(pii), isFalse, reason: pii);
+      }
+      for (final k in <String>['requestId', 'actor', 'reason', 'targetUid',
+        'executedAt', 'steps']) {
+        expect(w.contains(k), isTrue, reason: k);
+      }
+    });
+
+    test('1B-F 익명화를 주장하지 않는다 (§7)', () {
+      for (final claim in <String>['익명화', '완전 비식별', '비식별화']) {
+        expect(body.contains(claim), isFalse, reason: claim);
+        expect(deletionHtml.contains(claim), isFalse, reason: 's/$claim');
+      }
+      expect(body.contains('[직접 식별정보를 제거한 뒤 유지]'), isTrue);
+      expect(body.contains('완전한 비식별 처리를 뜻하지는 않습니다'), isTrue);
+    });
+
+    test('1B-H 자동 삭제를 추가하지 않았다 (§2)', () {
+      final cf = _read('functions/src/index.ts');
+      for (final bad in <String>[
+        'purgeAttendance', 'purgeMoneyAudit', 'retentionScheduler',
+        'cleanupExpiredPayroll', 'ttlDelete',
+      ]) {
+        expect(cf.contains(bad), isFalse, reason: bad);
+      }
+      final tool = _read('scripts/operator-delete-account.js');
+      expect(tool.contains("RETAIN(법정 보존)"), isTrue,
+          reason: '근무 이력은 지우지 않는다');
     });
 
     test('H 근거 없는 일괄 보존기간을 쓰지 않는다 (§11)', () {
@@ -216,7 +295,8 @@ void main() {
 
     test('탈퇴 후 처리가 세 갈래로 구분된다 (§12)', () {
       for (final k in <String>[
-        '[즉시 삭제]', '[법령·계약에 따라 보존]', '[식별자를 제거한 뒤 유지]',
+        '[즉시 삭제]', '[법령·계약에 따라 보존]',
+        '[직접 식별정보를 제거한 뒤 유지]', '[삭제 처리 기록]',
       ]) {
         expect(body.contains(k), isTrue, reason: k);
       }
@@ -264,8 +344,8 @@ void main() {
 
     test('§5 삭제 범위와 보존 항목을 함께 설명한다', () {
       for (final k in <String>[
-        '즉시 삭제', '식별자를 제거한 뒤 유지', '법령·계약에 따라 보존',
-        '재가입 제한',
+        '즉시 삭제', '직접 식별정보를 제거한 뒤 유지', '법령·계약에 따라 보존',
+        '재가입 제한', '삭제 처리 기록',
       ]) {
         expect(deletionHtml.contains(k), isTrue, reason: k);
       }
