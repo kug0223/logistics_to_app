@@ -152,15 +152,56 @@ void main() {
       }
     });
 
+    test('1A-A 근로기준법 일괄 5년 문구가 없다 (§4)', () {
+      expect(body.contains('급여·근로 관련 회계 기록 및 출퇴근 기록: 5년'), isFalse,
+          reason: '기록 종류를 뭉뚱그려 한 기간으로 적지 않는다');
+      expect(body.contains('3년 (근로기준법 제42조)'), isTrue,
+          reason: '근로자 명부·근로계약 중요 서류의 근거와 기간');
+      // 모든 항목을 3년으로 일괄 수정하지도 않았다.
+      expect(body.contains('5년 (전자상거래법)'), isTrue);
+      expect(body.contains('3개월 (통신비밀보호법)'), isTrue);
+    });
+
+    test('1A-A2 세무 자료에 없는 기간을 지어내지 않는다 (§4)', () {
+      expect(body.contains('세무 관련 자료: 관계 세법이 정한 기간'), isTrue);
+      // 확인되지 않은 세법 이름·연수를 쓰지 않는다.
+      for (final invented in <String>[
+        '국세기본법', '법인세법', '부가가치세법', '세무 관련 자료: 5년',
+      ]) {
+        expect(body.contains(invented), isFalse, reason: invented);
+      }
+    });
+
+    test('1A-A3 출퇴근 기록은 목적으로 기술한다 (§5)', () {
+      expect(body.contains('출퇴근 기록: 임금 계산의 근거가 되는 기록으로 보존'),
+          isTrue);
+      // 독립 법정 class 를 단정하지 않는다.
+      expect(body.contains('출퇴근 기록: 5년'), isFalse);
+      expect(body.contains('출퇴근 기록: 3년'), isFalse);
+    });
+
+    test('1A-A4 민감 원본과 지급 기록을 구분한다', () {
+      expect(body.contains('[민감 원본과 근무·지급 기록의 구분]'), isTrue);
+      expect(body.contains('이용 목적이 끝나면 지체 없이 파기하며'), isTrue);
+      expect(body.contains('같은 기준으로 지우지 않습니다'), isTrue);
+      expect(body.contains('임금을 지급했다는 사실 자체가 법적 증빙'), isTrue);
+    });
+
     test('H 근거 없는 일괄 보존기간을 쓰지 않는다 (§11)', () {
       // 기간을 적은 줄에는 법령 근거가 함께 있어야 한다.
-      final lines = body.split('\n')
+      // 보존 항목 목록만 본다 — 시행일 줄까지 쓸어담으면 오진한다.
+      final s = body.indexOf('• 법령에 따른 보존 항목:');
+      expect(s, greaterThan(-1));
+      final e = body.indexOf('[민감 원본과', s);
+      expect(e, greaterThan(s));
+      final lines = body.substring(s, e).split('\n')
+          .where((l) => l.trimLeft().startsWith('-'))
           .where((l) => RegExp(r'[0-9]+\s*(년|개월)').hasMatch(l))
-          .where((l) => l.contains('-') || l.contains('•'))
           .toList();
       expect(lines, isNotEmpty);
       for (final l in lines) {
-        expect(RegExp(r'\(.*법\)|재가입|30일').hasMatch(l), isTrue,
+        // 법령 표기는 '(근로기준법 제42조)' 처럼 조문이 붙을 수 있다.
+        expect(RegExp(r'\([^)]*법[^)]*\)|재가입|30일|관계 세법').hasMatch(l), isTrue,
             reason: '근거 없는 기간: $l');
       }
       // 영구 보관을 확정하지 않는다.
@@ -210,7 +251,8 @@ void main() {
       expect(deletionHtml.contains('mailto:corebridge87@gmail.com'), isTrue);
       // 메일 앱이 없어도 쓸 수 있게 주소를 글자로도 준다.
       expect(deletionHtml.contains('>corebridge87@gmail.com<'), isTrue);
-      expect(deletionHtml.contains('3일 이내'), isTrue);
+      // [1A §7] 근거 없는 기한 대신 실제 처리 순서를 약속한다.
+      expect(deletionHtml.contains('완료되면'), isTrue);
       expect(deletionHtml.contains('완료 사실을 회신'), isTrue);
     });
 
@@ -227,6 +269,50 @@ void main() {
       ]) {
         expect(deletionHtml.contains(k), isTrue, reason: k);
       }
+    });
+
+    test('1A-C 개정 표기가 미래처럼 읽히지 않는다 (§6)', () {
+      expect(rev, '2026-09-26', reason: '시행일과 같은 날짜여야 한다');
+      expect(dart.contains('(개정 2026-09-26)'), isTrue);
+      expect(dart.contains("kPrivacyPolicyRevision = '2026.10'"), isFalse,
+          reason: '월 단위 표기는 시행일보다 나중처럼 읽힌다');
+      expect(publicHtml.contains('개정 2026.10'), isFalse);
+    });
+
+    test('1A-H 근거 없는 고정 처리기한을 약속하지 않는다 (§7)', () {
+      expect(body.contains('3일 이내'), isFalse);
+      expect(deletionHtml.contains('3일 이내'), isFalse);
+      expect(body.contains('본인 확인과 법령상 보존 대상 여부를 확인한 뒤 처리하며'),
+          isTrue);
+      expect(deletionHtml.contains('완료되면\n         회신드립니다') ||
+          deletionHtml.contains('완료되면'), isTrue);
+    });
+
+    test('1A-F 운영자 도구가 앱 callable 이 아니다 (§2·§9)', () {
+      expect(File('scripts/operator-delete-account.js').existsSync(), isTrue);
+      final t = _read('scripts/operator-delete-account.js');
+      expect(t.contains('앱에 callable 을 만들지 않는다'), isTrue);
+      // 실행 근거가 필수다 — 기억에 의존하지 않는다.
+      for (final k in <String>['--request', '--actor', '--reason',
+        'account_deletion_records']) {
+        expect(t.contains(k), isTrue, reason: k);
+      }
+      // 서버에 cross-user 삭제 callable 이 생기지 않았다.
+      final cf = _read('functions/src/index.ts');
+      for (final bad in <String>[
+        'callableAdminDeleteAccount', 'callableOperatorDeleteAccount',
+        'callableForceDeleteUser',
+      ]) {
+        expect(cf.contains(bad), isFalse, reason: bad);
+      }
+    });
+
+    test('1A 자동 삭제를 구현하지 않았다', () {
+      final rb = _read('docs/account-deletion-runbook.md');
+      expect(rb.contains('자동 삭제(scheduler·TTL·일괄 정리)를 규정하지 않는다'),
+          isTrue);
+      final gate = _read('docs/release-privacy-gate.md');
+      expect(gate.contains('자동 삭제를 구현했다는 뜻이 아니다'), isTrue);
     });
 
     test('§6 웹과 앱이 같은 기준임을 명시한다', () {
@@ -255,11 +341,26 @@ void main() {
       expect(rb.contains('sentinel 삭제보다 **먼저**'), isTrue);
     });
 
-    test('운영자 실행 경로 부재가 명시돼 있다', () {
+    test('운영자 실행이 도구로 고정돼 있다', () {
       final rb = _read('docs/account-deletion-runbook.md');
-      expect(rb.contains('운영자가 다른 사람의 계정을 대신 삭제 실행하는 경로는'),
+      expect(rb.contains('scripts/operator-delete-account.js'), isTrue);
+      expect(rb.contains('Firebase Console 에서 컬렉션을 하나씩 지우지 않는다'),
           isTrue);
-      expect(rb.contains('미결 — 결정 필요'), isTrue);
+      expect(rb.contains('앱에는 타인 계정을 지우는 기능을 만들지 않는다'), isTrue);
+    });
+
+    test('보존 대상에 지급 증빙이 명시돼 있다', () {
+      final rb = _read('docs/account-deletion-runbook.md');
+      for (final k in <String>['money_audit', 'finalWage', '이체·취소·재이체']) {
+        expect(rb.contains(k), isTrue, reason: k);
+      }
+    });
+
+    test('PROD 동기화가 릴리스 게이트로 남아 있다 (§12)', () {
+      final gate = _read('docs/release-privacy-gate.md');
+      expect(gate.contains('PROD `app_settings/legal_terms`'), isTrue);
+      expect(gate.contains('PENDING — 출시 전 필수'), isTrue);
+      expect(gate.contains('CLOSED 가 아니다'), isTrue);
     });
   });
 }

@@ -154,7 +154,7 @@ void main() {
       final pp = _sliceOf(terms, "id: 'privacy_policy'", 'order: 2');
       // [PRIVACY-REWRITE.1] 개정 번호는 상수 한 곳에만 둔다.
       expect(pp, contains('version: kPrivacyPolicyRevision'));
-      expect(terms, contains("const kPrivacyPolicyRevision = '2026.10';"));
+      expect(terms, contains("const kPrivacyPolicyRevision = '2026-09-26';"));
       for (final other in ['service_terms', 'privacy_third_party',
         'location_terms', 'marketing_consent']) {
         final s = _sliceOf(terms, "id: '$other'", 'updatedAt: now');

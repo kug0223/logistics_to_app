@@ -328,7 +328,7 @@ void main() {
       // [PRIVACY-REWRITE.1] 개정 번호를 상수로 옮겼다 — 앱·공개 웹이 같은
       //   값을 보여야 하고, 두 군데에 적어 두면 다시 갈라진다.
       expect(privacyItem, contains('version: kPrivacyPolicyRevision'));
-      expect(terms, contains("const kPrivacyPolicyRevision = '2026.10';"));
+      expect(terms, contains("const kPrivacyPolicyRevision = '2026-09-26';"));
       // 내용이 바뀌지 않은 항목은 그대로다.
       final serviceItem = _sliceOf(terms, "id: 'service_terms'", 'order: 1');
       expect(serviceItem, contains("version: '2026.08'"));
