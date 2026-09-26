@@ -1645,6 +1645,105 @@ function srvResolvePayrollReadiness(
 const TAX_ID_COL = "taxIdentities";
 const TAX_ID_AUDIT_COL = "taxIdentityAuditLogs";
 
+// ═══════════════════════════════════════════════════════════
+// [R5-H] 돈을 움직인 기록 — append-only
+// ═══════════════════════════════════════════════════════════
+//
+//   현재 금액은 맞다. 문제는 **어떻게 지금 값이 됐는지**를 복원할 수 없다는
+//   것이었다. 이체와 취소가 서로의 흔적을 지우고(취소는 transferDate 를,
+//   재이체는 cancelNote 를 delete 한다), 급여 수정은 이전 wageDetail 을
+//   통째로 덮어쓰고, 마감 취소는 confirmedBy 를 지워 누가 열었는지조차
+//   남지 않았다.
+//
+//   그래서 상태 필드는 **현재 진실**로 그대로 두고, 사건은 별도로 쌓는다.
+//   같은 트랜잭션 안에서 쓰므로 상태가 바뀌지 않으면 사건도 생기지 않는다.
+const MONEY_AUDIT_SUB = "money_audit";
+
+/** 감사에 남길 wageDetail 금액 필드 — 이 목록만 남긴다(스냅샷 복제 금지). */
+const MONEY_AUDIT_WAGE_KEYS = [
+  "totalAmount", "netWage", "additionalAmount", "deductionAmount",
+  "nationalPensionDeduction", "healthInsuranceDeduction",
+  "ltcInsuranceDeduction", "employmentInsuranceDeduction",
+  "incomeTaxDeduction", "retroactiveDeduction",
+];
+
+type SrvMoneyAuditEventType =
+  | "TRANSFERRED"
+  | "TRANSFER_CANCELED"
+  | "WAGE_ADJUSTED"
+  | "WAGE_REOPENED";
+
+/**
+ * [R5-H] 돈 사건 하나를 근태 문서 하위에 append 한다.
+ *
+ *   반드시 상태를 바꾸는 **그 트랜잭션 안에서** 부른다. 그래야 재시도로
+ *   아무것도 바뀌지 않았을 때 사건도 생기지 않는다.
+ *
+ *   계좌번호·예금주·주민번호·신분증 경로는 담지 않는다. 누가 언제 무엇을
+ *   어떻게 바꿨는지만 남기면 충분하고, 그 이상은 사본을 늘리는 것이다.
+ *
+ * @param {admin.firestore.Transaction} tx 상태를 바꾸는 트랜잭션
+ * @param {admin.firestore.DocumentReference} attRef 대상 근태 문서
+ * @param {object} e 사건 내용
+ * @return {void}
+ */
+function srvWriteMoneyAudit(
+  tx: admin.firestore.Transaction,
+  attRef: admin.firestore.DocumentReference,
+  e: {
+    eventType: SrvMoneyAuditEventType;
+    businessId: string;
+    workerId: string;
+    actorUid: string;
+    beforeWageStatus?: string | null;
+    afterWageStatus?: string | null;
+    beforeFinalWage?: number | null;
+    afterFinalWage?: number | null;
+    reason?: string | null;
+    changed?: Record<string, {before: unknown; after: unknown}>;
+  }
+): void {
+  const row: Record<string, unknown> = {
+    attendanceId: attRef.id,
+    eventType: e.eventType,
+    businessId: e.businessId,
+    workerId: e.workerId,
+    actorUid: e.actorUid,
+    // 서버 시각만 쓴다 — 클라이언트 시계는 근거가 되지 못한다.
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (e.beforeWageStatus !== undefined) {
+    row.beforeWageStatus = e.beforeWageStatus;
+  }
+  if (e.afterWageStatus !== undefined) row.afterWageStatus = e.afterWageStatus;
+  if (e.beforeFinalWage !== undefined) row.beforeFinalWage = e.beforeFinalWage;
+  if (e.afterFinalWage !== undefined) row.afterFinalWage = e.afterFinalWage;
+  if (e.reason !== undefined && e.reason !== null) row.reason = e.reason;
+  if (e.changed && Object.keys(e.changed).length > 0) row.changed = e.changed;
+  // 새 문서다 — 기존 사건을 덮어쓰지 않는다.
+  tx.set(attRef.collection(MONEY_AUDIT_SUB).doc(), row);
+}
+
+/**
+ * [R5-H] 두 wageDetail 사이에서 **금액에 영향을 주는** 변화만 골라낸다.
+ *
+ * @param {Record<string, unknown>} before 이전 wageDetail
+ * @param {Record<string, unknown>} after 이후 wageDetail
+ * @return {Record<string, {before: unknown, after: unknown}>} 달라진 항목
+ */
+function srvMoneyAuditWageDiff(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): Record<string, {before: unknown; after: unknown}> {
+  const out: Record<string, {before: unknown; after: unknown}> = {};
+  for (const k of MONEY_AUDIT_WAGE_KEYS) {
+    const b = before[k] ?? null;
+    const a = after[k] ?? null;
+    if (Number(b ?? 0) !== Number(a ?? 0)) out[k] = {before: b, after: a};
+  }
+  return out;
+}
+
 const TAX_ID_TYPE_KOREAN = "KOREAN_RRN";
 const TAX_ID_TYPE_FOREIGN = "FOREIGN_REGISTRATION_NUMBER";
 
@@ -27091,6 +27190,17 @@ export const callableCancelFinalConfirmation = onCall(
               wageAccountReviewRequired: admin.firestore.FieldValue.delete(),
               updatedAt: now,
             });
+            // [R5-H] 위에서 confirmedBy·finalConfirmedAt 을 지운다. 그래서
+            //   누가 확정을 되돌렸는지가 어디에도 남지 않았다. 여기 남긴다.
+            srvWriteMoneyAudit(tx, ref, {
+              eventType: "WAGE_REOPENED",
+              businessId,
+              workerId: (data.userId as string | undefined) ?? "",
+              actorUid: callerUid,
+              beforeWageStatus: "confirmed",
+              afterWageStatus: "calculated",
+              beforeFinalWage: (data.finalWage as number | undefined) ?? null,
+            });
             return cancelNotifyRow;
           });
         })
@@ -30407,6 +30517,19 @@ export const callableMarkTransferredBatch = onCall(
         }
 
         tx.update(snap.ref, updateData);
+        // [R5-H] 재이체는 위에서 취소 메타데이터를 지운다. 그 흔적이 사라져도
+        //   사건은 남는다 — 이체·취소·재이체가 순서대로 쌓인다.
+        srvWriteMoneyAudit(tx, snap.ref, {
+          eventType: "TRANSFERRED",
+          businessId,
+          workerId: (data.userId as string | undefined) ?? "",
+          actorUid: callerUid,
+          beforeWageStatus: (data.wageStatus as string | undefined) ?? null,
+          afterWageStatus: "transferred",
+          afterFinalWage: (data.finalWage as number | undefined) ?? null,
+          reason: transferNote && transferNote.trim().length > 0 ?
+            transferNote.trim() : null,
+        });
         processedAttendanceIds.add(id); // 실제 전환된 ID 기록
         if (data.userId && typeof data.userId === "string") {
           validWorkerUserIds.add(data.userId); // [MT-2] 소속 근로자 userId 수집
@@ -30550,6 +30673,18 @@ export const callableCancelTransfer = onCall(
         transferredBy: admin.firestore.FieldValue.delete(),
         transferNote: admin.firestore.FieldValue.delete(),
         updatedAt: now,
+      });
+      // [R5-H] 위에서 transferDate·transferredBy 를 지운다. 누가 언제 보냈다가
+      //   누가 언제 되돌렸는지는 여기 남는다.
+      srvWriteMoneyAudit(tx, snap.ref, {
+        eventType: "TRANSFER_CANCELED",
+        businessId,
+        workerId: (data.userId as string | undefined) ?? "",
+        actorUid: callerUid,
+        beforeWageStatus: "transferred",
+        afterWageStatus: "confirmed",
+        beforeFinalWage: (data.finalWage as number | undefined) ?? null,
+        reason: cancelNote.trim(),
       });
     });
 
@@ -31530,6 +31665,27 @@ export const callableUpdateWageDetail = onCall(
         yearMonth,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      // [R5-H] 이전 wageDetail 은 통째로 덮어써진다. 금액에 영향을 준 항목만
+      //   before → after 로 남긴다 — 스냅샷을 복제하지 않는다.
+      const prevWageDetail =
+        (freshData.wageDetail ?? {}) as Record<string, unknown>;
+      const prevFinalWage = (freshData.finalWage as number | undefined) ?? null;
+      const wageChanged =
+        srvMoneyAuditWageDiff(prevWageDetail, safeWageDetailMap);
+      // 금액이 실제로 달라진 것이 없으면 사건을 만들지 않는다.
+      if (Object.keys(wageChanged).length > 0 || prevFinalWage !== finalWage) {
+        srvWriteMoneyAudit(tx, attRef, {
+          eventType: "WAGE_ADJUSTED",
+          businessId: (freshData.businessId as string | undefined) ?? "",
+          workerId: (freshData.userId as string | undefined) ?? "",
+          actorUid: callerUid,
+          beforeWageStatus: wageStatus,
+          afterWageStatus: wageStatus,
+          beforeFinalWage: prevFinalWage,
+          afterFinalWage: finalWage,
+          changed: wageChanged,
+        });
+      }
     });
 
     return {success: true};
