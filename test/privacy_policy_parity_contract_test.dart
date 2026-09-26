@@ -157,8 +157,8 @@ void main() {
           reason: '기록 종류를 뭉뚱그려 한 기간으로 적지 않는다');
       expect(body.contains('3년 (근로기준법 제42조)'), isTrue,
           reason: '근로자 명부·근로계약 중요 서류의 근거와 기간');
-      // 모든 항목을 3년으로 일괄 수정하지도 않았다.
-      expect(body.contains('3개월 (통신비밀보호법)'), isTrue);
+      // [1C] 통신비밀보호법 3개월도 적용 근거가 없어 함께 제거됐다.
+      expect(body.contains('3개월 (통신비밀보호법)'), isFalse);
     });
 
     test('1A-A2 세무 자료에 없는 기간을 지어내지 않는다 (§4)', () {
@@ -223,18 +223,41 @@ void main() {
     test('1B-D·E 삭제 처리 기록이 공개되고 최소화돼 있다 (§5)', () {
       expect(body.contains('[삭제 처리 기록]'), isTrue);
       expect(body.contains('계정 삭제 요청 처리 기록'), isTrue);
-      expect(body.contains('요청번호, 처리자,\n  처리 사유, 처리 시각'), isTrue);
       // 민감 원본을 담지 않는다고 명시.
-      expect(body.contains('신분증·통장 사본·계좌번호·\n  세무 식별번호는 포함하지 않습니다'),
+      expect(body.contains('신분증·통장 사본·계좌번호·세무 식별번호는 포함하지'),
           isTrue);
-      // 실제 기록기도 민감 필드를 쓰지 않는다.
+    });
+
+    /// 실제 저장 필드 — 공개 문구는 이것과 일치해야 한다.
+    String auditWrite() {
       final tool = _read('scripts/operator-delete-account.js');
       final i = tool.indexOf("collection('account_deletion_records')");
       expect(i, greaterThan(-1));
-      final w = tool.substring(i, i + 420);
+      return tool.substring(i, i + 420);
+    }
+
+    test('1C-A·B 저장되는 필드가 공개문구와 일치한다 (§2·§3)', () {
+      final w = auditWrite();
+      // 코드가 실제로 대상 계정 식별자를 남긴다.
+      expect(w.contains('targetUid: UID'), isTrue);
+      expect(w.contains('targetRole: role'), isTrue);
+      expect(w.contains('steps:'), isTrue);
+      // 그 사실이 공개 문구 양쪽에 적혀 있다.
+      for (final s in <String>['대상 계정 식별자', '계정 유형', '수행 결과']) {
+        expect(body.contains(s), isTrue, reason: 'policy/$s');
+        expect(deletionHtml.contains(s), isTrue, reason: 'deletion/$s');
+      }
+      expect(body.contains('삭제 요청 처리·보안·분쟁 대응 목적에 한해 제한적으로'),
+          isTrue);
+      // 숫자를 지어내지 않는다.
+      expect(body.contains('보존 기간은 관련 법령 검토에 따라 확정합니다'), isTrue);
+    });
+
+    test('1C-C 감사 기록에 민감 원본이 없다 (§4)', () {
+      final w = auditWrite();
       for (final pii in <String>[
         'ciHash', 'phoneHash', 'accountNumber', 'idCard', 'bankbook',
-        'taxIdentifier', 'foreignIdentityFingerprint',
+        'taxIdentifier', 'foreignIdentityFingerprint', 'rrn', 'phone',
       ]) {
         expect(w.contains(pii), isFalse, reason: pii);
       }
@@ -242,6 +265,35 @@ void main() {
         'executedAt', 'steps']) {
         expect(w.contains(k), isTrue, reason: k);
       }
+      // 자유 입력 사유에 PII 를 적지 말라는 운영 지침이 있다.
+      final rb = _read('docs/account-deletion-runbook.md');
+      expect(rb.contains('`--reason` 은 자유 입력이다'), isTrue);
+    });
+
+    test('1C-D 통신비밀보호법 3개월 문구가 없다 (§5·§6)', () {
+      expect(body.contains('통신비밀보호법'), isFalse,
+          reason: 'ALfit 이 적용 대상이라는 근거를 확인하지 못했다');
+      expect(body.contains('3개월'), isFalse);
+      // 대신 실제 목적만 적는다.
+      expect(
+        body.contains('서비스 접속·이용 로그: 서비스 보안, 오류 분석, '
+            '부정 이용 방지에 필요한'),
+        isTrue,
+      );
+      expect(body.contains('특정 법률에 따른 의무 보관이 아니며'), isTrue);
+    });
+
+    test('1C-E 새 기간을 지어내지 않았다 (§6)', () {
+      // 보존 항목 목록 안에서만 본다 — 시행일 날짜는 기간이 아니다.
+      final s = body.indexOf('• 법령에 따른 보존 항목:');
+      final e = body.indexOf('[민감 원본과', s);
+      expect(s, greaterThan(-1));
+      expect(e, greaterThan(s));
+      final periods = RegExp(r'[0-9]+\s*(년|개월|일)')
+          .allMatches(body.substring(s, e))
+          .map((m) => m.group(0)!.replaceAll(' ', '')).toSet();
+      expect(periods.difference({'3년'}), isEmpty,
+          reason: '근로기준법 3년 외의 기간이 생겼다: $periods');
     });
 
     test('1B-F 익명화를 주장하지 않는다 (§7)', () {
