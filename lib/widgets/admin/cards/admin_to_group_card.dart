@@ -634,6 +634,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
       );
     }
 
+    // [R7-P1-2 DEVICE.1A] 이 경로의 업무별 통계는 **아무도 불러오지 않았다.**
+    //
+    //   장기/단건 카드는 `groupItem.workDetailStats` 를 lazy 로 두고 채우는
+    //   쪽이 없었다. 그래서 `_getSingleTOStats` 가 null 을 돌려주고, 행은
+    //   그것을 `?? 0` 으로 받아 `확정 0 · 미충원 2 · 0/2` 라고 단정했다.
+    //   같은 카드의 요약은 같은 상황에서 TO 카운터로 폴백해 `확정 1` 이라고
+    //   말했다 — 한 공고가 두 숫자를 말한 이유가 이것이다.
+    //
+    //   복구 버튼(`onRetryStats`)은 `statsFailed` 일 때만 뜬다. 여기서는
+    //   실패한 적이 없으니 그 문도 열리지 않았다.
+    _ensureSingleTOStats();
+
     // 단건 슬롯 / 장기 / 캘린더 — 업무 상세
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,7 +684,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
             onLocalStatsChanged: () => setState(() {}),
             onAffectedTOsChanged: widget.onAffectedTOsChanged,
             // [POSTING-V2-01B] 통계 조회 실패 여부 — 0으로 표시하지 않기 위해
-            statsFailed: _singleTOStatsFailed(),
+            // [R7-P1-2 DEVICE.1A] **아직 안 불러온 것**도 0이 아니다.
+            //   집계는 업무마다 {confirmed:0, pending:0} 으로 미리 채워진다
+            //   (`loadTOWorkDetails`). 그래서 진짜 0명은 null 이 아니라 0 이고,
+            //   null 은 오직 "모른다" 뿐이다. 둘을 같은 숫자로 말하지 않는다.
+            statsFailed: _singleTOStatsFailed() || stats == null,
             onRetryStats: () => _retrySingleTOStats(),
           );
         }),
@@ -690,6 +706,29 @@ class _TOGroupCardState extends State<TOGroupCard> {
       return widget.groupItem.groupTOs.first.workDetailStatsFailed;
     }
     return widget.groupItem.workDetailStatsFailed;
+  }
+
+  /// [R7-P1-2 DEVICE.1A] 업무 상세를 펼쳤는데 통계가 비어 있으면 한 번 채운다.
+  ///
+  ///   신규 API 를 만들지 않는다 — 이미 있는 `_retrySingleTOStats` 를 그대로
+  ///   쓴다. 그쪽은 다시 `loadTOWorkDetails` 를 쓰므로, 요약·날짜 칩·업무 행이
+  ///   결국 **같은 집계 하나**를 보게 된다.
+  ///
+  ///   한 번만 시도한다. 실패하면 `statsFailed` 가 서고 행이 재시도 버튼을
+  ///   띄우므로, 여기서 자동 재시도 루프를 만들지 않는다.
+  bool _singleStatsRequested = false;
+
+  void _ensureSingleTOStats() {
+    if (_singleStatsRequested) return;
+    // 슬롯 단위 카드는 각자의 경로로 이미 채워진다 — 여기서 건드리지 않는다.
+    if (widget.calendarSlot != null) return;
+    if (widget.groupItem.groupTOs.isNotEmpty) return;
+    final g = widget.groupItem;
+    if (g.isWorkDetailLoaded || g.workDetailStatsFailed) return;
+    _singleStatsRequested = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _retrySingleTOStats();
+    });
   }
 
   /// [POSTING-V2-01B] 단건/장기 카드 통계 재조회.
@@ -1064,7 +1103,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     onLocalStatsChanged: () => setState(() {}),
                     onAffectedTOsChanged: widget.onAffectedTOsChanged,
                     // [POSTING-V2-01B] 이 슬롯의 통계 조회 실패 여부
-                    statsFailed: toItem.workDetailStatsFailed,
+                    // [R7-P1-2 DEVICE.1A] 미로드(null)도 0으로 말하지 않는다.
+                    statsFailed:
+                        toItem.workDetailStatsFailed || stats == null,
                     onRetryStats: () => _retryWorkDetailStats(toItem),
                   );
                 }).toList(),

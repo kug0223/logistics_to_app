@@ -398,6 +398,13 @@ class _TOItemCardState extends State<TOItemCard> {
                                                 widget.onLocalStatsChanged?.call();
                                               },
                                               onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가
+                                              // [R7-P1-2 DEVICE.1A] 아직 안 불러온 통계를
+                                              //   0명으로 말하지 않는다. 집계는 업무마다
+                                              //   {confirmed:0,pending:0} 으로 미리 채워지므로
+                                              //   null 은 "모른다" 뿐이다.
+                                              statsFailed:
+                                                  widget.toItem.workDetailStatsFailed ||
+                                                      stats == null,
                                             );
                                           }),
                                         ],
