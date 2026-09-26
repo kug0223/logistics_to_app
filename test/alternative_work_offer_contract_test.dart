@@ -442,8 +442,13 @@ void main() {
     });
 
     test('제안은 근로자가 선택해야 끝나는 알림이다', () {
-      expect(m.contains('NotificationType.workReassignmentOffered, };'), true,
-          reason: '_actionRequiredTypes 마지막 항목으로 등록');
+      // [R5-F.1] 계약은 "집합에 있다"이지 "마지막 줄이다"가 아니다.
+      //   뒤에 다른 행동 필요 알림이 추가돼도 이 사실은 그대로여야 한다.
+      final i = m.indexOf('_actionRequiredTypes');
+      expect(i, greaterThan(-1));
+      final setBody = m.substring(i, m.indexOf('};', i));
+      expect(setBody.contains('NotificationType.workReassignmentOffered'), true,
+          reason: '_actionRequiredTypes 에 등록');
     });
   });
 

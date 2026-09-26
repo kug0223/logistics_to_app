@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../models/core/notification_model.dart';
+import 'document_management_screen.dart';
 import '../../widgets/common/notification_card.dart';
 import '../../utils/notification_retention.dart';
 import '../../utils/responsive_helper.dart';
@@ -818,6 +819,31 @@ class _NotificationScreenState extends State<NotificationScreen> {
               focusApplicationId:
                   notification.data?['applicationId']?.toString(),
             ),
+          ),
+        );
+        break;
+
+      // [R5-F.1] 확정 근무의 변경 제안 — 원 지원(A)이 살아 있고 그 화면이
+      //   제안을 다시 읽어 시트를 연다. 그래서 sourceApplicationId 로 간다.
+      //   제안의 현재 상태는 화면이 다시 읽는다(payload 는 과거다).
+      case NotificationType.confirmedReassignmentProposed:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MyApplicationsScreen(
+              focusApplicationId:
+                  notification.data?['sourceApplicationId']?.toString(),
+            ),
+          ),
+        );
+        break;
+
+      // [R5-F.1] 서류 재등록 요청 — 근로자가 올리는 곳으로 간다.
+      case NotificationType.documentReuploadRequested:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const DocumentManagementScreen(),
           ),
         );
         break;

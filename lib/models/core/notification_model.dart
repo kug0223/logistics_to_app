@@ -115,6 +115,14 @@ enum NotificationType {
   // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 (PENDING 재배치)
   //   제안은 초대의 한 종류지만 **원 지원(A)이 살아 있다**는 점이 다르다.
   //   그래서 목적지·문구·행동 요구가 toInvite* 와 같을 수 없다.
+  // [R5-F.1] 확정 근무의 업무 변경 제안 — PENDING 재배치(workReassignment*)와
+  //   달리 **이미 확정된 근무**를 옮기는 제안이다. 근로자가 수락/거절해야
+  //   하므로 행동이 필요하다. 서버 type: "confirmedReassignmentProposed".
+  confirmedReassignmentProposed,
+  // [R5-F.1] 서류 재등록 요청 — 근로자가 다시 올려야 한다.
+  //   서버 type: "documentReuploadRequested".
+  documentReuploadRequested,
+
   workReassignmentOffered,  // 다른 업무 제안 도착 (근로자에게, actionable, CF: "workReassignmentOffered")
   workReassignmentAccepted, // 제안 수락됨 (제안한 관리자에게, informational, CF: "workReassignmentAccepted")
   workReassignmentDeclined, // 제안 거절됨 (제안한 관리자에게, informational, CF: "workReassignmentDeclined")
@@ -404,6 +412,9 @@ class NotificationModel {
     NotificationType.interimSettlementRequested,
     // [R5.3B] 제안은 근로자가 수락/거절을 골라야 끝난다 — 통보가 아니다.
     NotificationType.workReassignmentOffered,
+    // [R5-F.1] 확정 근무의 변경 제안·서류 재등록 요청도 근로자가 해야 끝난다.
+    NotificationType.confirmedReassignmentProposed,
+    NotificationType.documentReuploadRequested,
   };
 
   /// REMINDER_INFO 알림 type 집합 (resolvedImportance fallback용)
@@ -571,6 +582,11 @@ class NotificationModel {
       // [R5.3B] 다른 업무 제안 — 자리 이동이지 새 초대가 아니다.
       case NotificationType.workReassignmentOffered:
         return 'swap_horiz';
+      // [R5-F.1] 확정 근무의 변경 제안도 같은 성격이다.
+      case NotificationType.confirmedReassignmentProposed:
+        return 'swap_horiz';
+      case NotificationType.documentReuploadRequested:
+        return 'upload_file';
       case NotificationType.workReassignmentAccepted:
         return 'how_to_reg';
       case NotificationType.workReassignmentDeclined:
@@ -662,6 +678,11 @@ class NotificationModel {
       case 'workReminder': return NotificationType.workReminder;
       case 'workCanceled': return NotificationType.workCanceled;
       // 스케줄 변경
+      // [R5-F.1] 서버가 보내는 canonical 문자열은 scheduleChangeRequest 다.
+      //   파서는 scheduleChangeRequested 만 알아서, 스케줄 변경 요청 알림이
+      //   전부 other 로 떨어져 관리자가 눌러도 처리 화면에 가지 못했다.
+      //   두 문자열을 같은 의미로 받는다 — 이미 저장된 알림도 계속 열린다.
+      case 'scheduleChangeRequest':
       case 'scheduleChangeRequested': return NotificationType.scheduleChangeRequested;
       case 'scheduleChangeApproved': return NotificationType.scheduleChangeApproved;
       case 'scheduleChangeRejected': return NotificationType.scheduleChangeRejected;
@@ -723,6 +744,13 @@ class NotificationModel {
       case 'toInviteDeclined': return NotificationType.toInviteDeclined;
       case 'toInviteCanceled': return NotificationType.toInviteCanceled;
       // [R5.3B] 다른 업무 제안
+      // [R5-F.1] 확정 근무 변경 제안 · 서류 재등록 요청 — 서버가 보내던
+      //   문자열을 파서가 몰라 other 로 떨어졌다. 눌러도 아무 데도 가지
+      //   않았다. 둘 다 근로자가 무언가 해야 끝나는 알림이다.
+      case 'confirmedReassignmentProposed':
+        return NotificationType.confirmedReassignmentProposed;
+      case 'documentReuploadRequested':
+        return NotificationType.documentReuploadRequested;
       case 'workReassignmentOffered': return NotificationType.workReassignmentOffered;
       case 'workReassignmentAccepted': return NotificationType.workReassignmentAccepted;
       case 'workReassignmentDeclined': return NotificationType.workReassignmentDeclined;
@@ -813,6 +841,10 @@ class NotificationModel {
       case NotificationType.toInviteDeclined: return 'toInviteDeclined';
       case NotificationType.toInviteCanceled: return 'toInviteCanceled';
       // [R5.3B] 다른 업무 제안
+      case NotificationType.confirmedReassignmentProposed:
+        return 'confirmedReassignmentProposed';
+      case NotificationType.documentReuploadRequested:
+        return 'documentReuploadRequested';
       case NotificationType.workReassignmentOffered: return 'workReassignmentOffered';
       case NotificationType.workReassignmentAccepted: return 'workReassignmentAccepted';
       case NotificationType.workReassignmentDeclined: return 'workReassignmentDeclined';

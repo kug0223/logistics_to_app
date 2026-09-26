@@ -195,6 +195,11 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.toInviteDeclined:          return Icons.person_remove;
       // [R5.3B] 다른 업무 제안 — 자리 이동
       case NotificationType.workReassignmentOffered:   return Icons.swap_horiz;
+      // [R5-F.1] 확정 근무 변경 제안 · 서류 재등록 요청
+      case NotificationType.confirmedReassignmentProposed:
+        return Icons.swap_horiz;
+      case NotificationType.documentReuploadRequested:
+        return Icons.upload_file;
       case NotificationType.workReassignmentAccepted:  return Icons.how_to_reg;
       case NotificationType.workReassignmentDeclined:  return Icons.person_remove;
       case NotificationType.reconfirmRequest:          return Icons.check_circle_outline;
@@ -294,6 +299,9 @@ class _NotificationCardState extends State<NotificationCard>
       case NotificationType.toInvite:
       // [R5.3B] 제안 도착 — 근로자가 선택해야 하는 요청 → primary blue
       case NotificationType.workReassignmentOffered:
+      // [R5-F.1] 같은 성격 — 근로자가 응답해야 끝난다.
+      case NotificationType.confirmedReassignmentProposed:
+      case NotificationType.documentReuploadRequested:
       case NotificationType.reconfirmRequest:
       case NotificationType.toMatch:  // [Phase 8.1C] 일자리 발견 — 긍정적 정보 알림 → primary blue
       case NotificationType.systemNotice:
@@ -318,7 +326,10 @@ class _NotificationCardState extends State<NotificationCard>
         return '근무 확인';
       // [R5.3B] '수락하기'가 아니다 — 조건을 먼저 비교하고 고르는 화면으로 간다.
       case NotificationType.workReassignmentOffered:
+      case NotificationType.confirmedReassignmentProposed:
         return '제안 확인';
+      case NotificationType.documentReuploadRequested:
+        return '서류 등록';
       default:
         return '확인하기';
     }
