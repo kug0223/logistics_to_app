@@ -14,6 +14,29 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/section_header.dart';
 import 'wage_detail_screen.dart';
 
+/// [.6-P2] 근무 내역 한 줄.
+///
+/// 예전에는 이 목록이 **지원서**였다. 그래서 지원서가 취소·해지되면
+/// 실제로 일한 과거 근무까지 목록에서 사라졌다 — 월 합계는 근태에서
+/// 나오므로 "이번 달 32만원"이라고 써 놓고 아래 목록은 비어 있었다.
+///
+/// 과거에 일했다는 사실은 근태가 갖고 있고, 지원서는 지금의 약속 상태일
+/// 뿐이다. 그래서 줄의 근거를 둘로 나눈다.
+class _IncomeRow {
+  const _IncomeRow({required this.date, this.app, this.att});
+
+  /// 줄에 찍히는 날짜. 과거 근무는 실제 일한 날, 예정은 지원서 기준일.
+  final DateTime date;
+
+  /// 표시용 맥락(사업장명·업무명·예정 금액). 없을 수 있다.
+  final ApplicationModel? app;
+
+  /// 실제 근무·급여의 canonical 출처. 예정 줄에는 없다.
+  final AttendanceModel? att;
+
+  bool get isHistorical => att != null;
+}
+
 /// 수입 상세 화면
 ///
 /// 홈 수입 현황 섹션에서 "N년 N월 ›"을 눌러 진입.
@@ -382,15 +405,61 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
     return app.wage;
   }
 
-  /// 근무 내역 목록 (확정 + 검토중, 날짜 ASC)
-  List<ApplicationModel> get _workRecords {
-    final records = _monthApps
-        .where((a) =>
-            AppStatus.confirmedStatuses.contains(a.status) ||
-            a.status == AppStatus.pending)
-        .toList()
-      ..sort((a, b) => a.workDate.compareTo(b.workDate));
-    return records;
+  /// [.6-P2] 실제로 일한 근무인가 — 서버 ACTUAL_WORK_STATUSES 와 같은 집합.
+  ///
+  /// 노쇼·결근은 일반 근무 내역이 아니다(신뢰도 쪽이 따로 본다).
+  static bool _isActualWork(AttendanceModel a) =>
+      a.status == AttendanceModel.statusPresent ||
+      a.status == AttendanceModel.statusLate ||
+      a.status == AttendanceModel.statusEarlyLeave;
+
+  /// 이 달에 실제로 일한 근태. 지원서 상태를 보지 않는다.
+  List<AttendanceModel> get _workedThisMonth => _attendances
+      .where((a) =>
+          a.workDate.year == _year &&
+          a.workDate.month == _month &&
+          _isActualWork(a))
+      .toList();
+
+  /// 근무 내역 목록 (과거 실근무 + 현재 약속, 날짜 ASC)
+  ///
+  /// [.6-P2] 과거 근무는 근태가 근거다 — 지원서가 취소됐든 조회에서 빠졌든
+  /// 일한 사실은 남는다. 앞으로의 약속만 지원서 상태로 고른다.
+  List<_IncomeRow> get _incomeRows {
+    final rows = <_IncomeRow>[];
+    final seenAppIds = <String>{};
+
+    // 1) 지금 유효한 약속 — 기존 규칙 그대로(장기는 달에 한 줄).
+    for (final a in _monthApps) {
+      if (!AppStatus.confirmedStatuses.contains(a.status) &&
+          a.status != AppStatus.pending) {
+        continue;
+      }
+      rows.add(_IncomeRow(date: a.workDate, app: a));
+      seenAppIds.add(a.id);
+    }
+
+    // 2) 실제로 일한 기록 — 1)에 이미 잡힌 지원서는 중복시키지 않는다.
+    //    같은 지원서의 여러 근무일은 기존 구조대로 한 줄로 묶는다
+    //    (장기 근무를 날짜별로 펼치는 것은 이번 범위가 아니다).
+    final byApp = <String, AttendanceModel>{};
+    for (final att in _workedThisMonth) {
+      if (seenAppIds.contains(att.applicationId)) continue;
+      final prev = byApp[att.applicationId];
+      if (prev == null || att.workDate.isBefore(prev.workDate)) {
+        byApp[att.applicationId] = att;
+      }
+    }
+    for (final att in byApp.values) {
+      // 지원서는 표시용 맥락일 뿐이다. 없으면 근태가 가진 것으로 그린다.
+      final app = _allApplications
+          .where((x) => x.id == att.applicationId)
+          .firstOrNull;
+      rows.add(_IncomeRow(date: att.workDate, app: app, att: att));
+    }
+
+    rows.sort((a, b) => a.date.compareTo(b.date));
+    return rows;
   }
 
   double _s(BuildContext context) {
@@ -566,7 +635,12 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                   padding: EdgeInsets.symmetric(vertical: 48 * s),
                   child: const Center(child: CircularProgressIndicator()),
                 )
-              else if (_workRecords.isEmpty)
+              // [.6-P2] 조회 실패는 "수입이 없다"가 아니다. 모르는 것과
+              //   없는 것을 같은 화면으로 그리면 일한 돈이 사라진 것으로
+              //   읽힌다.
+              else if (_loadFailed && _incomeRows.isEmpty)
+                _buildLoadErrorState(s)
+              else if (_incomeRows.isEmpty)
                 Container(
                   color: Colors.white,
                   padding: EdgeInsets.symmetric(
@@ -600,12 +674,15 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                 Container(
                   color: Colors.white,
                   child: Column(
-                    children: _workRecords.asMap().entries.map((e) {
-                      final i = e.key;
-                      final app = e.value;
-                      return _buildWorkRecord(
-                          s, app, i < _workRecords.length - 1);
-                    }).toList(),
+                    children: [
+                      // 이전 데이터는 남기고, 지금 것이 최신이 아님을 말한다.
+                      if (_loadFailed) _buildStaleBanner(s),
+                      ..._incomeRows.asMap().entries.map((e) {
+                        final i = e.key;
+                        return _buildWorkRecord(
+                            s, e.value, i < _incomeRows.length - 1);
+                      }),
+                    ],
                   ),
                 ),
               const SizedBox(height: 24),
@@ -685,15 +762,91 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   //
   // PAID 상태(실제 금융 API 연결 후 → '입금 완료')는 AttendanceModel에
   // wageStatus = 'paid' 상수 추가 후 아래 분기에 추가 예정.
-  Widget _buildWorkRecord(double s, ApplicationModel app, bool showDivider) {
+  /// [.6-P2] 조회 자체가 실패한 상태 — 비어 있는 것과 구분해 그린다.
+  Widget _buildLoadErrorState(double s) => Container(
+        color: Colors.white,
+        padding:
+            EdgeInsets.symmetric(horizontal: 20 * s, vertical: 48 * s),
+        child: Column(
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 40 * s, color: AppColors.textTertiary),
+            SizedBox(height: 16 * s),
+            Text(
+              '근무 내역을 불러오지 못했어요',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            SizedBox(height: 6 * s),
+            Text(
+              '수입이 없는 것이 아니라, 지금 확인할 수 없는 상태예요',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: AppColors.textTertiary,
+              ),
+            ),
+            SizedBox(height: 16 * s),
+            OutlinedButton.icon(
+              onPressed: _isLoading ? null : _loadAll,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('다시 시도'),
+            ),
+          ],
+        ),
+      );
+
+  /// [.6-P2] 이전 데이터는 살아 있지만 방금 조회가 실패한 상태.
+  Widget _buildStaleBanner(double s) => Container(
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 10 * s),
+        color: AppColors.warning.withValues(alpha: 0.10),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, size: 16 * s, color: AppColors.warning),
+            SizedBox(width: 8 * s),
+            Expanded(
+              child: Text(
+                '최신 정보를 불러오지 못했어요. 아래는 마지막으로 확인된 내역이에요.',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: _isLoading ? null : _loadAll,
+              child: const Text('새로고침'),
+            ),
+          ],
+        ),
+      );
+
+  /// [.6-P2] 업무명 — 지원서가 없으면 근태가 가진 것을 쓴다.
+  static String _workTypeLabel(ApplicationModel? app, AttendanceModel? att) {
+    if (app != null && app.selectedWorkType.isNotEmpty) {
+      return app.selectedWorkType;
+    }
+    return att?.workType ?? '';
+  }
+
+  Widget _buildWorkRecord(double s, _IncomeRow row, bool showDivider) {
     const dowLabels = ['', '월', '화', '수', '목', '금', '토', '일'];
-    final d = app.workDate;
+    final app = row.app;
+    final d = row.date;
     final dateStr =
         '${d.month}/${d.day.toString().padLeft(2, '0')}(${dowLabels[d.weekday]})';
 
-    final att = _attendances
-        .where((a) => a.applicationId == app.id)
-        .firstOrNull;
+    // [.6-P2] 과거 줄은 자기 근태를 들고 온다. 예정 줄만 지원서로 찾는다.
+    final att = row.att ??
+        (app == null
+            ? null
+            : _attendances.where((a) => a.applicationId == app.id).firstOrNull);
 
     // 지급 상태별 레이블 — AttendanceModel 상수 사용, 타입 프로모션 보장
     final int displayWage;
@@ -719,32 +872,43 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
       statusLabel = '급여 계산 완료';
       statusColor = AppColors.success; // 처리 진행 중 → 연한 초록 유지
     } else if (att?.checkInAt != null) {
-      displayWage = _dailyWageOf(app);
-      statusLabel = '근무 완료';
+      // [.6-P2] 지원서가 없으면 예정 일당을 계산할 근거가 없다.
+      //   없는 금액을 지어내지 않고 모른다고 말한다.
+      displayWage = app == null ? 0 : _dailyWageOf(app);
+      statusLabel = app == null ? '근무 완료 · 금액 확인 필요' : '근무 완료';
       statusColor = AppColors.textSecondary; // 급여 미처리 → 중립 회색
-    } else if (AppStatus.confirmedStatuses.contains(app.status)) {
+    } else if (app != null &&
+        AppStatus.confirmedStatuses.contains(app.status)) {
       displayWage = _dailyWageOf(app);
       statusLabel = '근무 예정';
       statusColor = AppColors.brand;
-    } else {
+    } else if (app != null) {
       displayWage = _dailyWageOf(app);
       statusLabel = '검토중';
       statusColor = AppColors.warning;
+    } else {
+      // 근태만 남은 과거 근무 — 지원서를 못 찾았다. 조용히 빼지 않는다.
+      displayWage = 0;
+      statusLabel = '근무 기록 · 상세 확인 필요';
+      statusColor = AppColors.textSecondary;
     }
 
     return Column(
       children: [
         // 전체 행 탭 → 급여 상세 화면 (WageDetailScreen)
         InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => WageDetailScreen(
-                application: app,
-                attendance: att,
-              ),
-            ),
-          ),
+          // 지원서가 없으면 상세를 구성할 수 없다 — 탭을 열지 않는다.
+          onTap: app == null
+              ? null
+              : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => WageDetailScreen(
+                        application: app,
+                        attendance: att,
+                      ),
+                    ),
+                  ),
           child: Padding(
             padding:
                 EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
@@ -768,7 +932,13 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        app.businessName,
+                        // [.6-P2] 지원서가 없으면 근태가 가진 이름을 쓴다.
+                        //   둘 다 없으면 없는 이름을 지어내지 않는다.
+                        app?.businessName.isNotEmpty == true
+                            ? app!.businessName
+                            : (att?.businessName.isNotEmpty == true
+                                ? att!.businessName
+                                : '사업장 정보 없음'),
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -777,10 +947,10 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      if (app.selectedWorkType.isNotEmpty) ...[
+                      if (_workTypeLabel(app, att).isNotEmpty) ...[
                         SizedBox(height: 2 * s),
                         Text(
-                          app.selectedWorkType,
+                          _workTypeLabel(app, att),
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w400,
