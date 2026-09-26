@@ -612,8 +612,10 @@ void main() {
   group('SCOPE-09 서버·write 무회귀', () {
     test('09-a strict all-or-nothing 유지 (§1, §23)', () {
       final fns = _flat(_src(_fnsPath));
+      // [R5-D2] 자격이 canManageTo 로 올라갔다. all-or-nothing(MODEL A)은 그대로.
       expect(
-          fns.contains('await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));'),
+          fns.contains(
+              'await Promise.all(ids.map(id => srvAssertToAuthority(callerUid, id)));'),
           true,
           reason: 'MODEL A는 canonical policy다');
     });

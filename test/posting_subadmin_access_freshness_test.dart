@@ -279,9 +279,10 @@ void main() {
 
     test('03-d 서버 all-or-nothing 정책은 건드리지 않았다 (§13)', () {
       final fns = _src('functions/src/index.ts');
+      // [R5-D2] 자격은 canManageTo 로 올라갔지만 all-or-nothing 은 그대로다.
       expect(
           _flat(fns).contains(
-              'await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));'),
+              'await Promise.all(ids.map(id => srvAssertToAuthority(callerUid, id)));'),
           true,
           reason: '[BACKLOG-ADMIN-TOS-ALL-OR-NOTHING-SCOPE-ASSERT] 유지');
     });
@@ -677,9 +678,10 @@ void main() {
           true);
       // 서버 정책은 건드리지 않았다
       final fns = _src('functions/src/index.ts');
+      // [R5-D2] 자격만 canManageTo 로 올라갔다 — scope 결정 방식은 그대로다.
       expect(
           _flat(fns).contains(
-              'await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));'),
+              'await Promise.all(ids.map(id => srvAssertToAuthority(callerUid, id)));'),
           true);
     });
   });

@@ -354,10 +354,14 @@ void main() {
     });
 
     test('P2-10 제거 권한은 사업장 관리자에 머문다 — 근로자 우회 없음', () {
+      // [R5-D2] 인라인 판정이 canonical helper 로 옮겨갔다. 규칙은 그대로
+      //   관리자·SUPER_ADMIN 전용이고, capability 로는 열리지 않는다.
       expect(
-        removeMember.contains('해당 사업장 관리자만 멤버를 제거할 수 있습니다'),
+        removeMember.contains('srvAssertMemberManagementAuthority('),
         isTrue,
       );
+      expect(removeMember.contains('canManage'), isFalse,
+          reason: 'SubAdmin 에게 길이 열리면 안 된다');
     });
 
     test('P2-11 §35 본인 직책 해제가 여전히 동작한다', () {

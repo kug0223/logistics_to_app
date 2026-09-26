@@ -497,13 +497,15 @@ void main() {
     });
 
     test('08-f authorization이 쿼리보다 앞이다 (§5)', () {
-      final auth = code.indexOf('assertBizAdmin(callerUid, id)');
+      // [R5-D2] 공고 목록 read 자격이 canManageTo 로 올라갔다.
+      //   all-or-nothing 성질은 그대로다 — 부분 허용으로 바꾸지 않았다.
+      final auth = code.indexOf('srvAssertToAuthority(callerUid, id)');
       final query = code.indexOf('ids.flatMap(bizId');
       expect(auth, greaterThan(-1));
       expect(auth, lessThan(query));
       expect(
         _flat(code).contains(
-            'await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)))'),
+            'await Promise.all(ids.map(id => srvAssertToAuthority(callerUid, id)))'),
         true,
         reason: '03N all-or-nothing scope 무회귀',
       );

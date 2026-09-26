@@ -23932,7 +23932,9 @@ export const callableRecalculateTOStats = onCall(
     const totalRequired = (toData.totalRequired as number) ?? 0;
     const toStatus = toData.status as string;
 
-    await assertBizAdmin(callerUid, businessId);
+    // [R5-D2] 재집계는 TO 카운터를 다시 쓴다 — TO 를 만들 때와 같은 자격을
+    //   요구한다. businessId 는 공고 문서에서 왔다(payload 아님).
+    await srvAssertToAuthority(callerUid, businessId);
 
     // [M-6 수정 2026-07-15] 무제한 .get() → while 루프 페이지네이션으로 교체
     let totalPending = 0;
@@ -29166,6 +29168,66 @@ async function srvAssertToAuthority(
 }
 
 /**
+ * [R5-D2] 계약 도메인 권한 — wage·to 와 대칭.
+ *
+ *   SUPER_ADMIN → owner/adminIds → members.permissions.canManageContract
+ *   계약 갱신 제안을 만드는 경로가 쓰는 판정과 같은 규칙이다. 그 제안 목록을
+ *   읽는 일도 같은 자격을 요구한다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 대상 사업장 — target entity 기준
+ * @return {Promise<void>} 권한이 없으면 throw
+ */
+async function srvAssertContractAuthority(
+  callerUid: string, businessId: string
+): Promise<void> {
+  const {callerData} = await assertBizAdmin(callerUid, businessId);
+  const role = callerData?.role as string | undefined;
+  if (role === "SUPER_ADMIN") return;
+  const bizSnap = await db.collection("businesses").doc(businessId).get();
+  const biz = bizSnap.data() ?? {};
+  const ownerId = biz["ownerId"] as string | undefined;
+  const adminIds = (biz["adminIds"] as string[] | undefined) ?? [];
+  if (ownerId === callerUid || adminIds.includes(callerUid)) return;
+  const m = await db.collection("businesses").doc(businessId)
+    .collection("members").doc(callerUid).get();
+  const perms = (m.data()?.permissions as Record<string, boolean>) ?? {};
+  if (perms.canManageContract !== true) {
+    throw new HttpsError("permission-denied", "계약 관리 권한이 없습니다.");
+  }
+}
+
+/**
+ * [R5-D2] 멤버 관리 권한 — 사업장 관리자와 SUPER_ADMIN 만.
+ *
+ *   CLAUDE.md 의 결정: 멤버 관리는 SubAdmin 을 완전히 제외한다. 권한을 준다는
+ *   것은 이양이므로, 권한을 받은 사람이 또 권한을 나눠 줄 수는 없다.
+ *
+ *   그래서 capability 를 보지 않는다 — SubAdmin 이 모든 capability 를 갖고
+ *   있어도 멤버 관리 권한은 생기지 않는다. 새 capability 를 만들지도 않는다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string} businessId 대상 사업장
+ * @return {Promise<void>} 권한이 없으면 throw
+ */
+async function srvAssertMemberManagementAuthority(
+  callerUid: string, businessId: string
+): Promise<void> {
+  const [callerSnap, bizSnap] = await Promise.all([
+    db.collection("users").doc(callerUid).get(),
+    db.collection("businesses").doc(businessId).get(),
+  ]);
+  if ((callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN") return;
+  if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+  const biz = bizSnap.data()!;
+  const adminIds = (biz.adminIds as string[] | undefined) ?? [];
+  const ownerId = biz.ownerId as string | undefined;
+  if (adminIds.includes(callerUid) || ownerId === callerUid) return;
+  throw new HttpsError(
+    "permission-denied", "해당 사업장 관리자만 멤버를 관리할 수 있습니다.");
+}
+
+/**
  * 세무 신원 열람 권한 — 급여 도메인 권한과 같다.
  *
  *   이름을 남겨 둔다. 부르는 쪽이 "왜 이 문이 급여 권한을 요구하는가"를
@@ -30562,7 +30624,10 @@ export const callableGetAdminTOs = onCall(
 
     // 비슈퍼어드민: 각 businessId에 대해 권한 검증
     if (!isSuperAdmin) {
-      await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));
+      // [R5-D2] 공고 목록 read 권한 = canManageTo (callableGetTOsByBiz 와 같다).
+      //   all-or-nothing 성질은 그대로 둔다 — 부분 허용으로 바꾸면 화면이
+      //   어느 사업장이 빠졌는지 모르는 채 목록을 그린다.
+      await Promise.all(ids.map(id => srvAssertToAuthority(callerUid, id)));
     }
 
     // [POSTING-V2-03T.1] DRAFT는 관리자 목록의 **운영 population**이다.
@@ -30874,7 +30939,9 @@ export const callableGetPaymentChangeRequests = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    // [R5-D2] 이 목록의 행동 주인은 승인·거절이고 그 둘이 canManageWage 를
+    //   요구한다. 목록을 읽는 자격을 그보다 낮게 두지 않는다.
+    await srvAssertWageAuthority(callerUid, businessId);
 
     const VALID_PAYMENT_STATUSES = ["PENDING", "APPROVED", "REJECTED", "CANCELED"];
     const targetStatus = (typeof status === "string" && VALID_PAYMENT_STATUSES.includes(status)) ? status : "PENDING";
@@ -31261,7 +31328,8 @@ export const callableCheckPendingInvitation = onCall(
       throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    // [R5-D2] 멤버 초대 여부 조회 — 멤버 관리 권한이 필요하다.
+    await srvAssertMemberManagementAuthority(callerUid, businessId);
 
     // 3일 이내 발송된 PENDING 초대 확인
     const expiryMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
@@ -33130,7 +33198,9 @@ export const callableGetRenewalProposalsByBiz = onCall(
     if (!businessId || typeof businessId !== "string") {
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
-    await assertBizAdmin(callerUid, businessId);
+    // [R5-D2] 갱신 제안을 만드는 쪽(callableCreateRenewalProposal)이
+    //   canManageContract 를 요구한다. 그 제안 목록도 같은 도메인이다.
+    await srvAssertContractAuthority(callerUid, businessId);
     const snap = await db.collection("renewal_proposals")
       .where("businessId", "==", businessId)
       .where("status", "==", RENEWAL_PROPOSAL_PENDING)
@@ -35185,8 +35255,10 @@ export const callableGetSentPendingInvitations = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
     // [H-1 수정] businesses.adminIds 기반 검증 — managedBusinessIds(클라이언트 오염 취약) 미사용
-    // assertBizAdmin: SUPER_ADMIN 최우선 허용 → businesses.adminIds / ownerId → SubAdmin 순 체크
-    await assertBizAdmin(uid, businessId);
+    // [R5-D2] 멤버 관리 화면의 데이터다 — 사업장 소속만으로는 부족하다.
+    //   화면은 이미 SubAdmin 에게 이 호출을 건너뛰지만, 서버가 막지 않으면
+    //   직접 호출로 누가 초대됐는지 다 읽힌다.
+    await srvAssertMemberManagementAuthority(uid, businessId);
     const expiryMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
     const snap = await db.collection("member_invitations")
       .where("businessId", "==", businessId)
@@ -43092,24 +43164,11 @@ export const callableRemoveMember = onCall(
 
     // ── 호출자 권한 확인 (BUSINESS_ADMIN 전용, businesses.adminIds 기반 서버 검증) ──
     // [HIGH-04-FIX 동일 패턴] managedBusinessIds는 클라이언트 오염 가능 → businesses.adminIds 사용
-    const [callerSnap, bizSnap] = await Promise.all([
-      db.collection("users").doc(callerUid).get(),
-      db.collection("businesses").doc(businessId).get(),
-    ]);
-
+    // [R5-D2] 인라인이던 판정을 canonical helper 로 옮겼다 — 초대 목록·초대
+    //   확인 조회가 같은 판정을 쓴다. 규칙은 그대로다.
+    await srvAssertMemberManagementAuthority(callerUid, businessId);
+    const bizSnap = await db.collection("businesses").doc(businessId).get();
     if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
-
-    const callerRole = callerSnap.data()?.role as string | undefined;
-    const isSuperAdmin = callerRole === "SUPER_ADMIN";
-
-    if (!isSuperAdmin) {
-      const bizData = bizSnap.data()!;
-      const adminIds = (bizData.adminIds as string[] | undefined) ?? [];
-      const ownerId = bizData.ownerId as string | undefined;
-      if (!adminIds.includes(callerUid) && ownerId !== callerUid) {
-        throw new HttpsError("permission-denied", "해당 사업장 관리자만 멤버를 제거할 수 있습니다.");
-      }
-    }
 
     // ── 대상 멤버 존재 확인 ──────────────────────────────────────────────────────
     const memberRef = db.collection("businesses").doc(businessId)
@@ -43575,15 +43634,17 @@ export const callableRecalcToTotalRequired = onCall(
     }
     if (!toId)       throw new HttpsError("invalid-argument", "toId가 필요합니다.");
 
-    // 권한 검증
-    await assertBizAdmin(callerUid, businessId);
-
-    // TO 소속 검증
+    // TO 소속 검증 — 권한은 **공고가 속한 사업장** 기준으로 본다.
+    //   payload businessId 로 먼저 통과한 뒤 소속을 보면, 자기 사업장 id 와
+    //   남의 공고 id 를 섞어 보내는 경로가 열린다.
     const toSnap = await db.collection("tos").doc(toId).get();
     if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
-    if (toSnap.data()?.businessId !== businessId) {
+    const recalcBizId = toSnap.data()?.businessId as string | undefined;
+    if (!recalcBizId || recalcBizId !== businessId) {
       throw new HttpsError("permission-denied", "해당 공고에 대한 권한이 없습니다.");
     }
+    // [R5-D2] 재집계는 TO 카운터를 다시 쓴다 — canManageTo 를 요구한다.
+    await srvAssertToAuthority(callerUid, recalcBizId);
 
     // 슬롯 전체 순회 — 499건 페이지네이션
     let totalRequired = 0;

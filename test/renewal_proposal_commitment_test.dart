@@ -511,7 +511,9 @@ void main() {
     test('11-c 관리자 reader 는 사업장 소속을 확인한다', () {
       final reader =
           _after(cf, 'export const callableGetRenewalProposalsByBiz', 900);
-      expect(reader, contains('assertBizAdmin(callerUid, businessId)'));
+      // [R5-D2] 소속 확인 위에 계약 자격이 하나 더 필요하다 — 제안을 만드는
+      //   쪽(callableCreateRenewalProposal)이 canManageContract 를 요구한다.
+      expect(reader, contains('srvAssertContractAuthority(callerUid, businessId)'));
       expect(reader, contains('.where("businessId", "==", businessId)'));
     });
 
