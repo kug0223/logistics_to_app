@@ -288,18 +288,39 @@ void main() {
   // §9 — RECRUITING
   // ══════════════════════════════════════════════════════════════
   group('04. 모집중', () {
-    testWidgets('04-a label · icon · green family 유지', (tester) async {
+    // [CORRECTION-R7-RECRUITING-GREEN] 여기는 green family를 고정하고 있었다.
+    //
+    //   `모집중`과 `모집 완료`가 같은 초록이라는 계약이었다. 목록을 훑을 때
+    //   "더 받아야 한다"와 "다 찼다"가 구별되지 않는다 — 관리자가 지금 할 일이
+    //   서로 다른 두 상태다. green은 달성(FULL)에 남기고 진행 중인 모집은
+    //   정보색으로 옮겼다. 앵커를 그 새 계약으로 다시 쓴다.
+    testWidgets('04-a label · icon 유지 + 정보색 family', (tester) async {
       final l = await look(tester, status: SlotDisplayStatus.recruiting);
       expect(l.label, '모집중');
       expect(l.icon, Icons.campaign);
-      expect(l.bgColor, AppColors.successBg);
+      expect(l.bgColor, AppColors.infoBg);
+      expect(l.bgColor, isNot(AppColors.successBg),
+          reason: '달성(FULL)과 같은 배경을 쓰지 않는다');
     });
 
-    testWidgets('04-b 13px 라벨이 읽히도록 successDeep을 쓴다', (tester) async {
+    testWidgets('04-b 13px 라벨이 읽히도록 infoDeep을 쓴다', (tester) async {
       final l = await look(tester, status: SlotDisplayStatus.recruiting);
-      expect(l.textColor, AppColors.successDeep);
-      expect(l.iconColor, AppColors.successDeep);
-      expect(l.textColor, isNot(AppColors.successDark));
+      expect(l.textColor, AppColors.infoDeep);
+      expect(l.iconColor, AppColors.infoDeep);
+      // successDeep이 successBg 위에서 필요했던 것과 같은 대비 수준이다.
+      expect(l.textColor, isNot(AppColors.info),
+          reason: 'infoBg 위에서 info(#2196F3)는 13px 라벨에 부족하다');
+    });
+
+    testWidgets('04-c 모집 완료와 색으로 구별된다', (tester) async {
+      final recruiting = await look(tester, status: SlotDisplayStatus.recruiting);
+      final full = await look(tester,
+          status: SlotDisplayStatus.closed, recruitmentComplete: true);
+      expect(recruiting.textColor, isNot(full.textColor));
+      expect(recruiting.bgColor, isNot(full.bgColor));
+      // 색만으로 말하지 않는다 — 아이콘·라벨도 함께 다르다.
+      expect(recruiting.icon, isNot(full.icon));
+      expect(recruiting.label, isNot(full.label));
     });
   });
 
@@ -417,15 +438,15 @@ void main() {
       }
     });
 
-    testWidgets('07-c success 상태만 successDeep을 쓴다', (tester) async {
+    // [CORRECTION-R7-RECRUITING-GREEN] green은 이제 **달성 하나**의 색이다.
+    //   모집중이 여기 함께 묶여 있었다 — 그것이 고쳐진 결함이다.
+    testWidgets('07-c 달성(FULL)만 successDeep을 쓴다', (tester) async {
+      final full = await look(tester,
+          status: SlotDisplayStatus.closed, recruitmentComplete: true);
+      expect(full.textColor, AppColors.successDeep);
+
       for (final l in [
         await look(tester, status: SlotDisplayStatus.recruiting),
-        await look(tester,
-            status: SlotDisplayStatus.closed, recruitmentComplete: true),
-      ]) {
-        expect(l.textColor, AppColors.successDeep);
-      }
-      for (final l in [
         await look(tester, status: SlotDisplayStatus.draft),
         await look(tester, status: SlotDisplayStatus.closed),
         await look(tester,

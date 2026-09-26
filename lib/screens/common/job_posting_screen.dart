@@ -862,11 +862,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final isEffectivelyClosed = _isEffectivelyClosed;
     final isSoonDeadline = !isEffectivelyClosed && _isAnySoonDeadline();
 
+    // [R7-P1-2] 모집중은 진행 상태다 — green 은 달성(충족·확정)에 남긴다.
+    //   solid pill 이므로 CTA brand(#1565C0)와 구분되는 infoMedium(#1E88E5)을 쓴다.
     final (statusLabel, statusColor) = isEffectivelyClosed
         ? ('모집 종료', AppColors.grey500)
         : isSoonDeadline
             ? ('마감임박', AppColors.warning)
-            : ('모집중', AppColors.success);
+            : ('모집중', AppColors.infoMedium);
 
     return Container(
       color: Colors.white,
@@ -1348,11 +1350,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     }
     final isDeadlineSoon = !isClosed && (isAlmostFull || isNearStart);
 
+    // [R7-P1-2] 모집중 = 진행. green 은 달성에 남긴다.
     final (badgeLabel, badgeColor) = isClosed
         ? ('마감', AppColors.grey500)
         : isDeadlineSoon
             ? ('마감임박', AppColors.warning)
-            : ('모집중', AppColors.success);
+            : ('모집중', AppColors.infoMedium);
 
     // 이미지 유무로 레이아웃 분기 (16:9 대형 이미지 금지)
     final hasImage = workType?.thumbnailUrl != null;

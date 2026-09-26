@@ -237,9 +237,10 @@ class WorkSelectionCard extends StatelessWidget {
             bgColor = AppColors.grey200;
             textColor = AppColors.grey600;
           } else {
+            // [R7-P1-2] 모집중 = 진행 상태. green 은 지원완료·확정에 남긴다.
             text = '모집중';
-            bgColor = AppColors.successBg;
-            textColor = AppColors.successDark;
+            bgColor = AppColors.infoBg;
+            textColor = AppColors.infoDark;
           }
           break;
       }

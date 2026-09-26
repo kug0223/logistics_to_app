@@ -96,10 +96,19 @@ class SlotStatusBadge extends StatelessWidget {
           context,
           icon: Icons.campaign,
           label: '모집중',
-          // 모집 완료와 같은 green family다 — 둘 다 "모집 흐름이 정상"이라는
-          //   상위 의미를 공유하고, 구분은 아이콘과 라벨이 맡는다.
-          color: AppColors.successDeep,
-          bgColor: AppColors.successBg,
+          // [R7-P1-2] green 을 모집 완료와 나눠 쓰던 것을 되돌린다.
+          //
+          //   `모집 완료`와 같은 green family였다. 상위 의미가 같다는 이유였는데,
+          //   그 둘은 관리자가 **지금 할 일이 다른** 상태다. 모집중은 아직 채워야
+          //   하고, 모집 완료는 채워졌다. 같은 초록으로 두면 목록을 훑을 때
+          //   "다 찼다"와 "더 받아야 한다"가 한 덩어리로 보인다.
+          //
+          //   그래서 green 은 달성(FULL)에 남기고, 진행 중인 모집은 정보색
+          //   파랑으로 옮긴다. grey 는 종료. 세 상태가 각자 색을 갖는다.
+          //   infoDeep/infoBg 는 successDeep/successBg 와 같은 대비 수준이다.
+          //   CTA brand(#1565C0)와는 밝기·형태(연한 배경 pill + 아이콘)로 갈린다.
+          color: AppColors.infoDeep,
+          bgColor: AppColors.infoBg,
         );
     }
   }

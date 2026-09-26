@@ -3106,8 +3106,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       badgeFg = AppColors.warningDark;
       badgeLabel = '마감임박';
     } else {
-      badgeBg = AppColors.successBg;
-      badgeFg = AppColors.successDark;
+      // [R7-P1-2] 모집중은 진행 상태 — green 은 충족·확정 몫이다.
+      badgeBg = AppColors.infoBg;
+      badgeFg = AppColors.infoDark;
       badgeLabel = '모집중';
     }
 

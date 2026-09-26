@@ -484,21 +484,21 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       );
     }
     
-    // 3. 모집중
+    // 3. 모집중 — [R7-P1-2] green 은 달성(모집 완료)에 남기고 진행 중은 파랑.
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 6),
         vertical: ResponsiveHelper.spacing(context, 2),
       ),
       decoration: BoxDecoration(
-        color: AppColors.successBg,
+        color: AppColors.infoBg,
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         '모집중',
         style: ResponsiveHelper.tinyStyle(
           context,
-          color: AppColors.successDark,
+          color: AppColors.infoDark,
         ),
       ),
     );

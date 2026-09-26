@@ -1123,9 +1123,10 @@ class _UserTOCardState extends State<UserTOCard> {
       statusBg = AppColors.grey100;
       statusFg = AppColors.grey500;
     } else {
+      // [R7-P1-2] 모집중은 진행 상태다 — green 은 충족·확정에 남긴다.
       statusLabel = '모집중';
-      statusBg = AppColors.successBg;
-      statusFg = AppColors.successDark;
+      statusBg = AppColors.infoBg;
+      statusFg = AppColors.infoDark;
     }
 
     // 업무 힌트 (슬롯 자체 workDetails 사용)
@@ -1791,14 +1792,16 @@ class _WorkItem extends StatelessWidget {
       }
       if (work.isFull) return _chip(context, '마감', AppColors.grey400, Colors.white);
       if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
-      return _chip(context, '모집중', AppColors.successBg, AppColors.successDark);
+      // [R7-P1-2] 모집중 = 진행. green 은 확정·충족에만.
+      return _chip(context, '모집중', AppColors.infoBg, AppColors.infoDark);
     }
     // 단기 단일날짜 레거시 TO: 업무 레벨 상태만 체크
     if (work.isClosed || work.isTimeExpired || work.isFull) {
       return _chip(context, '마감', AppColors.grey400, Colors.white);
     }
     if (work.isEmergencyOpen) return _chip(context, '긴급', AppColors.error, Colors.white);
-    return _chip(context, '모집중', AppColors.successBg, AppColors.successDark);
+    // [R7-P1-2] 모집중 = 진행. green 은 확정·충족에만.
+    return _chip(context, '모집중', AppColors.infoBg, AppColors.infoDark);
   }
 
   Widget _chip(BuildContext context, String label, Color bg, Color text) =>

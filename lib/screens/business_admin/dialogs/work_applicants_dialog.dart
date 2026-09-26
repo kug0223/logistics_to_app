@@ -245,8 +245,48 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     super.dispose();
   }
 
+  // ── [R7-P1-2] 로드 결과를 사실대로 말한다 ─────────────────────────────
+  //
+  //   여기서 쓰는 `runWithLoading`은 예외를 삼킨다. errorMessage 도 넘기지
+  //   않았으므로 토스트조차 뜨지 않았다. 그래서 조회가 실패하면 `_applicants`
+  //   가 빈 채로 남고 화면은 `지원자가 없습니다`라고 말했다 — 확정자가 있는
+  //   업무에서도 그랬다. **읽지 못한 것과 없는 것은 다르다.**
+  //
+  //   그리고 실패에도 두 종류가 있다.
+  //     최초 로드 실패   → 보여줄 것이 없다. ERROR 화면 + 다시 시도.
+  //     새로고침 실패    → 이미 보여주던 명단은 여전히 쓸 만하다. 지우지 않는다.
+  //   후자를 전자처럼 다루면, 확정 처리 직후 새로고침이 한 번 실패했다는
+  //   이유로 방금까지 보던 명단이 통째로 사라진다.
+  bool _loadOk = false;
+  bool _hasLoadedOnce = false;
+  bool _loadFailed = false;
+  bool _refreshFailed = false;
+
   /// 지원자 + 사용자 정보 + 신분증 상태 로드
-  Future<void> _loadApplicants() => runWithLoading(() async {
+  Future<void> _loadApplicants() async {
+    _loadOk = false;
+    await _runLoadApplicants();
+    if (!mounted) return;
+    final ok = _loadOk;
+    final hadRows = _hasLoadedOnce;
+    setState(() {
+      if (ok) {
+        _hasLoadedOnce = true;
+        _loadFailed = false;
+        _refreshFailed = false;
+      } else if (hadRows) {
+        // 기존 행은 그대로 둔다 — PARTIAL 이지 EMPTY 가 아니다.
+        _refreshFailed = true;
+      } else {
+        _loadFailed = true;
+      }
+    });
+    if (!ok && hadRows) {
+      ToastHelper.showError('최신 정보를 불러오지 못했습니다. 아래는 이전에 받은 내용입니다.');
+    }
+  }
+
+  Future<void> _runLoadApplicants() => runWithLoading(() async {
       final userProvider = context.read<UserProvider>();
       final currentUserId = userProvider.currentUser?.uid ?? '';
 
@@ -447,6 +487,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         }
       }
 
+      // 여기까지 왔으면 조회는 끝났다 — unmount 여부와 무관하게 성공이다.
+      _loadOk = true;
       if (!mounted) return;
       setState(() {
         _applicants = applicantsWithUserInfo;
@@ -542,14 +584,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           //   준다 — 그러지 않으면 `취소` 버튼까지 사라져 빠져나갈 수 없다.
           if (widget.work != null && (pending.length >= 2 || _isBatchMode))
             _buildSelectAllRow(context, pending.length),
+          // [R7-P1-2] 새로고침만 실패했다 — 명단은 그대로 두고 그 사실만 알린다.
+          if (!isLoading && _refreshFailed && !_loadFailed)
+            _buildRefreshFailedBanner(context),
           Expanded(
             child: isLoading
                 ? const LoadingWidget()
-                : (pending.isEmpty && confirmed.isEmpty)
-                    ? _buildEmptyState()
-                    : widget.work == null
-                        ? _buildGroupedApplicantList(context)
-                        : _buildApplicantList(context, pending, confirmed),
+                // [R7-P1-2] ERROR != ZERO — 읽지 못한 것을 `없다`로 말하지 않는다.
+                : _loadFailed
+                    ? _buildLoadErrorState()
+                    : (pending.isEmpty && confirmed.isEmpty)
+                        ? _buildEmptyState()
+                        : widget.work == null
+                            ? _buildGroupedApplicantList(context)
+                            : _buildApplicantList(context, pending, confirmed),
           ),
           _buildBottomBar(context),
         ],
@@ -1021,11 +1069,66 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
-  /// 빈 상태
+  /// 빈 상태 — **조회에 성공했고 정말로 0명**일 때만 쓴다.
   Widget _buildEmptyState() {
     return const AppEmptyState(
       icon: Icons.people_outline,
       title: '지원자가 없습니다',
+    );
+  }
+
+  /// [R7-P1-2] 최초 로드 실패 — 보여줄 명단이 없다.
+  ///
+  ///   `지원자가 없습니다`라고 쓰지 않는다. 지원자가 있는지 **확인하지 못했다.**
+  ///   Day와 같은 어휘·같은 복구 수단을 쓴다(공통 위젯만 재사용, 복붙 아님).
+  Widget _buildLoadErrorState() {
+    return Padding(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+      child: AppEmptyState(
+        icon: Icons.error_outline,
+        iconColor: AppColors.error,
+        title: '인력 현황을 불러오지 못했어요',
+        subtitle: '지원자가 있는지 확인하지 못했습니다.',
+        action: TextButton(
+          onPressed: _isProcessing ? null : _loadApplicants,
+          child: const Text('다시 시도'),
+        ),
+      ),
+    );
+  }
+
+  /// [R7-P1-2] 새로고침 실패 — 명단은 남기고 낡았다는 사실만 알린다.
+  Widget _buildRefreshFailedBanner(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.sync_problem, size: 16, color: AppColors.warningDark),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '최신 정보를 불러오지 못했어요. 아래는 이전에 받은 내용입니다.',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.warningDark),
+            ),
+          ),
+          TextButton(
+            onPressed: _isProcessing ? null : _loadApplicants,
+            child: const Text('다시 시도'),
+          ),
+        ],
+      ),
     );
   }
 
