@@ -2266,10 +2266,25 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /payroll_summaries/{summaryId} {
 
-      // get: 해당 사업장 관리자·하위 관리자·슈퍼어드민 (resource==null: 문서 미존재 허용)
+      // get: 해당 사업장 관리자·하위 관리자·슈퍼어드민
       // [5C.1A-RULES-03] SubAdmin은 canManageWage=true인 경우에만 허용
+      //
+      // [R5-RESIDUAL.1] `resource == null` 허용을 제거했다.
+      //
+      //   그 분기는 로그인한 누구에게나 "없는 문서"의 get 을 성공시켰다.
+      //   문서가 있으면 권한 없는 사람은 PERMISSION_DENIED 를 받는다. 두 답이
+      //   다르므로, 경로를 추측할 수 있는 사람은 금액을 못 보더라도
+      //   "그 사업장 그 달의 집계가 존재하는가"를 알아낼 수 있었다.
+      //
+      //   없는 문서에는 businessId 가 없어 rule 이 권한을 판정할 수 없다.
+      //   그래서 문서 id 를 쪼개 businessId 를 짐작하지 않는다 — businessId
+      //   자체에 `_` 가 들어갈 수 있어(예: R8P53_kif2wrc4sahdjz) 그 추측은
+      //   권위가 없다.
+      //
+      //   대신 "있을 수도 없을 수도 있는" 조회는 서버로 옮겼다. CF 가
+      //   호출자가 준 businessId 를 급여 권한으로 검증한 뒤 있음·없음을
+      //   답한다. 그래서 rule 은 존재하는 문서만 판정하면 된다.
       allow get: if isLoggedIn() && (
-                   resource == null ||
                    isAdminOf(resource.data.businessId) ||
                    (isSubAdminOf(resource.data.businessId) && subAdminCanManageWage(resource.data.businessId)) ||
                    isSuperAdmin()

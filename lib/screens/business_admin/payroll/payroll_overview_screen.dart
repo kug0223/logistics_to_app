@@ -686,16 +686,47 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   }
 
   /// 지급현황 화면에서 돌아올 때 notTransferredCount 재조회
+  ///
+  /// [R5-RESIDUAL.1] 직접 Firestore get 에서 서버 경로로 옮겼다.
+  ///
+  ///   이 조회는 **있을 수도 없을 수도 있는** 문서를 본다. 아직 집계가
+  ///   만들어지지 않은 달을 열어 두고 돌아올 수 있기 때문이다. 그런데 없는
+  ///   문서에는 businessId 가 없어 Firestore rule 이 권한을 판정할 수 없다.
+  ///   예전에는 그래서 "없으면 누구나 통과"로 열어 뒀고, 그 결과 권한 없는
+  ///   사람이 존재 여부를 알아낼 수 있었다.
+  ///
+  ///   서버는 호출자가 준 businessId 를 급여 권한으로 검증한 뒤 답하므로
+  ///   그 문제가 없다. 없음·권한 없음·실패를 각각 다르게 다룬다.
   Future<void> _refreshSummary() async {
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('payroll_summaries')
-          .doc(_liveSummary.id)
-          .get();
-      if (!snap.exists || !mounted) return;
-      final fresh = PayrollSummaryModel.tryFromFirestore(snap);
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetPayrollSummaries',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final r = await callable.call<Map<String, dynamic>>({
+        'businessId': _liveSummary.businessId,
+        'year': _liveSummary.year,
+      });
+      if (!mounted) return;
+      final items = (r.data['items'] as List? ?? []).whereType<Map>();
+      final hit = items.firstWhere(
+        (m) => m['id']?.toString() == _liveSummary.id,
+        orElse: () => const {},
+      );
+      // 없는 것은 정상이다 — 아직 집계가 만들어지지 않은 달이다.
+      //   화면이 들고 있는 값을 그대로 둔다(빈 값으로 덮지 않는다).
+      if (hit.isEmpty) return;
+      // 로더와 같은 방식으로 파싱한다 — id 는 map 에서 빼고 따로 넘긴다.
+      final raw = Map<String, dynamic>.from(hit)..remove('id');
+      final fresh = PayrollSummaryModel.tryFromMap(raw, _liveSummary.id);
       if (fresh == null) return;
       setState(() => _liveSummary = fresh);
+    } on FirebaseFunctionsException catch (e) {
+      // 권한 없음과 통신 실패를 "집계 없음"으로 바꾸지 않는다.
+      debugPrint('❌ 급여 요약 새로고침 실패(${e.code}): ${e.message}');
+      if (!mounted) return;
+      ToastHelper.showError(e.code == 'permission-denied'
+          ? '급여 정보를 볼 권한이 없습니다'
+          : '새로고침에 실패했습니다');
     } catch (e) {
       debugPrint('❌ 급여 요약 새로고침 실패: $e');
       if (mounted) ToastHelper.showError('새로고침에 실패했습니다');
