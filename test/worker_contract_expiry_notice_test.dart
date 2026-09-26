@@ -152,7 +152,11 @@ void main() {
     });
 
     test('04-c B 응답 대기 제안이 있으면 그 사실을 함께 말한다', () {
-      expect(ended, contains('확인 중인 연장 제안은 별도로 처리할 수 있습니다.'));
+      // [R5-F] 분기는 그대로지만 문구는 단정하지 않는다. 알림은 보낼 때의
+      //   상태를 얼리므로, 읽는 시점에는 제안이 이미 끝나 있을 수 있다.
+      //   게다가 이 알림에는 proposalId 가 없어 제안으로 갈 수도 없다.
+      expect(ended, contains('연장 제안이 있는 경우 현재 상태는 앱에서 확인할 수 있습니다.'));
+      expect(ended, isNot(contains('확인 중인 연장 제안')));
       expect(ended, contains('waiting.has(doc.id)'));
     });
 
