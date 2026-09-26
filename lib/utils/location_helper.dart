@@ -40,6 +40,20 @@ class LocationHelper {
     }
   }
 
+  /// [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
+  /// 지금 요청하면 OS 권한 팝업이 뜨는 상태인가.
+  ///
+  ///   사전 고지를 **한 번만** 보여주기 위한 판단용이다. 권한을 요청하지
+  ///   않고 상태만 읽는다 — 이 호출 자체로는 팝업이 뜨지 않는다.
+  ///   이미 허용했거나 영구 거부된 경우 false — 고지를 다시 띄우지 않는다.
+  static Future<bool> willPromptForPermission() async {
+    try {
+      return await Geolocator.checkPermission() == LocationPermission.denied;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// GPS 권한 확인 및 요청 (하위 호환 — bool 반환)
   static Future<bool> checkAndRequestPermission() async {
     try {

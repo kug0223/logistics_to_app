@@ -39,11 +39,14 @@ node scripts/render-privacy.js --check     # 원문↔공개 웹 일치 확인
 - 두 페이지가 서로 링크된다
 - 방침을 고쳤다면 `node scripts/render-privacy.js` 후 hosting 재배포
 
-## 3. Play Console 제출 항목 (이번 범위 밖)
+## 3. Play Console 제출 항목
 
 - 개인정보처리방침 URL 등록
-- 계정 삭제 URL 등록 (`/account-deletion`)
-- Data Safety 선언 — `[PLAY-BLOCKER-DATA-SAFETY-NOT-DECLARED]` 미착수
+- 계정 삭제 URL 등록 — **PROD 호스팅 배포 후 확정**
+  (`.firebaserc` 의 prod = `alfit-prod`. 현재 배포·검증된 것은 DEV URL 뿐이다)
+- Data Safety 선언 — 선언 내용은 [`play-data-safety-final.md`](play-data-safety-final.md)
+  에 확정. `[PLAY-BLOCKER-DATA-SAFETY-NOT-DECLARED]` = **READY FOR PLAY CONSOLE
+  SUBMISSION** (실제 Console 입력 전까지 CLOSED 아님)
 
 ## 4. 법률·세무 확인 대기 (COUNSEL / TAX)
 

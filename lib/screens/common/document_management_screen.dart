@@ -9,6 +9,7 @@ import '../../models/core/user_model.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/privacy_inline_notice.dart';
 import '../../utils/document_upload_helper.dart';
 import '../../utils/identity_identifier.dart';
 import '../../services/firestore_service.dart';
@@ -1400,6 +1401,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 height: 1, thickness: 0.5, color: AppColors.grey200),
           ),
 
+          // [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
+          //   올리기 전에 무엇에 쓰이고 누가 언제 열 수 있는지 먼저 말한다.
+          //   방침 링크를 눌러야만 알 수 있는 상태로 두지 않는다.
+          const PrivacyInlineNotice(
+            disclosure: PrivacyDisclosure.idDocument,
+            icon: Icons.badge_outlined,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
           // ── CTA 버튼 ───────────────────────────────────────────────
           if (hasIdCard)
             // 완료: 경량 텍스트 링크 행 — "다시 등록하기"는 사진 재촬영/재업로드 의미 명확화
@@ -2187,6 +2197,14 @@ class _TaxIdentitySheetState extends State<_TaxIdentitySheet> {
                     '등록한 번호는 화면에 다시 표시되지 않습니다.',
             style:
                 ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          // [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
+          //   번호를 입력받기 **전에** 민감정보라는 점과, 사업장 관리자가
+          //   어떤 조건에서 열 수 있는지를 말한다. 동의 게이트가 아니라 고지다.
+          const PrivacyInlineNotice(
+            disclosure: PrivacyDisclosure.taxIdentity,
+            icon: Icons.lock_outline,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           Row(

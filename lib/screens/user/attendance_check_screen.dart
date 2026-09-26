@@ -18,6 +18,7 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../services/device_integrity_service.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/privacy_inline_notice.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import 'user_tab_scope.dart';
 
@@ -320,6 +321,23 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     String loadingMsg = 'GPS 확인 중...',
     bool silent = false,
   }) async {
+    // [RELEASE-CORRECTION-PRIVACY-INLINE-DISCLOSURE]
+    //   OS 권한 팝업이 뜨기 **직전에** 위치를 왜·언제 쓰는지 먼저 말한다.
+    //   이미 허용했거나 silent 폴백 분기면 뜨지 않는다 — 매번 묻지 않는다.
+    //   여기서 물러나면 OS 팝업도 띄우지 않고 조용히 돌아간다(거부 안내 없음).
+    if (!silent && await LocationHelper.willPromptForPermission()) {
+      if (!mounted) return null;
+      final agreed = await DialogHelper.showConfirm(
+        context,
+        title: PrivacyDisclosure.location.title,
+        message: PrivacyDisclosure.location.asMessage,
+        confirmText: '계속',
+        icon: Icons.my_location,
+        iconColor: AppColors.info,
+      );
+      if (!agreed) return null;
+    }
+
     // GPS 권한/서비스 상세 체크 — silent 모드에서는 OS 팝업 억제(both 모드 폴백 분기)
     final locationResult = await LocationHelper.checkAndRequestPermissionDetailed(
       requestIfNeeded: !silent,
