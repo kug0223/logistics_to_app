@@ -141,12 +141,19 @@ extension ApplicationFirestore on FirestoreService {
   ///   예전에는 "slotId 쿼리는 보안 규칙 제한"이라 TO 전체를 받아 클라이언트에서
   ///   걸렀다. 지금은 CF(Admin SDK) 경유라 그 제약이 없고, CF 는 이미 slotId 를
   ///   받는다. 한 슬롯을 세려고 TO 전체를 받을 이유가 없다.
+  /// [R7-P1-2.2] [purpose] 는 **서버 권한 분기**를 고른다.
+  ///
+  ///   `applicantReview` 를 넘기면 서버가 canManageTo 를 strict 로 본다.
+  ///   생략하면 지원서를 읽을 이유가 있는 네 권한 중 하나로 충분하다 —
+  ///   근태·급여·계약 reader 가 같은 endpoint 를 쓰기 때문이다.
+  ///   지원자 **관리** 화면은 반드시 넘긴다. 생략은 곧 우회다.
   Future<List<ApplicationModel>> getApplicationsByTOId(
     String toId, {
     String? businessId,
     String? uid,
     String? slotId,
     List<String>? statuses,
+    String? purpose,
   }) async {
     assert(
       uid != null || (businessId != null && businessId.isNotEmpty),
@@ -190,6 +197,7 @@ extension ApplicationFirestore on FirestoreService {
         'businessId': businessId,
         'toId': toId,
         if (slotId != null && slotId.isNotEmpty) 'slotId': slotId,
+        if (purpose != null) 'purpose': purpose,
         'limit': 2000,
       });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
@@ -211,11 +219,13 @@ extension ApplicationFirestore on FirestoreService {
 
   /// 슬롯별 지원서 조회 (flex 타입) — [CF 이전 2026-07-13] callableGetApplicationsByBiz
   /// [statuses] 지정 시 해당 상태만 조회 (미지정 시 전체)
+  /// [R7-P1-2.2] [purpose] — `getApplicationsByTOId` 와 같은 계약.
   Future<List<ApplicationModel>> getApplicationsBySlotId(
     String toId,
     String slotId, {
     String? businessId,
     List<String>? statuses,
+    String? purpose,
   }) async {
     assert(businessId != null && businessId.isNotEmpty, 'getApplicationsBySlotId: businessId 필수');
     try {
@@ -223,6 +233,7 @@ extension ApplicationFirestore on FirestoreService {
         'businessId': businessId ?? '',
         'toId': toId,
         'slotId': slotId,
+        if (purpose != null) 'purpose': purpose,
         'limit': 2000,
       });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
@@ -1194,9 +1205,12 @@ extension ApplicationFirestore on FirestoreService {
 
   /// 특정 날짜 × 사업장의 단기 PENDING 지원자 조회 (지원명단용)
   /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs)
+  /// [R7-P1-2.2] [purpose] — 지원자 **검토** 목록이다. 호출부(당일 명단)는
+  ///   `applicantReview` 를 넘겨 서버가 canManageTo 를 보게 한다.
   Future<List<ApplicationModel>> getPendingApplicationsByDateAndBusiness({
     required DateTime date,
     required String businessId,
+    String? purpose,
   }) async {
     // [R1.2.1] KST 영업일 창. canonical workDate가 KST 자정 instant이므로
     //   기기 local 자정으로 창을 만들면 UTC 기기에서 그 지원자가 창 밖으로 나간다.
@@ -1206,6 +1220,7 @@ extension ApplicationFirestore on FirestoreService {
         'businessId': businessId,
         'workDateGteMs': dateStart.millisecondsSinceEpoch,
         'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+        if (purpose != null) 'purpose': purpose,
         'limit': 2000,
       });
       return (result)

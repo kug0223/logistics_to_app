@@ -387,8 +387,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   말하는 자리라, 조회 실패를 "확정자 없음"으로 보여 주면 안 된다.
       //   _load() 의 catch 가 오류 토스트를 띄운다.
       final phase1 = await Future.wait([
+        // [R7-P1-2.2] 대기 지원자는 **검토 대상**이다 — 서버가 canManageTo 를
+        //   보도록 purpose 를 넘긴다. 이 화면의 확정·거절 CTA 가 쓰는 권한과 같다.
         _svc.getPendingApplicationsByDateAndBusiness(
-            date: widget.date, businessId: bizId),
+            date: widget.date,
+            businessId: bizId,
+            purpose: FirestoreService.purposeApplicantReview),
+        // 확정 근무자 명단은 purpose 를 넘기지 않는다. Home·근무 운영 화면이
+        //   같은 reader 를 쓰고, 그쪽은 canManageWorkers 로 보는 것이 정상이다.
+        //   여기서 canManageTo 를 요구하면 그 화면들이 함께 깨진다.
         _svc.getConfirmedWorkersByDateAndBusinessOrThrow(
             date: widget.date, businessId: bizId),
       ]);

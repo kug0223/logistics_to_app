@@ -367,16 +367,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       //   `runWithLoading` 이 바깥에서 예외를 삼키므로, 삼켜지기 전에 기록한다.
       final List<ApplicationModel> apps;
       try {
+        // [R7-P1-2.2] purpose 를 반드시 넘긴다.
+        //
+        //   생략하면 서버는 membership-only 분기로 간다 — canManageTo 가 없는
+        //   멤버에게도 지원서 payload 가 그대로 나간다. DEV 에서 실제로 그랬다
+        //   (canManageTo=false 인데 count=50). UI 가 감추는 것은 authorization 이
+        //   아니다. 이 화면의 UI 계약(canManageTo)과 서버 계약을 같게 만든다.
         if (widget.toItem.slot != null) {
           apps = await _firestoreService.getApplicationsBySlotId(
             widget.toItem.to.id,
             widget.toItem.slot!.id,
             businessId: widget.toItem.to.businessId,
+            purpose: FirestoreService.purposeApplicantReview,
           );
         } else {
           apps = await _firestoreService.getApplicationsByTOId(
             widget.toItem.to.id,
             businessId: widget.toItem.to.businessId,
+            purpose: FirestoreService.purposeApplicantReview,
           );
         }
       } catch (e) {
