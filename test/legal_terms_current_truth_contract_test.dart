@@ -123,8 +123,10 @@ void main() {
     });
 
     test('06 시행일이 개정본과 같다', () {
+      // [PRIVACY-REWRITE.1] 외부 계정삭제 경로 고지로 개정됐다.
+      //   이전 시행일도 본문에 남겨 어떤 판이 바뀌었는지 알 수 있게 한다.
       for (final f in both.entries) {
-        expect(f.value, contains('본 처리방침은 2026년 9월 20일부터 적용됩니다'),
+        expect(f.value, contains('본 처리방침은 2026년 9월 26일부터 적용됩니다'),
             reason: f.key);
       }
     });
@@ -150,7 +152,9 @@ void main() {
   group('INV-5a — 코드 기본값 메타데이터', () {
     test('09 개정 항목만 version이 올라갔다', () {
       final pp = _sliceOf(terms, "id: 'privacy_policy'", 'order: 2');
-      expect(pp, contains("version: '2026.09'"));
+      // [PRIVACY-REWRITE.1] 개정 번호는 상수 한 곳에만 둔다.
+      expect(pp, contains('version: kPrivacyPolicyRevision'));
+      expect(terms, contains("const kPrivacyPolicyRevision = '2026.10';"));
       for (final other in ['service_terms', 'privacy_third_party',
         'location_terms', 'marketing_consent']) {
         final s = _sliceOf(terms, "id: '$other'", 'updatedAt: now');
