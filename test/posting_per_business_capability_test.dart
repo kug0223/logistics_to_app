@@ -326,9 +326,11 @@ void main() {
       expect(code.contains('if (up.canManagePostingAnywhere) 1,'), true);
       expect(code.contains('if (up.can((p) => p.canManageTo)) 1,'), false,
           reason: '탭이 선택 사업장 권한으로 회귀했다');
-      // 다른 탭의 기존 계약은 그대로
-      expect(code.contains('if (up.can((p) => p.canManageWorkers)) 2,'), true);
-      expect(code.contains('if (up.can((p) => p.canManageWage)) 3,'), true);
+      // [R5-G] 다른 두 탭은 4-state 로 옮겼다 — 감추는 것은 확인된 거부일
+      //   때뿐이다. 공고 탭의 "배정 범위 전체" 계약은 그대로다.
+      expect(code.contains('.hidesAffordance) 2'), true);
+      expect(code.contains('.hidesAffordance) 3'), true);
+      expect(code.contains('if (up.can((p) => p.canManageWorkers)) 2,'), false);
     });
   });
 

@@ -45,6 +45,26 @@ enum PermissionCheck {
   error,
 }
 
+/// [R5-G] 네 상태를 **화면 표현**으로 옮기는 규칙 — 한 곳에만 둔다.
+///
+///   메뉴·탭이 bool 하나를 쓰면 "모른다"와 "확인 실패"가 "권한 없음"과 같은
+///   모습이 된다. 사용자는 자기 메뉴가 사라진 것을 보고 권한을 빼앗겼다고
+///   읽는다. 실제로는 구독이 한 번 끊겼을 뿐일 수 있다.
+///
+///   그래서 **감추는 것은 확인된 거부일 때뿐**이다. 모르는 동안에는 자리를
+///   지키고, 실제 실행은 각 화면의 mutation gate 가 다시 판정한다.
+extension PermissionCheckUx on PermissionCheck {
+  /// 지금 검증된 허용인가.
+  bool get isAllowed => this == PermissionCheck.allowed;
+
+  /// 메뉴·탭을 감출 것인가 — 확인된 거부일 때만이다.
+  bool get hidesAffordance => this == PermissionCheck.denied;
+
+  /// 아직 확정되지 않았다. 허용으로도 거부로도 쓰지 않는다.
+  bool get isPending =>
+      this == PermissionCheck.unknown || this == PermissionCheck.error;
+}
+
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
 

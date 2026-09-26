@@ -176,8 +176,16 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
         //   아니라 "관리할 수 있는 배정 사업장이 하나라도 있는가"다. 선택 사업장
         //   기준이던 때는 A에 권한이 있어도 B를 고르면 탭이 사라지고 홈으로 튕겼다.
         if (up.canManagePostingAnywhere) 1,       // 공고
-        if (up.can((p) => p.canManageWorkers)) 2, // 인력
-        if (up.can((p) => p.canManageWage)) 3,    // 정산
+        // [R5-G] 탭을 지우는 것은 **확인된 거부**일 때뿐이다.
+        //   bool can() 은 "모른다"와 "확인 실패"도 false 로 돌려준다. 그러면
+        //   구독이 한 번 끊긴 순간 탭이 사라지고, 그 탭에 있던 관리자는
+        //   아래 로직에 걸려 홈으로 튕긴다 — 권한을 잃은 것도 아닌데.
+        //   모르는 동안에는 자리를 지킨다. 실제 실행은 각 화면의 gate 가
+        //   다시 판정하고 서버가 한 번 더 막는다.
+        if (!up.checkCurrentBusiness((p) => p.canManageWorkers)
+            .hidesAffordance) 2, // 인력
+        if (!up.checkCurrentBusiness((p) => p.canManageWage)
+            .hidesAffordance) 3, // 정산
         4, // MY — 항상 표시
       ];
 

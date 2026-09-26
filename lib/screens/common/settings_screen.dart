@@ -415,7 +415,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
                 // 날인 카드: BUSINESS_ADMIN 항상 / SubAdmin은 canManageContract일 때만
                 if (user?.isBusinessAdmin == true ||
-                    userProvider.can((p) => p.canManageContract)) ...[
+                    !userProvider.checkCurrentBusiness((p) => p.canManageContract).hidesAffordance) ...[
                   KeyedSubtree(key: _sealKey, child: _buildSealCard(context, user)),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 ],
@@ -430,7 +430,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             builder: (_) => const BusinessListScreen())),
                   ),
                   user?.isBusinessAdmin == true ||
-                          userProvider.can((p) => p.canManageTo)
+                          !userProvider.checkCurrentBusiness((p) => p.canManageTo).hidesAffordance
                       ? _SettingsItem(
                           icon: Icons.work_outline,
                           iconColor: AppColors.warningDark,
@@ -467,7 +467,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // BUSINESS_ADMIN 또는 canManageContract SUB_ADMIN에게 표시.
               if (showAdminSection &&
                   (user?.isBusinessAdmin == true ||
-                      userProvider.can((p) => p.canManageContract))) ...[
+                      !userProvider.checkCurrentBusiness((p) => p.canManageContract).hidesAffordance)) ...[
                 _buildSectionHeader(
                     context, '계약', Icons.description_outlined),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -511,13 +511,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // BUSINESS_ADMIN 또는 canManageWage·canManageWorkers SUB_ADMIN에게 표시.
               if (showAdminSection &&
                   (user?.isBusinessAdmin == true ||
-                      userProvider.can((p) => p.canManageWage) ||
-                      userProvider.can((p) => p.canManageWorkers))) ...[
+                      !userProvider.checkCurrentBusiness((p) => p.canManageWage).hidesAffordance ||
+                      !userProvider.checkCurrentBusiness((p) => p.canManageWorkers).hidesAffordance)) ...[
                 _buildSectionHeader(context, '분석', Icons.bar_chart_outlined),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildMenuGroup(context, [
                   user?.isBusinessAdmin == true ||
-                          userProvider.can((p) => p.canManageWage)
+                          !userProvider.checkCurrentBusiness((p) => p.canManageWage).hidesAffordance
                       ? _SettingsItem(
                           icon: Icons.insights_outlined,
                           iconColor: AppColors.purpleDark,
@@ -534,7 +534,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         )
                       : null,
                   user?.isBusinessAdmin == true ||
-                          userProvider.can((p) => p.canManageWorkers)
+                          !userProvider.checkCurrentBusiness((p) => p.canManageWorkers).hidesAffordance
                       ? _SettingsItem(
                           icon: Icons.rate_review_outlined,
                           iconColor: AppColors.warningDark,

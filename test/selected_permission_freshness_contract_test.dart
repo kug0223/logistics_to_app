@@ -276,11 +276,19 @@ void main() {
       }
     });
 
-    test('메뉴 노출은 bool 그대로 — 탭을 없애는 것은 거부의 표현이다', () {
+    test('탭을 없애는 것은 확인된 거부의 표현이다', () {
+      // [R5-G] 이 테스트의 이유문이 원래부터 말하고 있던 것을 코드가 이제
+      //   지킨다. bool can() 은 확인 실패도 false 로 돌려주므로, 그것으로
+      //   탭을 지우면 ERROR 를 DENIED 로 말하는 것이었다. 각 탭 루트가
+      //   안에서 fail-closed 이므로 모르는 동안 자리를 지켜도 안전하다.
       final s = _load(_shell);
-      expect(s.contains('if (up.can((p) => p.canManageWorkers)) 2,'), true,
-          reason: '확인 실패로 탭이 사라지면 ERROR를 DENIED로 말하는 것이고, '
-              '각 탭 루트가 이미 안에서 fail-closed다');
+      expect(
+        s.contains('if (!up.checkCurrentBusiness((p) => p.canManageWorkers)'),
+        true,
+        reason: '확인 실패로 탭이 사라지면 ERROR를 DENIED로 말하는 것이고, '
+            '각 탭 루트가 이미 안에서 fail-closed다',
+      );
+      expect(s.contains('if (up.can((p) => p.canManageWorkers)) 2,'), false);
     });
 
     test('sensitive read도 확인된 허용을 요구한다', () {
