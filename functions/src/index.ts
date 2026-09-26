@@ -2558,10 +2558,16 @@ async function srvHasCurrentTaxIdentityPurpose(
   businessId: string, targetUid: string
 ): Promise<boolean> {
   // A. 실제 근무 이력. NO_SHOW·absent 는 이 집합에 없다.
+  //
+  //   [DOC-S1A.4] 여기서 토큰을 직접 적었다가 조퇴를 "earlyLeave" 로 썼다.
+  //   저장되는 값은 "early_leave" 다(writer·DEV 데이터·클라이언트 enum 모두).
+  //   존재하지 않는 값이므로 조퇴로만 일한 근로자는 실근무가 없는 것으로
+  //   읽혔고, 관리자가 그 사람의 세무 정보를 열지 못했다.
+  //   토큰을 다시 적지 않고 canonical 상수를 쓴다.
   const worked = await db.collection("attendance")
     .where("businessId", "==", businessId)
     .where("userId", "==", targetUid)
-    .where("status", "in", ["present", "late", "earlyLeave"])
+    .where("status", "in", ACTUAL_WORK_STATUSES)
     .limit(1).get();
   if (!worked.empty) return true;
 

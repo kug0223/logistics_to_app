@@ -328,12 +328,31 @@ void main() {
     });
 
     test('S1A-23 세무 목적은 실근무 status 집합으로 판정한다', () {
+      // [DOC-S1A.4] 토큰을 여기서 다시 적지 않는다 — 한 번 적었다가
+      //   조퇴를 "earlyLeave" 로 써서 존재하지 않는 값을 비교했다.
       final body = _after(code, 'srvHasCurrentTaxIdentityPurpose', 1600);
-      expect(body.contains('"present", "late", "earlyLeave"'), isTrue);
+      expect(body.contains('.where("status", "in", ACTUAL_WORK_STATUSES)'),
+          isTrue);
+      expect(body.contains('"earlyLeave"'), isFalse,
+          reason: '저장되는 값은 early_leave 다');
       expect(body.contains('NO_SHOW'), isFalse,
           reason: 'NO_SHOW·absent 는 실근무가 아니다');
       expect(body.contains('wageStatus'), isFalse,
           reason: '급여 확정을 기다리면 지급 전에 불일치를 잡을 수 없다');
+    });
+
+    test('S1A-23b [DOC-S1A.4] canonical 집합이 저장되는 값과 같다', () {
+      expect(
+        code.contains(
+            'const ACTUAL_WORK_STATUSES = ["present", "late", "early_leave"];'),
+        isTrue,
+      );
+      // 조퇴를 쓰는 writer 가 같은 토큰을 쓴다.
+      expect(code.contains('status = "early_leave";'), isTrue);
+      // 서버 어디에도 status 비교로 쓰이는 camelCase 표기가 없다.
+      //   (earlyLeaveUnit 은 반올림 단위 설정 필드명이라 대상이 아니다.)
+      final drift = RegExp(r'"earlyLeave"').allMatches(code).length;
+      expect(drift, 0, reason: '$drift 곳에 남아 있다');
     });
 
     test('S1A-24 신분증 목적에 correction 축이 없다 — 창을 연장하지 않는다', () {
@@ -486,6 +505,78 @@ void main() {
   // ═══════════════════════════════════════════════════════════
   // 감사 fail-closed
   // ═══════════════════════════════════════════════════════════
+  // ─────────────────────────────────────────────────────────────
+  // [DOC-S1A.4] 세무 목적 실근무 판정 — 저장되는 값으로 판정하는가
+  // ─────────────────────────────────────────────────────────────
+  group('DOCS1A.4 세무 목적 실근무 status', () {
+    // 서버 A 분기와 같은 식: status ∈ ACTUAL_WORK_STATUSES.
+    //   wageStatus 는 보지 않고, 지원서 현재 상태도 보지 않는다.
+    const canonical = {'present', 'late', 'early_leave'};
+    bool actualWorkBranch(List<String> statuses) =>
+        statuses.any(canonical.contains);
+
+    test('S1A-4A present 만 있어도 목적이 선다', () {
+      expect(actualWorkBranch(['present']), isTrue);
+    });
+    test('S1A-4B late 만 있어도 목적이 선다', () {
+      expect(actualWorkBranch(['late']), isTrue);
+    });
+    test('S1A-4C early_leave 만 있어도 목적이 선다', () {
+      expect(actualWorkBranch(['early_leave']), isTrue,
+          reason: '조퇴도 실제로 일한 것이다 — 이 줄이 이번 BLOCKER 다');
+    });
+    test('S1A-4C2 존재하지 않는 표기로는 아무것도 걸리지 않는다', () {
+      expect(canonical.contains('earlyLeave'), isFalse,
+          reason: '저장된 값과 비교 토큰이 다르면 영원히 0건이다');
+    });
+    test('S1A-4D NO_SHOW 만 있으면 실근무 분기가 서지 않는다', () {
+      expect(actualWorkBranch(['NO_SHOW']), isFalse);
+    });
+    test('S1A-4E absent 만 있으면 실근무 분기가 서지 않는다', () {
+      expect(actualWorkBranch(['absent']), isFalse);
+    });
+    // A 분기는 `if (!worked.empty) return true;` 에서 끝난다.
+    //   주석은 _codeOf 가 걷어내므로 경계 마커는 코드여야 한다.
+    String aBranchOf() {
+      final body = _after(code, 'srvHasCurrentTaxIdentityPurpose', 1600);
+      final end = body.indexOf('if (!worked.empty) return true;');
+      expect(end, greaterThan(-1), reason: 'A 분기 끝을 찾지 못했다');
+      return body.substring(0, end);
+    }
+
+    test('S1A-4F wageStatus 와 무관하다', () {
+      // 쿼리에 wageStatus 조건이 없다 — pending 이어도 목적은 선다.
+      expect(aBranchOf().contains('wageStatus'), isFalse);
+      expect(actualWorkBranch(['early_leave']), isTrue);
+    });
+    test('S1A-4G 지원서가 CANCELED 여도 실근무 분기는 선다', () {
+      // A 분기는 attendance 만 읽는다 — applications 를 보지 않는다.
+      final a = aBranchOf();
+      expect(a.contains('collection("attendance")'), isTrue);
+      expect(a.contains('collection("applications")'), isFalse,
+          reason: '과거 근무는 현재 관계 상태가 지우지 못한다');
+    });
+    test('S1A-4H 실근무도 남은 약속도 없으면 거부한다', () {
+      final body = _after(code, 'srvHasCurrentTaxIdentityPurpose', 1600);
+      expect(body.contains('return false'), isTrue,
+          reason: '두 분기 모두 실패하면 fail closed');
+      expect(actualWorkBranch(['NO_SHOW', 'absent']), isFalse);
+    });
+
+    test('S1A-4W 세 세무 door 가 모두 이 술어를 쓴다', () {
+      final n = RegExp(r'srvHasCurrentTaxIdentityPurpose\(businessId, targetUid\)')
+          .allMatches(code).length;
+      expect(n, 3, reason: 'Review · Number · ReviewTaxIdentity');
+    });
+
+    test('S1A-4X 신분증 원본 문은 이 수정으로 넓어지지 않았다', () {
+      // raw-ID door 는 별도 계약(동의 창)이다 — 같은 술어를 쓰지 않는다.
+      final f = _after(code, 'export const callableGetTaxIdentityIdCardUrl', 1400);
+      expect(f.contains('srvHasActiveIdentityDocumentPurpose('), isTrue);
+      expect(f.contains('srvHasCurrentTaxIdentityPurpose('), isFalse);
+    });
+  });
+
   group('DOCS1A 감사 fail-closed', () {
     test('S1A-30 지원자 서류 감사 실패는 URL 을 막는다', () {
       final body = _after(code, 'callableGetApplicantDocumentUrl', 3000);

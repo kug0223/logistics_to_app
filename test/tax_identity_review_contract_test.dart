@@ -169,7 +169,10 @@ void main() {
       // §31 은 기록의 독립성이지 무기한 열람권이 아니었다. 목적 술어는
       //   실근무(attendance) 또는 아직 남은 근무 약속(status)을 본다.
       expect(rel, contains('collection("attendance")'));
-      expect(rel, contains('"present", "late", "earlyLeave"'));
+      // [DOC-S1A.4] 토큰을 여기서 다시 적지 않는다 — 한 번 적었다가 조퇴를
+      //   "earlyLeave" 로 써서 존재하지 않는 값을 비교했다.
+      expect(rel, contains('.where("status", "in", ACTUAL_WORK_STATUSES)'));
+      expect(rel, isNot(contains('"earlyLeave"')));
       expect(rel, contains('collection("applications")'));
       expect(rel, contains('CONTRACT_PENDING'));
       // 급여 확정을 기다리지 않는다 — 지급 전에 불일치를 잡아야 한다.
