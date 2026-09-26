@@ -789,8 +789,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
   // 다중 슬롯 레이아웃 — 날짜 칩 + 당일 패널
   // ═══════════════════════════════════════════════════════════════
 
-  static const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-  String _weekdayLabel(DateTime d) => _weekdays[d.weekday - 1];
+  /// [R7-P1-2 DEVICE.1] 근무일의 요일은 **한국 사업장 달력** 기준이다.
+  ///
+  ///   `d.weekday` 는 기기 timezone 으로 성분을 읽는다. `slot.date` 는
+  ///   KST 자정 instant(예: 2026-09-26 00:00 KST = 2026-09-25 15:00Z)이므로
+  ///   UTC 기기에서 하루 앞 요일이 나왔다. 날짜와 요일이 서로 다른 변환을
+  ///   쓰면 안 된다 — 둘 다 canonical helper 하나에서 나온다.
+  String _weekdayLabel(DateTime d) => FormatHelper.weekday(d);
 
   /// 칩 상태 색상 — 마감(회색) / 예약(앰버) / 진행중(primary)
   Color _chipStatusColor(ThemeData theme, TOItem item) {
@@ -909,7 +914,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     ),
                     const SizedBox(height: 1),
                     Text(
-                      '${slotDate.month}/${slotDate.day}',
+                      // [R7-P1-2 DEVICE.1] 공고 요약은 이미 KST 로 그린다
+                      //   (`FormatHelper.formatDateShort`). 여기만 기기 성분을
+                      //   직접 읽어 UTC 기기에서 `9/26~9/28` 요약 아래
+                      //   `9/25 9/26 9/27` 칩이 섰다. 같은 카드가 두 달력을
+                      //   말하고 있었다.
+                      FormatHelper.formatDateShort(slotDate),
                       style: ResponsiveHelper.smallStyle(context)
                           .copyWith(fontWeight: FontWeight.w700),
                     ),

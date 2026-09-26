@@ -2064,8 +2064,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             Flexible(
                               child: Text(
                                 app.desiredStartDate != null
-                                    ? '희망: ${app.desiredStartDate!.month}/${app.desiredStartDate!.day}~'
-                                        '${app.workEndDate != null ? " (${app.workEndDate!.month}/${app.workEndDate!.day}까지)" : ""}'
+                                    // [R7-P1-2 DEVICE.1] 근무 약속 날짜는 KST 달력이다.
+                                    ? '희망: ${FormatHelper.formatDateShort(app.desiredStartDate!)}~'
+                                        '${app.workEndDate != null ? " (${FormatHelper.formatDateShort(app.workEndDate!)}까지)" : ""}'
                                     : '장기: ${app.workPeriodDisplay}',
                                 style: ResponsiveHelper.smallStyle(
                                   context,

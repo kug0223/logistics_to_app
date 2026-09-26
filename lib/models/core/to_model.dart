@@ -661,10 +661,13 @@ class TOModel {
   }
 
   /// "MM/DD" 형식 게시 만료일 (null = 무기한)
+  ///
+  /// [R7-P1-2 DEVICE.1] 같은 카드의 다른 날짜와 같은 달력을 써야 한다 —
+  ///   기기 성분을 직접 읽으면 UTC 기기에서 하루 앞으로 밀린다.
   String? get formattedPostingExpiry {
     final d = postingExpiryDate;
     if (d == null) return null;
-    return '${d.month}/${d.day}';
+    return FormatHelper.formatDateShort(d);
   }
 
   bool get isPostingExpired {
