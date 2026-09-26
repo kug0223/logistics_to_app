@@ -586,9 +586,22 @@ class FirestoreService {
       //   그때 함께 내려가고, Home(staffingReadiness)·당일명단도 반납분을 뺀다.
       //   여기만 status로 세면 같은 근무를 두고 Home은 `1명 부족`, 공고 카드는
       //   `3/3 모집 완료`라고 말하게 된다.
+      // [R7-P1-2 DEVICE.1B] 이미 끝난 장기 약속은 현재 정원을 차지하지 않는다.
+      //
+      //   DEV 실측: workEndDate 9/22 로 끝난 CONTRACT_PENDING 한 건이
+      //   9/27 의 `확정 1 / 부족 1` 을 만들고 있었다. 관리자는 2명이 필요한
+      //   자리에 한 명만 더 구하게 된다.
+      //
+      //   status 만 보면 이 상태를 영원히 놓친다 — 날짜로 끝난 관계에는
+      //   상태 전이가 일어나지 않기 때문이다(취소된 것이 아니다).
+      //   판정식은 `ApplicationModel.occupiesSeatOn` 하나이고, 그 안의
+      //   effectiveEnd 는 `srvLongTermEligibleOnDay` 와 같은 식이다.
+      final seatDay = DateTime.now();
       const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'};
       bool countsAsSeat(ApplicationModel a) =>
-          activeStatuses.contains(a.status) && !a.isStaffingReleased;
+          activeStatuses.contains(a.status) &&
+          !a.isStaffingReleased &&
+          a.occupiesSeatOn(seatDay);
       final apps = slotId != null
           ? allApps.where((a) => a.slotId == slotId && countsAsSeat(a)).toList()
           : allApps.where(countsAsSeat).toList();

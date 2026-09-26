@@ -1123,6 +1123,35 @@ class ApplicationModel {
       terminationStatus == AppStatus.approved ||
       terminationStatus == AppStatus.autoApproved;
 
+  /// [R7-P1-2 DEVICE.1B] 이 약속의 마지막 근무 가능일.
+  ///
+  ///   새 개념이 아니다 — `isWorkingOnDate`·`isScheduledOnDate`·
+  ///   `workPeriodDisplay` 가 이미 쓰던 `actualResignDate ?? workEndDate` 를
+  ///   한 이름으로 모았을 뿐이다. 서버 `srvLongTermEligibleOnDay` 의
+  ///   effectiveEnd 와 같은 식이다.
+  DateTime? get effectiveEndDate => actualResignDate ?? workEndDate;
+
+  /// [R7-P1-2 DEVICE.1B] [day] 시점에 이 약속이 **정원을 차지하는가.**
+  ///
+  ///   확정 이력과 현재 좌석은 다른 것이다. 9/22 에 끝난 장기 근무가
+  ///   9/27 의 모집 정원을 계속 채우고 있으면, 관리자는 사람이 없는데
+  ///   `확정 1 / 부족 1` 을 보고 한 명만 더 구한다.
+  ///
+  ///   status 전이를 기다리지 않는다. 종료는 날짜로 일어나고 scheduler 는
+  ///   그것을 뒤따라 정리할 뿐이다 — 지연되거나 legacy 로 남아 있어도
+  ///   좌석 판정은 어긋나지 않아야 한다.
+  ///
+  ///   단기는 날짜 축이 없으므로 기존대로 status 로만 판정한다.
+  ///   기간을 **모르면**(end 없음) 좌석을 빼앗지 않는다 — 확인하지 못한 것을
+  ///   근거로 부족을 부풀리면 보내지 않아도 될 초대를 낳는다.
+  bool occupiesSeatOn(DateTime day) {
+    if (!isLongTermApplication) return true;
+    final end = effectiveEndDate;
+    if (end == null) return true;
+    return !FormatHelper.toKstDate(end)
+        .isBefore(FormatHelper.toKstDate(day));
+  }
+
   /// 종료 결정이 내려졌는가 — 퇴사·해지 어느 쪽이든.
   ///
   /// [isTerminationApproved] 와 달리 퇴사 쪽에 status==CANCELED 를 요구하지

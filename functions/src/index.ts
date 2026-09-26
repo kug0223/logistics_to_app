@@ -22307,6 +22307,10 @@ export const callableGetApplicationsByBiz = onCall(
       "startTime", "endTime", "workDate", "workEndDate",
       "staffingReleasedAt", "isLongTermApplication",
       "requiredCount", "resignStatus", "terminationStatus",
+      // [R7-P1-2 DEVICE.1B] 좌석 판정의 effectiveEnd 는
+      //   `actualResignDate ?? workEndDate` 다. 날짜 하나이고 사람을
+      //   식별하지 않으므로 정원 projection 에 그대로 둔다.
+      "actualResignDate",
     ]);
 
     const {callerData: appsCallerData, bizData: appsBizData} =
