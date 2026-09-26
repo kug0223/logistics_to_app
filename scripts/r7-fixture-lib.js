@@ -159,8 +159,16 @@ async function callAs(uid, fn, data) {
   try { parsed = JSON.parse(r.body); } catch (_) { parsed = {}; }
   if (r.status !== 200) {
     const err = parsed.error || {};
-    throw new Error(
+    const e = new Error(
         `${fn} 실패 [${err.status || r.status}] ${err.message || r.body.slice(0, 160)}`);
+    // [R7-P1-2.1] 구조화된 오류를 메시지 안에만 묻어 두면, 호출부는 코드를
+    //   확인하려고 문자열을 파싱하게 된다. 그건 문구 한 번 바뀌면 조용히
+    //   틀어지는 판정이다. wire 의 canonical status 를 그대로 얹어 둔다.
+    //   (Firebase SDK 의 `permission-denied` 와 같은 값의 다른 표기다:
+    //    wire=PERMISSION_DENIED ↔ SDK=permission-denied)
+    e.wireCode = err.status || null;
+    e.httpStatus = r.status;
+    throw e;
   }
   return parsed.result;
 }

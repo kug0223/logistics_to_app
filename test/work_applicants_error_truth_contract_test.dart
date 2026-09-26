@@ -200,14 +200,23 @@ void main() {
           reason: '초기 실패와 새로고침 실패가 동시에 그려지지 않는다');
     });
 
-    test('WAE-F4 새로고침 실패가 행 수를 0으로 만들지 않는다', () {
-      // 실패 처리 setState 가 _applicants 를 건드리면 안 된다.
+    test('WAE-F4 일반 새로고침 실패가 행 수를 0으로 만들지 않는다', () {
+      // [R7-P1-2.1] 여기는 원래 "실패 처리 어디에도 _applicants 대입이 없다"를
+      //   고정하고 있었다. 그 뒤 축이 하나 늘었다 — **확인된 권한 거부**는
+      //   반대로 지워야 한다. 그래서 앵커를 일반 실패 가지로 좁힌다.
+      //   지우면 안 되는 곳과 지워야 하는 곳을 각각 못 박는다.
       final handler = _slice(src, 'Future<void> _loadApplicants() async {',
           'Future<void> _runLoadApplicants()');
+      final genericBranch = _slice(handler, '} else if (hadRows) {', '} else {');
       for (final banned in ['_applicants =', '_pending =', '_confirmed =']) {
-        expect(handler, isNot(contains(banned)),
-            reason: '실패 처리가 기존 명단을 비운다: $banned');
+        expect(genericBranch, isNot(contains(banned)),
+            reason: '일반 실패가 기존 명단을 비운다: $banned');
       }
+      expect(genericBranch, contains('_refreshFailed = true;'));
+
+      // 권한 거부 가지는 반대다 — 남기는 것이 사고다.
+      final deniedBranch = _slice(handler, '} else if (denied) {', '} else if (hadRows) {');
+      expect(deniedBranch, contains('_applicants = [];'));
     });
   });
 

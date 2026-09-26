@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -150,6 +151,43 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   bool _canManageTo() => _permissionFor((p) => p.canManageTo);
 
+  // ── [R7-P1-2.1] NO_PERMISSION != ERROR ────────────────────────────────
+  //
+  //   이 화면의 canonical capability 는 `canManageTo` 다 — 액션 게이트가 이미
+  //   그것을 쓰고, 서버도 applicantReview 경로에서 같은 값을 strict 로 본다.
+  //   `checkForBusiness` 는 **확인된 거부**와 **확인 실패**를 이미 구분한다.
+  //   여기서 새 권한 상태 기계를 만들지 않고 그 판정을 그대로 쓴다.
+  //
+  //   unknown 일 때만 알림 경로가 넘긴 snapshot 으로 임시 판정한다 —
+  //   `_permissionFor` 와 같은 순서다. snapshot 이 없으면 unknown 그대로 둔다.
+  //   unknown 을 denied 로 추정하지 않는다(확인 실패로 남의 권한을 지우지 않는다).
+  PermissionCheck _staffingPermission() {
+    final up = context.read<UserProvider>();
+    final r = up.checkForBusiness(
+        widget.toItem.to.businessId, (p) => p.canManageTo);
+    if (r != PermissionCheck.unknown) return r;
+    final target = widget.targetPermissions;
+    if (target != null) {
+      return target.canManageTo
+          ? PermissionCheck.allowed
+          : PermissionCheck.denied;
+    }
+    return PermissionCheck.unknown;
+  }
+
+  /// 조회 실패가 **권한 거부**였는가 — code 로만 판정한다.
+  ///
+  ///   메시지 문자열이나 화면 문구로 권한을 판별하지 않는다. 문구는 번역·
+  ///   수정으로 바뀌고, 그때 보안 판정이 조용히 틀어진다.
+  static bool isPermissionDenial(Object error) {
+    final String? code = switch (error) {
+      FirebaseFunctionsException e => e.code,
+      FirebaseException e => e.code,
+      _ => null,
+    };
+    return code == 'permission-denied' || code == 'unauthenticated';
+  }
+
   // [CSA-02] canManageContract: canManageTo와 대칭 구조.
   bool _canManageContract() => _permissionFor((p) => p.canManageContract);
 
@@ -262,18 +300,45 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   bool _loadFailed = false;
   bool _refreshFailed = false;
 
+  /// [R7-P1-2.1] 이번 조회가 **권한 거부**로 끝났는가.
+  ///
+  ///   일반 실패와 다른 축이다. 일반 실패는 기존 명단을 살려 두지만,
+  ///   권한이 사라진 것이 확인되면 살려 두는 것 자체가 사고다 —
+  ///   볼 자격을 잃은 사람이 이름·연락처를 계속 보게 된다.
+  bool _loadDenied = false;
+
   /// 지원자 + 사용자 정보 + 신분증 상태 로드
   Future<void> _loadApplicants() async {
     _loadOk = false;
+    _loadDenied = false;
     await _runLoadApplicants();
     if (!mounted) return;
     final ok = _loadOk;
+    final denied = _loadDenied;
     final hadRows = _hasLoadedOnce;
     setState(() {
       if (ok) {
         _hasLoadedOnce = true;
         _loadFailed = false;
         _refreshFailed = false;
+      } else if (denied) {
+        // [R7-P1-2.1] 확인된 권한 거부 — 낡은 명단을 남기지 않고 지운다.
+        //   stale rows + 새로고침 배너 조합은 여기서 쓰지 않는다.
+        _refreshFailed = false;
+        _loadFailed = false;
+        _applicants = [];
+        _allApplications = [];
+        _groupApplicants();
+        _idCardStatusMap = {};
+        _contractStatusMap = {};
+        _hasWorkedMap = {};
+        _weeklyWorkCountMap.clear();
+        _starredIds.clear();
+        _selectedIds.clear();
+        _selectedIdCardUserIds.clear();
+        _isBatchMode = false;
+        _isIdCardSelectMode = false;
+        _selectAll = false;
       } else if (hadRows) {
         // 기존 행은 그대로 둔다 — PARTIAL 이지 EMPTY 가 아니다.
         _refreshFailed = true;
@@ -281,6 +346,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _loadFailed = true;
       }
     });
+    if (denied) {
+      ToastHelper.showWarning('지원자 정보를 볼 권한이 없습니다.');
+      return;
+    }
     if (!ok && hadRows) {
       ToastHelper.showError('최신 정보를 불러오지 못했습니다. 아래는 이전에 받은 내용입니다.');
     }
@@ -294,18 +363,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
       //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
       //   statuses 파라미터 제거 후 클라이언트 필터링으로 전환.
+      // [R7-P1-2.1] 명단 조회가 canonical denial 신호다 — 여기서 code 를 잡는다.
+      //   `runWithLoading` 이 바깥에서 예외를 삼키므로, 삼켜지기 전에 기록한다.
       final List<ApplicationModel> apps;
-      if (widget.toItem.slot != null) {
-        apps = await _firestoreService.getApplicationsBySlotId(
-          widget.toItem.to.id,
-          widget.toItem.slot!.id,
-          businessId: widget.toItem.to.businessId,
-        );
-      } else {
-        apps = await _firestoreService.getApplicationsByTOId(
-          widget.toItem.to.id,
-          businessId: widget.toItem.to.businessId,
-        );
+      try {
+        if (widget.toItem.slot != null) {
+          apps = await _firestoreService.getApplicationsBySlotId(
+            widget.toItem.to.id,
+            widget.toItem.slot!.id,
+            businessId: widget.toItem.to.businessId,
+          );
+        } else {
+          apps = await _firestoreService.getApplicationsByTOId(
+            widget.toItem.to.id,
+            businessId: widget.toItem.to.businessId,
+          );
+        }
+      } catch (e) {
+        _loadDenied = isPermissionDenial(e);
+        rethrow;
       }
 
       const activeStatuses = {'PENDING', 'CONTRACT_PENDING', 'CONFIRMED'};
@@ -559,6 +635,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final pending = _pending;
     final confirmed = _confirmed;
 
+    // [R7-P1-2.1] 권한이 사라진 것이 **확인되면** 이 화면은 아무것도 말하지 않는다.
+    //
+    //   두 경로가 같은 결론으로 모인다.
+    //     · 구독이 회수를 밀어 준 경우 → checkForBusiness == denied
+    //     · 새로고침이 거부로 끝난 경우 → _loadDenied (error code)
+    //   어느 쪽이든 이름·연락처·행 액션·일괄 액션·초대 진입이 전부 사라진다.
+    //   unknown / error 는 여기 오지 않는다 — 확인 실패로 권한을 지우지 않는다.
+    final noPermission =
+        _staffingPermission() == PermissionCheck.denied || _loadDenied;
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -572,6 +658,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       child: AppModalShell(
         children: [
           _buildHeader(context, theme),
+          if (!noPermission) ...[
           _buildStatsBar(context, pending.length, confirmed.length),
           // [R7-P1-3] 부족 해소 진입 — Day와 같은 자리, 같은 조건.
           if (!isLoading) _buildStaffingActionRow(context),
@@ -587,19 +674,25 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           // [R7-P1-2] 새로고침만 실패했다 — 명단은 그대로 두고 그 사실만 알린다.
           if (!isLoading && _refreshFailed && !_loadFailed)
             _buildRefreshFailedBanner(context),
+          ],
           Expanded(
-            child: isLoading
-                ? const LoadingWidget()
-                // [R7-P1-2] ERROR != ZERO — 읽지 못한 것을 `없다`로 말하지 않는다.
-                : _loadFailed
-                    ? _buildLoadErrorState()
-                    : (pending.isEmpty && confirmed.isEmpty)
-                        ? _buildEmptyState()
-                        : widget.work == null
-                            ? _buildGroupedApplicantList(context)
-                            : _buildApplicantList(context, pending, confirmed),
+            child: noPermission
+                // [R7-P1-2.1] 권한 없음 — 실패도 아니고 0명도 아니다.
+                ? _buildNoPermissionState()
+                : isLoading
+                    ? const LoadingWidget()
+                    // [R7-P1-2] ERROR != ZERO — 읽지 못한 것을 `없다`로 말하지 않는다.
+                    : _loadFailed
+                        ? _buildLoadErrorState()
+                        : (pending.isEmpty && confirmed.isEmpty)
+                            ? _buildEmptyState()
+                            : widget.work == null
+                                ? _buildGroupedApplicantList(context)
+                                : _buildApplicantList(
+                                    context, pending, confirmed),
           ),
-          _buildBottomBar(context),
+          // 권한이 없으면 일괄 확정·거절이 있는 하단 바를 세우지 않는다.
+          if (noPermission) _buildCloseOnlyBar(context) else _buildBottomBar(context),
         ],
       ),
     );
@@ -1093,6 +1186,47 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           onPressed: _isProcessing ? null : _loadApplicants,
           child: const Text('다시 시도'),
         ),
+      ),
+    );
+  }
+
+  /// [R7-P1-2.1] 확인된 권한 없음 — 고장이 아니다.
+  ///
+  ///   `불러오지 못했어요`(ERROR)도 `지원자가 없습니다`(ZERO)도 아니다.
+  ///   둘 다 쓰면 관리자는 다시 시도하거나 지원자가 없다고 믿는다. 실제로는
+  ///   볼 자격이 사라진 것이고, 다시 시도해서 열릴 문이 아니다.
+  ///   그래서 retry loop 대신 닫기를 준다 — 권한은 이 화면이 되돌릴 수 없다.
+  Widget _buildNoPermissionState() {
+    return Padding(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+      child: const AppEmptyState(
+        icon: Icons.lock_outline,
+        iconColor: AppColors.grey400,
+        title: '지원자 정보를 볼 권한이 없습니다',
+        subtitle: 'TO 관리 권한이 있는 관리자에게 문의해주세요.',
+      ),
+    );
+  }
+
+  /// 권한 없음 상태의 하단 바 — 닫기만 남긴다.
+  Widget _buildCloseOnlyBar(BuildContext context) {
+    return AppModalFooter(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(
+              context,
+              WorkApplicantsDialogResult(
+                hasChanges: _hasChanges,
+                affectedTOIds: _affectedOtherTOIds,
+              ),
+            ),
+            child: Text('닫기',
+                style:
+                    ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
+          ),
+        ],
       ),
     );
   }
