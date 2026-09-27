@@ -893,6 +893,8 @@ extension ApplicationFirestore on FirestoreService {
       // [A03-FIX] TOCTOU 방지: 조회(get) 이후 배치 커밋 사이에 관리자가 지원자를
       // 확정(CONTRACT_PENDING/CONFIRMED)할 수 있다. 트랜잭션으로 서버 상태를 재확인해
       // 확정된 지원서를 사용자가 취소하는 것을 원자적으로 막는다.
+      // [R7-5] 실제로 PENDING → CANCELED 로 넘어갔을 때만 카운터를 내린다.
+      var didCancel = false;
       await _firestore.runTransaction((tx) async {
         final fresh = await tx.get(appDoc.reference);
         final freshStatus = fresh.data()?['status'] as String?;
@@ -922,26 +924,49 @@ extension ApplicationFirestore on FirestoreService {
             'reason': 'USER_CANCELED',
           }),
         });
-        if (toId != null) {
-          // [낙관적 카운터] 앱이 먼저 ±1 반영 → CF syncTOStats가 나중에 count()로 교정.
-          // 이 increment가 실패해도 CF가 자동 복구하므로 rollback 불필요.
-          // [특이사항] workTypeCounts.$workType.pendingCount는 CF가 재계산하므로 이중 쓰기 발생.
-          //   최종값은 CF가 덮어쓰며, 이 increment는 CF 실행 전까지 UI 즉각 반영을 위한 것.
-          tx.update(_firestore.collection('tos').doc(toId), {
-            'totalPending': FieldValue.increment(-1),
-          });
-          if (slotId != null) {
-            // [A1-FIX 누락 수정] workTypeCounts는 CF callableIncrementSlotPending이 처리.
-            // USER rules는 hasOnly(['pendingCount'])만 허용 — workTypeCounts 포함 시 PERMISSION_DENIED.
-            tx.update(
-              _firestore.collection('tos').doc(toId).collection('slots').doc(slotId),
-              {
-                'pendingCount': FieldValue.increment(-1),
-              },
-            );
-          }
-        }
+        // [R7-5] 카운터는 여기서 건드리지 않는다.
+        //
+        //   예전에는 `totalPending` 과 슬롯 `pendingCount` 를 여기서 직접
+        //   내렸다. 그런데 업무 단위(`workDetailCounts[wdId].pendingCount`)는
+        //   rules 가 막아 손댈 수 없었고, 대신 처리한다던
+        //   `callableIncrementSlotPending` 은 **앱 어디에서도 호출되지
+        //   않았다**(전수 확인). 그래서 취소할 때마다 업무 단위 값만
+        //   그대로 남았고, 취소·재지원을 반복하면 원장은 1인데 그 값은
+        //   2, 3으로 벌어졌다.
+        //
+        //   이제 세 카운터를 그 CF 하나가 한 transaction 에서 함께 내린다.
+        //   바로 아래에서 호출한다. 이 파일의 경고가 지시한 대로,
+        //   CF 를 부르는 이상 여기서 같은 값을 또 내리지 않는다 —
+        //   그러면 한 번의 취소가 2씩 깎인다.
+        didCancel = true;
       });
+      // [R7-5] 원장이 바뀐 뒤, 파생 카운터 셋을 권위 command 하나로 내린다.
+      //
+      //   `callableIncrementSlotPending` 은 `totalPending` · 슬롯
+      //   `pendingCount` · `workDetailCounts[wdId].pendingCount` 를 한
+      //   transaction 에서 함께 갱신하고, 지원서 문서의
+      //   `pendingDecrementedAt` 플래그로 멱등하다 — 재시도해도 두 번
+      //   깎이지 않는다.
+      //
+      //   실패해도 취소는 이미 성공했다. 사용자에게 "취소 실패"라고
+      //   말하지 않는다. 상위 두 카운터는 `syncTOStats` 트리거가 원장에서
+      //   다시 세어 맞춘다. 업무 단위 값만 어긋난 채 남고, 그것은 이 호출을
+      //   다시 하면 복구된다(멱등).
+      if (didCancel && toId != null) {
+        try {
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableIncrementSlotPending')
+              .call<Map<String, dynamic>>({
+            'applicationId': applicationId,
+            'toId': toId,
+            if (slotId != null) 'slotId': slotId,
+            'delta': -1,
+          });
+        } catch (e) {
+          debugPrint('⚠️ 지원 취소 후 카운터 갱신 실패 (취소 자체는 성공): $e');
+        }
+      }
+
       if (toId != null) clearCache(toId: toId);
       invalidateMyApplicationsCache(uid); // 내 지원 목록 캐시 무효화
 

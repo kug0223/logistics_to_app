@@ -31922,33 +31922,51 @@ export const callableIncrementSlotPending = onCall(
           }
         }
 
-        // 음수 방지 — Firestore increment는 음수도 허용하므로 CF에서 직접 차단
-        const currentPending = (slotSnap.data()?.pendingCount as number) ?? 0;
-        if (delta === -1 && currentPending <= 0) {
-          tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
-          return;  // totalPending 미감소 — zero-check 발동 시 TO 카운터 음수 방지
+        // [R7-5] 음수 방지는 **각 카운터가 자기 값으로** 한다.
+        //
+        //   예전에는 슬롯 합계(`pendingCount`) 하나가 0이면 곧바로 return 했다.
+        //   그러면 같은 호출이 업무 단위(`workDetailCounts[wdId].pendingCount`)와
+        //   공고 합계(`totalPending`)까지 한 번도 손대지 못한 채 멱등 플래그만
+        //   찍고 끝났다. 세 값은 **범위가 다르다** — 슬롯 합계가 이미 0이라고
+        //   해서 그 업무의 대기 인원도 0이라는 뜻이 아니다.
+        //
+        //   실제로 그래서 어긋났다. 근로자가 지원을 취소하면 클라이언트가
+        //   슬롯 합계를 먼저 0으로 내리고, 그 뒤 이 CF 가 돌면 위 return 에
+        //   걸려 업무 단위 값은 그대로 남았다. 취소·재지원을 반복하면
+        //   원장은 1인데 업무 카운터는 2, 3으로 벌어진다.
+        //
+        //   읽기는 쓰기보다 먼저 와야 하므로 TO 문서도 여기서 함께 읽는다.
+        const toSnapForSlot = delta === -1 ? await tx.get(toRef) : null;
+
+        const slotData = slotSnap.data() ?? {};
+        const slotUpdate: Record<string, unknown> = {};
+
+        const currentPending = (slotData.pendingCount as number) ?? 0;
+        if (delta === 1 || currentPending > 0) {
+          slotUpdate.pendingCount = admin.firestore.FieldValue.increment(delta);
         }
 
-        const slotUpdate: Record<string, unknown> = {
-          pendingCount: admin.firestore.FieldValue.increment(delta),
-        };
         // [Phase 8.1E.5] workTypeCounts.pendingCount 제거 — workDetailCounts canonical
         // [Phase 8.1E.2] wdId canonical counter dual-write
         if (incrementWdId) {
-          if (delta === -1) {
-            // 음수 방지: workDetailCounts 개별 체크
-            const wdcEntry = (slotSnap.data()?.workDetailCounts as
-              Record<string, {pendingCount?: number}> | undefined)?.[incrementWdId];
-            if ((wdcEntry?.pendingCount ?? 0) > 0) {
-              slotUpdate[`workDetailCounts.${incrementWdId}.pendingCount`] =
-                admin.firestore.FieldValue.increment(delta);
-            }
-          } else {
+          const wdcPending = ((slotData.workDetailCounts as
+            Record<string, {pendingCount?: number}> | undefined)
+            ?.[incrementWdId]?.pendingCount) ?? 0;
+          if (delta === 1 || wdcPending > 0) {
             slotUpdate[`workDetailCounts.${incrementWdId}.pendingCount`] =
               admin.firestore.FieldValue.increment(delta);
           }
         }
-        tx.update(slotRef, slotUpdate);
+
+        if (Object.keys(slotUpdate).length > 0) tx.update(slotRef, slotUpdate);
+
+        // 공고 합계도 자기 값으로 막는다 — 슬롯 값으로 대신 판단하지 않는다.
+        const toPending = (toSnapForSlot?.data()?.totalPending as number) ?? 0;
+        if (delta === 1 || toPending > 0) {
+          tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(delta)});
+        }
+        tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
+        return;
       } else if (delta === -1) {
         // [MEDIUM-SLOT-01 수정 2026-07-14] slotId 없는 TO에서 totalPending 음수 방지
         // 기존: slotId 없는 경우 zero-check 없이 decrement → totalPending 음수 저장 가능
@@ -35065,6 +35083,23 @@ export const callableApplyToTO = onCall(
           reactivateData["documentAccessConsentVersion"] =
             resolvedConsentVersion;
         }
+        // [R7-5] 대기 카운터 멱등 플래그를 비운다.
+        //
+        //   `callableIncrementSlotPending` 은 지원서 문서의
+        //   `pendingIncrementedAt` / `pendingDecrementedAt` 로 중복 호출을
+        //   막는다. 그런데 그 플래그는 한 번 찍히면 지워지지 않았고,
+        //   재지원은 **같은 문서를 되살린다**. 그래서 두 번째 취소부터는
+        //   그 CF 가 플래그만 보고 곧바로 돌아가 아무 카운터도 내리지 않았다
+        //   (Emulator 실측: 1회차 정상, 2회차부터 업무 카운터가 1 남고
+        //   재지원하면 2로 벌어진다).
+        //
+        //   가드는 문서의 수명이 아니라 **이번 전이 한 번**에 걸려야 한다.
+        //   되살릴 때 지우면 매 주기마다 새 가드가 생긴다. 지원 자체의
+        //   +1 은 이 트랜잭션이 직접 하므로 여기서 플래그를 세우지 않는다.
+        reactivateData["pendingIncrementedAt"] =
+          admin.firestore.FieldValue.delete();
+        reactivateData["pendingDecrementedAt"] =
+          admin.firestore.FieldValue.delete();
         tx.update(appRef, reactivateData);
       } else {
         // [L1-FIX] businessName/toTitle: 클라이언트 제출값 대신 서버 TO 문서값 우선 사용 (텍스트 주입 차단)
