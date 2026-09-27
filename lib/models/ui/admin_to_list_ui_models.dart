@@ -361,9 +361,25 @@ class TOItem {
         shortage: clamp(totalRequired - confirmedCount),
       );
     }
-    if (isWorkDetailLoaded && workDetails.isNotEmpty) {
+    // [R7-P1-2 DEVICE.1D] 요약과 업무 상세가 같은 집계를 본다.
+    //
+    //   여기는 `isWorkDetailLoaded && workDetails.isNotEmpty` 를 봤다.
+    //   그런데 장기/단건 카드가 만드는 합성 TOItem 은 `workDetailStats` 와
+    //   `isWorkDetailLoaded` 만 넘기고 **workDetails 는 넘기지 않는다**.
+    //   그래서 집계가 손에 있는데도 조건이 false 가 되어 카운터로 떨어졌다.
+    //
+    //   같은 카드의 업무 상세는 `_getSingleTOWorkDetails()` 로
+    //   `slot → TOItem → 마스터 TO` 까지 폴백해 언제나 업무 목록을 얻는다.
+    //   한 화면이 "업무 상세가 있는가"를 두 기준으로 판정하고 있었다 —
+    //   그래서 카운터가 뒤처지는 모든 순간에 두 숫자가 갈라졌다.
+    //
+    //   판정을 그쪽에 맞춘다. 그리고 기준을 flag 가 아니라 **집계의 존재**로
+    //   바꾼다 — `isWorkDetailLoaded` 는 업무 정의 로드 여부이고, 우리가
+    //   묻는 것은 통계가 있느냐다.
+    final details = workDetails.isNotEmpty ? workDetails : to.workDetails;
+    if (workDetailStats != null && details.isNotEmpty) {
       var c = 0, p = 0, r = 0, s = 0;
-      for (final work in workDetails) {
+      for (final work in details) {
         final stats = work.lookupByIdentity(workDetailStats);
         final wc = (stats?['confirmed'] ?? 0);
         c += wc;
@@ -379,6 +395,18 @@ class TOItem {
       required: totalRequired,
       shortage: clamp(totalRequired - confirmedCount),
     );
+  }
+
+  /// [R7-P1-2 DEVICE.1D] 지금 말하는 수치가 **집계에서 나온 것**인가.
+  ///
+  ///   false 면 카운터 폴백이다 — 같은 카드의 업무 상세는 그 상태를
+  ///   `모름 + 다시 시도` 로 그린다. 두 표면이 서로 다른 확신도로 같은
+  ///   metric 을 말하지 않도록, 화면이 이 값을 보고 맞춘다.
+  ///   (UNKNOWN != ZERO — 집계가 없다고 0 이라고 말하지 않는다)
+  bool get hasLoadedStats {
+    if (workDetailStatsFailed) return false;
+    final details = workDetails.isNotEmpty ? workDetails : to.workDetails;
+    return workDetailStats != null && details.isNotEmpty;
   }
 
   /// workDetailStats 기준 인원 충족 여부

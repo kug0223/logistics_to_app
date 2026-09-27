@@ -28,6 +28,7 @@ import '../../work_type_icon.dart';
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/work_applicants_dialog.dart';
+import '../../../utils/posting_presentation_mode.dart';
 
 /// ✨ 업무 상세 행 위젯 (간소화된 디자인)
 /// 
@@ -50,6 +51,9 @@ class WorkDetailRow extends StatefulWidget {
   /// 업무명·시간·급여는 TO/슬롯 문서에서 오므로 그대로 유효하다.
   final bool statsFailed;
 
+  /// [R7-P1-2 DEVICE.1D] 카드와 **같은** 판정. 여기서 다시 계산하지 않는다.
+  final PostingPresentationMode mode;
+
   /// [POSTING-V2-01B] 통계 재조회. null이면 재시도 버튼을 숨긴다.
   final VoidCallback? onRetryStats;
 
@@ -64,6 +68,7 @@ class WorkDetailRow extends StatefulWidget {
     this.onLocalStatsChanged,
     this.onAffectedTOsChanged,  // 🔥 추가
     this.statsFailed = false,
+    this.mode = PostingPresentationMode.active,
     this.onRetryStats,
   });
 
@@ -271,7 +276,13 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 // ⑤ 확정/대기/미충원 도트 + N/total
                 // [POSTING-V2-01B] 조회 실패를 '확정 0 · 미충원 N'으로 표시하지 않는다
-                if (widget.statsFailed)
+                // [R7-P1-2 DEVICE.1D] 운영이 끝난 공고에서는 `미충원 2 · 0/2`
+                //   를 그대로 두지 않는다 — 과거의 실패처럼 읽힌다.
+                //   lifecycle(mode)과 data state(statsFailed)는 다른 축이므로
+                //   순서대로 본다: 끝났는가 → 아는가.
+                if (!widget.mode.showsCurrentStaffing)
+                  _buildOperationEndedRow(context)
+                else if (widget.statsFailed)
                   _buildStatsErrorRow(context)
                 else
                   _buildPersonnelStatus(context, isFull, isClosed, missing),
@@ -380,6 +391,23 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   }
 
   /// [POSTING-V2-01B] 지원 통계 조회 실패 행 — 숫자 자리에 실패 사실을 둔다.
+  /// [R7-P1-2 DEVICE.1D] 운영이 끝난 업무 — 현재 수치를 말하지 않는다.
+  ///
+  ///   원래 필요 인원과 사람 이력은 그대로 남는다. 여기서 내리는 것은
+  ///   `지금 몇 자리가 비었는가` 라는 **질문**이다.
+  Widget _buildOperationEndedRow(BuildContext context) {
+    return Row(
+      children: [
+        Icon(Icons.event_available,
+            size: ResponsiveHelper.iconSize(context, 13),
+            color: AppColors.grey500),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Text('운영 종료',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
+      ],
+    );
+  }
+
   Widget _buildStatsErrorRow(BuildContext context) {
     return Row(
       children: [

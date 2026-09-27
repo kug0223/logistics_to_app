@@ -504,8 +504,12 @@ void main() {
           'required: totalRequired, '
           'shortage: clamp(totalRequired - confirmedCount), ); }'), isTrue);
       // 폴백이 workDetailStats 분기보다 앞에 있어야 한다
+      // [R7-P1-2 DEVICE.1D] 집계 분기의 조건이 `isWorkDetailLoaded` 에서
+      //   `workDetailStats != null && details.isNotEmpty` 로 바뀌었다.
+      //   지키는 것은 **순서**이지 조건의 글자가 아니다.
       final failIdx = body.indexOf('if (workDetailStatsFailed)');
-      final loadedIdx = body.indexOf('if (isWorkDetailLoaded');
+      final loadedIdx = body.indexOf('if (workDetailStats != null');
+      expect(loadedIdx, greaterThan(-1), reason: '집계 분기를 찾지 못했다');
       expect(failIdx < loadedIdx, isTrue);
     });
 

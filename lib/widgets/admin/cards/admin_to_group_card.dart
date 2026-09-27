@@ -28,6 +28,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/format_helper.dart';
+import '../../../utils/posting_presentation_mode.dart';
 
 // Widgets
 import '../../../theme/app_colors.dart';
@@ -196,14 +197,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
         : g.groupTOs;
 
     if (_targetTOs.isEmpty) {
-      _totalConfirmed = g.totalConfirmed;
-      _totalPending   = g.totalPending;
-      _totalRequired  = g.totalRequired;
-      // 이 경로에는 업무별 수치가 없다 — 그룹 카운터로만 계산한다.
-      _totalShortage = (g.totalRequired - g.totalConfirmed) > 0
-          ? g.totalRequired - g.totalConfirmed
-          : 0;
-      _isFull = g.isFull;
+      // [R7-P1-2 DEVICE.1D] 장기/단건 카드도 같은 resolver 를 거친다.
+      //
+      //   여기는 그룹 카운터(`TO.totalConfirmed`)를 곧바로 썼다. 같은
+      //   카드의 업무 상세는 방금 불러온 집계를 쓴다 — 두 projection 은
+      //   갱신 시점이 달라서, 카운터가 뒤처진 구간에 요약 `충원 1` 과
+      //   상세 `충원 0` 이 한 화면에 동시에 떴다.
+      //
+      //   `resolveStats()` 가 집계가 있으면 집계를, 없으면 카운터를 쓴다.
+      //   두 표면이 같은 함수에서 나오므로 갈라질 수 없다.
+      final single = _getSingleTOItem();
+      final s = single.resolveStats();
+      _totalConfirmed = s.confirmed;
+      _totalPending   = s.pending;
+      _totalRequired  = s.required;
+      _totalShortage  = s.shortage;
+      _isFull = single.resolvedIsFull;
     } else {
       // [SYSTEM-INTEGRATION-R2.4 §9] 헤더와 날짜 칩이 같은 source를 쓴다.
       //
@@ -517,14 +526,20 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       //   `필요 R`을 항상 숫자로 말한다. 이전에는 FLEX 다중과
                       //   CONTRACT가 확정/대기/미충원 점 세 개만 보여줘서,
                       //   정작 "몇 명 필요한가"에 직답이 없었다.
-                      _buildStaffingLine(
-                        context,
-                        confirmed: totalConfirmed,
-                        required: totalRequired,
-                        pending: totalPending,
-                        shortage: _totalShortage,
-                        isFull: isFull,
-                      ),
+                      // [R7-P1-2 DEVICE.1D] 운영이 끝난 공고는 현재 수치를
+                      //   대표 정보로 말하지 않는다. `충원 0 / 부족 2` 는
+                      //   산술은 맞지만 "결국 못 구했다"로 읽힌다.
+                      if (_presentationMode.showsCurrentStaffing)
+                        _buildStaffingLine(
+                          context,
+                          confirmed: totalConfirmed,
+                          required: totalRequired,
+                          pending: totalPending,
+                          shortage: _totalShortage,
+                          isFull: isFull,
+                        )
+                      else
+                        _buildOperationEndedLine(context),
 
                       // 고정 공고: 공고 마감일 (계약기간은 _buildWorkLine으로 이동)
                       if (masterTO.isLongTerm) ...[
@@ -690,8 +705,38 @@ class _TOGroupCardState extends State<TOGroupCard> {
             //   null 은 오직 "모른다" 뿐이다. 둘을 같은 숫자로 말하지 않는다.
             statsFailed: _singleTOStatsFailed() || stats == null,
             onRetryStats: () => _retrySingleTOStats(),
+            mode: _presentationMode,
           );
         }),
+      ],
+    );
+  }
+
+  /// [R7-P1-2 DEVICE.1D] 이 카드가 어떤 질문의 화면인가 — 한 곳에서 정한다.
+  ///
+  ///   collapsed 요약과 expanded 업무 상세가 **같은 값**을 쓴다. 화면마다
+  ///   날짜·상태 조건문을 따로 쓰면 둘이 어긋난다.
+  ///
+  ///   근로자 한 명의 계약 종료로 공고를 끝내지 않는다 — 공고 자신의
+  ///   운영 기간(rangeEnd)만 본다.
+  PostingPresentationMode get _presentationMode =>
+      resolvePostingPresentationMode(
+        operationEnd: widget.groupItem.masterTO.rangeEnd,
+        recruitmentClosed: widget.groupItem.isClosed,
+        now: _buildNow,
+      );
+
+  /// 운영이 끝난 공고의 대표 줄. 숫자를 지우는 것이 아니라 자리에서 내린다.
+  Widget _buildOperationEndedLine(BuildContext context) {
+    return Row(
+      children: [
+        Icon(Icons.event_available,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: AppColors.grey500),
+        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+        Text('운영 종료',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)
+                .copyWith(fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -1107,6 +1152,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     statsFailed:
                         toItem.workDetailStatsFailed || stats == null,
                     onRetryStats: () => _retryWorkDetailStats(toItem),
+                    mode: _presentationMode,
                   );
                 }).toList(),
               ),

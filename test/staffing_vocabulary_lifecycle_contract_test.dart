@@ -148,12 +148,19 @@ void main() {
       final rds = _codeOf(_read('lib/utils/renewal_decision_state.dart'));
       expect(rds, contains('if (app.renewalDecision != null) return RenewalDecisionState.resolved;'));
       expect(fixed, contains('RenewalDecisionState.expired'));
-      expect(fixed, contains("_buildStatChip(\n                context, '계약 확인'"));
+      // 줄바꿈을 가로질러 매칭하지 않는다 — 이 저장소는 CRLF 다.
+      expect(fixed, contains("'계약 확인', expiredDecisionCount"));
     });
 
     test('VOC-K 끝난 관계에는 계약 할 일이 없다', () {
-      expect(fixed, contains(
-          'app.status == AppStatus.contractPending &&\n                  app.occupiesSeatOn(DateTime.now())'));
+      // 줄바꿈 무관하게 — 배너 게이트에 좌석 조건이 함께 걸려 있는가.
+      // 주석은 `_codeOf` 가 걷어낸다 — 코드 marker 로 자른다.
+      final gate = _slice(
+          fixed,
+          '_buildStatusBanner(app, hasResignRequest, hasTerminationRequest),',
+          '_buildContractPendingBanner(context),');
+      expect(gate, contains('app.status == AppStatus.contractPending'));
+      expect(gate, contains('app.occupiesSeatOn(DateTime.now())'));
     });
   });
 
