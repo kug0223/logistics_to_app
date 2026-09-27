@@ -957,13 +957,31 @@ class ApplicationModel {
     //
     //   `isWorkingOnDate` 는 이미 같은 식을 KST 로 계산한다(1013행 주석의
     //   "세 곳이 동일해야 함"). 표시만 기기 달력이면 판정과 화면이 갈라진다.
-    DateTime effectiveStart = FormatHelper.toKstDate(desiredStartDate ?? workDate);
+    return '${FormatHelper.formatDateShort(effectiveStartDate)}~'
+        '${FormatHelper.formatDateShort(effectiveEnd)}';
+  }
+
+  /// [R7-P1-2 DEVICE.1F] 이 약속이 **실제로 시작되는 날**(KST 달력).
+  ///
+  ///   `effectiveEndDate` 와 짝을 이루는 시작일이다. 939행 주석이 "세 곳의
+  ///   effectiveStart 로직이 동일해야 한다"고 적어 두었지만 규칙 자체는
+  ///   각 자리에 복사돼 있었다. 그래서 고정근무 관리 행은 **confirmedAt
+  ///   보정을 빼먹은 네 번째 소비자**가 됐다 — 같은 사람의 같은 약속을
+  ///   인력 현황은 `9/16~9/22`, 고정근무 관리는 `9/9~9/22` 로 말했다.
+  ///
+  ///   새 시작일 정책을 만들지 않는다. 이미 문서화돼 있던 규칙을 한 이름에
+  ///   모을 뿐이다.
+  ///
+  ///     희망시작일이 있으면 그것이 시작이다.
+  ///     없고 확정일이 공고일보다 늦으면 확정일이 시작이다 —
+  ///       공고일부터 적으면 근무하지 않은 기간이 약속에 포함된다.
+  DateTime get effectiveStartDate {
+    var start = FormatHelper.toKstDate(desiredStartDate ?? workDate);
     if (confirmedAt != null && desiredStartDate == null) {
       final confirmedDay = FormatHelper.toKstDate(confirmedAt!);
-      if (confirmedDay.isAfter(effectiveStart)) effectiveStart = confirmedDay;
+      if (confirmedDay.isAfter(start)) start = confirmedDay;
     }
-    return '${FormatHelper.formatDateShort(effectiveStart)}~'
-        '${FormatHelper.formatDateShort(effectiveEnd)}';
+    return start;
   }
   
   /// 근무 요일 표시 (예: "주 5일 (월~금)" 또는 "주 3일 (월,수,금)")

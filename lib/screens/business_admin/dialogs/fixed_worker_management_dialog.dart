@@ -13,7 +13,6 @@ import 'package:cloud_firestore/cloud_firestore.dart' show FieldValue;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/business_member_model.dart';
 import '../../../models/core/business_model.dart';
@@ -1245,10 +1244,23 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           ],
                         ),
                         SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                        // 시작일: 희망시작일 우선, 종료일: 퇴사일 우선
+                        // 시작일: 희망시작일 우선(+확정일 보정), 종료일: 퇴사일 우선
+                        //
+                        // [R7-P1-2 DEVICE.1F] 여기가 두 가지로 틀려 있었다.
+                        //
+                        //   ① 아래 Text 가 `DateFormat('M/d')` 로 찍었다. 그것은
+                        //      DateTime 자신의 zone 으로 찍는다 — UTC 기기에서
+                        //      `9/9 KST` 가 `9/8`, `9/22 KST` 가 `9/21` 이 된다.
+                        //      실기기 화면이 정확히 `9/8~9/21` 이었다.
+                        //      바로 아래 D-day 계산은 이미 `toKstDate` 를 쓰고
+                        //      있었다 — 한 블록에서 두 달력을 함께 쓴 셈이다.
+                        //
+                        //   ② 시작일에 **확정일 보정이 빠져** 있었다. 같은 약속을
+                        //      인력 현황은 `9/16~`, 여기는 `9/9~` 로 말했다.
+                        //      판정식은 `app.effectiveStartDate` 하나다.
                         Builder(builder: (_) {
-                          final effectiveStartDate = app.desiredStartDate ?? app.workDate;
-                          final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
+                          final effectiveStartDate = app.effectiveStartDate;
+                          final effectiveEndDate = app.effectiveEndDate;
                           int? daysLeft;
                           // 종료가 발효되기 전까지는 남은 일수를 보여준다 —
                           // 승인된 해지도 D 까지는 "며칠 남았는지"가 정보다.
@@ -1263,7 +1275,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           return Row(
                             children: [
                               Text(
-                                '${DateFormat('M/d').format(effectiveStartDate)} ~ ${effectiveEndDate != null ? DateFormat('M/d').format(effectiveEndDate) : '미정'}',
+                                '${FormatHelper.formatDateShort(effectiveStartDate)} ~ '
+                                '${effectiveEndDate != null ? FormatHelper.formatDateShort(effectiveEndDate) : '미정'}',
                                 style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
                               ),
                               if (daysLeft != null) ...[

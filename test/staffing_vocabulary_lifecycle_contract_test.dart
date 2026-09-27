@@ -219,6 +219,27 @@ void main() {
       expect(deviceComponent.allMatches(fixed).toList(), isEmpty,
           reason: '계약 기간을 기기 달력으로 말한다');
       expect(fixed, contains('FormatHelper.formatDateShort('));
+
+      // [R7-P1-2 DEVICE.1F] 이 앵커가 놓친 형태가 하나 더 있었다.
+      //
+      //   위 정규식은 `${d.month}/${d.day}` 만 본다. 그래서 같은 파일의
+      //   `DateFormat('M/d').format(effectiveStartDate)` 를 통과시켰고,
+      //   실기기에서 `9/8~9/21` 로 남아 있었다. `DateFormat.format` 은
+      //   DateTime 자신의 zone 으로 찍으므로 기기 달력과 같다.
+      //   업무 날짜를 말하는 이 파일에서는 쓰지 않는다.
+      expect(fixed, isNot(contains('DateFormat(')),
+          reason: '업무 날짜는 FormatHelper(KST) 로만 말한다');
+    });
+
+    test('VOC-Z5 같은 약속의 기간을 두 화면이 같은 식으로 말한다', () {
+      // 시작일에 확정일 보정이 빠져 인력 현황은 `9/16~`, 고정근무 관리는
+      //   `9/9~` 라고 했다. 규칙은 `effectiveStartDate` 하나다.
+      expect(fixed, contains('app.effectiveStartDate'));
+      expect(fixed, contains('app.effectiveEndDate'));
+      final model = _codeOf(_read('lib/models/core/application_model.dart'));
+      expect(model, contains('DateTime get effectiveStartDate'));
+      expect(model, contains('FormatHelper.formatDateShort(effectiveStartDate)'),
+          reason: 'workPeriodDisplay 도 같은 getter 를 쓴다');
     });
 
     test('VOC-Z4 삭제가 없다', () {
