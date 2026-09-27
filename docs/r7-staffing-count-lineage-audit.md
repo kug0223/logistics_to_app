@@ -413,3 +413,157 @@ fixture: TO `r7to` / slot `r7slot` / `wdId = wd-canonical-001` / required 2.
 - shared DEV 는 이번 차수에 **쓰지 않았다**(읽기도 없음). 모든 write 는 `demo-alfit-r7`.
 - §3B(writer 전수·전이표), §3C(그룹 캐시/WorkforceController seam) **미착수**.
 - 감사는 **OPEN** 이다.
+
+---
+
+# 4차 — C3~C7 수정, writer 인벤토리, 전이 매트릭스 확장 (2026-09-27)
+
+## 15. 3차 보고의 정정
+
+증거를 다시 따라가 보니 내가 3차에 적은 것 중 두 가지가 틀렸다.
+
+| # | 3차 서술 | 실제 | 근거 |
+|---|---|---|---|
+| 15-1 | C4 가 **지원자 공고 상세**에 잘못된 `잔여 N명` 을 낸다 | **아니다.** `workDetailStats` 를 넘기는 곳은 `admin_to_group_card`(3) 와 `admin_to_item_card`(1) 뿐이고 **전부 `adminPreview`** 다. 지원자 진입점(`user_to_card` 3곳, `my_applications`, `user_home`, `apply_work_dialog`, `notification_screen`, `fcm_service`)은 모두 `workDetailStats` 를 넘기지 않아 `잔여` 가 렌더되지 않는다 | 호출부 전수 grep |
+| 15-2 | `functions/.env` 6개 키를 전부 dummy 로 덮었다 | **7개**였고 `GMAIL_USER` 가 덮이지 않은 채 실행되고 있었다 | `verify-env-isolation.js` 가 잡아냄. 이번에 막음 |
+
+**complexId 표기 정정** (3차의 내 서술도 부정확했다):
+
+- `discriminator` = 클라이언트가 보낸 `workDetailId`, 없으면 `selectedWorkType`
+- `complexId` = slotId 있으면 `{toId}_{slotId}_{discriminator}_{uid}`, 없으면 `{toId}_{discriminator}_{uid}`
+- `canonicalNewId` = (slotId && resolvedWdId) 이면 `{toId}_{slotId}_{resolvedWdId}_{uid}`, 아니면 complexId
+- 최종 `applyDocId` = 관계로 찾은 기존 문서의 id → 없으면 legacy complexId 문서가 있으면 그것 → 없으면 canonicalNewId
+
+즉 3번째 segment 는 "항상 workType"(CLAUDE.md 의 옛 표기)도 "항상 wdId"(3차의 내 말)도
+아니다. **클라이언트가 보낸 `workDetailId`, 없으면 `workType`** 이고, 새 문서는 서버가
+역산한 `resolvedWdId` 를 쓴다.
+
+> **migration 하지 않는다.** CF 주석이 명시한다 — "application docId를 파싱하는
+> 소비자는 없다 — 전수 확인". id 는 아무도 읽지 않는 식별자이므로 형식 통일의 이득이
+> 없고, 알림·계약·근태가 참조하는 id 를 바꾸는 위험만 남는다.
+
+## 16. §4 — C3~C7 판정과 수정
+
+| # | 위치 | 실제 actor / scope | identity 원천 | 미확인 조건 | 수정 전 | 수정 후 | 실행 증거 |
+|---|---|---|---|---|---|---|---|
+| C3 | `work_detail_management_dialog:76,87,121` | 관리자 · 업무별 마감 관리(**action**) | `toItem.workDetailStats` | statsFailed / map null / **identity miss** | `confirmed = 0` → `진행중` 라벨 + `N개 마감` 버튼 | `_WDS.unknown` → `확인 필요` 라벨 · `정원 확인 필요` 버튼 + 복구 안내. 마감·재오픈 미개방 | WCR-C(2), 판독기 A-1~A-9 |
+| C4 | `job_posting_screen:1316,1330` | 관리자 **미리보기** (지원자 아님 — §15-1) | `widget.workDetailStats` | 위와 같음 | `hasWorkStats = map != null` → `잔여 = required - 0` | `WorkCapacityReading` · `remaining` 이 null 이면 잔여 미표시 | WCR-C, `cross_surface` 10-a/10-c/10-d/10-e |
+| C4b | `admin_to_group_card:2169` | 관리자 · 미리보기 진입 | **master 정의 + slot stats 를 짝지음** | 정의가 비어 master 로 폴백할 때 | 두 identity 원천을 짝지어 조회가 반드시 빗나감 | master 로 떨어지면 stats 를 붙이지 않는다(null) | WCR-C |
+| C5 | `work_applicants_dialog:2948` | 관리자 · 단건 승인(**action**) | 같은 map, `?? 0` | 위와 같음 | `remaining = required` → fail-open | 공통 관문 `capacityBlockReason` | WCR-B(6) |
+| C6 | `work_applicants_dialog:3394` | 관리자 · 일괄 승인(**action**) | 같은 map, `?? 0` | 위와 같음 | fail-open + `현재 0명 확정` 문구 | 같은 관문 | WCR-B |
+| C7 | `work_applicants_dialog:1287` → `available_workers_bottom_sheet` | 관리자 · 근무 가능 인력(**초대**) | `_canonicalConfirmed ?? 0` | canonical 아님 / miss | `정원 2명 · 확정 0명 · 부족 2명` | `confirmedCount` 를 `int?` 로. 모르면 `확정 인원 확인 불가` | WCR-C |
+| C7b | 같은 자리 `workDetailId: work.id` | — | — | — | — | **바꾸지 않았다** | 아래 |
+
+**C7b — 결함이 아니다(증명).** 서버 `callableGetAvailableWorkers` 는 `workDetailId` 를
+composite(`workType_startTime_endTime`) 또는 workType 과 비교해 맞춘 뒤 거기서
+`targetWdId` 를 역산한다. 즉 composite 를 기대한다. `canonicalId`(wdId) 를 넘겼다면
+매칭에 실패하고 **첫 번째 workDetail 로 폴백**했을 것이다 — 지금 값이 맞는 값이다.
+`work.id` 를 기계적으로 `canonicalId` 로 바꾸지 않는다.
+
+**공통 owner:** `lib/models/ui/work_capacity_reading.dart`.
+새 상태 엔진이 아니라 기존 `WorkDetailData.lookupByIdentity` 위의 얇은 판정이다.
+전환한 caller 에서 옛 `?? 0` · `map != null` 판정은 제거했다(테스트가 재등장을 막는다).
+**합법적인 표시 0 은 남는다** — canonical 0 은 `isKnown: true, confirmed: 0` 이다(A-1).
+
+**검증:** 21개(`work_capacity_unknown_contract_test.dart`) + `cross_surface` 재작성 4개.
+`lib/` 를 HEAD 로 되돌리면 그중 **6개가 실패**한다 — 수정이 없으면 깨지고 있으면
+통과하는 before/after 증거다. 전체 스위트에서 **새로 깨진 것 0건**(기존 실패 63건은 그대로).
+
+## 17. §3B — writer 인벤토리
+
+`scripts/r7-writer-inventory.js` (정적 분석, 에뮬레이터 불필요) 기준 **32개**.
+
+| owner | 종류 | 원자성 | 대상 |
+|---|---|---|---|
+| `callableConfirmApplication` | callable | transaction+batch | wdCounts(6) · totalPending(5) · totalConfirmed(5) |
+| `callableApproveApplicationForReview` | callable | transaction | wdCounts(2) · totalPending(4) · totalConfirmed(2) |
+| `syncTOStats` | **trigger** | transaction+batch | totalRequired(3) · totalConfirmed(2) · totalPending(2) |
+| `callableReleaseNoshowSeat` · `callableBatchCancelNoShow` · `callableAcceptTOInvitation` | callable | transaction(+batch) | 세 대상 모두 |
+| `callableApplyToTO` · `callableAcceptInvitation` · `callableInviteWorker` · `callableOfferAlternativeWork` | callable | transaction | wdCounts(1) · totalPending(1) |
+| `callableCloseSlots` · `callableDeclineTOInvitation` · `callableDeleteAccountApplications` · `callableExpireApplications` · `callableRecalculateTOStats` · `callableCreateFlexSlots` | callable | **batch** | 혼합 |
+| `callableRecalcToTotalRequired` | callable | **single-write** | totalRequired(1) |
+
+**CF 밖의 writer — 클라이언트 직접 write 1개 (정적 인벤토리에 잡히지 않는 경로):**
+`ApplicationFirestore.cancelApplication` (근로자 본인 지원취소, PENDING 한정).
+클라이언트 transaction 이 `applications.status='CANCELED'` + `tos.totalPending -1`
++ `slot.pendingCount -1` 을 원자적으로 쓴다. **`workDetailCounts` 는 쓰지 않는다.**
+
+## 18. §5·§6 — 전이 매트릭스 2단계 (실행)
+
+1차 T1~T4 는 기준점으로 재사용. 정착 판정은 **고정 sleep 이 아니라 수렴 관측**이다
+(`settle()`: 값이 연속 4회 동일해야 정착, 아니면 `settled:false` 로 남긴다).
+
+| 단계 | 원장 | slot.pendingCount | **workDetailCounts.pending** | to.totalPending | 정착 |
+|---|---|---|---|---|---|
+| T5-b 지원 | PENDING 1 | 1 | 1 | 1 | — |
+| T5-c 지원취소 직후(트리거 전) | CANCELED 1 | 0 | **1** | 0 | — |
+| T5-d 지원취소 정착 | CANCELED 1 | 0 | **1 (남음)** | 0 | 1.76s · 5샘플 |
+| T6-b 재지원 정착 | PENDING 1 | 1 | **2 (누적)** | 1 | 1.75s · 5샘플 |
+| T7-b 확정 정착 | CONTRACT_PENDING 1 | 0 | **1 (여전히 어긋남)** | 0 | 1.73s · 5샘플 |
+
+### 18-1. ROOT CAUSE — `workDetailCounts` 에는 보정자가 없다
+
+`syncTOStats` → `_syncTOCounters` 가 쓰는 것은 정확히 이것뿐이다:
+`toRef.update({totalConfirmed, totalPending, statsUpdatedAt})`,
+`slotRef.update({confirmedCount, pendingCount})`, 그리고 slot status 교정.
+
+**`workDetailCounts` 는 재계산하지 않는다.** 그래서 그 필드를 명시적으로 쓰지 않는
+경로(= 위 클라이언트 지원취소)가 지나가면 그 차이가 **영구히 남고, 취소→재지원마다
+누적된다.** 상위 카운터(`slot.pendingCount`, `to.totalPending`)는 트리거가 스스로
+낫게 하므로, 겉보기에는 정상인 채로 업무 단위 값만 어긋난다.
+
+유일한 보정 경로는 **수동** `callableRecalculateTOStats` 다 — 자동이 아니다.
+
+### 18-2. 현재 영향 범위 (과장하지 않는다)
+
+- 입증된 drift 는 **`pendingCount`** 다. `countForDetail` 의 클라이언트 소비자는 없고,
+  `isWorkDetailFull` 은 `confirmedCount` 만 본다 → **지금 UI 숫자에 도달하지 않는다.**
+- 서버 정원 게이트(`getWorkDetailCount`)도 `confirmedCount` 만 본다 → 지원 차단에 영향 없음.
+- `confirmedCount` 에 같은 일이 생기려면 **좌석 상태를 CF 밖에서 바꾸는 경로**가 있어야 한다.
+  클라이언트 취소는 PENDING 한정이므로 그 경로는 아직 찾지 못했다 — **NOT TESTED / 미확정**.
+- 따라서 이것은 **저장 불변식 위반이며, 현재 확인된 사용자 노출은 없다.** 둘 다 사실이다.
+
+### 18-3. 부수 관측 — `onBusinessDeleted`
+
+harness cleanup 이 사업장·사용자를 같이 지우자 `onBusinessDeleted` 가
+`5 NOT_FOUND: no entity to update` (`type: "users"`) 로 **unhandled error** 를 내고 죽었다
+(cascade 중단). 내 삭제 순서가 만든 상황이지만, **존재 확인 없이 `.update()`** 한다는
+사실 자체는 남는다. 탈퇴한 사용자가 있는 사업장을 삭제할 때 같은 일이 가능하다.
+**후보이며 제품 시나리오로 재현하지는 않았다.**
+
+## 19. §3 — 외부 부작용 격리 (확인한 것과 못 한 것)
+
+| 항목 | 상태 |
+|---|---|
+| demo 프로젝트 차단 | CLI 자체 출력으로 확인 |
+| ADC 없음 / 하드코딩 bucket 없음 / `defineSecret` 0건 | 확인 |
+| `.env` **7개 키 전부** 감사 전용 값으로 override | `verify-env-isolation.js`, 값 미노출 |
+| 알림이 실제로 나가지 않음 | 제품 코드가 `FCM 토큰 없음` 에서 멈춤 — `sendEachForMulticast` 미도달 |
+| 전송 실패가 commit 을 잘못 실패시키는가 | **구조적으로 불가** — 전송은 callable 이 아니라 `onNotificationCreated` **트리거**에서 일어난다(별도 실행). 확정 callable 은 200 + 원장 commit |
+| 전송 경로 자체를 실패시켜 끝까지 관측 | **NOT TESTED** — 토큰을 주입했으나 해당 알림 수신자가 달라 경로에 닿지 못했다 |
+| Firestore **rules** | **NOT TESTED** — harness 는 Admin SDK 라 rules 를 지나지 않는다. 클라이언트 경로 재현은 **write set 만** 같다 |
+
+## 20. §3C — 그룹 갱신 seam (실행)
+
+`WorkforceController.refreshGroup` 을 **실제 controller 로** 돌렸다.
+서버 읽기 두 곳(`_readTO`/`_readSlots`)만 주입 가능하게 하고 나머지는 production 코드다.
+`_service` 를 lazy 로 바꿔 주입 시 Firebase 없이 세워진다. 순수 helper 단독 테스트가 아니다.
+
+확인(12건, `workforce_group_refresh_seam_test.dart`):
+빠른 연속 갱신에서 **응답 역전** 시 늦게 온 쪽 `superseded` + 화면 값이 과거로 안 돌아감 ·
+읽기 실패가 목록을 지우지 않음 · 실패→재시도 성공 · 예외도 실패로 · **부재 vs 실패 구분**
+(`removed` vs `failed`) · dispose 후 무기록 · 목록 밖은 읽지도 단정하지도 않음 ·
+목록 **새 인스턴스** 교체(뷰 필터 캐시 무효화) · 실패 시 미통지 · flex 만 슬롯 재조회.
+
+**미검증:** 날짜 타일 선택 → 일자별 다이얼로그의 `_cachedGroups` 왕복(사용자 재현
+`9/29 → 9/30 → 9/29 → 닫기 → 탭 복귀`)은 `day_applicants_dialog` 의 private State 이고
+Firebase 에 직접 붙는다. 이번 seam 은 controller 경로만 덮는다 — **NOT TESTED**.
+
+## 21. 이번 차수 상태
+
+- 제품 코드 수정: C3·C4·C4b·C5·C6·C7 + controller seam.
+- 환경/재현 산출물: `scripts/r7-audit/`, harness, audit config, CLI patch.
+- shared DEV write **0** · PROD 접근 **0** · 외부 발송 **0** · 저장 migration **0**.
+- **OPEN.** 남은 것: §18-1 보정자 부재의 수리 방침(사용자 결정 필요), `confirmedCount`
+  drift 경로 존재 여부, rules 경로, 초대/자동취소/동시성/trigger replay 전이,
+  일자별 다이얼로그 캐시 왕복, `onBusinessDeleted` 후보.

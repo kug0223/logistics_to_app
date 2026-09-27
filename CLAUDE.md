@@ -421,7 +421,11 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
 
 **CURRENT IMPLEMENTATION:**
 - Application 확정 시 `autoConflictCancelOverlapping` 로직으로 겹치는 PENDING 자동취소
-- complexId(`{toId}_{slotId}_{workType}_{uid}`)로 동일 공고·동일 슬롯 중복 지원 차단
+- 동일 공고·동일 슬롯 중복 지원은 복합 docId로 차단한다. [R7-4 정정] 3번째 segment는
+  workType 고정이 아니다 — 클라이언트가 보낸 `workDetailId`, 없으면 `selectedWorkType`이
+  discriminator이고, 새 문서는 서버가 역산한 `resolvedWdId`를 쓴다
+  (`{toId}_{slotId}_{resolvedWdId}_{uid}`). 기존 문서의 id는 바꾸지 않는다.
+  **docId를 파싱하는 소비자는 없다(CF 주석 전수 확인) — 형식 migration 금지.**
 
 ---
 
