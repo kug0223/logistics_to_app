@@ -127,8 +127,12 @@ void main() {
           s.contains('_releasePermsWatch = context .read<UserProvider>() '
               '.watchBusinessPermissions(widget.toItem.to.businessId);'),
           true);
-      expect(s.contains('void dispose() { _releasePermsWatch?.call(); super.dispose(); }'),
-          true);
+      // [R7-P1-2 DEVICE.1E.1] dispose 본문에 정원 상태기계 정리가 더해졌다.
+      //   계약은 "구독을 반드시 해제한다" 이므로 그 한 줄만 못 박는다 —
+      //   본문 전체를 고정하면 무관한 추가에도 깨진다.
+      final dispose = _codeOf(s.substring(s.indexOf('void dispose() {')));
+      expect(dispose.contains('_releasePermsWatch?.call();'), true);
+      expect(dispose.contains('super.dispose();'), true);
     });
 
     test('날짜별 지원자 — 선택기로 바뀌면 구독도 옮긴다', () {

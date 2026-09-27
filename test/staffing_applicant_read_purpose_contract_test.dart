@@ -230,12 +230,21 @@ void main() {
     test('SAP-I1 서버 DENY 가 NO_PERMISSION 으로 간다', () {
       expect(workDialog, contains('_loadDenied = isPermissionDenial(e);'));
       expect(workDialog, contains('_buildNoPermissionState()'));
-      // generic ERROR 로 되돌리지 않는다.
-      final handler = _slice(workDialog, 'Future<void> _loadApplicants() async {',
-          'Future<void> _runLoadApplicants()');
-      final denied = _slice(handler, '} else if (denied) {', '} else if (hadRows) {');
-      expect(denied, contains('_loadFailed = false;'));
-      expect(denied, contains('_refreshFailed = false;'));
+      // [R7-P1-2 DEVICE.1E.1] generic ERROR 로 되돌리지 않는다.
+      //
+      //   이 판정은 화면의 if/else 사슬에서 `applicantLoadOutcome` 으로
+      //   옮겨졌다 — private State 안에 있어 실행으로 증명할 수 없었기
+      //   때문이다. 계약은 그대로다: 확인된 거부는 행을 지우고, ERROR·
+      //   PARTIAL 로 되돌리지 않는다. (실행 검증: REC-C2)
+      final outcome =
+          _codeOf(_read('lib/utils/applicant_load_outcome.dart'));
+      final denied = _slice(outcome, 'if (denied) {', 'if (hadRows) {');
+      expect(denied, contains('clearRows: true'));
+      expect(denied, contains('loadFailed: false'));
+      expect(denied, contains('refreshFailed: false'));
+      // 화면은 그 판정을 쓰고, 자기 조건문을 다시 만들지 않는다.
+      expect(workDialog, contains('applicantLoadOutcome('));
+      expect(workDialog, contains('outcome.clearRows'));
     });
 
     test('SAP-I2 DENY 뒤에 사람 정보 조회가 이어지지 않는다', () {
@@ -259,7 +268,12 @@ void main() {
           expect(s, isNot(contains(banned)), reason: '문자열 파싱: $banned');
         }
       }
-      expect(workDialog, contains('.code'));
+      // [R7-P1-2 DEVICE.1E.1] code 판정의 owner 는 `applicant_load_outcome` 이다.
+      //   화면은 그것을 부른다 — 판정식이 두 벌이 되지 않는다.
+      final outcome =
+          _codeOf(_read('lib/utils/applicant_load_outcome.dart'));
+      expect(outcome, contains('.code'));
+      expect(workDialog, contains('isPermissionDenialError(error)'));
     });
   });
 

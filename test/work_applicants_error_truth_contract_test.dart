@@ -205,18 +205,28 @@ void main() {
       //   고정하고 있었다. 그 뒤 축이 하나 늘었다 — **확인된 권한 거부**는
       //   반대로 지워야 한다. 그래서 앵커를 일반 실패 가지로 좁힌다.
       //   지우면 안 되는 곳과 지워야 하는 곳을 각각 못 박는다.
+      // [R7-P1-2 DEVICE.1E.1] 두 축의 판정이 `applicantLoadOutcome` 으로
+      //   옮겨졌다. 화면에는 **지우는 가지 하나**만 남는다 — 그것이 지워야
+      //   하는 곳이고, 나머지 실패는 명단을 건드리지 않는다.
+      //   (실행 검증: REC-B3 일반 실패 → refreshFailed, 행 유지 /
+      //             REC-C2 확인된 거부 → clearRows)
+      final outcome = _codeOf(_read('lib/utils/applicant_load_outcome.dart'));
+      final generic = _slice(outcome, 'if (hadRows) {', 'return (clearRows: false, loadFailed: true');
+      expect(generic, contains('refreshFailed: true'));
+      expect(generic, contains('clearRows: false'),
+          reason: '일반 실패가 기존 명단을 비우면 안 된다');
+
+      // 화면에서 명단을 비우는 곳은 **오직** clearRows 가지 하나다.
       final handler = _slice(src, 'Future<void> _loadApplicants() async {',
           'Future<void> _runLoadApplicants()');
-      final genericBranch = _slice(handler, '} else if (hadRows) {', '} else {');
-      for (final banned in ['_applicants =', '_pending =', '_confirmed =']) {
-        expect(genericBranch, isNot(contains(banned)),
-            reason: '일반 실패가 기존 명단을 비운다: $banned');
-      }
-      expect(genericBranch, contains('_refreshFailed = true;'));
-
-      // 권한 거부 가지는 반대다 — 남기는 것이 사고다.
-      final deniedBranch = _slice(handler, '} else if (denied) {', '} else if (hadRows) {');
+      expect('_applicants = [];'.allMatches(handler).length, 1,
+          reason: '명단을 비우는 자리가 둘이면 어느 실패가 지우는지 알 수 없다');
+      // 주석은 `_codeOf` 가 걷어낸다 — 코드 marker 로 자른다.
+      final deniedBranch =
+          _slice(handler, 'if (outcome.clearRows) {', '_selectAll = false;');
       expect(deniedBranch, contains('_applicants = [];'));
+      expect(deniedBranch, contains('_capacity.clearOnRevocation();'),
+          reason: '권한을 잃었으면 읽어 둔 정원도 남기지 않는다');
     });
   });
 

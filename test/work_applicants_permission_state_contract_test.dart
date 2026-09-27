@@ -283,8 +283,14 @@ void main() {
 
   group('WAP-H 판정 근거', () {
     test('WAP-H1 error code 로만 판정한다', () {
-      final fn = _slice(src, 'static bool isPermissionDenial(Object error) {',
-          '@override');
+      // [R7-P1-2 DEVICE.1E.1] 판정식이 `applicant_load_outcome.dart` 로
+      //   옮겨졌다 — private State 안에서는 실행으로 증명할 수 없었다.
+      //   계약은 그대로다: code 로만 본다. (실행 검증: REC-C1)
+      final fn = _slice(_codeOf(_read('lib/utils/applicant_load_outcome.dart')),
+          'bool isPermissionDenialError(Object error) {',
+          'typedef ApplicantLoadOutcome');
+      expect(src, contains('isPermissionDenialError(error)'),
+          reason: '화면은 그 하나를 부른다');
       expect(fn, contains('FirebaseFunctionsException'));
       expect(fn, contains('FirebaseException'));
       expect(fn, contains("'permission-denied'"));

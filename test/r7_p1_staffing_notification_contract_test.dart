@@ -144,23 +144,24 @@ void main() {
       //
       //   계약은 그대로다: 실패는 0 이 아니라 UNKNOWN 이고, 정원은 화면에
       //   로드된 지원서 부분집합에서 세지 않는다.
+      // [DEVICE.1E.1] 그 상태기계는 `CapacityLoadState` 로 분리됐다.
       final s = _codeOf(_src(_work));
       final i = s.indexOf('int? get _canonicalConfirmed');
-      final seg = s.substring(i, i + 700);
-      expect(seg.contains('_capacityFailed'), true,
-          reason: '통계 조회 실패는 정원 0이 아니라 UNKNOWN이다');
-      expect(seg.contains('return null'), true);
+      final seg = s.substring(i, i + 300);
+      expect(seg.contains('_capacity.confirmedFor'), true,
+          reason: '정원은 canonical 조회 상태가 답한다');
       expect(seg.contains('_applicants'), false,
           reason: '정원을 지원서 목록에서 세면 부족이 부풀려진다');
 
-      // 그 상태를 만드는 곳이 canonical 정원 조회여야 한다.
-      final j = s.indexOf('Future<void> _loadCapacity()');
-      expect(j, greaterThan(-1));
-      final load = s.substring(j, j + 900);
-      expect(load.contains('loadTOWorkDetails('), true,
-          reason: '새 정원 경로를 만들지 않는다 — 카드와 같은 조회');
-      expect(load.contains("result['statsFailed'] == true"), true,
+      // 실패는 0 이 아니라 UNKNOWN 이고, 전부 0 인 seed 를 수치로 쓰지 않는다.
+      final cap = _codeOf(_src('lib/models/ui/capacity_load_state.dart'));
+      expect(cap.contains('if (_failed) return null;'), true,
+          reason: '통계 조회 실패는 정원 0이 아니라 UNKNOWN이다');
+      expect(cap.contains("result['statsFailed'] == true"), true,
           reason: '전부 0으로 seed 된 map 을 수치로 쓰지 않는다');
+
+      // 조회 자체는 카드와 같은 경로여야 한다 — 새 정원 경로를 만들지 않는다.
+      expect(s.contains('_firestoreService.loadTOWorkDetails('), true);
     });
 
     test('P1-3-h FULL/CLOSED에서는 ⋮ 메뉴의 초대도 내린다', () {

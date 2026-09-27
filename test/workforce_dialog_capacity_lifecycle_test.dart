@@ -443,12 +443,17 @@ void main() {
     });
 
     test('DLG-W1 다이얼로그가 정원을 직접 읽는다', () {
+      // [DEVICE.1E.1] 상태기계가 `CapacityLoadState` 로 분리됐다 —
+      //   실패→재시도·순서 역전·dispose 를 실행으로 증명하기 위해서다.
+      //   계약은 그대로: 부모 snapshot 이 아니라 자기 상태를 본다.
       expect(dlg, contains('Future<void> _loadCapacity()'));
       expect(dlg, contains('_firestoreService.loadTOWorkDetails('),
           reason: '새 API 를 만들지 않는다 — 카드와 같은 경로');
-      expect(dlg, contains('_canonicalConfirmed'));
-      expect(dlg, contains('work.lookupByIdentity(_capacityStats)'),
-          reason: '부모 snapshot 이 아니라 자기 상태를 본다');
+      expect(dlg, contains('CapacityLoadState('));
+      expect(dlg, contains('_capacity.confirmedFor(widget.work)'),
+          reason: '정원은 그 상태기계가 답한다');
+      expect(dlg, isNot(contains('widget.toItem.workDetailStatsFailed) return null')),
+          reason: '부모 flag 를 직접 읽지 않는다');
     });
 
     test('DLG-W2 다시 시도가 정원을 다시 읽는다', () {
@@ -461,10 +466,15 @@ void main() {
     });
 
     test('DLG-W3 정원과 사람 목록의 로드 상태가 분리돼 있다', () {
-      expect(dlg, contains('bool _capacityFailed'));
+      // 정원 상태는 `CapacityLoadState` 가, 사람 목록 상태는 화면이 갖는다.
+      final cls = _codeOf(_read('lib/models/ui/capacity_load_state.dart'));
+      expect(cls, contains('bool _failed'));
+      expect(cls, contains('int _seq'), reason: '늦게 온 응답이 새 상태를 덮지 않는다');
+      expect(cls, contains('if (_disposed) return;'));
       expect(dlg, contains('bool _loadFailed'), reason: '사람 목록 상태는 그대로다');
-      expect(dlg, contains('int _capacitySeq'),
-          reason: '늦게 온 응답이 새 상태를 덮지 않는다');
+      expect(dlg, contains('_capacity.dispose()'));
+      expect(dlg, contains('_capacity.clearOnRevocation()'),
+          reason: '권한 회수가 확인되면 읽어 둔 정원도 남기지 않는다');
     });
 
     test('DLG-W4 로컬 재집계가 아는 값을 빈 map 으로 덮지 않는다', () {
@@ -473,9 +483,61 @@ void main() {
           reason: '합성 TOItem 의 빈 workDetails 를 폴백한다');
     });
 
-    test('DLG-W5 로컬 재집계가 canonical 좌석 규칙을 쓴다', () {
-      expect(dlg, contains('a.occupiesSeatOn(seatDay)'));
-      expect(dlg, contains('!a.isStaffingReleased'));
+    test('DLG-W5 로컬 재집계가 섹션 분류와 **같은 함수**를 쓴다', () {
+      // [DEVICE.1E.1] 좌석 규칙을 두 번 쓰지 않는다 — 한쪽만 고치면 갈린다.
+      expect(dlg, contains('staffingRelationOf(a, seatDay).isCurrentStaffing'));
+      expect(dlg,
+          contains('staffingRelationOf(app, seatDay).isCurrentStaffing'),
+          reason: '폴백 경로도 같은 함수를 쓴다');
+      expect(dlg, isNot(contains('!a.isStaffingReleased && a.occupiesSeatOn')),
+          reason: '조건문 복제를 남기지 않는다');
+    });
+
+    test('DLG-W6b mutation 뒤 canonical 재조회가 이어진다', () {
+      expect(dlg, contains('Future.microtask(_loadCapacity)'),
+          reason: '로컬 값이 영구히 권위를 갖지 않는다');
+      expect(dlg, contains('_capacity.applyLocal('));
+    });
+
+    test('DLG-W6c 최초 로드에서는 로컬 집계를 정원으로 쓰지 않는다 (§3)', () {
+      // `_allApplications` 는 페이징되는 callable 결과다 — 부분집합일 수
+      //   있으므로 전체 자리 수의 근거가 될 수 없다. 그리고 initState 가
+      //   이미 canonical 조회를 시작했으므로, 여기서 applyLocal 하면 그
+      //   응답을 폐기해 버린다(그 경로에는 후속 재조회가 없다).
+      expect(dlg, contains('final applyToCapacity = markChanged;'));
+      expect(dlg, contains('if (applyToCapacity) _capacity.applyLocal('));
+      // 최초 호출은 markChanged: false 다.
+      expect(dlg, contains('_updateLocalStats(markChanged: false)'));
+    });
+
+    test('DLG-W9 좌석 아님과 계약 종료를 구분한다 (§4)', () {
+      expect(dlg, contains('staffingRelationOf(app, DateTime.now()).resolvedEnded'),
+          reason: '만료+미결정을 종료로 단정하지 않는다');
+      expect(dlg, contains("'계약 확인 필요'"), reason: '결정이 남은 섹션');
+      expect(dlg, contains("'좌석 반납'"), reason: '자리 해제 != 관계 종료');
+      expect(dlg, contains('staffingRelationLabel(app, DateTime.now())'),
+          reason: '라벨도 canonical 조합이 정한다');
+    });
+
+    test('DLG-W10 끝난 관계의 신분증 요구형 강조만 내린다 (§5)', () {
+      // 기록(제출·승인)은 남기고 요구형(none/expired/rejected)만 감춘다.
+      expect(dlg, contains('IdCardHelper.isRequestable(idCardStatus))'));
+      expect(dlg, contains('if (!(_isEndedRelation(app) &&'));
+      // 공용 helper 를 전역으로 바꾸지 않았다.
+      final helper = _codeOf(_read('lib/utils/id_card_helper.dart'));
+      expect(helper, contains("status == 'none' || status == 'expired'"),
+          reason: 'active worker 용 판정은 그대로다');
+    });
+
+    test('DLG-W11 장기 부족에 다음 경로를 말한다 (§6)', () {
+      expect(dlg, contains('_buildLongTermShortageRoute('));
+      expect(dlg, contains('인력 초대'), reason: '기존 canonical 경로를 가리킨다');
+      // 새 초대 CTA 를 이 화면에 만들지 않았다.
+      final route = dlg.substring(
+          dlg.indexOf('Widget _buildLongTermShortageRoute('),
+          dlg.indexOf('Widget _buildCapacityUnknownNotice('));
+      expect(route, isNot(contains('onPressed')),
+          reason: '안내다 — 여기서 초대를 열면 약속 범위를 이 화면이 정하게 된다');
     });
 
     test('DLG-W6 합성 TOItem 이 실패 flag 를 싣는다', () {

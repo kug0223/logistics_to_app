@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
@@ -49,6 +48,10 @@ import '../../../screens/contract/contract_sign_screen.dart' show ContractTempla
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../models/core/business_member_model.dart';
+// [R7-P1-2 DEVICE.1E.1] 화면에서 분리한 판정들 — 실행으로 증명하기 위해서다.
+import '../../../models/ui/capacity_load_state.dart';
+import '../../../utils/applicant_load_outcome.dart';
+import '../../../utils/staffing_relation.dart';
 
 /// 다이얼로그 결과
 class WorkApplicantsDialogResult {
@@ -96,8 +99,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   List<Map<String, dynamic>> _applicants = [];
   List<Map<String, dynamic>> _pending = [];
   List<Map<String, dynamic>> _confirmed = [];
-  /// [R7-P1-2 DEVICE.1E] 이미 끝난 근무 관계 — 이력으로 남는다.
+  /// [R7-P1-2 DEVICE.1E] 결정까지 끝난 근무 관계 — 이력으로 남는다.
   List<Map<String, dynamic>> _ended = [];
+  /// [R7-P1-2 DEVICE.1E.1] 기간은 지났는데 연장/종료 결정이 남았다 — 할 일이 있다.
+  List<Map<String, dynamic>> _decisionPending = [];
+  /// [R7-P1-2 DEVICE.1E.1] 자리를 반납했다(대체충원). 관계가 끝난 것은 아니다.
+  List<Map<String, dynamic>> _released = [];
   // 통계 계산용 전체 앱 목록 (_loadApplicants에서 캐시, _updateLocalStats에서 재사용)
   List<ApplicationModel> _allApplications = [];
 
@@ -178,16 +185,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 조회 실패가 **권한 거부**였는가 — code 로만 판정한다.
   ///
-  ///   메시지 문자열이나 화면 문구로 권한을 판별하지 않는다. 문구는 번역·
-  ///   수정으로 바뀌고, 그때 보안 판정이 조용히 틀어진다.
-  static bool isPermissionDenial(Object error) {
-    final String? code = switch (error) {
-      FirebaseFunctionsException e => e.code,
-      FirebaseException e => e.code,
-      _ => null,
-    };
-    return code == 'permission-denied' || code == 'unauthenticated';
-  }
+  ///   [R7-P1-2 DEVICE.1E.1] 판정식은 `applicant_load_outcome.dart` 하나다.
+  ///   private State 안에 있으면 실행으로 증명할 수 없어서 떼어 냈다.
+  static bool isPermissionDenial(Object error) =>
+      isPermissionDenialError(error);
 
   // [CSA-02] canManageContract: canManageTo와 대칭 구조.
   bool _canManageContract() => _permissionFor((p) => p.canManageContract);
@@ -265,7 +266,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // [R7-P1-2 DEVICE.1E] 정원은 부모 snapshot 에 기대지 않고 직접 읽는다.
     //   첫 프레임은 부모가 준 값으로 그리고(깜빡임 방지), 곧바로 canonical
     //   조회로 덮는다. 사람 목록과 **독립**이다.
-    _seedCapacityFromParent();
+    _capacity.seed(widget.toItem.workDetailStats,
+        parentFailed: widget.toItem.workDetailStatsFailed);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _releasePermsWatch = context
@@ -286,6 +288,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   @override
   void dispose() {
     _releasePermsWatch?.call();
+    // 진행 중인 정원 응답이 dispose 이후 상태를 건드리지 않게 한다.
+    _capacity.dispose();
     super.dispose();
   }
 
@@ -322,16 +326,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final ok = _loadOk;
     final denied = _loadDenied;
     final hadRows = _hasLoadedOnce;
+    // [R7-P1-2 DEVICE.1E.1] 무엇으로 말할지는 `applicantLoadOutcome` 하나가 정한다.
+    final outcome =
+        applicantLoadOutcome(ok: ok, denied: denied, hadRows: hadRows);
     setState(() {
+      _loadFailed = outcome.loadFailed;
+      _refreshFailed = outcome.refreshFailed;
       if (ok) {
         _hasLoadedOnce = true;
-        _loadFailed = false;
-        _refreshFailed = false;
-      } else if (denied) {
+      } else if (outcome.clearRows) {
         // [R7-P1-2.1] 확인된 권한 거부 — 낡은 명단을 남기지 않고 지운다.
         //   stale rows + 새로고침 배너 조합은 여기서 쓰지 않는다.
-        _refreshFailed = false;
-        _loadFailed = false;
+        // [R7-P1-2 DEVICE.1E.1] 읽어 둔 정원도 함께 지운다 — 권한을 잃은
+        //   사람에게 자리 수치를 계속 보여 줄 이유가 없고, 진행 중이던
+        //   정원 응답이 늦게 도착해 다시 노출되어서도 안 된다.
+        _capacity.clearOnRevocation();
         _applicants = [];
         _allApplications = [];
         _groupApplicants();
@@ -345,12 +354,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _isBatchMode = false;
         _isIdCardSelectMode = false;
         _selectAll = false;
-      } else if (hadRows) {
-        // 기존 행은 그대로 둔다 — PARTIAL 이지 EMPTY 가 아니다.
-        _refreshFailed = true;
-      } else {
-        _loadFailed = true;
       }
+      // refreshFailed → 기존 행은 그대로 둔다(PARTIAL 이지 EMPTY 가 아니다).
+      // loadFailed    → 보여 줄 것이 없다(ERROR — `지원자 없음` 이 아니다).
     });
     if (denied) {
       ToastHelper.showWarning('지원자 정보를 볼 권한이 없습니다.');
@@ -609,21 +615,42 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     //   서 있고, `계약서 작성 필요` 배지와 `계약서 작성` 버튼까지 달고
     //   나온다 — 끝난 관계에 새 근로계약을 맺으라는 **없는 할 일**이다.
     //
-    //   판정식은 새로 쓰지 않는다. 좌석·FixedWorker·서버 카운터가 모두
-    //   쓰는 `occupiesSeatOn` 하나다(단기는 항상 true — 날짜 축이 없다).
-    //   사람을 목록에서 지우지 않는다. 자리를 옮길 뿐이다.
+    // [R7-P1-2 DEVICE.1E.1] 그런데 `occupiesSeatOn` 하나로 가른 것이 틀렸다.
+    //
+    //   그것은 **좌석** 판정이지 **관계 종료** 판정이 아니다. 만료됐지만
+    //   연장/종료를 아직 결정하지 않은 사람까지 `계약 종료` 로 적어
+    //   관리자의 할 일을 지웠고, 좌석을 반납한(대체충원) 사람은 반대로
+    //   현재 인력으로 세어 정원 집계와 갈렸다.
+    //
+    //   판정은 `staffingRelationOf` 한 곳이 한다 — 기존 canonical 사실
+    //   셋을 조합할 뿐, 새 정책을 만들지 않는다.
+    //
+    //   어느 경우에도 사람을 목록에서 지우지 않는다. 자리를 옮길 뿐이다.
     final now = DateTime.now();
-    _confirmed = all
-        .where((i) => (i['application'] as ApplicationModel).occupiesSeatOn(now))
-        .toList();
-    _ended = all
-        .where((i) => !(i['application'] as ApplicationModel).occupiesSeatOn(now))
-        .toList();
+    _confirmed = <Map<String, dynamic>>[];
+    _released = <Map<String, dynamic>>[];
+    _decisionPending = <Map<String, dynamic>>[];
+    _ended = <Map<String, dynamic>>[];
+    for (final item in all) {
+      final r = staffingRelationOf(item['application'] as ApplicationModel, now);
+      if (r.decisionPending) {
+        _decisionPending.add(item);
+      } else if (r.resolvedEnded) {
+        _ended.add(item);
+      } else if (r.seatReleased) {
+        _released.add(item);
+      } else {
+        _confirmed.add(item);
+      }
+    }
   }
 
-  /// 이 행이 **끝난 관계**인가 — 표시·액션이 함께 보는 한 판정.
+  /// 이 행이 **결정까지 끝난 이력**인가.
+  ///
+  ///   만료+미결정(`decisionPending`)은 여기 들어오지 않는다 — 그 사람에게는
+  ///   아직 할 일이 남아 있고, 액션을 내리면 그 일이 사라진다.
   bool _isEndedRelation(ApplicationModel app) =>
-      !app.occupiesSeatOn(DateTime.now());
+      staffingRelationOf(app, DateTime.now()).resolvedEnded;
 
   /// 전체 선택/해제
   void _toggleSelectAll(bool? value) {
@@ -718,7 +745,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     // [R7-P1-2] ERROR != ZERO — 읽지 못한 것을 `없다`로 말하지 않는다.
                     : _loadFailed
                         ? _buildLoadErrorState()
-                        : (pending.isEmpty && confirmed.isEmpty && _ended.isEmpty)
+                        : (pending.isEmpty &&
+                                confirmed.isEmpty &&
+                                _ended.isEmpty &&
+                                _decisionPending.isEmpty &&
+                                _released.isEmpty)
                             ? _buildEmptyState()
                             : widget.work == null
                                 ? _buildGroupedApplicantList(context)
@@ -865,71 +896,32 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   //
   //   사람 목록과 **독립된** 로드 상태를 갖는다 — 한쪽 실패가 다른 쪽을
   //   지우지 않는다(§5).
-  Map<String, Map<String, int>>? _capacityStats;
-  bool _capacityFailed = false;
-  bool _capacityLoading = false;
+  //   [R7-P1-2 DEVICE.1E.1] 그 상태기계를 화면에서 분리했다 —
+  //   실패→재시도·순서 역전·dispose·권한 회수를 실행으로 증명하기 위해서다.
+  //   화면은 그 객체를 그대로 쓴다(테스트 전용 분기 없음).
+  late final CapacityLoadState _capacity = CapacityLoadState(
+    loader: () => _firestoreService.loadTOWorkDetails(
+      widget.toItem.to,
+      slotId: widget.toItem.slot?.id,
+      slotWorkDetails: widget.toItem.slot?.workDetails,
+    ),
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+  );
 
-  /// 늦게 도착한 응답이 새 상태를 덮지 않게 하는 토큰.
-  int _capacitySeq = 0;
-
-  /// 부모가 넘긴 snapshot 을 초기값으로만 쓴다 — 첫 프레임 깜빡임 방지.
-  /// 실패 flag 가 서 있으면 그 map 은 전부 0 인 seed 이므로 쓰지 않는다.
-  void _seedCapacityFromParent() {
-    if (widget.toItem.workDetailStatsFailed) {
-      _capacityFailed = true;
-      return;
-    }
-    _capacityStats = widget.toItem.workDetailStats;
-  }
+  bool get _capacityLoading => _capacity.loading;
 
   Future<void> _loadCapacity() async {
     if (widget.work == null) return; // 그룹 모드 — 단일 capacity 없음
-    final seq = ++_capacitySeq;
-    setState(() {
-      _capacityLoading = true;
-      _capacityFailed = false;
-    });
-    Map<String, Map<String, int>>? stats;
-    var failed = false;
-    try {
-      final result = await _firestoreService.loadTOWorkDetails(
-        widget.toItem.to,
-        slotId: widget.toItem.slot?.id,
-        slotWorkDetails: widget.toItem.slot?.workDetails,
-      );
-      // `statsFailed` 면 workStats 는 전부 0 인 seed 다 — 숫자로 쓰지 않는다.
-      failed = result['statsFailed'] == true;
-      if (!failed) {
-        stats = result['workStats'] as Map<String, Map<String, int>>?;
-        failed = stats == null;
-      }
-    } catch (e) {
-      debugPrint('❌ 인력 현황 정원 조회 실패: $e');
-      failed = true;
-    }
-    if (!mounted) return;
-    // 더 새로운 요청이 이미 나갔으면 이 결과는 버린다.
-    if (seq != _capacitySeq) return;
-    setState(() {
-      _capacityLoading = false;
-      _capacityFailed = failed;
-      if (!failed) _capacityStats = stats;
-    });
+    await _capacity.load();
   }
 
   /// 이 업무의 canonical 확정 수. 정원 조회가 말하는 값이고, 못 읽었으면 null.
   ///
   /// 지원서에서 세지 않는다 — 이 다이얼로그가 로드한 지원서는 권한·페이징에
   /// 따라 일부일 수 있고, 그 부분집합으로 정원을 판정하면 `부족`이 부풀려진다.
-  int? get _canonicalConfirmed {
-    final work = widget.work;
-    if (work == null) return null; // 전체 업무 그룹 모드 — 단일 capacity 없음
-    // [POSTING-V2-01B] 통계 조회가 실패했으면 0이 아니라 UNKNOWN이다.
-    if (_capacityFailed) return null;
-    final stats = work.lookupByIdentity(_capacityStats);
-    if (stats == null) return null;
-    return stats['confirmed'];
-  }
+  int? get _canonicalConfirmed => _capacity.confirmedFor(widget.work);
 
   /// 이 모집 단위가 지금 초대를 받을 수 있는가 — Day와 같은 세 상태 + UNKNOWN.
   InviteCapacityState get _capacityState => inviteCapacityStateOf(
@@ -1038,7 +1030,23 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 초대 CTA만 단기로 제한한다 — 이 화면에는 장기 약속 범위가 없다.
     //   장기 초대는 당일 명단(약속 범위를 canonical row로 받는다)과
     //   공고 ⋮ 메뉴가 맡는다.
-    if (widget.toItem.to.isLongTerm) return const SizedBox.shrink();
+    //
+    // [R7-P1-2 DEVICE.1E.1 §6] 다만 **아무 말도 하지 않는 것**은 다른 문제다.
+    //
+    //   화면은 `부족 2`를 보여 주면서 다음 경로를 말하지 않았다. 관리자는
+    //   부족을 보고 여기서 할 수 있는 일이 없다는 것만 알게 된다.
+    //   초대를 여기서 열지 않는 이유는 권한이 아니라 **약속 범위가 없기
+    //   때문**이고, 실제 경로는 공고 카드의 ⋮ 메뉴다(거기 게이트는
+    //   `_canInviteNow` — 마감·충원 상태를 따로 본다).
+    //
+    //   새 초대 경로를 만들지 않는다. 있는 길을 가리킬 뿐이다.
+    if (widget.toItem.to.isLongTerm) {
+      final shortage = _shortage ?? 0;
+      if (capacity == InviteCapacityState.available && shortage > 0) {
+        return _buildLongTermShortageRoute(context, shortage);
+      }
+      return const SizedBox.shrink();
+    }
     if (capacity != InviteCapacityState.available) {
       return const SizedBox.shrink();
     }
@@ -1065,6 +1073,44 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         ),
+      ),
+    );
+  }
+
+  /// [R7-P1-2 DEVICE.1E.1 §6] 장기 공고의 부족 — 다음 경로를 말한다.
+  ///
+  ///   버튼이 아니라 안내다. 이 화면에서 초대를 열면 약속 범위(시작·종료)를
+  ///   여기서 정하게 되고, 그건 이 다이얼로그가 갖지 않은 계약 정보다.
+  ///   모집 재개·권한 우회는 하지 않는다 — 공고 카드의 게이트가 그대로
+  ///   판단한다.
+  Widget _buildLongTermShortageRoute(BuildContext context, int shortage) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person_add_outlined,
+              size: 16, color: AppColors.grey600),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '$shortage명이 더 필요해요. 장기 근무 초대는 근무 기간을 정해야 해서\n'
+              '공고 카드의 ⋮ 메뉴 > 인력 초대에서 보낼 수 있어요.',
+              style:
+                  ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1480,15 +1526,40 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               }),
             ],
 
-            // [R7-P1-2 DEVICE.1E] 끝난 근무 관계 — 현재 인력이 아니라 이력이다.
+            // [R7-P1-2 DEVICE.1E.1] 현재 인력이 아닌 관계를 **세 갈래**로 나눈다.
             //
             //   새 탭 체계를 만들지 않는다. 이 화면이 이미 쓰는
             //   `_buildSectionHeader` + 카드 목록 그대로, 자리만 나눈다.
             //   숨기지 않는 이유: 그 사람이 확정됐던 사실과 근무·계약·급여
             //   이력은 남아 있고 관리자가 거기로 갈 길이 필요하다.
-            if (_ended.isNotEmpty) ...[
+            //
+            //   순서는 급한 것부터다 — 할 일이 남은 쪽이 위다.
+
+            // ① 만료 + 미결정 — 좌석은 비었지만 **결정이 남아 있다.**
+            if (_decisionPending.isNotEmpty) ...[
               if (confirmed.isNotEmpty)
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              _buildSectionHeader(context, '계약 확인 필요',
+                  _decisionPending.length, AppColors.warningDark),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              ..._decisionPending.asMap().entries.map((entry) =>
+                  _buildApplicantCard(context, entry.value, entry.key + 1,
+                      isPending: false)),
+            ],
+
+            // ② 좌석 반납 — 자리는 비었지만 관계는 끝나지 않았다.
+            if (_released.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              _buildSectionHeader(
+                  context, '좌석 반납', _released.length, AppColors.grey500),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              ..._released.asMap().entries.map((entry) => _buildApplicantCard(
+                  context, entry.value, entry.key + 1, isPending: false)),
+            ],
+
+            // ③ 결정까지 끝난 이력.
+            if (_ended.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               _buildSectionHeader(
                   context, '계약 종료', _ended.length, AppColors.grey500),
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -2180,11 +2251,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             //   이 사람에 대한 나머지 배지는 전부 그 다음이다 —
                             //   끝난 관계인지 모른 채 `계약서 작성 필요`부터
                             //   읽으면 관리자는 없는 할 일을 먼저 본다.
-                            if (_isEndedRelation(app))
-                              _buildEndedRelationBadge(context),
+                            // [R7-P1-2 DEVICE.1E.1] 라벨은 canonical 조합이
+                            //   정한다 — 화면이 날짜 조건을 다시 쓰지 않는다.
+                            if (staffingRelationLabel(app, DateTime.now())
+                                case final label?)
+                              _buildRelationBadge(context, label,
+                                  urgent: staffingRelationOf(app, DateTime.now())
+                                      .decisionPending),
                             _buildContractBadge(context, app.id,
                                 isEnded: _isEndedRelation(app)),
-                            IdCardHelper.buildStatusBadge(context, idCardStatus),
+                            // [CORRECTION-R7-ENDED-ID-REUPLOAD-ACTION-COPY]
+                            //
+                            //   종료된 관계에 `신분증 재요청 필요` 가 남아
+                            //   있었다. 그 사람에게는 개별·선택·일괄 요청
+                            //   경로가 모두 없다 — **행동이 없는데 행동을
+                            //   요구하는 강조**만 남은 것이다.
+                            //
+                            //   요구형(none/expired/rejected = isRequestable)
+                            //   만 내린다. 제출·승인 같은 **기록**은 그대로
+                            //   둔다 — 그것은 과거 관계의 사실이고, 급여·
+                            //   계약 정리에 필요한 정보다.
+                            //   공용 IdCardHelper 문구를 전역으로 바꾸지 않는다.
+                            if (!(_isEndedRelation(app) &&
+                                IdCardHelper.isRequestable(idCardStatus)))
+                              IdCardHelper.buildStatusBadge(
+                                  context, idCardStatus),
                           ],
                         ),
                       ],
@@ -2453,24 +2544,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
 /// 리뷰 작성 여부 배지
 
-  /// [R7-P1-2 DEVICE.1E] 끝난 근무 관계의 primary 상태.
+  /// [R7-P1-2 DEVICE.1E.1] 근무 관계의 primary lifecycle 배지.
   ///
-  ///   FixedWorker 관리가 이미 쓰는 말과 같다 — 같은 사람의 같은 사실을
-  ///   화면마다 다른 단어로 부르지 않는다.
-  Widget _buildEndedRelationBadge(BuildContext context) {
+  ///   문구는 `staffingRelationLabel` 이 정한다 — FixedWorker 관리·Home
+  ///   만료 화면이 이미 쓰는 말이다. 같은 사람의 같은 사실을 화면마다
+  ///   다른 단어로 부르지 않는다.
+  ///
+  ///   [urgent] 는 **할 일이 남은** 상태다(만료+미결정). 끝난 이력과 같은
+  ///   회색으로 적으면 그 일이 없는 것처럼 읽힌다.
+  Widget _buildRelationBadge(BuildContext context, String label,
+      {bool urgent = false}) {
+    final color = urgent ? AppColors.warningDark : AppColors.grey600;
+    final bg = urgent ? AppColors.warningBg : AppColors.grey100;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 5),
         vertical: 1,
       ),
       decoration: BoxDecoration(
-        color: AppColors.grey100,
+        color: bg,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: AppColors.grey500.withValues(alpha: 0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Text(
-        '계약 종료',
-        style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)
+        label,
+        style: ResponsiveHelper.tinyStyle(context, color: color)
             .copyWith(fontWeight: FontWeight.bold),
       ),
     );
@@ -3854,6 +3952,26 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 첫 로드에서는 변경이 아니다 — 부모에게 갱신을 요구하지 않는다.
     if (markChanged) _hasChanges = true;
 
+    // [R7-P1-2 DEVICE.1E.1 §3] 로컬 재집계는 **과도기 값**이다.
+    //
+    //   `_allApplications` 는 `callableGetApplicationsByBiz` 의 결과이고
+    //   그 callable 은 페이징한다(`hasMore`/`lastDocId`). 즉 이 목록은
+    //   부분집합일 수 있다 — 부분집합으로 전체 자리 수를 주장할 수 없다.
+    //   서버가 세는 좌석은 정원 가드·반납·자동취소까지 반영한다.
+    //
+    //   그래서 두 가지를 지킨다.
+    //     mutation 직후 → 즉시 반응을 위해 로컬 값을 쓰고 **반드시**
+    //                     canonical 재조회를 이어 붙인다.
+    //     최초 로드     → 로컬 값을 정원으로 쓰지 않는다. initState 가
+    //                     이미 canonical 조회를 시작했고, 여기서
+    //                     `applyLocal` 을 부르면 그 응답을 폐기해 버린다.
+    final applyToCapacity = markChanged;
+    if (applyToCapacity && widget.work != null) {
+      // 기다리지 않는다 — 로컬 값으로 이미 화면은 맞다.
+      //   microtask 라 아래 `applyLocal` 이 먼저 seq 를 올린 뒤 실행된다.
+      Future.microtask(_loadCapacity);
+    }
+
     try {
       final applications = _allApplications;
 
@@ -3883,8 +4001,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       //   끝난 장기 약속을 빼고 센다. 같은 화면의 두 집계가 다른 규칙을
       //   쓰면, 확정 처리 한 번에 숫자가 조용히 갈라진다.
       final seatDay = DateTime.now();
+      // [R7-P1-2 DEVICE.1E.1] 좌석 규칙은 섹션 분류와 **같은 함수**다.
       bool countsAsSeat(ApplicationModel a) =>
-          !a.isStaffingReleased && a.occupiesSeatOn(seatDay);
+          staffingRelationOf(a, seatDay).isCurrentStaffing;
 
       for (final work in details) {
         int pending = 0;
@@ -3928,9 +4047,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         // 슬롯 헤더 숫자도 즉시 갱신
         widget.toItem
             .updateOuterStats(confirmed: totalConfirmed, pending: totalPending);
-        // 이 화면의 정원도 같은 값으로 맞춘다 — 두 집계가 동시에 권위를
-        // 주장하지 않게 한다(§5).
-        if (mounted) setState(() => _capacityStats = newStats);
+        // [R7-P1-2 DEVICE.1E.1 §3] 이 화면의 정원도 같은 값으로 맞추되,
+        //   **진행 중이던 canonical 응답을 무효화**한다. 그러지 않으면
+        //   mutation 전에 나간 요청이 늦게 도착해 방금 확정한 사람을
+        //   지워 버린다. 그 다음 canonical 재조회가 최종 권위를 되돌린다.
+        if (applyToCapacity) _capacity.applyLocal(newStats);
       }
     } catch (e) {
       // 실패 시 현재 다이얼로그 목록 기준으로 현재 업무만 업데이트
@@ -3942,7 +4063,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       // [R7-P1-2 DEVICE.1E] 폴백도 같은 좌석 규칙을 쓴다.
       final seatDay = DateTime.now();
       for (final app in _allApplications) {
-        if (app.isStaffingReleased || !app.occupiesSeatOn(seatDay)) continue;
+        if (!staffingRelationOf(app, seatDay).isCurrentStaffing) continue;
         if (app.status == AppStatus.pending) pending++;
         if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) confirmed++;
       }
@@ -3951,11 +4072,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (widget.work != null) {
         final entry = {'pending': pending, 'confirmed': confirmed};
         widget.toItem.workDetailStats![widget.work!.id] = entry;
-        if (mounted) {
-          setState(() {
-            (_capacityStats ??= {})[widget.work!.id] = entry;
-          });
-        }
+        if (applyToCapacity) _capacity.applyLocal({widget.work!.id: entry});
       }
     }
   }
