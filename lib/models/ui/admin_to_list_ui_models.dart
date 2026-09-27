@@ -419,22 +419,17 @@ class TOItem {
     //   바꾼다 — `isWorkDetailLoaded` 는 업무 정의 로드 여부이고, 우리가
     //   묻는 것은 통계가 있느냐다.
     final details = statsAlignedWorkDetails;
-    if (workDetailStats != null && details.isNotEmpty) {
+    if (_aggregateUsable) {
       var c = 0, p = 0, r = 0, s = 0;
-      var allFound = true;
       for (final work in details) {
-        final stats = work.lookupByIdentity(workDetailStats);
+        final stats = work.lookupByIdentity(workDetailStats)!;
         // [R7 STAFFING AUDIT] 조회가 빗나간 업무가 하나라도 있으면 이 집계로
-        //   숫자를 말하지 않는다.
+        //   숫자를 말하지 않는다 — 그 판정은 `_aggregateUsable` 이 이미 했다.
         //
         //   `?? 0` 이 거짓 0 을 만들고 있었다. DEV 대조에서 172 슬롯 중 17
         //   자리가 그랬다 — 원장(`slot.workDetailCounts`)은 1 인데 화면이 0.
         //   원인은 값이 아니라 **identity** 다(아래 `statsAlignedWorkDetails`).
         //   모르는 것을 0 이라고 말하는 대신 카운터 폴백으로 내려간다.
-        if (stats == null) {
-          allFound = false;
-          break;
-        }
         final int wc = stats['confirmed'] ?? 0;
         c += wc;
         final int wp = stats['pending'] ?? 0;
@@ -442,9 +437,7 @@ class TOItem {
         r += work.requiredCount;
         s += clamp(work.requiredCount - wc);
       }
-      if (allFound) {
-        return (confirmed: c, pending: p, required: r, shortage: s);
-      }
+      return (confirmed: c, pending: p, required: r, shortage: s);
     }
     return (
       confirmed: confirmedCount,
@@ -460,9 +453,27 @@ class TOItem {
   ///   `모름 + 다시 시도` 로 그린다. 두 표면이 서로 다른 확신도로 같은
   ///   metric 을 말하지 않도록, 화면이 이 값을 보고 맞춘다.
   ///   (UNKNOWN != ZERO — 집계가 없다고 0 이라고 말하지 않는다)
-  bool get hasLoadedStats {
+  ///
+  /// [R7 STAFFING AUDIT 2차] `resolveStats` 와 **같은 판정**을 쓴다.
+  ///
+  ///   1차 수정에서 `resolveStats` 는 "업무 하나라도 조회 miss 면 카운터 폴백"
+  ///   으로 바뀌었는데 이 getter 는 그 조건을 몰랐다. 그래서 실제로는 카운터를
+  ///   말하고 있는데 화면에는 "집계에서 나온 값" 이라고 보고할 수 있었다 —
+  ///   provenance 가 거짓이 되는 것이다.
+  ///   (§2C: summary 가 counter 로 알려졌다는 것이 child 별 분배의 증거는 아니다)
+  bool get hasLoadedStats => _aggregateUsable;
+
+  /// 집계로 수치를 말할 수 있는가 — `resolveStats` 의 분기 조건 그대로.
+  bool get _aggregateUsable {
     if (workDetailStatsFailed) return false;
-    return workDetailStats != null && statsAlignedWorkDetails.isNotEmpty;
+    final stats = workDetailStats;
+    if (stats == null) return false;
+    final details = statsAlignedWorkDetails;
+    if (details.isEmpty) return false;
+    for (final work in details) {
+      if (work.lookupByIdentity(stats) == null) return false;
+    }
+    return true;
   }
 
   /// [R7 STAFFING AUDIT] `workDetailStats` 와 **identity 가 맞는** 업무 정의.

@@ -201,7 +201,13 @@ void main() {
       expect(aligned, contains('if (slot != null) return const [];'));
       expect(aligned, contains('return to.workDetails;'),
           reason: 'slot 이 없는 장기는 master 가 유일한 원천이다 (DEVICE.1D 유지)');
-      expect(fn, contains('workDetailStats != null && details.isNotEmpty'));
+      // [2차] 집계 사용 판정이 `_aggregateUsable` 한 곳으로 모였다 —
+      //   `resolveStats` 와 `hasLoadedStats` 가 같은 것을 써야 한다.
+      expect(fn, contains('if (_aggregateUsable)'));
+      final usable = _slice(models, 'bool get _aggregateUsable {', 'bool get resolvedIsFull');
+      expect(usable, contains('if (details.isEmpty) return false;'));
+      expect(usable, contains('lookupByIdentity(stats) == null'),
+          reason: 'identity miss 를 집계 사용 조건에 포함한다');
       expect(fn, isNot(contains('isWorkDetailLoaded && workDetails.isNotEmpty')),
           reason: '옛 판정이 남아 있으면 다시 갈라진다');
     });

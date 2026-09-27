@@ -507,10 +507,17 @@ void main() {
       // [R7-P1-2 DEVICE.1D] 집계 분기의 조건이 `isWorkDetailLoaded` 에서
       //   `workDetailStats != null && details.isNotEmpty` 로 바뀌었다.
       //   지키는 것은 **순서**이지 조건의 글자가 아니다.
+      // [R7 STAFFING AUDIT 2차] 그 조건이 `_aggregateUsable` 한 곳으로 모였다 —
+      //   `resolveStats` 와 `hasLoadedStats` 가 같은 판정을 써야 provenance 가
+      //   거짓이 되지 않는다. 순서 계약은 그대로다.
       final failIdx = body.indexOf('if (workDetailStatsFailed)');
-      final loadedIdx = body.indexOf('if (workDetailStats != null');
+      final loadedIdx = body.indexOf('if (_aggregateUsable)');
       expect(loadedIdx, greaterThan(-1), reason: '집계 분기를 찾지 못했다');
       expect(failIdx < loadedIdx, isTrue);
+      // 실패 폴백이 그 판정 안에도 있다(둘 중 어느 경로로도 0 이 되지 않는다).
+      final model = _codeOf(_src(_modelPath));
+      final usable = _flat(_bodyOf(model, 'bool get _aggregateUsable {'));
+      expect(usable.contains('if (workDetailStatsFailed) return false;'), isTrue);
     });
 
     test('capacity source 통합을 하지 않았다 (범위 밖)', () {

@@ -190,6 +190,76 @@ wdId 를 가질 가능성에 기대지 않는다(DEVICE.1H.1 에서 범위 count
 
 ---
 
+---
+
+# 2차 실행 (§2 안전성 · §4 Emulator 시도)
+
+## 2-1. §2A identity 계약 — 상태별 authoritative definition
+
+`TOItem.statsAlignedWorkDetails` caller: `resolveStats` · `_aggregateUsable`
+(`hasLoadedStats` 경유). 그 외 lib 내 caller 없음.
+
+| 상태 | 권위 정의 | 집계 | 결과 | 고정 |
+|---|---|---|---|---|
+| slot + 정의 로드 성공 | `TOItem.workDetails` (= slot 정의) | canonical 키 | **known** | IDS-E1 |
+| slot + 정의 미로드 | 없음 (`[]`) | `null` (둘은 `setWorkDetails` 가 함께 세운다) | 카운터, provenance false | IDS-E2 |
+| **정의가 로드되면** | slot 정의 | canonical | **known 으로 회복** | **IDS-E3** |
+| slot + slot 정의 문서에 없음 | loader 가 master 로 정의·seed 를 **함께** 만든다 → identity 일치 | master canonical | known | IDS-E4 |
+| 정의 조회 실패 | — | flag | 카운터, provenance false | IDS-E5 |
+| slot 없음(장기) | `to.workDetails` | master canonical | known | IDS-E6 |
+
+**영구 UNKNOWN 없음** — `setWorkDetails` 가 정의와 집계를 한 호출에서 함께
+세우므로 identity 가 어긋날 수 없고, 로드되면 known 으로 돌아온다(IDS-E3).
+`slot 존재`만으로 loaded 를 가정하지 않는다(IDS-E2).
+
+같은 type/time 이지만 다른 `wdId` 는 **다른 업무**다 — composite 폴백이 A 의 값을
+B 에 주지 않는다(IDS-E7). 정의의 `requiredCount` 와 집계의 `confirmed` 가 같은
+identity 에서 온다(IDS-E8).
+
+## 2-2. §2C counter fallback source — 그리고 **2차에서 찾은 결함**
+
+| source | 범위 | 의미 | writer | 실패/권한 시 |
+|---|---|---|---|---|
+| `TOItem.confirmedCount` | **그 slot** | 현재 좌석 | `syncTOStats` → `slot.confirmedCount` | 사용(같은 범위) |
+| `TOItem.pendingCount` | 그 slot | 관계(대기) | 동일 | 사용 |
+| `TOItem.totalRequired` | 그 slot | 필요 자리 | slot 문서 | 사용 |
+
+폴백은 **같은 slot 범위**이므로 §2C 의 "같은 범위의 유효 counter" 조건을
+만족한다. 부모 합계를 자식마다 복제하지 않고, 장기 누적확정을 현재 좌석으로
+쓰지 않는다(`occupiesSeatOn` 은 집계 쪽 계약).
+
+### ⚠ 2차에서 찾은 결함 — provenance 가 거짓이 될 수 있었다
+
+1차 수정은 `resolveStats` 를 "업무 하나라도 miss → 카운터 폴백" 으로 바꿨는데
+`hasLoadedStats` 는 그 조건을 몰랐다. 그래서 **실제로는 카운터를 말하면서
+화면에는 "집계에서 나온 값" 이라고 보고**할 수 있었다.
+→ 판정을 `_aggregateUsable` 한 곳으로 모아 두 소비자가 같은 것을 쓰게 했다.
+(§2C: summary 가 counter 로 알려진 것이 child 별 분배의 증거는 아니다)
+고정: IDS-C1 (부분 miss → `hasLoadedStats == false`).
+
+## 2-3. §4 Emulator 통합 — **시도했고 막혔다 (필요조건 명시)**
+
+| | |
+|---|---|
+| `firebase.json` | `emulators` 에 **`functions` 항목 없음** (firestore 6060 / storage 6061만) |
+| 시도 | `firebase emulators:start --only functions,firestore --project alfit-89567` |
+| 결과 | **emulator 는 떴다** — Functions `127.0.0.1:5001`, Firestore `127.0.0.1:6060` |
+| 오염 방지 | Admin SDK 를 `FIRESTORE_EMULATOR_HOST` 로 고정 + **emulator 가 비어 있음을 확인한 뒤에만 write**. seed·read 성공 |
+| **막힌 지점** | 모든 함수가 로드 실패: `Your function was killed because it raised an unhandled error` → `Failed to load function` (`callableApplyToTO` 포함) |
+| 원인 판정 | `node -e "require('./lib/index.js')"` 는 **`load OK`** — 프로젝트 코드는 정상. CLI 런타임이 v7 에서 제거된 `functions.config()` 를 호출한다는 경고와 함께 죽는다 → **firebase-tools 14.20.0 ↔ firebase-functions 7.3.2 런타임 비호환** |
+| 필요조건 | 두 버전 중 하나를 맞춰야 한다. **배포 런타임에 영향을 주는 변경이므로 이 감사에서 하지 않았다** — 별도 승인이 필요하다 |
+
+→ **EMULATOR-INTEGRATION = 미달성.** §9 matrix 의 전이 실행(확정/취소/재시도/
+동시성/trigger 재실행)은 여전히 **미검증**이다. fake server 결과로 대체하지 않았다.
+
+## 2-4. §5 클릭 1→0 — **PARTIAL**
+
+`TOItem` 수준의 전이(미로드 → 로드 → known 회복)는 실행으로 고정했다(IDS-E2/E3).
+**날짜 전환(9/29→9/30→9/29)·dialog 열고닫기·탭 재진입은 실행하지 못했다** —
+그 경로의 상태는 `_AdminTOGroupCardState._updateGroupCache` / `WorkforceController`
+안에 있고 Firebase provider 에 의존한다. 필요한 최소 seam(그룹 캐시 계산을
+값 입력 순수 함수로 분리)은 **제안만** 하고 이번에 만들지 않았다.
+
 ## 9. 미검증 / CLOSED 금지 사유
 
 - **Emulator 통합 검증 미실시.** 확정/취소/재시도/동시성(§9 matrix 1·3·4)을

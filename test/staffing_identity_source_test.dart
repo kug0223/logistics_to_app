@@ -209,6 +209,118 @@ void main() {
     });
   });
 
+  // ══════════════════════════════════════════════════════════════
+  // IDS-E §2A — 상태별 authoritative definition
+  //
+  //   `slot 존재만으로 loaded 를 가정하지 않는다.` 각 상태에서 무엇이 권위이고
+  //   **최종적으로 known 으로 회복하는지**를 고정한다.
+  //   (수정으로 문제를 UNKNOWN 에만 옮겨 영구 로딩으로 만들지 않는다)
+  // ══════════════════════════════════════════════════════════════
+
+  group('IDS-E 정의 원천 상태표', () {
+    TOItem item({
+      SlotModel? slot,
+      List<WorkDetailData>? defs,
+      Map<String, Map<String, int>>? stats,
+      bool failed = false,
+      int counterConfirmed = 1,
+    }) {
+      final i = TOItem(
+        to: _flexMaster(),
+        slot: slot,
+        workDetails: defs,
+        confirmedCount: counterConfirmed,
+        pendingCount: 0,
+        totalRequired: 1,
+        workDetailStats: stats,
+        isWorkDetailLoaded: defs != null,
+        workDetailStatsFailed: failed,
+      );
+      return i;
+    }
+
+    test('IDS-E1 slot + 정의 로드 성공 → slot 정의가 권위, known', () {
+      final i = item(
+          slot: _slot0929(),
+          defs: [_def(wdId: _slotWdId)],
+          stats: _statsFromLedger());
+      expect(i.statsAlignedWorkDetails.single.canonicalId, _slotWdId);
+      expect(i.hasLoadedStats, isTrue);
+      expect(i.resolveStats().confirmed, 1);
+    });
+
+    test('IDS-E2 slot + 정의 미로드 → 권위 없음, 카운터로 말하고 provenance 정직', () {
+      // 이 상태에서는 `workDetailStats` 도 아직 없다(둘은 `setWorkDetails` 가
+      // 함께 세운다). 그래서 영구 UNKNOWN 이 아니라 카운터 구간이다.
+      final i = item(slot: _slot0929(), defs: null, stats: null);
+      expect(i.statsAlignedWorkDetails, isEmpty);
+      expect(i.hasLoadedStats, isFalse, reason: 'provenance = 카운터');
+      expect(i.resolveStats().confirmed, 1, reason: 'slot 카운터 = 원장값');
+    });
+
+    test('IDS-E3 정의가 로드되면 같은 item 이 known 으로 회복한다', () {
+      // `setWorkDetails` 는 정의와 집계를 **함께** 세운다 — 둘의 identity 가
+      // 같은 호출에서 나오므로 어긋날 수 없다.
+      final i = item(slot: _slot0929(), defs: null, stats: null);
+      expect(i.hasLoadedStats, isFalse);
+      i.setWorkDetails([_def(wdId: _slotWdId)], _statsFromLedger());
+      expect(i.hasLoadedStats, isTrue, reason: 'UNKNOWN 에 갇히지 않는다');
+      expect(i.resolveStats().confirmed, 1);
+    });
+
+    test('IDS-E4 slot 정의가 문서에 없으면 loader 가 master 로 정의·집계를 함께 만든다', () {
+      // `loadTOWorkDetails` 는 `slotWorkDetails` 가 비면 `to.workDetails` 로
+      // 정의와 seed 를 **둘 다** 만든다. 그래서 identity 가 어긋나지 않는다.
+      final masterDefs = _flexMaster().workDetails;
+      final seededFromMaster = {
+        for (final w in masterDefs) w.canonicalId: {'confirmed': 0, 'pending': 0},
+      };
+      final i = item(
+          slot: _slot0929(), defs: masterDefs, stats: seededFromMaster);
+      expect(i.hasLoadedStats, isTrue);
+      expect(i.resolveStats().confirmed, 0,
+          reason: '이 경로의 집계는 지원서를 만나지 못했을 뿐 known 0 이다');
+    });
+
+    test('IDS-E5 정의 조회 실패 → 카운터, provenance false', () {
+      final i = item(
+          slot: _slot0929(),
+          defs: [_def(wdId: _slotWdId)],
+          stats: _statsFromLedger(),
+          failed: true);
+      expect(i.hasLoadedStats, isFalse);
+      expect(i.resolveStats().confirmed, 1);
+    });
+
+    test('IDS-E6 slot 없음(장기) → master 가 권위', () {
+      final i = item(slot: null, defs: null, stats: null);
+      expect(i.statsAlignedWorkDetails, hasLength(1),
+          reason: 'slot 이 없으면 master 정의가 유일한 원천이다');
+    });
+
+    test('IDS-E7 같은 type/time 이지만 다른 wdId 는 다른 업무다', () {
+      final a = _def(wdId: 'wd_A');
+      final b = _def(wdId: 'wd_B');
+      expect(a.canonicalId, isNot(b.canonicalId));
+      expect(a.id, b.id, reason: 'composite 는 같다 — 그래서 composite 로는 구분 못 한다');
+      final stats = {'wd_A': {'confirmed': 1, 'pending': 0}};
+      expect(a.lookupByIdentity(stats), isNotNull);
+      expect(b.lookupByIdentity(stats), isNull,
+          reason: 'composite 폴백이 A 의 값을 B 에 주면 안 된다');
+    });
+
+    test('IDS-E8 required 와 confirmed 가 같은 identity 를 쓴다', () {
+      // 정의의 requiredCount 와 집계의 confirmed 가 같은 업무에서 와야 한다.
+      final defs = [_def(wdId: _slotWdId)];
+      final i = item(
+          slot: _slot0929(), defs: defs, stats: _statsFromLedger());
+      final s = i.resolveStats();
+      expect(s.required, defs.single.requiredCount);
+      expect(s.confirmed, _statsFromLedger()[_slotWdId]!['confirmed']);
+      expect(s.shortage, 0);
+    });
+  });
+
   group('IDS-D producer seed 키', () {
     test('IDS-D1 wdId 가 있으면 canonicalId(=wdId) 로 seed 된다', () {
       // `loadTOWorkDetails` 의 seed 식과 같은 표현을 실행한다.
@@ -263,8 +375,11 @@ void main() {
       expect(s.confirmed, 1, reason: '카운터로 내려간다');
       expect(s.required, 3, reason: 'totalRequired 를 쓴다');
       // 부분 집계로 `충원 1 / 필요 3 · 부족 2` 를 주장하지 않는다.
-      expect(item.hasLoadedStats, isTrue,
-          reason: '정의는 있다 — 화면은 이 값을 카운터 출처로 읽는다');
+      // [2차] provenance 도 사실대로다 — 이 수치는 집계가 아니라 카운터에서
+      //   나왔으므로 `hasLoadedStats` 는 false 여야 한다.
+      //   (§2C: summary 가 counter 로 알려진 것이 child 별 분배의 증거는 아니다)
+      expect(item.hasLoadedStats, isFalse,
+          reason: '카운터로 말하면서 "집계에서 나왔다" 고 보고하면 안 된다');
     });
   });
 }
