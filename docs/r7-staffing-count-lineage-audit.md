@@ -1224,3 +1224,307 @@ F3 **슬롯/업무 축** 경합 · loader 통합 · 공고 날짜 클릭(실제 
 
 §44 의 4건. **따라서 전체 개발 감사는 CLOSED 가 아니다.**
 B 와 C 는 개발 완료로 세지 않으며 서로 다른 gate 로 관리한다.
+
+---
+
+# 8차 — 고정 미결 항목 종료 (2026-09-27)
+
+BASE `ce3b0d6`(7차 종료 시점) → 8차 커밋 `1825b72`(O01) · `ee69e60`(O03) ·
+`a56ad70`(O05) · `8617663`(하루 경계 helper 통일).
+branch `main`. 사용자 소유 untracked 스크립트 8개는 손대지 않았다.
+체크리스트 파일(`ALfit_Staffing_Integrity_Closure_Checklist.md`)은 저장소에 없다 —
+요청 본문의 O01~O08 정의를 기준으로 적는다.
+
+## 46. 종료 표
+
+| ID | 이전→현재 | owner/변경 | 제거한 구 경로 | 증거(테스트·SHA·환경) | 남은 조건 |
+|---|---|---|---|---|---|
+| **O01** 공고 합계 경합 | 열림 → **구조 근거로 닫음** | 변경 없음(배치가 이미 안전). 계약 고정 테스트 추가 | — | `scripts/r8-emu-to-total-race.js` T2·T3·T4·T5 / `test/to_total_write_contract_test.dart` 7건 / `1825b72` / Emulator | 반례 부재는 증명이 아님 — 시도한 순서 3종을 명시 |
+| **O02** 로더 통합 | 완료 유지 | `WorkforceController` | 카드 `_retryWorkDetailStats` 본문·카드 그룹 통계 로딩 | 7차 `fa65d3c` 재사용. 이번 회귀만 재실행 | 없음 |
+| **O03** Day 실제 왕복 | 미착수 → **실행 완료** | `DayApplicantsReads` 주입 경계 + production `DayApplicantsDialog` | 화면 안의 `_svc.*` 읽기 12개·`_contractSvc` 필드 | `test/day_applicants_roundtrip_test.dart` 4건 / `ee69e60` / production widget | 실기기는 O08 |
+| **O03b** 공고 카드 날짜 전환 | 완료 유지 | `projectGroupHeaderTotals` + 무조건 재계산 | `identical` 캐시 가드 | 7차 `test/posting_card_render_pipeline_test.dart` 재사용 | dialog 닫기·탭 복귀는 그 테스트에 없음 → O03 에서 별도 확인 |
+| **O04-a** 남은 writer 3 | 미검증 → **전부 판정** | — | — | 정적 근거 + 기존 Emulator | 없음 |
+| **O04-b** raw 카운터·length | 미판정 → **행 단위 판정** | — | — | 아래 §49 | 없음 |
+| **O04-c** 사라진 wdId 옛 키 | 미결 → **계약으로 닫음(수정 불필요)** | — | — | §50 | 없음 |
+| **O05** 후보 조회 두 계약 | 1 연결 / 2 **결손 보완** | `available_workers_bottom_sheet` 오류 처리 | 일반 문구 덮기·무한 재시도 버튼 | `test/available_workers_error_recovery_test.dart` 6건 + `scripts/r7-emu-c7-fallback.js` C7-3·C7-7 / `a56ad70` | 없음 |
+| **O06** DEV READ 대조 | 완료 유지 | — | — | 7차 §43 (flex 92TO·246slot·266키, mismatch 21) | 반복하지 않음 |
+| **O07** 배포·복구 준비 | 계획 갱신 | — | — | §51·§52 (미실행) | 실행은 별도 결정 |
+
+## 47. O01 — 공고 합계 축
+
+### 47-1. owner 와 경계
+
+| 주체 | 원장 읽기 | TO 합계 쓰기 | 경계 |
+|---|---|---|---|
+| `_syncTOCounters` flex (index.ts:17787) | `countCommittedSeats()`(페이지네이션) + `.count()` | `toRef.update` **절대값** | transaction 밖 |
+| `_syncTOCounters` 비슬롯 (17747) | 같음 | 같음 | transaction 밖 |
+| `callableRecalculateTOStats` (24501) | `while` 페이지네이션 | `update(toUpdate)` **절대값** | transaction 밖 |
+| apply·confirm·cancel·increment 등 | — | `FieldValue.increment` **delta** | **transaction 안** |
+
+### 47-2. 통제한 순서와 결과
+
+| 시도 | 만든 순서 | 결과 |
+|---|---|---|
+| T2 | 느린 재집계(61슬롯, 9.1초)가 원장을 읽은 뒤 취소를 끼워 넣고, 후속 이벤트 없이 4초 대기 | 원장과 **일치** |
+| T3 | 같은 창에 좌석 delta(transaction)를 겹침 | 원장과 **일치** |
+| T4 | 재집계 2개를 띄운 채 36건 변경 burst → 정적 상태에서 대조 | 원장과 **일치** |
+| T5 | 재집계 경합 중 정상 지원 5회 | 아래 47-4 |
+
+**재현하지 못했다.** 이유는 코드 배치다:
+
+- 트리거는 **느린 일(슬롯 transaction)이 읽기 앞**에 있고, 원장 읽기 직후 TO 를 쓴다.
+- 재집계는 **스캔 직후 TO 를 쓰고**, 느린 일(슬롯별 transaction)이 쓰기 뒤에 있다.
+
+즉 두 절대 writer 모두 **읽기→쓰기 간격이 짧다.** 모든 원장 변경이 트리거를
+깨우고 그 트리거의 읽기는 그 변경 이후이므로, 마지막 쓰기의 스냅샷은 마지막
+변경을 포함한다. 낡은 쓰기가 마지막이 되려면 **먼저 읽은 쪽이 나중에 써야**
+하는데 그 간격이 거의 없다.
+
+> `transaction API 를 썼다`로 대신하지 않았다. 그 배치가 깨지면 실패하는 테스트를
+> 두었다(`to_total_write_contract_test.dart`): 읽기와 쓰기 사이에 `await` 이
+> 들어오면, 느린 일이 읽기 뒤로 가면, 슬롯 구간이 TO 쓰기 앞으로 오면 깨진다.
+> 슬롯·업무 축의 transaction(읽기가 tx 안, 쓰기도 tx 안)도 같은 파일에서 고정했다.
+
+**남는 한계:** 반례를 찾지 못한 것은 없다는 증명이 아니다. 시도한 순서는 위 3종이고,
+그 밖의 interleaving(예: 트리거 재시도가 길어져 먼저 읽은 쪽이 나중에 쓰는 경우)은
+재현하지도 반증하지도 못했다. **슬롯·업무 축은 transaction 으로 닫혔고, TO 축은
+배치 근거로만 안전하다** — 두 상태를 분리해 기록한다.
+
+### 47-3. 슬롯축/TO축 완료 상태
+
+| 축 | 방식 | 상태 |
+|---|---|---|
+| `slot.workDetailCounts` · `slot.pendingCount/confirmedCount` | 쓰기 시점 재계산(transaction) | **닫힘** (7차 재현→수정) |
+| `to.totalPending/totalConfirmed` | 절대 쓰기, 읽기→쓰기 인접 | **배치 근거로 안전**, 구조 변경 시 테스트가 잡음 |
+
+### 47-4. 71.8초의 영향 (7차 수치 후속)
+
+| 항목 | 실측 |
+|---|---|
+| 데이터 규모 | 슬롯 61 · 지원서 483 |
+| 동시 작업 | 전체 재집계 1개 + 정상 지원 5회 |
+| 재집계 소요 | **9.2초** |
+| 경합 중 첫 지원 | **성공(200), 4.5초** |
+| 이후 지원 4회 | 409 `이미 지원한 업무입니다.` (103~115ms) |
+| 정원 오판 | **없음** — `모집 인원이 마감` 거절 0건 |
+| timeout·재시도 소진 | 관측되지 않음 |
+| 경합 후 정합 | TO 축·슬롯 축 모두 원장과 일치 |
+
+그 시간 동안 원장은 정상이고, 슬롯·업무 카운터는 매 커밋 시점에 재계산된 값이며,
+TO 합계는 트리거가 곧 맞춘다. **사용자에게 과거 숫자를 현재값으로 보여주거나
+잘못된 action 을 허용·차단한 경로는 확인되지 않았다.** 7차의 71.8초는
+하네스의 수렴 관측 지연이고 사용자 정지 시간이 아니다.
+새 성능 SLA 는 만들지 않는다 — 관측값과 이 제약만 남긴다.
+
+## 48. O03 — Day 실제 왕복
+
+7차에 "한 번 로드에 서비스 호출 10개라 최소 seam 불가"라고 적은 것은 **의존성
+규모의 설명**이었다. 읽는 경계를 한 곳에 모으면 화면은 그대로 돌아간다.
+
+- `DayApplicantsReads` — 읽기 12개(지원자·확정자·충원행·초대·근무이력·노쇼·
+  사용자·주간근태·슬롯정원·슬롯업무·공고·계약상태). 주지 않으면 기존 서비스로 간다.
+  `WorkforceController` 가 이미 쓰는 패턴이고 새 프레임워크를 만들지 않았다.
+  **도메인 계산은 넣지 않았다** — 그룹 구성·캐시·머리말 수치·scope label 은 화면이 한다.
+- `_contractSvc` 필드는 제거했다(그 읽기도 경계로 옮겼으므로 두 경로를 남기지 않는다).
+
+실행한 것 (production `DayApplicantsDialog`, 복제품 아님):
+
+| # | 시퀀스 | assert |
+|---|---|---|
+| DAY-1 | 9/29 → 9/30 → 9/29 → 날짜 해제 (날짜마다 새 인스턴스 = 실제 navigation) | scope label 날짜·`공고 1개 · 업무 1개`·`지원 1건`·`확정 1건` / 9/30 은 `0건` / 날짜별 읽기 호출 순서 |
+| DAY-2 | 진입점 → 열기 → 닫기 → 진입점 복귀 → 다시 열기 | 닫힌 뒤 본문 사라짐 · 다시 열면 **다시 읽고** 같은 값 |
+| DAY-3 | A 응답을 붙잡은 채 B 로 이동 → A 의 늦은 응답 도착 | B 화면이 덮이지 않음(`9월 30일` 유지) |
+| DAY-4 | 충원 읽기 실패 → 성공 경계로 재시도 | 지원자 명단 유지(전체 ERROR 아님) · 못 읽은 충원을 0 으로 적지 않음 · 재시도 후 값 표시 |
+
+> 렌더된 실제 문구 예: `인력 현황 | 2026년 9월 30일 (수) · 공고 1개 · 업무 1개 |
+> 0명 | 부족 | 1건 | 지원 | 1건 | 확정 | 단기 | 테스트 공고 …`
+>
+> **공고 카드의 날짜 전환 테스트(7차)와의 구분:** 그 테스트에는 dialog 닫기·탭
+> 복귀가 없다. 그 시퀀스는 위 DAY-2 가 담당한다. 실기기 조작은 O08 로 남긴다.
+
+## 49. O04 — 고정 인벤토리 종료
+
+### 49-1. 남은 writer 3
+
+| 함수 | 호출자 | 전이 | 쓰는 필드 | 집계 owner | 판정 |
+|---|---|---|---|---|---|
+| `callableCreateFlexSlots` | 공고 생성 화면 | 슬롯 **생성**(원장 전이 없음) | `slot.workDetailCounts[wdId]={0,0}` 전량 · `slot.confirmedCount/pendingCount=0` | 자신(초기화) | **N/A — 초기화**. 생성 시점에 지원서가 없어 어긋날 대상이 없다. 모든 wdId 를 0 으로 깔아 `getWorkDetailCount` fail-closed 도 막는다 |
+| `callableUpdateSlotWorkDetails` | 공고 수정 | 업무 정의 변경 | **신규 wdId 에만** `workDetailCounts.{wdId}` dot-notation 초기화(기존 카운터 보존) | 자신 + 트리거 | **정적 확인 + 구조 보호**. identity 가 바뀌는 수정은 활성 지원자가 있으면 `failed-precondition` 으로 **거부**된다(`해당 업무 시간대에 활성 지원자가 있어…`). 따라서 원장/카운터 불일치를 만들 수 없다 |
+| `callableRecalcToTotalRequired` | 공고 관리 | 정원 재합산 | `to.totalRequired` 단일 | 자신 | **N/A — 다른 축**. 원장이 아니라 **정의**에서 합산하므로 대기/확정 축이 아니고 stale 창 개념이 없다 |
+
+> "같은 sync owner 를 부른다"는 사실만으로 세지 않았다 — 위 세 건은 각각
+> 쓰는 필드와 전이를 보고 판정했다.
+
+### 49-2. raw 카운터·`.length` 소비자 — 행 단위
+
+| 위치 | source·identity | 모집단·단위 | canonical 0 vs UNKNOWN | 표시/gate | owner·근거 |
+|---|---|---|---|---|---|
+| `business_admin_home_screen:1443` | 서버 staffing readiness | 그날 모집 단위 · 명 | 대상 없음은 상위 gate 에서 걸러짐 | 표시 | 기존 Home 계약 |
+| `:2201` (`day?.confirmedCount ?? 0`) | 같음 | 오늘 · 명 | `if (!_staffingReadiness!.hasTodayTarget) return null;` 가 앞에서 UNKNOWN 차단 | 표시 | 같음 |
+| `:2592` | 같음 | 예정일 · 명 | 같은 gate | 표시 | 같음 |
+| `:2614–2615` | 같음 | 오늘 · **건** | `pendingCount != null && > 0` — `null(실패)·0 → 숨김` 명시 | 표시 | 같음 |
+| `available_workers_bottom_sheet:526` | `_canonicalConfirmed`(canonical gate) | 그 업무 · 명 | `int?` — 모르면 `확정 인원 확인 불가` | 표시 | 4차 C7 |
+| `day_applicants_dialog:803·829` | `DayStaffingRow.confirmedCount`(서버 canonical) | 그 업무 · 명 | 행이 없으면 `_capacityUnknown` | 표시 + 초대 CTA | O03 DAY-4 |
+| `slot_batch_select_dialog:492` | **슬롯 문서 카운터** | 그 슬롯 · 명 | 문서 필드(항상 존재, 초기값 0) — UNKNOWN 개념 없음 | 표시만(선택 목록) | 슬롯 축은 transaction 으로 보장(§47-3) |
+| `payroll_summary_model` · `payroll_overview_screen`(4곳) | 급여 요약 | **급여 건수** | 해당 없음 | 표시 | **N/A — 다른 도메인**(정원 아님) |
+| `staffing_readiness_model:32/34/72/74`, `payroll_summary_model:65/67`, `available_workers_bottom_sheet:53` | — | — | — | — | **N/A — 선언/생성자** |
+| 리스트 `.length` 12곳 | 목록 길이 | — | — | 표시·반복·빈 목록 판정 | **N/A — 정원/대기 수치로 쓰이지 않는다** |
+
+미판정 행 없음. 정상 경로는 패치하지 않았다.
+
+### 49-3. 사라진 wdId 의 옛 키 — 수정하지 않는다(계약으로 닫음)
+
+키를 세 종류로 나눴다.
+
+| 종류 | 현재 동작 | 판정 |
+|---|---|---|
+| ① 현재 정의에 있고 지원서가 0 | `srvBuildWdCountsUpdate` 가 **0 으로 깐다** | 6차에 닫힘 |
+| ② 현재 정의에서 사라진 키 | 맵에 남지만 **아무도 읽지 않는다** | 저장 찌꺼기 |
+| ③ 지원서가 옛 wdId 를 들고 있는 경우 | `callableUpdateSlotWorkDetails` 가 **활성 지원자 있으면 수정을 거부**한다 | 생성 경로 없음 |
+
+②의 근거: `workDetailCounts` 를 **순회·합산하는 코드가 없다**(CF·클라이언트 전수
+확인). 모든 읽기는 현재 업무 정의의 키로 하는 조회다 —
+CF `getWorkDetailCount` 는 `wdc[wd.wdId]`, 클라이언트는 `lookupByIdentity` /
+`countForDetail(canonicalId)`. 따라서 옛 키는 합계·gate·표시에 들어가지 않는다.
+
+재집계는 dot-notation **부분 merge** 다(맵 전체 교체가 아니다). 그래서 옛 키가
+남는다. 원장·이력 보존 계약상 그것이 맞다 — 과거 관계를 지우지 않는다.
+**모든 옛 키 삭제·0 처리·새 migration 을 기본 해법으로 삼지 않는다.**
+
+## 50. O05 — 증거 연결과 결손 보완
+
+### 50-1. 계약 1 — 모호한 workType 단독 (이미 수행, 재실행 없음)
+
+| 항목 | 값 |
+|---|---|
+| 테스트 | `scripts/r7-emu-c7-fallback.js` C7-7 |
+| 입력 | 같은 workType 정의 2개 슬롯 + `workDetailId: '홀서빙'` |
+| 기대 | 거부 |
+| 결과 | `400` (`같은 업무 이름이 여러 개입니다. 목록에서 근무 시간을 골라 다시 시도해주세요.`) |
+| 비공허 근거 | C7-1 pool 비어 있지 않음 · C7-2 업무별 후보가 **다름**(wd1 `[free]` / wd2 `[busy, free]`) |
+| SHA | `57663a3` (regexp/unique 규칙), 8차 확인 재실행 |
+| legacy 호환 | workType 단독은 **유일할 때만** 허용(C7-4 통과) — 기존 `srvResolveAppWdId` 계약과 동일 |
+
+### 50-2. 계약 2 — unresolvable 400 의 caller 처리 (**결손 보완**)
+
+서버 거부는 7차에 있었지만 **받는 쪽이 비어 있었다**:
+`_parseError` 가 일반 문구(`인력 조회에 실패했습니다.`)로 떨어뜨려 서버가 넣어 둔
+복구 안내를 지웠고, 오류 화면은 `다시 시도` 를 줬다 — 같은 식별자를 다시 보내므로
+**무한히 같은 실패**가 된다.
+
+| 변경 | 내용 |
+|---|---|
+| 안내 | `invalid-argument` 면 서버 message 를 그대로 보여준다(`목록을 새로고침한 뒤…` / `근무 시간을 골라…`) |
+| 복구 | 그 경우에만 `다시 시도` → **`닫기`**. 복구 가능한 실패(권한·지역 미설정)는 `다시 시도` 유지 |
+| 상태 | `_staleRequest` — 성공 시 해제 |
+| 증거 | `test/available_workers_error_recovery_test.dart` 6건 / `a56ad70` |
+
+빈 후보와 오류를 같은 화면으로 말하지 않는다(별도 블록) — 확인했다.
+
+## 51. O07 — 배포 준비 (실행하지 않음)
+
+### 51-1. 기준 산출물
+
+| 구분 | 식별 |
+|---|---|
+| **old CF (실제 배포 기준)** | `adb6cbb` 의 `functions/src/index.ts` — 감사 변경 전. **아직 아무것도 배포되지 않았다** |
+| **new CF** | `HEAD` = `8617663` — `functions/src/index.ts` 1파일 |
+| old/new client | 같은 커밋 범위의 `lib/` 8파일 |
+
+### 51-2. 배포 대상 전체 목록
+
+변경 hunk 가 속한 export 를 추적한 결과:
+
+| 대상 | 종류 | 변경 |
+|---|---|---|
+| `callableApplyToTO` | callable | 재활성화 시 대기 카운터 멱등 플래그 삭제 · 하루 경계 helper 통일 |
+| `callableIncrementSlotPending` | callable | 카운터별 자기-값 음수 가드 · 주기 precondition |
+| `callableRecalculateTOStats` | callable | 쓰기 모양 공유 · 슬롯별 transactional writer |
+| `callableGetAvailableWorkers` | callable | KST 하루 경계 · unresolvable 거부 · 모호 workType 거부 |
+| **`syncTOStats`** | **trigger** | 슬롯·업무 카운터 재계산(transaction) |
+
+공유 helper(`srvResolveAppWdId`·`srvBuildWdCountsUpdate`·`srvSyncSlotCountersTx`·
+`srvKstDayStartMs`·`srvOccupiesSeatToday`)는 같은 번들이므로 위 5개와 **함께** 나간다.
+**함수 2개만 배포 대상으로 고정하지 않는다.**
+
+### 51-3. 순서·중단·복구
+
+| 단계 | 내용 |
+|---|---|
+| 1 | **CF 5개 배포**(callable 4 + trigger 1). client 는 아직 그대로 |
+| 2 | 검증: 지원→취소→재지원 1주기에서 원장·`slot.pendingCount`·`totalPending`·`workDetailCounts` 4값 일치 / 후보 목록에서 같은 시간 확정자 제외 / 없는 workDetailId → 400 |
+| 3 | client 배포 |
+| 중단 기준 | `syncTOStats` 오류율 상승, `fail-closed` 경고 급증, `stale decrement 무시` 경고 급증, `callableGetAvailableWorkers` 400 비율 급증 |
+| 복구 | **CF 만 되돌리는 것은 client 배포 후 금지**(§51-4). 되돌려야 하면 client 도 함께. forward-fix 는 §52 재집계 |
+
+### 51-4. 방향별 호환 — 7차 실측 재사용
+
+| 방향 | 지원 | 확정 | 취소 | 조회 | 재시도 | 최종 수렴 | 판정 |
+|---|---|---|---|---|---|---|---|
+| CF 먼저 교체, 아직 old client | 정상 | 정상 | 정상 | 정상 | 멱등 | **일치 12/12** | **권장** |
+| new client 배포 후 **CF 만 old 로 rollback** | 정상 | 정상 | **주기 간 감소가 상위 카운터를 0 으로** | 원장 1인데 `대기 0` 표시 | 스스로 낫지 않음 | **11 FAIL** | **금지** |
+| CF new 유지, client 만 old | 정상 | 정상 | 정상 | 정상 | 멱등 | 일치 | 안전 |
+| 양쪽 rollback | 현행 | 현행 | 현행 drift | 현행 | — | 기준선 | 안전(개선 없음) |
+
+`이중 차감·음수 없음`은 **일부 불변식**일 뿐이다. 금지 판정의 근거는
+`to.totalPending`/`slot.pendingCount` 가 원장과 어긋난 값으로 **사용자에게 보이고
+다음 원장 이벤트까지 자가 복구되지 않는다`는 사실이다.
+
+**혼합 버전의 통제:** client 를 나중에 배포하므로 위험 구간은 "CF new × old client"
+하나뿐이고 그 조합은 12/12 일치다. client 배포 후에는 CF 단독 rollback 을 막는 것이
+통제 수단이다.
+
+**사용자에게 보이는 동작 변경 1건:** 후보 조회가 맞출 수 없는/모호한 식별자에
+`400` 을 준다. 구버전 client 는 일반 문구로 보여주고 `다시 시도` 를 준다
+(8차 개선은 client 쪽이므로 CF 먼저 단계에서는 적용되지 않는다). 조용히 다른
+업무의 후보를 보여주던 것보다 낫지만 **배포 노트에 적는다.**
+
+## 52. O07 — 기존 21건 보정 준비 (실행하지 않음)
+
+O06 진단을 반복하지 않는다. 7차 §43 결과를 기준으로 절차만 확정한다.
+
+| 항목 | 내용 |
+|---|---|
+| 범위 | 영향 공고 **11개** / 업무키 mismatch **21건**(`wd.pendingCount` 9 · `wd.confirmedCount` 12) |
+| 수단 | `callableRecalculateTOStats(toId)` — 7차 수정 후 슬롯 범위를 transaction 안에서 다시 센다 |
+| dry-run | `scripts/r7-dev-read-reconcile.js` 가 곧 dry-run 이다(읽기 전용). `저장 → 기대` 표를 먼저 출력하고 그 차이만 바뀌는지 확인 |
+| 기대 변경 | 과다 저장은 기대값으로 내려가고, 음수(`-6`·`-3`·`-2`)는 0 이상으로 교정된다. **원장은 건드리지 않는다** |
+| 이력 보존 | 원장(`applications`)·`statusHistory` 미변경. 옛 wdId 키는 지우지 않는다(§49-3) |
+| 멱등성 | 반복해도 같은 결과 — Emulator 확인(`r7-emu-f3-stale.js` S4, `r8-emu-to-total-race.js` T4) |
+| 실패 후 재실행 | 슬롯 단위 transaction 이므로 부분 실패 시 그 슬롯만 다시 돌면 된다. 7차 수정에서 실패 슬롯이 있으면 `internal` 로 던져 조용히 넘어가지 않는다 |
+| **실행 직전 절차** | 보정 직전에 **최신 원장을 다시 읽어** 대조표를 재산출한다. 이번 표는 2026-09-27T11:35Z 기준이다 |
+| 이번 실행 | **없음.** 공유 DEV 보정은 하지 않았다 |
+
+> **CF 반영만으로 21건이 복구된다고 표시하지 않는다.** 트리거는 그 슬롯에
+> **다음 원장 이벤트가 올 때** 다시 센다. 이벤트가 오지 않는 슬롯은 그대로 남으므로
+> 보정이 필요하다.
+>
+> 계약형(슬롯 없는) 공고 등 이번 조사 밖 범위를 전체 정상으로 확대하지 않는다.
+
+Rules 축소와 `onBusinessDeleted` 는 기존 owner 에 그대로 둔다(변경 없음).
+
+## 53. 최종 결론
+
+### A. 개발 검증 완료 (CODE + Emulator/production-widget)
+
+O01(슬롯축 닫힘·TO축 배치 근거+가드 테스트) · O02 · O03 · O03b · O04(a·b·c) · O05.
+Emulator 하네스 **6개 전부 통과**(durability 29 · matrix3 25 · invitations 19 ·
+c7 17 · compat 12 · to-total-race 11). Dart 스위트 **신규 실패 0**, 기존 실패 63건
+동일(이름 기준 비교).
+
+### B. DEVICE 로만 남은 것 (O08)
+
+최소 한 묶음: **공고 탭 → 다중 날짜 카드에서 날짜 선택 → 머리말과 업무 행 숫자
+일치 → 다른 날짜 → 원래 날짜 복귀 → 명단(일자별) 열기 → 닫기 → 탭 복귀.**
+
+### C. 별도 실행 결정 (미실행)
+
+DEV 배포(§51) · 과거 데이터 21건 보정(§52) · Rules 축소.
+
+### D. 아직 개발 검증·수정이 안 끝난 critical
+
+**없음.** O01 의 TO 축은 "미결"이 아니라 **배치 근거 + 계약 고정 테스트**로
+관리되는 상태이며, 그 한계(반례 부재 ≠ 증명)를 §47-2 에 적었다.
+
+따라서 **개발 감사 범위는 종료**한다. B·C 는 개발 완료로 세지 않으며 서로 다른
+gate 로 관리한다.
