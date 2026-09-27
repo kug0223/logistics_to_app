@@ -17412,6 +17412,99 @@ async function srvSyncToStatusSafely(
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+// [R7-6] 업무 단위 카운터 — identity 해석과 쓰기 모양을 한 곳에 둔다
+// ═══════════════════════════════════════════════════════════
+
+/** 슬롯의 업무 정의 모양 — 어느 경로에서 읽어도 같은 형태로 넘긴다. */
+type SrvSlotWdShape = {wds: Record<string, unknown>[]; isNewSchema: boolean};
+
+/** 어떤 근거로 wdId 를 정했는지 — 진단과 fail-closed 판단에 쓴다. */
+type SrvWdVia =
+  | "wdId" | "composite" | "timeTriple" | "uniqueWorkType"
+  | "ambiguous" | "unresolved" | "legacySlot";
+
+/**
+ * [R7-6] 지원서 하나를 슬롯의 업무 정의 중 하나로 맞춘다.
+ *
+ *   이 규칙은 `callableRecalculateTOStats` 안에만 있었다. 같은 판단을
+ *   `syncTOStats` 에도 두려면 복사가 아니라 **한 곳에서** 해야 한다 —
+ *   두 벌이 되면 한쪽만 고쳐지는 날이 온다.
+ *
+ *   new-schema 슬롯에서 맞출 수 없거나 여러 개에 걸리면 **first-match 로
+ *   때우지 않는다**(ambiguous/unresolved). 호출부가 그 슬롯의 업무 카운터를
+ *   아예 건드리지 않게 만드는 신호다 — 틀린 값을 쓰는 것보다 낫다.
+ */
+function srvResolveAppWdId(
+  app: {
+    wdId?: string; workDetailId?: string;
+    startTime?: string; endTime?: string; selectedWorkType?: string;
+  },
+  slotInfo: SrvSlotWdShape | undefined
+): {wdId?: string; via: SrvWdVia} {
+  if (app.wdId) return {wdId: app.wdId, via: "wdId"};
+  if (!slotInfo?.isNewSchema) return {via: "legacySlot"};
+
+  const wds = slotInfo.wds;
+  // Priority 2: composite workDetailId (workType_startTime_endTime)
+  if (app.workDetailId && app.workDetailId.split("_").length >= 3) {
+    const m = wds.find(
+      (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === app.workDetailId
+    );
+    if (m?.["wdId"]) return {wdId: m["wdId"] as string, via: "composite"};
+  }
+  // Priority 3: triple exact match
+  if (app.selectedWorkType && app.startTime && app.endTime) {
+    const m = wds.find(
+      (wd) => wd["workType"] === app.selectedWorkType &&
+              wd["startTime"] === app.startTime && wd["endTime"] === app.endTime
+    );
+    if (m?.["wdId"]) return {wdId: m["wdId"] as string, via: "timeTriple"};
+  }
+  // Priority 4: 동일 workType 정의가 **하나뿐**일 때만
+  if (app.selectedWorkType) {
+    const same = wds.filter((wd) => wd["workType"] === app.selectedWorkType);
+    if (same.length === 1 && same[0]["wdId"]) {
+      return {wdId: same[0]["wdId"] as string, via: "uniqueWorkType"};
+    }
+    if (same.length > 1) return {via: "ambiguous"};
+  }
+  return {via: "unresolved"};
+}
+
+/**
+ * [R7-6] 절대 재계산의 쓰기 모양.
+ *
+ *   **슬롯이 가진 모든 wdId 를 먼저 0 으로 깐다.** 지원자가 남지 않은 업무의
+ *   키를 건너뛰면 옛 값이 그대로 남는다 — 절대 재계산인데 결과가 절대가 아니다.
+ *   (`callableRecalculateTOStats` 가 실제로 그랬다: 취소로 인원이 0 이 되면
+ *   그 wdId 는 집계에 나타나지 않아 dot-update 대상에서 빠졌다.)
+ *
+ *   그리고 `getWorkDetailCount` 는 wdId 는 있는데 카운터 항목이 없으면
+ *   fail-closed 로 막는다. 0 으로라도 깔아 두는 것이 그 계약과도 맞다.
+ *
+ *   [failClosed] 면 빈 객체를 돌려준다 — 그 슬롯의 업무 카운터는 손대지 않는다.
+ */
+function srvBuildWdCountsUpdate(
+  slotWds: Record<string, unknown>[],
+  counts: Record<string, {pending: number; confirmed: number}>,
+  failClosed: boolean
+): Record<string, number> {
+  if (failClosed) return {};
+  const out: Record<string, number> = {};
+  for (const wd of slotWds) {
+    const id = wd["wdId"] as string | undefined;
+    if (!id) continue;
+    out[`workDetailCounts.${id}.confirmedCount`] = 0;
+    out[`workDetailCounts.${id}.pendingCount`] = 0;
+  }
+  for (const [wdId, c] of Object.entries(counts)) {
+    out[`workDetailCounts.${wdId}.confirmedCount`] = c.confirmed;
+    out[`workDetailCounts.${wdId}.pendingCount`] = c.pending;
+  }
+  return out;
+}
+
 async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const toRef = db.collection("tos").doc(toId);
 
@@ -17540,16 +17633,32 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const slotRef = toRef.collection("slots").doc(slotId);
   const slotAppsRef = appsRef.where("slotId", "==", slotId);
 
+  // [R7-6] 이 슬롯의 지원서를 **문서로** 읽는다.
+  //
+  //   업무 단위 카운터(`workDetailCounts`)를 여기서 함께 재계산하기 위해서다.
+  //   예전에는 슬롯 대기 인원을 `.count()` 로만 세고 업무 단위는 손대지 않았다.
+  //   그 결과 파생 집계 중 **그 하나만** 보정자가 없었고, 클라이언트가 원장을
+  //   바꾼 뒤 delta command 에 닿지 못하면(프로세스 종료·연결 끊김) 영구히
+  //   어긋난 채 남았다. 원장 변경이 이 트리거를 깨우므로, 여기서 세면
+  //   **호출자가 죽어도** 복구된다.
+  const SLOT_WD_FIELDS = ["status", "wdId", "workDetailId", "startTime",
+    "endTime", "selectedWorkType", "staffingReleasedAt", "type",
+    "workEndDate", "actualResignDate"] as const;
+
   const [
     seats,
     toPendingSnap,
-    slotPendingSnap,
+    slotPendingDocs,
+    slotSeatedDocs,
     slotDoc,
   ] = await Promise.all([
     // 공고 단위와 슬롯 단위를 한 번의 읽기에서 함께 만든다.
     countCommittedSeats(),
     appsRef.where("status", "in", PENDING_STATUSES).count().get(),
-    slotAppsRef.where("status", "in", PENDING_STATUSES).count().get(),
+    slotAppsRef.where("status", "in", PENDING_STATUSES)
+      .select(...SLOT_WD_FIELDS).get(),
+    slotAppsRef.where("status", "in", CONFIRMED_STATUSES)
+      .select(...SLOT_WD_FIELDS).get(),
     slotRef.get(),
   ]);
 
@@ -17561,6 +17670,54 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const required = workDetails.reduce((acc, d) => acc + (d.requiredCount ?? 0), 0);
   const newStatus = required > 0 && confirmedCount >= required ? "full" : "open";
   // [Phase 8.1E.5] workTypeCountsUpdate 제거 — workTypeCounts 더 이상 재계산하지 않음
+
+  // [R7-6] 업무 단위 카운터를 원장에서 다시 센다.
+  //
+  //   identity 해석은 재집계 command 와 **같은 함수**를 쓴다.
+  //   new-schema 슬롯에서 맞출 수 없거나 여러 개에 걸리는 지원서가 하나라도
+  //   있으면 이 슬롯의 업무 카운터는 건드리지 않는다(fail-closed) —
+  //   first-match 로 때워 다른 업무의 인원을 옮기지 않는다.
+  const rawSlotWds =
+    (slotDoc.data()?.workDetails as Record<string, unknown>[] | undefined) ?? [];
+  const slotWdInfo: SrvSlotWdShape = {
+    wds: rawSlotWds,
+    isNewSchema: rawSlotWds.some(
+      (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0),
+  };
+  const wdTally: Record<string, {pending: number; confirmed: number}> = {};
+  let wdFailClosed = false;
+  const tallyOne = (
+    d: FirebaseFirestore.QueryDocumentSnapshot, isPending: boolean
+  ): void => {
+    if (!isPending) {
+      // 좌석 판정은 공고 단위 집계와 같은 규칙을 쓴다.
+      if (d.get("staffingReleasedAt") != null) return;
+      if (!occupiesSeatToday(d)) return;
+    }
+    const r = srvResolveAppWdId({
+      wdId: d.get("wdId") as string | undefined,
+      workDetailId: d.get("workDetailId") as string | undefined,
+      startTime: d.get("startTime") as string | undefined,
+      endTime: d.get("endTime") as string | undefined,
+      selectedWorkType: d.get("selectedWorkType") as string | undefined,
+    }, slotWdInfo);
+    if (r.via === "ambiguous" || r.via === "unresolved") {
+      wdFailClosed = true;
+      return;
+    }
+    if (!r.wdId) return; // legacy 슬롯 — 업무 단위 축이 없다
+    wdTally[r.wdId] ??= {pending: 0, confirmed: 0};
+    if (isPending) wdTally[r.wdId].pending++;
+    else wdTally[r.wdId].confirmed++;
+  };
+  for (const d of slotPendingDocs.docs) tallyOne(d, true);
+  for (const d of slotSeatedDocs.docs) tallyOne(d, false);
+  const wdcUpdate = srvBuildWdCountsUpdate(rawSlotWds, wdTally, wdFailClosed);
+  if (wdFailClosed) {
+    console.warn(
+      `[syncTOStats] 슬롯 ${slotId}: new-schema unresolved/ambiguous 지원서 존재 ` +
+      "→ workDetailCounts 미갱신 (fail-closed)");
+  }
 
   const flexToData = toSnap.data();
   const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
@@ -17574,7 +17731,8 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   if (slotDoc.exists) {
     writeBatch.update(slotRef, {
       confirmedCount,
-      pendingCount: slotPendingSnap.data().count,
+      pendingCount: slotPendingDocs.size,
+      ...wdcUpdate,
     });
   }
   await writeBatch.commit();
@@ -24234,52 +24392,26 @@ export const callableRecalculateTOStats = onCall(
               // [Phase 8.1E.5] slotWorkTypeCounts 제거 — workDetailCounts canonical
               // [Phase 8.1E.2B] wdId 우선순위 기반 resolution (legacy Application 포함)
               {
+                // [R7-6] 해석은 공유 함수 하나로 — 트리거와 같은 규칙이다.
                 const slotInfo = slotWorkDetailMap[slotId];
-                const appWdId = d.wdId as string | undefined;
-                const workDetailId = d.workDetailId as string | undefined;
-                const startTime = d.startTime as string | undefined;
-                const endTime = d.endTime as string | undefined;
-                const wt = d.selectedWorkType as string | undefined;
-                let resolvedWdId: string | undefined;
-
-                if (appWdId) {
-                  // Priority 1: Application.wdId 직접 사용
-                  resolvedWdId = appWdId;
-                  diagResolvedByWdId++;
-                } else if (slotInfo?.isNewSchema) {
-                  // 신규 schema slot → priority chain (legacy app에 wdId 없을 때)
-                  // Priority 2: composite workDetailId (workType_startTime_endTime)
-                  if (!resolvedWdId && workDetailId && workDetailId.split("_").length >= 3) {
-                    const m = slotInfo.wds.find(
-                      (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === workDetailId
-                    );
-                    if (m?.["wdId"]) { resolvedWdId = m["wdId"] as string; diagResolvedByComposite++; }
-                  }
-                  // Priority 3: triple exact match (selectedWorkType + startTime + endTime)
-                  if (!resolvedWdId && wt && startTime && endTime) {
-                    const m = slotInfo.wds.find(
-                      (wd) => wd["workType"] === wt &&
-                              wd["startTime"] === startTime && wd["endTime"] === endTime
-                    );
-                    if (m?.["wdId"]) { resolvedWdId = m["wdId"] as string; diagResolvedByTimeTriple++; }
-                  }
-                  // Priority 4: unique workType (동일 workType WD 1개만 존재)
-                  if (!resolvedWdId && wt) {
-                    const same = slotInfo.wds.filter((wd) => wd["workType"] === wt);
-                    if (same.length === 1 && same[0]["wdId"]) {
-                      resolvedWdId = same[0]["wdId"] as string;
-                      diagLegacyWorkTypeOnly++;
-                    } else if (same.length > 1) {
-                      // Priority 5: AMBIGUOUS — new-schema slot, first-match 금지
-                      diagAmbiguous++;
-                      slotFailClosed.add(slotId);
-                    }
-                  }
-                  if (!resolvedWdId) {
-                    // 모든 priority chain 실패 → new-schema fail-closed
-                    diagUnresolved++;
-                    slotFailClosed.add(slotId);
-                  }
+                const res = srvResolveAppWdId({
+                  wdId: d.wdId as string | undefined,
+                  workDetailId: d.workDetailId as string | undefined,
+                  startTime: d.startTime as string | undefined,
+                  endTime: d.endTime as string | undefined,
+                  selectedWorkType: d.selectedWorkType as string | undefined,
+                }, slotInfo);
+                const resolvedWdId = res.wdId;
+                if (res.via === "wdId") diagResolvedByWdId++;
+                else if (res.via === "composite") diagResolvedByComposite++;
+                else if (res.via === "timeTriple") diagResolvedByTimeTriple++;
+                else if (res.via === "uniqueWorkType") diagLegacyWorkTypeOnly++;
+                else if (res.via === "ambiguous") {
+                  diagAmbiguous++;
+                  slotFailClosed.add(slotId);
+                } else if (res.via === "unresolved") {
+                  diagUnresolved++;
+                  slotFailClosed.add(slotId);
                 }
                 // legacy slot (isNewSchema=false): resolvedWdId = undefined → workType aggregate only
 
@@ -24324,14 +24456,15 @@ export const callableRecalculateTOStats = onCall(
           const stats = slotStats[slotDoc.id] ?? {pending: 0, confirmed: 0};
           // [Phase 8.1E.5] wtUpdate(workTypeCounts) 제거 — workDetailCounts canonical
           // [Phase 8.1E.2B] workDetailCounts — new-schema unresolved/ambiguous → fail-closed (미갱신)
-          const wdcUpdate: Record<string, number> = {};
-          if (!slotFailClosed.has(slotDoc.id)) {
-            const wdCounts = slotWorkDetailCounts[slotDoc.id] ?? {};
-            for (const [wdId, c] of Object.entries(wdCounts)) {
-              wdcUpdate[`workDetailCounts.${wdId}.confirmedCount`] = c.confirmed;
-              wdcUpdate[`workDetailCounts.${wdId}.pendingCount`] = c.pending;
-            }
-          } else {
+          // [R7-6] 쓰기 모양을 트리거와 같은 함수로 만든다.
+          //   예전에는 집계에 나타난 wdId 만 dot-update 했다. 취소로 인원이
+          //   0 이 된 업무는 집계에서 사라지므로 **옛 값이 그대로 남았다** —
+          //   절대 재계산인데 결과가 절대가 아니었다.
+          const wdcUpdate = srvBuildWdCountsUpdate(
+            (slotDoc.data()?.workDetails as Record<string, unknown>[] | undefined) ?? [],
+            slotWorkDetailCounts[slotDoc.id] ?? {},
+            slotFailClosed.has(slotDoc.id));
+          if (slotFailClosed.has(slotDoc.id)) {
             console.warn(
               `[callableRecalculateTOStats] 슬롯 ${slotDoc.id}: ` +
               `new-schema unresolved/ambiguous app 존재 → workDetailCounts 미갱신 (fail-closed)`
@@ -31898,6 +32031,36 @@ export const callableIncrementSlotPending = onCall(
       const freshApp = await tx.get(appRef);
       const flagField = delta === 1 ? "pendingIncrementedAt" : "pendingDecrementedAt";
       if (freshApp.data()?.[flagField]) return;
+
+      // [R7-6] **주기가 지난 요청을 적용하지 않는다.**
+      //
+      //   멱등 플래그는 재지원 때 지워진다 — 같은 문서가 되살아나기 때문이다.
+      //   그러면 이전 주기의 감소 요청이 늦게 도착했을 때 막을 것이 없다.
+      //   실측 시나리오: A 지원 → A 취소(원장만) → 같은 문서로 B 재지원 →
+      //   그때 A 의 감소가 도착. 원장은 `PENDING 1` 인데 대기 카운터가 0 이 된다.
+      //
+      //   그래서 **현재 상태가 그 전이의 결과와 맞는지** 본다. 감소는 대기
+      //   좌석이 사라졌을 때만 옳고, 증가는 대기 중일 때만 옳다. 새 필드나
+      //   저장 모델을 만들지 않고 이미 있는 status 로 판정한다.
+      //
+      //   B 도 이미 취소된 뒤에 A 가 도착하는 경우는 이 검사를 통과하지만,
+      //   그때는 B 의 취소가 남긴 멱등 플래그가 위에서 막는다. 순서가 뒤집혀
+      //   A 가 먼저 적용되면 A 가 플래그를 세우고 B 가 막힌다 — 어느 쪽이든
+      //   감소는 한 번이다.
+      const freshStatus = freshApp.data()?.status as string | undefined;
+      const isPendingNow = !!freshStatus && PENDING_STATUSES.includes(freshStatus);
+      if (delta === -1 && isPendingNow) {
+        console.warn(
+          `[callableIncrementSlotPending] stale decrement 무시 — app=${applicationId} ` +
+          `status=${freshStatus} (대기 좌석이 살아 있다)`);
+        return;
+      }
+      if (delta === 1 && !isPendingNow) {
+        console.warn(
+          `[callableIncrementSlotPending] stale increment 무시 — app=${applicationId} ` +
+          `status=${freshStatus ?? "(없음)"} (대기 상태가 아니다)`);
+        return;
+      }
 
       const toRef = db.collection("tos").doc(toId);
       // [M-1-FIX] totalPending 업데이트를 슬롯 zero-check 이후로 이동 — zero-protection 발동 시 음수 방지 보장
