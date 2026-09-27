@@ -1717,6 +1717,48 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     );
   }
 
+  /// [R7-P1-3] 이 그룹에 **서로 다른 관계**가 섞여 있는가.
+  ///
+  ///   그룹 키의 조각은 `workDetailId` 이고, 그것이 없는 구 문서는 빈 문자열이
+  ///   되어 같은 슬롯의 다른 업무가 한 그룹으로 합쳐진다. 그때 헤더가 첫 관계의
+  ///   업무명만 말하면 나머지 행이 그 업무인 것처럼 읽히고, 행끼리도 구별되지
+  ///   않는다(미출근 행은 시간 표시가 없다).
+  ///   섞였는지는 **그 그룹이 실제로 들고 있는 값**으로만 판단한다.
+  bool _isMixedRelationGroup(List<ApplicationModel> workers) {
+    if (workers.length < 2) return false;
+    final types = workers
+        .map((a) => a.selectedWorkType.trim())
+        .where((t) => t.isNotEmpty)
+        .toSet();
+    final ranges = workers.map(_scheduledRangeOf).where((r) => r.isNotEmpty).toSet();
+    return types.length > 1 || ranges.length > 1;
+  }
+
+  /// [R7-P1-3] 그 관계의 **예정 근무시간** — 모르면 빈 문자열.
+  ///
+  ///   `WorkDetailHelper.effectiveStart/End` 는 값이 없을 때 '09:00'·'18:00' 을
+  ///   돌려준다(입력 기본값 용도). 여기서는 사실 표시라서 그 기본값을 쓰지 않는다 —
+  ///   모르는 것을 시간처럼 보여주지 않는다.
+  String _scheduledRangeOf(ApplicationModel app) {
+    final resolved = WorkDetailHelper.resolve(app, _workDetailTimeMap);
+    final rs = (resolved?['startTime'] as String?)?.trim() ?? '';
+    final re = (resolved?['endTime'] as String?)?.trim() ?? '';
+    final st = rs.isNotEmpty ? rs : app.startTime.trim();
+    final en = re.isNotEmpty ? re : app.endTime.trim();
+    if (st.isEmpty || en.isEmpty) return '';
+    return '$st ~ $en';
+  }
+
+  /// [R7-P1-3] 혼합 그룹의 행에 붙이는 문맥 — 업무명 · 예정 시간.
+  ///   없는 값은 추정하지 않고 모른다고 적는다.
+  String _relationContextOf(ApplicationModel app) {
+    final type = app.selectedWorkType.trim();
+    final range = _scheduledRangeOf(app);
+    final typeLabel = type.isNotEmpty ? type : '업무 정보 없음';
+    final rangeLabel = range.isNotEmpty ? range : '예정 시간 정보 없음';
+    return '$typeLabel · $rangeLabel';
+  }
+
   /// 업무 유형 섹션
   Widget _buildWorkTypeSection(
     ThemeData theme,
@@ -1793,6 +1835,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }
     }
     
+    // [R7-P1-3] 혼합 그룹이면 제목·시간을 첫 관계로 말하지 않는다.
+    //   개수는 그 그룹이 들고 있는 값에서 센다 — 없는 정보를 만들지 않는다.
+    final isMixedGroup = _isMixedRelationGroup(workers);
+    final mixedTypeCount = workers
+        .map((a) => a.selectedWorkType.trim())
+        .where((t) => t.isNotEmpty)
+        .toSet()
+        .length;
+    final mixedRangeCount =
+        workers.map(_scheduledRangeOf).where((r) => r.isNotEmpty).toSet().length;
+    final headerTitle =
+        (isMixedGroup && mixedTypeCount > 1) ? '여러 업무 $mixedTypeCount종' : workType;
+    final headerTime = (isMixedGroup && mixedRangeCount > 1)
+        ? '시간 $mixedRangeCount종 — 행에서 확인'
+        : timeStr;
+
     // 업무유형 정보 가져오기
     final workTypeInfo = _workTypeMap[workType];
     final iconColor = workTypeInfo?.color != null 
@@ -1888,14 +1946,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            workType,
+                            headerTitle,
                             style: ResponsiveHelper.subtitleStyle(context).copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          if (timeStr.isNotEmpty)
+                          if (headerTime.isNotEmpty)
                             Text(
-                              timeStr,
+                              headerTime,
                               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                             ),
                         ],
@@ -1983,7 +2041,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           Padding(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
             child: Column(
-              children: sortedWorkers.map((app) => _buildWorkerCard(app)).toList(),
+              children: sortedWorkers
+                  .map((app) =>
+                      _buildWorkerCard(app, showRelationContext: isMixedGroup))
+                  .toList(),
             ),
           ),
         ],
@@ -2014,7 +2075,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   /// 근무자 카드
-  Widget _buildWorkerCard(ApplicationModel app) {
+  Widget _buildWorkerCard(ApplicationModel app,
+      {bool showRelationContext = false}) {
     final theme = Theme.of(context);
     final statusInfo = _getAttendanceStatus(app);
     final isSelected = _selectedIds.contains(app.id);
@@ -2150,6 +2212,32 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           ],
                         ],
                       ),
+
+                      // [R7-P1-3] Row 1.5: 관계 문맥 — 혼합 그룹에서만.
+                      //   미출근 행은 아래 '시간 정보' 가 비어 있어서, 같은 사람의
+                      //   다른 관계와 구별할 단서가 없었다. 그 그룹에서만 붙인다.
+                      if (showRelationContext)
+                        Padding(
+                          padding: EdgeInsets.only(
+                              top: ResponsiveHelper.spacing(context, 3)),
+                          child: Row(
+                            children: [
+                              Icon(Icons.work_outline,
+                                  size: ResponsiveHelper.iconSize(context, 13),
+                                  color: AppColors.grey500),
+                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                              Expanded(
+                                child: Text(
+                                  _relationContextOf(app),
+                                  style: ResponsiveHelper.smallStyle(context,
+                                      color: AppColors.grey600),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
 
                       // Row 2: 시간 정보
                       Builder(builder: (context) {
@@ -4316,7 +4404,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                                       SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
                                       Expanded(
                                         child: Text(
-                                          firstApp.selectedWorkType,
+                                          // [R7-P1-3] 혼합 파트를 첫 업무로 말하지 않는다.
+                                          _isMixedRelationGroup(workers)
+                                              ? '여러 업무 ${workers.map((a) => a.selectedWorkType.trim()).where((t) => t.isNotEmpty).toSet().length}종'
+                                              : firstApp.selectedWorkType,
                                           style: ResponsiveHelper.bodyStyle(ctx)
                                               .copyWith(fontWeight: FontWeight.bold),
                                         ),

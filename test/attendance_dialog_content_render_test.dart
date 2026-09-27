@@ -12,6 +12,7 @@ import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/ui/day_staffing_row.dart';
 import 'package:ALfit/providers/user_provider.dart';
+import 'package:ALfit/widgets/common/app_checkbox.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/screens/business_admin/dialogs/attendance_reads.dart';
 import 'package:ALfit/screens/business_admin/dialogs/attendance_status_dialog.dart';
@@ -275,6 +276,8 @@ void main() {
     expect(find.textContaining('홀서빙 및 매장 정리'), findsWidgets);
     //   a1·a3 둘 다 출근 기록이 있다 → 그 그룹은 2/2.
     expect(find.text('출근 2/2'), findsOneWidget);
+    // 동질 그룹(같은 업무·시간)은 기존 표현 그대로 — 혼합 문구가 끼지 않는다.
+    expect(find.textContaining('여러 업무'), findsNothing);
     // 두 번째 업무 그룹은 아래에 있다 — 스크롤해서 같은 사람이 또 나오는지 본다.
     await tester.drag(find.text('상태순').first, const Offset(0, -400));
     await tester.pump(const Duration(milliseconds: 300));
@@ -326,12 +329,64 @@ void main() {
     // 출근 전(미출근)은 '정상' 탭에 있다 — 확인필요가 아니다.
     await _openTab(tester, '정상');
     expect(find.textContaining('한사람두관계'), findsNWidgets(2));
-    // 그룹 헤더는 그 그룹 **첫 관계**의 업무명·시간을 쓴다(현재 구현).
-    //   구 문서가 합쳐진 경우 두 번째 업무명은 헤더에 나오지 않는다 —
-    //   숫자 단위는 이 수정으로 맞았고, 그 표기 한계는 문서에 남겼다.
-    expect(find.textContaining('홀서빙'), findsWidgets);
+    // [R7-P1-3] 혼합 그룹 헤더는 **첫 업무로 대표하지 않는다**.
+    expect(find.text('여러 업무 2종'), findsOneWidget);
+    expect(find.textContaining('시간 2종'), findsOneWidget);
+    // 두 관계를 행에서 각각 식별할 수 있다 — 업무명 · 예정 시간.
+    expect(find.text('홀서빙 · 09:00 ~ 13:00'), findsOneWidget);
+    expect(find.text('주방 보조 · 14:00 ~ 18:00'), findsOneWidget);
 
     // 그룹 헤더의 분자/분모는 같은 단위(관계)다 — 아직 아무도 출근하지 않았다.
     expect(find.text('출근 0/2'), findsOneWidget);
+  });
+
+  testWidgets('ACR-6 혼합 그룹 문맥이 좁은 폭·큰 글자에서도 가려지지 않는다',
+      (tester) async {
+    await _pump(tester, size: const Size(320, 640), reads: _legacyReads(), textScale: 1.3);
+    await _openTab(tester, '정상');
+    expect(tester.takeException(), isNull);
+
+    // 두 관계의 문맥이 각각 보인다(줄바꿈/축약이 필수 정보를 지우지 않는다).
+    expect(find.text('홀서빙 · 09:00 ~ 13:00'), findsOneWidget);
+    expect(find.text('주방 보조 · 14:00 ~ 18:00'), findsOneWidget);
+    // 행동 버튼에 닿는다.
+    expect(find.text('출근'), findsWidgets);
+    // 마지막 행까지 스크롤된다.
+    await tester.drag(find.text('상태순').first, const Offset(0, -260));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ACR-7 개별 선택이 그 관계(applicationId)에 붙는다', (tester) async {
+    await _pump(tester, size: const Size(390, 780), reads: _legacyReads());
+    await _openTab(tester, '정상');
+
+    // L2(주방 보조) 행의 체크박스만 누른다 — 문맥 줄로 그 행을 특정한다.
+    //   카드 탭은 상세 열기이고, 선택은 별도 GestureDetector 다(production 구조).
+    final l2Row = find.ancestor(
+      of: find.text('주방 보조 · 14:00 ~ 18:00'),
+      matching: find.byType(Material),
+    );
+    expect(l2Row, findsWidgets);
+    final l2Check = find.descendant(of: l2Row.first, matching: find.byType(AppCheckbox));
+    expect(l2Check, findsOneWidget);
+    await tester.tap(l2Check);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.takeException(), isNull);
+
+    // 선택은 **그 관계 하나**에만 붙는다 — 같은 사람의 다른 관계까지 묶이지 않는다.
+    final checked = tester
+        .widgetList<AppCheckbox>(find.byType(AppCheckbox))
+        .where((c) => c.value)
+        .length;
+    expect(checked, 1);
+    // 그리고 그 행은 주방 보조 관계다.
+    final selectedRow = find.ancestor(
+      of: find.text('주방 보조 · 14:00 ~ 18:00'),
+      matching: find.byType(Material),
+    );
+    final selectedCheck = tester.widget<AppCheckbox>(
+        find.descendant(of: selectedRow.first, matching: find.byType(AppCheckbox)));
+    expect(selectedCheck.value, isTrue);
   });
 }
