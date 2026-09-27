@@ -415,3 +415,186 @@ production 두 화면이 쓰게 했고(`day`·`work`), 실제 렌더로 검증�
 분리하면 된다(DEVICE.1E.2A 의 `CapacitySummaryText` 와 같은 크기의 분리).
 그 단위라면 긴 이름·다중 배지·큰 금액을 viewport × 배율 matrix 로 실제 렌더할
 수 있다. **이번에는 제안만 남긴다.**
+
+---
+
+# R7-P1-3 — 관리자 오늘·근태 화면군 (2026-09-28)
+
+기준 `574cccd`. branch `main`, tracked 변경 없음(패치 전), 사용자 소유 untracked 8건 보존.
+Staffing O01~O06 개발 검증과 DEV 6함수 배포(VERIFIED)는 유지한다.
+**기존 11TO/21 업무카운터 보정은 DEFERRED, Staffing O08 은 PENDING** — 이 절이 그것을
+끝냈다고 적지 않는다. 알려진 DEV 불일치를 새 결함으로 다시 세지 않았다.
+
+## P1-3.1 검토한 surface 와 도달 경로
+
+| 화면/진입 | 대상(사업장·날짜·사람) | source | 계산 owner | loading/empty/error/권한 | action |
+|---|---|---|---|---|---|
+| **`AttendanceStatusDialog`** ("당일명단") ← 홈 `오늘 확인 필요` | `businessIds`(다중 시 선택 드롭다운) · `date` 1일 · 그날 확정 지원서 | `_getConfirmedWorkersForDate` + `_getAttendanceRecords` + `getUsersBatch(purposeWorkerDirectory)` + `getContractStatusBatch` + `getDayStaffingDetail`(모집단위 종료) | `AttendanceStatusHelper` · `AttendanceReviewHelper` · `WorkDetailTimeService` · `AttendanceRoundingHelper` | `_isLoading` / 성공 0건만 빈 상태 / `_loadError` 별도 / `canManageWorkers`·`canManageWage` | 출근·퇴근·시간정정·노쇼·노쇼해제·근태확인·확인취소·좌석반납(대체충원)·명단 PDF·급여확정 진입 |
+| 같은 화면 ← **미처리 큐**(`unclosed_action_queue_screen`) | 그 큐 행의 `business × workDate` | 위와 같음 | 위와 같음 | 위와 같음 | 위와 같음 |
+| 같은 화면 ← **근무 탭**(`workforce_operational_view`) ×2 (일괄 / 개인 focus) | `_selectedDay` · `initialApplicationId` | 위와 같음 | 위와 같음 | 위와 같음 | 위와 같음 |
+| **미처리 큐 화면** ← 홈 | 사업장×근무일 미마감 목록 | `UnclosedActionQueueService`(CF) | 화면 내 `unclosedDaysAgo`/`formatUnclosedWorkDate` | 자체 | 근태 화면 열기 |
+
+연결한 기존 계약(재검증하지 않음): 좌석·UNKNOWN·집계 fence·identity 는 Staffing(P1-2/O01~O05),
+`ACTION_REQUIRED` 정의는 `admin_home_attendance_actionability_test`,
+근무일 판정 parity 는 `unclosed_effective_start_parity_test`,
+scoped refresh 는 `attendance_scoped_refresh_contract_test`,
+오늘/어제 폴백은 `attendance_today_truth_contract_test`.
+홈 요약·타이포는 P1-4, 급여 전체는 P1-5, 교차는 P1-7 유지.
+
+## P1-3.2 고정 검토 목록과 판정
+
+| # | 항목 | 판정 | 근거 |
+|---|---|---|---|
+| 1 | **화면이 쓰는 날짜의 계약** | **수정** | 아래 §P1-3.3 |
+| 2 | **집계 단위(건수 vs 인원수)** | **수정** | 아래 §P1-3.4 |
+| 3 | 조회 실패를 "근무자 0명"으로 말하지 않음 | 유지 | `_loadError` 분리 + 빈 상태 주석("성공했고 결과가 0명일 때만"), 실패 시 하단 바(명단 출력·급여)도 닫힘 — `[R5-ERROR-PARTIAL-R0 §16]`·`[R5-R0 §18]` |
+| 4 | 모집단위 종료 여부 모름을 "종료됨"으로 바꾸지 않음 | 유지 | `closedByUnit` 실패 시 `null` 유지, 서버가 최종 권위 |
+| 5 | 늦은 응답이 최신 화면을 덮지 않음 | 유지 | `_attRefreshSeq`(R8-P1C) |
+| 6 | 중복 입력(연타) 방어 | 유지 | 모든 mutation 진입에 `if (_isLoading) return;` — 8곳 |
+| 7 | 권한별 action 노출 ↔ 서버 재검증 | 유지 | `canManageWorkers`(조작 전체)·`canManageWage`(마감취소), CF 에서 권한 재검증 |
+| 8 | 예정 근무 vs 실제 기록 구분 | 유지 | `WorkDetailHelper.effectiveStart`(예정) ↔ `attendance.checkInAt`(실제)를 분리해 읽고, 4탭(확인필요·정상·확인완료·처리완료)이 그 구분을 표현 |
+| 9 | 한 사람이 여러 업무일 때 행 분리 | 유지 | 그룹 키 `businessId\|toId\|slotId\|wdId`, 행은 지원서 단위 — 근무 건마다 따로 출퇴근이 필요하므로 맞다 |
+| 10 | RENDER(제약 폭) | **부분 검증** | §P1-3.5 — 에러 경로 360/320dp 통과, **행·액션 렌더는 미검증** |
+| 11 | 근무 탭 자체의 day 창 | **기존 owner 이관(미수정)** | §P1-3.6 |
+| 12 | radius 혼재(V4) | 미수정(POLISH 유지) | 이 파일 `4,6,8,10,12,14,20,24` — 의미·행동 무해. 근거 없는 일괄 변경을 하지 않았다 |
+| 13 | 근태 → 급여 경계 | 경계만 확인 | 급여 확정은 `wage_confirm_dialog` 로 넘기고 이 화면은 근태 사실만 쓴다. 급여 전체는 P1-5 |
+| 14 | scheduler 리컨펌 인덱스 부재 | 별건 유지 | 이 화면군과 직접 연결되지 않는다(해당 owner) |
+
+## P1-3.3 [수정] 화면이 쓰는 날짜 — 호출부마다 다른 달력이었다
+
+**사용자 영향.** KST 가 아닌 기기에서 이 화면을 **미처리 큐**나 **근무 탭**으로 열면
+그 날짜가 아니라 **다른 KST 날짜**의 명단이 조회되고, 그 상태에서 누른 출근·퇴근·노쇼가
+**다른 날짜의 근태 문서**로 기록될 수 있었다.
+
+**root cause.** 이 화면은 받은 `date` 를 **instant** 로 쓴다 —
+`FormatHelper.kstDayRange`(조회 창 3곳), `toKstDate`(비교 키), 그리고 서버로 보내는
+`workDateMs`. 그런데 호출부가 넘기는 값이 두 종류였다.
+
+| 호출부 | 넘기는 값 | 성격 |
+|---|---|---|
+| 홈 `_openTodayAttendanceDialog` | `FormatHelper.toKstDate(DateTime.now())` | `DateTime.utc(y,m,d)` — KST 달력일 ✔ |
+| 미처리 큐 `_openAttendance` | `item.workDate` | **기기 local 자정** (그 화면 주석이 "instant 가 아니다"라고 직접 적어 두었다) |
+| 근무 탭 ×2 | `_selectedDay` | **기기 local 자정**(`DateTime(y,m,d)`) |
+
+`kstDayRange` 문서가 이 경우를 직접 경고한다: *"`DateTime(d.year, d.month, d.day)` 로 만든
+기기 local 자정을 쓰면 KST가 아닌 기기에서 창이 통째로 어긋난다."*
+서버는 한 걸음 더 간다 — `callableBatchSetNoShow` 가 `workDateMs` 를 KST 로 바꿔
+**근태 문서 id**(`${applicationId}_${dateStr}`)를 만든다. 즉 표시가 아니라 **데이터**다.
+
+**owner·수정.** 화면 하나로 모았다(호출부 4곳을 각각 고치면 5번째 호출부가 같은 실수를 한다).
+들어온 값의 **달력 성분**을 KST 달력일로 못박아 한 번만 정규화하고, 그 뒤로는 그것만 쓴다.
+
+- `_kstDay = DateTime.utc(widget.date.year, widget.date.month, widget.date.day)` 추가
+- `widget.date` 37곳 → `_kstDay`
+- 과거/미래 판정의 기준이던 **기기 local 오늘 자정** 3곳 → `_todayKst`(= `toKstDate(now)`)
+- 시간 계산 helper 들은 모두 성분 기반(`DateTime(workDate.year, …)`)이라 **KST 기기에서의
+  동작은 그대로다** — 바뀌는 것은 instant 가 의미를 갖는 지점뿐이다
+
+**수정 전/후 실행 근거** — `test/attendance_dialog_day_key_contract_test.dart` 10건 통과:
+
+| 사례 | 수치 |
+|---|---|
+| UTC+13 기기가 만든 `DateTime(2026,9,28)` | KST 로 **2026-09-27** (`toKstDateKey`) |
+| 그 값의 조회 창 | 정상 창보다 **정확히 하루 이르다**. 관리자가 고른 9/28 의 KST 자정이 그 창의 **끝** — 그 날 근무가 빠진다 |
+| 정규화 키 `DateTime.utc(2026,9,28)` | KST **2026-09-28**, 창도 그 하루 |
+| KST·UTC−7 기기 | 기존 값도 같은 날을 고른다 → **회귀 범위: 한국 기기는 동작 불변** |
+| 서버 문서 id 기준 | 같은 두 값이 `2026-09-27` / `2026-09-28` 로 갈린다 |
+
+기존 계약 테스트 `attendance_business_date_contract_test` 의 앵커는 새 표현으로 다시 썼다
+(`kstDayRange(widget.date)` → `kstDayRange(_kstDay)` + 정규화 지점 존재 + 원본 재사용 0).
+**기준을 낮추지 않았다** — "기기 local 자정 금지"는 그대로 두고 조건을 하나 늘렸다.
+
+## P1-3.4 [수정] 숫자가 무엇을 세는지 — "명"이 아니라 "건"이었다
+
+**사용자 영향.** 한 사람이 같은 날 겹치지 않는 두 업무를 확정받을 수 있다(지원 게이트는
+**겹치는** 확정만 막는다). 그때 `미출근 2명`은 실제로 **1명·2건**이다. 관리자가 인원을
+잘못 읽고 대체 인력을 과하게 부른다.
+
+**root cause.** 이 화면의 모든 집계가 `List<ApplicationModel>` 위에서 돈다
+(`_calculateStats`, 탭별 목록, 선택 목록) — 단위는 근무 건인데 라벨이 전부 `명` 이었다.
+
+**수정.** 업무 그룹을 **넘는** 수치 10곳을 `건` 으로 바꿨다(통계 셀·칩·미출근/지각/퇴근미기록·
+선택 바·근태확인/취소 버튼·처리현황·확인완료). 이웃 화면의 canonical 과 같은 표기다
+(`DayApplicantsDialog`: `지원 N건 · 확정 N건`).
+
+**업무 그룹 헤더의 `명` 은 그대로 두었다** — 그룹 키가 `…|slotId|wdId` 까지 좁혀져 있고
+지원서 docId 가 `{toId}_{slotId}_{wdId}_{uid}` 로 uid 당 유일하므로(CLAUDE.md complexId 계약)
+그룹 안에서 한 사람은 한 번만 나온다. 즉 그 자리에서는 건수 = 인원수다.
+
+증거: `test/attendance_count_unit_contract_test.dart` 4건 통과(U-3 은 UI 문구에 남은 `명` 이
+그룹 헤더 하나임을 세고, U-4 는 그 예외의 근거인 그룹 키를 고정한다).
+
+## P1-3.5 RENDER — 범위를 밝힌 부분 검증
+
+`test/attendance_dialog_render_test.dart` 3건 통과. **production `AttendanceStatusDialog`** 를
+`tester.view` 로 폭을 제약해 띄웠다(MediaQuery 만 바꾼 검사가 아니다).
+
+| 확인한 것 | 결과 |
+|---|---|
+| 360×640 에서 예외·overflow 없음 | ✔ |
+| 320×568(좁은 폭)에서도 없음 | ✔ |
+| 실패를 "확정된 근무자가 없습니다"로 말하지 않음 | ✔ (그 문구가 나오지 않는다) |
+| 명단을 모르는 상태에서 `명단 출력` 을 열지 않음 | ✔ |
+| 머리말 날짜가 넘어온 값의 성분대로 찍힘(기기 local 자정 입력에서도 `09월 28일`) | ✔ |
+
+**이 테스트가 그린 것은 조회 실패 경로다.** 이 화면은 읽기를 `FirestoreService()` 로 직접
+하고 주입 경계가 없어서, 백엔드 없는 환경에서는 `_loadError` 상태가 된다.
+**production 행·액션(탭 4종·그룹 카드·긴 이름/업무명·다중 배지·큰 글자) 렌더는 미검증이다.**
+다음 조치는 8차의 `DayApplicantsReads` 와 같은 읽기 경계를 이 화면에도 두는 것이다
+(읽기 5종: 확정자·근태·사용자·업무시간·계약상태 + 모집단위 종료). 그 작업은 이 절에서 하지 않았다.
+
+대비·터치영역은 기존 P4 owner 기록을 연결만 한다 — **이번에 측정하지 않았고 PASS 로 쓰지 않는다.**
+
+## P1-3.6 [이관] 근무 탭 자체의 day 창 — 같은 root cause, 이번에 고치지 않음
+
+`workforce_operational_view` 는 자기 조회에도 같은 값을 쓴다.
+
+| 지점 | 내용 |
+|---|---|
+| `_loadDayData(_selectedDay)` → `getConfirmedWorkersByDateAndBusinessOrThrow(date:)` | 그 안에서 `FormatHelper.kstDayRange(date)` — **기기 local 자정 입력** → 비KST 기기에서 하루 어긋난 명단 |
+| `_today()` / `_selectDay` | `DateTime(y,m,d)` 로 만든다 |
+| 마커 점 판정(`dates.contains(FormatHelper.toKstDate(day))`, 2곳) | 달력 위젯이 준 local 자정을 `toKstDate` 에 넣는다 → 비KST 기기에서 점이 다른 날에 찍힌다 |
+
+다이얼로그 경계는 이번 정규화로 막혔다(그 화면이 무엇을 넘기든 KST 달력일로 해석한다).
+남은 것은 **그 화면 자신의 조회·마커**다. 최소 조치는 같은 규칙 한 줄 —
+`_selectedDay`/`_today()` 를 `DateTime.utc(y,m,d)` 기준으로 통일하고 마커 판정도 그 값을 쓰는 것.
+그 화면은 P1-2(staffing) 소유이고 자체 회귀 묶음이 따로 있어, **승인 없이 건드리지 않았다.**
+`UnclosedQueueItem.workDate` 는 그대로 둔다 — 그 화면의 표시 계약(성분 기반)은 정상이고,
+경계 문제는 위 정규화로 해결됐다.
+
+## P1-3.7 변경 파일 · 회귀
+
+| 파일 | 변경 |
+|---|---|
+| `lib/screens/business_admin/dialogs/attendance_status_dialog.dart` | 날짜 정규화(`_kstDay`·`_todayKst`) + 단위 10곳 `명→건` |
+| `test/attendance_dialog_day_key_contract_test.dart` | 신규 10건(A 실행 5 · B 소스 5) |
+| `test/attendance_count_unit_contract_test.dart` | 신규 4건 |
+| `test/attendance_dialog_render_test.dart` | 신규 3건(production 위젯·제약 폭) |
+| `test/attendance_business_date_contract_test.dart` | 앵커 재작성(기준 유지 + 조건 추가) |
+
+`flutter analyze` 대상 파일 No issues. 이 화면을 참조하는 테스트 **20파일 + 신규 3파일**을
+같은 환경에서 돌려 이름 단위로 비교했다 — **새 실패 0**,
+남은 2건은 9차에 기록한 기준선의 기존 실패(`noshow_replacement_cross_slice_contract`)다.
+
+## P1-3.8 상태와 다음
+
+| 구분 | 상태 |
+|---|---|
+| P1-3 CODE | **수정 2건 완료 · 유지 8건 · 이관 1건** |
+| P1-3 RENDER | **부분** — 에러 경로/제약 폭 통과, 행·액션 렌더 미검증(읽기 경계 도입 후) |
+| P1-3 DEVICE | **PENDING** — 아래 최소 확인안 |
+| Staffing 보정(11TO/21건) | **DEFERRED**(사용자 결정) |
+| Staffing O08 | **PENDING** |
+| P1-4 / P1-5 / P1-6 / P1-7 / P2 | 각 owner 유지 — 이번에 시작하지 않았다 |
+
+### 바뀐 화면에 한정한 최소 확인안 (기기)
+
+이번 변경은 **한국 기기에서 동작이 같다**(회귀 범위 A-3). 그래서 기기 확인은 두 가지만이다.
+
+1. 홈 `오늘 확인 필요` → 당일명단: 머리말 날짜가 오늘이고, 탭 숫자 라벨이 `건` 으로 보인다.
+   업무 그룹 헤더만 `명` 이다.
+2. 근무 탭에서 **과거 날짜** 하나를 골라 당일명단 열기: 머리말 날짜 = 고른 날짜,
+   그 날의 명단이 뜬다(빈 날이면 "확정된 근무자가 없습니다", 조회 실패면 그 문구가 **아니라**
+   실패 안내가 뜬다).
+
+기존에 이미 확인한 같은 화면의 다른 항목은 다시 요청하지 않는다.

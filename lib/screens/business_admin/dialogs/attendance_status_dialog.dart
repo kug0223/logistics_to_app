@@ -183,10 +183,34 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   late final String _dateStr;
 
+  /// [R7-P1-3] 이 화면이 다루는 **KST 달력일** 하나.
+  ///
+  ///   호출부가 넘기는 `date` 는 두 종류였다.
+  ///     · 홈: `FormatHelper.toKstDate(DateTime.now())` → `DateTime.utc(y,m,d)`
+  ///     · 미처리 큐 / 근무 탭: `DateTime(y,m,d)` — **기기 local 자정**
+  ///
+  ///   그런데 이 화면은 그 값을 **instant** 로 쓴다 — `FormatHelper.kstDayRange`,
+  ///   `toKstDate`, 그리고 서버로 보내는 `workDateMs` 다. `kstDayRange` 문서가
+  ///   그 경우를 직접 경고한다: "`DateTime(d.year, d.month, d.day)` 로 만든 기기
+  ///   local 자정을 쓰면 KST가 아닌 기기에서 창이 통째로 어긋난다."
+  ///   `workDateMs` 는 더 나아가 서버에서 **근태 문서 id** 를 정한다
+  ///   (`callableBatchSetNoShow`: `${applicationId}_${KST(workDateMs)}`) —
+  ///   즉 기기 시간대에 따라 다른 날짜의 기록을 만들 수 있었다.
+  ///
+  ///   그래서 들어온 값의 **달력 성분**을 KST 달력일로 못박아 한 번만 정규화하고,
+  ///   그 뒤로는 이것만 쓴다. 시간 계산 helper 들은 모두 성분 기반
+  ///   (`DateTime(workDate.year, …)`)이라 KST 기기에서의 동작은 그대로다.
+  late final DateTime _kstDay =
+      DateTime.utc(widget.date.year, widget.date.month, widget.date.day);
+
+  /// [R7-P1-3] 과거/미래 판정의 기준 — `_kstDay` 와 **같은 달력**이어야 한다.
+  ///   기기 local 자정과 섞으면 시간대 offset 만큼 어긋난 비교가 된다.
+  DateTime get _todayKst => FormatHelper.toKstDate(DateTime.now());
+
   @override
   void initState() {
     super.initState();
-    _dateStr = DateFormat('MM월 dd일 (E)', 'ko_KR').format(widget.date);
+    _dateStr = DateFormat('MM월 dd일 (E)', 'ko_KR').format(_kstDay);
     _tabController = TabController(length: 4, vsync: this);
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
@@ -342,7 +366,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       //   (서버가 최종 권위이고, 모르는 채로 눌러도 사유와 함께 거절된다.)
       Map<String, bool>? closedByUnit;
       try {
-        final (dayStart, _) = FormatHelper.kstDayRange(widget.date);
+        final (dayStart, _) = FormatHelper.kstDayRange(_kstDay);
         final rows = await _firestoreService.getDayStaffingDetail(
           businessId: _selectedBusinessId ?? '',
           dayStartMs: dayStart.millisecondsSinceEpoch,
@@ -408,9 +432,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     //   두 달력이 섞인다 — 비KST 기기에서 창이 통째로 밀려 그 날 확정 근무자가
     //   0명으로 보이거나 하루 어긋난 사람이 잡힌다. 같은 날짜에 대해 창과
     //   비교 키는 반드시 같은 달력에서 나와야 한다.
-    final (dateStart, dateEnd) = FormatHelper.kstDayRange(widget.date);
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(_kstDay);
     // 날짜 비교용 — startDateOnly/endDateOnly와 동일한 UTC-midnight(KST) 포맷
-    final dateKeyKst = FormatHelper.toKstDate(widget.date);
+    final dateKeyKst = FormatHelper.toKstDate(_kstDay);
     
     final result = <ApplicationModel>[];
     final seenIds = <String>{};  // 단기/장기 중복 entry 방어
@@ -531,7 +555,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     // [PREDEVICE-ATTENDANCE-KST] 근태 조회 창도 KST 영업일 기준으로 만든다.
     //   서버는 workDate를 KST 자정 instant로 저장하므로 기기 로컬 자정으로
     //   창을 만들면 비KST 기기에서 하루가 밀린다.
-    final (dateStart, dateEnd) = FormatHelper.kstDayRange(widget.date);
+    final (dateStart, dateEnd) = FormatHelper.kstDayRange(_kstDay);
     // [BUG-수정] 전날 야간 단기근무자 포함: workDate 조회 범위를 전날부터 시작
     final queryRangeStart = dateStart.subtract(const Duration(days: 1));
 
@@ -764,8 +788,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         isNextDay: AttendanceStatusHelper.isNextDayCheckIn(attendance.checkIn!, expectedStart),
       );
       // 과거 날짜이거나 당일 퇴근 예정 시간 초과 → 퇴근 미체크 경고
-      final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-      final isPastDay = widget.date.isBefore(today);
+      final today = _todayKst;
+      final isPastDay = _kstDay.isBefore(today);
       bool isOverdue = false;
       if (!isPastDay && expectedEnd.isNotEmpty) {
         final endParts = expectedEnd.split(':');
@@ -773,7 +797,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           final endH = int.tryParse(endParts[0]);
           final endM = int.tryParse(endParts[1]);
           if (endH != null && endM != null) {
-            final workDay = widget.date;
+            final workDay = _kstDay;
             var endAt = DateTime(workDay.year, workDay.month, workDay.day, endH, endM);
             final startParts = expectedStart.split(':');
             final startH = int.tryParse(startParts.first) ?? 0;
@@ -901,7 +925,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final isAdminConfirmed = attendance?.adminConfirmed == true;
       final needsReview = AttendanceReviewHelper.requiresReviewNow(
         now: now,
-        workDate: widget.date,
+        workDate: _kstDay,
         scheduledStart: WorkDetailHelper.effectiveStart(app, _workDetailTimeMap),
         scheduledEnd:   WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap),
         attendance: attendance,
@@ -1230,7 +1254,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '$count명',
+          '$count건',
           style: ResponsiveHelper.smallStyle(context).copyWith(
             fontWeight: FontWeight.bold,
             color: color,
@@ -1252,7 +1276,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       children: [
         Container(width: 6, height: 6, decoration: BoxDecoration(color: c.color, shape: BoxShape.circle)),
         const SizedBox(width: 3),
-        Text('${c.label} ${c.count}명', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
+        Text('${c.label} ${c.count}건', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
       ],
     );
   }
@@ -1348,7 +1372,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               // 노쇼 칩 (검토 탭) — canManageWorkers 없는 서브어드민 숨김
               // [5A.1] 미래 날짜 노쇼 차단 — server future guard defense-in-depth
               if (noShowTargets.isNotEmpty && canManage &&
-                  !widget.date.isAfter(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)))
+                  !_kstDay.isAfter(_todayKst))
                 _buildActionChip(
                   label: '노쇼 (${noShowTargets.length})',
                   color: AppColors.error,
@@ -1430,7 +1454,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 children: [
                   if (pendingList.isNotEmpty)
                     _buildActionChip(
-                      label: '미출근 ${pendingList.length}명',
+                      label: '미출근 ${pendingList.length}건',
                       color: AppColors.warning,
                       onTap: () => setState(() {
                         _selectedIds.addAll(pendingList.map((a) => a.id));
@@ -1439,7 +1463,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     ),
                   if (lateList.isNotEmpty)
                     _buildActionChip(
-                      label: '지각 ${lateList.length}명',
+                      label: '지각 ${lateList.length}건',
                       color: AppColors.error,
                       onTap: () => setState(() {
                         _selectedIds.addAll(lateList.map((a) => a.id));
@@ -1448,7 +1472,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     ),
                   if (missedList.isNotEmpty)
                     _buildActionChip(
-                      label: '퇴근미기록 ${missedList.length}명',
+                      label: '퇴근미기록 ${missedList.length}건',
                       color: AppColors.purple,
                       onTap: () => setState(() {
                         _selectedIds.addAll(missedList.map((a) => a.id));
@@ -1465,8 +1489,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           // Row 2: 출근 / 조정 / 퇴근 / 리셋 — canManage=false·미래 날짜면 모두 비활성화
           // [5A.1] 미래 날짜 UX guard — server authority defense-in-depth
           Builder(builder: (ctx2) {
-            final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-            final isFutureDate = widget.date.isAfter(today);
+            final today = _todayKst;
+            final isFutureDate = _kstDay.isAfter(today);
             return Column(
               children: [
                 // 반응형 배치: LayoutBuilder 실측 후 분기
@@ -1594,7 +1618,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               if (_selectedIds.isNotEmpty) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 3)),
                 Text(
-                  isEnabled ? '$count명' : '0명',
+                  isEnabled ? '$count건' : '0건',
                   style: ResponsiveHelper.tinyStyle(
                     context,
                     color: isEnabled ? color : AppColors.grey400,
@@ -1965,8 +1989,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final endH = int.tryParse(parts[0]);
     final endM = int.tryParse(parts[1]);
     if (endH == null || endM == null) return false;
-    // widget.date 기준으로 퇴근 예정시각 계산 (야간 자정 넘김 보정)
-    final workDay = widget.date;
+    // _kstDay 기준으로 퇴근 예정시각 계산 (야간 자정 넘김 보정)
+    final workDay = _kstDay;
     var endAt = DateTime(workDay.year, workDay.month, workDay.day, endH, endM);
     final effStart = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
     final startParts = effStart.split(':');
@@ -2257,7 +2281,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }
     // 당일 날짜 게이트 (연/월/일 비교 — 시간값 비교 금지)
     final todayKst = FormatHelper.toKstDate(DateTime.now());
-    final dialogDateKst = FormatHelper.toKstDate(widget.date);
+    final dialogDateKst = FormatHelper.toKstDate(_kstDay);
     if (dialogDateKst.year != todayKst.year ||
         dialogDateKst.month != todayKst.month ||
         dialogDateKst.day != todayKst.day) {
@@ -2356,7 +2380,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
     // §13: seat release 성공 → DayApplicantsDialog(오늘) 오픈
     // [GAP-ATT-NOSHOW-RECOVERY-DATE-01] _buildNoshowRecoveryButton isToday gate 통과 후
-    // 이 경로에 도달하므로 widget.date == today 보장. DateTime.now() ambient clock 불필요.
+    // 이 경로에 도달하므로 _kstDay == today 보장. DateTime.now() ambient clock 불필요.
     if (!mounted) return;
     final bizId = _selectedBusinessId ??
         (widget.businessIds.isEmpty ? null : widget.businessIds.first);
@@ -2365,7 +2389,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       context: context,
       barrierDismissible: false,
       builder: (_) => DayApplicantsDialog(
-        date: widget.date,
+        date: _kstDay,
         businessIds: [bizId],
         businesses: widget.businesses ?? [],
       ),
@@ -2778,7 +2802,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 onPressed: () => _batchGroupConfirm(confirmable),
                 icon: Icon(Icons.check_circle_outline, size: ResponsiveHelper.iconSize(context, 16)),
                 // [5B.2B] adminConfirmed action: "확인 N명" → "근태 확인 N명" (Application/급여 확정과 구분)
-                label: Text('근태 확인 ${confirmable.length}명'),
+                label: Text('근태 확인 ${confirmable.length}건'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.success,
                   foregroundColor: Colors.white,
@@ -2794,7 +2818,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               child: OutlinedButton.icon(
                 onPressed: () => _batchGroupCancelConfirm(cancellable),
                 icon: Icon(Icons.undo_outlined, size: ResponsiveHelper.iconSize(context, 16)),
-                label: Text('취소 ${cancellable.length}명'),
+                label: Text('취소 ${cancellable.length}건'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.warning,
                   side: BorderSide(color: AppColors.warning.withValues(alpha: 0.6)),
@@ -3012,7 +3036,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         const Text('처리 완료 ',
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
         Text(
-          '$processedCount/${_confirmedWorkers.length}명',
+          '$processedCount/${_confirmedWorkers.length}건',
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
@@ -3023,7 +3047,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           const Text('  ·  ',
               style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           Text(
-            '확인완료 $confirmedTabCount명',
+            '확인완료 $confirmedTabCount건',
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -3074,7 +3098,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       context: context,
       barrierDismissible: false, // [M-3] 외부 탭으로 null 반환 시 부모 _hasChanges 미갱신 → 목록 UI 미반영 버그
       builder: (context) => WageConfirmDialog(
-        date: widget.date,
+        date: _kstDay,
         businessId: _selectedBusinessId!,
         businessName: businessName,
         workers: _confirmedWorkers,
@@ -3146,7 +3170,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       // 데이터 변환 (이미 로드된 _workDetailTimeMap 사용)
       data = AttendanceListPdf.convertFromDialogData(
         businessName: businessName,
-        date: widget.date,
+        date: _kstDay,
         confirmedWorkers: _confirmedWorkers,
         userMap: _userMap,
         workTypeMap: _workDetailTimeMap,
@@ -3174,7 +3198,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         confirmedWorkers: _confirmedWorkers,
         userMap: _userMap,
         businessName: data.businessName,
-        date: widget.date,
+        date: _kstDay,
       );
     }
   }
@@ -3244,7 +3268,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final att = _attendanceMap[app.id];
       return {
         'applicationId': app.id,
-        'workDateMs': widget.date.millisecondsSinceEpoch,
+        'workDateMs': _kstDay.millisecondsSinceEpoch,
         'userId': app.uid,
         'businessName': app.businessName,
         'workType': app.selectedWorkType,
@@ -3828,8 +3852,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         // 퇴근 반올림: 출근 기준 DateTime 먼저 결정
         final checkInDtForOut = resolvedCheckIn != null
-            ? _hmToDateTime(widget.date, resolvedCheckIn)
-            : attendance.checkInAt ?? _hmToDateTime(widget.date, effectiveCheckIn);
+            ? _hmToDateTime(_kstDay, resolvedCheckIn)
+            : attendance.checkInAt ?? _hmToDateTime(_kstDay, effectiveCheckIn);
 
         final resolvedCheckOut = (applyRounding && newCheckOut != null)
             ? _roundedCheckOut(app, checkInDtForOut, newCheckOut)
@@ -3850,10 +3874,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
         };
         if (newCheckIn != null) {
-          entry['checkInMs'] = _hmToKstEpochMs(widget.date, effectiveCheckIn);
+          entry['checkInMs'] = _hmToKstEpochMs(_kstDay, effectiveCheckIn);
         }
         if (newCheckOut != null) {
-          entry['checkOutMs'] = _hmCheckoutToKstEpochMs(widget.date, checkInDtForOut, resolvedCheckOut!);
+          entry['checkOutMs'] = _hmCheckoutToKstEpochMs(_kstDay, checkInDtForOut, resolvedCheckOut!);
         }
         if (effectiveCheckOut != null) {
           entry['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
@@ -4082,7 +4106,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             final attendance = _attendanceMap[app.id];
             if (attendance == null) return false;
             final checkInDt = attendance.checkInAt ??
-                _hmToDateTime(widget.date, attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap));
+                _hmToDateTime(_kstDay, attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap));
             return _roundedCheckOut(app, checkInDt, time) != time;
           });
           if (wouldChange) {
@@ -4107,7 +4131,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               final attendance = _attendanceMap[app.id];
               if (attendance == null) return false;
               final checkInDt = attendance.checkInAt ??
-                  _hmToDateTime(widget.date, attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap));
+                  _hmToDateTime(_kstDay, attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap));
               return _roundedCheckOut(app, checkInDt, e.value) != e.value;
             });
           });
@@ -4484,8 +4508,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final rules = _attendanceRules;
     if (rules == null) return rawTime;
     final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-    final contractStart = contractStartAt(widget.date, startTime);
-    final punchAt = _hmToDateTime(widget.date, rawTime);
+    final contractStart = contractStartAt(_kstDay, startTime);
+    final punchAt = _hmToDateTime(_kstDay, rawTime);
     final offsetMin = punchAt.difference(contractStart).inMinutes;
     return processCheckin(
       offsetMinutes: offsetMin,
@@ -4500,8 +4524,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if (rules == null) return rawCheckOutTime;
     final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
     final endTimeStr = app.endTime.isNotEmpty ? app.endTime : rawCheckOutTime;
-    final contractEnd = contractEndAt(widget.date, startTime, endTimeStr);
-    final punchAt = _hmToDateTimeCheckout(widget.date, checkInDt, rawCheckOutTime);
+    final contractEnd = contractEndAt(_kstDay, startTime, endTimeStr);
+    final punchAt = _hmToDateTimeCheckout(_kstDay, checkInDt, rawCheckOutTime);
     final offsetMin = punchAt.difference(contractEnd).inMinutes;
     return processCheckout(
       offsetMinutes: offsetMin,
@@ -4620,10 +4644,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         // 반올림 정책 적용 여부에 따라 유효 시간 결정
         final effectiveTime = applyRounding ? _roundedCheckIn(app, time) : time;
         final existing = _attendanceMap[app.id];
-        final checkInMs = _hmToKstEpochMs(widget.date, effectiveTime);
+        final checkInMs = _hmToKstEpochMs(_kstDay, effectiveTime);
         final entry = <String, dynamic>{
           'applicationId': app.id,
-          'workDateMs': widget.date.millisecondsSinceEpoch,
+          'workDateMs': _kstDay.millisecondsSinceEpoch,
           'userId': app.uid,
           'businessId': app.businessId,
           'businessName': app.businessName,
@@ -4727,7 +4751,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         }
 
         final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
+        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(_kstDay, checkIn);
         final effectiveTime = applyRounding ? _roundedCheckOut(app, checkInDtForOut, time) : time;
         final minutes = AttendanceStatusHelper.workMinutes(checkIn, effectiveTime);
         if (minutes <= 0) {
@@ -4741,7 +4765,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         entries.add({
           'attendanceId': attendance.id,
-          'checkOutMs': _hmCheckoutToKstEpochMs(widget.date, checkInDtForOut, effectiveTime),
+          'checkOutMs': _hmCheckoutToKstEpochMs(_kstDay, checkInDtForOut, effectiveTime),
           'workHours': _calcWorkHoursCompat(checkIn, effectiveTime),
           'status': _deriveStatus(app, checkIn, effectiveTime),
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
@@ -4810,13 +4834,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         final existing = _attendanceMap[app.id];
         final entry = <String, dynamic>{
           'applicationId': app.id,
-          'workDateMs': widget.date.millisecondsSinceEpoch,
+          'workDateMs': _kstDay.millisecondsSinceEpoch,
           'userId': app.uid,
           'businessId': app.businessId,
           'businessName': app.businessName,
           'workType': app.selectedWorkType,
           'status': _deriveStatus(app, effectiveTime, null),
-          'checkInMs': _hmToKstEpochMs(widget.date, effectiveTime),
+          'checkInMs': _hmToKstEpochMs(_kstDay, effectiveTime),
         };
         if (existing != null) entry['attendanceId'] = existing.id;
         entries.add(entry);
@@ -4912,7 +4936,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         }
 
         final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
+        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(_kstDay, checkIn);
         final effectiveTime = applyRounding ? _roundedCheckOut(app, checkInDtForOut, time) : time;
         final minutes = AttendanceStatusHelper.workMinutes(checkIn, effectiveTime);
         if (minutes <= 0) {
@@ -4926,7 +4950,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         entries.add({
           'attendanceId': attendance.id,
-          'checkOutMs': _hmCheckoutToKstEpochMs(widget.date, checkInDtForOut, effectiveTime),
+          'checkOutMs': _hmCheckoutToKstEpochMs(_kstDay, checkInDtForOut, effectiveTime),
           'workHours': _calcWorkHoursCompat(checkIn, effectiveTime),
           'status': _deriveStatus(app, checkIn, effectiveTime),
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,

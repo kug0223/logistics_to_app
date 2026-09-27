@@ -45,15 +45,31 @@ void main() {
         false,
         reason: '기기 로컬 자정 창이 남아 있으면 비KST 기기에서 하루가 밀린다',
       );
+      // [R7-P1-3] 창의 입력이 `widget.date` 에서 정규화된 `_kstDay` 로 바뀌었다.
+      //   호출부 세 곳이 기기 local 자정을 넘기고 있었고(미처리 큐·근무 탭 ×2),
+      //   이 화면은 그 값을 instant 로 썼다 — 그래서 들어온 값의 달력 성분을
+      //   KST 달력일로 못박아 한 번만 정규화한다. 이 단언이 지키려는 것은
+      //   그대로다: **이 화면의 날짜 창은 전부 KST 영업일이다.**
+      expect(
+        code.contains(
+            'DateTime.utc(widget.date.year, widget.date.month, widget.date.day)'),
+        true,
+        reason: '들어온 날짜를 KST 달력일로 정규화하는 지점이 있어야 한다',
+      );
       // [CROSS-SLICE-1A] 개수를 못 박지 않는다. 이 단언이 지키려는 것은
       //   "이 화면의 날짜 창은 전부 KST"이지 "창이 두 개"가 아니다.
       //   실제로 모집 단위 종료 여부를 읽는 세 번째 창이 생겼고, 그것도 KST다.
       //   개수를 고정하면 올바른 창이 늘어날 때마다 깨진다.
       //   진짜 가드는 위의 기기 로컬 자정 금지다.
       expect(
-        'FormatHelper.kstDayRange(widget.date)'.allMatches(code).length >= 2,
+        'FormatHelper.kstDayRange(_kstDay)'.allMatches(code).length >= 2,
         true,
         reason: '확정 명단 창과 근태 조회 창을 포함해 모든 창이 KST여야 한다',
+      );
+      // 정규화를 거치지 않은 원본이 날짜 계산에 다시 쓰이면 계약이 깨진다.
+      expect(
+        'FormatHelper.kstDayRange(widget.date)'.allMatches(code).length,
+        0,
       );
     });
 
