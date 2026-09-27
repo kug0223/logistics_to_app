@@ -567,3 +567,219 @@ Firebase 에 직접 붙는다. 이번 seam 은 controller 경로만 덮는다 �
 - **OPEN.** 남은 것: §18-1 보정자 부재의 수리 방침(사용자 결정 필요), `confirmedCount`
   drift 경로 존재 여부, rules 경로, 초대/자동취소/동시성/trigger replay 전이,
   일자별 다이얼로그 캐시 왕복, `onBusinessDeleted` 후보.
+
+---
+
+# 5차 — 업무별 카운터 무결성 복구 (2026-09-27)
+
+## 22. 4차 커밋 SHA (§0)
+
+| SHA | 구분 | 내용 |
+|---|---|---|
+| `4ec5a10` | CODE | C3~C7 소비자 수정 + `WorkCapacityReading` |
+| `c55b025` | TOOLING | `scripts/r7-audit/`, harness, audit config, CLI patch |
+| `7fd8313` | SEAM/TEST | `WorkforceController` 읽기 주입 + 전이 12건 |
+| `adb6cbb` | DOCS | 3차 정정 + CLAUDE.md complexId |
+
+5차 시작 시 HEAD `adb6cbb`, tracked 변경 없음(이전 phase 의 untracked 스크립트만 잔존).
+
+## 23. §2 — 수리 방침을 근거로 선택했다
+
+추상적 양자택일로 넘기지 않고 writer 구조를 먼저 읽었다. 결정적 사실:
+
+**`callableIncrementSlotPending` 이 이미 정확히 그 일을 한다.**
+`totalPending` · `slot.pendingCount` · `workDetailCounts[wdId].pendingCount` 를
+한 transaction 에서 함께 쓰고, 지원서 문서의 `pendingIncrementedAt` /
+`pendingDecrementedAt` 로 멱등하고, 음수 가드와 new-schema wdId fail-closed 까지 있다.
+
+**그런데 앱 어디에서도 호출하지 않았다.** 전수 확인 결과 주석만 다섯 곳에 있었다.
+클라이언트 취소 코드 자신이 경고까지 적어 두었다 — *"CF 호출 코드가 추가되면
+`_incrementTOPending` 의 totalPending/pendingCount 업데이트를 반드시 제거해야 한다.
+제거 없이 CF까지 호출하면 … 이중 카운트 버그 발생."*
+
+| 안 | 판정 | 근거 |
+|---|---|---|
+| **A. 권위 server command 가 원장+집계를 원자적으로** | **선택** | 이미 존재·멱등·음수가드·fail-closed. 새 command·정책·모델 변경 0. |
+| B. sync owner 가 파생 집계 전체를 재계산 | 부분 채택 | `_syncTOCounters` 에 `workDetailCounts` 를 넣으면 모든 writer 를 덮지만, 상태 변경마다 슬롯 전량 재계산이 붙는다. **드문 경로(확정 롤백)에만** 기존 `callableRecalculateTOStats` 로 채택. |
+| C. 즉시 일관성 + 비동기 복구 | 결과적으로 성립 | command 가 즉시 세 값을 맞추고, 실패 시 `syncTOStats` 가 상위 두 값을 원장에서 다시 센다. 업무 단위만 남고 같은 호출 재시도로 복구(멱등). 역할이 겹쳐 이중 증감하지 않는다 — command 는 delta, trigger 는 절대 재계산이고 command 의 음수 가드가 순서 역전을 흡수한다. |
+
+## 24. §3 — 세 겹의 원인과 event timeline
+
+### 24-1. 불변식 정의
+
+| 값 | 포함 status | 범위 | identity |
+|---|---|---|---|
+| `slot.workDetailCounts[wdId].pendingCount` | `PENDING` | 슬롯 × 업무정의 | `wdId`(slot 의 것) |
+| `slot.workDetailCounts[wdId].confirmedCount` | `CONFIRMED`, `CONTRACT_PENDING` | 슬롯 × 업무정의 | 같음 |
+| `slot.pendingCount` / `confirmedCount` | 같음 | 슬롯 전체 | — |
+| `to.totalPending` / `totalConfirmed` | 같음 | 공고 전체 | — |
+
+합계 관계는 **범위가 같을 때만** 정의된다. 장기(슬롯 없음) 공고는 슬롯 축이 없어
+업무 단위 카운터를 쓰지 않는다 — 누계와 혼동하지 않는다.
+
+### 24-2. 지원취소 event timeline (수리 전)
+
+```
+t0  클라이언트 transaction
+      applications.status = CANCELED
+      tos.totalPending      -1        ← rules 가 ±1 허용
+      slot.pendingCount     -1        ← rules 가 ±1 허용
+      slot.workDetailCounts  손대지 못함 ← rules 403 (실측)
+t1  syncTOStats 트리거
+      totalPending / slot.pendingCount / slot.confirmedCount 를 원장에서 재계산
+      workDetailCounts 는 재계산 대상이 아니다
+결과  원장 0 · 상위 카운터 0 · **업무 단위 1**  (영구)
+재지원 반복 → 1, 2, 3 … 누적 (실측)
+```
+
+### 24-3. 세 겹
+
+1. **호출이 없다.** 담당한다던 command 를 아무도 부르지 않았다.
+2. **불러도 걸린다.** command 의 슬롯 합계 zero-guard 가 `return` 이라,
+   클라이언트가 이미 슬롯 합계를 0 으로 내린 뒤면 업무 단위와 TO 합계까지
+   한 번도 손대지 못한 채 멱등 플래그만 찍고 끝났다. **세 값은 범위가 다르다.**
+3. **두 번째 주기부터 다시 걸린다.** 멱등 플래그를 지우지 않는데 재지원은
+   **같은 문서를 되살린다**. 가드가 문서 수명에 걸려 있었다.
+
+### 24-4. 수리
+
+| 지점 | 변경 |
+|---|---|
+| `callableIncrementSlotPending` | 음수 방지를 **각 카운터가 자기 값으로**. 읽기를 쓰기 앞으로 모아 TO 합계도 자기 값으로 판단. |
+| `callableApplyToTO` 재활성화 | `pendingIncrementedAt`/`pendingDecrementedAt` 를 `FieldValue.delete()`. 가드가 **이번 전이 한 번**에 걸린다. |
+| `ApplicationFirestore.cancelApplication` | 원장만 바꾸고 그 command 를 호출. 실패는 취소 실패로 말하지 않는다. |
+| `ApplicationFirestore.updateApplicationStatus` | 클라이언트 낙관적 증감 제거 → `callableRecalculateTOStats`. |
+| 제거 | `_incrementTOPending` · `_incrementTOConfirmed` · `_decrementTOConfirmed` (절반만 맞는 상태를 만들던 helper) |
+
+### 24-5. `confirmedCount` drift — 검색으로 닫지 않았다
+
+호출부를 전수로 열어 확인했다. `updateApplicationStatus` 의 직접 write 분기가
+좌석 상태를 바꾸는데 `workDetailCounts` 를 쓸 수 없었다(rules 403, 실측).
+live 호출부를 12곳 열어 보니 대부분 `confirmed`/`rejected`(→ CF)였고,
+**`work_applicants_dialog.dart:3590` 하나가 `pending` 을 넘긴다** —
+계약서 생성 실패 시 `CONTRACT_PENDING → PENDING` 롤백이다. 드물지만 live 다.
+→ 재집계 command 로 닫았고, 에뮬레이터에서 확인했다(S7).
+
+## 25. §4 — rules 경로 (실측 11건)
+
+Admin SDK 는 rules 를 우회하므로 **ID 토큰 + Firestore REST** 로 직접 쳤다.
+
+| # | 시도 | 결과 |
+|---|---|---|
+| R1 | 본인 지원서 `PENDING → CANCELED` | **허용** |
+| R2 | 타인 지원서 상태 변경 | 거부 |
+| R3 / R3b | 본인 스스로 `CONFIRMED` / `CONTRACT_PENDING` 승격 | 거부 |
+| R4 | `slot.workDetailCounts` 직접 쓰기 | **거부** |
+| R5 / R5b | `slot.pendingCount` −1 / 임의값 | 허용 / 거부 |
+| R6 / R6b | `slot.confirmedCount` / `to.totalConfirmed` | 거부 / 거부 |
+| R7 / R7b | `to.totalPending` −1 / 임의값 | 허용 / 거부 |
+| R8 | 사업장 문서 변경 | 거부 |
+
+**원장 상태 쓰기 권한과 파생 counter 쓰기 권한이 분리되어 있다.**
+새 취소 경로는 ±1 허용을 **더 쓰지 않는다** — 그 허용을 좁히는 것은
+구버전 클라이언트가 남아 있는 동안은 하지 않는다(전환 계획으로만 기록).
+
+> 자기 정정: 첫 rules 테스트는 고정 숫자를 넣어 `-1` 거부 / `-2` 허용처럼
+> 보였고 rules 결함으로 보고할 뻔했다. 앞 단계 취소가 트리거를 깨워 값을 이미
+> 재계산한 뒤였다. 현재값을 읽고 ±1 을 만들도록 고쳤다. **rule 을 완화해
+> 통과시키지 않았다.**
+
+## 26. §6 — 전이 매트릭스 (기대값 판정, 25건)
+
+`scripts/r7-emu-matrix3.js`. 판정은 **원장에서 계산한 기대값**과 파생 집계 셋의
+일치다. 수렴을 기다리되 수렴한 값이 틀리면 FAIL 이다("4회 동일"은 판정 근거가 아니다).
+
+| 시나리오 | 결과 |
+|---|---|
+| S1 지원 | 원장=파생 |
+| S2.1 / S2.2 취소 → 재지원 **2주기** | 매 단계 원장=파생 |
+| S3 같은 감소 command replay | 이중감소·음수 없음 |
+| S4 정원 1에서 동시 확정 2건 | 성공 1건, 원장=파생 |
+| S5 확정취소 → 재확정 | 원장=파생 |
+| S6 무인증 401 / 근로자 토큰 확정 거부 / 타인 카운터 조작 거부 | 분리 확인 |
+| S7 확정 롤백(`CONTRACT_PENDING → PENDING`) | 원장=파생 |
+
+**before/after:** 수정 없이 같은 harness 를 돌리면 **9건 FAIL** 이고 업무 카운터가
+1 → 2 → 3 으로 누적된다. 수정 후 **25/25 PASS**.
+
+> harness 자기 결함 정정: 처음엔 고정 id 를 써서 직전 실행 cleanup 의
+> `onTODeleted`/`onBusinessDeleted` cascade(각 ~900ms)가 새 실행이 막 seed 한
+> 문서를 지웠다. 제품 결함이 아니라 간섭이다 — id 를 실행마다 유일하게 바꿨다.
+
+## 27. §7 — 날짜 선택 재현
+
+두 축 중 하나가 아직 열려 있었다.
+
+카드는 머리말 수치를 `_updateGroupCache()` 에서 **캐시**하고, 같은 카드의 업무
+행은 `resolveStats()` 를 매 build 에 다시 읽는다. 그런데 재계산 조건이
+`!identical(widget.groupItem, old.groupItem)` 이었다. 정원 집계는
+`setWorkDetails()` 로 **같은 인스턴스 안에** 채워진다 — 제자리 수정이다.
+그래서 집계 도착 후 부모가 setState 해도 머리말은 갱신되지 않았다.
+날짜를 고르는 순간엔 `calendarSlot` 변화로 갱신되지만, **그 뒤 도착한 집계는
+다시 갱신을 만들지 못한다.** 머리말이 이전 값을 붙들고 있던 자리다.
+
+- 수리: 부모가 다시 그릴 때마다 재계산한다(슬롯 수만큼의 덧셈, 프레임마다 아님).
+- 계산을 `projectGroupHeaderTotals` 로 분리해 화면 없이 실행(11건):
+  집계 있으면 집계 / identity miss 면 카운터 / 실패면 카운터 / 한 날짜라도 비면
+  FULL 아님 / **같은 인스턴스에 집계를 채운 뒤 다시 부르면 새 값** / 쓰지 않을
+  합성 item 은 만들지 않음.
+
+**미검증(NOT TESTED):** 실제 위젯 렌더. `TOGroupCard` 는 Provider 와
+`FirestoreService`(→ Firebase) 를 타서 단위 테스트에서 pump 할 수 없다.
+`WorkforceController` 12건은 controller 경로만 덮고, Day `_cachedGroups` 왕복과
+공고 date tile 선택의 **actual entry** 는 각각 별도다. 이 항목은 여전히 OPEN.
+
+## 28. §5 — 소비자 범위 (grep 분류 실측)
+
+`lookupByIdentity` 13개를 전체 수치 소비자 수로 말하지 않는다.
+
+| 분류 | 지점 수 | 비고 |
+|---|---|---|
+| `lookupByIdentity` | 13 | 정의 파일 제외 |
+| `resolveStats()` | 10 | 정의 파일 제외 |
+| `WorkCapacityReading.read` | 5 | 이번·4차에 전환한 owner |
+| `capacityBlockReason` | 4 | 승인 관문 공통 |
+| `confirmedFor(` | 2 | canonical gate |
+| raw `.confirmedCount`/`.pendingCount` 읽기 | 48 | 모델·주석 포함 grep 분류 |
+| `totalConfirmed`/`totalPending` 읽기 | 56 | 같음 |
+| `workDetailCounts` 읽기 | 16 | 같음 |
+| 지원서 리스트 `.length` 를 수치로 | 12 | 부분집합 위험 표면 |
+
+> 이 숫자는 **grep 분류 건수**이고 중복 제거한 "화면 표면 수"가 아니다.
+> 감사·전환한 부분집합은 §16·§24 에 명시했고, raw 카운터 읽기 48/56/16 의
+> 개별 판정은 **미완료**다.
+
+### C7 서버 폴백 — 후보 유지, 판정 보류
+
+`callableGetAvailableWorkers` 는 `workDetailId` 를 composite 또는 workType 으로
+맞추고, 못 맞추면 **첫 번째 workDetail 로 폴백**한다. 좁은 실행을 시도해
+도시·주소 전제까지 채워 200 을 받았지만 **세 호출 모두 후보 pool 이 비어** 나왔다.
+빈 결과끼리 같다고 해서 폴백이 안전하다는 뜻이 아니므로 harness 가 그 경우를
+PASS 로 읽지 않게 가드를 넣고 **보류**로 남겼다. pool 진입 조건
+(`inviteKeys`/availability)을 채우는 것이 남은 일이다.
+`work.id` 를 바꾸지 않았다는 사실로 이 항목을 닫지 않는다.
+
+## 29. §8 — 환경·부수 결함
+
+- 수정 CLI / 7키 override / 재현 자료 유지. 실키 값은 로그·commit 에 없다.
+- 외부 발송 0 의 근거 범위는 **이번 test 의 관측**이다. 발송 실패가 원장 commit 에
+  영향 없다는 주장은 **해당 비동기 경로(`onNotificationCreated` 트리거)** 로 한정한다.
+- **`onBusinessDeleted`:** 정상 순서(사용자 문서 존재) 삭제에서는 cascade 가
+  `완료` 로 끝난다(850ms, 에러 없음). **사용자 문서를 먼저 지운 경우에만**
+  `5 NOT_FOUND: no entity to update` + unhandled error 로 cascade 가 끊긴다.
+  존재 확인 없는 `.update()` 는 사실이고, 탈퇴한 관리자가 있는 사업장 삭제에서
+  같은 일이 가능하다 — **별건 owner** 로 분리. 삭제 시스템을 재작성하지 않는다.
+- 에뮬레이터는 작업 중 재사용했고, 재시작 절차는 `scripts/r7-audit/README.md` 에 있다.
+
+## 30. 5차 상태
+
+- 제품 코드: CF 2곳(`callableIncrementSlotPending`, `callableApplyToTO` 재활성화),
+  클라이언트 3곳(취소·상태변경·카드 캐시), helper 3개 제거, projection 1개 분리.
+- 저장 drift 복구와 UI 증상은 **별개 상태**로 관리한다:
+  - 저장 불변식: 신규 전이에 대해 **복구 완료**(에뮬레이터 25건).
+  - 기존 데이터: **손대지 않았다.** 실DEV 과거 데이터 backfill 은 READ 대조·필요성
+    계획까지만이고 이번에 하지 않았다.
+- shared DEV write **0** · PROD **0** · 외부 발송 **0** · 모델 migration **0**.
+- **OPEN.** 남은 것: 날짜 선택 실제 렌더(§27), C7 pool 폴백(§28),
+  raw 카운터 소비자 48/56/16 개별 판정, 초대/자동취소/trigger replay 전이,
+  `onBusinessDeleted` 별건, 기존 데이터 backfill 필요성 판단.
