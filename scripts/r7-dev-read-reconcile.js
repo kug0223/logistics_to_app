@@ -42,6 +42,10 @@ const LIMIT = (() => {
   return i >= 0 ? parseInt(args[i + 1], 10) : 40;
 })();
 
+// [O07] `--repair-plan` : 보정 command 가 쓸 필드를 **투영만** 한다(쓰기 없음).
+const PLAN = args.includes('--repair-plan');
+const plan = [];
+
 const PENDING = ['PENDING', 'INVITED'];
 const SEATED = ['CONFIRMED', 'CONTRACT_PENDING'];
 const KST = 9 * 3600 * 1000;
@@ -149,6 +153,86 @@ function resolveWdId(a, wds, isNewSchema) {
         stored: to.totalConfirmed ?? null, expected: toSeated});
     }
 
+    // [O07] 보정 계획 — **재집계 command 가 실제로 쓸 필드 전부**를 투영한다.
+    //   `callableRecalculateTOStats(toId)` 가 쓰는 것:
+    //     tos: totalPending · totalConfirmed · status(CLOSED/EXPIRED 아닐 때) ·
+    //          statsSourceReadAt(fence, 값과 함께 항상)
+    //     slots: pendingCount · confirmedCount · workDetailCounts.{현재 wdId}
+    //   원장(applications)·계약·근태·급여는 건드리지 않는다.
+    if (PLAN) {
+      const rows = [];
+      const push = (o) => rows.push(o);
+      const notClosed = to.status !== 'CLOSED' && to.status !== 'EXPIRED';
+      const req = to.totalRequired ?? 0;
+      push({scope: `to=${toId}`, field: 'totalPending',
+        stored: to.totalPending ?? null, expected: toPending,
+        why: '원장 PENDING/INVITED 수', ledger: `applications(toId=${toId})`});
+      push({scope: `to=${toId}`, field: 'totalConfirmed',
+        stored: to.totalConfirmed ?? null, expected: toSeated,
+        why: '확정 중 좌석 점유만(반납·기간종료 제외)',
+        ledger: `applications(toId=${toId})`});
+      if (notClosed) {
+        push({scope: `to=${toId}`, field: 'status',
+          stored: to.status ?? null,
+          expected: (req > 0 && toSeated >= req) ? 'FULL' : 'ACTIVE',
+          why: `totalRequired=${req} 와 좌석 수 비교`, ledger: '위 값에서 파생'});
+      } else {
+        push({scope: `to=${toId}`, field: 'status',
+          stored: to.status ?? null, expected: to.status ?? null,
+          why: 'CLOSED/EXPIRED 는 재계산이 손대지 않는다', ledger: '-'});
+      }
+      push({scope: `to=${toId}`, field: 'statsSourceReadAt',
+        stored: to.statsSourceReadAt ? 'set' : null, expected: '(이번 읽기 시각)',
+        why: 'fence — 값과 함께 항상 기록', ledger: '-'});
+      for (const slotDoc of slots.docs) {
+        const s = slotDoc.data();
+        const r = bySlot[slotDoc.id] ?? [];
+        const wds = Array.isArray(s.workDetails) ? s.workDetails : [];
+        const isNew = wds.some((w) => typeof w?.wdId === 'string' && w.wdId.length > 0);
+        let sp = 0, sc = 0; const tally = {}; let fc = false;
+        for (const {a, isP, isS} of r) {
+          if (isP) sp++;
+          if (isS) sc++;
+          if (!isP && !isS) continue;
+          const rr = resolveWdId(a, wds, isNew);
+          if (rr.via === 'ambiguous' || rr.via === 'unresolved') { fc = true; continue; }
+          if (!rr.wdId) continue;
+          tally[rr.wdId] ??= {pending: 0, confirmed: 0};
+          if (isP) tally[rr.wdId].pending++;
+          if (isS) tally[rr.wdId].confirmed++;
+        }
+        const sk = `to=${toId} slot=${slotDoc.id}`;
+        push({scope: sk, field: 'pendingCount', stored: s.pendingCount ?? null,
+          expected: sp, why: '슬롯 범위 원장 재계산',
+          ledger: `applications(slotId=${slotDoc.id})`});
+        push({scope: sk, field: 'confirmedCount', stored: s.confirmedCount ?? null,
+          expected: sc, why: '좌석 점유만', ledger: `applications(slotId=${slotDoc.id})`});
+        const stored = s.workDetailCounts ?? {};
+        const cur = wds.map((w) => w?.wdId).filter(Boolean);
+        for (const k of cur) {
+          const e = tally[k] ?? {pending: 0, confirmed: 0};
+          const st = stored[k] ?? {};
+          push({scope: `${sk} wd=${k}`, field: 'workDetailCounts.pendingCount',
+            stored: st.pendingCount ?? null, expected: fc ? '(fail-closed 미갱신)' : e.pending,
+            why: fc ? 'identity 미확정 슬롯 — 서버도 건드리지 않는다' : '현재 wdId 전량 0 시드 후 집계',
+            ledger: `applications(slotId=${slotDoc.id})`});
+          push({scope: `${sk} wd=${k}`, field: 'workDetailCounts.confirmedCount',
+            stored: st.confirmedCount ?? null, expected: fc ? '(fail-closed 미갱신)' : e.confirmed,
+            why: fc ? 'identity 미확정 슬롯' : '같음',
+            ledger: `applications(slotId=${slotDoc.id})`});
+        }
+        for (const k of Object.keys(stored)) {
+          if (cur.includes(k)) continue;
+          push({scope: `${sk} wd=${k}`, field: 'workDetailCounts(사라진 키)',
+            stored: JSON.stringify({p: stored[k]?.pendingCount ?? null,
+              c: stored[k]?.confirmedCount ?? null}),
+            expected: '(그대로)',
+            why: '현재 업무 정의에 없는 키 — 보존 계약(읽는 곳 없음)', ledger: '-'});
+        }
+      }
+      plan.push({toId, rows});
+    }
+
     for (const slotDoc of slots.docs) {
       slotsChecked++;
       const s = slotDoc.data();
@@ -222,6 +306,29 @@ function resolveWdId(a, wds, isNewSchema) {
         (f.slotId ? ` slot=${f.slotId}` : '') + (f.wdId ? ` wd=${f.wdId}` : '') +
         ` 저장=${f.stored} 기대=${f.expected}`);
     }
+  }
+
+  if (PLAN) {
+    // mismatch 가 있는 공고만 보정 대상이다 — 나머지는 부를 이유가 없다.
+    const targets = new Set(findings.map((f) => f.toId));
+    console.log(`\n## 보정 계획 (읽기 전용 투영 · ${startedAt})`);
+    console.log(`- 보정 대상 공고 ${targets.size}개 (mismatch 가 있는 flex 공고)`);
+    console.log('- 명령 단위: callableRecalculateTOStats(toId) — TO 1건씩, 멱등');
+    console.log('\n| TO/slot/wdId | 필드 | 현재값 | 예상값 | 차이 이유 | 근거 원장 | 변경 |');
+    console.log('|---|---|---|---|---|---|---|');
+    let changed = 0, same = 0;
+    for (const p of plan) {
+      if (!targets.has(p.toId)) continue;
+      for (const r of p.rows) {
+        const isSame = String(r.stored) === String(r.expected);
+        if (r.field === 'statsSourceReadAt') { changed++; } else if (isSame) { same++; } else { changed++; }
+        console.log(`| ${r.scope} | ${r.field} | ${r.stored} | ${r.expected} | ` +
+          `${r.why} | ${r.ledger} | ${r.field === 'statsSourceReadAt' ? '변경(기록)' :
+            (isSame ? '변경없음' : '변경')} |`);
+      }
+    }
+    console.log(`\n- 변경 ${changed}행 · 변경없음 ${same}행`);
+    console.log('- 원장(applications)·계약·근태·급여: **미변경**');
   }
   process.exit(0);
 })().catch((e) => {

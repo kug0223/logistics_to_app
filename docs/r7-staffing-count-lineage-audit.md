@@ -2052,3 +2052,326 @@ O01 하위에 남은 결손 없음. 근거: 재현 → 최소 수정 → 같은 
 - **O08 DEVICE**: 8차 결론 B 그대로.
 
 O02~O06 은 **변경 없음 · 기존 증거 재사용**으로 끝낸다.
+
+---
+
+# O07 — DEV 적용 준비 (2026-09-28, 실행 전)
+
+11차 감사가 아니다. CODE/Emulator 종료(O01~O05)와 O06 는 그대로 두고, **적용 실행안**만 만든다.
+이 절의 모든 DEV 접근은 **읽기 전용**이다. 배포·보정·Rules·APK 는 실행하지 않았다.
+
+## 73. 현재 상태 — 소스와 실배포는 같지 않다
+
+| 항목 | 값 |
+|---|---|
+| branch / HEAD | `main` / `40fe3d3` (기준 보고와 동일, tracked 변경 없음) |
+| 사용자 소유 untracked | 8건 보존 |
+| DEV project | `alfit-89567` (`.firebaserc`: default=dev=alfit-89567, prod=alfit-prod) |
+| region | `asia-northeast3` · 런타임 `nodejs22` · Functions v2 |
+| DEV 인증 | CLI 로그인 + `functions/…-adminsdk-….json`(untracked, `firebase.json` ignore 대상). 키 내용은 출력하지 않았다 |
+
+### 73-1. 실배포 메타데이터 (READ ONLY, Cloud Functions v2 API)
+
+| 함수 | 실DEV updateTime(UTC) | state |
+|---|---|---|
+| `syncTOStats` | 2026-09-26T16:58:55Z | ACTIVE |
+| `masterScheduler` | 2026-09-26T16:58:48Z | ACTIVE |
+| `callableRecalculateTOStats` | 2026-09-26T05:23:47Z | ACTIVE |
+| `callableApplyToTO` | 2026-09-25T22:16:56Z | ACTIVE |
+| `callableGetAvailableWorkers` | 2026-09-22T16:09:13Z | ACTIVE |
+| `callableIncrementSlotPending` | 2026-09-21T14:02:52Z | ACTIVE |
+| `callableReleaseNoshowSeat`(참고) | 2026-09-21T14:03:01Z | ACTIVE |
+
+**정정:** `adb6cbb`(2026-09-27 17:44 KST)는 **어느 함수에도 배포돼 있지 않다.**
+모든 대상의 배포 시각이 그보다 이르다. 8차 이후 "old CF = adb6cbb" 라고 적은 것은
+**비교 기준**이었을 뿐 실배포 상태가 아니다. 실제 DEV 는 함수마다 09-21 ~ 09-27 01:58 KST
+사이의 **서로 다른 소스**를 돌리고 있다 — 즉 혼합 버전은 이미 현재 상태다.
+소스 SHA 는 배포 메타데이터에 없으므로, 여기서 말할 수 있는 것은 **시각 상한**뿐이다:
+감사 기간의 index.ts 커밋은 전부 09-27 18:12 KST 이후이므로 **감사 변경은 전부 미배포다.**
+
+보강 증거(제품 동작): DEV 의 flex 공고 92개 중 `statsSourceReadAt`(9차 fence 가 쓰는 필드)을
+가진 문서는 **0건**이다. fence 코드가 아직 살아 있지 않다는 뜻이다.
+
+## 74. 최종 배포표 — 실제 diff 기준
+
+`adb6cbb..HEAD` 의 `functions/src/index.ts` 변경 줄(651줄)을 소유 export 로 매핑하고,
+공유 helper 의 **참조 전수**를 다시 대조했다. 기존 5개 목록은 **틀렸다** — 하나가 빠졌다.
+
+| export | 종류/region | 변경 이유 · 관련 helper | 배포 필요 여부와 근거 | 단계 | 반영 확인 |
+|---|---|---|---|---|---|
+| `syncTOStats` | Firestore trigger `applications/{id}` · asia-northeast3 | 좌석 표식 변화에도 재계산(`seatMarkChanged`) · 슬롯/업무 transactional writer · fence 쓰기. `_syncTOCounters`·`srvCommitToTotals`·`srvEarliestReadAt`·`srvTsAtLeast`·`srvSyncSlotCountersTx`·`srvBuildWdCountsUpdate`·`srvResolveAppWdId`·`srvOccupiesSeatToday` | **필수** — 변경 줄 333 | 1 | 지원/취소 1주기 뒤 `statsSourceReadAt` 기록 + 4값 일치 |
+| `callableRecalculateTOStats` | callable | 좌석 술어 통일 · fence 경유 쓰기 · 죽은 누산기 제거 · 응답 `applied` | **필수** — 변경 줄 83 | 1 | 응답 `applied` 필드 존재 + 대상 TO 값 변화 |
+| `callableIncrementSlotPending` | callable | 카운터별 자기-값 가드 · 주기 precondition · **이미 반영된 전이면 delta 생략**(`srvTsAtLeast`) | **필수** — 변경 줄 103 | 1 | 취소 1주기에서 대기 값이 원장과 일치(이중 차감 없음) |
+| `callableApplyToTO` | callable | 재활성화 시 멱등 플래그 삭제 · 하루 경계 `srvKstDayStartMs` | **필수** — 변경 줄 22 | 1 | 재지원 후 대기 카운터 정합 |
+| `callableGetAvailableWorkers` | callable | KST 하루 경계 · 맞출 수 없는/모호한 식별자 거부 | **필수** — 변경 줄 69 | 1 | 없는 `workDetailId` → 400, 같은 이름 2개 → 400 |
+| **`masterScheduler`** | **scheduled** | `processExpiredSeatReconciliation` → **`_syncTOCounters`**(줄 3985). 이 번들에 바뀐 집계 코드가 들어 있다 | **필수(신규 식별)** — 배포하지 않으면 매일 스케줄러가 **fence 없는 옛 절대 쓰기**로 최신 값을 덮을 수 있고, stamp 를 남기지 않아 이후 writer 도 막지 못한다 | 1 | 스케줄 실행 후 해당 공고 값이 원장과 일치 |
+
+배포 **제외**(변경 코드 없음, 확인 완료): `callableReleaseNoshowSeat` · `callableBatchCancelNoShow` ·
+`callableAcceptConfirmedReassignment` — 반납 표식을 쓰는 3 writer 지만 **이번 수정은 전부
+트리거 쪽**이라 이 함수들의 코드는 바뀌지 않았다. 공유 helper `srvKstDateNum` ·
+`srvLongTermEligibleOnDay` 는 **미변경**이므로 그것을 쓰는 다른 export(11개)도 대상이 아니다.
+`srv*` 는 독립 함수가 아니라 위 6개 번들에 포함되는 코드다.
+
+## 75. 준비된 명령 (실행하지 않음)
+
+```
+# 0) 산출물 준비 — 배포와 동일한 predeploy 가 이것을 다시 돌린다
+npm --prefix functions run build     # tsc, 이미 통과 확인
+
+# 1) CF 6개만 배포 (Rules·Hosting·Indexes 동반 금지)
+firebase deploy --project alfit-89567 --only \
+  functions:syncTOStats,functions:masterScheduler,\
+functions:callableRecalculateTOStats,functions:callableIncrementSlotPending,\
+functions:callableApplyToTO,functions:callableGetAvailableWorkers
+```
+
+환경 격리 확인:
+
+| 항목 | 확인 |
+|---|---|
+| 전역 CLI | `firebase 14.20.0` (`~/AppData/Roaming/npm`). 감사용 패치 사본은 스크래치패드 안에만 있고 PATH 에 없다 |
+| 감사 설정 유출 | 배포는 `firebase.json` 을 쓴다. `firebase.r7audit.json` 은 `--config` 로만 쓰이므로 섞이지 않는다 |
+| dummy env 유출 | `firebase.json` 의 functions.ignore 에 `.env`·`.env.*` 가 있어 `functions/.env.demo-alfit-r7` 는 업로드되지 않는다. 또 `.env.<project>` 는 그 프로젝트에서만 로드되므로 `alfit-89567` 배포에는 적용되지 않는다 |
+| 서비스 계정 키 유출 | ignore 에 `*-adminsdk-*.json` 이 있어 업로드되지 않는다 |
+| 소스 discovery | 전역 14.20.0 으로 **정의 로드 성공**을 로컬에서 확인했다(감사 초기의 blocker 는 emulator **실행 런타임** 쪽이었다). 다만 이 파일은 크고 discovery 에 10초 timeout 이 있어 **간헐적 실패 가능** — 그때는 재시도하고, 반복되면 공식 최신 CLI 로 올린다(패치본 사용 금지) |
+| APK | 이번 범위 아님. Flutter 빌드는 사용자 직접 |
+
+## 76. 순서 · 중간 상태 · 중단 · 복구
+
+### 76-1. 순서
+
+1. **CF 6개 동시 배포**(위 명령 한 번). client 는 그대로 둔다.
+2. **반영 확인**(§77).
+3. client 적용은 별도 결정 — 8차 §51-4 의 방향별 증거를 그대로 쓴다
+   (old client × new CF 12/12 일치).
+
+### 76-2. 중간 상태에서 무엇이 보호되는가
+
+한 번의 명령이라도 함수별로 순차 교체된다. 그 사이의 상태:
+
+| 아직 구버전인 것 | 그 동안의 위험 |
+|---|---|
+| `syncTOStats` 미교체 | 좌석 반납이 재계산을 깨우지 않고, fence 없이 절대 쓰기를 한다 → **현행 결함 그대로** |
+| `masterScheduler` 미교체 | 매일 1회 fence 없는 절대 쓰기 — 새 값을 덮을 수 있다 |
+| `callableIncrementSlotPending` 미교체 | 취소 2단계 이중 반영 가능(현행 결함) |
+| `callableRecalculateTOStats` 미교체 | 관리자 재집계가 반납·기간종료를 무시한 값을 쓴다 |
+
+**전부 배포되기 전에는 "수정 완료"가 아니다.** 부분 배포 상태는 현행 결함이 남은 상태이며,
+새로 나빠지는 조합은 없다(새 코드는 구버전 필드를 요구하지 않고, `statsSourceReadAt`
+부재는 "그냥 쓴다"로 처리된다).
+
+### 76-3. 중단 조건
+
+- 배포 명령이 일부 함수에서 실패 → **나머지를 강행하지 않는다.** 실패 함수만 재시도.
+- 배포 후 `syncTOStats` 오류율 상승, `[srvCommitToTotals] 낡은 스냅샷` 이 정상 범위를 넘어
+  급증, `fail-closed` 경고 급증, `callableGetAvailableWorkers` 400 비율 급증 → 중단.
+- 확인 1주기에서 4값(원장·`slot.pendingCount`·`workDetailCounts`·`to.totalPending`)이
+  어긋나면 중단.
+
+### 76-4. 복구
+
+| 상황 | 절차 |
+|---|---|
+| 배포 직후 문제, client 미적용 | 6개를 **한 번에** 이전 소스로 되돌린다. 되돌릴 기준은 **함수별 실배포 시각이 달랐다**는 점 때문에 단일 SHA 가 아니다 → 되돌리려면 그 시각 이전의 커밋을 함수별로 찾아야 하고, 그것이 어렵다면 **forward-fix 를 우선**한다 |
+| client 적용 후 문제 | **CF 단독 rollback 금지**(8차 §51-4, 11 FAIL). client 와 함께 되돌린다 |
+| 값이 어긋난 공고가 남음 | 최신 원장으로 재계산(§79). 과거 카운터를 손으로 되돌리지 않는다 |
+
+> rollback 이 단일 SHA 로 깔끔하지 않다는 것이 이번에 새로 확인된 제약이다.
+> 그래서 **배포 전에 현재 배포 시각표(§73-1)를 기록으로 남긴다.**
+
+### 76-5. 기록 형식
+
+```
+배포일시(KST) / source SHA=40fe3d3 / 명령=위 §75
+함수별: 이름 | 배포 전 updateTime | 배포 후 updateTime | 결과(OK/실패) | 비고
+확인: 1주기 4값 일치(Y/N) · 400 계약 2건(Y/N) · applied 필드(Y/N)
+```
+
+## 77. 반영 확인 — 읽기로 되는 것과 안 되는 것
+
+| 확인 항목 | 방법 | 이번 범위 |
+|---|---|---|
+| 배포 자체 | Cloud Functions `updateTime` 이 배포 시각으로 갱신(§73-1 과 같은 READ) | READ ONLY ✔ |
+| fence 가 살아 있는가 | 이후 재계산이 일어난 공고에 `statsSourceReadAt` 이 생긴다 | READ ONLY ✔ |
+| 응답 계약(`applied`) | 보정 실행 시 응답에서 확인 | 보정 승인 후 |
+| 1주기 4값 일치 · 400 계약 2건 · 이중 차감 없음 | **실제 domain mutation 필요**(지원·취소·초대) | **이번 범위 아님** — 격리 Emulator 증거를 재사용한다(`r7-emu-durability` 29 · `matrix3` 25 · `compat` 12 · `c7-fallback` 17 · `r10-emu-contract-b` 4/4) |
+
+실제 mutation 검증이 꼭 필요하다면, 대상·변경·복구 가능성을 특정한 **별도 제안**으로 올린다
+(예: 전용 테스트 사업장의 공고 1건에서 지원→취소 1주기, 사후 원장 원복 방법 포함).
+이번 요청에는 포함하지 않았다.
+
+## 78. 최신 READ ONLY dry-run (2026-09-27T15:35:49Z = 09-28 00:35 KST)
+
+도구: `scripts/r7-dev-read-reconcile.js --limit 120 --repair-plan`
+(같은 파일에 계획 모드를 더했다 — 술어를 두 벌로 만들지 않기 위해서다.
+**쓰기 API 정적 0건**: `.set(`·`.update(`·`.delete(`·`batch()`·`runTransaction`·`FieldValue`·
+`httpsCallable` 모두 미사용. 재집계 callable 을 dry-run 이라 부르며 호출하지 않았다.)
+
+| 항목 | 7차 (09-27T11:35Z) | 이번 (09-27T15:35Z) |
+|---|---|---|
+| 범위 | flex 92 · 슬롯 246 · 업무키 266 | **동일** |
+| mismatch | 21건(pending 9 / confirmed 12) | **21건(pending 9 / confirmed 12)** |
+| TO 합계·슬롯 카운터 | 0건 | **0건** |
+| 영향 공고 | 11 | **11** (ID 확보) |
+| identity 해석 | — | `wdId` 18건, **ambiguous/unresolved 0** → fail-closed 슬롯 없음 |
+| 사라진 wd 키 | — | **0건** (보존 계약이 적용될 행이 없다) |
+
+자연 복구된 항목: **없음**(21건이 그대로다). 새로 생긴 항목: 없음.
+대상 공고 11개는 모두 **한 사업장** `fLmSOHVKUwmBHcbwQE0I` 소속이고, 그중 10개는 `CLOSED`,
+1개(`cW9YEE02tlAbT9DqYXsT`)만 `ACTIVE` 다.
+
+### 78-1. 보정 command 가 쓸 필드 — 전량 투영
+
+계획 표 **122행**(대상 11 공고) 중 **변경 32행 / 변경없음 90행**.
+32행 = 업무 카운터 21 + 공고별 `statsSourceReadAt` 기록 11.
+
+| 필드 | 변경 | 비고 |
+|---|---|---|
+| `slot.workDetailCounts.{wdId}.pendingCount` | 9행 | 전부 **→ 0** |
+| `slot.workDetailCounts.{wdId}.confirmedCount` | 12행 | 전부 **→ 0** |
+| `to.statsSourceReadAt` | 11행(기록) | fence — 값과 함께 항상 |
+| `to.totalPending` / `to.totalConfirmed` | 0행 | 이미 원장과 일치 |
+| `slot.pendingCount` / `slot.confirmedCount` | 0행 | 이미 일치 |
+| `to.status` | 0행 | 10개는 `CLOSED`(재계산이 손대지 않는다), 1개는 `ACTIVE` 유지 |
+
+**좌석 술어 때문에 `totalConfirmed` 가 내려갈 수 있다**는 설명은 유효하지만,
+**이번 데이터에는 해당 행이 없다**(반납·기간종료로 달라지는 공고가 대상에 없다).
+
+### 78-2. 변경 21행 (원장 기대는 전부 0 — 그 자리에 살아 있는 지원자가 없다)
+
+| # | TO | slot | wdId | 필드 | 현재 | 예상 |
+|---|---|---|---|---|---|---|
+| 1 | cW9YEE02tlAbT9DqYXsT | YuSUwXpiRYpB3H10gP9Y | sPIaE1V7QX94Orhx3zeD | pendingCount | 1 | 0 |
+| 2 | 6ekvP7g790UNJ9I15gyl | dz5lHSMMzZLIR7xYpn1C | kFhSypNK3vHDHtNDd0kH | confirmedCount | 1 | 0 |
+| 3 | zmJiXbYGIc6ebqtPwjQ2 | 1TbuO88z3B5mZxpujich | 9tTUrs954Rhajh1NRBB7 | pendingCount | **-6** | 0 |
+| 4 | zmJiXbYGIc6ebqtPwjQ2 | 1TbuO88z3B5mZxpujich | 9tTUrs954Rhajh1NRBB7 | confirmedCount | 6 | 0 |
+| 5 | olRw5n0HtVbLdBaTAulq | PffgupveoO5G5O535TMb | AMAhmj1B2hWpJbK1U5l1 | pendingCount | **-3** | 0 |
+| 6 | olRw5n0HtVbLdBaTAulq | PffgupveoO5G5O535TMb | AMAhmj1B2hWpJbK1U5l1 | confirmedCount | 2 | 0 |
+| 7 | olRw5n0HtVbLdBaTAulq | PffgupveoO5G5O535TMb | 2oTMYQ70scI1IJV6Aie7 | confirmedCount | 1 | 0 |
+| 8 | YR0PFPMJ2MLLmt8DOVyZ | t7h1bd4IMKI1cDFStefn | OxWHrAzMt1izrlgnoMif | pendingCount | **-3** | 0 |
+| 9 | YR0PFPMJ2MLLmt8DOVyZ | t7h1bd4IMKI1cDFStefn | OxWHrAzMt1izrlgnoMif | confirmedCount | 2 | 0 |
+| 10 | YR0PFPMJ2MLLmt8DOVyZ | t7h1bd4IMKI1cDFStefn | h03iKQ3neDmTUBPH0WJM | confirmedCount | 1 | 0 |
+| 11 | Sjb3EXkYTm1a5gLDvtMb | FY5PlQqefqZ74P6ZKpJg | 1mfSlp3el8NlLH248Kqv | pendingCount | **-2** | 0 |
+| 12 | Sjb3EXkYTm1a5gLDvtMb | FY5PlQqefqZ74P6ZKpJg | 1mfSlp3el8NlLH248Kqv | confirmedCount | 2 | 0 |
+| 13 | Sjb3EXkYTm1a5gLDvtMb | FY5PlQqefqZ74P6ZKpJg | 5O1gogep8wG8HqqC2Vea | pendingCount | 1 | 0 |
+| 14 | aNCJlTJQvjHI2i6UIFPv | umyiBbmslGHAAeTsq919 | xufmBlipZseIm8deG6Uk | pendingCount | **-2** | 0 |
+| 15 | aNCJlTJQvjHI2i6UIFPv | umyiBbmslGHAAeTsq919 | xufmBlipZseIm8deG6Uk | confirmedCount | 2 | 0 |
+| 16 | 01d0fT1AVRxmqkAlVBfm | 3QW26YnI8QnehKtnGNhv | A9p27Ghr3QVwbzAG5L8b | confirmedCount | 1 | 0 |
+| 17 | 01d0fT1AVRxmqkAlVBfm | 3QW26YnI8QnehKtnGNhv | 9A5dRsR9VRs8xlDBQr2H | pendingCount | 1 | 0 |
+| 18 | eSXhMKtqgk2h7n29dXck | ayO4j1ZeqZyq7y83FmY1 | ccxOwi9FEeGPu5yybnnW | confirmedCount | 1 | 0 |
+| 19 | gVL0cmNa1om5FEbDXG1c | 2LPlH8BD4CrNmEmspkWV | 9Xo4rDw9dSWSMwibjpl3 | confirmedCount | 2 | 0 |
+| 20 | gVL0cmNa1om5FEbDXG1c | 2LPlH8BD4CrNmEmspkWV | aACl0R7PHmAqRFqvNCZX | confirmedCount | 1 | 0 |
+| 21 | kcwGL5K4SjWFhuPP54bF | pnql4rfQOZ6l949GPVY4 | 5QSBHUzQcD5tDdPredYE | pendingCount | 1 | 0 |
+
+차이 이유는 모두 같다: 그 업무 자리에 **대기·좌석 점유 지원서가 없는데** 카운터가 남아 있다
+(음수 5건은 클라이언트 delta 가 zero-guard 없이 감소했던 흔적이다).
+근거 원장 범위: `applications(toId=… , slotId=…)` 전량.
+개인 식별 정보는 읽지도 출력하지도 않았다(uid·이름·연락처 제외).
+
+### 78-3. 불확실성
+
+- 이 표는 **그 시각의 계획**이다. 원장은 계속 바뀔 수 있다 → 실행 직전 재조회(§79-4).
+- `ACTIVE` 공고 1건(`cW9YEE02tlAbT9DqYXsT`)은 지금도 사용 중일 수 있어, 실행 시점에
+  값이 달라질 가능성이 가장 높은 대상이다.
+- 이번 조사에서 원래 범위를 넘는 차이는 **발견되지 않았다**(대상 확장 없음).
+
+## 79. 보정 실행안 (준비만)
+
+### 79-1. 명령과 단위
+
+| 항목 | 값 |
+|---|---|
+| 명령 | `callableRecalculateTOStats({toId})` — **수정된 버전**(배포 후) |
+| 단위 | **TO 1건.** 슬롯은 내부 루프이며 슬롯 단위 인터페이스는 없다 |
+| 권한 | `srvAssertToAuthority` — SUPER_ADMIN, 또는 그 사업장 owner/adminIds, 또는 `members.permissions.canManageTo`. 대상 11건이 **한 사업장**이라 한 관리자 계정으로 전부 처리된다 |
+| 호출 방법 | 앱의 해당 공고 화면에서 재집계, 또는 관리자 계정 토큰으로 callable 직접 호출 |
+| 호출 횟수 | 11회(공고당 1회) |
+
+> **8차의 "실패 슬롯만 재실행" 은 인터페이스와 맞지 않는다 — 정정한다.**
+> 실패한 슬롯이 있으면 함수가 `internal` 로 던지므로, 재실행은 **그 TO 전체**를 다시
+> 부르는 것이다. 슬롯 재집계는 각각 transaction 이고 값을 원장에서 다시 세므로,
+> 이미 맞은 슬롯을 다시 돌려도 결과가 같다(멱등).
+
+### 79-2. `applied=false` 의 해석
+
+| 관측 | 의미 | 처리 |
+|---|---|---|
+| HTTP 200 · `applied:true` | 합계를 썼다 | 정상 |
+| HTTP 200 · `applied:false` | **실패가 아니다.** 더 최신 읽기를 가진 값이 이미 저장돼 있어 fence 가 건너뛴 것 | 정상. 단 **저장 결과와 최신 원장을 대조**해 일치를 확인한다 |
+| HTTP 500 `internal` | 슬롯 재집계 실패가 있었다 | 같은 TO 재호출 |
+| 그 외 오류 | 권한·입력 문제 | 원인 해소 후 재호출 |
+
+반환값만으로 성공을 판정하지 않는다. **판정은 항상 "저장값 == 최신 원장"** 이다.
+
+### 79-3. 멱등·중간 실패 후 재개 — 기존 증거 연결
+
+| 성질 | 증거 |
+|---|---|
+| 같은 대상 재실행 결과 동일 | `scripts/r7-emu-f3-stale.js` S4 · `r8-emu-to-total-race.js` T4(재집계 2개 동시 + 36건 변경 후 정합) |
+| 슬롯 부분 실패 시 그 TO 재호출로 복구 | 7차 수정에서 실패 슬롯 수집 후 `internal` throw — 조용히 넘어가지 않는다(코드 계약) |
+| fence 와의 상호작용(skip 이 정상) | `r10-emu-contract-b.js` R10-3/R10-4(`skip=1`, 최종 원장 일치) |
+| 업무 카운터가 0 으로 시드되는 것 | `r7-emu-matrix3.js` 25건 |
+
+부족한 부분은 없다. 새 하네스를 만들지 않았다.
+
+### 79-4. 실행 절차 (승인 후)
+
+1. **직전 재조회**: `node scripts/r7-dev-read-reconcile.js --limit 120 --repair-plan`
+   → 대상 목록과 변경 행을 **그 시각 기준으로 다시 확정**한다. §78 표와 다르면 그쪽을 쓴다.
+2. 공고 1건 호출 → 응답(`applied`) 기록 → **그 공고만** 재조회해 일치 확인.
+3. 1건이 확인되면 나머지 10건 진행(같은 방식, 1건씩).
+4. 전체 끝난 뒤 **전량 재조회**로 mismatch 0 확인.
+5. 어긋난 공고가 남으면 그 TO 만 다시 호출한다(멱등). 손으로 값을 되돌리지 않는다.
+
+기록 형식:
+
+```
+실행 전: toId | 필드별 현재값·예상값(§78 표 행) | 재조회 시각
+실행:   toId | HTTP | applied | diagnostics | 소요
+실행 후: toId | 저장값 | 최신 원장값 | 일치(Y/N) | 비고
+```
+
+### 79-5. 보정 범위 — 바꾸지 않는 것
+
+`applications`(원장) · 근로관계 · 계약 · 근태 · 급여 이력은 **건드리지 않는다.**
+현재 업무 정의에 없는 옛 `workDetailCounts` 키는 **그대로 둔다**(보존 계약, 이번 데이터엔 0건).
+**CF 배포만으로 21건이 자동 복구된다고 말하지 않는다** — 트리거는 그 슬롯에 다음 원장
+이벤트가 와야 다시 센다. 대상 11개 중 10개가 `CLOSED` 라 그런 이벤트가 오지 않을 가능성이 높다.
+
+## 80. O08 최소 DEVICE 체크리스트 (실행 대기)
+
+전제: CF 6개 배포 완료 + client 는 사용자가 직접 빌드·설치한 최신 버전.
+대상은 **보정 대상이면서 살아 있는** 공고 하나다 — 그래서 보정 전/후를 같은 화면에서 본다.
+
+**공고 `cW9YEE02tlAbT9DqYXsT`** (ACTIVE · 정원 3 · 사업장 `fLmSOHVKUwmBHcbwQE0I`)
+
+| 날짜(KST) | slot | wdId | 시간 | 원장 기대 대기/확정 | 현재 저장 대기/확정 |
+|---|---|---|---|---|---|
+| 2026-09-26 | MglKKpS5oq6n9t9glWQA | dcFeQd4BCJ7NK4IRClcN | 09:00–18:00 | 0 / 1 | 0 / 1 (일치) |
+| 2026-09-27 | YuSUwXpiRYpB3H10gP9Y | sPIaE1V7QX94Orhx3zeD | 09:00–18:00 | **0 / 0** | **1 / 0 (어긋남)** |
+| 2026-09-28 | YmaA8I6tOQPMNCB4yoxG | JD5BLdKj1JM9EPIEdkgT | 09:00–18:00 | 0 / 1 | 0 / 1 (일치) |
+
+공고 머리말(공고 전체 scope): 대기 **0** · 확정 **2**. — 이 값은 **날짜 행과 다른 scope** 다.
+날짜 행(그 날 그 업무)과 같아야 한다고 비교하지 않는다. 홈의 일자별 합계도 다른 scope 다.
+
+확인 순서(한 묶음):
+
+1. 공고탭 → 이 공고의 다중 날짜 카드
+2. 날짜 **A(09-28)** 선택 → 머리말 `대기 0 · 확정 2` · 업무 행 `0 / 1`
+3. 날짜 **B(09-26)** 선택 → 머리말 그대로 · 업무 행 `0 / 1`
+4. **A 로 복귀** → 2번과 같은 숫자(카드 캐시가 날짜 전환에 따라오는지)
+5. A 의 **명단 열기 → 닫기** → 다시 공고탭 → 숫자 그대로
+6. (보정 전이면) 날짜 **09-27** 행이 `대기 1` 로 보이는데 명단은 비어 있음 → 보정 후 `대기 0`
+
+이미 PRODUCT 확인된 항목(FixedWorker 날짜 등)은 넣지 않았다. 재촬영 요청도 아니다 —
+배포·보정이 끝난 뒤 이 목록만 확인하면 된다.
+
+## 81. 승인 갈래 — 두 가지는 별개다
+
+| 결정 | 내용 | 상태 |
+|---|---|---|
+| **① DEV 배포 승인** | §75 명령으로 CF **6개** 배포(`masterScheduler` 포함) | **PENDING** |
+| **② 데이터 보정 승인** | 배포 후, §79 절차로 공고 11건 재집계(업무 카운터 21행 → 0) | **PENDING** (①이 먼저) |
+| O08 DEVICE | §80 체크리스트 1묶음 | **PENDING** (①② 뒤) |
+
+CODE/Emulator 종료 상태는 그대로 유지한다. 이번 절에서 DEV 에 쓴 것은 **없다**.
