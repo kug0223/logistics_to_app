@@ -9,9 +9,13 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
-String _src() => File(
-    'lib/screens/business_admin/dialogs/attendance_status_dialog.dart')
-    .readAsStringSync();
+// [R7-P1-3 P13-R] 이 화면의 바깥 읽기는 `attendance_reads.dart` 경계로 옮겼다.
+//   "무엇을 다시 읽는가" 계약은 그대로여서, 화면과 경계를 합쳐 본다.
+String _src() =>
+    File('lib/screens/business_admin/dialogs/attendance_status_dialog.dart')
+        .readAsStringSync() +
+    File('lib/screens/business_admin/dialogs/attendance_reads.dart')
+        .readAsStringSync();
 String _fn() => File('functions/src/index.ts').readAsStringSync();
 
 /// 주석으로 시작하는 줄만 제거한다 (문서 주석은 남는다).
@@ -104,7 +108,13 @@ void main() {
     test('AS-32 근태 조회는 여전히 서버 CF다', () {
       final rec = _sliceOf(code, 'Future<Map<String, AttendanceModel>> _getAttendanceRecords',
           'Future<Map<String, BusinessWorkTypeModel>> _getWorkTypeInfo');
-      expect(_flat(rec), contains("httpsCallable('callableGetAdminAttendances'"));
+      // [R7-P1-3 P13-R] CF 호출 자체는 읽기 경계(`attendance_reads.dart`)로 옮겼다.
+      //   계약은 그대로다 — 이 재조회가 **그 CF** 를 쓴다.
+      expect(_flat(rec), contains('_reads.adminAttendances('));
+      expect(
+          _flat(File('lib/screens/business_admin/dialogs/attendance_reads.dart')
+              .readAsStringSync()),
+          contains("httpsCallable('callableGetAdminAttendances'"));
     });
   });
 

@@ -202,7 +202,7 @@ void main() {
     test('종료 여부를 지원자 화면과 같은 source에서 읽는다', () {
       final a = _flat(_codeOf(
           _src('lib/screens/business_admin/dialogs/attendance_status_dialog.dart')));
-      expect(a.contains('_firestoreService.getDayStaffingDetail('), true,
+      expect(a.contains('_reads.dayStaffing('), true,
           reason: '슬롯 상태를 따로 캐시하거나 추측하면 두 화면이 갈린다');
       expect(a.contains('closedByUnit = {for (final r in rows) r.wdId: r.isClosed};'), true);
       final d = _flat(_codeOf(

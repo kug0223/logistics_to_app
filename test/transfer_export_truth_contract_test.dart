@@ -54,6 +54,8 @@ const _directoryCallers = <String>[
   'lib/screens/business_admin/dialogs/resign_request_management_dialog.dart',
   'lib/screens/business_admin/dialogs/schedule_request_management_dialog.dart',
   'lib/screens/business_admin/dialogs/attendance_status_dialog.dart',
+  // [R7-P1-3 P13-R] 같은 화면의 읽기 경계.
+  'lib/screens/business_admin/dialogs/attendance_reads.dart',
   'lib/screens/business_admin/dialogs/expiring_contracts_dialog.dart',
   'lib/screens/business_admin/expiring_contracts_screen.dart',
   'lib/screens/business_admin/workforce_management/workforce_operational_view.dart',
@@ -135,22 +137,37 @@ void main() {
     test('07 목록·운영 화면 전부가 workerDirectory로 조회한다', () {
       // [R8 O03] 일자별 화면은 읽기가 경계를 지난다. 목적 전달 계약은 그대로다 —
       //   화면이 workerDirectory 를 넘기고, 경계가 `getUsersBatch` 로 전달한다.
-      const viaReads = 'lib/screens/business_admin/dialogs/day_applicants_dialog.dart';
+      // 읽기가 경계를 지나는 화면 → 그 경계 파일.
+      //   [R8 O03] 일자별 화면 · [R7-P1-3 P13-R] 당일명단.
+      //   화면이 목적을 넘기거나 경계가 목적을 고정하거나, 어느 쪽이든
+      //   **workerDirectory 목적으로만** 읽는다는 계약은 그대로다.
+      const viaReads = <String, String>{
+        'lib/screens/business_admin/dialogs/day_applicants_dialog.dart':
+            'lib/screens/business_admin/dialogs/day_applicants_reads.dart',
+        'lib/screens/business_admin/dialogs/attendance_status_dialog.dart':
+            'lib/screens/business_admin/dialogs/attendance_reads.dart',
+      };
       for (final path in _directoryCallers) {
         final code = _codeOf(_src(path));
-        if (path == viaReads) {
+        final boundary = viaReads[path];
+        if (boundary != null) {
           expect(code, contains('_reads.usersBatch('),
               reason: '$path 가 더는 이 CF를 쓰지 않으면 목록에서 빼야 한다');
-          final reads = _codeOf(
-              _src('lib/screens/business_admin/dialogs/day_applicants_reads.dart'));
+          final reads = _codeOf(_src(boundary));
           expect(reads, contains('svc.getUsersBatch('));
-          expect(reads, contains('purpose: purpose'));
+          // 목적은 화면이 넘기거나(일자별) 경계가 고정한다(당일명단).
+          //   어느 쪽이든 그 읽기 경로에 workerDirectory 가 있어야 한다.
+          expect(
+              code.contains('FirestoreService.purposeWorkerDirectory') ||
+                  reads.contains('FirestoreService.purposeWorkerDirectory'),
+              true,
+              reason: '$path 읽기 경로가 전체본(계좌 포함)을 받고 있다');
         } else {
           expect(code, contains('getUsersBatch'),
               reason: '$path 가 더는 이 CF를 쓰지 않으면 목록에서 빼야 한다');
+          expect(code, contains('FirestoreService.purposeWorkerDirectory'),
+              reason: '$path 가 전체본(계좌 포함)을 받고 있다');
         }
-        expect(code, contains('FirestoreService.purposeWorkerDirectory'),
-            reason: '$path 가 전체본(계좌 포함)을 받고 있다');
       }
     });
 

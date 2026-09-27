@@ -15,7 +15,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/user_provider.dart';
@@ -28,7 +27,6 @@ import '../../../models/core/business_work_type_model.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
-import '../../../services/contract_service.dart';
 
 // Utils
 import '../../../utils/person_label.dart';
@@ -39,7 +37,6 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/attendance_badge_helper.dart';
 import '../../../utils/attendance_status_helper.dart';
 import '../../../utils/attendance_review_helper.dart';
-import '../../../services/work_detail_time_service.dart';
 import '../../../utils/work_detail_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
@@ -62,6 +59,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/app_select_field.dart';
 // [R5.2] NO_SHOW 대체 인력 충원 recovery dialog
 import 'day_applicants_dialog.dart';
+import 'attendance_reads.dart';
 
 /// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
@@ -73,6 +71,10 @@ class AttendanceStatusDialog extends StatefulWidget {
   /// null이면 기존 batch mode. userId가 아닌 applicationId 기준 (동일 uid 복수 application 대응).
   final String? initialApplicationId;
 
+  /// [R7-P1-3 P13-R] 바깥에서 읽어오는 것들의 경계. 주지 않으면 기존 구현이다.
+  ///   분류·병합·그룹·수치는 이 화면이 그대로 한다 — 여기로 옮기지 않는다.
+  final AttendanceReads? reads;
+
   const AttendanceStatusDialog({
     super.key,
     required this.date,
@@ -80,6 +82,7 @@ class AttendanceStatusDialog extends StatefulWidget {
     this.initialBusinessId,
     this.businesses,
     this.initialApplicationId,
+    this.reads,
   });
 
   @override
@@ -95,6 +98,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   static final _parenRe = RegExp(r'\(.*?\)');
 
   final FirestoreService _firestoreService = FirestoreService();
+  /// [R7-P1-3 P13-R] 바깥 읽기 경계 — 주지 않으면 기존 구현.
+  late final AttendanceReads _reads =
+      widget.reads ?? AttendanceReads.of(_firestoreService);
 
   // 데이터
   List<ApplicationModel> _confirmedWorkers = [];
@@ -201,11 +207,28 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   ///   그 뒤로는 이것만 쓴다. 시간 계산 helper 들은 모두 성분 기반
   ///   (`DateTime(workDate.year, …)`)이라 KST 기기에서의 동작은 그대로다.
   late final DateTime _kstDay =
-      DateTime.utc(widget.date.year, widget.date.month, widget.date.day);
+      FormatHelper.kstDayKeyOfCivil(widget.date);
 
   /// [R7-P1-3] 과거/미래 판정의 기준 — `_kstDay` 와 **같은 달력**이어야 한다.
   ///   기기 local 자정과 섞으면 시간대 offset 만큼 어긋난 비교가 된다.
+  ///   이쪽은 **실제 현재 시각**을 KST 달력일로 바꾸는 변환이다(`toKstDate`).
+  ///   위 `_kstDay` 의 성분 추출과 방향이 다르다 — 섞어 쓰지 않는다.
   DateTime get _todayKst => FormatHelper.toKstDate(DateTime.now());
+
+  /// [R7-P1-3] 서버로 보내는 `workDateMs` — 그 KST 하루의 **자정 instant**.
+  ///
+  ///   서버는 이 값으로 두 가지를 정한다.
+  ///     · 근태 문서 id: `${applicationId}_${KST(workDateMs) 날짜}`
+  ///     · 저장되는 `attendance.workDate`: `Timestamp.fromDate(new Date(workDateMs))`
+  ///
+  ///   두 번째가 이 프로젝트의 DATE_ONLY canonical(= **KST 자정 instant**)이다.
+  ///   그래서 `_kstDay.millisecondsSinceEpoch`(= 00:00Z, KST 09:00)를 그대로 보내면
+  ///   날짜는 맞아도 저장 형태가 canonical 을 벗어난다 — 홈에서 열었을 때가
+  ///   그랬다(홈은 처음부터 `toKstDate` 값을 넘겼다).
+  ///   조회 창을 만드는 `kstDayRange` 의 시작값을 그대로 쓴다 — 창과 저장값과
+  ///   문서 id 가 **같은 하루**를 가리킨다.
+  int get _kstDayStartMs =>
+      FormatHelper.kstDayRange(_kstDay).$1.millisecondsSinceEpoch;
 
   @override
   void initState() {
@@ -262,7 +285,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   /// 사업장명 조회 (30개 초과 청크 처리)
   Future<void> _loadBusinessNames() async {
     try {
-      final nameMap = await _firestoreService.getBusinessNames(widget.businessIds);
+      final nameMap = await _reads.businessNames(widget.businessIds);
       if (!mounted) return;
       setState(() {
         _businessNameMap = nameMap;
@@ -348,10 +371,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final step2Results = await Future.wait([
         _getAttendanceRecords(appIds),                              // [0] 출근 기록
         // [1] 사용자 정보 — [PII-DOC-R0.1 / INV-1] 근태 현황은 이름·나이·성별만 쓴다.
-        _firestoreService.getUsersBatch(uids, businessId: _selectedBusinessId ?? '',
-            purpose: FirestoreService.purposeWorkerDirectory),
+        _reads.usersBatch(uids: uids, businessId: _selectedBusinessId ?? ''),
         _getWorkDetailTimes(confirmedWorkers),                        // [2] WorkDetail 시간 정보 (근무자 목록 전달)
-        ContractService().getContractStatusBatch(appIds, businessId: _selectedBusinessId ?? ''),  // [3] 계약 서명 상태
+        _reads.contractStatus(appIds: appIds, businessId: _selectedBusinessId ?? ''),  // [3] 계약 서명 상태
       ]);
 
       final attendanceMap = step2Results[0] as Map<String, AttendanceModel>;
@@ -367,7 +389,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       Map<String, bool>? closedByUnit;
       try {
         final (dayStart, _) = FormatHelper.kstDayRange(_kstDay);
-        final rows = await _firestoreService.getDayStaffingDetail(
+        final rows = await _reads.dayStaffing(
           businessId: _selectedBusinessId ?? '',
           dayStartMs: dayStart.millisecondsSinceEpoch,
         );
@@ -379,7 +401,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       // 사업장이 바뀐 경우에만 반올림 정책 로드 (매 refresh마다 Firestore 읽지 않음)
       if (_rulesLoadedForBusinessId != _selectedBusinessId) {
         try {
-          final business = await _firestoreService.getBusinessById(_selectedBusinessId ?? '');
+          final business = await _reads.businessById(_selectedBusinessId ?? '');
           _attendanceRules = business?.attendanceRules;
           _rulesLoadedForBusinessId = _selectedBusinessId;
         } catch (e) {
@@ -444,14 +466,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     // [R8-P7.1] cap 에서 잘린 것을 전부로 오해하지 않도록 페이징 헬퍼 경유.
     final cfResults = await Future.wait([
       // [R7-P1-2.3] 근태 현황 — 이 화면의 조작 게이트와 같은 canManageWorkers.
-      fetchApplicationsByBizPaged({
+      _reads.applicationsPaged({
         'businessId': _selectedBusinessId,
         'workDateGteMs': dateStart.millisecondsSinceEpoch,
         'workDateLtMs': dateEnd.millisecondsSinceEpoch,
         'purpose': FirestoreService.purposeWorkerOperation,
         'limit': 2000,
       }),
-      fetchApplicationsByBizPaged({
+      _reads.applicationsPaged({
         'businessId': _selectedBusinessId,
         'type': AppType.longTerm,
         'purpose': FirestoreService.purposeWorkerOperation,
@@ -560,15 +582,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final queryRangeStart = dateStart.subtract(const Duration(days: 1));
 
     // CF 경유: callableGetAdminAttendances (Admin SDK 서버사이드 권한 검증)
-    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetAdminAttendances',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-    final cfResult = await callable.call<Map<String, dynamic>>({
-      'businessId': _selectedBusinessId,
-      'startMs': queryRangeStart.millisecondsSinceEpoch,
-      'endMs': dateEnd.millisecondsSinceEpoch,
-    });
-    final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+    final cfItems = await _reads.adminAttendances(
+      businessId: _selectedBusinessId ?? '',
+      startMs: queryRangeStart.millisecondsSinceEpoch,
+      endMs: dateEnd.millisecondsSinceEpoch,
+    );
 
     final Map<String, AttendanceModel> attendanceMap = {};
     for (final e in cfItems) {
@@ -593,15 +611,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if (_selectedBusinessId == null) return workTypeMap;
 
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(_selectedBusinessId)
-          .collection('workTypes')
-          .where('isActive', isEqualTo: true)
-          .get();
+      final docs = await _reads.workTypeDocs(_selectedBusinessId!);
 
-      for (var doc in snapshot.docs) {
-        final workType = BusinessWorkTypeModel.tryFromFirestore(doc);
+      for (final e in docs.entries) {
+        final workType = BusinessWorkTypeModel.tryFromMap(e.value, e.key);
         if (workType != null) workTypeMap[workType.name] = workType;
       }
     } catch (e) {
@@ -3210,7 +3223,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   /// [AH-V2-04A.1] 실제 로딩은 WorkDetailTimeService가 담당한다.
   ///   관리자 Home도 같은 서비스를 써서 동일한 근무시간 기준을 갖는다.
   Future<Map<String, dynamic>> _getWorkDetailTimes([List<ApplicationModel>? workers]) =>
-      WorkDetailTimeService.load(workers ?? _confirmedWorkers);
+      _reads.workDetailTimes(workers ?? _confirmedWorkers);
 
 
   // ═══════════════════════════════════════════════════════════
@@ -3268,7 +3281,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final att = _attendanceMap[app.id];
       return {
         'applicationId': app.id,
-        'workDateMs': _kstDay.millisecondsSinceEpoch,
+        'workDateMs': _kstDayStartMs,
         'userId': app.uid,
         'businessName': app.businessName,
         'workType': app.selectedWorkType,
@@ -4647,7 +4660,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         final checkInMs = _hmToKstEpochMs(_kstDay, effectiveTime);
         final entry = <String, dynamic>{
           'applicationId': app.id,
-          'workDateMs': _kstDay.millisecondsSinceEpoch,
+          'workDateMs': _kstDayStartMs,
           'userId': app.uid,
           'businessId': app.businessId,
           'businessName': app.businessName,
@@ -4834,7 +4847,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         final existing = _attendanceMap[app.id];
         final entry = <String, dynamic>{
           'applicationId': app.id,
-          'workDateMs': _kstDay.millisecondsSinceEpoch,
+          'workDateMs': _kstDayStartMs,
           'userId': app.uid,
           'businessId': app.businessId,
           'businessName': app.businessName,

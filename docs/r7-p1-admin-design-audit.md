@@ -598,3 +598,172 @@ scoped refresh 는 `attendance_scoped_refresh_contract_test`,
    실패 안내가 뜬다).
 
 기존에 이미 확인한 같은 화면의 다른 항목은 다시 요청하지 않는다.
+
+---
+
+## R7-P1-3 후속 — P13-T / P13-W / P13-R (2026-09-28)
+
+기준 `1edcac2`. branch `main`, 시작 시 tracked 변경 없음, 사용자 소유 untracked 8건 보존.
+Staffing 보정 **DEFERRED**, O08 **PENDING** 유지. 첫 보고의 증거(날짜 실행 10건·집계 단위·
+유지 8건·실패 경로 320/360 렌더·회귀 23파일)는 재사용하고 다시 만들지 않았다.
+
+| ID | 이전→현재 | owner/변경 또는 NO PATCH | 재사용/신규 증거 | 남은 조건 |
+|---|---|---|---|---|
+| **P13-T** | 입력 계약 미확정 → **확정(+체인 1건 수정)** | 화면(`AttendanceStatusDialog`). `date` 는 **civil day** 계약임을 코드로 확정. `workDateMs` 를 KST 자정 instant 로 정정 | 재사용: 첫 보고 실행 10건 · 신규: `attendance_dialog_day_key_contract_test` 갱신(A 실행 5 · B 소스 5) | 없음 |
+| **P13-W** | 이관(미수정) → **수정** | 근무 탭(`workforce_operational_view`) — 날짜 입력·조회창·마커 3지점. 경계 변환은 새 공용 owner `FormatHelper.kstDayKeyOfCivil` | 신규: `work_calendar_marker_contract_test` 재앵커 · 기존 marker/parity 회귀 유지 | 없음(그 화면의 집계·정원은 손대지 않았다) |
+| **P13-R** | 오류 경로만 → **정상 명단 렌더 검증** | 화면에 좁은 읽기 경계 `AttendanceReads` 주입(8차 `DayApplicantsReads` 패턴) | 신규: `attendance_dialog_content_render_test` 4건(production 위젯·실제 행/그룹/액션) | 키보드 경로 없음 · 대비·터치영역은 P4 유지 |
+
+### P13-T. 날짜 입력 계약 — 네 진입 모두 **civil day** 다
+
+| 진입 / 실제 caller | 날짜 생성식 | civil 성분? | 고른 KST 날짜 | `_kstDay` 결과 | 조회창 / `workDateMs` 의미 |
+|---|---|---|---|---|---|
+| 홈 `_openTodayAttendanceDialog` | `FormatHelper.toKstDate(DateTime.now())` | **성분**(`DateTime.utc(y,m,d)`, 실제 시각을 KST 달력일로 바꾼 결과) | 오늘(KST) | 같은 y/m/d | `kstDayRange` → 그 날 KST 00:00~다음날 00:00 · `workDateMs` = 그 날 KST 자정 |
+| 미처리 큐 `_openAttendance` | `item.workDate` = `DateTime(y,m,d)` ← CF `workDateStr('YYYY-MM-DD')` | **성분**(기기 local 자정, 그 화면 주석이 "instant 아님" 명시) | 큐 행의 근무일 | 같은 y/m/d | 같음 |
+| 근무 탭 일괄 | `_selectedDay` = `DateTime(y,m,d)` (달력 선택 / `_today()`) | **성분** | 고른 날 | 같은 y/m/d | 같음 |
+| 근무 탭 개인 focus | 같음 + `initialApplicationId` | **성분** | 같음 | 같음 | 같음 |
+
+**실제 instant 를 넘기는 caller 는 없다.** 그래서 성분 추출(`kstDayKeyOfCivil`)이 네 경우 모두
+맞는 변환이고, 범용 API 나 새 날짜 모델을 만들지 않았다. 두 변환을 코드에서 분리해 두었다.
+
+- `_kstDay = FormatHelper.kstDayKeyOfCivil(widget.date)` — **성분 → 키**(달력에서 고른 날 보존)
+- `_todayKst = FormatHelper.toKstDate(DateTime.now())` — **실제 시각 → KST 달력일**('오늘' 판정)
+- 두 값은 같은 달력(UTC 성분 키)이라 `isBefore/isAfter` 비교가 성립한다. 선택 날짜와 오늘을
+  섞지 않는다 — 과거/미래 판정에만 `_todayKst` 를 쓴다.
+- 지적된 예시(`2026-09-27T15:00Z` 는 KST 9/28 인데 UTC 성분은 9/27)는 **instant 를 성분
+  추출했을 때** 생기는 문제다. 이 화면에는 그 입력이 오지 않으므로 해당 사례가 없다 —
+  그 전제를 주석과 테스트(B-1)로 못박았다. 새 caller 가 instant 를 넘기기 시작하면
+  `kstDayKeyOfCivil` 의 문서가 그것이 틀린 입력임을 말한다.
+
+**체인 1건 수정.** 선택값 → 정규화 → `kstDayRange` → `workDateMs` → 서버까지 따라가 보니
+마지막 칸이 어긋나 있었다. 서버는 `workDateMs` 로 두 가지를 정한다:
+
+- 근태 문서 id `${applicationId}_${KST(workDateMs) 날짜}` — **날짜는 두 형태 모두 같다**
+- 저장되는 `attendance.workDate` = `Timestamp.fromDate(new Date(workDateMs))`
+  — 이 프로젝트의 **DATE_ONLY canonical 은 KST 자정 instant** 다(`kstDayRange` 문서)
+
+`_kstDay.millisecondsSinceEpoch`(= 00:00Z, KST 09:00)를 보내면 날짜는 맞아도 저장 형태가
+canonical 을 벗어난다. **이건 첫 보고 이전부터 홈 경로가 그랬다**(홈은 처음부터
+`toKstDate` 값을 넘겼다). 그래서 `_kstDayStartMs = kstDayRange(_kstDay).$1.millisecondsSinceEpoch`
+로 바꿨다 — 조회창·저장값·문서 id 가 **한 하루**에서 나온다.
+`attendance.workDate` 를 정확 instant 로 비교하는 소비자는 없음을 확인했다(전수 grep).
+
+### P13-W. 근무 탭 — 날짜창·마커를 선택일과 맞췄다
+
+| 지점 | 이전 | 현재 |
+|---|---|---|
+| `_loadDayData` → `getConfirmedWorkersByDateAndBusinessOrThrow` / `getAttendanceByDate` | `_selectedDay`(기기 local 자정)를 `kstDayRange` 에 넣었다 | 경계에서 `dayKey = kstDayKeyOfCivil(day)` 로 바꿔 넘긴다 |
+| 주간 strip 판정 `_hasWorkOn` | `dates.contains(toKstDate(day))` — civil 을 instant 변환에 넣었다 | `dates.contains(kstDayKeyOfCivil(day))` |
+| 월 달력 `eventLoader` | 같음 | 같음 |
+| 마커 범위 `_loadMarkerRange` 의 `start`/`end` | 달력 연산 결과(local)를 그대로 | 양 끝을 `kstDayKeyOfCivil` 로 |
+| `_today()` · `_selectDay` · `_isFuture` | civil 끼리 비교 | **그대로**(의미가 일관돼 결함이 아니다 — 기계적으로 바꾸지 않았다) |
+| `anchor`(캐시 키) | local | **그대로**(내부 비교 전용) |
+
+마커 집합의 원소는 `FormatHelper.toKstDate(app.workDate)`(= `DateTime.utc(y,m,d)`)이므로
+이제 판정 키와 집합 키가 같은 형태다. 명단 진입은 `_selectedDay` 를 그대로 넘기고
+다이얼로그가 같은 규칙으로 정규화하므로 **머리말·요청 날짜가 선택일과 같다**(ACR/ADR 증거).
+
+**공통화와 제거.** 성분→키 변환을 `FormatHelper.kstDayKeyOfCivil` 하나로 두고,
+다이얼로그의 인라인 `DateTime.utc(widget.date...)` 도 그 owner 로 위임했다(옛 계산 제거).
+`UnclosedQueueItem.workDate` 는 그대로 — 그 화면의 표시 계약(성분 기반)은 정상이고
+경계 문제는 다이얼로그 정규화로 해결됐다.
+
+### P13-R. 정상 명단·행·액션 렌더
+
+`AttendanceReads`(신규, `lib/screens/business_admin/dialogs/attendance_reads.dart`) —
+**원시 외부 호출 9개만** 주입한다. 파싱·병합·중복 제거·상태 계산·탭 분류·업무 그룹·수치는
+production State 에 그대로 남겼다(경계를 파싱 이전에서 끊었다).
+
+| 이전한 caller | 이전 위치 → 현재 |
+|---|---|
+| 확정 근무자(단기·장기) | `fetchApplicationsByBizPaged(...)` ×2 → `_reads.applicationsPaged` |
+| 업무유형 | `FirebaseFirestore.instance…workTypes.get()` → `_reads.workTypeDocs` |
+| 근태 기록 | `httpsCallable('callableGetAdminAttendances')` → `_reads.adminAttendances` |
+| 업무시간 | `WorkDetailTimeService.load` → `_reads.workDetailTimes` |
+| 사용자 | `getUsersBatch(purposeWorkerDirectory)` → `_reads.usersBatch` |
+| 계약 상태 | `ContractService().getContractStatusBatch` → `_reads.contractStatus` |
+| 모집단위 종료 | `getDayStaffingDetail` → `_reads.dayStaffing` |
+| 반올림 정책 | `getBusinessById` → `_reads.businessById` |
+| 사업장 이름 | `getBusinessNames` → `_reads.businessNames` |
+
+제거: 위 호출로만 쓰던 import 3개(`cloud_firestore` · `contract_service` ·
+`work_detail_time_service`). 화면에는 우회 경로가 남지 않았다(`grep` 0건).
+
+**실행 결과** — `attendance_dialog_content_render_test` 4건 통과. fixture 는 대표 혼합:
+같은 사람이 **다른 업무 2건**(`workDetailId` 다름) + 미출근/지각 출근/퇴근 3행 + 긴 업무명·긴 이름.
+
+| 사례 | 확인한 것 |
+|---|---|
+| ACR-1 390×780 | 머리말 `당일명단`·`09월 28일 (월)` · 상단 통계가 **건**(`3건`·`2건`·`1건`·`0/3건`) · 조회 0건 문구 아님 · `명단 출력` 열림 |
+| ACR-2 | 기본 탭 `확인필요`(0건)의 빈 문구는 **조회 0건과 다른 말**(`해당 근무자가 없습니다`) · `정상` 탭 탭하면 실제 행(긴 이름 포함) · 첫 업무 그룹 `출근 2/2` · 스크롤 후 두 번째 업무 그룹(`주방 보조`) — 같은 사람이 두 그룹에 나뉜다 |
+| ACR-3 320×640 · 글자배율 **1.3** | 예외 0 · 행 그려짐 · 드래그로 아래 행 접근 |
+| ACR-4 | 실패 시 `명단 출력` 닫힘 + `다시 시도` → 탭 → **정상 목록** + `명단 출력` 열림 |
+
+글자 축소나 배율 무효화로 덮지 않았다. 키보드 입력 경로는 이 화면에 없어 확인하지 않았다.
+
+**렌더에서 찾은 결함 1건 — 공용 컴포넌트.** 320dp·배율 1.3 에서 `AppTabLabel` 의 Row 가
+**4.9px 넘쳤다**(탭 3개 동시, `RenderFlex overflowed` 실측). 배지는 이미 `Flexible`+`FittedBox`
+였지만 **라벨 `Text` 가 고정**이었다. 프로젝트 규칙(Row 안 두 위젯 이상 → `Flexible`)대로
+라벨을 `Flexible`+`ellipsis` 로 바꿨다 — 숫자 배지는 그대로 보여 눌러야 할 것이 가려지지 않는다.
+수정 후 같은 조건에서 예외 0.
+
+### 첫 보고의 잘못된 근거 1건 — 정정
+
+첫 보고에 "그룹 키가 `businessId|toId|slotId|**wdId**`" 라고 적었다. 실제 코드는
+`wdSeg = app.workDetailId ?? ''` 다 — **`workDetailId`** 이고 `wdId` 가 아니다(1676행).
+그룹 헤더 `명` 의 근거는 여전히 성립한다(docId discriminator 가 `workDetailId ?? selectedWorkType`
+이라 같은 그룹에서 한 uid 가 두 번 나오면 docId 가 충돌한다). 다만 **남는 예외**가 있다:
+`workDetailId` 가 없는 legacy 문서는 `wdSeg` 가 빈 문자열이 되어 같은 슬롯의 다른 업무가
+한 그룹으로 합쳐지고, 그때 한 사람이 두 번 나올 수 있다. 드물고(구 문서 한정) 행 자체는
+정상이므로 표기를 바꾸지 않고 **한계로 적는다**(`attendance_count_unit_contract_test` U-4 주석).
+
+### ALfit 디자인 판정 (D0 기준)
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| 제목·날짜·사업장/필터 맥락 | 유지 | `AppModalHeader(당일명단 / MM월 dd일 (E))` + 다중 사업장일 때만 선택 필드 — 대상이 하나면 늘리지 않는다 |
+| 상태색·정보 위계 | 유지 | 4탭(확인필요→정상→확인완료→처리완료) + 상단 통계 + 상태 배지. `urgent` 배지는 확인필요에만 |
+| 사람 identity·배지 | 유지 | 이름 + 시간 + 상태 배지(지각/연장 등), 행은 근무 건 단위 |
+| 주요 행동·정정 대상 | 유지 | 하단 고정 바(명단 출력·급여관리) + 행별 출근/조정/퇴근/리셋. 명단을 모르면 하단 바를 열지 않는다 |
+| 카드 밀도·공백 | 유지 | 업무 그룹 카드(radius 14) — V4 의 radius 혼재는 POLISH 로 유지(근거 없는 일괄 변경 금지) |
+| empty / error | 유지 | 조회 0건(`확정된 근무자가 없습니다`) ↔ 탭 0건(`해당 근무자가 없습니다`) ↔ 실패(`명단을 확인하지 못했습니다`) **세 문구가 갈라져 있다** |
+| **공용 탭 라벨** | **수정** | 위 overflow |
+
+### 회귀
+
+같은 환경·이름 단위. 영향면 **45파일**(화면·경계·`app_tab_label`·`format_helper`·근무 탭 참조).
+`+1564 -3` — **새 실패 0**, 남은 3건은 9차 기준선의 기존 실패
+(`noshow_replacement_cross_slice_contract` ×2 · `mixed_staffing_parity` ×1).
+`flutter analyze` 변경 5파일 No issues.
+
+seam 이전으로 앵커가 옮겨간 **기존 계약 5건을 재작성**했다(기준을 낮추지 않았다):
+
+| 테스트 | 무엇을 다시 앵커했나 |
+|---|---|
+| `attendance_business_date_contract_test` | 창 입력이 `_kstDay` 이고 원본 재사용 0 + 정규화 지점 존재 |
+| `attendance_scoped_refresh_contract_test` | 재조회가 `_reads.adminAttendances` 를 쓰고, **그 CF 이름은 경계 파일에** 있다 |
+| `admin_home_attendance_effective_time_test` | 화면+경계를 합쳐 시간 source 계약 확인 |
+| `transfer_export_truth_contract_test` | `viaReads` 를 map 으로 — 화면이 `_reads.usersBatch` 를 쓰고, 목적은 화면이나 경계 중 한쪽에 있어야 한다 |
+| `work_calendar_marker_contract_test` | 두 표면이 `kstDayKeyOfCivil` 을 **2회** 쓰고 `toKstDate(day)` 는 **0회** |
+
+### 상태와 다음
+
+| 구분 | 상태 |
+|---|---|
+| P13-T | **CLOSED** — 계약 확정 + 체인 1건 수정 |
+| P13-W | **CLOSED** — 날짜창·마커·명단 진입이 같은 선택일 |
+| P13-R | **CLOSED** — 정상 명단/행/액션 렌더 + D0 위반 1건 수정 |
+| P1-3 CODE | 수정 누적 5건(날짜 정규화 · 단위 · workDateMs · 근무 탭 경계 · AppTabLabel) |
+| P1-3 RENDER | **정상 콘텐츠 포함** (오류 경로 + 정상 명단, 320/390dp, 배율 1.3) |
+| P1-3 DEVICE | **PENDING** — 아래 최소안 |
+| Staffing 보정 / O08 | **DEFERRED / PENDING** (사용자 결정 유지) |
+| P1-4·5·6·7·P2 | 각 owner 유지 — 시작하지 않았다 |
+
+#### 바뀐 화면에 한정한 최소 DEVICE 확인안
+
+한국 기기에서는 날짜 동작이 **불변**이다(회귀 범위 A-3). 그래서 세 가지만이다.
+
+1. 근무 탭에서 **과거 날짜** 하나 선택 → 그 날 명단이 뜨고, 달력/주간 strip 의 점이 그 날에 있다.
+2. 그 상태에서 당일명단 열기 → 머리말 날짜 = 고른 날짜, 탭 숫자는 `건`, 업무 그룹 헤더만 `명`.
+3. 좁은 기기(또는 글자 크게) 에서 탭 라벨이 잘려도 **숫자 배지가 보이고 탭이 눌린다**.
+
+첫 보고에서 이미 확인한 항목은 다시 요청하지 않는다.

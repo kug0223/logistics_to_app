@@ -126,6 +126,18 @@ class FormatHelper {
         '${d.day.toString().padLeft(2, '0')}';
   }
 
+  /// [R7-P1-3] **달력에서 고른 날짜**(연월일 성분)를 [toKstDate]와 같은 비교 키로.
+  ///
+  /// [toKstDate]와 방향이 다르다 — 그쪽은 **실제 시각**을 KST 달력일로 바꾼다.
+  /// 이쪽은 이미 달력일인 값(예: `DateTime(y, m, d)` 로 만든 날짜 선택값,
+  /// 'YYYY-MM-DD' 를 파싱한 값)의 성분을 그대로 키로 만든다.
+  ///
+  /// 둘을 섞으면 KST 가 아닌 기기에서 하루가 밀린다:
+  /// UTC+13 기기의 `DateTime(2026, 9, 28)` 은 실제로 `2026-09-27T11:00Z` 이므로
+  /// [toKstDate] 를 통과하면 **9/27** 이 된다. 성분을 쓰면 9/28 그대로다.
+  static DateTime kstDayKeyOfCivil(DateTime civilDay) =>
+      DateTime.utc(civilDay.year, civilDay.month, civilDay.day);
+
   /// [R8-P9D] 'YYYY-MM-DD' → [toKstDate]와 같은 비교 키.
   ///
   /// 형식이 어긋나면 null — 한 건 때문에 전체 집계를 깨지 않는다.

@@ -369,9 +369,15 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     if (!force && _markerRangeAnchor == anchor && _workDates != null) return;
 
     final requestId = ++_markerRequestId;
-    final start = anchor.subtract(const Duration(days: 7));
-    final end = DateTime(anchor.year, anchor.month + 1, 1)
-        .add(const Duration(days: 7));
+    // [R7-P1-3 P13-W] 범위 양 끝도 KST 영업일 창을 만드는 쪽으로 간다
+    //   (`getSeatedWorkDatesInRange` → `kstDayRange`). 달력 연산으로 만든
+    //   civil day 를 그대로 넘기면 KST 가 아닌 기기에서 양 끝이 하루씩 밀린다.
+    //   `anchor` 는 캐시 키로만 쓰므로 그대로 둔다(내부 비교).
+    final start = FormatHelper.kstDayKeyOfCivil(
+        anchor.subtract(const Duration(days: 7)));
+    final end = FormatHelper.kstDayKeyOfCivil(
+        DateTime(anchor.year, anchor.month + 1, 1)
+            .add(const Duration(days: 7)));
 
     try {
       // [R8-P7.5] 사업장 조회를 try 안으로 들여왔다. 밖에 두면 실패가
@@ -417,11 +423,17 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   bool? _hasWorkOn(DateTime day) {
     final dates = _workDates;
     if (dates == null) return null;
-    return dates.contains(FormatHelper.toKstDate(day));
+    return dates.contains(FormatHelper.kstDayKeyOfCivil(day));
   }
 
   Future<void> _loadDayData(DateTime day) async {
     if (!mounted) return;
+    // [R7-P1-3 P13-W] 이 화면의 날짜는 **달력에서 고른 날**(civil day)이다.
+    //   아래 조회는 `FormatHelper.kstDayRange` 로 KST 영업일 창을 만드는데
+    //   그 함수는 **instant** 를 기대한다. 기기 local 자정을 그대로 넘기면
+    //   KST 가 아닌 기기에서 창이 통째로 하루 어긋난다(그 함수 문서의 경고).
+    //   그래서 경계에서 canonical 키로 바꿔 넘긴다.
+    final dayKey = FormatHelper.kstDayKeyOfCivil(day);
     // [P2-WF-02] 요청 번호 발급 — 이 함수가 반환하기 전 새 요청이 오면 현재 요청은 stale
     final requestId = ++_loadDayDataRequestId;
 
@@ -457,13 +469,13 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       //   같은 화면이 되면 안 된다.
       final appFutures = businesses.map((b) =>
           _firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow(
-            date: day,
+            date: dayKey,
             businessId: b.id,
           ));
       final attFutures = businesses.map((b) =>
           _firestoreService.getAttendanceByDate(
             businessId: b.id,
-            date: day,
+            date: dayKey,
           ));
 
       final results = await Future.wait([
@@ -1849,7 +1861,7 @@ class _MonthCalendarSheetState extends State<_MonthCalendarSheet> {
           eventLoader: (day) {
             final dates = widget.workDates;
             if (dates == null) return const [];
-            return dates.contains(FormatHelper.toKstDate(day))
+            return dates.contains(FormatHelper.kstDayKeyOfCivil(day))
                 ? const [_kWorkMarker]
                 : const [];
           },

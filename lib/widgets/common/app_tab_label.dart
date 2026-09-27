@@ -42,7 +42,14 @@ class AppTabLabel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label),
+        // [R7-P1-3] 라벨도 좁은 폭에서 양보해야 한다.
+        //   배지는 Flexible + FittedBox 였지만 라벨은 고정이어서, 320dp·글자배율
+        //   1.3 에서 이 Row 가 4.9px 넘쳤다(탭 3개 동시, 실측). 배율을 끄거나
+        //   글자를 축소해 덮지 않고, 프로젝트 규칙대로 Row 안에서 양보시킨다.
+        //   숫자 배지는 그대로 보인다 — 눌러야 할 것이 가려지지 않는다.
+        Flexible(
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
         // Flexible: 좁은 화면(320dp 등)에서 배지가 Row 범위를 초과하지 않도록 압축
         Flexible(

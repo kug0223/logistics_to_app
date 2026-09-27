@@ -10,10 +10,19 @@ import 'package:flutter_test/flutter_test.dart';
 ///   (지원 게이트는 **겹치는** 확정만 막는다) 건수와 인원수는 다를 수 있다.
 ///   그런데 라벨이 전부 `명` 이었다 — 1명이 2건이면 "미출근 2명" 이 된다.
 ///
-///   업무 그룹 **안**은 예외다. 그룹 키가 `businessId|toId|slotId|wdId` 이고
-///   지원서 docId 가 `{toId}_{slotId}_{wdId}_{uid}` 로 uid 당 유일하므로
-///   (CLAUDE.md 의 complexId 계약) 그룹 안에서 한 사람은 한 번만 나온다.
-///   그래서 그룹 헤더만 `명` 이 맞다.
+///   업무 그룹 **안**은 대체로 예외다. 그룹 키는
+///   `businessId|toId|slotId|workDetailId` 다 — **`wdId` 가 아니라 `workDetailId`**
+///   (첫 보고에 `wdId` 라고 적었던 것을 정정한다. index.ts 가 아니라 이 화면의
+///   `_buildWorkTypeGroups` 가 쓰는 조각이다).
+///   지원서 docId 의 discriminator 도 `workDetailId ?? selectedWorkType` 이므로
+///   (CLAUDE.md complexId 계약) `workDetailId` 가 있는 문서끼리는 같은 그룹에서
+///   한 uid 가 한 번만 나온다 — docId 가 겹치기 때문이다.
+///
+///   **남는 예외:** `workDetailId` 가 없는 legacy 문서는 `wdSeg` 가 빈 문자열이
+///   되어 같은 슬롯의 서로 다른 업무가 한 그룹으로 합쳐진다. 그때 한 사람이 두
+///   번 나올 수 있다(docId discriminator 는 `selectedWorkType` 이라 충돌하지
+///   않는다). 그 경우 그룹 헤더의 `명` 은 과대 표기다 — 드물고(구 문서 한정)
+///   행 자체는 정상이므로 이번에 표기를 바꾸지 않고 한계로 적는다.
 ///
 ///   같은 계열의 이웃 화면은 이미 건/명을 구분해 쓴다
 ///   (`DayApplicantsDialog`: `지원 N건 · 확정 N건`).
@@ -59,7 +68,9 @@ void main() {
       expect(uiLines.first.contains('workers.length'), isTrue);
     });
 
-    test('U-4 그룹 헤더의 명이 맞는 근거 — 그룹 키가 wdId 까지 좁혀져 있다', () {
+    test('U-4 그룹 헤더의 명이 맞는 근거 — 그룹 키가 workDetailId 까지 좁혀져 있다', () {
+      // 조각의 정체를 못 박는다 — `wdId` 가 아니다.
+      expect(code.contains("final wdSeg = app.workDetailId ?? '';"), isTrue);
       expect(code.contains("final groupKey = '\${app.businessId}|\$toSeg|\$slotSeg|\$wdSeg';"),
           isTrue);
     });

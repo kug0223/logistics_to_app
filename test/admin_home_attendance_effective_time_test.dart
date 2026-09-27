@@ -169,7 +169,10 @@ void main() {
 
   setUpAll(() {
     home = _codeOf(_src(_homePath));
-    dialog = _codeOf(_src(_dialogPath));
+    // [R7-P1-3 P13-R] 바깥 읽기는 `attendance_reads.dart` 로 옮겼다 —
+    //   읽는 주체가 이 화면이라는 계약은 두 파일을 합쳐 확인한다.
+    dialog = _codeOf(_src(_dialogPath)) +
+        _codeOf(_src('lib/screens/business_admin/dialogs/attendance_reads.dart'));
   });
 
   // ───────────────────────────────────────────────────────────

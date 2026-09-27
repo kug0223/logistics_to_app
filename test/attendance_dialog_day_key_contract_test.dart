@@ -100,23 +100,27 @@ void main() {
     final code = _src(_dialog);
 
     test('B-1 정규화 필드가 있고, 성분을 KST 달력일로 못박는다', () {
-      expect(
-          code.contains('DateTime.utc(widget.date.year, widget.date.month, widget.date.day)'),
-          isTrue);
+      // [P13-W] 성분→키 변환을 `FormatHelper` 로 옮겼다(같은 규칙을 근무 탭도 쓴다).
+      expect(code.contains('FormatHelper.kstDayKeyOfCivil(widget.date)'), isTrue);
       expect(code.contains('DateTime get _todayKst => FormatHelper.toKstDate(DateTime.now());'),
           isTrue);
     });
 
     test('B-2 정규화 지점 말고는 widget.date 를 쓰지 않는다', () {
       // 들어온 원본을 그대로 날짜 계산에 쓰면 호출부마다 다른 달력이 섞인다.
-      expect('widget.date'.allMatches(code).length, 3,
-          reason: '정규화 필드 한 줄의 3개 참조뿐이어야 한다');
+      expect('widget.date'.allMatches(code).length, 1,
+          reason: '정규화 지점 한 곳뿐이어야 한다');
     });
 
     test('B-3 조회 창·비교 키·서버 payload 가 모두 정규화된 값을 쓴다', () {
       expect(code.contains('FormatHelper.kstDayRange(_kstDay)'), isTrue);
       expect(code.contains('FormatHelper.toKstDate(_kstDay)'), isTrue);
-      expect(code.contains("'workDateMs': _kstDay.millisecondsSinceEpoch"), isTrue);
+      // 서버가 이 값으로 근태 문서 id 와 저장 workDate(DATE_ONLY)를 정한다 →
+      //   조회 창을 만든 것과 **같은** KST 자정 instant 를 보낸다.
+      expect(code.contains("'workDateMs': _kstDayStartMs,"), isTrue);
+      expect(
+          code.contains(r'FormatHelper.kstDayRange(_kstDay).$1.millisecondsSinceEpoch'),
+          isTrue);
       expect(code.contains('FormatHelper.kstDayRange(widget.date)'), isFalse);
     });
 

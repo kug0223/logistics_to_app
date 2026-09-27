@@ -51,8 +51,7 @@ void main() {
       //   KST 달력일로 못박아 한 번만 정규화한다. 이 단언이 지키려는 것은
       //   그대로다: **이 화면의 날짜 창은 전부 KST 영업일이다.**
       expect(
-        code.contains(
-            'DateTime.utc(widget.date.year, widget.date.month, widget.date.day)'),
+        code.contains('FormatHelper.kstDayKeyOfCivil(widget.date)'),
         true,
         reason: '들어온 날짜를 KST 달력일로 정규화하는 지점이 있어야 한다',
       );

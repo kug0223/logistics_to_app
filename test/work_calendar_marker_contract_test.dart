@@ -112,13 +112,18 @@ void main() {
     });
 
     test('두 표면이 같은 날짜 키를 쓴다 — KST', () {
-      expect(viewFlat.contains('dates.contains(FormatHelper.toKstDate(day))'),
-          true, reason: '주간 strip 판정');
+      // [R7-P1-3 P13-W] 달력이 주는 값은 **기기 local 자정(civil day)** 이다.
+      //   그것을 `toKstDate`(실제 시각 → KST 달력일)에 넣으면 KST 가 아닌
+      //   기기에서 하루가 밀려 점이 다른 날에 찍힌다. 성분을 키로 바꾸는
+      //   `kstDayKeyOfCivil` 로 통일했다 — 두 표면이 같은 키를 쓴다는 계약은 그대로다.
       expect(
-        viewFlat.contains('dates.contains(FormatHelper.toKstDate(day))'),
-        true,
-        reason: '월 달력 eventLoader도 같은 키',
-      );
+          'dates.contains(FormatHelper.kstDayKeyOfCivil(day))'
+              .allMatches(viewFlat)
+              .length,
+          2,
+          reason: '주간 strip 과 월 달력 eventLoader 가 같은 키를 쓴다');
+      expect(viewFlat.contains('FormatHelper.toKstDate(day)'), false,
+          reason: 'civil day 를 instant 변환에 넣는 경로가 남아 있으면 안 된다');
       expect(fsFlat.contains('FormatHelper.kstDayRange(start)'), true);
       expect(fsFlat.contains('dates.add(FormatHelper.toKstDate(app.workDate));'),
           true, reason: '기기 로컬 자정을 쓰면 비KST에서 하루 밀린다');
