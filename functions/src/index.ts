@@ -34840,13 +34840,11 @@ export const callableApplyToTO = onCall(
       //   오늘 슬롯의 마감은 바로 아래 applicationDeadline 검사가 판단한다.
       const slotWorkDateTs = sd["date"] as admin.firestore.Timestamp | undefined;
       if (slotWorkDateTs) {
-        const KST_OFFSET_MS_APPLY = 9 * 60 * 60 * 1000;
-        const kstDayStartOf = (ms: number) => {
-          const d = new Date(ms + KST_OFFSET_MS_APPLY);
-          d.setUTCHours(0, 0, 0, 0);
-          return d.getTime() - KST_OFFSET_MS_APPLY;
-        };
-        if (kstDayStartOf(slotWorkDateTs.toMillis()) < kstDayStartOf(Date.now())) {
+        // [R8] 하루 경계 계산은 `srvKstDayStartMs` 하나다.
+        //   여기에 같은 식이 따로 있었다. 둘이면 한쪽만 고쳐지는 날이 온다 —
+        //   실제로 후보 조회 쪽에서 그 계산이 런타임 TZ 로 새는 결함이 있었다.
+        if (srvKstDayStartMs(slotWorkDateTs.toMillis()) <
+            srvKstDayStartMs(Date.now())) {
           throw new HttpsError(
             "permission-denied", "이미 지난 날짜의 슬롯에는 지원할 수 없습니다.");
         }
