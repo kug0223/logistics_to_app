@@ -4226,7 +4226,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                               Text('파트별 일괄 $actionLabel',
                                   style: ResponsiveHelper.subtitleStyle(ctx)
                                       .copyWith(fontWeight: FontWeight.bold)),
-                              Text('$totalCount명 선택 · ${groups.length}개 파트',
+                              // [R7-P1-3] 일괄 처리 대상은 근무 건이다 —
+                              //   한 사람이 하루에 두 파트를 가질 수 있고,
+                              //   workDetailId 가 없는 구 문서는 한 파트로 합쳐진다.
+                              Text('$totalCount건 선택 · ${groups.length}개 파트',
                                   style: ResponsiveHelper.smallStyle(ctx,
                                       color: AppColors.grey600)),
                             ],
@@ -4302,7 +4305,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // 파트명 + 인원
+                                  // 파트명 + 근무 건수
                                   Row(
                                     children: [
                                       Container(
@@ -4327,7 +4330,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                                           color: theme.primaryColor.withValues(alpha: 0.1),
                                           borderRadius: BorderRadius.circular(10),
                                         ),
-                                        child: Text('${workers.length}명',
+                                        child: Text('${workers.length}건',
                                             style: ResponsiveHelper.tinyStyle(ctx,
                                                 color: theme.primaryColor)),
                                       ),

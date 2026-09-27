@@ -61,7 +61,7 @@ Map<String, dynamic> _appMap({
   required String id,
   required String uid,
   required String wdId,
-  required String workDetailId,
+  String? workDetailId,
   required String workType,
   required String start,
   required String end,
@@ -73,7 +73,7 @@ Map<String, dynamic> _appMap({
       'slotId': 'slot1',
       'businessId': _biz,
       'wdId': wdId,
-      'workDetailId': workDetailId,
+      if (workDetailId != null) 'workDetailId': workDetailId,
       'status': 'CONFIRMED',
       'type': 'short_term',
       'selectedWorkType': workType,
@@ -164,6 +164,33 @@ AttendanceReads _reads({bool failFirstLoad = false}) {
     businessNames: (ids) async => {for (final i in ids) i: _business().name},
   );
 }
+
+/// [R7-P1-3] **workDetailId 가 없는 구 문서** 형태. 같은 uid 의 서로 다른 관계 2건이
+///   같은 슬롯에 있으면 `wdSeg` 가 빈 문자열이라 **한 그룹**으로 합쳐진다.
+///   그래서 그 자리의 숫자는 인원이 아니라 관계(근무 건) 수다.
+AttendanceReads _legacyReads() => AttendanceReads(
+      applicationsPaged: (payload) async {
+        if (payload['type'] != null) return const [];
+        return [
+          _appMap(id: 'L1', uid: 'u-legacy', wdId: 'wdA', workType: '홀서빙',
+              start: '09:00', end: '13:00'),
+          _appMap(id: 'L2', uid: 'u-legacy', wdId: 'wdB', workType: '주방 보조',
+              start: '14:00', end: '18:00'),
+        ];
+      },
+      workTypeDocs: (_) async => const {},
+      adminAttendances: ({required businessId, required startMs, required endMs}) async =>
+          const [],
+      workDetailTimes: (_) async => const {},
+      usersBatch: ({required uids, required businessId}) async =>
+          {'u-legacy': _user('u-legacy', '한사람두관계')},
+      contractStatus: ({required appIds, required businessId}) async =>
+          {for (final id in appIds) id: 'signed'},
+      dayStaffing: ({required businessId, required dayStartMs}) async =>
+          const <DayStaffingRow>[],
+      businessById: (_) async => _business(),
+      businessNames: (ids) async => {for (final i in ids) i: _business().name},
+    );
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -284,5 +311,27 @@ void main() {
     expect(find.text('명단 출력'), findsOneWidget);
     await _openTab(tester, '정상');
     expect(find.textContaining('김아주아주긴이름'), findsWidgets);
+  });
+
+  testWidgets('ACR-5 구 문서(workDetailId 없음) — 한 사람의 두 관계가 한 그룹, 숫자는 건',
+      (tester) async {
+    await _pump(tester, size: const Size(390, 780), reads: _legacyReads());
+    expect(tester.takeException(), isNull);
+
+    // 상단: 관계 2건.
+    expect(find.text('2건'), findsWidgets);
+    expect(find.text('0/2건'), findsOneWidget);
+
+    // 두 관계가 모두 살아 있다 — 행을 지우거나 합치지 않았다.
+    // 출근 전(미출근)은 '정상' 탭에 있다 — 확인필요가 아니다.
+    await _openTab(tester, '정상');
+    expect(find.textContaining('한사람두관계'), findsNWidgets(2));
+    // 그룹 헤더는 그 그룹 **첫 관계**의 업무명·시간을 쓴다(현재 구현).
+    //   구 문서가 합쳐진 경우 두 번째 업무명은 헤더에 나오지 않는다 —
+    //   숫자 단위는 이 수정으로 맞았고, 그 표기 한계는 문서에 남겼다.
+    expect(find.textContaining('홀서빙'), findsWidgets);
+
+    // 그룹 헤더의 분자/분모는 같은 단위(관계)다 — 아직 아무도 출근하지 않았다.
+    expect(find.text('출근 0/2'), findsOneWidget);
   });
 }
