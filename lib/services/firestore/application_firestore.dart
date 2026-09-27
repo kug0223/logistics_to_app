@@ -720,8 +720,9 @@ extension ApplicationFirestore on FirestoreService {
       final appData = appDoc.data()!;
       final prevStatus = appData['status'] as String?;
       final toId = appData['toId'] as String?;
-      final slotId = appData['slotId'] as String?;
-      final selectedWorkType = appData['selectedWorkType'] as String?;
+      // [R7-5] slotId·selectedWorkType 은 더 읽지 않는다 — 파생 집계를
+      //   여기서 계산하지 않게 되면서 쓸 곳이 없어졌다. 서버 재집계는
+      //   toId 하나로 공고의 모든 슬롯·업무를 원장에서 다시 센다.
 
       // 확정/계약 서명 상태는 거절로 전이 불가 (cancelConfirmedApplication() 사용)
       if (status == AppStatus.rejected &&
@@ -793,20 +794,27 @@ extension ApplicationFirestore on FirestoreService {
       // tos totalConfirmed/totalPending은 rules상 admin 직접 쓰기 불가(PERMISSION_DENIED 가능).
       // 슬롯 confirmedCount/pendingCount(±1)는 isToAdmin 허용이지만 같은 배치라 같이 실패.
       // CF syncTOStats가 최종 교정하므로 실패는 UI 일시 불일치만 발생.
+      // [R7-5] 파생 집계를 클라이언트 batch 로 손대지 않는다.
+      //
+      //   이 경로는 좌석 상태를 바꾼다(확정 → 대기 롤백, 대기 → 취소).
+      //   그런데 여기서 쓸 수 있었던 것은 `totalConfirmed`·`totalPending` 과
+      //   슬롯 합계뿐이고, 업무 단위 `workDetailCounts` 는 rules 가 막아
+      //   손댈 수 없었다. 그래서 계약서 생성 실패로 CONTRACT_PENDING →
+      //   PENDING 롤백이 돌면 업무 단위 확정 수가 1 로 남았다.
+      //   `syncTOStats` 트리거는 그 필드를 재계산하지 않으므로 영구히 남는다.
+      //
+      //   대신 서버의 재집계 command 를 부른다. 원장에서 전량 다시 세므로
+      //   멱등하고, identity 를 확정할 수 없는 슬롯은 fail-closed 로
+      //   건드리지 않는다. 드문 경로라 읽기 비용도 감당할 만하다.
+      //
+      //   실패해도 원장 변경은 이미 끝났다 — 실패로 말하지 않는다.
       if (toId != null) {
         try {
-          final counterBatch = _firestore.batch();
-          if (AppStatus.confirmedStatuses.contains(prevStatus)) {
-            _decrementTOConfirmed(counterBatch, toId, slotId, workType: selectedWorkType);
-            if (status == AppStatus.pending) {
-              _incrementTOPending(counterBatch, toId, slotId, delta: 1, workType: selectedWorkType);
-            }
-          } else if (prevStatus == AppStatus.pending) {
-            _incrementTOPending(counterBatch, toId, slotId, delta: -1, workType: selectedWorkType);
-          }
-          await counterBatch.commit();
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableRecalculateTOStats')
+              .call<Map<String, dynamic>>({'toId': toId});
         } catch (e) {
-          debugPrint('⚠️ [updateApplicationStatus] TO 카운터 낙관적 업데이트 실패 — CF syncTOStats 교정 예정: $e');
+          debugPrint('⚠️ [updateApplicationStatus] 재집계 실패 — 상태 변경은 완료됨: $e');
         }
         clearCache(toId: toId);
       }
@@ -1845,83 +1853,16 @@ extension ApplicationFirestore on FirestoreService {
     return affectedTOIds.toList();
   }
 
-  /// TO.totalPending 및 Slot.pendingCount 변경
-  /// [A1-FIX] workTypeCounts 업데이트 제거 — callableIncrementSlotPending CF로 이전.
-  /// rules에서 isUser() slots update의 workTypeCounts 허용 삭제로 맵 전체 교체 취약점 차단.
-  /// workTypeCounts.pendingCount는 CF가 dot-notation으로 정밀 업데이트 (confirmedCount 보호).
-  void _incrementTOPending(
-    WriteBatch batch,
-    String toId,
-    String? slotId, {
-    required int delta,
-    String? workType,
-  }) {
-    batch.update(_firestore.collection('tos').doc(toId), {
-      'totalPending': FieldValue.increment(delta),
-    });
-    if (slotId != null) {
-      final slotRef = _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('slots')
-          .doc(slotId);
-      // [A1-FIX] workTypeCounts 제거 — CF callableIncrementSlotPending이 별도로 처리
-      batch.update(slotRef, {
-        'pendingCount': FieldValue.increment(delta),
-      });
-    }
-  }
-
-  // [A1-FIX] workTypeCounts.pendingCount는 callableIncrementSlotPending CF(Admin SDK)가
-  // dot-notation으로 정밀 업데이트. 현재는 pendingCount만 rules에서 허용하며,
-  // workTypeCounts 통계 정밀도가 필요할 때 CF 호출을 추가한다.
+  // [R7-5] 파생 카운터를 클라이언트에서 증감하던 helper 를 제거했다.
   //
-  // ⚠️ [이중 카운트 방지] CF 호출 추가 시 필수 확인:
-  // callableIncrementSlotPending은 totalPending + pendingCount + workTypeCounts.pendingCount를
-  // 모두 업데이트한다. CF 호출 코드가 추가되면 _incrementTOPending의 totalPending/pendingCount
-  // 업데이트(위 batch.update 두 곳)를 반드시 제거해야 한다. 제거 없이 CF까지 호출하면
-  // 같은 지원에서 totalPending/pendingCount가 2씩 증가하는 이중 카운트 버그 발생.
-
-  /// TO.totalConfirmed 및 Slot.confirmedCount 변경
-  ///
-  /// [F01/F02/F03 동시성] FieldValue.increment()는 서버 측 원자 연산 → count 정확도 보장.
-  /// [CRIT-02-FIX] 정원 초과 방지: 정원 검증 필드를 트랜잭션 내 write로 이동해
-  ///   Firestore 낙관적 잠금 활성화. 두 트랜잭션이 같은 slotRef write 시 충돌 감지 → retry.
-  /// [Phase 8.1E.5] workTypeCounts 쓰기 제거 — canonical source는 workDetailCounts
-  void _incrementTOConfirmed(
-    WriteBatch batch,
-    String toId,
-    String? slotId, {
-    required int delta,
-    String? workType,
-  }) {
-    final toUpdate = <String, dynamic>{
-      'totalConfirmed': FieldValue.increment(delta),
-    };
-    // contract TO: workTypeConfirmedCounts (TO 레벨 집계) — 유지
-    if (slotId == null && workType != null && workType.isNotEmpty) {
-      toUpdate['workTypeConfirmedCounts.$workType'] = FieldValue.increment(delta);
-    }
-    batch.update(_firestore.collection('tos').doc(toId), toUpdate);
-    if (slotId != null) {
-      final slotRef = _firestore
-          .collection('tos')
-          .doc(toId)
-          .collection('slots')
-          .doc(slotId);
-      batch.update(slotRef, {
-        'confirmedCount': FieldValue.increment(delta),
-      });
-    }
-  }
-
-  void _decrementTOConfirmed(
-    WriteBatch batch,
-    String toId,
-    String? slotId, {
-    String? workType,
-  }) =>
-      _incrementTOConfirmed(batch, toId, slotId, delta: -1, workType: workType);
+  //   _incrementTOPending / _incrementTOConfirmed / _decrementTOConfirmed.
+  //   세 helper 는 totalPending·totalConfirmed 와 슬롯 합계만 쓸 수 있었고
+  //   업무 단위 workDetailCounts 는 rules 가 막아 손대지 못했다. 그래서
+  //   쓰는 쪽마다 절반만 맞는 상태를 남겼다.
+  //
+  //   이제 파생 집계를 정하는 곳은 서버뿐이다 — 각 전이의 권위 command,
+  //   그리고 드문 경로에서는 callableRecalculateTOStats 전량 재집계.
+  //   같은 판단을 두 군데서 하지 않기 위해 여기 남겨 두지 않는다.
 
   // ───────────────────────────────────────────────────────
   // 슬롯 상태 재계산

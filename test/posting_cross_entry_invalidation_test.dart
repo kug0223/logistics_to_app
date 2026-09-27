@@ -676,10 +676,38 @@ void main() {
       }
     });
 
-    test('optimistic counter write 정책은 그대로다', () {
+    // [R7-5] 정책이 바뀌었다 — 클라이언트는 파생 집계를 쓰지 않는다.
+    //
+    //   예전에는 `totalPending`·`totalConfirmed` 와 슬롯 합계를 낙관적으로
+    //   증감했다. 그런데 업무 단위 `workDetailCounts` 는 rules 가 막아
+    //   손댈 수 없었고(실측: 클라이언트 쓰기 403), 그래서 쓰는 쪽마다
+    //   절반만 맞는 상태가 남았다. 확정 롤백에서는 업무 단위 확정 수가
+    //   1 로 남고 `syncTOStats` 도 그 필드를 되돌리지 않는다.
+    //
+    //   이제 파생 집계를 정하는 것은 서버뿐이다.
+    test('클라이언트가 파생 집계를 직접 증감하지 않는다', () {
       final appFs = _codeOf(_src('lib/services/firestore/application_firestore.dart'));
-      expect(appFs.contains('await counterBatch.commit();'), isTrue);
-      expect(appFs.contains('_decrementTOConfirmed('), isTrue);
+      // 옛 증감 경로가 사라졌다.
+      expect(appFs.contains('await counterBatch.commit();'), isFalse);
+      expect(appFs.contains('_decrementTOConfirmed('), isFalse);
+      expect(appFs.contains('_incrementTOConfirmed('), isFalse);
+      expect(appFs.contains('_incrementTOPending('), isFalse);
+      // 대신 권위 command 를 쓴다.
+      expect(appFs.contains("httpsCallable('callableRecalculateTOStats')"), isTrue,
+          reason: '좌석 상태를 바꾸는 경로는 서버 재집계로 맞춘다');
+      expect(appFs.contains("httpsCallable('callableIncrementSlotPending')"), isTrue,
+          reason: '지원취소는 대기 카운터 권위 command 를 부른다');
+    });
+
+    // [R7-5] 카운터 갱신 실패를 사용자 행동의 실패로 말하지 않는다.
+    test('카운터 갱신 실패가 상태 변경 실패로 보고되지 않는다', () {
+      final appFs = _codeOf(_src('lib/services/firestore/application_firestore.dart'));
+      for (final marker in [
+        '지원 취소 후 카운터 갱신 실패 (취소 자체는 성공)',
+        '재집계 실패 — 상태 변경은 완료됨',
+      ]) {
+        expect(appFs.contains(marker), isTrue, reason: '$marker 가 없다');
+      }
     });
   });
 
