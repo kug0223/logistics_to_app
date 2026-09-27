@@ -131,6 +131,25 @@ function srvKstDayStartMs(ms: number): number {
 }
 
 /**
+ * [R7-7] 이 확정 지원서가 **오늘** 좌석을 차지하는가.
+ *
+ *   `_syncTOCounters` 안에만 있던 판정을 꺼냈다 — 슬롯 카운터를 쓰는 곳이
+ *   둘이 되었으므로(트리거·재집계) 규칙이 한 벌이어야 한다.
+ *   `ApplicationModel.occupiesSeatOn` · `srvLongTermEligibleOnDay` 와 같은 식이고
+ *   새 규칙을 만들지 않는다. 기간을 모르면 좌석을 빼앗지 않는다.
+ *
+ * @param {FirebaseFirestore.DocumentSnapshot} d 지원서 문서
+ * @return {boolean} 오늘 좌석 점유 여부
+ */
+function srvOccupiesSeatToday(d: FirebaseFirestore.DocumentSnapshot): boolean {
+  if (d.get("type") !== "long_term") return true;
+  const end = (d.get("actualResignDate") ??
+    d.get("workEndDate")) as admin.firestore.Timestamp | undefined;
+  if (!end || typeof end.toDate !== "function") return true;
+  return srvKstDateNum(end.toDate()) >= srvKstDateNum(new Date());
+}
+
+/**
  * [.6-P3] 근무 한 건의 canonical 달력 값 (KST).
  *
  *   돈이 어느 날·어느 달의 것인지는 attendance.workDate 하나가 정한다.
@@ -17527,6 +17546,97 @@ function srvBuildWdCountsUpdate(
   return out;
 }
 
+/**
+ * [R7-7] 슬롯 하나의 파생 카운터를 **transaction 안에서 다시 세어** 쓴다.
+ *
+ *   왜 transaction 인가 — 실측한 결함 때문이다.
+ *
+ *   절대 재계산은 원장을 transaction 밖에서 읽고 `batch` 로 **무조건** 썼다.
+ *   conflict detection 도 precondition 도 없으니, 읽은 뒤 원장이 바뀌면
+ *   낡은 값이 최신 값을 덮는다. Emulator 에서 재현했다 — 지원서 482건으로
+ *   재집계를 6.9초로 늘린 뒤 그 사이에 한 명을 취소하자, 원장은 대기 1인데
+ *   슬롯·업무 카운터가 2 로 남았고 후속 이벤트가 없어 그대로 있었다.
+ *
+ *   여기서는 **쓰기 시점에** 읽는다. Firestore transaction 은 읽은 결과가
+ *   커밋 전에 바뀌면 재시도하므로, 낡은 스냅샷으로 쓰는 일 자체가 없어진다.
+ *   범위가 슬롯 하나라 읽기량도 작다.
+ *
+ * @param {FirebaseFirestore.DocumentReference} toRef 공고 문서
+ * @param {string} slotId 슬롯 id
+ * @param {(d: FirebaseFirestore.DocumentSnapshot) => boolean} occupiesSeatToday
+ *        좌석 점유 판정 — 공고 단위 집계와 같은 규칙을 쓴다
+ * @return {Promise<{pending: number; confirmed: number} | null>}
+ *         쓴 값. 슬롯이 없으면 null.
+ */
+async function srvSyncSlotCountersTx(
+  toRef: FirebaseFirestore.DocumentReference,
+  slotId: string,
+  occupiesSeatToday: (d: FirebaseFirestore.DocumentSnapshot) => boolean
+): Promise<{pending: number; confirmed: number} | null> {
+  const slotRef = toRef.collection("slots").doc(slotId);
+  const appsRef = db.collection("applications").where("toId", "==", toRef.id);
+  const slotAppsRef = appsRef.where("slotId", "==", slotId);
+  const FIELDS = ["status", "wdId", "workDetailId", "startTime", "endTime",
+    "selectedWorkType", "staffingReleasedAt", "type",
+    "workEndDate", "actualResignDate"] as const;
+
+  return db.runTransaction(async (tx) => {
+    const [slotDoc, pendingDocs, seatedDocs] = await Promise.all([
+      tx.get(slotRef),
+      tx.get(slotAppsRef.where("status", "in", PENDING_STATUSES).select(...FIELDS)),
+      tx.get(slotAppsRef.where("status", "in", CONFIRMED_STATUSES).select(...FIELDS)),
+    ]);
+    if (!slotDoc.exists) return null;
+
+    const rawSlotWds =
+      (slotDoc.data()?.workDetails as Record<string, unknown>[] | undefined) ?? [];
+    const slotWdInfo: SrvSlotWdShape = {
+      wds: rawSlotWds,
+      isNewSchema: rawSlotWds.some(
+        (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0),
+    };
+    const tally: Record<string, {pending: number; confirmed: number}> = {};
+    let failClosed = false;
+    let confirmed = 0;
+
+    const tallyOne = (
+      d: FirebaseFirestore.QueryDocumentSnapshot, isPending: boolean
+    ): void => {
+      if (!isPending) {
+        if (d.get("staffingReleasedAt") != null) return;
+        if (!occupiesSeatToday(d)) return;
+        confirmed++;
+      }
+      const r = srvResolveAppWdId({
+        wdId: d.get("wdId") as string | undefined,
+        workDetailId: d.get("workDetailId") as string | undefined,
+        startTime: d.get("startTime") as string | undefined,
+        endTime: d.get("endTime") as string | undefined,
+        selectedWorkType: d.get("selectedWorkType") as string | undefined,
+      }, slotWdInfo);
+      if (r.via === "ambiguous" || r.via === "unresolved") { failClosed = true; return; }
+      if (!r.wdId) return; // legacy 슬롯 — 업무 단위 축이 없다
+      tally[r.wdId] ??= {pending: 0, confirmed: 0};
+      if (isPending) tally[r.wdId].pending++;
+      else tally[r.wdId].confirmed++;
+    };
+    for (const d of pendingDocs.docs) tallyOne(d, true);
+    for (const d of seatedDocs.docs) tallyOne(d, false);
+
+    if (failClosed) {
+      console.warn(
+        `[srvSyncSlotCountersTx] 슬롯 ${slotId}: unresolved/ambiguous 지원서 존재 ` +
+        "→ workDetailCounts 미갱신 (fail-closed)");
+    }
+    tx.update(slotRef, {
+      pendingCount: pendingDocs.size,
+      confirmedCount: confirmed,
+      ...srvBuildWdCountsUpdate(rawSlotWds, tally, failClosed),
+    });
+    return {pending: pendingDocs.size, confirmed};
+  });
+}
+
 async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const toRef = db.collection("tos").doc(toId);
 
@@ -17563,15 +17673,8 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   //   effectiveEnd = actualResignDate ?? workEndDate — 클라이언트
   //   `ApplicationModel.occupiesSeatOn` 및 `srvLongTermEligibleOnDay` 와
   //   같은 식이다. 새 판정 규칙을 만들지 않는다.
-  const seatTodayNum = srvKstDateNum(new Date());
-  const occupiesSeatToday = (d: FirebaseFirestore.DocumentSnapshot): boolean => {
-    if (d.get("type") !== "long_term") return true;
-    const end = (d.get("actualResignDate") ??
-      d.get("workEndDate")) as admin.firestore.Timestamp | undefined;
-    // 기간을 모르면 좌석을 빼앗지 않는다 — 확인 못 한 것으로 정원을 늘리지 않는다.
-    if (!end || typeof end.toDate !== "function") return true;
-    return srvKstDateNum(end.toDate()) >= seatTodayNum;
-  };
+  // [R7-7] 판정은 공유 함수 하나다 — 트리거와 재집계가 같은 규칙을 쓴다.
+  const occupiesSeatToday = srvOccupiesSeatToday;
 
   const countCommittedSeats = async (): Promise<{
     to: number;
@@ -17653,37 +17756,20 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
 
   // flex TO: TO + 슬롯 집계 전체 병렬 실행 후 배치 쓰기
   const slotRef = toRef.collection("slots").doc(slotId);
-  const slotAppsRef = appsRef.where("slotId", "==", slotId);
 
-  // [R7-6] 이 슬롯의 지원서를 **문서로** 읽는다.
+  // [R7-7] 슬롯 범위 카운터는 **transaction 안에서 다시 세어** 쓴다.
   //
-  //   업무 단위 카운터(`workDetailCounts`)를 여기서 함께 재계산하기 위해서다.
-  //   예전에는 슬롯 대기 인원을 `.count()` 로만 세고 업무 단위는 손대지 않았다.
-  //   그 결과 파생 집계 중 **그 하나만** 보정자가 없었고, 클라이언트가 원장을
-  //   바꾼 뒤 delta command 에 닿지 못하면(프로세스 종료·연결 끊김) 영구히
-  //   어긋난 채 남았다. 원장 변경이 이 트리거를 깨우므로, 여기서 세면
-  //   **호출자가 죽어도** 복구된다.
-  const SLOT_WD_FIELDS = ["status", "wdId", "workDetailId", "startTime",
-    "endTime", "selectedWorkType", "staffingReleasedAt", "type",
-    "workEndDate", "actualResignDate"] as const;
+  //   6차에는 여기서 문서를 읽어 batch 로 함께 썼다. 그 모양은 읽은 뒤
+  //   원장이 바뀌면 낡은 값을 그대로 덮는다 — 실측으로 재현했다.
+  //   이제 srvSyncSlotCountersTx 가 쓰기 시점에 다시 센다.
+  //   공고 단위 합계는 아래에 남는다(범위가 공고 전체라 비용이 다르다).
+  await srvSyncSlotCountersTx(toRef, slotId, occupiesSeatToday);
 
-  const [
-    seats,
-    toPendingSnap,
-    slotPendingDocs,
-    slotSeatedDocs,
-    slotDoc,
-  ] = await Promise.all([
-    // 공고 단위와 슬롯 단위를 한 번의 읽기에서 함께 만든다.
+  const [seats, toPendingSnap, slotDoc] = await Promise.all([
     countCommittedSeats(),
     appsRef.where("status", "in", PENDING_STATUSES).count().get(),
-    slotAppsRef.where("status", "in", PENDING_STATUSES)
-      .select(...SLOT_WD_FIELDS).get(),
-    slotAppsRef.where("status", "in", CONFIRMED_STATUSES)
-      .select(...SLOT_WD_FIELDS).get(),
     slotRef.get(),
   ]);
-
   const confirmedCount = seats.bySlot.get(slotId) ?? 0;
   // 슬롯 문서는 workDetails[].requiredCount 합계로 총 필요 인원 계산
   const workDetails =
@@ -17693,71 +17779,16 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const newStatus = required > 0 && confirmedCount >= required ? "full" : "open";
   // [Phase 8.1E.5] workTypeCountsUpdate 제거 — workTypeCounts 더 이상 재계산하지 않음
 
-  // [R7-6] 업무 단위 카운터를 원장에서 다시 센다.
-  //
-  //   identity 해석은 재집계 command 와 **같은 함수**를 쓴다.
-  //   new-schema 슬롯에서 맞출 수 없거나 여러 개에 걸리는 지원서가 하나라도
-  //   있으면 이 슬롯의 업무 카운터는 건드리지 않는다(fail-closed) —
-  //   first-match 로 때워 다른 업무의 인원을 옮기지 않는다.
-  const rawSlotWds =
-    (slotDoc.data()?.workDetails as Record<string, unknown>[] | undefined) ?? [];
-  const slotWdInfo: SrvSlotWdShape = {
-    wds: rawSlotWds,
-    isNewSchema: rawSlotWds.some(
-      (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0),
-  };
-  const wdTally: Record<string, {pending: number; confirmed: number}> = {};
-  let wdFailClosed = false;
-  const tallyOne = (
-    d: FirebaseFirestore.QueryDocumentSnapshot, isPending: boolean
-  ): void => {
-    if (!isPending) {
-      // 좌석 판정은 공고 단위 집계와 같은 규칙을 쓴다.
-      if (d.get("staffingReleasedAt") != null) return;
-      if (!occupiesSeatToday(d)) return;
-    }
-    const r = srvResolveAppWdId({
-      wdId: d.get("wdId") as string | undefined,
-      workDetailId: d.get("workDetailId") as string | undefined,
-      startTime: d.get("startTime") as string | undefined,
-      endTime: d.get("endTime") as string | undefined,
-      selectedWorkType: d.get("selectedWorkType") as string | undefined,
-    }, slotWdInfo);
-    if (r.via === "ambiguous" || r.via === "unresolved") {
-      wdFailClosed = true;
-      return;
-    }
-    if (!r.wdId) return; // legacy 슬롯 — 업무 단위 축이 없다
-    wdTally[r.wdId] ??= {pending: 0, confirmed: 0};
-    if (isPending) wdTally[r.wdId].pending++;
-    else wdTally[r.wdId].confirmed++;
-  };
-  for (const d of slotPendingDocs.docs) tallyOne(d, true);
-  for (const d of slotSeatedDocs.docs) tallyOne(d, false);
-  const wdcUpdate = srvBuildWdCountsUpdate(rawSlotWds, wdTally, wdFailClosed);
-  if (wdFailClosed) {
-    console.warn(
-      `[syncTOStats] 슬롯 ${slotId}: new-schema unresolved/ambiguous 지원서 존재 ` +
-      "→ workDetailCounts 미갱신 (fail-closed)");
-  }
-
   const flexToData = toSnap.data();
   const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
   const flexConfirmedCnt = seats.to;
-  const writeBatch = db.batch();
-  writeBatch.update(toRef, {
+  // [R7-7] 슬롯 문서는 위에서 transaction 으로 이미 썼다.
+  //   여기서는 공고 단위 합계만 쓴다 — 슬롯 값을 다시 덮지 않는다.
+  await toRef.update({
     totalConfirmed: flexConfirmedCnt,
     totalPending: toPendingSnap.data().count,
     statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
-  if (slotDoc.exists) {
-    writeBatch.update(slotRef, {
-      confirmedCount,
-      pendingCount: slotPendingDocs.size,
-      ...wdcUpdate,
-    });
-  }
-  await writeBatch.commit();
   // [CROSS-DOMAIN-R5.3D.1] TO status는 커밋 시점 상태로 판정한다.
   await srvSyncToStatusSafely(toRef, flexTotalRequired, flexConfirmedCnt);
   // [CROSS-DOMAIN-R5.3D.1] 슬롯 status도 TO와 같은 이유로 트랜잭션에서 정한다.
@@ -24471,40 +24502,31 @@ export const callableRecalculateTOStats = onCall(
 
     if (isFlexType) {
       const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
-      if (!slotsSnap.empty) {
-        let batch = db.batch();
-        let count = 0;
-        for (const slotDoc of slotsSnap.docs) {
-          const stats = slotStats[slotDoc.id] ?? {pending: 0, confirmed: 0};
-          // [Phase 8.1E.5] wtUpdate(workTypeCounts) 제거 — workDetailCounts canonical
-          // [Phase 8.1E.2B] workDetailCounts — new-schema unresolved/ambiguous → fail-closed (미갱신)
-          // [R7-6] 쓰기 모양을 트리거와 같은 함수로 만든다.
-          //   예전에는 집계에 나타난 wdId 만 dot-update 했다. 취소로 인원이
-          //   0 이 된 업무는 집계에서 사라지므로 **옛 값이 그대로 남았다** —
-          //   절대 재계산인데 결과가 절대가 아니었다.
-          const wdcUpdate = srvBuildWdCountsUpdate(
-            (slotDoc.data()?.workDetails as Record<string, unknown>[] | undefined) ?? [],
-            slotWorkDetailCounts[slotDoc.id] ?? {},
-            slotFailClosed.has(slotDoc.id));
-          if (slotFailClosed.has(slotDoc.id)) {
-            console.warn(
-              `[callableRecalculateTOStats] 슬롯 ${slotDoc.id}: ` +
-              `new-schema unresolved/ambiguous app 존재 → workDetailCounts 미갱신 (fail-closed)`
-            );
-          }
-          batch.update(slotDoc.ref, {
-            pendingCount: stats.pending,
-            confirmedCount: stats.confirmed,
-            ...wdcUpdate,
-          });
-          count++;
-          if (count >= 499) {
-            await batch.commit();
-            batch = db.batch();
-            count = 0;
-          }
+      // [R7-7] 슬롯별 카운터는 **트리거와 같은 transactional writer** 로 쓴다.
+      //
+      //   예전에는 위에서 계산한 스냅샷을 batch 로 무조건 썼다. 그 사이에
+      //   원장이 바뀌면 낡은 값이 최신을 덮는다 — Emulator 에서 재현했다
+      //   (지원서 482건으로 이 함수를 6.9초로 늘리고 그 사이 한 명을 취소하자,
+      //   원장은 대기 1인데 카운터가 2 로 남았고 후속 이벤트가 없어 그대로였다).
+      //
+      //   쓰기 시점에 그 슬롯 범위를 다시 세면 낡은 스냅샷으로 쓰는 일이 없다.
+      //   위의 TO 전체 스캔은 공고 합계용으로 남는다. 슬롯 수만큼 읽기가
+      //   늘지만, 이 함수는 사람이 의도해서 부르는 복구 경로다.
+      const failedSlots: string[] = [];
+      for (const slotDoc of slotsSnap.docs) {
+        try {
+          await srvSyncSlotCountersTx(
+            db.collection("tos").doc(toId), slotDoc.id, srvOccupiesSeatToday);
+        } catch (e) {
+          failedSlots.push(slotDoc.id);
+          console.warn(
+            "[callableRecalculateTOStats] 슬롯 재집계 실패: " + slotDoc.id, e);
         }
-        if (count > 0) await batch.commit();
+      }
+      if (failedSlots.length > 0) {
+        throw new HttpsError("internal",
+          "일부 슬롯 재집계에 실패했습니다(" + failedSlots.length +
+          "건). 다시 시도해주세요.");
       }
     }
 
