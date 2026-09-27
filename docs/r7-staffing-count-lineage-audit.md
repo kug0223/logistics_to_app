@@ -2375,3 +2375,174 @@ functions:callableApplyToTO,functions:callableGetAvailableWorkers
 | O08 DEVICE | §80 체크리스트 1묶음 | **PENDING** (①② 뒤) |
 
 CODE/Emulator 종료 상태는 그대로 유지한다. 이번 절에서 DEV 에 쓴 것은 **없다**.
+
+---
+
+# O07 — DEV 배포 실행 기록 (2026-09-28 00:55~01:01 KST)
+
+이번 단계에서 **DEV 함수 6개를 실제로 배포**했다. 데이터 보정은 하지 않았다.
+client 도 바꾸지 않았다. Rules·Hosting·Indexes·PROD·APK 는 건드리지 않았다.
+
+## 82. 배포 실행
+
+| 항목 | 값 |
+|---|---|
+| branch / HEAD | `main` / `b8e1664` — 제품 코드는 `40fe3d3` 과 **동일**(그 뒤 diff 는 문서 1 + 읽기전용 도구 1) |
+| tracked 변경 | 없음 · 사용자 소유 untracked 8건 보존 |
+| project / region | **`alfit-89567`** / **`asia-northeast3`** (`--project` 로 명시 지정, default alias 에 의존하지 않았다) |
+| 계정 | CLI 로그인 계정 1개(키·토큰 미출력) |
+| CLI | 전역 `firebase 14.20.0`(공식). 감사용 패치 사본은 PATH 에 없다 |
+| 소스 식별 | `HEAD=b8e16640…` · `functions/src/index.ts` blob `42bcd5e73ebe6745` · sha256 `16461c34d2cba007` |
+| 빌드 산출물 | `functions/lib/index.js` sha256 **`8c0b7a9dc6af3cac`** (2,299,015 bytes) — `npm run build`(tsc) 통과, 6개 export 존재 확인 |
+| 명령 | `firebase deploy --project alfit-89567 --only functions:syncTOStats,functions:masterScheduler,functions:callableRecalculateTOStats,functions:callableIncrementSlotPending,functions:callableApplyToTO,functions:callableGetAvailableWorkers` |
+| 시각(UTC) | 시작 15:55:11 · 종료 15:56:59 · `Deploy complete!` (rc=0) |
+| 산출물 격리 | `firebase.json` ignore(`.env`·`.env.*`·`*-adminsdk-*.json`)로 감사용 dummy env 와 SA 키는 업로드 대상 아님. 배포는 `firebase.json` 을 사용(`firebase.r7audit.json` 미사용) |
+
+### 82-1. 함수별 결과 — 요약이 아니라 개별 확인
+
+| 함수 | 배포 로그 | 이전 updateTime(UTC) | 이후 updateTime(UTC) | 결과 |
+|---|---|---|---|---|
+| `syncTOStats` | `Successful update operation.` | 2026-09-26T16:58:55Z | **2026-09-27T15:56:48Z** | OK |
+| `masterScheduler` | `Successful update operation.` | 2026-09-26T16:58:48Z | **2026-09-27T15:56:42Z** | OK |
+| `callableRecalculateTOStats` | `Successful update operation.` | 2026-09-26T05:23:47Z | **2026-09-27T15:56:48Z** | OK |
+| `callableIncrementSlotPending` | `Successful update operation.` | 2026-09-21T14:02:52Z | **2026-09-27T15:56:51Z** | OK |
+| `callableApplyToTO` | `Successful update operation.` | 2026-09-25T22:16:56Z | **2026-09-27T15:56:48Z** | OK |
+| `callableGetAvailableWorkers` | `Successful update operation.` | 2026-09-22T16:09:13Z | **2026-09-27T15:56:49Z** | OK |
+| (대조) `callableReleaseNoshowSeat` | 배포 대상 아님 | 2026-09-21T14:03:01Z | **2026-09-21T14:03:01Z(불변)** | 미대상 확인 |
+
+미대상 함수의 updateTime 이 그대로라는 것이 "6개만 배포했다"의 증거다.
+
+### 82-2. 배포 산출물 ↔ 원격 연결
+
+`updateTime` 만으로는 소스 SHA 가 증명되지 않는다. 연결 고리는 **Cloud Build 한 개**다.
+
+| 함수 | Cloud Run revision | Cloud Build |
+|---|---|---|
+| `syncTOStats` | `synctostats-00110-vil` | `5cc71058…` |
+| `masterScheduler` | `masterscheduler-00135-yev` | `5cc71058…` |
+| `callableRecalculateTOStats` | `callablerecalculatetostats-00086-neq` | `5cc71058…` |
+| `callableIncrementSlotPending` | `callableincrementslotpending-00067-zix` | `5cc71058…` |
+| `callableApplyToTO` | `callableapplytoto-00088-vaq` | `5cc71058…` |
+| `callableGetAvailableWorkers` | `callablegetavailableworkers-00010-qem` | `5cc71058…` |
+
+여섯 revision 이 **같은 build** 에서 나왔고, 그 build 는 위 로컬 산출물
+(`lib/index.js` sha256 `8c0b7a9dc6af3cac`)을 올린 이 배포 실행의 것이다.
+`masterScheduler` 만 source object generation 이 다른 번호로 보이는데(업로드가 두 번
+기록됨), build id 는 같다. **소스 SHA 를 원격에서 직접 읽을 수단은 없다** — 여기까지가
+확인 가능한 연결이다.
+
+## 83. 반영 확인 (보정 호출 없음)
+
+### 83-1. 새 코드가 실제로 로드됐는가
+
+| 함수 | `DEPLOYMENT_ROLLOUT` 기동 | `STARTUP TCP probe succeeded` | 컨테이너 종료/모듈 오류 |
+|---|---|---|---|
+| `syncTOStats` | 1 | 1 | 0 |
+| `masterScheduler` | 1 | 2 | 0 |
+| `callableRecalculateTOStats` | 1 | 1 | 0 |
+| `callableIncrementSlotPending` | 1 | 1 | 0 |
+| `callableApplyToTO` | 1 | 2 | 0 |
+| `callableGetAvailableWorkers` | 2 | 3 | 0 |
+
+새 번들로 컨테이너가 뜨고 startup probe 를 통과했다 → **import/런타임 로드 오류 없음.**
+`Cannot find module` · `TypeError` · `Container terminated` 은 6개 모두 0건이다.
+
+### 83-2. 로그에서 본 오류 3종 — 성격을 구분한다
+
+| 관측 | 시각 | 판정 |
+|---|---|---|
+| `callableRecalculateTOStats`: `Error: Invalid request, unable to process.` ×2 | 15:56:49Z(자기 배포 직후) | **배포 시점 노이즈.** `callableGetAvailableWorkers` 에도 **이전 배포 시각(09-22T16:09:14Z)** 에 같은 줄이 있다 — callable 형식이 아닌 요청이 배포 직후 들어올 때 나오는 로그다. 새 결함이 아니다 |
+| `masterScheduler`: `❌ [리컨펌 알림] 실패: 9 FAILED_PRECONDITION: The query requires an index` | **15:00:12Z(배포 이전)** | **기존 문제, 이번 배포와 무관.** 리컨펌 알림 쿼리에 복합 인덱스가 없다. 이번 범위에 인덱스 배포가 없으므로 손대지 않았다 — 별건으로 남긴다 |
+| 그 밖 | — | 없음 |
+
+로그가 조용하다는 사실을 전이 검증 완료로 확대하지 않는다. 쓰기 성격 callable 은
+smoke 명목으로 부르지 않았고, 전이 증거는 격리 Emulator 것을 그대로 쓴다
+(`r7-emu-durability` 29 · `matrix3` 25 · `invitations` 19 · `c7-fallback` 17 ·
+`compat` 12 · `f3-stale` · `r8-emu-to-total-race` 11 · `r10-emu-contract-b` 4/4 — 전부 0 실패).
+
+### 83-3. 판정
+
+| 질문 | 답 |
+|---|---|
+| 6개 모두 반영됐는가? | **예.** 로그 6/6 성공 + 원격 updateTime 6/6 갱신 + 같은 build 6 revision |
+| 부분 배포·이전 코드 잔존이 없는가? | **없다.** 6개 전부 갱신되고 미대상 함수는 불변. 단 **다른 ~235개 함수는 각자 이전 시점의 번들**이고 그건 이 프로젝트의 평소 상태다(이번 변경 코드는 6개 안에만 있다) |
+| 관측 가능한 초기 런타임 오류가 있는가? | **이번 배포로 생긴 것은 없다.** 기존 masterScheduler 인덱스 오류 1건은 배포 이전부터 있던 별건 |
+| client 를 바꿨거나 과거 데이터를 보정했는가? | **둘 다 아니다** |
+
+배포된 trigger/scheduler 는 정상 이벤트·예약에 따라 앞으로 데이터를 바꿀 수 있다 —
+"배포 후 쓰기 0" 을 약속하지 않는다. 예약 스케줄은 변경·수동 실행하지 않았다.
+
+## 84. 배포 후 최신 READ ONLY dry-run (2026-09-27T16:01:26Z)
+
+`node scripts/r7-dev-read-reconcile.js --limit 120 --repair-plan` (보정 callable 미호출)
+
+| 항목 | 배포 전 15:35:49Z | **배포 후 16:01:26Z** |
+|---|---|---|
+| 범위 | flex 92 · 슬롯 246 · 업무키 266 | **동일** |
+| mismatch | 21 (pending 9 / confirmed 12) | **21 (pending 9 / confirmed 12)** |
+| 대상 공고 | 11 | **11** |
+| 변경 행 / 투영 행 | 32 / 122 | **32 / 122** |
+| TO 합계·슬롯 카운터·status 변경 | 0 | **0** |
+| 변경 21행의 내용 | — | **행 단위로 동일**(정렬 비교 diff 결과 차이 없음) |
+
+숫자를 기대값으로 고정해 두고 맞춘 것이 아니라, 같은 도구를 다시 돌려 **행까지 비교**했다.
+차이가 없는 이유는 확인 가능한 범위에서 이렇다: 대상 11개 중 **10개가 `CLOSED`** 이고
+나머지 1개도 이 사이에 원장 변경이 없었다 → **트리거를 깨울 이벤트가 없었다.**
+**배포 자체가 데이터를 보정하지 않는다** — 트리거는 그 슬롯에 원장 이벤트가 와야 다시 센다.
+
+### 84-1. `statsSourceReadAt` 은 미래 시각을 미리 정하지 않는다
+
+| 항목 | 내용 |
+|---|---|
+| 값의 정체 | 그 값을 만든 **원장 읽기의 서버 readTime**(페이지네이션이면 **첫 페이지**의 readTime) |
+| 생성 시점 | 보정 command(또는 트리거)가 **실제 실행될 때** 결정된다 |
+| 계획 표의 표기 | `(이번 읽기 시각)` — 확정 timestamp 를 적지 않는다 |
+| 현재 상태 | 대상 11개 모두 **미기록**(fence 쓰기가 아직 일어나지 않았다) |
+| 변경 예상의 의미 | "이 필드가 **새로 기록된다**"는 뜻이고, 특정 값을 기대한다는 뜻이 아니다 |
+
+## 85. O08 용어 정정 — 경로를 정확히 쓴다
+
+이전 §80 에 "09-27 슬롯 저장 대기 1 / 원장 0" 이라고 적은 것은 **필드 경로를 생략한
+표기**였다. 해당 대상만 다시 읽어 확정했다(전수 재감사 아님).
+
+| 경로 | 값 |
+|---|---|
+| `tos/cW9YEE02tlAbT9DqYXsT/slots/YuSUwXpiRYpB3H10gP9Y` → `pendingCount` | **0** (원장과 일치) |
+| 같은 슬롯 → `confirmedCount` | **0** (일치) |
+| 같은 슬롯 → `workDetailCounts.sPIaE1V7QX94Orhx3zeD.pendingCount` | **1** ← **어긋난 곳** |
+| 같은 슬롯 → `workDetailCounts.sPIaE1V7QX94Orhx3zeD.confirmedCount` | 0 (일치) |
+| 그 슬롯 원장 | 지원서 1건, status **`AUTO_CANCELED`** → 대기도 좌석도 아님 → 기대 **0** |
+| `tos/cW9YEE02tlAbT9DqYXsT` → `totalPending` / `totalConfirmed` | 0 / 2 (일치) |
+
+즉 **명칭 차이였고 값의 모순은 없다.** 이전 진단의 "slot 카운터 mismatch 0건" 과 정확히
+연결된다 — 어긋난 축은 처음부터 **업무 단위(`workDetailCounts[wdId]`)** 하나뿐이다.
+§80 의 날짜 행 표기는 이 경로로 읽어야 한다.
+
+## 86. 다음 — 데이터 보정 승인 자료 (이번에 실행하지 않음)
+
+| 항목 | 내용 |
+|---|---|
+| 대상 | 공고 **11개**(09-27T16:01Z 기준, 배포 전과 동일): `01d0fT1AVRxmqkAlVBfm` `6ekvP7g790UNJ9I15gyl` `Sjb3EXkYTm1a5gLDvtMb` `YR0PFPMJ2MLLmt8DOVyZ` `aNCJlTJQvjHI2i6UIFPv` `cW9YEE02tlAbT9DqYXsT` `eSXhMKtqgk2h7n29dXck` `gVL0cmNa1om5FEbDXG1c` `kcwGL5K4SjWFhuPP54bF` `olRw5n0HtVbLdBaTAulq` `zmJiXbYGIc6ebqtPwjQ2` (전부 사업장 `fLmSOHVKUwmBHcbwQE0I`, 10개 `CLOSED` / 1개 `ACTIVE`) |
+| 바뀔 필드 | `slot.workDetailCounts.{wdId}.pendingCount` 9행 → **0** · `…confirmedCount` 12행 → **0** · `to.statsSourceReadAt` 11행 **신규 기록**(값은 실행 시 readTime) |
+| 안 바뀔 필드 | `to.totalPending` · `to.totalConfirmed` · `slot.pendingCount` · `slot.confirmedCount` · `to.status`(10개는 `CLOSED` 라 재계산이 손대지 않는다) — **변경 0행** |
+| command / 입력 | `callableRecalculateTOStats({toId})` — **TO 단위 1건씩**, 11회. 슬롯 단위 인터페이스는 없다 |
+| 권한 | `srvAssertToAuthority`: SUPER_ADMIN 또는 그 사업장 owner/adminIds 또는 `members.permissions.canManageTo`. 한 사업장이므로 관리자 1명으로 전부 가능 |
+| 실패 재호출 | 슬롯 재집계 실패 시 함수가 `internal` 로 던진다 → **그 TO 전체 재호출**(멱등, 슬롯마다 transaction 으로 원장에서 다시 센다) |
+| `applied=false` | 실패가 아니라 fence 의 정상 skip(더 최신 읽기를 가진 값이 이미 있음). **판정은 항상 "저장값 == 최신 원장"** — 반환값만으로 성공을 선언하지 않는다 |
+| 실행 전후 대조 | 직전 `--repair-plan` 재조회로 대상·행을 그 시각 기준으로 재확정 → 1건 호출 → 그 공고만 재조회 일치 확인 → 나머지 진행 → 전량 재조회로 mismatch 0 확인 |
+| 무변경 범위 | `applications`(원장)·근로관계·계약·근태·급여 이력 **미변경**. 현재 정의에 없는 옛 `workDetailCounts` 키는 보존(이번 데이터엔 0건) |
+| snapshot 조건 | 원장은 계속 바뀔 수 있다 → **보정 직전 재조회**가 절차에 포함된다. 새 대상을 임의로 추가하지 않는다 |
+
+과거 진단(11TO/21건)과 **달라진 점 없음.** 자연 복구된 항목도 없다.
+
+## 87. 상태
+
+| 구분 | 상태 |
+|---|---|
+| CODE / Emulator | **CLOSED** (O01~O05, O06 범위 유지) |
+| **DEPLOY** | **VERIFIED** — 6/6, 같은 build, 컨테이너 기동 확인, 신규 런타임 오류 0 |
+| DATA REPAIR | **NOT EXECUTED** |
+| DEVICE (O08) | **PENDING** — 기대값은 §80 + §85 경로 정정본으로 준비됨. 지금 캡처를 요구하지 않는다 |
+
+별건으로 남기는 것: `masterScheduler` 의 리컨펌 알림 쿼리 인덱스 부재(배포 이전부터,
+이번 범위 아님) · Rules 의 pending ±1 축소.
