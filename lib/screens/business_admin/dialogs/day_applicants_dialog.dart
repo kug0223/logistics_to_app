@@ -11,7 +11,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/application_model.dart';
-import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/employment_contract_model.dart';
 import '../../../models/core/user_model.dart';
@@ -34,6 +33,7 @@ import '../../../models/ui/invite_capacity_state.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/week_helper.dart';
 import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/app_empty_state.dart';
@@ -581,25 +581,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<Map<String, int>> _loadWeeklyCount(String bizId) async {
     try {
-      final date = widget.date;
-      final weekStart = date.subtract(Duration(days: date.weekday - 1));
-      final weekEnd = weekStart.add(const Duration(days: 6));
+      // [R7-P1-2 DEVICE.1G] 주간 창과 세는 규칙을 canonical 한 곳에서 가져온다.
+      //
+      //   여기는 `date.subtract(Duration(days: date.weekday - 1))` 로 직접
+      //   계산했다. `date.weekday` 는 기기 달력 성분이고 KST 정규화가 없다.
+      //   공고탭 인력 현황은 `WeekHelper` 를 쓰므로, 같은 사람·같은 날짜에
+      //   대해 두 화면이 다른 주를 봤다(DEV 실측: 주1회 vs 주0회).
+      //
+      //   세는 것도 문서 수가 아니라 **근무한 날** 수다 — 같은 사람의 9/20
+      //   에 출근 문서가 4건 있었다.
       final result = await _svc.getWeeklyAttendanceByBusiness(
         businessId: bizId,
-        weekStart: weekStart,
-        weekEnd: weekEnd,
+        weekStart: WeekHelper.weekStart(widget.date),
+        weekEnd: WeekHelper.weekEnd(widget.date),
       );
-      // Map<String, List<AttendanceModel>> — key = userId
-      // 실제 출근 기록만 카운트 (결근·노쇼 제외)
-      return result.map((uid, list) => MapEntry(
-            uid,
-            list
-                .where((a) =>
-                    a.checkIn != null &&
-                    a.status != AttendanceModel.statusAbsent &&
-                    a.status != AttendanceModel.statusNoShow)
-                .length,
-          ));
+      return WeekHelper.workedDayCounts(result);
     } catch (e) {
       debugPrint('⚠️ _loadWeeklyCount 조회 실패 (빈 맵 반환): $e');
       return {};

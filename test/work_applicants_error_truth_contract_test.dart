@@ -190,12 +190,19 @@ void main() {
     });
 
     test('WAE-F3 배너가 목록을 대체하지 않는다', () {
-      // 배너는 Expanded(목록) 앞에 놓인 형제여야 한다 — 목록 자리를 먹으면 안 된다.
+      // 배너는 목록 wrapper 앞에 놓인 **형제**여야 한다 — 목록 자리를 먹으면 안 된다.
+      //
+      // [R7-P1-2 DEVICE.1G] 앵커가 wrapper 이름(`Expanded(`)을 고정하고
+      //   있었다. 그 자리는 `Flexible(` 로 바뀌었다 — `AppModalShell` 이
+      //   `Column(mainAxisSize: min)` 이라 `Expanded` 가 높이를 화면의 95%
+      //   로 고정시키고 있었다. 계약은 **순서**이므로 그것만 못 박는다.
       final b = buildBody.indexOf('_buildRefreshFailedBanner');
-      final list = buildBody.indexOf('Expanded(');
+      final list = buildBody.indexOf('Flexible(');
       expect(b, greaterThan(-1));
-      expect(list, greaterThan(-1));
+      expect(list, greaterThan(-1), reason: '목록은 Flexible 로 감싼다');
       expect(b, lessThan(list));
+      expect(buildBody.contains('Expanded('), false,
+          reason: 'Expanded 는 빈 공간을 만든다 (WCP-C2 가 차이를 실행으로 남긴다)');
       expect(buildBody, contains('_refreshFailed && !_loadFailed'),
           reason: '초기 실패와 새로고침 실패가 동시에 그려지지 않는다');
     });

@@ -449,7 +449,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       // 날짜 범위 (weeklyMap Future 생성에 필요)
       final slotDate = widget.toItem.slot?.date;
-      final refDate = slotDate ?? DateTime.now();
+      // [R7-P1-2 DEVICE.1G] 기준일은 **이 화면이 말하는 날짜**다.
+      //
+      //   여기는 `slotDate ?? DateTime.now()` 였다. 슬롯이 없는 진입에서는
+      //   머리말이 2026-09-28 을 말하면서 주간 배지는 **오늘**이 속한 주를
+      //   셌다. 같은 사람·같은 날짜를 두고 홈 일자별 화면과 다른 수가 나온
+      //   경로다(DEV 실측: 주1회 vs 주0회).
+      //
+      //   `_headerScope` 가 쓰는 것과 같은 순서로 대상 날짜를 고른다.
+      final refDate = slotDate ?? widget.initialDate ?? widget.toItem.to.date;
       final ws = WeekHelper.weekStart(refDate);
       final we = WeekHelper.weekEnd(refDate);
 
@@ -520,15 +528,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final weeklyCountMap = <String, int>{
         for (final uid in uniqueUids) uid: 0,
       };
+      // [R7-P1-2 DEVICE.1G] 세는 규칙은 `WeekHelper.workedDayCount` 하나다.
+      //
+      //   여기는 `.length` 로 **문서 수**를 셌다. DEV 실측에서 한 사람의
+      //   9/20 에 출근 문서가 4건 있어 하루가 `주4회` 가 될 수 있었다.
+      //   바로 위 주석이 처음부터 "근무한 날 기준"이라고 적고 있었다.
       for (final entry in weeklyMap.entries) {
-        // "근무한 날" 기준: 실제 출근 기록(checkIn)이 있고 결근·노쇼가 아닌 날
-        // present + late + early_leave 모두 포함 (조퇴도 출근한 날)
-        weeklyCountMap[entry.key] = entry.value
-            .where((a) =>
-                a.checkIn != null &&
-                a.status != AttendanceModel.statusAbsent &&
-                a.status != AttendanceModel.statusNoShow)
-            .length;
+        weeklyCountMap[entry.key] =
+            WeekHelper.workedDayCount(entry.value.whereType<AttendanceModel>());
       }
 
       // isStarred 필드에서 관심표시 복원
@@ -737,7 +744,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           if (!isLoading && _refreshFailed && !_loadFailed)
             _buildRefreshFailedBanner(context),
           ],
-          Expanded(
+          // [R7-P1-2 DEVICE.1G] `Expanded` → `Flexible`.
+          //
+          //   `AppModalShell` 은 `Column(mainAxisSize: min)` 이라 내용만큼
+          //   줄어들도록 설계돼 있고, 그 문서도 `Flexible(child: body)` 를
+          //   규정한다. `Expanded` 는 남은 공간을 **강제로 채우므로**
+          //   높이가 항상 화면의 95% 가 됐다 — 확정 1명인 화면에서 아래쪽
+          //   절반이 빈 채로 남았다.
+          //
+          //   고정 높이를 없애거나 전체화면으로 바꾸는 것이 아니다.
+          //   본문이 스크롤 가능한 것은 그대로다(내부 SingleChildScrollView).
+          //   많은 행에서는 여전히 maxHeight 까지 자라고 그 안에서 스크롤한다.
+          Flexible(
             child: noPermission
                 // [R7-P1-2.1] 권한 없음 — 실패도 아니고 0명도 아니다.
                 ? _buildNoPermissionState()
@@ -982,8 +1000,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         spacing: ResponsiveHelper.spacing(context, 14),
         runSpacing: ResponsiveHelper.spacing(context, 6),
         children: [
-          _buildStatItem(context, '지원', pendingCount, AppColors.warning),
-          _buildStatItem(context, '확정', confirmedCount, AppColors.success),
+          // [R7-P1-2 DEVICE.1G] 0 은 처리할 일이 아니다.
+          //
+          //   orange 는 이 앱의 색 계약에서 **지금 처리 가능한 미완료**다.
+          //   `지원 0` 에 그것을 쓰면 없는 할 일을 강조하고, 바로 옆
+          //   `부족 2` 와 같은 경고 강도로 경쟁한다. 같은 파일의 `부족` 이
+          //   이미 `> 0` 일 때만 강조하고 있었다 — 같은 규칙을 맞춘다.
+          _buildStatItem(context, '지원', pendingCount,
+              pendingCount > 0 ? AppColors.warning : AppColors.grey500),
+          _buildStatItem(context, '확정', confirmedCount,
+              confirmedCount > 0 ? AppColors.success : AppColors.grey500),
           // [R7-P1-6] 부족은 실패가 아니라 **지금 처리 가능한 미완료**다.
           //   red는 NO_SHOW·실패에 남겨 둔다.
           if (work != null && shortage != null)
