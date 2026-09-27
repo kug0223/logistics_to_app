@@ -18,13 +18,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/user_provider.dart';
 import '../../services/unclosed_action_queue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/loading_state_mixin.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -36,16 +36,34 @@ import 'dialogs/attendance_status_dialog.dart';
 
 // ─── 날짜 포맷 ────────────────────────────────────────────────────────────────
 
-final _dateFmt = DateFormat('M월 d일 EEEE', 'ko_KR');
+// [R7-P1-2 DEVICE.1H] 이 화면의 canonical unit 은 `business × workDate` 이고
+//   workDate 는 DATE_ONLY(KST 달력일)다. 두 곳이 기기 달력을 읽고 있었다.
+//
+//     ① `DateFormat('M월 d일 EEEE').format(workDate)` — DateFormat 은 DateTime
+//        자신의 zone 으로 찍는다. UTC 기기에서 `9/28 KST` 가 `9월 27일 일요일`
+//        이 된다(DEVICE.1F 와 같은 계열).
+//     ② `_daysAgo` 가 `DateTime(workDate.year, .month, .day)` 로 성분을 직접
+//        읽어 `D+N` 이 하루 밀린다. 마감 지연 일수는 관리자가 우선순위를
+//        정하는 수치다.
+//
+//   `+1일` 보정이나 저장 데이터 변경은 하지 않는다. 기존 KST helper 만 쓴다.
 
-int _daysAgo(DateTime workDate) {
-  final now = DateTime.now();
-  final todayMidnight = DateTime(now.year, now.month, now.day);
-  final dateMidnight  = DateTime(workDate.year, workDate.month, workDate.day);
+/// `9월 28일 월요일` — KST 달력 기준.
+@visibleForTesting
+String formatUnclosedWorkDate(DateTime workDate) {
+  final kst = FormatHelper.toKstDate(workDate); // 성분이 KST 달력값이다
+  return '${kst.month}월 ${kst.day}일 ${FormatHelper.weekday(workDate)}요일';
+}
+
+@visibleForTesting
+int unclosedDaysAgo(DateTime workDate) {
+  final todayMidnight = FormatHelper.toKstDate(DateTime.now());
+  final dateMidnight = FormatHelper.toKstDate(workDate);
   return todayMidnight.difference(dateMidnight).inDays;
 }
 
-String _urgencyLabel(int daysAgo) {
+@visibleForTesting
+String unclosedUrgencyLabel(int daysAgo) {
   if (daysAgo <= 1) return '어제';
   return 'D+$daysAgo';
 }
@@ -262,7 +280,7 @@ class _UnclosedActionQueueScreenState
 
   Widget _buildTopSummary() {
     final total = _items.length;
-    final oldestDays = total > 0 ? _daysAgo(_items.first.workDate) : 0;
+    final oldestDays = total > 0 ? unclosedDaysAgo(_items.first.workDate) : 0;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
@@ -280,7 +298,7 @@ class _UnclosedActionQueueScreenState
           if (total > 0) ...[
             const SizedBox(height: 2),
             Text(
-              '가장 오래된 미처리 ${_urgencyLabel(oldestDays)}',
+              '가장 오래된 미처리 ${unclosedUrgencyLabel(oldestDays)}',
               style: ResponsiveHelper.bodyStyle(
                 context,
                 color: AppColors.textTertiary,
@@ -295,9 +313,9 @@ class _UnclosedActionQueueScreenState
   // ─── 각 row ────────────────────────────────────────────────────────────────
 
   Widget _buildRow(UnclosedQueueItem item) {
-    final daysAgo = _daysAgo(item.workDate);
-    final urgency = _urgencyLabel(daysAgo);
-    final dateLabel = _dateFmt.format(item.workDate);
+    final daysAgo = unclosedDaysAgo(item.workDate);
+    final urgency = unclosedUrgencyLabel(daysAgo);
+    final dateLabel = formatUnclosedWorkDate(item.workDate);
 
     return InkWell(
       onTap: () => _openAttendance(item),

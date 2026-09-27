@@ -872,6 +872,39 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   // ── Header ─────────────────────────────────────────────────────────────────
 
+  /// [R7-P1-2 DEVICE.1H §3] 이 화면이 **무엇을 조회한 범위**인지 머리말이 말한다.
+  ///
+  ///   공고탭의 인력 현황은 제목에 업무명이 있어 대상이 하나임이 드러난다.
+  ///   이 화면은 날짜만 적혀 있어서 「1 공고」인지 「그 날짜의 여러 공고」인지
+  ///   알 수 없었다 — 같은 제목·같은 날짜로 두 화면이 다른 모집단을 말했다.
+  ///
+  ///   세는 기준은 canonical identity 다. 업무 **이름의 종류 수**가 아니라
+  ///   `wdId`(없으면 composite) 단위의 업무 건수를 센다 — 같은 업무명이 시간대
+  ///   별로 두 건이면 2다.
+  ///
+  ///   **완전한 결과일 때만 적는다.** `_dayStaffingRows == null` 은 조회 실패
+  ///   (UNKNOWN)이므로 `공고 0개` 같은 수를 만들어 내지 않고 날짜만 남긴다.
+  ///   `전체` 라는 말은 쓰지 않는다 — 사업장 전체인지 진입 시 좁혀진 범위인지
+  ///   이 화면이 단정할 수 없다.
+  String _headerScopeLabel() {
+    final dateLabel = FormatHelper.formatDateLong(widget.date);
+    final rows = _dayStaffingRows;
+    if (rows == null) return dateLabel; // UNKNOWN — 수를 만들지 않는다
+
+    final toIds = <String>{};
+    final workUnits = <String>{};
+    for (final r in rows) {
+      if (r.toId.isNotEmpty) toIds.add(r.toId);
+      // canonical: wdId 가 있으면 그것, 없으면 업무명+시간 조합
+      final unit = r.wdId.isNotEmpty
+          ? r.wdId
+          : '${r.toId}_${r.workType}_${r.startTime}_${r.endTime}';
+      workUnits.add(unit);
+    }
+    if (toIds.isEmpty) return dateLabel;
+    return '$dateLabel · 공고 ${toIds.length}개 · 업무 ${workUnits.length}개';
+  }
+
   Widget _buildHeader(BuildContext context) {
     return AppModalHeader(
       // [R7-P1-7 §15] `지원명단` → `인력 현황`.
@@ -880,7 +913,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   실제로 하는 일을 담지 못했다 — 여기서는 지원만 보는 게 아니라
       //   확정·초대·계약·서류 후속까지 처리한다.
       title: '인력 현황',
-      subtitle: FormatHelper.formatDateLong(widget.date),
+      subtitle: _headerScopeLabel(),
       onClose: () => Navigator.pop(context, _hasChanges),
       // [AH-V2-04B] 선택지 기준으로 판단한다. businesses(이름 조회용 전체 목록)로
       //   판단하면 실제 옵션이 1개여도 selector가 떴다.
@@ -932,12 +965,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ),
       child: Row(
         children: [
+          // 부족 = 필요한 자리 수 → `명`
           _statCell(context, '부족', totalShortage, shortageColor),
           _statDivider(context),
-          _statCell(context, '지원', _pendingApps.length, AppColors.warningDark),
+          // 지원·확정 = 관계 건수 → `건` (같은 사람이 두 공고에 걸칠 수 있다)
+          _statCell(context, '지원', _pendingApps.length,
+              _pendingApps.isEmpty ? AppColors.grey500 : AppColors.warningDark,
+              unit: '건'),
           _statDivider(context),
-          _statCell(
-              context, '확정', _confirmedApps.length, AppColors.successDark),
+          _statCell(context, '확정', _confirmedApps.length,
+              _confirmedApps.isEmpty ? AppColors.grey500 : AppColors.successDark,
+              unit: '건'),
           // [R7-P1-PRODUCT §17] 일괄선택에는 아무 게이트도 없었다.
           //   이 버튼의 bulk 대상은 PENDING 지원자다(일괄 확정·거절).
           //   1명이면 그 사람 카드의 action이 이미 같은 일을 한다.
@@ -1009,13 +1047,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Widget _statCell(
-      BuildContext context, String label, int count, Color color) {
+  /// [R7-P1-2 DEVICE.1H §3] 단위를 모집단에 맞춘다.
+  ///
+  ///   세 셀이 모두 `N명` 이었다. `부족` 은 필요한 **자리 수**라 `명` 이 맞지만
+  ///   `지원`·`확정` 은 `_pendingApps`/`_confirmedApps`(= `List<ApplicationModel>`)
+  ///   의 길이, 즉 **관계 건수**다. 이 화면은 그 날짜의 여러 공고를 함께 보므로
+  ///   한 사람이 두 건을 가질 수 있고, 그때 `2명` 이라고 말하게 된다.
+  ///
+  ///   수치는 바꾸지 않는다(모집단 재정의 금지). 단위만 사실에 맞춘다.
+  Widget _statCell(BuildContext context, String label, int count, Color color,
+      {String unit = '명'}) {
     return Expanded(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$count명',
+          Text('$count$unit',
               style: ResponsiveHelper.smallStyle(context)
                   .copyWith(fontWeight: FontWeight.bold, color: color)),
           Text(label,
@@ -1612,7 +1658,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       cardBorder = AppColors.amberLight;
       borderWidth = 1.0;
     } else if (!isPending) {
-      cardBg = AppColors.successBg.withValues(alpha: 0.35);
+      // [R7-P1-2 DEVICE.1H §4] 확정은 **완료된 사실**이다 — 낮은 강조.
+      //
+      //   카드 전체 초록 tint + 초록 테두리 + 초록 배지가 함께 서 있었다.
+      //   D0 은 반복 강조 축소와 행당 강한 강조 제한을 규정하고, 완료 정보는
+      //   낮은 강조로 둔다. 셋 다 같은 사실을 세 번 말하는 동안 정작 눌러야
+      //   하는 것(계약서·서류 보완)이 묻힌다.
+      //
+      //   배경 tint 를 내리고 테두리만 남긴다. 배지는 그대로 둔다 —
+      //   상태를 색에만 의존하지 않기 위해 글자가 필요하다.
+      cardBg = Colors.white;
       cardBorder = AppColors.successLight.withValues(alpha: 0.7);
       borderWidth = 1.0;
     } else {
@@ -3739,13 +3794,28 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     return parts.isNotEmpty ? '(${parts.join(' ')})' : '';
   }
 
+  /// [R7-P1-2 DEVICE.1H §4] 상대 시각에도 **무엇의** 시각인지 붙인다.
+  ///
+  ///   `4일 전` 만 적혀 있으면 지원인지 확정인지 계약인지 알 수 없다.
+  ///   같은 값의 절대 표기는 이미 `지원 MM/DD HH:mm` 로 이름을 갖고 있다
+  ///   (DEVICE.1E) — 두 표기가 같은 이름을 쓰게 맞춘다.
+  ///
+  ///   `appliedAt` 은 INSTANT 이므로 상대 계산은 timezone 과 무관하다.
   String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt);
-    if (diff.isNegative) return '방금 전';
-    if (diff.inDays >= 1) return '${diff.inDays}일 전';
-    if (diff.inHours >= 1) return '${diff.inHours}시간 전';
-    if (diff.inMinutes >= 1) return '${diff.inMinutes}분 전';
-    return '방금 전';
+    final String rel;
+    if (diff.isNegative) {
+      rel = '방금 전';
+    } else if (diff.inDays >= 1) {
+      rel = '${diff.inDays}일 전';
+    } else if (diff.inHours >= 1) {
+      rel = '${diff.inHours}시간 전';
+    } else if (diff.inMinutes >= 1) {
+      rel = '${diff.inMinutes}분 전';
+    } else {
+      rel = '방금 전';
+    }
+    return '지원 $rel';
   }
 
 }

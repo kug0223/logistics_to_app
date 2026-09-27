@@ -2093,7 +2093,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       cardBg = AppColors.amber.withValues(alpha: 0.1); // amber[50] equivalent
       cardBorder = AppColors.amberLight;
     } else if (!isPending) {
-      cardBg = AppColors.successBg.withValues(alpha: 0.35);
+      // [R7-P1-2 DEVICE.1H §4] 확정은 완료된 사실 — 낮은 강조.
+      //
+      //   카드 전체 초록 tint 위에 초록 배지·초록 섹션 머리말이 겹쳐 같은
+      //   사실을 세 번 말했다(D0: 반복 강조 축소 · 행당 강한 강조 제한 ·
+      //   완료 정보 낮은 강조). tint 를 테두리로 낮춘다 — 배지 글자는
+      //   그대로 둔다(상태를 색에만 의존하지 않는다).
+      cardBorder = AppColors.successLight.withValues(alpha: 0.7);
     }
 
     return Container(
@@ -2799,15 +2805,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final now = DateTime.now();
     final diff = now.difference(appliedAt);
 
+    // [R7-P1-2 DEVICE.1H §4] 상대 표기에도 같은 이름을 붙인다.
+    //   7일 경과 시의 절대 표기만 `지원 …` 이고 그 전까지는 `4일 전` 이어서,
+    //   같은 자리의 같은 값이 어느 날 갑자기 이름을 얻었다.
     if (diff.isNegative || diff.inMinutes < 1) {
-      return '방금 전';
+      return '지원 방금 전';
     }
     if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}분 전';
+      return '지원 ${diff.inMinutes}분 전';
     } else if (diff.inHours < 24) {
-      return '${diff.inHours}시간 전';
+      return '지원 ${diff.inHours}시간 전';
     } else if (diff.inDays < 7) {
-      return '${diff.inDays}일 전';
+      return '지원 ${diff.inDays}일 전';
     } else {
       // [R7-P1-2 DEVICE.1E §8] 이 절대시각에는 **이름이 없었다**.
       //

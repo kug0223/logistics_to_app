@@ -1,12 +1,12 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import '../../../theme/app_colors.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../controllers/workforce_controller.dart';
 import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';  // ⭐ 추가
 import '../../../models/ui/admin_to_list_ui_models.dart';
@@ -274,8 +274,17 @@ class TOListDialogs {
               ),
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
+            // [R7-P1-2 DEVICE.1H] 근무일은 DATE_ONLY(KST 달력일)다.
+            //
+            //   `DateFormat(...).format(to.date)` 는 DateTime 자신의 zone 으로
+            //   찍으므로 UTC 기기에서 하루 앞 날짜가 나온다. 이 다이얼로그는
+            //   "이 날짜는 이미 지났다" 를 근거로 재개를 막는 자리라서,
+            //   날짜가 밀리면 근거 자체가 틀린 말이 된다.
+            //   형식(`yyyy-MM-dd (요일)`)은 그대로 두고 KST helper 로만 만든다.
             StyledDialogInfoCard.error(
-              '근무일: ${DateFormat('yyyy-MM-dd (E)', 'ko_KR').format(to.date)}\n근무 시간: ${to.startTime} ~ ${to.endTime}',
+              '근무일: ${FormatHelper.toKstDateKey(to.date)} '
+                  '(${FormatHelper.weekday(to.date)})\n'
+                  '근무 시간: ${to.startTime} ~ ${to.endTime}',
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Text(

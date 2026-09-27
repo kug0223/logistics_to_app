@@ -212,9 +212,9 @@ DEVICE.1F 에서 확인했듯 `DateFormat.format` 은 **DateTime 자신의 zone*
 
 | 파일 | DateFormat | FormatHelper | 판정 |
 |---|---|---|---|
-| `dialogs/to_detail_dialogs.dart` | 2 | **0** | **확인 필요 — FormatHelper 미사용** |
-| `dialogs/to_list_dialogs.dart` | 1 | **0** | **확인 필요** |
-| `unclosed_action_queue_screen.dart` | 1 | **0** | **확인 필요** |
+| `dialogs/to_detail_dialogs.dart` | 2 | **0** | **DEAD → NO PATCH** (DEVICE.1H) — `TODetailDialogs` 가 어디서도 인스턴스화되지 않는다 |
+| `dialogs/to_list_dialogs.dart` | 1 | **0** | **FIXED** (DEVICE.1H) — `to.date` DATE_ONLY → `toKstDateKey`+`weekday`. 증거 RENDER(DH-B) |
+| `unclosed_action_queue_screen.dart` | 1 | **0** | **FIXED** (DEVICE.1H) — `item.workDate` DATE_ONLY + `_daysAgo` 기기 성분 → `toKstDate`. 증거 RENDER(DH-A) |
 | `common/profile_edit_screen.dart` | 1 | **0** | 확인 필요 |
 | `dialogs/resign_request_management_dialog.dart` | 3 | 2 | 혼재 |
 | `dialogs/schedule_request_management_dialog.dart` | 2 | 1 | 혼재 |
@@ -306,9 +306,12 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 ## 5. 우선순위 요약
 
 ### BLOCKER (필수 행동 불가 / 대상 혼동 / 정보 왜곡)
-1. **V6 업무 날짜 `DateFormat`** — `to_detail_dialogs` · `to_list_dialogs` ·
-   `unclosed_action_queue_screen` (FormatHelper 0). 1F 와 같은 root cause. → **P1-2**
-2. **4-1 홈 일자별 범위 미표시** — 어느 모집단인지 화면에서 알 수 없다. → **P1-2**
+1. ~~**V6 업무 날짜 `DateFormat`**~~ → **DEVICE.1H 에서 해소.**
+   active 2건(`to_list_dialogs` · `unclosed_action_queue_screen`) 수정,
+   dead 2건(`to_detail_dialogs`) NO PATCH. CODE CLOSED · RENDER 검증 완료.
+2. ~~**4-1 홈 일자별 범위 미표시**~~ → **DEVICE.1H 에서 해소(CORRECTION 수준).**
+   머리말에 `· 공고 N개 · 업무 M개`(canonical identity 기준, 완전 결과일 때만).
+   실제 잘못된 대상 action 증거는 없어 BLOCKER 승격하지 않았다.
 
 ### CORRECTION
 3. **§1 관리 탭(`settings_screen`)이 파란 구디자인** — `GradientScaffold` →
@@ -326,6 +329,25 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 ### POLISH / BACKLOG
 11. V4 radius 이탈 (같은 화면 3종 이상은 CORRECTION) → 각 군
 12. `splash_screen` `AppColors` 0 · 하드코딩 색 → P1-7
+
+---
+
+## 5-1. DEVICE.1H 실행 결과 (P1-2 적용분)
+
+| 항목 | CODE | RENDER | DEVICE |
+|---|---|---|---|
+| 날짜 active 2건 (KST) | **CLOSED** | **DH-A/DH-B 실행** | 재촬영 대상 |
+| 날짜 dead 2건 | **NO PATCH** | — | — |
+| 홈 일자별 범위 문구 | **CLOSED** | **DH-C 렌더** | 재촬영 대상 |
+| 지원·확정 단위 `건` (관계 건수) | **CLOSED** | — | 재촬영 대상 |
+| 확정 카드 tint → 테두리 | **CLOSED** | — | 재촬영 대상 |
+| `지원 N일 전` 라벨 | **CLOSED** | — | 재촬영 대상 |
+| 실제 콘텐츠 matrix (viewport 4 × 배율 3 × 행수 3 + 키보드 + safe area) | — | **48 PASS** | — |
+
+**여전히 미검증:** 사람 카드·badge/action 행 자체는 Firebase 의존 State 안에
+있어 렌더하지 못했다. DH-C 는 머리말·정원 문구·정보 카드·긴 텍스트 줄을
+production 위젯으로 그렸을 뿐이다. **그 조합 PASS 를 사람 카드 PASS 로
+읽지 않는다.**
 
 ---
 
