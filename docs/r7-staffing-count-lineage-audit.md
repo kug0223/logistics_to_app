@@ -288,3 +288,128 @@ identity 에서 온다(IDS-E8).
 3. `[R7FIX] 부족 남은 공고` **9/26·9/28** 선택 시 각각 `충원 1`
 
 그 외는 개발 검증으로 대체했다.
+
+---
+
+# 3차 — 실행환경 복구 및 write-path 실제 실행 (2026-09-27)
+
+## 11. 환경 BLOCKER — ROOT CAUSE 확정 및 해소
+
+2차에서 "모든 function 이 `Failed to load function`" 으로 멈췄다. 그때는 원인을
+특정하지 못한 채 `require('./lib/index.js') 성공` 만 가지고 있었다. 그것은 import
+context 성공일 뿐이라는 지적이 맞았다. 이번에 **호출자·피호출자·버전**을 모두 짚었다.
+
+### 11-1. 첫 번째 실패 — functions.config()
+
+| 항목 | 값 |
+|---|---|
+| 호출자 | `firebase-tools@14.20.0` → `lib/emulator/functionsEmulatorRuntime.js:455,458` |
+| 호출 | `localFunctionsModule.config()` (가드 없음, `initializeFunctionsConfigHelper` 에서 무조건 실행) |
+| 피호출자 | `firebase-functions@7.3.2` → `lib/v1/config.js:10` |
+| 스택 | `Error: functions.config() has been removed in firebase-functions v7.` |
+
+즉 **제품 코드가 아니라 CLI 런타임**이 제거된 API 를 부른다. 프로젝트의
+`functions/lib/index.js` 에 있던 `functions:config` 문자열은 원인이 아니었다.
+
+**해소:** `firebase-tools@15.31.0` 에서 `initializeFunctionsConfigHelper` 자체가
+제거되었다. 전역 CLI 를 바꾸지 않고, 격리 디렉터리에 **exact version 고정**으로
+설치해 사용한다(`@latest` 미사용).
+
+### 11-2. 두 번째 실패 — admin.firestore statics 손실
+
+| 항목 | 값 |
+|---|---|
+| 증상 | 모든 callable 이 `INTERNAL`. 런타임 스택: `TypeError: Cannot read properties of undefined (reading 'fromMillis')` at `functions/lib/index.js:30069` |
+| 원인 | CLI `Proxied.getOriginal` 이 `value.bind(target)` 을 반환 → 함수의 own property 소실 |
+| 확인 | `admin.firestore` 는 `prototype` 없음 → `isConstructor` false → bind 분기. 원본 `admin.firestore.Timestamp` = function, `.bind()` 후 `undefined` |
+
+**CODE ≠ INFRA.** 제품의 `admin.firestore.Timestamp.fromMillis` 는 운영에서 정상이고,
+같은 표현이 하네스 프로세스(비-에뮬레이터)에서도 정상 동작한다. 깨지는 곳은
+에뮬레이터 런타임뿐이다.
+
+**해소:** **격리 CLI 사본에만** `getOriginal` 이 bind 후 own property 를 복원하도록
+수선했다(`node_modules/firebase-tools/.../functionsEmulatorRuntime.js`, 원본은 `.r7bak`).
+이것은 호환을 가장하는 monkey patch 가 아니라 **운영과 동일한 원본 동작의 복원**이다.
+제품 코드·배포 SDK·lockfile·engines·전역 CLI 는 건드리지 않았다.
+
+### 11-3. 격리 증거
+
+- 프로젝트: `demo-alfit-r7` — CLI 자체 출력:
+  *"Detected demo project ID … attempts to access non-emulated services for this project will fail."*
+- 엔드포인트: functions `127.0.0.1:5011` / firestore `6070` / storage `6071` / auth `6072` / hub `4410`
+- **자격증명 부재 확인:** `GOOGLE_APPLICATION_CREDENTIALS` 미설정, gcloud ADC 파일 없음,
+  `src/index.ts` 에 하드코딩 bucket 없음, `defineSecret` 0건
+  → FCM 등 외부 Google API 는 **인증 실패로 전달 불가**. (빈 데이터가 아니라 자격증명 경로로 증명)
+- **실자격증명 차단:** `functions/.env.demo-alfit-r7` 로 `.env` 6개 키를 전부 dummy 로 덮었다.
+  CLI 로그가 로드 순서를 확인해 준다: `Loaded environment variables from functions\.env, functions\.env.demo-alfit-r7`
+- 설정 분리: `firebase.r7audit.json` (별도 config, predeploy 없음). 기존 `firebase.json` 미수정.
+
+### 11-4. discovery ≠ invocation
+
+| 구분 | 증거 |
+|---|---|
+| discovery | `All emulators ready`, **241 functions initialized, `Failed to load function` 0건** |
+| invocation | 인증 없이 `callableApplyToTO` 호출 → `401 {"status":"UNAUTHENTICATED"}` — 로드 실패가 아니라 **제품의 auth guard 가 실행된 결과** |
+| 실제 트랜잭션 | 아래 §13 전이 매트릭스 |
+
+## 12. §3A — count 소비자 인벤토리 (1차 결과)
+
+집계 provenance 는 `_aggregateUsable` 로 닫았지만, **개별 업무 단위 소비자**는
+별도 축이다. 같은 identity miss 를 서버와 클라이언트가 반대로 처리한다.
+
+**서버:** `getWorkDetailCount(slotData, wd)` — `wdId` 는 있는데 `workDetailCounts`
+항목이 없으면 **fail-closed** 로 `failed-precondition` throw.
+주석이 이유를 명시한다: *"fail-open(0/0)은 '정원 여유 있음'으로 오판 → 정원 초과 지원 허용하는 보안 버그."*
+
+**클라이언트:** 같은 miss 를 `?? 0` 으로 접는 자리가 남아 있다.
+
+| # | 위치 | 표면 | miss 시 동작 | 판정 |
+|---|---|---|---|---|
+| C1 | `admin_to_group_card.dart:1144` | 업무 행 | `statsFailed: … \|\| stats == null` | **정상** — miss 를 실패로 표기 |
+| C2 | `admin_to_item_card.dart:384` | 업무 행 | 동일 | **정상** |
+| C3 | `work_detail_management_dialog.dart:76,87,121` | **업무별 마감 관리** | `confirmed = 0` → `_getWorkStatus` 로 상태 판정·선택 그룹핑 | **결함** — 미표기 fail-open, action 표면 |
+| C4 | `job_posting_screen.dart:1316,1330` | **지원자 공고 상세** | `hasWorkStats = workDetailStats != null` (map 존재만) → `잔여 N명` | **결함** — provenance 를 identity hit 이 아닌 map 존재로 판단 |
+| C5 | `work_applicants_dialog.dart:2948` | 개별 승인 전 인원 체크 | `confirmed 0` → `remaining = required` | **결함** — fail-open (서버가 최종 차단) |
+| C6 | `work_applicants_dialog.dart:3394` | 일괄 승인 한도 | 동일 + `현재 0명 확정` 문구 | **결함** |
+| C7 | `work_applicants_dialog.dart:1287` | 초대 다이얼로그 인자 | `_canonicalConfirmed ?? 0`, `workDetailId: work.id`(canonicalId 아님) | **결함 후보** — canonical gate 를 경계에서 되접음 |
+
+C5~C7 은 같은 다이얼로그 안에서 **한쪽은 canonical gate(`confirmedFor`, miss 시 null),
+다른 쪽은 `?? 0`** 을 쓴다. 1E.2A 가 만든 규칙이 일부 경로에만 적용돼 있다.
+
+> C4 의 실제 노출 조건(master identity 로 렌더되는 경로인지)은 아직 실행으로
+> 확인하지 않았다 — **NOT TESTED**. 코드 경로상 후보로만 기록한다.
+
+## 13. §5 — 전이 매트릭스 (격리 에뮬레이터, production callable 실행)
+
+하네스: `scripts/r7-emu-transition-matrix.js` (커밋하지 않음).
+fixture: TO `r7to` / slot `r7slot` / `wdId = wd-canonical-001` / required 2.
+
+| 단계 | 호출 | 응답 | 카운터(slot.workDetailCounts) | TO 합계 | 원장(applications) |
+|---|---|---|---|---|---|
+| T0 | (seed) | — | c0 / p0 | 0 / 0 / req 2 | — |
+| T1 | `callableApplyToTO` | **200** | c0 / **p1** | 0 / **1** / 2 | **PENDING 1** |
+| T2 | 동일 조건 재지원 | **409 ALREADY_EXISTS** | c0 / p1 (불변) | 0 / 1 / 2 | PENDING 1 (불변) |
+| T3 | `callableConfirmApplication` | **200** | **c1** / p0 | **1** / 0 / 2 | **CONTRACT_PENDING 1** |
+| T4 | `callableCancelConfirmedApplication` | **200** | c0 / p0 | 0 / 0 / 2 | **CANCELED 1** |
+
+**확인된 사실 (VERIFIED — 실행):**
+1. 네 단계 모두에서 **원장·카운터·TO 합계가 일치**한다. 저장 mismatch 없음.
+2. **중복지원이 카운터를 올리지 않는다** — 거부와 카운터 불변이 함께 성립.
+3. 확정 직후 status 는 `CONFIRMED` 가 아니라 **`CONTRACT_PENDING`** 이고,
+   그 시점에 좌석 카운터가 `confirmedCount` 로 올라간다. 클라이언트의
+   좌석 판정(`occupiesSeatOn` 이 CONTRACT_PENDING 을 좌석으로 셈)과 **일치**한다.
+   이것은 이제 추론이 아니라 실행 결과다.
+4. 확정취소는 `confirmedCount` 에서 내려오고 `pendingCount` 로 되돌아가지 않는다.
+5. applicationId = `r7to_r7slot_wd-canonical-001_r7worker001` —
+   complexId 의 3번째 segment 는 **workType 이 아니라 wdId** 다.
+   (CLAUDE.md 의 `{toId}_{slotId}_{workType}_{uid}` 설명은 8.1E 이전 표기다.)
+
+**아직 실행하지 않은 전이 (NOT TESTED):** 지원취소(worker), 재지원, 초대,
+자동취소(겹침), 응답 유실, 동시성, trigger 재실행, 마감/재개.
+
+## 14. 이번 차수에서 하지 않은 것
+
+- 제품 코드 변경 **0건**. §12 의 C3~C7 은 **발견까지**이고 수정은 하지 않았다.
+- shared DEV 는 이번 차수에 **쓰지 않았다**(읽기도 없음). 모든 write 는 `demo-alfit-r7`.
+- §3B(writer 전수·전이표), §3C(그룹 캐시/WorkforceController seam) **미착수**.
+- 감사는 **OPEN** 이다.
