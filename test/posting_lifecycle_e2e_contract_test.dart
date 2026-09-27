@@ -71,8 +71,50 @@ void main() {
           reason: 'PENDING만 세면 미수락 초대가 대기에서 사라진다');
       expect('appsRef.where("status", "in", PENDING_STATUSES).count().get()'
           .allMatches(fnsFlat).length >= 2, true);
-      expect(fnsFlat.contains('slotAppsRef.where("status", "in", PENDING_STATUSES).count().get()'),
+      // [R7-6] 슬롯 대기는 `.count()` 대신 문서로 읽는다 — 같은 읽기로 업무
+      //   단위 카운터까지 원장에서 다시 세기 위해서다. 세는 **정의**는 그대로
+      //   `PENDING_STATUSES` 이므로 미수락 초대가 대기에서 빠지지 않는다.
+      // `_flat` 이 줄바꿈을 공백 하나로 접으므로 공백을 지운 뒤 비교한다.
+      expect(
+          fnsFlat.replaceAll(' ', '').contains(
+              'slotAppsRef.where("status","in",PENDING_STATUSES)'
+              '.select(...SLOT_WD_FIELDS).get()'),
+          true,
+          reason: '슬롯 대기 모집단이 PENDING_STATUSES 가 아니면 초대가 사라진다');
+      expect(fnsFlat.contains('pendingCount: slotPendingDocs.size,'), true,
+          reason: '문서로 읽은 그 모집단을 그대로 슬롯 대기로 쓴다');
+    });
+
+    // [R7-6] 트리거가 업무 단위 대기도 같은 모집단으로 센다 — 초대 포함.
+    test('트리거의 업무 단위 재계산도 초대를 센다', () {
+      expect(fnsFlat.contains('for (const d of slotPendingDocs.docs) tallyOne(d, true);'),
           true);
+      expect(fnsFlat.contains('for (const d of slotSeatedDocs.docs) tallyOne(d, false);'),
+          true);
+      // 좌석 판정은 공고 단위와 같은 규칙을 쓴다.
+      expect(fnsFlat.contains('if (d.get("staffingReleasedAt") != null) return;'), true);
+      expect(fnsFlat.contains('if (!occupiesSeatToday(d)) return;'), true);
+    });
+
+    // [R7-6] 절대 재계산은 인원이 0 이 된 업무도 0 으로 적어야 한다.
+    test('절대 재계산이 인원 0 인 업무를 옛 값으로 남기지 않는다', () {
+      expect(fnsFlat.contains('function srvBuildWdCountsUpdate('), true,
+          reason: '쓰기 모양이 한 곳에 있어야 트리거와 재집계가 갈라지지 않는다');
+      expect(fnsFlat.contains('out[`workDetailCounts.\${id}.confirmedCount`] = 0;'), true,
+          reason: '슬롯의 모든 wdId 를 먼저 0 으로 깔지 않으면 옛 값이 남는다');
+      // 두 소비자가 같은 함수를 쓴다.
+      expect('srvBuildWdCountsUpdate('.allMatches(fnsFlat).length >= 3, true,
+          reason: '정의 1 + 트리거 1 + 재집계 1');
+    });
+
+    // [R7-6] identity 해석이 한 벌이다.
+    test('업무 identity 해석이 한 곳에만 있다', () {
+      expect(fnsFlat.contains('function srvResolveAppWdId('), true);
+      expect('srvResolveAppWdId('.allMatches(fnsFlat).length >= 3, true,
+          reason: '정의 1 + 트리거 1 + 재집계 1');
+      // new-schema 에서 못 맞추면 first-match 로 때우지 않는다.
+      expect(fnsFlat.contains('if (same.length > 1) return {via: "ambiguous"};'), true);
+      expect(fnsFlat.contains('return {via: "unresolved"};'), true);
     });
 
     test('마감이 업무 단위 대기도 줄인다', () {

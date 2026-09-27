@@ -53,13 +53,26 @@ class WorkforceController extends ChangeNotifier {
   WorkforceController({
     Future<({TOModel? to, bool failed})> Function(String toId)? loadTO,
     Future<FlexSlotLoad> Function(String toId, {TOModel? masterTO})? loadSlots,
+    Future<Map<String, dynamic>> Function(
+      TOModel to, {
+      String? slotId,
+      List<WorkDetailData>? slotWorkDetails,
+    })? loadWorkDetailStats,
   })  : _loadTOOverride = loadTO,
-        _loadSlotsOverride = loadSlots;
+        _loadSlotsOverride = loadSlots,
+        _loadWorkDetailStatsOverride = loadWorkDetailStats;
 
   final Future<({TOModel? to, bool failed})> Function(String toId)?
       _loadTOOverride;
   final Future<FlexSlotLoad> Function(String toId, {TOModel? masterTO})?
       _loadSlotsOverride;
+
+  /// [R7-6 §5] 날짜 타일을 고르면 이 읽기가 돈다 — 사용자 재현 경로의 owner 다.
+  final Future<Map<String, dynamic>> Function(
+    TOModel to, {
+    String? slotId,
+    List<WorkDetailData>? slotWorkDetails,
+  })? _loadWorkDetailStatsOverride;
 
   // [R7-4 §3C] lazy — 주입된 경우 `FirebaseFirestore.instance` 를 건드리지 않는다.
   FirestoreService? _serviceOrNull;
@@ -878,13 +891,27 @@ class WorkforceController extends ChangeNotifier {
 
   /// 슬롯의 업무 상세를 lazy load
   Future<void> loadWorkDetails(TOItem slot) async {
-    if (!slot.needsWorkDetailLoad) return;
+    // [R7-6 §5] 실패한 로드는 다시 읽을 수 있어야 한다.
+    //
+    //   `markWorkDetailStatsFailed()` 는 `isWorkDetailLoaded = true` 로 만든다
+    //   (실패를 '아직 안 읽음'과 구분하기 위해서다). 그래서
+    //   `needsWorkDetailLoad` 만 보면 **실패 뒤 재시도가 통째로 막혔다** —
+    //   화면은 `확인 필요` 를 보여 주면서 다시 읽지는 않는 상태가 된다.
+    //   카드의 자체 재시도 경로는 `resetWorkDetailLoad()` 를 먼저 불러
+    //   이 문제를 피하고 있었다. 같은 일을 이쪽에서도 한다.
+    if (!slot.needsWorkDetailLoad && !slot.workDetailStatsFailed) return;
+    if (slot.workDetailStatsFailed) slot.resetWorkDetailLoad();
     try {
-      final result = await _service.loadTOWorkDetails(
-        slot.to,
-        slotId: slot.slot?.id,
-        slotWorkDetails: slot.slot?.workDetails,
-      );
+      final result = await (_loadWorkDetailStatsOverride?.call(
+            slot.to,
+            slotId: slot.slot?.id,
+            slotWorkDetails: slot.slot?.workDetails,
+          ) ??
+          _service.loadTOWorkDetails(
+            slot.to,
+            slotId: slot.slot?.id,
+            slotWorkDetails: slot.slot?.workDetails,
+          ));
       // 데이터 초기화 후 applicationDeadline은 항상 저장되어 있으므로 backfill 불필요
       final workDetails = result['workDetails'] as List<WorkDetailData>;
 

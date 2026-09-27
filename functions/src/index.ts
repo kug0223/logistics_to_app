@@ -109,6 +109,28 @@ function srvKstDateNum(d: Date): number {
 }
 
 /**
+ * [R7-6] 그 시각이 속한 **KST 하루의 시작 instant**(ms).
+ *
+ *   `new Date(연, 월, 일)` 로 하루 경계를 만들면 **런타임 TZ** 로 해석된다.
+ *   Cloud Functions 는 UTC 로 돈다. 그래서 KST 성분으로 그 생성자를 부르면
+ *   경계가 9시간 밀리고, `workDate` 가 KST 자정 instant 인 이 프로젝트에서는
+ *   **하루 어긋난 창**을 보게 된다.
+ *
+ *   실측(Emulator): 후보 조회의 시간 충돌 검사가 같은 날 확정자를 걸러내지
+ *   못하고, 대신 **다음 날** 확정자를 걸러냈다.
+ *
+ *   여기서는 TZ 에 기대지 않는다 — UTC 산술만 쓴다.
+ *
+ * @param {number} ms 기준 시각(ms)
+ * @return {number} 그 KST 날짜의 시작 instant(ms)
+ */
+function srvKstDayStartMs(ms: number): number {
+  const d = new Date(ms + SRV_KST_MS);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime() - SRV_KST_MS;
+}
+
+/**
  * [.6-P3] 근무 한 건의 canonical 달력 값 (KST).
  *
  *   돈이 어느 날·어느 달의 것인지는 attendance.workDate 하나가 정한다.
@@ -40191,13 +40213,31 @@ export const callableGetAvailableWorkers = onCall(
           break;
         }
       }
-      // fallback: 첫 번째 workDetail
-      if (!targetStartTime && rawWDs.length > 0) {
-        const firstWD = rawWDs[0] as Record<string, unknown>;
-        targetStartTime = firstWD.startTime as string | undefined;
-        targetEndTime = firstWD.endTime as string | undefined;
-        targetWdId    = firstWD.wdId as string | undefined; // [R1.1-PATCH-2]
-        targetWorkType = firstWD.workType as string | undefined; // [R3-B]
+      // [R7-6] 맞추지 못한 식별자를 **조용히 다른 업무로 바꾸지 않는다.**
+      //
+      //   예전에는 무조건 첫 번째 workDetail 로 떨어졌다. Emulator 실측:
+      //   업무가 둘인 슬롯에 없는 식별자를 넘기면 응답이 **첫 업무의 후보
+      //   목록과 같았다**(물어본 업무와는 달랐다). 관리자는 09:00 근무의
+      //   후보를 18:00 근무의 후보로 읽는다.
+      //
+      //   지원 경로는 이미 같은 규칙을 갖고 있다 —
+      //   "composite: exact match 필수 — 실패 시 REJECT (silent fallback 금지)".
+      //   읽기 경로만 예외를 둘 이유가 없다.
+      //
+      //   업무 정의가 하나뿐이면 폴백해도 가리킬 곳이 하나라 모호함이 없다.
+      if (!targetStartTime) {
+        if (rawWDs.length === 1) {
+          const onlyWD = rawWDs[0] as Record<string, unknown>;
+          targetStartTime = onlyWD.startTime as string | undefined;
+          targetEndTime = onlyWD.endTime as string | undefined;
+          targetWdId    = onlyWD.wdId as string | undefined;
+          targetWorkType = onlyWD.workType as string | undefined;
+        } else if (rawWDs.length > 1) {
+          throw new HttpsError(
+            "invalid-argument",
+            "요청한 업무를 찾을 수 없습니다. 목록을 새로고침한 뒤 다시 시도해주세요."
+          );
+        }
       }
     } else if (rawWDs.length === 1) {
       // [R1-PATCH-3] workDetailId 미전달 + 단일 workDetail → 시간 충돌 검사 수행 가능
@@ -40327,12 +40367,19 @@ export const callableGetAvailableWorkers = onCall(
     // [Phase 8.1B.1] businessId 필터 제거 → 타 사업장 확정 근무도 포함
     let confirmedOnDate: Array<{startTime?: string; endTime?: string; uid: string}> = [];
     if (targetStartTime && targetEndTime) {
-      const dateStart = admin.firestore.Timestamp.fromDate(
-        new Date(kstDate.getUTCFullYear(), kstDate.getUTCMonth(), kstDate.getUTCDate())
-      );
-      const dateEnd = admin.firestore.Timestamp.fromDate(
-        new Date(kstDate.getUTCFullYear(), kstDate.getUTCMonth(), kstDate.getUTCDate() + 1)
-      );
+      // [R7-6] 하루 경계를 **KST 기준 instant** 로 만든다.
+      //
+      //   예전에는 `new Date(연, 월, 일)` 이었다. 그 생성자는 런타임 TZ 로
+      //   해석되고 Cloud Functions 는 UTC 라, KST 성분을 넣으면 창이 9시간
+      //   밀렸다. `workDate` 는 항상 KST 자정 instant 이므로, 그 창은 그 날
+      //   확정자를 하나도 못 보고 **다음 날** 확정자를 보게 된다.
+      //   Emulator 실측으로 양쪽을 확인했다 — 같은 날 확정자는 후보에 남고,
+      //   하루 뒤 확정자가 오늘 후보에서 빠졌다.
+      const conflictDayStartMs = srvKstDayStartMs(slotDateJST.getTime());
+      const dateStart =
+        admin.firestore.Timestamp.fromMillis(conflictDayStartMs);
+      const dateEnd =
+        admin.firestore.Timestamp.fromMillis(conflictDayStartMs + 86400000);
       // 전체 사업장 대상 — uid 기반으로 필터링하므로 businessId 불필요
       const conflictSnap = await db.collection("applications")
         .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
