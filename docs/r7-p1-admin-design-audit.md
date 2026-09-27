@@ -3,9 +3,39 @@
 - **감사 HEAD:** `01908f6`
 - **작성:** 2026-09-27 KST
 - **성격:** 전역 READ 감사. 전 화면 일괄 PATCH·새 navigation·도메인 정책 변경 없음.
-- **기준:** 기존 R7-D0 계약(프로젝트 로컬 디자인 기록) + 실제 공용 owner
-  (`AppColors` · `ResponsiveHelper` · `GradientScaffold` · `AppModalShell` ·
-  `StyledDialog` · `DialogHelper` · `CommonWidgets`). 새 디자인 체계를 만들지 않았다.
+- **기준:** 코드에 명시된 현행 ALfit 문법 —
+  `AppPageScaffold`("ALfit flat screen foundation · **ADMIN flat header 표준** ·
+  GradientScaffold 의 신규 ADMIN 화면 대안") ·
+  `HOME-V2-08D.1` admin card 언어(grey50 배경 · surface 카드 · **radius 16** ·
+  grey200 1px · **shadow 없음**) ·
+  `AppModalShell`/`AppModalHeader`(flat white + grey200 divider + 3px brand accent) ·
+  `AppColors` · `ResponsiveHelper` · `StyledDialog` · `DialogHelper`.
+  새 디자인 체계를 만들지 않았다.
+
+> ## ⚠️ 정정 (2026-09-27, 사용자 지적 반영)
+>
+> **이 문서의 첫 판은 기준을 거꾸로 잡았다.** 세 가지가 틀렸다.
+>
+> 1. **`GradientScaffold` 채택률을 "준수"로 셌다 — 반대다.**
+>    그 파일은 스스로 *"지원자 화면 공통 레이아웃 / 파란 그라디언트 헤더 +
+>    32px 곡선"* 이라고 적는다. 관리자 화면의 `GradientScaffold` 는
+>    **구디자인(지원자 언어) 유입**이다. canonical 관리자 shell 은
+>    **`AppPageScaffold`** 이고 **이미 25개 화면이 채택**했다. 저장소에
+>    `[DESIGN-PATCH-1]~[DESIGN-PATCH-5] GradientScaffold → AppPageScaffold —
+>    관리자 Shell 정규화 / flat admin 정렬` 마커로 **진행 중인 마이그레이션이
+>    이미 존재한다.**
+> 2. **radius 기준을 12 로 봤다 — admin 카드는 16 이다**(`HOME-V2-08D.1`,
+>    공고 카드 `03S.1`). 12 는 아이콘 버튼·작은 요소다. 내가 근거로 쓴
+>    프로젝트 메모리 기록(카드 12 · 그림자 alpha .04 blur 6 ·
+>    "GradientScaffold 적용 확대")은 **2026-06 자, R7 리디자인 이전 값**이다.
+> 3. **"홈이 글자 확대를 따르지 않는다" 는 틀렸다.** `fontSize: 14` 도
+>    Flutter `textScaler` 가 적용된다. `ResponsiveHelper.getScale` 은 주석이
+>    **"(폰트 제외)"** 이고 레이아웃 전용이다. 하드코딩 `fontSize` 의 실제
+>    비용은 접근성이 아니라 **타이포 위계 불일치**이며, 별개로 홈의 `_s()` 가
+>    `ResponsiveHelper.getScale` 의 **값이 다른 사본**(0.82/0.92/1.0/1.08 vs
+>    0.85/0.9/1.0)인 것이 실제 문제다.
+>
+> 아래 §1·§2·§3-V3/V4·§5 는 정정된 기준으로 다시 쓴 것이다.
 - **재현:** `node scripts/r7-p1-admin-design-audit.js` (SOURCE READ ONLY, 쓰기 0)
 
 > **감사 완료 ≠ 수정 완료 ≠ DEVICE 검증 완료.** 이 문서는 첫째만 기록한다.
@@ -34,36 +64,78 @@
 
 ---
 
-## 1. 가장 큰 불일치 — 탭을 옮기면 다른 앱이 된다
+## 1. 가장 큰 불일치 — 관리 탭이 홀로 구디자인이다
 
-사용자 지적("관리자 MY 탭이 ALfit 디자인과 불일치")의 **원인을 측정으로 지목**한다.
-결론은 뒤집힌다: **`관리` 탭이 기준을 지키는 쪽이고, 나머지 root 가 안 지킨다.**
+사용자 지적: **「리디자인하면서 MY 탭 파란색 디자인은 구디자인인데」 — 맞다.**
 
-| 탭 | 화면 | GradientScaffold | ResponsiveHelper | 하드코딩 `fontSize` |
-|---|---|---|---|---|
-| 홈 | `business_admin_home_screen.dart` | **0** | **0** | **36** |
-| 공고 | `jobs_root_screen.dart` | **0** | **0** | 3 |
-| 근무 | `workforce_management/workforce_root_screen.dart` | **0** | **0** | 2 |
-| 급여 | `payroll/payroll_overview_screen.dart` | 2 | 71 | 0 |
-| **관리**(=관리자 MY) | `common/settings_screen.dart` | **1** | **173** | 1 |
+### 관리자 5탭의 shell
 
-사용자 영향: 배경(그라디언트 유무)·여백·글자 스케일이 탭 전환마다 바뀐다.
-`관리`·`급여`는 공용 shell 을 쓰고 `홈`·`공고`·`근무`는 직접 `Scaffold` 를 쓴다.
-특히 **홈은 관리자가 가장 먼저 보는 화면인데 `fontSize` 36개가 하드코딩**돼
-글자 확대 설정을 따르지 않는다.
+| 탭 | 화면 | shell | 문법 |
+|---|---|---|---|
+| 홈 | `business_admin_home_screen.dart` | 탭 body (AppBar 없음) | grey50 + surface/radius16 → **flat admin** |
+| 공고 | `jobs_root_screen.dart` | 탭 body | flat |
+| 근무 | `workforce_root_screen.dart` | 탭 body | flat |
+| 급여 | `payroll/payroll_overview_screen.dart` | **`AppPageScaffold`** | **flat admin** (`[DESIGN-PATCH-1]` 완료) |
+| **관리**(=관리자 MY) | `common/settings_screen.dart` | **`GradientScaffold`** | **파란 그라디언트 = 구디자인 / 지원자 언어** |
 
-- **D0 계약:** 신규/기존 UI 는 공용 컴포넌트 사용, 인라인 중복 금지.
-- **severity:** CORRECTION (BLOCKER 아님 — 행동 불가·정보 왜곡은 아니다)
-- **수정 방향:** `관리` 탭을 바꾸는 것이 **아니다.** `홈`·`공고`·`근무` root 를
-  공용 shell·ResponsiveHelper 로 맞춘다.
-- **owner:** 홈 → **R7-P1-4** / 공고·근무 → **R7-P1-2** / 교차 확인 → P1-7
+**관리 탭만 지원자용 파란 shell을 입고 있다.** 파란 그라디언트 헤더 + 상단
+32px 곡선 + 흰 반투명 아이콘 버튼은 `gradient_scaffold.dart` 가 스스로
+*"지원자 화면 공통 레이아웃"* 이라고 적은 것이다. 나머지 관리자 화면은
+`AppPageScaffold`(AppBar elevation 0, white + 1px grey200 divider, 배경 grey100)
+또는 동등한 flat 구성이다.
 
-### `관리` 탭 자체의 이탈 (별건)
+### 이미 진행 중인 마이그레이션 (내가 처음에 놓친 사실)
 
-`settings_screen.dart` 1553–1582 에 **AppColors 밖 하드코딩 색 7곳**
+| 마커 | 화면 |
+|---|---|
+| `[DESIGN-PATCH-1]` | `payroll_overview_screen` · `payroll_worker_detail_screen` |
+| `[DESIGN-PATCH-2]` | `admin_month_detail_screen` |
+| `[DESIGN-PATCH-3]` | `admin_stats_screen` |
+| `[DESIGN-PATCH-5]` | `business_detail_screen` |
+| (동일 방향) | `member_management_screen` |
+
+`AppPageScaffold` 채택 = **관리자 화면 25개.** 방향은 이미 정해져 있고
+관리 탭이 남은 쪽이다.
+
+### 남은 파란 구디자인 12곳
+
+| scope | 화면 | 비고 |
+|---|---|---|
+| **SHARED** | **`common/settings_screen.dart`** (2583줄) | **관리자 관리(MY) 탭 — 사용자 지적 대상** |
+| ADMIN | `super_admin/` 11개 (`all_users` · `all_businesses` · `badge_settings` · `help_faq_management` · `review_tags_settings` · `to_limit_settings` · `legal_terms_management` · `insurance_rate_settings` · `minimum_wage_settings` · `system_settings` · `business_approval_settings`) | SUPER_ADMIN 범위 |
+
+**`settings_screen` 은 `screens/common/` 에 있지만 실제 진입은 전부 관리자다** —
+`business_admin_shell`(탭4) · `business_admin_home_screen` ·
+`work_applicants_dialog` · `day_applicants_dialog` · `create_to_screen` ·
+`contract_sign_screen`. **USER 진입 경로가 없다**(USER 의 MY 는
+`user/tabs/user_my_tab.dart`). 따라서 shell 교체에 역할 공유 제약이 없다.
+
+- **severity:** **CORRECTION** (행동 불가·정보 왜곡은 아니다. 다만 관리자가
+  가장 자주 여는 탭 하나가 다른 제품처럼 보인다)
+- **수정 방향:** `settings_screen` 의 `GradientScaffold` → **`AppPageScaffold`**.
+  이미 있는 `[DESIGN-PATCH-*]` 와 **같은 전환**이며 새 컴포넌트를 만들지 않는다.
+  헤더의 홈·알림 버튼은 `AppPageScaffold.actions` 로 넘긴다(그 컴포넌트가
+  그렇게 설계돼 있다). `headerContent`(프로필 영역)는 body 최상단 카드로 내린다.
+- **owner:** **R7-P1-6**(관리/설정군) · super_admin 11개는 동일 root cause 로 묶되
+  별도 배치
+
+### `관리` 탭의 두 번째 이탈
+
+`settings_screen.dart` 1553–1582 에 **`AppColors` 밖 하드코딩 색 7곳**
 (`0xFFB45309` · `0xFFFFFBEB` · `0xFFF0FDF4` · `0xFFBBF7D0` · `0xFF16A34A` ·
-`0xFF166534`). amber/green 계열을 직접 적어 상태색 계약 밖에 있다.
-→ **CORRECTION**, owner **R7-P1-6**(관리/설정군), 증거 SOURCE.
+`0xFF166534`) — amber/green 계열을 직접 적어 상태색 계약 밖에 있다.
+→ **CORRECTION**, owner **R7-P1-6**, 증거 SOURCE.
+
+### 홈의 실제 문제 (정정됨)
+
+하드코딩 `fontSize` 36개는 **접근성 문제가 아니다**(textScaler 적용됨).
+실제 문제는 두 가지다.
+1. **타이포 위계 불일치** — `ResponsiveHelper.bodyStyle()` 등 공용 style 대신
+   raw `TextStyle(fontSize:)` 를 쓰므로 다른 탭과 글자 크기 단계가 어긋난다.
+2. **`_s()` 가 `ResponsiveHelper.getScale` 의 값 다른 사본** —
+   `0.82/0.92/1.0/1.08` vs `0.85/0.9/1.0`. 같은 기기에서 홈과 다른 화면의
+   여백이 다르게 계산된다.
+→ **CORRECTION**, owner **R7-P1-4**, 증거 SOURCE.
 
 ---
 
@@ -71,14 +143,15 @@
 
 | 컴포넌트 | 채택 | 비고 |
 |---|---|---|
+| **`AppPageScaffold`** (canonical admin shell) | **25 화면** | 정착됨 — 이것이 기준이다 |
 | `StyledDialog` / `DialogHelper` | **42/68** | 가장 정착됨 |
 | `AppEmptyState` | 23/68 | |
-| `GradientScaffold` | **12/68** | §1 의 근본 원인 |
-| `AppModalShell` | 10/68 | |
+| `AppModalShell` | 10/68 | 다이얼로그 shell |
 | `AppSearchBar` | 5/68 | |
 | `AppBatchActionBar` | 1/68 | |
 | **`AppSummaryHeader`** | **0/68** | 추출했으나 **아무도 안 쓴다** |
 | **`AppStatusCard`** | **0/68** | 추출했으나 **아무도 안 쓴다** |
+| ~~`GradientScaffold`~~ | **12 (잔존)** | **구디자인 — 낮을수록 좋다.** 채택률 아님 |
 
 `AppSummaryHeader`·`AppStatusCard` 는 D0 계획에 "추출 완료/예정"으로 적혀
 있는데 실사용 0 이다. 요약 헤더와 좌측 인디케이터 카드가 **화면마다 인라인**
@@ -238,7 +311,12 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 2. **4-1 홈 일자별 범위 미표시** — 어느 모집단인지 화면에서 알 수 없다. → **P1-2**
 
 ### CORRECTION
-3. §1 `홈`·`공고`·`근무` root 의 공용 shell·ResponsiveHelper 미적용 (홈 fontSize 36) → P1-4 / P1-2
+3. **§1 관리 탭(`settings_screen`)이 파란 구디자인** — `GradientScaffold` →
+   `AppPageScaffold`. 이미 `[DESIGN-PATCH-*]` 로 6화면 전환 완료, 25화면 채택.
+   USER 진입 없음 → 제약 없음. **사용자가 직접 지적한 항목** → **P1-6**
+3b. super_admin 11화면 동일 전환 (같은 root cause, 별도 배치) → P1-6
+3c. 홈 타이포 위계(공용 style 미사용) + `_s()` 가 `ResponsiveHelper.getScale` 의
+   값 다른 사본 → **P1-4**
 4. V1 `AlertDialog`/`showModalBottomSheet` 12건 (SafeArea 위험) → 각 군
 5. 4-2 카드 tint/테두리 4중첩 · 4-3 행당 배지 3종 경쟁 → **P1-2**
 6. `AppSummaryHeader`/`AppStatusCard` 채택 0 → P1-7
