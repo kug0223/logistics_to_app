@@ -128,7 +128,15 @@ async function cleanup(w) {
     `users/${w.OWNER}`, `users/${w.WA}`, `users/${w.WB}`,
     `businessApplicantDocumentReviews/${w.BIZ}_${w.WA}`,
     `businessApplicantDocumentReviews/${w.BIZ}_${w.WB}`];
-  for (const p of paths) await db.doc(p).delete().catch(() => {});
+  // [R7-6] 사업장을 먼저 지우고 cascade 가 끝난 뒤 사용자를 지운다.
+  //   순서를 뒤집으면 onBusinessDeleted 가 없는 사용자 문서를 update 하다
+  //   unhandled error 로 죽고, functions 런타임이 재시작되며 진행 중인
+  //   요청까지 끊긴다(실측). 제품 후보 결함이지만 하네스에서도 피해야 한다.
+  const bizPaths = paths.filter((p) => p.startsWith('businesses/'));
+  const rest = paths.filter((p) => !p.startsWith('businesses/'));
+  for (const p of bizPaths) await db.doc(p).delete().catch(() => {});
+  if (bizPaths.length > 0) await sleep(1800);
+  for (const p of rest) await db.doc(p).delete().catch(() => {});
 }
 
 const payload = (w, workDate, wdId, workType, st, et) => ({
