@@ -1043,3 +1043,184 @@ instant 인 이 프로젝트에서는 **다음 날** 확정을 보게 된다.
   writer 미검증 10(§36-3), F3 의 마지막-트리거-stale 창(§34), 기존 데이터 대조(§38-4),
   `onBusinessDeleted` 별건(5차 §29).
 - "신규 전이 저장 불변식 전체 복구" 라고 말하지 않는다 — 위 목록이 남아 있다.
+
+---
+
+# 7차 — 종료 정리 (2026-09-27)
+
+## 40. Closure matrix
+
+`CODE` = 로컬 코드 · `EMU` = 격리 에뮬레이터 실행 · `CONS` = consumer/위젯 실행 ·
+`DEVR` = 실DEV 읽기 대조 · `DEVICE` = 실기기 · `DEPL` = 배포.
+`—` 는 해당 없음, `✗` 는 아직 아님.
+
+| 항목 | 원래 결함/요구 | 수정 owner | 제거된 구 경로 | CODE | EMU/CONS | DEVR | DEVICE | DEPL | 미결·근거 |
+|---|---|---|---|---|---|---|---|---|---|
+| 업무 identity | 정의 원천이 둘(slot wdId vs master) | `WorkDetailData.lookupByIdentity` · `srvResolveAppWdId` | 소비자별 개별 키 해석, 재집계 인라인 해석 | ✓ | ✓ | ✓(해석 18건 전부 `wdId`, ambiguous 0) | ✗ | ✗ | — |
+| UNKNOWN ≠ 0 | miss 를 0 으로 접어 표시·판단 | `WorkCapacityReading` · `capacityBlockReason` | C3~C7 의 `?? 0`, map 존재 판정 | ✓ | ✓ 21+4 | — | ✗ | ✗ | — |
+| 카운터 drift | `workDetailCounts` 보정자 부재 | `syncTOStats`→`srvSyncSlotCountersTx` | 클라이언트 증감 helper 3개 | ✓ | ✓ 29 | ✓ **21건 발견** | ✗ | ✗ | 기존 데이터 보정 미실행(§43) |
+| F1 내구성 | 원장 성공 후 command 미도달 | 트리거(원장 이벤트가 깨움) | 2단계 의존 | ✓ | ✓ 수정 전 11건 실패 | ✓ | ✗ | ✗ | — |
+| F2 주기 간 | 플래그 reset 만으로 부족 | `callableIncrementSlotPending` status precondition | — | ✓ | ✓ 3주기·replay | ✓ | ✗ | ✗ | 주기 범위 §42 |
+| F3 경합 | 낡은 절대 재계산이 최신을 덮음 | `srvSyncSlotCountersTx`(transaction) | 슬롯 batch 무조건 쓰기 | ✓ | ✓ **재현→차단** | — | ✗ | ✗ | 공고 합계 축은 창 잔존(§41) |
+| loader 통합 | 같은 로딩 3벌 | `WorkforceController` | 카드 `_retryWorkDetailStats` 본문, 카드 그룹 통계 로딩 | ✓ | ✓ | — | ✗ | ✗ | — |
+| 공고 날짜 클릭 | 선택 후 머리말이 옛 값 | `projectGroupHeaderTotals` + 무조건 재계산 | `identical` 캐시 가드 | ✓ | ✓ **실제 위젯 3건** | — | ✗ | ✗ | — |
+| Day `_cachedGroups` 왕복 | 선택·무효화·표시 | — | — | — | ✗ | — | ✗ | ✗ | **미착수**(§44) |
+| writer/consumer 전수 | 34 writer · 소비자 분류 | — | — | ✓ | 실행 9 · 구조 커버 21 · N/A 1 · 미검증 3 | ✓ | — | — | §42 |
+| 후보 조회 identity | 날짜 창 · 폴백 · 모호성 | `srvKstDayStartMs` · exact/unique 규칙 | first-match 폴백 | ✓ | ✓ 17 | — | ✗ | ✗ | — |
+| 배포 호환 | 방향별 안전성 | — | — | — | ✓ 4조합 | — | — | ✗ | **6차 주장 철회**(§41) |
+
+## 41. 6차 주장 보정
+
+### 41-1. "한쪽만 되돌려도 안전" — **철회한다**
+
+6차에는 `functions/src` 를 stash 해 비교했는데, 그것은 **6차 CF** 로 돌아간 것이지
+배포 기준의 old CF 가 아니었다. 실제 production 기준(`adb6cbb`, 아직 아무것도
+배포되지 않음)으로 다시 재면 **11건 실패**이고, 그중 하나는 상위 카운터까지 망가뜨린다.
+
+| 방향 | 결과 | 판정 |
+|---|---|---|
+| **CF 먼저 교체, 아직 old client** | 12/12 일치. 구버전이 상위 두 카운터를 직접 내려도 트리거가 업무 단위를 원장에서 다시 센다. 구버전은 command 를 부르지 않아 이중 차감 없음 | **권장 순서** |
+| **new client 배포 후 CF 만 old 로 rollback** | 11건 실패. 특히 지난 주기 감소가 `slot.pendingCount`·`to.totalPending` 을 **0 으로 만들고 원장에는 대기 1이 남는다**. 그 상태는 다음 원장 이벤트 전까지 **스스로 낫지 않고 관리자에게 보인다** | **금지** |
+| **CF new 유지, client 만 old 로 rollback** | old client × new CF 와 같다 — 12/12 | 안전 |
+| **양쪽 rollback** | 현행 기준선으로 복귀(기존 drift 유지) | 안전(개선 없음) |
+
+**결론:** CF 를 먼저, 클라이언트를 나중에. **클라이언트가 나간 뒤에는 CF 만 되돌리지 않는다.**
+되돌려야 하면 클라이언트도 함께 되돌리거나, forward-fix(§43 재집계)로 간다.
+
+### 41-2. "trigger 가 writer 34 전부를 덮는다" — 연결 구조 주장으로 한정
+
+트리거는 `applications/{applicationId}` 쓰기에 붙는다. 그래서 **원장을 건드리는
+writer 만** 덮는다. 미검증 10건을 그 근거로 실행 완료로 세지 않는다(§42).
+
+### 41-3. F3 "반례를 찾지 못했다" → **반례를 찾았고 고쳤다**
+
+부하로 창을 만들어 재현했다(§34 의 후속). 아래 §41-4.
+
+### 41-4. F3 — 재현과 수정
+
+| 단계 | 관측 |
+|---|---|
+| 경계 | 절대 재계산이 원장을 **transaction 밖**에서 읽고 `batch` 로 **무조건** 쓴다. conflict detection·precondition 없음 |
+| 재현 | 지원서 482건으로 재집계를 6.9초로 늘린 뒤 그 사이 1명 취소 → 원장 대기 1인데 슬롯·업무 카운터 **2** 로 남고, 후속 이벤트가 없어 3초간 그대로 |
+| 수정 | 슬롯 범위 재계산을 `srvSyncSlotCountersTx` 로 옮겨 **쓰기 시점에 다시 센다**. Firestore transaction 이 읽은 결과의 변경을 잡아 재시도한다 |
+| 수정 후 | 같은 시나리오 통과. 트리거·재집계가 같은 writer 를 쓴다 |
+| **남는 창** | **공고 단위 합계**(`to.totalPending`/`totalConfirmed`)는 여전히 밖에서 읽고 쓴다. 이 축의 stale 창은 **닫지 않았다** — 범위가 공고 전체라 비용이 다르고, 이번에 재현한 결함은 슬롯·업무 축이다. **미결로 유지한다** |
+
+**비용(실측)**: 평범한 취소 1건의 수렴 3.8초 → **2.0초**(오히려 단축).
+13슬롯·482건 전체 재집계와 **동시에** 돌면 경합으로 **71.8초**까지 늘어난다.
+재집계는 사람이 의도해 부르는 복구 경로이므로 그대로 두되 숫자를 남긴다.
+
+**replay/0-reset**: 같은 상태에서 재집계를 3회 반복해도 값이 바뀌지 않는다.
+모든 wdId 를 0 으로 깔고 시작하지만 그것이 최신 값을 지우지 않는다(같은 transaction 에서 다시 세므로).
+
+## 42. writer coverage · consumer 분류
+
+### 42-1. writer 34 coverage (watched path 기준)
+
+| 분류 | 수 | 근거 |
+|---|---|---|
+| 실행 검증 | 9 | apply · confirm · cancelConfirmed · incrementSlotPending · recalculate · inviteWorker · acceptTOInvitation · declineTOInvitation · cancelTOInvitation (트리거는 전 단계에서 함께 실행) |
+| 대상 0건 실행 | 1 | `callableExpireApplications` (`expired: 0`) |
+| **구조 커버(원장 이벤트 발생 확인)** | 21 | 좌석·대기 전이 12(6차) + 미검증이던 10 중 **8**(아래) + `callableCloseSlots` |
+| N/A | 1 | `migrateAddressFields` — `applications` 미접근, 카운터 무관 |
+| **미검증(구조 커버로도 못 닫음)** | 3 | `callableCreateFlexSlots`(슬롯 생성 시 wdCounts seed, 원장 이벤트 없음) · `callableUpdateSlotWorkDetails`(**wdCounts 직접 쓰기 8곳 + 업무 정의 변경**) · `callableRecalcToTotalRequired`(단일 write, totalRequired 전용) |
+
+6차에 "미검증 10" 이라 적은 것 중 8건(`callableDeleteSlots` · `callableDeleteTO` ·
+`callableDeleteAccountApplications` · `callableCleanupApplicationData` ·
+`backfillReviewRequests` · `onAttendanceWageStatusChanged` · `callableApplyNoShowPenalty` ·
+그리고 `callableCloseSlots`)은 `applications` 문서를 쓴다 → 트리거가 깨어나
+슬롯 범위가 다시 계산된다. **구조 커버이지 개별 실행은 아니다.**
+
+> **남은 위험 하나:** `srvBuildWdCountsUpdate` 는 슬롯의 **현재** wdId 를 모두 0 으로
+> 깔지만, 정의에서 **사라진** wdId 의 옛 키는 지우지 않는다.
+> `callableUpdateSlotWorkDetails` 가 wdId 를 교체하면 옛 키가 남는다.
+> 읽는 쪽은 현재 정의로 `lookupByIdentity` 하므로 화면에 나오지는 않지만
+> 저장 찌꺼기다. DEV 대조에서는 해당 사례가 없었다(§43). **미결.**
+
+### 42-2. consumer 분류 (5차의 grep 수치 정돈 완료)
+
+| 분류 | 판정 |
+|---|---|
+| 화면 수치 소비자 | `WorkCapacityReading`(5) · `capacityBlockReason`(4) · `confirmedFor`(2) · `resolveStats`(10) · `projectGroupHeaderTotals`(1) — **전환 완료, 실행 검증됨** |
+| `lookupByIdentity` 13 | 4차 전수 판정(정상 6 / 수정 7) |
+| raw 카운터 grep 48·56·16 | **비화면·N/A**: 모델 필드 정의·`toMap`/`fromMap` 직렬화·CF 소스 문자열·주석. 화면 수치 경로는 위 항목으로 수렴 |
+| 리스트 `.length` 12 | **비-카운터**: 목록 길이·반복 인덱스·빈 목록 판정. 정원/대기 수치로 쓰는 곳은 없다 |
+
+각 active 숫자의 source/모집단/freshness/실패/action 연결은 §16(4차)·§26(5차)·
+§36(6차) 표에 있고 이번에 바뀐 것은 없다.
+
+## 43. 실DEV READ 대조 (실행함 · 읽기 전용)
+
+`scripts/r7-dev-read-reconcile.js` — `.get()` 만 사용. **쓰기·보정 없음.**
+
+- 프로젝트 `alfit-89567` · 기준시점 **2026-09-27T11:35:38Z**
+- 범위: 전체 공고 96 중 **flex 92** · 슬롯 **246** · 업무키 **266**
+- identity 해석: **`wdId` 18건**, ambiguous/unresolved **0** → fail-closed 슬롯 없음
+
+| 축 | mismatch |
+|---|---|
+| `to.totalPending` / `to.totalConfirmed` | **0** |
+| `slot.pendingCount` / `slot.confirmedCount` | **0** |
+| **`workDetailCounts.pendingCount`** | **9** |
+| **`workDetailCounts.confirmedCount`** | **12** |
+
+**진단이 실데이터로 확인됐다.** 상위 두 축은 트리거가 계속 맞춰 왔고,
+보정자가 없던 업무 단위 축에만 어긋남이 남아 있다.
+
+원인 분류:
+- **과다 저장(저장 > 기대)** — 대부분. `저장=1·2`, `기대=0`.
+  `wd.confirmedCount` 과다는 **지원 차단**으로 이어질 수 있다
+  (`getWorkDetailCount` 가 `confirmedCount >= required` 로 막는다).
+- **음수 저장** — `-6` · `-3` · `-2`(`wd.pendingCount`). 가드 없이 감소된 이력.
+  현재 이 필드의 화면 소비자는 없다.
+- 영향 공고 **11개**, 슬롯 11개.
+
+### repair dry-run 계획 (실행하지 않음)
+
+1. 수단: `callableRecalculateTOStats(toId)` — 원장 기준 멱등, identity 불확실 슬롯은
+   fail-closed. **7차 수정 후에는 슬롯 범위를 transaction 안에서 다시 센다.**
+2. dry-run: 이 대조 스크립트가 곧 dry-run 이다. 대상 11개 공고에 대해
+   `저장 → 기대` 변화표를 먼저 출력하고, 그 차이만큼만 바뀌는지 확인한다.
+3. 재실행성: 같은 command 를 반복해도 결과가 같다(에뮬레이터 확인).
+4. 순서: **CF 배포 후**에 돌린다. 배포 전에 돌리면 옛 재집계의
+   "인원 0 인 wdId 를 건너뛰는" 결함 때문에 일부가 그대로 남는다.
+5. 실행은 **별도 검토**. 이번에 하지 않았다.
+
+> 발견 21건은 **이 범위·이 시점** 의 결과다. 신규 write-path 안전성의 근거로
+> 확대하지 않는다.
+
+## 44. 아직 끝나지 않은 것 (D)
+
+| 항목 | 왜 남았나 |
+|---|---|
+| Day `_cachedGroups` 왕복 | `day_applicants_dialog` 의 한 번 로드에 서비스 호출이 **10개**다. 단일 주입점이 없어 "최소 seam" 으로 덮이지 않는다. 그룹 생성·무효화·표시 경로를 **실행하지 못했다** |
+| 공고 합계 축의 stale 창 | `to.totalPending`/`totalConfirmed` 는 여전히 transaction 밖 읽기 + 무조건 쓰기. 슬롯 축은 닫았고 이 축은 **열려 있다** |
+| 사라진 wdId 의 옛 키 | `srvBuildWdCountsUpdate` 가 지우지 않는다. `callableUpdateSlotWorkDetails` 와 함께 **미검증** |
+| writer 3건 | `callableCreateFlexSlots` · `callableUpdateSlotWorkDetails` · `callableRecalcToTotalRequired` |
+
+## 45. 최종 결론
+
+### A. 개발 검증 완료 (CODE + EMU/CONS)
+
+업무 identity · UNKNOWN≠0 · 카운터 drift(신규 전이) · F1 내구성 · F2 주기 간 멱등 ·
+F3 **슬롯/업무 축** 경합 · loader 통합 · 공고 날짜 클릭(실제 위젯) ·
+후보 조회 날짜창·폴백·모호성 · 초대 전이 · 겹침 자동취소 · rules 경로.
+에뮬레이터 실행 **118건**, Dart 신규 실패 **0**(기존 63 유지).
+
+### B. DEVICE 로만 남은 것
+
+위 A 항목들의 실기기 확인. 최소 묶음으로 한 번:
+**공고 탭 → 다중 날짜 카드에서 날짜 하나 선택 → 머리말과 업무 행 숫자가 같은지 →
+다른 날짜 → 원래 날짜 복귀 → 상세 열고 닫고 탭 복귀.**
+(개발 검증이 끝난 범위이므로 이 한 묶음이면 된다.)
+
+### C. 별도 실행 결정이 필요한 것
+
+- **DEV 배포** — 순서는 CF 먼저. 클라이언트 배포 후 CF 단독 rollback 금지(§41-1).
+- **기존 데이터 보정** — 21건, 배포 후, dry-run 먼저(§43).
+- **Rules 축소** — pending ±1 허용 제거는 구버전 클라이언트 하한선 결정 후.
+
+### D. 아직 개발 검증·수정이 안 끝난 critical
+
+§44 의 4건. **따라서 전체 개발 감사는 CLOSED 가 아니다.**
+B 와 C 는 개발 완료로 세지 않으며 서로 다른 gate 로 관리한다.
