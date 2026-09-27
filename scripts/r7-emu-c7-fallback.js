@@ -289,7 +289,10 @@ async function cleanup() {
   });
   const ambiguous = await call('callableGetAvailableWorkers',
     {toId: TO, slotId: SLOT, workDetailId: '홀서빙'}, otok);
-  observe('C7-7 같은 workType 두 개 + workType 단독 입력',
+  check('C7-7 같은 workType 두 개 + workType 단독 입력 → 거부',
+    ambiguous.status >= 400, true,
+    String(ambiguous.status) + ' ' + JSON.stringify(ambiguous.body).slice(0,160));
+  observe('C7-7 관측',
     `${ambiguous.status} ${JSON.stringify((ambiguous.body?.result?.candidates ?? [])
       .map((c) => c.uid ?? c.id))}`,
     '어느 시간대로 판정됐는지는 응답만으로 알 수 없다 — 후보 구성으로 추론');

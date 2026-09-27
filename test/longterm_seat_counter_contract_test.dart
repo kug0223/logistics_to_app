@@ -45,8 +45,8 @@ void main() {
   group('SEAT-B 재계산', () {
     late String counter;
     setUpAll(() {
-      counter = _slice(cf, 'const seatTodayNum = srvKstDateNum(new Date());',
-          'if (!slotId) {');
+      counter = _slice(cf, 'function srvOccupiesSeatToday(',
+          '[.6-P3] 근무 한 건의 canonical 달력 값');
     });
 
     test('SEAT-B1 effectiveEnd 식이 클라이언트·서버와 같다', () {
@@ -68,9 +68,14 @@ void main() {
     });
 
     test('SEAT-B4 좌석 반납 축은 그대로다', () {
-      expect(counter, contains('staffingReleasedAt'));
-      expect(cf, contains('if (d.get("staffingReleasedAt") != null) continue;'));
+      // [R7-7] 반납 축은 좌석 판정 함수가 아니라 **세는 쪽**에 있다.
+      //   판정 함수는 기간만 본다 — 두 축이 분리된 것이 계약이다.
+      expect(cf, contains('if (d.get("staffingReleasedAt") != null) continue;'),
+          reason: '공고 단위 집계');
+      expect(cf, contains('if (d.get("staffingReleasedAt") != null) return;'),
+          reason: '슬롯 범위 transactional writer');
       expect(cf, contains('if (!occupiesSeatToday(d)) continue;'));
+      expect(cf, contains('if (!occupiesSeatToday(d)) return;'));
     });
 
     test('SEAT-C 업무별 카운터가 같은 좌석 정의를 쓴다', () {
@@ -167,7 +172,7 @@ void main() {
   group('SEAT-H 이력', () {
     test('SEAT-M 이번 변경이 아무것도 지우지 않는다', () {
       final counter = _slice(cf,
-          'const seatTodayNum = srvKstDateNum(new Date());', 'if (!slotId) {');
+          'function srvOccupiesSeatToday(', '[.6-P3] 근무 한 건의 canonical 달력 값');
       for (final banned in ['delete()', 'FieldValue.delete']) {
         expect(counter, isNot(contains(banned)));
       }
@@ -176,7 +181,7 @@ void main() {
     test('SEAT-A 확정 상태 자체를 바꾸지 않는다', () {
       // 좌석에서 빠지는 것과 status 가 바뀌는 것은 다른 축이다.
       final counter = _slice(cf,
-          'const seatTodayNum = srvKstDateNum(new Date());', 'if (!slotId) {');
+          'function srvOccupiesSeatToday(', '[.6-P3] 근무 한 건의 canonical 달력 값');
       expect(counter, isNot(contains('CANCELED')));
       // 종료 전환(퇴사·해지)은 여전히 별도 경로다.
       expect(cf, contains('async function processExitEffectiveTransition('));
@@ -195,8 +200,10 @@ void main() {
     test('SEAT-K OLD 종료 + NEW 활성 → 좌석 하나', () {
       // 좌석 판정이 문서별이므로 끝난 쪽만 빠진다.
       final counter = _slice(cf,
-          'const seatTodayNum = srvKstDateNum(new Date());', 'if (!slotId) {');
-      expect(counter, contains('const occupiesSeatToday'));
+          'function srvOccupiesSeatToday(', '[.6-P3] 근무 한 건의 canonical 달력 값');
+      // [R7-7] 이름이 공유 함수로 바뀌었다. 판정 내용은 그대로다.
+      expect(counter, contains('d.get("actualResignDate") ??'));
+      expect(cf, contains('const occupiesSeatToday = srvOccupiesSeatToday;'));
       expect(cf, contains('byWorkType.set(wt, (byWorkType.get(wt) ?? 0) + 1)'));
     });
   });

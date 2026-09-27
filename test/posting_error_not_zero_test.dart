@@ -436,15 +436,29 @@ void main() {
       );
     });
 
+    // [R7-7] 재시도의 loader owner 가 controller 로 통합됐다.
+    //
+    //   카드에는 `WorkforceController.loadWorkDetails` 와 같은 본문이 복사되어
+    //   있었고, 그래서 재시도 정책이 두 곳에 생겼다(한쪽은 실패 뒤 막혀 있었다).
+    //   계약은 그대로다 — 기존 `loadTOWorkDetails` 를 재사용하고 새 API 를
+    //   만들지 않는다. 그 계약을 이제 owner 쪽에서 확인한다.
     test('재시도가 기존 loadTOWorkDetails를 재사용한다 (신규 API 없음)', () {
       final retry = _codeOf(
           _bodyOf(_src(_cardPath), 'Future<void> _retryWorkDetailStats('));
-      expect(retry.contains('widget.firestoreService.loadTOWorkDetails('), isTrue);
-      expect(retry.contains('item.resetWorkDetailLoad()'), isTrue,
-          reason: '재시도 전에 실패 상태를 되돌리지 않는다');
-      expect(retry.contains("statsFailed: result['statsFailed'] == true,"), isTrue);
+      // 카드는 위임만 한다 — 자기 로딩·retry 정책을 갖지 않는다.
+      expect(retry.contains('widget.onRetryWorkDetailStats(item)'), isTrue);
+      expect(retry.contains('loadTOWorkDetails('), isFalse,
+          reason: '같은 로딩이 두 벌이면 한쪽만 고쳐진다');
       expect(retry.contains('httpsCallable'), isFalse);
       expect(retry.contains('FirebaseFirestore'), isFalse);
+
+      final owner =
+          _codeOf(_bodyOf(_src(_ctrlPath), 'Future<void> loadWorkDetails('));
+      expect(owner.contains('loadTOWorkDetails('), isTrue,
+          reason: '기존 reader 를 그대로 쓴다 — 새 API 없음');
+      expect(owner.contains('slot.resetWorkDetailLoad()'), isTrue,
+          reason: '실패한 로드는 되돌린 뒤 다시 읽을 수 있어야 한다');
+      expect(owner.contains("statsFailed: result['statsFailed'] == true,"), isTrue);
     });
 
     test('재시도 성공 시 error flag가 남지 않는다', () {

@@ -40221,18 +40221,37 @@ export const callableGetAvailableWorkers = onCall(
     let targetWdId: string | undefined; // [R1.1-PATCH-2] wdId precision용 canonical identity
     let targetWorkType: string | undefined; // [R3-B] Group A 판단용 workType
     if (workDetailId) {
-      for (const wd of rawWDs) {
-        const wdMap = wd as Record<string, unknown>;
-        const wt = wdMap.workType as string | undefined;
-        const st = wdMap.startTime as string | undefined;
-        const et = wdMap.endTime as string | undefined;
-        const compositeId = `${wt}_${st}_${et}`;
-        if (compositeId === workDetailId || wt === workDetailId) {
-          targetStartTime = st;
-          targetEndTime = et;
-          targetWdId = wdMap.wdId as string | undefined; // [R1.1-PATCH-2]
-          targetWorkType = wt; // [R3-B]
-          break;
+      // [R7-7] composite 는 정확히 맞고, workType 단독은 **유일할 때만** 맞는다.
+      //
+      //   예전에는 둘을 한 조건으로 묶고 first-match 로 끝냈다. 같은 workType
+      //   정의가 둘인 슬롯에 `홀서빙` 만 넘기면 앞에 있는 시간대가 뽑혔다 —
+      //   뒤 시간대를 물어본 관리자는 다른 근무의 후보를 본다(실측).
+      //
+      //   카운터 쪽 계약은 이미 그렇게 되어 있다. `srvResolveAppWdId` 는
+      //   같은 workType 정의가 둘 이상이면 ambiguous 로 두고 아무거나 고르지
+      //   않는다. 조회 경로만 다르게 둘 이유가 없다.
+      const pick = (wdMap: Record<string, unknown>): void => {
+        targetStartTime = wdMap.startTime as string | undefined;
+        targetEndTime = wdMap.endTime as string | undefined;
+        targetWdId = wdMap.wdId as string | undefined; // [R1.1-PATCH-2]
+        targetWorkType = wdMap.workType as string | undefined; // [R3-B]
+      };
+      const composite = rawWDs.find((wd) => {
+        const m = wd as Record<string, unknown>;
+        return `${m.workType}_${m.startTime}_${m.endTime}` === workDetailId;
+      }) as Record<string, unknown> | undefined;
+      if (composite) {
+        pick(composite);
+      } else {
+        const sameType = rawWDs.filter(
+          (wd) => (wd as Record<string, unknown>).workType === workDetailId);
+        if (sameType.length === 1) {
+          pick(sameType[0] as Record<string, unknown>);
+        } else if (sameType.length > 1) {
+          throw new HttpsError(
+            "invalid-argument",
+            "같은 업무 이름이 여러 개입니다. 목록에서 근무 시간을 골라 다시 시도해주세요."
+          );
         }
       }
       // [R7-6] 맞추지 못한 식별자를 **조용히 다른 업무로 바꾸지 않는다.**
