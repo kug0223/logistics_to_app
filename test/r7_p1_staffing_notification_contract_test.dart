@@ -119,7 +119,14 @@ void main() {
     test('P1-3-e WorkApplicants도 부족·정원 UNKNOWN·초대를 말한다', () {
       final s = _codeOf(_src(_work));
       expect(s.contains("_buildStatItem(context, '부족'"), true);
-      expect(s.contains('정원 확인 불가'), true);
+      // [R7-P1-2 DEVICE.1E.2A] `정원 확인 불가` 문구는 이 화면의 정원 줄을
+      //   그리는 `CapacitySummaryText` 로 옮겼다 — 렌더를 실행으로 검사하기
+      //   위해서다. 화면이 그것을 쓰는지까지 함께 못 박는다.
+      expect(s.contains('CapacitySummaryText('), true);
+      expect(
+          _codeOf(_src('lib/widgets/admin/capacity_summary_text.dart'))
+              .contains('정원 확인 불가'),
+          true);
       expect(s.contains('_buildStaffingActionRow('), true);
       expect(s.contains('인력 초대 (\$shortage명 부족)'), true);
     });

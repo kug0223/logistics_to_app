@@ -148,18 +148,16 @@ class CapacityLoadState {
     return s['confirmed'];
   }
 
-  /// **표시용** 확정 수 — 출처를 묻지 않는다.
-  ///
-  ///   mutation 직후 관리자가 방금 한 일이 화면에 반영되는 것은 맞다.
-  ///   다만 그 수가 판단의 근거가 되지는 않으므로, 화면은 이 값을
-  ///   `isPending` 과 함께 읽어 **갱신 중**으로 말해야 한다.
-  int? displayConfirmedFor(WorkDetailData? work) {
-    if (work == null) return null;
-    if (_failed) return null;
-    final s = work.lookupByIdentity(_stats);
-    if (s == null) return null;
-    return s['confirmed'];
-  }
+  // [R7-P1-2 DEVICE.1E.2A] `displayConfirmedFor` 를 **제거했다.**
+  //
+  //   출처를 묻지 않고 숫자를 돌려주는 창구를 두었더니, 곧바로 그 값이
+  //   `갱신 중 (충원 15)` 로 화면에 적혔다 — 내가 직접 "wdId 충돌로 나올 수
+  //   있다"고 증명한 그 수다. 판단에서 막고 표시에서 허용하면 같은 거짓이
+  //   조금 부드러운 말투로 남는다.
+  //
+  //   그래서 확정 수를 읽는 창구는 `confirmedFor` 하나이고, 그것은 canonical
+  //   일 때만 답한다. 화면이 "확인 중"을 말하고 싶으면 `isPending` 을 쓴다 —
+  //   숫자 없이.
 
   /// 권한이 사라진 것이 확인됐다 — 읽어 둔 정원을 남기지 않는다.
   void clearOnRevocation() {

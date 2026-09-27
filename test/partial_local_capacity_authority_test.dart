@@ -101,7 +101,10 @@ Surface surfaceOf(CapacityLoadState cap, {bool isClosed = false}) {
   );
   final unknown = capacity == InviteCapacityState.unknown;
   return (
-    displayed: cap.displayConfirmedFor(work), // 표시용
+    // [DEVICE.1E.2A] 화면에 적히는 충원 수는 **canonical 뿐**이다.
+    //   출처를 묻지 않는 표시용 창구는 제거했다 — 그 값이 곧바로
+    //   `갱신 중 (충원 15)` 로 렌더되고 있었다.
+    displayed: cap.confirmedFor(work),
     capacity: capacity,
     shortage: shortage,
     pending: unknown && cap.isPending,
@@ -141,7 +144,9 @@ void main() {
 
       s = surfaceOf(cap);
       expect(cap.isCanonical, isFalse, reason: '출처가 구분된다');
-      expect(s.displayed, 5, reason: '방금 한 처리는 화면에 반영된다');
+      // [DEVICE.1E.2A] 확인되지 않은 수는 **화면에도 적지 않는다.**
+      //   처리가 성공했다는 사실은 `pending` 표현이 대신 말한다.
+      expect(s.displayed, isNull);
       expect(s.capacity, InviteCapacityState.unknown,
           reason: '부분 산술로 현재 total 을 주장하지 않는다');
       expect(s.shortage, isNull, reason: 'false shortage 를 말하지 않는다');
@@ -172,7 +177,8 @@ void main() {
       expect(s.claimsFull, isFalse,
           reason: '이 값으로 모집 완료를 선언하면 초대 경로가 사라진다');
       expect(s.capacity, InviteCapacityState.unknown);
-      expect(s.displayed, 15, reason: '표시는 한다 — 판단만 하지 않는다');
+      expect(s.displayed, isNull,
+          reason: '[DEVICE.1E.2A] `갱신 중` 과 함께라도 15 를 적지 않는다');
 
       await cap.load();
       expect(surfaceOf(cap).capacity, InviteCapacityState.available);
@@ -269,9 +275,10 @@ void main() {
 
       stale.complete(_canonical(10)); // 이전 응답이 먼저 도착
       await f1;
-      expect(surfaceOf(cap).displayed, 11,
-          reason: '성공한 사람 mutation 반영이 되돌려지면 안 된다');
+      // mutation 이전 값(10)이 다시 노출되지 않는다.
+      expect(surfaceOf(cap).displayed, isNull);
       expect(cap.isCanonical, isFalse, reason: '아직 확인 전이다');
+      expect(cap.isPending, isTrue, reason: '성공한 처리는 갱신 중으로 남는다');
 
       fresh.complete(_canonical(11)); // 이후 응답
       await f2;
@@ -314,7 +321,8 @@ void main() {
       final s = surfaceOf(cap);
       expect(s.claimsFull, isFalse);
       expect(s.capacity, InviteCapacityState.unknown);
-      expect(s.displayed, 11);
+      expect(s.displayed, isNull, reason: '취소 직후의 손계산도 적지 않는다');
+      expect(s.pending, isTrue);
     });
   });
 
@@ -373,14 +381,21 @@ void main() {
     test('PLC-W1 판단용과 표시용이 분리돼 있다', () {
       final s = _codeOf(_read('lib/models/ui/capacity_load_state.dart'));
       expect(s, contains('if (!_isCanonical) return null;'));
-      expect(s, contains('int? displayConfirmedFor('));
+      // [DEVICE.1E.2A] 표시용 창구는 제거됐다 — 확정 수는 canonical 뿐이다.
+      expect(s, isNot(contains('int? displayConfirmedFor(')));
       expect(s, contains('_isCanonical = false;'));
     });
 
     test('PLC-W2 화면이 갱신 중과 확인 불가를 구분한다', () {
       final dlg = _codeOf(_read(
           'lib/screens/business_admin/dialogs/work_applicants_dialog.dart'));
-      expect(dlg, contains("_capacity.isPending ? '정원 갱신 중' : '정원 확인 불가'"));
+      // [DEVICE.1E.2A] 정원 문구는 `CapacitySummaryText` 가 그린다 —
+      //   렌더를 실행으로 검사하기 위해서다(`capacity_display_provenance_test`).
+      final line = _codeOf(_read('lib/widgets/admin/capacity_summary_text.dart'));
+      expect(line, contains("isPending ? '갱신 중' : '정원 확인 불가'"));
+      expect(line, contains("'필요 \$requiredCount명'"),
+          reason: '필요 인원은 조회 상태와 무관하게 유효하다 — 감추지 않는다');
+      expect(dlg, contains('CapacitySummaryText('));
       expect(dlg, contains('_buildCapacityPendingNotice(context)'));
       // 갱신 중 안내에는 `다시 시도`가 없다 — 도메인 재실행으로 읽힌다.
       final pending = dlg.substring(

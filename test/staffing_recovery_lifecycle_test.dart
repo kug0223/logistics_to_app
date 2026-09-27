@@ -302,17 +302,18 @@ void main() {
       cap.applyLocal({
         _composite: {'confirmed': 1, 'pending': 0}
       });
-      // [DEVICE.1E.2] 로컬 값은 **표시용**이다 — 판단용 `confirmedFor` 는
-      //   출처가 canonical 일 때만 답한다.
-      expect(cap.displayConfirmedFor(_work()), 1);
+      // [DEVICE.1E.2A] 로컬 값은 판단에도 표시에도 쓰지 않는다.
+      //   확인 전이라는 사실(`isPending`)만 남고, 수치는 canonical 뒤에 온다.
       expect(cap.confirmedFor(_work()), isNull);
       expect(cap.isCanonical, isFalse);
+      expect(cap.isPending, isTrue);
 
       stale.complete(_ok(0)); // 확정 전 상태가 뒤늦게 도착
       await inFlight;
 
-      expect(cap.displayConfirmedFor(_work()), 1,
-          reason: '방금 확정한 사람이 사라지면 안 된다');
+      expect(cap.confirmedFor(_work()), isNull,
+          reason: '늦게 온 mutation 이전 값이 canonical 로 승격되지 않는다');
+      expect(cap.isPending, isTrue);
     });
 
     test('REC-E2 그 다음 canonical 조회가 최종 권위다', () async {
@@ -320,7 +321,6 @@ void main() {
       cap.applyLocal({
         _composite: {'confirmed': 2, 'pending': 0}
       });
-      expect(cap.displayConfirmedFor(_work()), 2);
       expect(cap.confirmedFor(_work()), isNull,
           reason: '[DEVICE.1E.2] 확인 전 값으로 판단하지 않는다');
       await cap.load();

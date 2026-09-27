@@ -52,6 +52,7 @@ import '../../../models/core/business_member_model.dart';
 import '../../../models/ui/capacity_load_state.dart';
 import '../../../utils/applicant_load_outcome.dart';
 import '../../../utils/staffing_relation.dart';
+import '../../../widgets/admin/capacity_summary_text.dart';
 
 /// 다이얼로그 결과
 class WorkApplicantsDialogResult {
@@ -988,21 +989,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           if (work != null && shortage != null)
             _buildStatItem(context, '부족', shortage,
                 shortage > 0 ? AppColors.warningDark : AppColors.grey500),
+          // [R7-P1-2 DEVICE.1E.2A] 정원 문구는 전용 component 가 그린다.
+          //
+          //   필요 인원은 공고가 정한 값이라 조회 상태와 무관하게 유효하다 —
+          //   `정원 확인 불가`로 통째로 대체하면 알 수 있는 것까지 잃는다.
+          //   충원 수는 canonical 일 때만 적는다(그 규칙은 위젯이 갖는다).
           if (work != null)
-            Text(
-              // capacity를 못 읽었으면 `필요 N명`이라고 단정하지 않는다.
-              capacity == InviteCapacityState.unknown
-                  // [R7-P1-2 DEVICE.1E.2] **모르는 것**과 **아직 확인 중인
-                  //   것**을 같은 말로 하지 않는다. 방금 확정을 누른 관리자에게
-                  //   `확인 불가`는 실패처럼 읽힌다 — 그 처리는 성공했다.
-                  ? (_capacity.isPending ? '정원 갱신 중' : '정원 확인 불가')
-                  : '필요 ${work.requiredCount}명',
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: capacity == InviteCapacityState.unknown
-                    ? AppColors.grey500
-                    : AppColors.grey600,
-              ),
+            CapacitySummaryText(
+              requiredCount: work.requiredCount,
+              capacity: capacity,
+              isPending: _capacity.isPending,
             ),
         ],
       ),
@@ -1131,7 +1127,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   ///   표시용 수치는 있으나 `FULL`·`부족`을 확정하지 않는다(출처가 canonical
   ///   이 아니다).
   Widget _buildCapacityPendingNotice(BuildContext context) {
-    final shown = _capacity.displayConfirmedFor(widget.work);
     return Container(
       margin: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 12),
@@ -1156,9 +1151,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
             child: Text(
-              shown != null
-                  ? '처리를 반영했어요. 인력 현황을 다시 확인하는 중이에요. (충원 $shown)'
-                  : '인력 현황을 다시 확인하는 중이에요.',
+              // [R7-P1-2 DEVICE.1E.2A] 여기에 `(충원 N)` 을 적고 있었다.
+              //
+              //   그 N 은 mutation 직후 화면이 손으로 다시 센 값이고,
+              //   canonical 과 identity 규칙이 다르다 — wdId 충돌로 필요 12 에
+              //   15 가 나올 수 있다고 직접 증명한 값이다. `갱신 중` 이라는
+              //   말과 함께라도 현재 충원처럼 보여 줄 수 없다.
+              //
+              //   처리가 성공했다는 사실만 말한다. 숫자는 canonical 이
+              //   도착한 뒤에 나온다.
+              '처리를 반영했어요. 인력 현황을 다시 확인하는 중이에요.',
               style:
                   ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
             ),
