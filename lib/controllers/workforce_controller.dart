@@ -890,6 +890,28 @@ class WorkforceController extends ChangeNotifier {
   }
 
   /// 슬롯의 업무 상세를 lazy load
+  /// [R7-7] 단건/장기 공고의 업무 통계 — 통계가 [TOGroupItem] 에 저장되는 경우.
+  ///
+  ///   카드가 같은 로딩을 자기 안에 갖고 있었다. 슬롯 단위와 **같은 의미의
+  ///   로딩**이므로 owner 를 하나로 모은다. 읽는 함수도 같은 것을 쓴다.
+  Future<void> loadGroupWorkDetailStats(TOGroupItem group) async {
+    group.resetWorkDetailStats();
+    if (!_disposed) notifyListeners();
+    try {
+      final result = await (_loadWorkDetailStatsOverride?.call(group.masterTO) ??
+          _service.loadTOWorkDetails(group.masterTO));
+      group.setWorkDetailStats(
+        result['workStats'] as Map<String, Map<String, int>>,
+        statsFailed: result['statsFailed'] == true,
+      );
+    } catch (e) {
+      debugPrint('❌ WorkforceController.loadGroupWorkDetailStats 실패: $e');
+      // [POSTING-V2-01B] 실패를 '확정 0 / 대기 0'으로 커밋하지 않는다
+      group.markWorkDetailStatsFailed();
+    }
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> loadWorkDetails(TOItem slot) async {
     // [R7-6 §5] 실패한 로드는 다시 읽을 수 있어야 한다.
     //

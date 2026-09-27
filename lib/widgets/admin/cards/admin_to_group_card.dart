@@ -88,6 +88,14 @@ class TOGroupCard extends StatefulWidget {
   /// 제공되지 않으면 [onChanged]로 떨어진다 — 기존 호출부는 그대로 동작한다.
   final void Function(String toId)? onTOChanged;
 
+  /// [R7-7] 슬롯 업무 통계 재조회 — **loader owner 는 controller 다.**
+  ///   카드가 같은 로딩을 따로 구현하지 않는다. 부모가
+  ///   `WorkforceController.loadWorkDetails` 로 연결한다.
+  final Future<void> Function(TOItem item) onRetryWorkDetailStats;
+
+  /// [R7-7] 단건/장기 공고의 업무 통계 재조회 — 같은 owner(controller).
+  final Future<void> Function(TOGroupItem group) onRetryGroupWorkDetailStats;
+
   final bool isExpanded;
   final Set<String> expandedTOs;
   final VoidCallback onToggleExpand;
@@ -121,6 +129,8 @@ class TOGroupCard extends StatefulWidget {
     super.key,
     required this.groupItem,
     required this.firestoreService,
+    required this.onRetryWorkDetailStats,
+    required this.onRetryGroupWorkDetailStats,
     required this.dialogs,
     required this.onChanged,
     this.onTOChanged,
@@ -781,41 +791,26 @@ class _TOGroupCardState extends State<TOGroupCard> {
       await _retryWorkDetailStats(target);
       return;
     }
-    // groupTOs가 없는 단건/장기 TO — 통계는 TOGroupItem에 저장된다
-    final group = widget.groupItem;
-    setState(() => group.resetWorkDetailStats());
-    try {
-      final result =
-          await widget.firestoreService.loadTOWorkDetails(group.masterTO);
-      group.setWorkDetailStats(
-        result['workStats'] as Map<String, Map<String, int>>,
-        statsFailed: result['statsFailed'] == true,
-      );
-    } catch (e) {
-      debugPrint('❌ 업무 통계 재조회 실패: $e');
-      group.markWorkDetailStatsFailed();
-    }
+    // groupTOs가 없는 단건/장기 TO — 통계는 TOGroupItem에 저장된다.
+    // [R7-7] 이것도 controller 가 읽는다. 카드는 부르고 다시 그릴 뿐이다.
+    await widget.onRetryGroupWorkDetailStats(widget.groupItem);
     if (mounted) setState(() {});
   }
 
   /// [POSTING-V2-01B] 슬롯 단위 통계 재조회.
+  ///
+  /// [R7-7] 로딩 자체는 이 카드가 하지 않는다.
+  ///
+  ///   여기에는 `WorkforceController.loadWorkDetails` 와 **같은 본문**이
+  ///   복사되어 있었다 — 같은 서비스 호출, 같은 `setWorkDetails`, 같은
+  ///   실패 표시. 두 벌이라서 한쪽만 고쳐졌다: controller 쪽은 실패 뒤
+  ///   재시도가 막혀 있었고(7차에 고침) 이쪽은 `resetWorkDetailLoad()` 를
+  ///   먼저 불러 피하고 있었다.
+  ///
+  ///   이제 loader 는 controller 하나이고, 카드는 그것을 부르고 다시 그린다.
+  ///   이 위젯에는 새 도메인 계산도 retry 정책도 두지 않는다.
   Future<void> _retryWorkDetailStats(TOItem item) async {
-    setState(() => item.resetWorkDetailLoad());
-    try {
-      final result = await widget.firestoreService.loadTOWorkDetails(
-        item.to,
-        slotId: item.slot?.id,
-        slotWorkDetails: item.slot?.workDetails,
-      );
-      item.setWorkDetails(
-        result['workDetails'] as List<WorkDetailData>,
-        result['workStats'] as Map<String, Map<String, int>>,
-        statsFailed: result['statsFailed'] == true,
-      );
-    } catch (e) {
-      debugPrint('❌ 업무 통계 재조회 실패: $e');
-      item.markWorkDetailStatsFailed();
-    }
+    await widget.onRetryWorkDetailStats(item);
     if (mounted) setState(() {});
   }
 

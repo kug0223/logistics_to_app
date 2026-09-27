@@ -734,6 +734,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               child: TOGroupCard(
                 groupItem: groupItem,
                 firestoreService: _firestoreService,
+                // [R7-7] 업무 통계 로딩 owner 는 controller 하나다.
+                //   카드가 같은 로딩을 따로 갖고 있었고, 그래서 재시도 정책이
+                //   두 곳에 생겼다(한쪽은 막혀 있었다). 여기로 연결한다.
+                onRetryWorkDetailStats: controller.loadWorkDetails,
+                onRetryGroupWorkDetailStats: controller.loadGroupWorkDetailStats,
                 dialogs: _dialogs,
                 onChanged: _reload,
                 onTOChanged: _refreshEditedTO,
