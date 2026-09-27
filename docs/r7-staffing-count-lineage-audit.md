@@ -783,3 +783,263 @@ PASS 로 읽지 않게 가드를 넣고 **보류**로 남겼다. pool 진입 조
 - **OPEN.** 남은 것: 날짜 선택 실제 렌더(§27), C7 pool 폴백(§28),
   raw 카운터 소비자 48/56/16 개별 판정, 초대/자동취소/trigger replay 전이,
   `onBusinessDeleted` 별건, 기존 데이터 backfill 필요성 판단.
+
+---
+
+# 6차 — 실패 구간·주기 간 요청·경합, 그리고 후보 목록의 날짜 (2026-09-27)
+
+## 31. SHA (§0)
+
+BASE `5b358d2`. branch `main`. tracked 변경 없음(이전 phase 의 user-owned untracked 8개만).
+
+| SHA | 구분 | 내용 |
+|---|---|---|
+| `ed6dfd5` | CODE + TEST | F1/F2 — 트리거가 업무 단위 카운터까지 재계산, 주기 precondition, 공유 helper 2개, durability 하네스 |
+| `f89cc0b` | CODE + TEST | 후보 목록 KST 하루 경계, unresolvable workDetailId 거부, controller 읽기 seam·재시도, 날짜 타일 파이프라인 테스트 |
+| `4e08e26` | TEST | 초대 전이 하네스, C7 하네스, 하네스 cleanup 순서·타임아웃 |
+
+## 32. F1 — 원장은 성공했고 command 는 오지 않았다
+
+### 32-1. transaction 경계 (제출)
+
+```
+[경계 1] 클라이언트 Firestore transaction
+           applications.status = CANCELED     (rules 허용: 본인 PENDING→CANCELED)
+[경계 밖]  ── 여기서 프로세스가 죽으면 아래는 실행되지 않는다 ──
+[경계 2] callableIncrementSlotPending(delta:-1)  (CF 내부 transaction)
+           to.totalPending / slot.pendingCount / slot.workDetailCounts[wdId].pendingCount
+```
+
+두 동작은 **별개**다. 5차의 "실패해도 재시도하면 복구된다"는 **메모리 안의 재시도**였고,
+호출자가 죽으면 아무도 재시도하지 않는다. 트리거는 상위 두 카운터만 되돌리므로
+그 사실로 업무 단위 복구를 주장할 수 없다.
+
+### 32-2. 선택한 설계와 대안
+
+| 안 | 판정 | 근거 |
+|---|---|---|
+| **기존 authoritative sync 책임 완성** (`syncTOStats` 가 `workDetailCounts` 도 재계산) | **선택** | 원장 변경 자체가 트리거를 깨운다 → **호출자가 죽어도** 복구된다. writer 34개 전부를 덮는다. 새 command·필드·모델 없음. 확정 지원서는 이미 문서로 읽고 있어 `wdId` 그룹핑에 추가 읽기가 거의 없다(슬롯 대기만 `.count()` → 문서). |
+| 취소를 CF 로 이전(원장+집계 원자적) | 미채택 | 새 callable + rules 전환 + 구버전 클라이언트 잔존 처리. 위 안이 같은 문제를 더 적은 변경으로 덮는다. |
+| 스케줄 재처리 | 미채택 | 지연이 크고, 트리거가 이미 같은 이벤트에 붙어 있다. |
+
+**새 helper 로 집계 책임을 늘리지 않았다.** 대신 `callableRecalculateTOStats` 안에만
+있던 두 조각을 공유 함수로 꺼냈다 — `srvResolveAppWdId`(identity 4단계 + fail-closed),
+`srvBuildWdCountsUpdate`(쓰기 모양). 트리거와 재집계가 같은 것을 쓴다.
+
+### 32-3. 덤으로 찾은 것 — 절대 재계산이 절대가 아니었다
+
+`callableRecalculateTOStats` 는 **집계에 나타난 wdId 만** dot-update 했다.
+취소로 인원이 0 이 된 업무는 집계에서 사라지므로 **옛 값이 그대로 남았다**.
+이제 슬롯이 가진 모든 wdId 를 0 으로 깔고 시작한다 —
+`getWorkDetailCount` 가 항목 없음을 fail-closed 로 막는 계약과도 맞다.
+
+## 33. F2 — 같은 문서의 다음 주기와 지난 주기의 요청
+
+플래그 reset 만으로는 부족했다. 재지원이 같은 문서를 되살리며 플래그를 지우니,
+**지난 주기의 감소 요청이 늦게 도착하면 막을 것이 없다.**
+
+실측(수정 전): 원장은 `PENDING 1` 인데 `slot.pendingCount` 와 `to.totalPending` 이 0.
+
+해법은 **상태 전이 precondition** 이다 — 새 필드도 저장 모델도 만들지 않고 이미 있는
+`status` 로 본다. 감소는 대기 좌석이 사라졌을 때만, 증가는 대기 중일 때만 옳다.
+
+| 경우 | 막는 것 |
+|---|---|
+| 같은 주기 replay | 멱등 플래그 |
+| 주기 간(B 활성) | **status precondition** — B 가 대기 중이므로 A 의 감소를 무시 |
+| B 도 취소된 뒤 A 도착 | B 의 취소가 남긴 멱등 플래그 |
+| 순서 역전(A 먼저 적용) | A 가 플래그를 세워 B 가 막힌다 — 어느 쪽이든 감소는 한 번 |
+
+## 34. F3 — 절대 재계산과 증감의 경합
+
+| 주체 | 읽기 | 쓰기 | 경계 |
+|---|---|---|---|
+| `syncTOStats`/`_syncTOCounters` | 원장(공고 전체 + 슬롯), 슬롯 문서 | TO 합계, 슬롯 합계, `workDetailCounts` **절대값**, slot status | `batch` (+ status 교정만 transaction) |
+| `callableRecalculateTOStats` | 원장 전량, 슬롯 전량 | 같은 필드들 **절대값** | `batch` |
+| `callableIncrementSlotPending` | 지원서, 슬롯, TO | 같은 필드들 **delta ±1** | `transaction` |
+
+**반례를 찾지 못했다.** 재집계가 원장을 읽은 뒤 커밋을 끼워 넣고, 증감과 트리거를
+겹치고, 마지막 한 자리를 동시에 확정하고, 재집계를 반복해도 최종값이 원장과 맞았다.
+**수정 전에도 통과했으므로 내가 고친 것이 아니다** — 원래 그랬다고 적는다.
+
+근거: delta 쪽이 `transaction` 이라 슬롯 문서에 쓰는 절대 재계산과 겹치면 재시도되고,
+재시도 후 자기 값을 다시 읽어 가드가 다시 판단한다. 절대 쪽은 마지막 이벤트의
+재계산이 이기고, 모든 원장 변경이 트리거를 깨우므로 마지막 재계산이 최종 원장을 읽는다.
+
+> 남은 이론적 창: **마지막** 트리거 실행이 stale snapshot 을 읽고, 그 뒤 아무 이벤트도
+> 없으면 어긋난 채 남는다. 이번 실행으로는 재현하지 못했고 **반증하지도 못했다**.
+> 이 창은 상위 두 카운터에도 이미 있던 것이고, 이번에 새로 만든 것은 아니다.
+
+## 35. 실행 증거 (before/after)
+
+| 하네스 | 수정 후 | 수정 없이 |
+|---|---|---|
+| `r7-emu-durability.js` (F1·F2·F3) | **29/29** | **8건 실패** — command 없이 복구 불가, 롤백 후 확정 카운터 잔존, 주기 간 stale 감소가 상위 카운터를 0 으로 |
+| `r7-emu-matrix3.js` (5차 25건) | 25/25 | (5차 기록: 9건 실패) |
+| `r7-emu-invitations.js` | **19/19** | — |
+| `r7-emu-c7-fallback.js` | **16/16** | 아래 §36 |
+| `r7-emu-compat.js` | **12/12** | — |
+| Dart 스위트 | 신규 실패 **0** (기존 63건 유지) | — |
+
+## 36. §4 — 초대·겹침·C7
+
+### 36-1. 초대 전이 (ACTIVE 전이, 실행)
+
+발송 → **관리자 취소** → 재초대 → **거절** → 다른 근로자 **수락**(대기→좌석) →
+**겹침 자동취소** → 재집계 반복 → 만료. 매 단계 원장 기대값과 업무·슬롯·공고 집계 대조.
+
+겹침 자동취소는 **두 공고 모두** 확인했다 — 확정된 쪽과 `AUTO_CANCELED` 된 쪽이 각각 일치.
+
+> 순서 주의: 거절을 먼저 하면 재초대가 `409`(이미 초대됨)로 막혀 **관리자 취소 경로에
+> 닿지 못한다**. 그래서 취소를 먼저 본다.
+>
+> 전제를 우회하지 않았다. 초대는 `worker_availability` 의
+> `inviteEnabled` · `inviteRegionKeys` · `dates` 가 필요하고, 후보 조회는 같은 문서의
+> `inviteKeys`(= `지역키#날짜`) 배열을 본다 — **서로 다른 인덱스**다.
+> 실제 앱은 `callableSyncInviteKeys` 가 둘을 맞춘다.
+
+### 36-2. C7 — 두 가지가 나왔다
+
+후보 pool 을 실제로 채우자 **먼저 다른 것이 보였다.**
+
+**(A) 후보 목록의 시간 충돌 배제가 하루 어긋난 창을 보고 있었다.**
+
+`new Date(연, 월, 일)` 은 **런타임 TZ** 로 해석된다. Cloud Functions 는 UTC 로 돈다.
+KST 성분으로 그 생성자를 부르면 창이 +9h 밀리고, `workDate` 가 항상 KST 자정
+instant 인 이 프로젝트에서는 **다음 날** 확정을 보게 된다.
+
+| 관측 | 수정 전 | 수정 후 |
+|---|---|---|
+| 같은 날 09:00–12:00 확정자를 09:00–12:00 업무 후보에서 | **포함**(틀림) | 제외 |
+| **하루 뒤** 확정자를 오늘 후보에서 | **제외**(틀림) | 포함 |
+| 업무 1개 슬롯에서도 | 포함(틀림) | 제외 |
+| 같은 충돌로 초대 시도 | `400 동일 시간대에 이미 확정된 일정` | 동일 |
+
+즉 증상은 **"목록이 과하게 포함되고, 누르면 거절당한다"** 였다. 데이터 무결성 문제는
+아니지만 관리자가 못 뽑을 사람을 보고 판단하게 된다. `srvKstDayStartMs` 를 공유로
+올려 TZ 에 기대지 않고 창을 만든다(`callableApplyToTO` 안에만 있던 계산이다).
+
+**(B) 그 수정으로 업무별 후보가 갈라지자 C7 원래 질문이 결정됐다.**
+
+없는 `workDetailId` 를 넘기면 응답이 **첫 번째 업무의 후보 목록과 같았다**
+(물어본 업무와는 달랐다). 관리자가 09:00 근무 후보를 18:00 근무 후보로 읽는다.
+지원 경로는 이미 *"composite exact match 필수 — 실패 시 REJECT, silent fallback 금지"*
+라고 정해 두었다. 읽기 경로만 예외를 둘 이유가 없어 같은 규칙으로 맞췄다
+(업무 정의가 하나뿐이면 가리킬 곳이 하나라 폴백 유지).
+
+| 입력 | 결과 |
+|---|---|
+| 정상 composite(wd1 / wd2) | 각 업무의 후보 (서로 다르다) |
+| legacy workType 단독(`주방`) | 그 업무로 맞는다 |
+| **없는 식별자** | `400` — 조용히 바꾸지 않는다 |
+| 미전달 + 업무 2개 | 시간 충돌 검사 불가 경로(기존 동작 유지) |
+| 다른 사업장 공고로 조회 | 거부 — business isolation 유지 |
+
+> **남은 예외:** 같은 `workType` 정의가 둘인 슬롯에 **workType 단독**을 넘기면
+> 여전히 **첫 매치**로 간다(실측: wd1 의 후보가 나왔다). legacy 입력 경로의
+> 기존 동작이라 이번에 바꾸지 않았다 — 별건으로 남긴다.
+
+### 36-3. writer 34 분류
+
+| 분류 | 수 | 근거 |
+|---|---|---|
+| 실행 검증 | 9 | `callableApplyToTO` · `callableConfirmApplication` · `callableCancelConfirmedApplication` · `callableIncrementSlotPending` · `callableRecalculateTOStats` · `callableInviteWorker` · `callableAcceptTOInvitation` · `callableDeclineTOInvitation` · `callableCancelTOInvitation` (+ `syncTOStats` 트리거는 모든 단계에서 함께 돌았다) |
+| 실행되었으나 대상 0건 | 1 | `callableExpireApplications` (`expired: 0`) |
+| 정적 확인 | 2 | `callableCloseSlots`(업무 단위 감소 anchor 있음) · `callableRecalcToTotalRequired`(single-write, totalRequired 전용) |
+| **동등 경로로 묶음** | 12 | 좌석 증감 계열(`callableApproveApplicationForReview` · `callableReleaseNoshowSeat` · `callableBatchCancelNoShow` · `callableRespondToReconfirm` · `callableDecrementSlotConfirmed` · `callableRejectApplication` · `callableAcceptInvitation` · `callableOfferAlternativeWork` · `callableDeclineTOInvitation`(중복) · `callableAcceptConfirmedReassignment` · `callableCancelTOInvitation`(중복) · `onNotificationCreated`) — **모두 원장 status 를 바꾸므로 `syncTOStats` 가 같은 절대 재계산으로 덮는다.** 그 성질은 F1 에서 실행으로 확인했다(원장만 바꿔도 복구) |
+| 미검증 | 10 | 삭제·정리 계열(`callableDeleteSlots` · `callableDeleteTO` · `callableDeleteAccountApplications` · `callableCleanupApplicationData` · `backfillReviewRequests` · `migrateAddressFields` 등)과 `callableUpdateSlotWorkDetails` · `callableCreateFlexSlots` · `onAttendanceWageStatusChanged` · `callableApplyNoShowPenalty` |
+| 클라이언트 직접 counter writer | **0** | 5차에 helper 3개 삭제 — 이제 파생 집계를 쓰는 곳은 서버뿐이다 |
+
+### 36-4. consumer 분류 정리 (5차의 grep 수치 정돈)
+
+5차에 적은 48/56/16/12 는 **검색 건수**였다. 이번에 성격별로 나눴다.
+
+| 분류 | 처리 |
+|---|---|
+| 판정·표시에 쓰는 소비자 | `WorkCapacityReading`(5) · `capacityBlockReason`(4) · `confirmedFor`(2) · `resolveStats`(10) · `projectGroupHeaderTotals`(1) — **전환 완료** |
+| `lookupByIdentity` 13 | 4차에 전수 판정(정상 6 / 수정 7) |
+| raw 카운터 grep 48·56·16 | 대부분 **모델 정의·주석·CF 문자열**이다. 화면 수치 소비는 위 항목으로 수렴했고, 남은 것은 **N/A**(정의/직렬화) 또는 미판정으로 남긴다 — 개별 판정은 **미완료** |
+| 리스트 `.length` 12 | 부분집합 위험 표면. 이번에 판정하지 않았다 — **미완료** |
+
+## 37. §5 — 날짜 선택 실제 경로
+
+`TOGroupCard` 를 pump 할 수 없다는 말을 반복하지 않고, **실제 owner** 를 돌렸다.
+타일을 고르면 `WorkforceController.loadWorkDetails(slot)` 가 집계를 읽어 **그 TOItem
+인스턴스 안에** 채운다(제자리 수정). 읽기 하나만 주입 가능하게 했다.
+
+원래 fixture 순서를 그대로 실행했다(11 + 5건):
+`9/29 = 1/1` → 선택 → 상세 `1/1` → `9/30 = 0/1` → `9/29` 복귀 `1/1` →
+재진입(이미 읽은 것을 다시 읽지 않음) → 요약이 날짜별 합과 일치.
+빠른 전환에서 **응답 역전** 시 날짜별 값이 섞이지 않고, 실패는 0 이 아니라 카운터로
+떨어지며, dispose 뒤에는 알리지 않는다.
+
+**그 과정에서 실패 재시도가 막혀 있는 것을 찾았다.** `markWorkDetailStatsFailed()` 가
+`isWorkDetailLoaded = true` 로 만드는데 `loadWorkDetails` 는 그것만 보고 돌아간다 —
+화면은 `확인 필요` 를 보여 주면서 다시 읽지는 않는다. 카드의 자체 재시도 경로는
+`resetWorkDetailLoad()` 를 먼저 불러 피하고 있었다.
+
+> **남은 중복:** 같은 데이터를 읽는 **로더가 두 벌**이다 —
+> `WorkforceController.loadWorkDetails` 와 카드의 `_retryWorkDetailStats`
+> (후자는 `firestoreService` 를 직접 부른다). 이번에는 controller 쪽 구멍만 막았다.
+> 카드가 controller 를 들고 있지 않아 통합은 별건이다.
+>
+> **미검증:** 위젯 렌더 자체(`TOGroupCard` — Provider·`FirestoreService`→Firebase),
+> Day `_cachedGroups` 왕복(`day_applicants_dialog` private State + Firebase 직결).
+> 이 두 항목은 여전히 **OPEN** 이다.
+
+## 38. §6 — DEV 배포 준비 (실행하지 않았다)
+
+### 38-1. 호환 조합 — 가능한 칸은 Emulator 로 돌렸다
+
+클라이언트 세대는 **write set 으로** 재현했다(`scripts/r7-emu-compat.js`).
+
+| 조합 | 결과 | 근거 |
+|---|---|---|
+| old client × old CF | 기준선(현행) | 5차에 기록한 drift 가 그대로 |
+| **old client × new CF** | **일치 12/12** | 구버전이 상위 두 카운터를 직접 내려도, 트리거가 업무 단위를 원장에서 다시 센다. **이중 차감 없음**(구버전은 command 를 부르지 않는다) |
+| **new client × old CF** | **실패 8건, 이중 차감·음수 없음** | `functions/src` stash 후 durability 하네스. 신버전은 상위 카운터를 미리 내리지 않으므로 구 CF 의 zero-guard 에 걸리지 않고 세 값을 내린다. 다만 주기 반복에서 옛 결함이 돌아온다 |
+| **new client × new CF** | **일치 12/12** | — |
+
+### 38-2. 배포 순서와 되돌림
+
+- **CF 먼저, 클라이언트 나중.** `old client × new CF` 가 **더 좋아진다**(구버전 사용자도 복구된다).
+- 한쪽만 되돌려도 안전하다: CF 만 되돌리면 `new client × old CF`(허용 가능),
+  클라이언트만 되돌리면 `old client × new CF`(양호).
+- **사용자에게 보이는 동작 변경 1건:** `callableGetAvailableWorkers` 가 맞출 수 없는
+  `workDetailId` 에 `400` 을 준다. 구버전 클라이언트는 이 오류를 특별히 다루지 않아
+  일반 실패 문구가 뜬다. 조용히 **다른 업무의 후보**를 보여 주던 것보다 낫지만,
+  배포 노트에 적어야 한다.
+
+### 38-3. 배포 대상·관측·중단
+
+| 항목 | 내용 |
+|---|---|
+| CF | `callableIncrementSlotPending` · `callableApplyToTO` · `callableRecalculateTOStats` · `callableGetAvailableWorkers` · **trigger** `syncTOStats` |
+| Rules | **변경 없음.** pending ±1 허용 축소는 **하지 않는다** — 구버전 클라이언트가 그 경로를 아직 쓴다. 서버 배포 승인과 묶지 않는다 |
+| smoke | 지원 → 취소 → 재지원 1주기에서 원장·`slot.pendingCount`·`totalPending`·`workDetailCounts` 4값 일치 / 후보 목록에서 같은 시간 확정자 제외 / 없는 workDetailId → 400 |
+| 관측 | `syncTOStats` 실행시간·오류율, `[syncTOStats] … fail-closed` 경고 건수, `stale decrement 무시` 경고 건수, `callableGetAvailableWorkers` 400 비율 |
+| 중단·rollback | 트리거 오류율 상승 또는 fail-closed 경고 급증 시 CF만 revert. 클라이언트는 그대로 둬도 안전(위 표) |
+
+### 38-4. 기존 데이터 — READ 대조 계획까지만
+
+이번에 실DEV 를 **읽지도 쓰지도 않았다.** 계획만 남긴다.
+
+1. 대조 대상: `tos/{toId}/slots/{slotId}.workDetailCounts` vs 그 슬롯의 원장 집계.
+2. 산출: 기준시점(UTC), 대상 공고·슬롯 수, wdId 별 mismatch(부호·크기), 영향 표면
+   (그 값을 읽는 화면이 있는지 — 현재 `pendingCount` 소비자는 없고 `confirmedFor`/
+   `isWorkDetailFull` 는 `confirmedCount` 를 본다).
+3. 수정 수단: `callableRecalculateTOStats`(멱등, 원장 기준, identity 불확실 슬롯은
+   fail-closed). **dry-run 이 없으므로** 먼저 READ 대조로 예상 변화량을 산출한다.
+4. 재실행성: 같은 command 를 여러 번 돌려도 같은 결과(§F3-e 로 확인).
+5. **발견 0건이어도 신규 write-path 안전성으로 확대 해석하지 않는다.**
+
+## 39. 6차 상태
+
+- CODE: CF 5곳(트리거 포함), 클라이언트 1곳(controller), 공유 helper 3개 추가, 중복 구현 1개 제거.
+- EMULATOR: durability 29 · matrix3 25 · invitations 19 · c7 16 · compat 12 = **101건**.
+- DEV READ: **없음**. DEVICE: **없음**. DEPLOYED: **없음**.
+- **OPEN.** 남은 것: 위젯 렌더(§37), Day `_cachedGroups` 왕복(§37), 로더 두 벌 통합(§37),
+  ambiguous workType 후보 선택(§36-2), raw 카운터/`.length` 개별 판정(§36-4),
+  writer 미검증 10(§36-3), F3 의 마지막-트리거-stale 창(§34), 기존 데이터 대조(§38-4),
+  `onBusinessDeleted` 별건(5차 §29).
+- "신규 전이 저장 불변식 전체 복구" 라고 말하지 않는다 — 위 목록이 남아 있다.
