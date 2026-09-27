@@ -22,6 +22,7 @@ import '../../../screens/common/settings_screen.dart';
 import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
 import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
+import 'day_applicants_reads.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/id_card_helper.dart';
 // trust_score_helper: 신뢰도 점수 시스템 제거 (5A.2A)
@@ -216,12 +217,17 @@ class DayApplicantsDialog extends StatefulWidget {
   /// 특정 공고로 필터링 (TOGroupCard 명단 보기에서 사용). null이면 전체 표시.
   final String? filterToId;
 
+  /// [R8 O03] 읽기 경계. 주지 않으면 실제 서비스로 간다.
+  ///   화면의 계산(그룹 구성·머리말·scope label)은 그대로 이 위젯이 한다.
+  final DayApplicantsReads? reads;
+
   const DayApplicantsDialog({
     super.key,
     required this.date,
     required this.businessIds,
     required this.businesses,
     this.filterToId,
+    this.reads,
   });
 
   @override
@@ -230,7 +236,8 @@ class DayApplicantsDialog extends StatefulWidget {
 
 class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   final FirestoreService _svc = FirestoreService();
-  final ContractService _contractSvc = ContractService();
+  late final DayApplicantsReads _reads =
+      widget.reads ?? DayApplicantsReads.of(_svc);
 
   bool _isLoading = true;
   bool _isProcessing = false;
@@ -390,14 +397,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final phase1 = await Future.wait([
         // [R7-P1-2.2] 대기 지원자는 **검토 대상**이다 — 서버가 canManageTo 를
         //   보도록 purpose 를 넘긴다. 이 화면의 확정·거절 CTA 가 쓰는 권한과 같다.
-        _svc.getPendingApplicationsByDateAndBusiness(
+        _reads.pendingApplications(
             date: widget.date,
             businessId: bizId,
             purpose: FirestoreService.purposeApplicantReview),
         // 확정 근무자 명단은 purpose 를 넘기지 않는다. Home·근무 운영 화면이
         //   같은 reader 를 쓰고, 그쪽은 canManageWorkers 로 보는 것이 정상이다.
         //   여기서 canManageTo 를 요구하면 그 화면들이 함께 깨진다.
-        _svc.getConfirmedWorkersByDateAndBusinessOrThrow(
+        _reads.confirmedWorkers(
             date: widget.date, businessId: bizId),
       ]);
       var pending = phase1[0] as List<ApplicationModel>;
@@ -409,7 +416,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       List<DayStaffingRow>? staffingRows;
       try {
         final (dayStart, _) = FormatHelper.kstDayRange(widget.date);
-        staffingRows = await _svc.getDayStaffingDetail(
+        staffingRows = await _reads.dayStaffing(
           businessId: bizId,
           dayStartMs: dayStart.millisecondsSinceEpoch,
         );
@@ -434,7 +441,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final canSeeInvites = _canForSelectedBiz((p) => p.canManageTo);
       if (canSeeInvites) {
       try {
-        invitations = await _svc.getDayInvitationsByDateAndBusiness(
+        invitations = await _reads.dayInvitations(
             date: widget.date, businessId: bizId);
         if (widget.filterToId != null) {
           invitations =
@@ -486,20 +493,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         //   그 결과로 만든 배지가 근무 전 확정자에게 없는 업무를 만들었다.
 
         final hasWorkedFuture = confirmedUserIds.isNotEmpty
-            ? _svc.loadHasWorkedMap(businessId: bizId, date: widget.date)
+            ? _reads.hasWorkedMap(businessId: bizId, date: widget.date)
             : Future.value(<String, bool>{});
 
         // [R5.1] NO_SHOW applicationId 집합 선제 시작 (Phase 2와 병렬)
-        final noShowFuture = _svc.getNoShowApplicationIdsByDate(
+        final noShowFuture = _reads.noShowApplicationIds(
           businessId: bizId, date: widget.date);
 
         // Phase 2: Phase 3 futures가 이미 실행 중인 상태에서 병렬로 처리됨
         Map<String, int> workDetailCapacityMap = {};
         final results = await Future.wait([
           // [PII-DOC-R0.1 / INV-1] 날짜별 지원자·확정자 목록 — 계좌 불필요.
-          _svc.getUsersBatch(allUids, businessId: bizId,
+          _reads.usersBatch(allUids, businessId: bizId,
               purpose: FirestoreService.purposeWorkerDirectory),
-          _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
+          _reads.contractStatusBatch(allAppIds, businessId: bizId),
           _loadWeeklyCount(bizId),
           _loadWorkDetailCapacities(allApps),
           // [4J.0C] 대기 중 TO 모델 선제 로드 — canApprovePending UI gate용
@@ -591,7 +598,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //
       //   세는 것도 문서 수가 아니라 **근무한 날** 수다 — 같은 사람의 9/20
       //   에 출근 문서가 4건 있었다.
-      final result = await _svc.getWeeklyAttendanceByBusiness(
+      final result = await _reads.weeklyAttendance(
         businessId: bizId,
         weekStart: WeekHelper.weekStart(widget.date),
         weekEnd: WeekHelper.weekEnd(widget.date),
@@ -632,7 +639,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       // 장기TO 폴백: TO 문서의 workDetails에서 개별 requiredCount
       final toIds = allApps.where((a) => a.toId != null).map((a) => a.toId!).toSet().toList();
       if (toIds.isEmpty) return {};
-      final tos = await Future.wait(toIds.map((id) => _svc.getTO(id)));
+      final tos = await Future.wait(toIds.map((id) => _reads.to(id)));
       final res = <String, int>{};
       for (var i = 0; i < toIds.length; i++) {
         final to = tos[i];
@@ -647,7 +654,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     final result = <String, int>{};
     await Future.wait(toSlotMap.entries.map((e) async {
-      final caps = await _svc.getSlotWorkDetailCapacities(e.key, e.value);
+      final caps = await _reads.slotWorkDetailCapacities(e.key, e.value);
       result.addAll(caps);
     }));
     return result;
@@ -664,7 +671,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         .toList();
     if (toIds.isEmpty) return;
     await Future.wait(toIds.map((id) async {
-      final to = await _svc.getTO(id);
+      final to = await _reads.to(id);
       if (to != null) _toCache[id] = to;
     }));
   }
@@ -2873,7 +2880,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
       // 3. TO에서 WorkDetailData 조회
       if (g.toId != null) {
-        final to = await _svc.getTO(g.toId!);
+        final to = await _reads.to(g.toId!);
         if (to != null && to.workDetails.isNotEmpty) {
           workDetail = to.workDetails
               .where((w) =>
@@ -3311,7 +3318,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     if (toId != null) {
       setState(() => _isProcessing = true);
       try {
-        final to = await _svc.getTO(toId);
+        final to = await _reads.to(toId);
         if (to != null && to.workDetails.isNotEmpty) {
           workDetail = to.workDetails
               .where((w) =>
@@ -3554,7 +3561,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     setState(() => _isProcessing = true);
     List<WorkDetailData> wds;
     try {
-      wds = await _svc.getSlotWorkDetails(toId, slotId);
+      wds = await _reads.slotWorkDetails(toId, slotId);
     } catch (e) {
       debugPrint('⚠️ [R5.3B] slot workDetails 조회 실패 [$toId/$slotId]: $e');
       if (mounted) {
