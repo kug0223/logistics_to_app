@@ -630,7 +630,8 @@ void main() {
     });
 
     test('상시 listener나 polling을 추가하지 않는다', () {
-      expect(d.contains('await _svc.getSlotWorkDetails(toId, slotId);'), true,
+      // [R8 O03] 읽기가 경계를 지난다. "눌렀을 때만 읽는다"는 계약은 그대로다.
+      expect(d.contains('await _reads.slotWorkDetails(toId, slotId);'), true,
           reason: '눌렀을 때만 읽는다');
       for (final s in [sheet, d]) {
         expect(s.contains('Timer.periodic'), false);

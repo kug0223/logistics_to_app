@@ -93,9 +93,17 @@ void main() {
 
   group('[R8P7.2] 확정자 — 삼키는 변형을 쓰지 않는다', () {
     test('AR-5 날짜별 지원자 화면이 OrThrow 를 쓴다', () {
-      final code = _codeOf(_read('lib/screens/business_admin/dialogs/day_applicants_dialog.dart'));
-      expect(code.contains('getConfirmedWorkersByDateAndBusinessOrThrow('), isTrue,
+      // [R8 O03] 읽기가 경계(DayApplicantsReads)를 지난다. 삼키지 않는 변형을
+      //   쓴다는 계약은 그 경계에서 확인한다 — 계약은 그대로다.
+      final code = _codeOf(
+          _read('lib/screens/business_admin/dialogs/day_applicants_dialog.dart'));
+      expect(code.contains('_reads.confirmedWorkers('), isTrue,
           reason: '그날 누가 일하는지를 말하는 자리다');
+      final reads = _codeOf(
+          _read('lib/screens/business_admin/dialogs/day_applicants_reads.dart'));
+      expect(reads.contains('svc.getConfirmedWorkersByDateAndBusinessOrThrow('),
+          isTrue,
+          reason: '경계가 삼키는 변형으로 바뀌면 그 상태가 발동하지 않는다');
     });
 
     test('AR-6 운영 뷰가 OrThrow 를 쓴다', () {

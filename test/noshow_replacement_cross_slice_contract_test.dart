@@ -207,7 +207,11 @@ void main() {
       expect(a.contains('closedByUnit = {for (final r in rows) r.wdId: r.isClosed};'), true);
       final d = _flat(_codeOf(
           _src('lib/screens/business_admin/dialogs/day_applicants_dialog.dart')));
-      expect(d.contains('_svc.getDayStaffingDetail('), true);
+      // [R8 O03] 같은 source 를 쓴다는 계약은 그대로다 — 경계를 지난다.
+      expect(d.contains('_reads.dayStaffing('), true);
+      final reads = _flat(_codeOf(
+          _src('lib/screens/business_admin/dialogs/day_applicants_reads.dart')));
+      expect(reads.contains('svc.getDayStaffingDetail('), true);
     });
 
     test('모르는 상태를 종료로 바꾸지 않는다', () {

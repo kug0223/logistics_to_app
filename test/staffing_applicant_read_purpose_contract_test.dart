@@ -139,8 +139,13 @@ void main() {
     test('SAP-F3 당일 명단이 대기 지원자 조회에 applicantReview 를 넘긴다', () {
       final phase =
           _slice(dayDialog, 'final phase1 = await Future.wait([', ']);');
-      expect(phase, contains('getPendingApplicationsByDateAndBusiness'));
+      // [R8 O03] 화면은 경계에 purpose 를 넘기고, 경계가 그대로 전달한다.
+      expect(phase, contains('_reads.pendingApplications('));
       expect(phase, contains('FirestoreService.purposeApplicantReview'));
+      final reads = _codeOf(
+          _read('lib/screens/business_admin/dialogs/day_applicants_reads.dart'));
+      expect(reads, contains('svc.getPendingApplicationsByDateAndBusiness('));
+      expect(reads, contains('purpose: purpose'));
     });
 
     test('SAP-F4 purpose 상수를 새로 만들지 않았다', () {

@@ -133,10 +133,22 @@ void main() {
     });
 
     test('07 목록·운영 화면 전부가 workerDirectory로 조회한다', () {
+      // [R8 O03] 일자별 화면은 읽기가 경계를 지난다. 목적 전달 계약은 그대로다 —
+      //   화면이 workerDirectory 를 넘기고, 경계가 `getUsersBatch` 로 전달한다.
+      const viaReads = 'lib/screens/business_admin/dialogs/day_applicants_dialog.dart';
       for (final path in _directoryCallers) {
         final code = _codeOf(_src(path));
-        expect(code, contains('getUsersBatch'),
-            reason: '$path 가 더는 이 CF를 쓰지 않으면 목록에서 빼야 한다');
+        if (path == viaReads) {
+          expect(code, contains('_reads.usersBatch('),
+              reason: '$path 가 더는 이 CF를 쓰지 않으면 목록에서 빼야 한다');
+          final reads = _codeOf(
+              _src('lib/screens/business_admin/dialogs/day_applicants_reads.dart'));
+          expect(reads, contains('svc.getUsersBatch('));
+          expect(reads, contains('purpose: purpose'));
+        } else {
+          expect(code, contains('getUsersBatch'),
+              reason: '$path 가 더는 이 CF를 쓰지 않으면 목록에서 빼야 한다');
+        }
         expect(code, contains('FirestoreService.purposeWorkerDirectory'),
             reason: '$path 가 전체본(계좌 포함)을 받고 있다');
       }

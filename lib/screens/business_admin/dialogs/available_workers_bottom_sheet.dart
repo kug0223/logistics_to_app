@@ -2,6 +2,7 @@
 // R7.2A 추가: weeklyBusinessCount 표시, FULL_POOL filter/sort, poolComplete parity
 // DayApplicantsDialog에서 부족한 work group에서 열린다.
 // DialogHelper.showSheet()를 통해 표시.
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../../../models/core/available_worker_model.dart';
@@ -79,6 +80,8 @@ class _AvailableWorkersBottomSheetState
   bool _isLoading = true;
   bool _isLoadingMore = false;
   String? _error;
+  /// [R8 O05] 같은 입력으로는 다시 성공할 수 없는 오류인가.
+  bool _staleRequest = false;
 
   // ── 초대 상태 ────────────────────────────────────────────────────────────────
   final Set<String> _invitedUids = {};
@@ -128,6 +131,7 @@ class _AvailableWorkersBottomSheetState
       setState(() {
         _isLoading = true;
         _error = null;
+        _staleRequest = false;
       });
     } else {
       setState(() => _isLoadingMore = true);
@@ -175,6 +179,7 @@ class _AvailableWorkersBottomSheetState
       if (!mounted) return;
       setState(() {
         _error = _parseError(e);
+        _staleRequest = _isStaleRequestError(e);
         _isLoading = false;
         _isLoadingMore = false;
       });
@@ -504,8 +509,25 @@ class _AvailableWorkersBottomSheetState
   ///   ERROR         후보를 불러오지 못했다        ← 0명으로 표시하지 않는다
   ///   NO_PERMISSION TO 관리 권한이 없다
   ///   UNKNOWN       근무 지역을 판단하지 못했다    ← 0명도 ERROR도 아니다
+  /// [R8 O05] 이 요청이 **같은 입력으로 다시 보내도 실패하는** 종류인가.
+  ///
+  ///   서버가 업무 식별자를 맞추지 못했거나(목록이 낡음) 같은 이름의 업무가
+  ///   둘이라 고를 수 없을 때는 `invalid-argument` 로 돌아온다. 그 상태에서
+  ///   `다시 시도` 는 같은 식별자를 또 보내므로 결과가 같다 — 눌러도 안 되는
+  ///   버튼을 두지 않는다. 대신 닫고 다시 열도록 안내한다.
+  bool _isStaleRequestError(Object e) =>
+      e.toString().toLowerCase().contains('invalid-argument');
+
   String _parseError(Object e) {
     final s = e.toString().toLowerCase();
+    // [R8 O05] 서버가 준 구체적인 안내를 일반 문구로 덮지 않는다.
+    //   "목록을 새로고침한 뒤 다시 시도해주세요" / "근무 시간을 골라 다시
+    //   시도해주세요" 처럼 복구 방법이 담겨 있다.
+    if (_isStaleRequestError(e)) {
+      final msg = e is FirebaseFunctionsException ? e.message : null;
+      if (msg != null && msg.isNotEmpty) return msg;
+      return '요청한 업무를 찾을 수 없습니다.\n목록을 닫았다가 다시 열어 주세요.';
+    }
     if (s.contains('not-found')) return '공고 또는 슬롯 정보를 찾을 수 없습니다.';
     if (s.contains('permission-denied')) return 'TO 관리 권한이 없습니다.';
     if (s.contains('work_region_unresolved')) {
@@ -693,10 +715,18 @@ class _AvailableWorkersBottomSheetState
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            OutlinedButton(
-              onPressed: _load,
-              child: const Text('다시 시도'),
-            ),
+            // [R8 O05] 같은 입력으로는 다시 성공할 수 없는 오류에는
+            //   `다시 시도` 를 주지 않는다 — 누를수록 같은 실패만 반복된다.
+            if (_staleRequest)
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                child: const Text('닫기'),
+              )
+            else
+              OutlinedButton(
+                onPressed: _load,
+                child: const Text('다시 시도'),
+              ),
           ],
         ),
       );
