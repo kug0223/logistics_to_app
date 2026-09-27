@@ -32,6 +32,11 @@
  *   PASS 가 아니라 **INCONCLUSIVE** 로 남긴다 — 고정 sleep 으로 판정하지 않는다.
  *
  * 격리 에뮬레이터(demo-alfit-r7) 전용.
+ *
+ * ⚠ 다른 하네스와 같은 세션에서 돌릴 때는 **이것을 마지막에** 두거나 에뮬레이터를
+ *   다시 띄운다. seeding·cleanup 이 ballast 만큼 no-op 트리거 이벤트를 만들어
+ *   (제품 가드로 각 2ms 지만 invocation 비용이 있다) 다음 하네스의 트리거가
+ *   수십 초 늦게 실행된다. 그 지연을 제품 결함으로 읽지 않도록 주의한다.
  */
 const PROJECT = 'demo-alfit-r7';
 process.env.GCLOUD_PROJECT = PROJECT;
