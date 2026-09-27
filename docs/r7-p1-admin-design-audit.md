@@ -314,18 +314,18 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 3. **§1 관리 탭(`settings_screen`)이 파란 구디자인** — `GradientScaffold` →
    `AppPageScaffold`. 이미 `[DESIGN-PATCH-*]` 로 6화면 전환 완료, 25화면 채택.
    USER 진입 없음 → 제약 없음. **사용자가 직접 지적한 항목** → **P1-6**
-3b. super_admin 11화면 동일 전환 (같은 root cause, 별도 배치) → P1-6
-3c. 홈 타이포 위계(공용 style 미사용) + `_s()` 가 `ResponsiveHelper.getScale` 의
+4. super_admin 11화면 동일 전환 (3 과 같은 root cause, 별도 배치) → **P1-6**
+5. 홈 타이포 위계(공용 style 미사용) + `_s()` 가 `ResponsiveHelper.getScale` 의
    값 다른 사본 → **P1-4**
-4. V1 `AlertDialog`/`showModalBottomSheet` 12건 (SafeArea 위험) → 각 군
-5. 4-2 카드 tint/테두리 4중첩 · 4-3 행당 배지 3종 경쟁 → **P1-2**
-6. `AppSummaryHeader`/`AppStatusCard` 채택 0 → P1-7
-7. V5 하드코딩 색 (`settings_screen` 7 · `document_management_screen` 10) → P1-6 / P1-7
-8. 4-4 `지원 4일 전` 라벨 → **P1-2**
+6. V1 `AlertDialog`/`showModalBottomSheet` 12건 (SafeArea 위험) → 각 군
+7. 4-2 카드 tint/테두리 4중첩 · 4-3 행당 배지 3종 경쟁 → **P1-2**
+8. `AppSummaryHeader`/`AppStatusCard` 채택 0 → **P1-7**
+9. V5 하드코딩 색 (`settings_screen` 7 · `document_management_screen` 10) → P1-6 / P1-7
+10. 4-4 `지원 4일 전` 라벨 → **P1-2**
 
 ### POLISH / BACKLOG
-9. V4 radius 이탈 (같은 화면 3종 이상은 CORRECTION) → 각 군
-10. `splash_screen` `AppColors` 0 · 하드코딩 색 → P1-7
+11. V4 radius 이탈 (같은 화면 3종 이상은 CORRECTION) → 각 군
+12. `splash_screen` `AppColors` 0 · 하드코딩 색 → P1-7
 
 ---
 
