@@ -439,8 +439,14 @@ void main() {
       expect(svc, contains("const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'}"));
       expect(svc, contains('!a.isStaffingReleased'));
       // 업무마다 0으로 미리 채우는 계약 — null 과 0 의 구분이 여기서 나온다.
+      // [R7 STAFFING AUDIT] seed 키가 `w.id`(composite) → `w.canonicalId` 로
+      //   바뀌었다. 계약은 **강화**됐다: 지원서도 canonicalId 로 키가 잡히므로
+      //   둘이 같은 자리에서 만나고, identity 가 다른 정의로 조회하면 이제
+      //   **null**(UNKNOWN)이 나온다. 예전 composite seed 는 wdId 를 가진
+      //   정의에서 영원히 0 인 유령 항목이어서, `lookupByIdentity` 의 composite
+      //   폴백이 조회 실패를 `0` 으로 바꿨다(DEV 대조 17 자리).
       expect(svc,
-          contains("for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0}"));
+          contains("for (final w in workDetails) w.canonicalId: {'confirmed': 0, 'pending': 0}"));
     });
   });
 }

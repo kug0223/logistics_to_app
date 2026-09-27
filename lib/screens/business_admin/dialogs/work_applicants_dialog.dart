@@ -4093,7 +4093,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       //    다이얼로그는 그 한 번의 snapshot 밖에 갖지 못한다)
       final details = widget.toItem.workDetails.isNotEmpty
           ? widget.toItem.workDetails
-          : widget.toItem.to.workDetails;
+          : (widget.toItem.slot != null ? const <WorkDetailData>[] : widget.toItem.to.workDetails);
 
       // [R7-P1-2 DEVICE.1E] 좌석 규칙은 canonical 한 쪽만 쓴다.
       //
@@ -4134,7 +4134,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           }
         }
 
-        newStats[work.id] = {'pending': pending, 'confirmed': confirmed};
+        newStats[work.canonicalId] = {'pending': pending, 'confirmed': confirmed};
         totalPending += pending;
         totalConfirmed += confirmed;
       }
@@ -4171,8 +4171,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       widget.toItem.workDetailStats ??= {};
       if (widget.work != null) {
         final entry = {'pending': pending, 'confirmed': confirmed};
-        widget.toItem.workDetailStats![widget.work!.id] = entry;
-        if (applyToCapacity) _capacity.applyLocal({widget.work!.id: entry});
+        widget.toItem.workDetailStats![widget.work!.canonicalId] = entry;
+        if (applyToCapacity) _capacity.applyLocal({widget.work!.canonicalId: entry});
       }
     }
   }

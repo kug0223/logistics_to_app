@@ -188,7 +188,19 @@ void main() {
 
     test('PSP-A3 실제 코드가 같은 폴백을 쓴다', () {
       final fn = _slice(models, 'resolveStats() {', 'bool get hasLoadedStats');
-      expect(fn, contains('workDetails.isNotEmpty ? workDetails : to.workDetails'));
+      // [R7 STAFFING AUDIT] 폴백이 `statsAlignedWorkDetails` 라는 이름을 얻었다.
+      //
+      //   DEVICE.1D 의 계약("요약과 상세가 같은 정의 목록을 본다")은 그대로다.
+      //   달라진 것은 **slot 이 있을 때 master 로 폴백하지 않는다**는 점이다 —
+      //   FLEX 는 slot 과 master 의 wdId 가 서로 다른 값이어서, master 로
+      //   갈아타면 집계와 만나지 못하고 `충원 1` 이 `0` 이 됐다.
+      //   두 소비자(`resolveStats`·`hasLoadedStats`)가 여전히 같은 것을 쓴다.
+      expect(fn, contains('statsAlignedWorkDetails'));
+      final aligned =
+          _slice(models, 'get statsAlignedWorkDetails {', 'bool get resolvedIsFull');
+      expect(aligned, contains('if (slot != null) return const [];'));
+      expect(aligned, contains('return to.workDetails;'),
+          reason: 'slot 이 없는 장기는 master 가 유일한 원천이다 (DEVICE.1D 유지)');
       expect(fn, contains('workDetailStats != null && details.isNotEmpty'));
       expect(fn, isNot(contains('isWorkDetailLoaded && workDetails.isNotEmpty')),
           reason: '옛 판정이 남아 있으면 다시 갈라진다');

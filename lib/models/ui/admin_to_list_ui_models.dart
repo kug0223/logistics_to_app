@@ -418,18 +418,33 @@ class TOItem {
     //   판정을 그쪽에 맞춘다. 그리고 기준을 flag 가 아니라 **집계의 존재**로
     //   바꾼다 — `isWorkDetailLoaded` 는 업무 정의 로드 여부이고, 우리가
     //   묻는 것은 통계가 있느냐다.
-    final details = workDetails.isNotEmpty ? workDetails : to.workDetails;
+    final details = statsAlignedWorkDetails;
     if (workDetailStats != null && details.isNotEmpty) {
       var c = 0, p = 0, r = 0, s = 0;
+      var allFound = true;
       for (final work in details) {
         final stats = work.lookupByIdentity(workDetailStats);
-        final wc = (stats?['confirmed'] ?? 0);
+        // [R7 STAFFING AUDIT] 조회가 빗나간 업무가 하나라도 있으면 이 집계로
+        //   숫자를 말하지 않는다.
+        //
+        //   `?? 0` 이 거짓 0 을 만들고 있었다. DEV 대조에서 172 슬롯 중 17
+        //   자리가 그랬다 — 원장(`slot.workDetailCounts`)은 1 인데 화면이 0.
+        //   원인은 값이 아니라 **identity** 다(아래 `statsAlignedWorkDetails`).
+        //   모르는 것을 0 이라고 말하는 대신 카운터 폴백으로 내려간다.
+        if (stats == null) {
+          allFound = false;
+          break;
+        }
+        final int wc = stats['confirmed'] ?? 0;
         c += wc;
-        p += (stats?['pending'] ?? 0);
+        final int wp = stats['pending'] ?? 0;
+        p += wp;
         r += work.requiredCount;
         s += clamp(work.requiredCount - wc);
       }
-      return (confirmed: c, pending: p, required: r, shortage: s);
+      if (allFound) {
+        return (confirmed: c, pending: p, required: r, shortage: s);
+      }
     }
     return (
       confirmed: confirmedCount,
@@ -447,8 +462,35 @@ class TOItem {
   ///   (UNKNOWN != ZERO — 집계가 없다고 0 이라고 말하지 않는다)
   bool get hasLoadedStats {
     if (workDetailStatsFailed) return false;
-    final details = workDetails.isNotEmpty ? workDetails : to.workDetails;
-    return workDetailStats != null && details.isNotEmpty;
+    return workDetailStats != null && statsAlignedWorkDetails.isNotEmpty;
+  }
+
+  /// [R7 STAFFING AUDIT] `workDetailStats` 와 **identity 가 맞는** 업무 정의.
+  ///
+  ///   FLEX 공고에는 업무 정의의 원천이 **둘** 있고 서로 다른 `wdId` 를 갖는다.
+  ///
+  ///     slot 문서의 `workDetails[].wdId`   ← 원장(`slot.workDetailCounts`)과
+  ///                                          지원서(`app.wdId`)가 쓰는 키
+  ///     master TO 의 `workDetails[].wdId`  ← **다른 값** (slot 생성 시 새로 만든다)
+  ///
+  ///   DEV 대조(businessId fLmSOHVKUwmBHcbwQE0I, TO 93 · slot 172):
+  ///     slot 정의에 wdId 가 있는 slot        172/172
+  ///     master 정의에 wdId 가 전혀 없는 TO    25
+  ///     원천에 따라 값이 갈리는 자리          17  (slot 기준=원장값, master 기준=0)
+  ///   `[R6.1] Clean Golden Path` 처럼 **양쪽 다 wdId 가 있어도 값이 다르다**
+  ///   (`xw87EbAh…` vs `rBnNxCMg…`). 그래서 master 정의로는 절대 만나지 못한다.
+  ///
+  ///   DEVICE.1D/1E 가 "정의가 비어 있으면 master 로 폴백" 을 넣었다. 장기
+  ///   (slot 없음)에서는 master 가 유일한 원천이라 맞지만, **slot 이 있는
+  ///   TOItem 에서는 identity 가 다른 정의로 갈아타는 것**이어서 집계와
+  ///   어긋난다. 그것이 `날짜 선택 → 충원 1 이 0 으로` 의 원인이다.
+  ///
+  ///   그래서 폴백을 **slot 이 없을 때로 좁힌다.**
+  List<WorkDetailData> get statsAlignedWorkDetails {
+    if (workDetails.isNotEmpty) return workDetails;
+    // slot 이 있으면 master 정의는 이 집계의 identity 가 아니다.
+    if (slot != null) return const [];
+    return to.workDetails;
   }
 
   /// workDetailStats 기준 인원 충족 여부

@@ -295,7 +295,7 @@ void main() {
       }
       final svc = _codeOf(_read('lib/services/firestore_service.dart'));
       expect(svc,
-          contains("for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0}"));
+          contains("for (final w in workDetails) w.canonicalId: {'confirmed': 0, 'pending': 0}"));
     });
 
     test('LCS-W5 새 정책을 만들지 않았다 (§2)', () {

@@ -559,8 +559,24 @@ class FirestoreService {
     final workDetails = (slotWorkDetails != null && slotWorkDetails.isNotEmpty)
         ? slotWorkDetails
         : to.workDetails;
+    // [R7 STAFFING AUDIT] seed 키를 **canonicalId** 로 맞춘다.
+    //
+    //   여기는 `w.id`(composite)로 seed 했다. 그런데 아래에서 지원서는
+    //   `app.wdId` 로 키가 잡힌다. 그래서 정의가 wdId 를 가진 경우
+    //   composite seed 는 **영원히 0 인 유령 항목**이 되고,
+    //   `lookupByIdentity`(= `map[canonicalId] ?? map[id]`)의 composite 폴백이
+    //   그것을 집어낸다 — 조회 실패와 진짜 0 이 구분되지 않는다.
+    //
+    //   DEV 대조: slot 172/172 가 wdId 를 갖고, 원천이 갈리는 17 자리에서
+    //   원장은 1 인데 화면이 0 이었다. `[R7FIX] 한 날짜만 마감` 9/29 가 그 예다.
+    //
+    //   canonical 로 seed 하면
+    //     wdId 있는 정의  → seed 도 wdId → 지원서와 같은 자리에서 만난다
+    //     wdId 없는 정의  → seed 도 composite → 지원서 폴백과 만난다
+    //     identity 가 다른 정의 → **아무것도 찾지 못한다**(null = UNKNOWN)
+    //   즉 유령 0 이 사라지고, 모르는 것은 모른다고 말할 수 있게 된다.
     final Map<String, Map<String, int>> workStats = {
-      for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0},
+      for (final w in workDetails) w.canonicalId: {'confirmed': 0, 'pending': 0},
     };
     var statsFailed = false;
     try {

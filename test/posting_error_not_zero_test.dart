@@ -209,7 +209,7 @@ void main() {
           _bodyOf(svc, 'Future<Map<String, dynamic>> loadTOWorkDetails('));
       expect(
         _flat(body).contains(
-            "for (final w in workDetails) w.id: {'confirmed': 0, 'pending': 0},"),
+            "for (final w in workDetails) w.canonicalId: {'confirmed': 0, 'pending': 0},"),
         isTrue,
       );
     });
