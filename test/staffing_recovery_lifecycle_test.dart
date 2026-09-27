@@ -302,12 +302,16 @@ void main() {
       cap.applyLocal({
         _composite: {'confirmed': 1, 'pending': 0}
       });
-      expect(cap.confirmedFor(_work()), 1);
+      // [DEVICE.1E.2] 로컬 값은 **표시용**이다 — 판단용 `confirmedFor` 는
+      //   출처가 canonical 일 때만 답한다.
+      expect(cap.displayConfirmedFor(_work()), 1);
+      expect(cap.confirmedFor(_work()), isNull);
+      expect(cap.isCanonical, isFalse);
 
       stale.complete(_ok(0)); // 확정 전 상태가 뒤늦게 도착
       await inFlight;
 
-      expect(cap.confirmedFor(_work()), 1,
+      expect(cap.displayConfirmedFor(_work()), 1,
           reason: '방금 확정한 사람이 사라지면 안 된다');
     });
 
@@ -316,7 +320,9 @@ void main() {
       cap.applyLocal({
         _composite: {'confirmed': 2, 'pending': 0}
       });
-      expect(cap.confirmedFor(_work()), 2);
+      expect(cap.displayConfirmedFor(_work()), 2);
+      expect(cap.confirmedFor(_work()), isNull,
+          reason: '[DEVICE.1E.2] 확인 전 값으로 판단하지 않는다');
       await cap.load();
       expect(cap.confirmedFor(_work()), 1,
           reason: '서버가 세는 좌석이 최종이다 — 로컬 값이 영구히 이기지 않는다');

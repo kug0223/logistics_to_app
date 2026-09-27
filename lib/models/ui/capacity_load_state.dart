@@ -33,9 +33,33 @@ class CapacityLoadState {
   int _seq = 0;
   bool _disposed = false;
 
+  /// [R7-P1-2 DEVICE.1E.2] 지금 들고 있는 수치의 **출처**.
+  ///
+  ///   `true` 면 canonical 정원 조회가 답한 값이다. `false` 면 mutation 직후
+  ///   화면이 손으로 다시 센 값이다 — 그 산술은 canonical 과 두 가지가
+  ///   다르다.
+  ///
+  ///     · identity: 화면 재집계는 `workDetailId`(+workType·시간 폴백)로
+  ///       업무를 맞추고 `wdId` 를 보지 않는다. canonical 은 `wdId` 를 먼저
+  ///       본다. workType·시간이 같고 wdId 만 다른 두 업무가 있으면 화면
+  ///       쪽이 같은 지원서를 둘 다에 세어 **과대 집계**한다.
+  ///     · 동시성: 다른 관리자가 같은 순간에 확정한 것은 보이지 않는다.
+  ///
+  ///   그래서 이 값으로 `FULL`(모집 완료)을 새로 확정하거나 초대 action 을
+  ///   허용하지 않는다. 보여 주기는 하되 **갱신 중**으로 말한다.
+  bool _isCanonical = false;
+
   Map<String, Map<String, int>>? get stats => _stats;
   bool get failed => _failed;
   bool get loading => _loading;
+
+  /// 지금 값이 canonical 조회에서 나왔는가.
+  bool get isCanonical => _isCanonical;
+
+  /// 보여 줄 수는 있으나 최신을 보장하지 못하는 상태인가.
+  ///
+  ///   mutation 직후의 로컬 값, 또는 canonical 재조회가 진행 중인 상태다.
+  bool get isPending => !_failed && _stats != null && (!_isCanonical || _loading);
 
   /// 부모가 준 snapshot 을 **초기값으로만** 쓴다 — 첫 프레임 깜빡임 방지.
   ///
@@ -47,6 +71,8 @@ class CapacityLoadState {
       return;
     }
     _stats = parentStats;
+    // 부모의 그 map 도 `loadTOWorkDetails` 가 만든 canonical 값이다.
+    _isCanonical = parentStats != null;
   }
 
   /// canonical 정원 조회. 실패한 그것을 다시 하는 재시도도 이 함수다.
@@ -76,7 +102,12 @@ class CapacityLoadState {
 
     _loading = false;
     _failed = failed;
-    if (!failed) _stats = next;
+    if (!failed) {
+      _stats = next;
+      _isCanonical = true;
+    }
+    // 실패했으면 `_stats` 는 그대로 두되 `_failed` 가 서므로 수치로 쓰이지
+    // 않는다(UNKNOWN). 로컬 값이 stale canonical 처럼 남지 않는다.
     _notify();
   }
 
@@ -97,11 +128,32 @@ class CapacityLoadState {
     _loading = false;
     _failed = false;
     _stats = local;
+    // **canonical 이 아니다.** 이 값으로 FULL 을 확정하거나 action 을
+    // 허용하지 않는다 — 호출자는 `confirmedFor` 에서 null 을 받는다.
+    _isCanonical = false;
     _notify();
   }
 
-  /// 이 업무의 canonical 확정 수. 못 읽었으면 null (UNKNOWN != ZERO).
+  /// 이 업무의 **canonical** 확정 수. 못 읽었으면 null (UNKNOWN != ZERO).
+  ///
+  ///   판단(FULL·부족·초대 허용)에 쓰는 값이다. 그래서 출처가 canonical 일
+  ///   때만 답한다 — mutation 직후의 로컬 산술로 모집 완료를 선언하거나
+  ///   초대를 막지 않는다.
   int? confirmedFor(WorkDetailData? work) {
+    if (work == null) return null;
+    if (_failed) return null;
+    if (!_isCanonical) return null;
+    final s = work.lookupByIdentity(_stats);
+    if (s == null) return null;
+    return s['confirmed'];
+  }
+
+  /// **표시용** 확정 수 — 출처를 묻지 않는다.
+  ///
+  ///   mutation 직후 관리자가 방금 한 일이 화면에 반영되는 것은 맞다.
+  ///   다만 그 수가 판단의 근거가 되지는 않으므로, 화면은 이 값을
+  ///   `isPending` 과 함께 읽어 **갱신 중**으로 말해야 한다.
+  int? displayConfirmedFor(WorkDetailData? work) {
     if (work == null) return null;
     if (_failed) return null;
     final s = work.lookupByIdentity(_stats);
@@ -116,6 +168,7 @@ class CapacityLoadState {
     _stats = null;
     _failed = false;
     _loading = false;
+    _isCanonical = false;
     _notify();
   }
 

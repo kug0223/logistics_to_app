@@ -992,7 +992,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             Text(
               // capacity를 못 읽었으면 `필요 N명`이라고 단정하지 않는다.
               capacity == InviteCapacityState.unknown
-                  ? '정원 확인 불가'
+                  // [R7-P1-2 DEVICE.1E.2] **모르는 것**과 **아직 확인 중인
+                  //   것**을 같은 말로 하지 않는다. 방금 확정을 누른 관리자에게
+                  //   `확인 불가`는 실패처럼 읽힌다 — 그 처리는 성공했다.
+                  ? (_capacity.isPending ? '정원 갱신 중' : '정원 확인 불가')
                   : '필요 ${work.requiredCount}명',
               style: ResponsiveHelper.smallStyle(
                 context,
@@ -1025,6 +1028,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     //   로드되지 않았을 때 `정원 확인 불가`만 보이고 복구 수단이 없었다.
     //   ERROR != ZERO를 지키려고 만든 표면이 subtype 때문에 사라진 것이다.
     if (capacity == InviteCapacityState.unknown) {
+      // [R7-P1-2 DEVICE.1E.2] 갱신 중에는 오류 안내를 세우지 않는다.
+      //
+      //   mutation 은 성공했다. 여기서 `확인하지 못했어요 + 다시 시도`를
+      //   띄우면 관리자는 방금 한 확정·취소가 실패한 줄 알고 다시 누른다 —
+      //   중복 약속을 만드는 안내다. 조회가 끝나면 정상 수치로 대체된다.
+      if (_capacity.isPending) return _buildCapacityPendingNotice(context);
       return _buildCapacityUnknownNotice(context);
     }
     // 초대 CTA만 단기로 제한한다 — 이 화면에는 장기 약속 범위가 없다.
@@ -1106,6 +1115,50 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             child: Text(
               '$shortage명이 더 필요해요. 장기 근무 초대는 근무 기간을 정해야 해서\n'
               '공고 카드의 ⋮ 메뉴 > 인력 초대에서 보낼 수 있어요.',
+              style:
+                  ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [R7-P1-2 DEVICE.1E.2] 갱신 중 — 실패가 아니다.
+  ///
+  ///   방금 한 처리는 성공했고, 정원만 다시 세는 중이다. `다시 시도` 를 두지
+  ///   않는다 — 여기서 재시도를 권하면 도메인 처리를 다시 하라는 말로 읽힌다.
+  ///   표시용 수치는 있으나 `FULL`·`부족`을 확정하지 않는다(출처가 canonical
+  ///   이 아니다).
+  Widget _buildCapacityPendingNotice(BuildContext context) {
+    final shown = _capacity.displayConfirmedFor(widget.work);
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: ResponsiveHelper.iconSize(context, 14),
+            height: ResponsiveHelper.iconSize(context, 14),
+            child: const CircularProgressIndicator(
+                strokeWidth: 2, color: AppColors.grey500),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Text(
+              shown != null
+                  ? '처리를 반영했어요. 인력 현황을 다시 확인하는 중이에요. (충원 $shown)'
+                  : '인력 현황을 다시 확인하는 중이에요.',
               style:
                   ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
             ),
