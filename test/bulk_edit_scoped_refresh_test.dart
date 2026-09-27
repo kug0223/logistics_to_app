@@ -98,8 +98,16 @@ void main() {
     });
 
     test('BR-81 읽는 것은 그 공고의 문서와 슬롯뿐이다', () {
-      expect(refreshGroup.contains('_service.getTOOrFailure(toId)'), true);
-      expect(refreshGroup.contains('_service.loadFlexSlots(toId, masterTO: fresh)'), true);
+      // [R7-4 §3C] 두 읽기는 주입 가능한 이름을 지나지만, 목적지는 같다.
+      expect(refreshGroup.contains('_readTO(toId)'), true);
+      expect(refreshGroup.contains('_readSlots(toId, masterTO: fresh)'), true);
+      final f = _flat(ctrl);
+      expect(f.contains('_loadTOOverride?.call(toId) ?? _service.getTOOrFailure(toId)'),
+          true);
+      expect(
+          f.contains('_loadSlotsOverride?.call(toId, masterTO: masterTO) ?? '
+              '_service.loadFlexSlots(toId, masterTO: masterTO)'),
+          true);
     });
 
     test('BR-82 기존 reader를 재사용한다 — 새 reader를 만들지 않았다', () {
@@ -202,7 +210,12 @@ void main() {
     test('BR-73 없는 문서와 못 읽은 문서를 구분하는 reader를 쓴다', () {
       // getTO()는 둘 다 null로 만든다 — 그걸 쓰면 네트워크 오류가 "삭제됨"이 된다.
       expect(refreshGroup.contains('_service.getTO(toId)'), false);
-      expect(refreshGroup.contains('getTOOrFailure'), true);
+      // [R7-4 §3C] 읽기 지점이 주입 가능한 `_readTO` 로 바뀌었다. 폴백은 그대로
+      //   `getTOOrFailure` 이고, 실패와 부재를 가르는 계약은 변하지 않았다.
+      expect(refreshGroup.contains('_readTO(toId)'), true);
+      expect(_flat(ctrl).contains(
+          'Future<({TOModel? to, bool failed})> _readTO(String toId) => '
+          '_loadTOOverride?.call(toId) ?? _service.getTOOrFailure(toId);'), true);
     });
   });
 

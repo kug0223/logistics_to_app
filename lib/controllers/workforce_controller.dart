@@ -44,7 +44,39 @@ enum TOGroupRefreshOutcome {
 /// 수정·삭제·확정 등 모든 데이터 변경 후에는 [reload]를 호출하면
 /// 두 뷰가 동시에 갱신된다.
 class WorkforceController extends ChangeNotifier {
-  final FirestoreService _service = FirestoreService();
+  /// [R7-4 §3C] 감사용 최소 seam.
+  ///
+  ///   `refreshGroup` 의 세대 토큰·stale 판정·목록 교체를 **실제 controller
+  ///   에서** 돌려 보려면, 그 두 번의 서버 읽기만 갈아끼울 수 있으면 된다.
+  ///   새 상태 엔진을 만들지 않는다 — 읽기 지점 두 개를 주입 가능하게 할 뿐이고,
+  ///   주지 않으면 기존과 똑같이 [FirestoreService] 를 쓴다.
+  WorkforceController({
+    Future<({TOModel? to, bool failed})> Function(String toId)? loadTO,
+    Future<FlexSlotLoad> Function(String toId, {TOModel? masterTO})? loadSlots,
+  })  : _loadTOOverride = loadTO,
+        _loadSlotsOverride = loadSlots;
+
+  final Future<({TOModel? to, bool failed})> Function(String toId)?
+      _loadTOOverride;
+  final Future<FlexSlotLoad> Function(String toId, {TOModel? masterTO})?
+      _loadSlotsOverride;
+
+  // [R7-4 §3C] lazy — 주입된 경우 `FirebaseFirestore.instance` 를 건드리지 않는다.
+  FirestoreService? _serviceOrNull;
+  FirestoreService get _service => _serviceOrNull ??= FirestoreService();
+
+  Future<({TOModel? to, bool failed})> _readTO(String toId) =>
+      _loadTOOverride?.call(toId) ?? _service.getTOOrFailure(toId);
+
+  Future<FlexSlotLoad> _readSlots(String toId, {TOModel? masterTO}) =>
+      _loadSlotsOverride?.call(toId, masterTO: masterTO) ??
+      _service.loadFlexSlots(toId, masterTO: masterTO);
+
+  /// [R7-4 §3C] 테스트에서 목록 초기 상태를 세운다. production 경로가 아니다.
+  @visibleForTesting
+  void seedItemsForTest(List<TOGroupItem> items) {
+    _items = List<TOGroupItem>.of(items);
+  }
 
   List<TOGroupItem> _items = [];
   bool _isLoading = false;
@@ -759,7 +791,7 @@ class WorkforceController extends ChangeNotifier {
     }
 
     try {
-      final result = await _service.getTOOrFailure(toId);
+      final result = await _readTO(toId);
       if (_disposed || stale()) return TOGroupRefreshOutcome.superseded;
       if (result.failed) return TOGroupRefreshOutcome.failed;
 
@@ -777,7 +809,7 @@ class WorkforceController extends ChangeNotifier {
 
       final rebuilt = TOGroupItem(singleTO: fresh);
       if (fresh.isFlexType) {
-        final loaded = await _service.loadFlexSlots(toId, masterTO: fresh);
+        final loaded = await _readSlots(toId, masterTO: fresh);
         if (_disposed || stale()) return TOGroupRefreshOutcome.superseded;
         rebuilt.setGroupTOs(loaded.groupTOs);
         rebuilt.setSlotDates(loaded.slotDates);
