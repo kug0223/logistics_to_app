@@ -17376,8 +17376,24 @@ export const syncTOStats = onDocumentWritten(
     const beforeStatus = before?.status as string | undefined;
     const afterStatus = after?.status as string | undefined;
 
-    // 상태 변경이 없으면 카운터 변화 없음 → 불필요한 집계 skip
-    if (beforeStatus === afterStatus) return;
+    // [R10] 좌석 표식 변화도 집계를 바꾼다 — status 만 보면 놓친다.
+    //
+    //   `staffingReleasedAt` 는 status 를 CONFIRMED 그대로 두고 정원만
+    //   되돌린다(`callableReleaseNoshowSeat` · `callableBatchCancelNoShow` ·
+    //   `callableAcceptConfirmedReassignment`). 그래서 이 가드가 status 만
+    //   보던 동안 그 경로에는 canonical 재계산이 **한 번도 돌지 않았다** —
+    //   제품 주석도 그 사실을 적어 두고 있었다("syncTOStats가 발동하지
+    //   않으므로 FULL→ACTIVE 전환 명시적 처리").
+    //
+    //   그 경로의 카운터는 delta 하나에만 의존했고, delta 는 fence 시각을
+    //   남기지 않는다. 그래서 그 변경 전에 원장을 읽은 절대 쓰기가 나중에
+    //   커밋하면 반납이 지워지고, 되돌릴 이벤트가 없어 그대로 남았다
+    //   (실측: scripts/r10-emu-contract-b.js R10-4).
+    const seatMarkChanged =
+      (before?.staffingReleasedAt == null) !== (after?.staffingReleasedAt == null);
+
+    // 상태·좌석 표식 변경이 없으면 카운터 변화 없음 → 불필요한 집계 skip
+    if (beforeStatus === afterStatus && !seatMarkChanged) return;
 
     const toId = (after?.toId ?? before?.toId) as string | undefined;
     const slotId = (after?.slotId ?? before?.slotId) as string | undefined;
@@ -24495,11 +24511,10 @@ export const callableRecalculateTOStats = onCall(
     // [M-6 수정 2026-07-15] 무제한 .get() → while 루프 페이지네이션으로 교체
     let totalPending = 0;
     let totalConfirmed = 0;
-    const slotStats: Record<string, {pending: number; confirmed: number}> = {};
     // workType 단위 카운터 — workTypeConfirmedCounts (TO-level, non-flex)
     const workTypeConfirmedCounts: Record<string, number> = {};
-    // [Phase 8.1E.2A] wdId 단위 canonical counter 재구성
-    const slotWorkDetailCounts: Record<string, Record<string, {pending: number; confirmed: number}>> = {};
+    // [R10] 슬롯 단위 합계를 여기서 따로 모으지 않는다 — `srvSyncSlotCountersTx`
+    //   가 쓰기 시점에 다시 센다(7차). 남아 있던 두 누산기는 읽는 곳이 없었다.
     // [Phase 8.1E.2B] legacy Application → wdId priority-based resolution (slot pre-load)
     const slotWorkDetailMap: Record<string, {wds: Record<string, unknown>[]; isNewSchema: boolean}> = {};
     const slotFailClosed = new Set<string>(); // new-schema slot + unresolved/ambiguous → workDetailCounts 미갱신
@@ -24536,17 +24551,29 @@ export const callableRecalculateTOStats = onCall(
           // [Phase 8.1E.2A] INVITED도 pendingCount에 포함
           const isPending = (status === "PENDING" || status === "INVITED");
           if (isPending) totalPending++;
-          if (status && CONFIRMED_STATUSES.includes(status)) totalConfirmed++;
-          if (!isFlexType && selectedWorkType && status && CONFIRMED_STATUSES.includes(status)) {
+          // [R10] 좌석 정의는 한 벌이다 — 트리거(`countCommittedSeats`)와 같은 술어.
+          //
+          //   여기서는 `CONFIRMED_STATUSES` 만 셌다. 반납한 좌석
+          //   (`staffingReleasedAt`)과 기간이 끝난 장기 약속이 정원을 계속
+          //   차지했고, **경합이 전혀 없어도** 재집계가 트리거와 다른 값을 썼다
+          //   (실측 R10-2: 원장 1 / 재집계 2, 그리고 fence stamp 가 최신이라
+          //   그 틀린 값이 남았다).
+          const occupiesSeat = !!status && CONFIRMED_STATUSES.includes(status) &&
+            d.staffingReleasedAt == null && srvOccupiesSeatToday(doc);
+          if (occupiesSeat) totalConfirmed++;
+          if (!isFlexType && selectedWorkType && occupiesSeat) {
             workTypeConfirmedCounts[selectedWorkType] =
               (workTypeConfirmedCounts[selectedWorkType] ?? 0) + 1;
           }
           if (isFlexType) {
             const slotId = d.slotId as string | undefined;
             if (slotId && status && (isPending || CONFIRMED_STATUSES.includes(status))) {
-              if (!slotStats[slotId]) slotStats[slotId] = {pending: 0, confirmed: 0};
-              if (isPending) slotStats[slotId].pending++;
-              if (CONFIRMED_STATUSES.includes(status)) slotStats[slotId].confirmed++;
+              // [R10] 여기서 슬롯 단위 합계를 따로 모으던 두 변수(`slotStats`,
+              //   `slotWorkDetailCounts`)를 지웠다. 7차에 슬롯 쓰기를
+              //   `srvSyncSlotCountersTx` 로 옮긴 뒤로 **읽는 곳이 없었고**,
+              //   좌석 반납을 보지 않는 옛 술어를 그대로 들고 있었다.
+              //   죽은 채로 두면 다음 사람이 그 술어를 되살린다.
+              //   남기는 것은 wdId 해석 진단뿐이다 — 응답으로 나간다.
               // [Phase 8.1E.5] slotWorkTypeCounts 제거 — workDetailCounts canonical
               // [Phase 8.1E.2B] wdId 우선순위 기반 resolution (legacy Application 포함)
               {
@@ -24559,7 +24586,6 @@ export const callableRecalculateTOStats = onCall(
                   endTime: d.endTime as string | undefined,
                   selectedWorkType: d.selectedWorkType as string | undefined,
                 }, slotInfo);
-                const resolvedWdId = res.wdId;
                 if (res.via === "wdId") diagResolvedByWdId++;
                 else if (res.via === "composite") diagResolvedByComposite++;
                 else if (res.via === "timeTriple") diagResolvedByTimeTriple++;
@@ -24572,14 +24598,6 @@ export const callableRecalculateTOStats = onCall(
                   slotFailClosed.add(slotId);
                 }
                 // legacy slot (isNewSchema=false): resolvedWdId = undefined → workType aggregate only
-
-                if (resolvedWdId) {
-                  if (!slotWorkDetailCounts[slotId]) slotWorkDetailCounts[slotId] = {};
-                  if (!slotWorkDetailCounts[slotId][resolvedWdId])
-                    slotWorkDetailCounts[slotId][resolvedWdId] = {pending: 0, confirmed: 0};
-                  if (isPending) slotWorkDetailCounts[slotId][resolvedWdId].pending++;
-                  if (CONFIRMED_STATUSES.includes(status)) slotWorkDetailCounts[slotId][resolvedWdId].confirmed++;
-                }
               }
             }
           }
@@ -32226,6 +32244,42 @@ export const callableIncrementSlotPending = onCall(
       }
 
       const toRef = db.collection("tos").doc(toId);
+
+      // [R10] **이미 반영된 전이에 delta 를 얹지 않는다.**
+      //
+      //   클라이언트 취소는 두 걸음이다 — 원장을 쓰고, 그 다음 이 command 를
+      //   부른다. 그런데 원장 쓰기는 트리거를 깨우고, 트리거는 원장에서
+      //   **절대값으로** 다시 센다. 그 재계산이 이 호출보다 먼저 커밋되면
+      //   같은 전이가 두 번 반영된다.
+      //
+      //   실측(scripts/r10-emu-contract-b.js R10-3, 수정 전):
+      //     원장 취소 → 트리거가 대기 2 를 커밋(+415ms) → 이 command 가
+      //     -1 을 얹어 대기 1(+5247ms). 원장은 2 였다.
+      //   멱등 플래그는 **중복 호출**만 막는다. 절대 재계산과의 중복은 못 막는다.
+      //
+      //   판단 근거는 이미 있다: fence 가 "저장된 값이 어느 시점의 원장을
+      //   반영하는가"(`statsSourceReadAt`)를 들고 있고, 이 지원서의 마지막
+      //   쓰기 시각은 문서의 `updateTime` 이다. 저장된 값이 그보다 나중을
+      //   보았다면 이 전이는 이미 그 안에 들어 있다 → delta 를 쓰지 않는다.
+      //   필드가 없는(구버전이 만든) 공고에서는 판단하지 않고 기존대로 적용한다.
+      {
+        const incToSnap = await tx.get(toRef);
+        const fence = incToSnap.get("statsSourceReadAt") as
+          FirebaseFirestore.Timestamp | undefined;
+        const appWrittenAt = freshApp.updateTime;
+        if (fence && appWrittenAt && srvTsAtLeast(fence, appWrittenAt)) {
+          console.log(
+            "[callableIncrementSlotPending] 이미 반영된 전이 — delta 생략: " +
+            `app=${applicationId} delta=${delta} ` +
+            `원장쓰기=${appWrittenAt.toDate().toISOString()} ` +
+            `저장된읽기=${fence.toDate().toISOString()}`);
+          // 멱등 플래그는 남긴다 — 같은 요청이 다시 와도 여기서 끝난다.
+          tx.update(appRef, {
+            [flagField]: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          return;
+        }
+      }
       // [M-1-FIX] totalPending 업데이트를 슬롯 zero-check 이후로 이동 — zero-protection 발동 시 음수 방지 보장
 
       if (slotId) {

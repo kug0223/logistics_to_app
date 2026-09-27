@@ -139,6 +139,63 @@ void main() {
     });
   });
 
+  group('TTW-D 좌석 정의는 한 벌이고, 그 변화는 재계산을 깨운다 (R10)', () {
+    test('D-1 재집계도 트리거와 같은 좌석 술어를 쓴다', () {
+      // 반납한 좌석과 기간이 끝난 장기 약속은 정원을 차지하지 않는다.
+      //   재집계가 `CONFIRMED_STATUSES` 만 세던 동안, 경합이 전혀 없어도
+      //   두 절대 writer 가 같은 원장에서 다른 값을 만들었다
+      //   (실측 R10-2: 원장 1 / 재집계 2, 그리고 fence 가 그 값을 고정했다).
+      expect(
+          flatCf.contains('constoccupiesSeat=!!status&&CONFIRMED_STATUSES.includes(status)&&'
+              'd.staffingReleasedAt==null&&srvOccupiesSeatToday(doc)'),
+          isTrue);
+      // TO 합계와 업무유형 카운터가 같은 판정을 쓴다.
+      expect(flatCf.contains('if(occupiesSeat)totalConfirmed++;'), isTrue);
+      expect(flatCf.contains('if(!isFlexType&&selectedWorkType&&occupiesSeat){'), isTrue);
+      // 옛 술어로 돌아가지 않는다.
+      expect(cf.contains('if (status && CONFIRMED_STATUSES.includes(status)) totalConfirmed++;'),
+          isFalse);
+    });
+
+    test('D-2 좌석 표식이 바뀌면 status 가 같아도 재계산한다', () {
+      // `staffingReleasedAt` 는 status 를 그대로 두고 정원만 되돌린다.
+      //   status 만 보던 가드 때문에 그 경로에는 canonical 재계산이 돌지 않았고,
+      //   delta 는 fence 시각을 남기지 않으므로 낡은 절대 쓰기가 반납을 지우면
+      //   되돌릴 이벤트가 없었다(실측 R10-4).
+      expect(flatCf.contains('constseatMarkChanged='), isTrue);
+      expect(
+          flatCf.contains('(before?.staffingReleasedAt==null)!=='
+              '(after?.staffingReleasedAt==null)'),
+          isTrue);
+      expect(flatCf.contains('if(beforeStatus===afterStatus&&!seatMarkChanged)return;'), isTrue);
+    });
+
+    test('D-4 이미 반영된 전이에 delta 를 얹지 않는다', () {
+      // 클라이언트 취소는 두 걸음이다(원장 쓰기 → delta command). 원장 쓰기가
+      //   트리거를 깨우고 그 절대 재계산이 먼저 커밋되면 같은 전이가 두 번
+      //   반영됐다 — 멱등 플래그는 중복 **호출**만 막는다.
+      //   실측 R10-3(수정 전): 원장 대기 2 인데 저장 1.
+      //   판단은 fence(저장된 값이 본 원장 시점) vs 지원서 문서의 updateTime.
+      expect(flatCf.contains('constfence=incToSnap.get("statsSourceReadAt")'), isTrue);
+      expect(flatCf.contains('constappWrittenAt=freshApp.updateTime;'), isTrue);
+      expect(flatCf.contains('if(fence&&appWrittenAt&&srvTsAtLeast(fence,appWrittenAt)){'),
+          isTrue);
+      // 생략할 때도 멱등 플래그는 남긴다 — 같은 요청이 다시 와도 여기서 끝난다.
+      expect(
+          flatCf.contains('tx.update(appRef,{[flagField]:admin.firestore.FieldValue.serverTimestamp(),});'),
+          isTrue);
+    });
+
+    test('D-3 슬롯 합계를 재집계에서 따로 모으지 않는다', () {
+      // 7차에 슬롯 쓰기를 `srvSyncSlotCountersTx` 로 옮긴 뒤 읽는 곳이 없었고,
+      // 반납을 보지 않는 옛 술어를 들고 있었다 — 죽은 채 두면 되살아난다.
+      expect(cf.contains('const slotStats:'), isFalse);
+      expect(cf.contains('const slotWorkDetailCounts:'), isFalse);
+      // 진단은 남는다 — 응답으로 나간다.
+      expect(cf.contains('resolvedByWdId: diagResolvedByWdId,'), isTrue);
+    });
+  });
+
   group('TTW-C 슬롯·업무 축은 transaction 이 지킨다', () {
     test('C-1 슬롯 범위는 쓰기 시점에 다시 센다', () {
       final tx = _codeOf(_slice(cf,
