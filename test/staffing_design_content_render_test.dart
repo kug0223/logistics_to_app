@@ -15,6 +15,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:ALfit/models/ui/invite_capacity_state.dart';
 import 'package:ALfit/screens/business_admin/unclosed_action_queue_screen.dart';
@@ -26,33 +27,85 @@ import 'package:ALfit/widgets/dialogs/styled_dialog.dart';
 DateTime _kstDay(int y, int m, int d) =>
     DateTime.utc(y, m, d).subtract(const Duration(hours: 9));
 
+/// [R7-P1-2 DEVICE.1H.1] **실제 렌더 표면**을 그 크기로 만든다.
+///
+///   `MediaQuery` 만 덮으면 위젯이 *믿는* 크기만 바뀌고 실제 캔버스는 기본
+///   800x600 이라 좁은 폭이 강제되지 않는다. 그 상태에서는 320dp 에서 요소가
+///   오른쪽으로 밀려도 테스트가 통과한다 — 처음 작성한 harness 가 그랬다.
+void _setSurface(WidgetTester tester, Size size, double textScale) {
+  tester.view
+    ..devicePixelRatio = 1.0
+    ..physicalSize = size;
+  tester.platformDispatcher.textScaleFactorTestValue = textScale;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+  });
+}
 void main() {
   // ══════════════════════════════════════════════════════════════
   // A. §2 날짜 — production 함수 실행, 기기 무관
   // ══════════════════════════════════════════════════════════════
 
+  // [R7-P1-2 DEVICE.1H.1] **입력 형태가 다르다.**
+  //
+  //   `UnclosedQueueItem.workDate` 는 CF 의 `workDateStr`('YYYY-MM-DD')을
+  //   `DateTime(y, m, d)` 로 만든 값이다 — Firestore Timestamp 를 그대로 받은
+  //   instant 가 아니라 **성분이 KST 달력일인 로컬 DateTime** 이다.
+  //   그래서 production 에 넘어가는 그 모양으로 테스트한다.
+  //
+  //   DEVICE.1H 는 이 화면을 DEVICE.1F 와 같은 결함으로 보고 KST helper 로
+  //   바꿨는데, 로컬 성분 값에 `toKstDate` 를 적용하면 KST 보다 동쪽 기기에서
+  //   하루 앞으로 밀린다 — 없던 결함을 만드는 변경이었다. 되돌렸고, 그
+  //   사실을 아래 A5 가 붙잡는다.
+  DateTime queueWorkDate(int y, int m, int d) => DateTime(y, m, d);
+
   group('DH-A 미마감 큐 날짜/지연일수', () {
-    test('DH-A1 workDate 9/28(KST) → `9월 28일 월요일`', () {
-      expect(formatUnclosedWorkDate(_kstDay(2026, 9, 28)), '9월 28일 월요일');
+    // `DateFormat(..., 'ko_KR')` 은 locale data 가 필요하다. 앱에서는 main 이
+    // 초기화하므로 테스트 환경에서만 맞춰 준다(제품 동작과 무관).
+    setUpAll(() => initializeDateFormatting('ko_KR'));
+
+    test('DH-A1 workDate 9/25 → `9월 25일 금요일`', () {
+      expect(formatUnclosedWorkDate(queueWorkDate(2026, 9, 25)),
+          '9월 25일 금요일');
     });
 
-    test('DH-A2 월 경계도 밀리지 않는다', () {
-      // 10/1 00:00 KST = 9/30 15:00 UTC — 기기 성분을 읽으면 `9월 30일`.
-      expect(formatUnclosedWorkDate(_kstDay(2026, 10, 1)), startsWith('10월 1일'));
-      expect(formatUnclosedWorkDate(_kstDay(2026, 1, 1)), startsWith('1월 1일'));
+    test('DH-A2 월·연 경계도 성분 그대로다', () {
+      expect(formatUnclosedWorkDate(queueWorkDate(2026, 10, 1)),
+          startsWith('10월 1일'));
+      expect(formatUnclosedWorkDate(queueWorkDate(2026, 1, 1)),
+          startsWith('1월 1일'));
     });
 
-    test('DH-A3 지연일수가 KST 달력 차이다', () {
-      final today = FormatHelper.toKstDate(DateTime.now());
-      final threeDaysAgo =
-          today.subtract(const Duration(days: 3)).add(const Duration(hours: 9));
-      expect(unclosedDaysAgo(threeDaysAgo), 3);
+    test('DH-A3 지연일수가 달력 차이다', () {
+      final now = DateTime.now();
+      final d = DateTime(now.year, now.month, now.day)
+          .subtract(const Duration(days: 3));
+      expect(unclosedDaysAgo(d), 3);
     });
 
     test('DH-A4 오늘은 0, 어제는 1', () {
       final now = DateTime.now();
       expect(unclosedDaysAgo(now), 0);
       expect(unclosedDaysAgo(now.subtract(const Duration(days: 1))), 1);
+    });
+
+    test('DH-A5 KST helper 를 적용하면 안 된다 — 동쪽 TZ 에서 하루 밀린다', () {
+      // 로컬 성분 값에 `toKstDate` 를 쓰면 무슨 일이 벌어지는지 고정한다.
+      //   `toKstDate(local 9/25 00:00)` = toUtc + 9h.
+      //   기기가 KST(+9) 면 9/25, UTC 면 9/25, 그러나 UTC+13 이면 9/24 다.
+      final local = queueWorkDate(2026, 9, 25);
+      final viaKst = FormatHelper.toKstDate(local);
+      final offsetHours = local.timeZoneOffset.inHours;
+      if (offsetHours > 9) {
+        expect(viaKst.day, isNot(25),
+            reason: '동쪽 TZ 에서는 KST helper 가 하루 앞으로 민다');
+      } else {
+        expect(viaKst.day, 25);
+      }
+      // production 은 성분을 그대로 쓰므로 어느 TZ 에서도 25 다.
+      expect(formatUnclosedWorkDate(local), contains('25일'));
     });
 
     test('DH-A5 긴급 라벨 계약 유지', () {
@@ -161,6 +214,7 @@ void main() {
           testWidgets(
               'DH-C ${size.width.toInt()}x${size.height.toInt()} '
               'scale$scale rows$rows', (tester) async {
+            _setSurface(tester, size, scale);
             await tester.pumpWidget(harness(
               size: size,
               textScale: scale,
@@ -190,6 +244,7 @@ void main() {
     }
 
     testWidgets('DH-C-CAP 정원 갱신 중 — 숫자 없이 `갱신 중`', (tester) async {
+      _setSurface(tester, const Size(360, 740), 1.0);
       await tester.pumpWidget(harness(
         size: const Size(360, 740),
         textScale: 1.0,
@@ -205,6 +260,7 @@ void main() {
     });
 
     testWidgets('DH-C-ERR 정원 확인 불가 — 필요 인원은 유지', (tester) async {
+      _setSurface(tester, const Size(320, 640), 2.0);
       await tester.pumpWidget(harness(
         size: const Size(320, 640),
         textScale: 2.0,
@@ -220,6 +276,7 @@ void main() {
 
     testWidgets('DH-C-SCOPE 부분 로드에서는 수를 만들지 않는다', (tester) async {
       // `_dayStaffingRows == null` 일 때 머리말은 날짜만 남는다.
+      _setSurface(tester, const Size(360, 740), 1.0);
       await tester.pumpWidget(harness(
         size: const Size(360, 740),
         textScale: 1.0,
@@ -235,6 +292,7 @@ void main() {
     });
 
     testWidgets('DH-C-KB 키보드 올라와도 닫기에 닿는다', (tester) async {
+      _setSurface(tester, const Size(360, 740), 1.0);
       await tester.pumpWidget(harness(
         size: const Size(360, 740),
         textScale: 1.0,
@@ -250,6 +308,7 @@ void main() {
     });
 
     testWidgets('DH-C-SA safe area(노치·홈바)에서도 잘리지 않는다', (tester) async {
+      _setSurface(tester, const Size(390, 844), 1.3);
       await tester.pumpWidget(harness(
         size: const Size(390, 844),
         textScale: 1.3,

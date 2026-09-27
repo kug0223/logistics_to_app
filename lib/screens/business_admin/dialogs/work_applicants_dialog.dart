@@ -52,6 +52,7 @@ import '../../../models/core/business_member_model.dart';
 import '../../../models/ui/capacity_load_state.dart';
 import '../../../utils/applicant_load_outcome.dart';
 import '../../../utils/staffing_relation.dart';
+import '../../../widgets/admin/applicant_row_surface.dart';
 import '../../../widgets/admin/capacity_summary_text.dart';
 
 /// 다이얼로그 결과
@@ -2102,13 +2103,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       cardBorder = AppColors.successLight.withValues(alpha: 0.7);
     }
 
-    return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 4)),
-      decoration: BoxDecoration(
-        color: cardBg,
-        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
-        border: Border.all(color: cardBorder),
-      ),
+    // [R7-P1-2 DEVICE.1H.1] 표면은 `ApplicantRowSurface` 가 그린다 — 실제로
+    //   렌더해 확인할 수 있어야 하기 때문이다. 강조 색 규칙은 이 화면이 그대로
+    //   갖는다(알림 딥링크 강조·선택 alpha 가 홈 일자별과 다르다 — 통합하면
+    //   한쪽 모양이 바뀐다).
+    return ApplicantRowSurface(
+      background: cardBg,
+      border: cardBorder,
+      padding: EdgeInsets.zero,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -2230,9 +2232,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             ),
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          Text(
-                            _formatAppliedTime(app.appliedAt),
-                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                          // [R7-P1-2 DEVICE.1H.1] 큰 글자에서 넘치던 칸이다.
+                          //   `Expanded(이름)` 옆의 맨 Text 라 줄지 못했고,
+                          //   DEVICE.1H 의 `지원 ` 접두로 더 길어졌다.
+                          //   실제 렌더(320dp·배율 2.0)에서 확인했다.
+                          Flexible(
+                            child: Text(
+                              _formatAppliedTime(app.appliedAt),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                            ),
                           ),
                           if (isPending) ...[
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),

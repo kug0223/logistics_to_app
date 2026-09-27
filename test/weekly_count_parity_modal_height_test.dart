@@ -82,6 +82,22 @@ int countIn(DateTime refDate, List<AttendanceModel> recs) {
   return WeekHelper.workedDayCount(inWindow);
 }
 
+/// [R7-P1-2 DEVICE.1H.1] **실제 렌더 표면**을 그 크기로 만든다.
+///
+///   `MediaQuery` 만 덮으면 위젯이 *믿는* 크기만 바뀌고 실제 캔버스는 기본
+///   800x600 이라 좁은 폭이 강제되지 않는다. 그 상태에서는 320dp 에서 요소가
+///   오른쪽으로 밀려도 테스트가 통과한다 — 처음 작성한 harness 가 그랬다.
+void _setSurface(WidgetTester tester, Size size, double textScale) {
+  tester.view
+    ..devicePixelRatio = 1.0
+    ..physicalSize = size;
+  tester.platformDispatcher.textScaleFactorTestValue = textScale;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+  });
+}
 void main() {
   // ══════════════════════════════════════════════════════════════
   // A. 세는 규칙 — 문서가 아니라 날
@@ -225,6 +241,7 @@ void main() {
         tester.getRect(find.text('머리말')).top;
 
     testWidgets('WCP-C1 행이 적으면 모달이 내용만큼 줄어든다', (tester) async {
+      _setSurface(tester, const Size(360, 800), 1.0);
       await tester.pumpWidget(shell(rows: 1, useExpanded: false));
       final h = modalHeight(tester);
       expect(h, lessThan(300),
@@ -233,8 +250,10 @@ void main() {
 
     testWidgets('WCP-C2 같은 조건에서 Expanded 는 남은 공간을 채운다 — 회귀 대비',
         (tester) async {
+      _setSurface(tester, const Size(360, 800), 1.0);
       await tester.pumpWidget(shell(rows: 1, useExpanded: true));
       final expanded = modalHeight(tester);
+      _setSurface(tester, const Size(360, 800), 1.0);
       await tester.pumpWidget(shell(rows: 1, useExpanded: false));
       final flexible = modalHeight(tester);
       expect(expanded, greaterThan(flexible + 200),
@@ -244,6 +263,7 @@ void main() {
 
     testWidgets('WCP-C3 행이 많으면 상한까지 자라고 그 안에서 스크롤한다',
         (tester) async {
+      _setSurface(tester, const Size(360, 800), 1.0);
       await tester.pumpWidget(shell(rows: 30, useExpanded: false));
       final h = modalHeight(tester);
       expect(h, greaterThan(400), reason: '많은 행에서는 자란다 (실측 $h)');
@@ -315,6 +335,7 @@ void main() {
               'WCP-M ${size.width.toInt()}x${size.height.toInt()} '
               'scale$scale rows$rows — overflow 없음 · 닫기 접근 가능',
               (tester) async {
+            _setSurface(tester, size, scale);
             await tester.pumpWidget(
                 matrixShell(size: size, textScale: scale, rows: rows));
             await tester.pump();
@@ -341,6 +362,7 @@ void main() {
     }
 
     testWidgets('WCP-M-KB 키보드가 올라와도 닫기에 닿는다', (tester) async {
+      _setSurface(tester, const Size(360, 740), 1.0);
       await tester.pumpWidget(matrixShell(
           size: const Size(360, 740), textScale: 1.0, rows: 20, keyboard: 320));
       await tester.pump();
@@ -351,6 +373,7 @@ void main() {
     });
 
     testWidgets('WCP-M-SA safe area(노치·홈바)에서도 잘리지 않는다', (tester) async {
+      _setSurface(tester, const Size(390, 844), 1.0);
       await tester.pumpWidget(matrixShell(
         size: const Size(390, 844),
         textScale: 1.0,

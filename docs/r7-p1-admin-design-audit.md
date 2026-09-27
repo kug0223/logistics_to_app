@@ -214,7 +214,7 @@ DEVICE.1F 에서 확인했듯 `DateFormat.format` 은 **DateTime 자신의 zone*
 |---|---|---|---|
 | `dialogs/to_detail_dialogs.dart` | 2 | **0** | **DEAD → NO PATCH** (DEVICE.1H) — `TODetailDialogs` 가 어디서도 인스턴스화되지 않는다 |
 | `dialogs/to_list_dialogs.dart` | 1 | **0** | **FIXED** (DEVICE.1H) — `to.date` DATE_ONLY → `toKstDateKey`+`weekday`. 증거 RENDER(DH-B) |
-| `unclosed_action_queue_screen.dart` | 1 | **0** | **FIXED** (DEVICE.1H) — `item.workDate` DATE_ONLY + `_daysAgo` 기기 성분 → `toKstDate`. 증거 RENDER(DH-A) |
+| `unclosed_action_queue_screen.dart` | 1 | **0** | **NO PATCH — 원래 정상** (DEVICE.1H.1 정정). `UnclosedQueueItem.workDate` 는 CF 의 `workDateStr`('YYYY-MM-DD')을 `DateTime(y,m,d)` 로 만든 값이라 **성분이 KST 달력일인 로컬 DateTime** 이다. `DateFormat.format` 과 성분 기반 `_daysAgo` 가 모든 TZ 에서 정확하다. DEVICE.1H 가 `toKstDate` 로 바꿨는데 그것은 KST 보다 동쪽 기기(UTC+13)에서 하루 밀리는 **없던 결함을 만드는 변경**이었고 되돌렸다. 증거 RENDER(DH-A1~A5, TZ 3종) |
 | `common/profile_edit_screen.dart` | 1 | **0** | 확인 필요 |
 | `dialogs/resign_request_management_dialog.dart` | 3 | 2 | 혼재 |
 | `dialogs/schedule_request_management_dialog.dart` | 2 | 1 | 혼재 |
@@ -334,20 +334,41 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 
 ## 5-1. DEVICE.1H 실행 결과 (P1-2 적용분)
 
+> **DEVICE.1H.1 정정:** 날짜 4지점 중 **고칠 것은 1건**이었다.
+> `to_list_dialogs`(instant) FIXED · `unclosed_action_queue`(로컬 성분) **NO PATCH
+> — 원래 정상, 1H 의 변경을 되돌림** · `to_detail_dialogs` 2건 DEAD.
+> 판정 기준은 **필드가 instant 인가 성분 값인가** 다. instant(Firestore
+> Timestamp)면 KST helper 가 필요하고, 성분 값이면 성분을 그대로 읽는 것이 옳다.
+
 | 항목 | CODE | RENDER | DEVICE |
 |---|---|---|---|
-| 날짜 active 2건 (KST) | **CLOSED** | **DH-A/DH-B 실행** | 재촬영 대상 |
+| 날짜 `to_list_dialogs` (instant) | **CLOSED** | **DH-B** | 재촬영 대상 |
+| 날짜 `unclosed_action_queue` (성분) | **NO PATCH** (1H 변경 revert) | **DH-A1~A5 · TZ 3종** | — |
 | 날짜 dead 2건 | **NO PATCH** | — | — |
+| 사람 행 표면 (`ApplicantRowSurface`) | **CLOSED** | **ARS-A/B 실행** | 재촬영 대상 |
+| 지원시각 라벨 overflow | **CLOSED** (1H 가 키운 폭) | **ARS-B (320dp·배율 2.0)** | 재촬영 대상 |
 | 홈 일자별 범위 문구 | **CLOSED** | **DH-C 렌더** | 재촬영 대상 |
 | 지원·확정 단위 `건` (관계 건수) | **CLOSED** | — | 재촬영 대상 |
 | 확정 카드 tint → 테두리 | **CLOSED** | — | 재촬영 대상 |
 | `지원 N일 전` 라벨 | **CLOSED** | — | 재촬영 대상 |
 | 실제 콘텐츠 matrix (viewport 4 × 배율 3 × 행수 3 + 키보드 + safe area) | — | **48 PASS** | — |
 
-**여전히 미검증:** 사람 카드·badge/action 행 자체는 Firebase 의존 State 안에
-있어 렌더하지 못했다. DH-C 는 머리말·정원 문구·정보 카드·긴 텍스트 줄을
-production 위젯으로 그렸을 뿐이다. **그 조합 PASS 를 사람 카드 PASS 로
-읽지 않는다.**
+**DEVICE.1H.1 에서 해소:** 사람 행의 **표면**을 `ApplicantRowSurface` 로 떼어
+production 두 화면이 쓰게 했고(`day`·`work`), 실제 렌더로 검증했다.
+그 과정에서 **두 가지를 잡았다.**
+
+1. **1H 의 렌더 matrix 가 실제로 폭을 제약하지 않았다.** `MediaQuery` 만
+   덮으면 위젯이 *믿는* 크기만 바뀌고 캔버스는 기본 800x600 이다. 320dp 에서
+   버튼이 오른쪽으로 밀려도 통과했다(`right=583 > 320` 으로 드러남).
+   `tester.view.physicalSize` 로 실제 표면을 설정하도록 세 suite 를 모두 고쳤다.
+2. 그 결과 **진짜 overflow 를 찾았다** — 이름 줄의 지원시각 칸이 맨 `Text` 라
+   줄지 못해 320dp·배율 2.0 에서 Row 가 넘쳤다(36px). 1H 가 `지원 ` 접두를
+   붙여 더 길어진 자리다. 두 화면 모두 `Flexible` + ellipsis 로 고쳤다 —
+   글자를 줄이거나 라벨을 숨기지 않았다.
+
+**여전히 미검증:** 권한 게이팅·capacity 계산·어떤 action 이 뜰지 결정하는 규칙은
+여전히 Firebase 의존 State 안에 있다. 표면과 배지는 검증됐고, **그 PASS 를
+카드 전체 로직 PASS 로 읽지 않는다.**
 
 ---
 

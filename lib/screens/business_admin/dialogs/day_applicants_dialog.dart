@@ -36,6 +36,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/week_helper.dart';
 import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/app_checkbox.dart';
+import '../../../widgets/admin/applicant_row_surface.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../models/core/contract_template_model.dart' show ContractArticle;
@@ -895,11 +896,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final workUnits = <String>{};
     for (final r in rows) {
       if (r.toId.isNotEmpty) toIds.add(r.toId);
-      // canonical: wdId 가 있으면 그것, 없으면 업무명+시간 조합
-      final unit = r.wdId.isNotEmpty
+      // [R7-P1-2 DEVICE.1H.1] 업무 단위 키는 **항상 공고로 scope** 한다.
+      //
+      //   `wdId` 만으로 전역 dedup 하면 두 공고가 같은 wdId 를 갖는 경우
+      //   두 업무가 하나로 합쳐진다. DEV 실측으로는 공유 사례가 없었지만
+      //   (wdId 67개 중 공유 0), 그 성질에 기대지 않는다 — 공고 안에서만
+      //   같은 업무다.
+      final within = r.wdId.isNotEmpty
           ? r.wdId
-          : '${r.toId}_${r.workType}_${r.startTime}_${r.endTime}';
-      workUnits.add(unit);
+          : '${r.workType}_${r.startTime}_${r.endTime}';
+      workUnits.add('${r.toId}|$within');
     }
     if (toIds.isEmpty) return dateLabel;
     return '$dateLabel · 공고 ${toIds.length}개 · 업무 ${workUnits.length}개';
@@ -1646,35 +1652,28 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final canManageTo = _canForSelectedBiz((p) => p.canManageTo);
     final canManageContract = _canForSelectedBiz((p) => p.canManageContract);
 
-    final Color cardBg;
-    final Color cardBorder;
-    final double borderWidth;
-    if (isSelected) {
-      cardBg = AppColors.warningBg;
-      cardBorder = AppColors.warning;
-      borderWidth = 1.5;
-    } else if (isStarred) {
-      cardBg = AppColors.amber.withValues(alpha: 0.1);
-      cardBorder = AppColors.amberLight;
-      borderWidth = 1.0;
-    } else if (!isPending) {
-      // [R7-P1-2 DEVICE.1H §4] 확정은 **완료된 사실**이다 — 낮은 강조.
-      //
-      //   카드 전체 초록 tint + 초록 테두리 + 초록 배지가 함께 서 있었다.
-      //   D0 은 반복 강조 축소와 행당 강한 강조 제한을 규정하고, 완료 정보는
-      //   낮은 강조로 둔다. 셋 다 같은 사실을 세 번 말하는 동안 정작 눌러야
-      //   하는 것(계약서·서류 보완)이 묻힌다.
-      //
-      //   배경 tint 를 내리고 테두리만 남긴다. 배지는 그대로 둔다 —
-      //   상태를 색에만 의존하지 않기 위해 글자가 필요하다.
-      cardBg = Colors.white;
-      cardBorder = AppColors.successLight.withValues(alpha: 0.7);
-      borderWidth = 1.0;
-    } else {
-      cardBg = Colors.white;
-      cardBorder = AppColors.grey200;
-      borderWidth = 1.0;
-    }
+    // [R7-P1-2 DEVICE.1H §4] 확정은 **완료된 사실**이다 — 낮은 강조.
+    //
+    //   카드 전체 초록 tint + 초록 테두리 + 초록 배지가 함께 서 있었다.
+    //   D0 은 반복 강조 축소와 행당 강한 강조 제한을 규정하고, 완료 정보는
+    //   낮은 강조로 둔다. 셋 다 같은 사실을 세 번 말하는 동안 정작 눌러야
+    //   하는 것(계약서·서류 보완)이 묻힌다.
+    //   배경 tint 를 내리고 테두리만 남긴다.
+    //
+    // [R7-P1-2 DEVICE.1H.1] 그 규칙을 `dayApplicantRowColors` 로 떼어 냈다 —
+    //   실제로 그려서 확인할 수 있어야 하기 때문이다. 색 값은 여기서 넘기므로
+    //   이 화면의 모양은 바뀌지 않는다.
+    final rowColors = dayApplicantRowColors(
+      isSelected: isSelected,
+      isStarred: isStarred,
+      isPending: isPending,
+      selectedBg: AppColors.warningBg,
+      selectedBorder: AppColors.warning,
+      starredBg: AppColors.amber.withValues(alpha: 0.1),
+      starredBorder: AppColors.amberLight,
+      confirmedBorder: AppColors.successLight.withValues(alpha: 0.7),
+      plainBorder: AppColors.grey200,
+    );
 
     return GestureDetector(
       onTap: () {
@@ -1693,17 +1692,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _showWorkerDetail(app, user, isPending: isPending);
         }
       },
-      child: Container(
-        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 4)),
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 10),
-          vertical: ResponsiveHelper.spacing(context, 8),
-        ),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: cardBorder, width: borderWidth),
-        ),
+      child: ApplicantRowSurface(
+        background: rowColors.background,
+        border: rowColors.border,
+        borderWidth: rowColors.width,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1786,10 +1778,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     ],
                   ),
                 ),
-                Text(
-                  _timeAgo(app.appliedAt),
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey400),
+                // [R7-P1-2 DEVICE.1H.1] 이 Row 에서 유일하게 줄지 못하는 칸이었다.
+                //
+                //   `Expanded(이름)` 옆에 맨 Text 로 놓여 있어서, 글자 배율을
+                //   키우면 이 라벨이 남은 폭을 넘고 Row 가 overflow 한다.
+                //   320dp + 배율 2.0 의 실제 렌더에서 36px 넘쳤다.
+                //   DEVICE.1H 가 `지원 ` 접두를 붙여 더 길어졌으므로 함께 고친다.
+                //
+                //   글자를 줄이거나 라벨을 숨기지 않는다 — 줄 수 있게 만든다.
+                Flexible(
+                  child: Text(
+                    _timeAgo(app.appliedAt),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.grey400),
+                  ),
                 ),
                 if (isPending)
                   GestureDetector(

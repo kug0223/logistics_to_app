@@ -18,13 +18,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/user_provider.dart';
 import '../../services/unclosed_action_queue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/loading_state_mixin.dart';
-import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -36,29 +36,41 @@ import 'dialogs/attendance_status_dialog.dart';
 
 // ─── 날짜 포맷 ────────────────────────────────────────────────────────────────
 
-// [R7-P1-2 DEVICE.1H] 이 화면의 canonical unit 은 `business × workDate` 이고
-//   workDate 는 DATE_ONLY(KST 달력일)다. 두 곳이 기기 달력을 읽고 있었다.
+// [R7-P1-2 DEVICE.1H.1] **이 화면의 workDate 는 instant 가 아니다.**
 //
-//     ① `DateFormat('M월 d일 EEEE').format(workDate)` — DateFormat 은 DateTime
-//        자신의 zone 으로 찍는다. UTC 기기에서 `9/28 KST` 가 `9월 27일 일요일`
-//        이 된다(DEVICE.1F 와 같은 계열).
-//     ② `_daysAgo` 가 `DateTime(workDate.year, .month, .day)` 로 성분을 직접
-//        읽어 `D+N` 이 하루 밀린다. 마감 지연 일수는 관리자가 우선순위를
-//        정하는 수치다.
+//   `UnclosedQueueItem.tryFromMap` 은 CF 의 `workDateStr`('YYYY-MM-DD',
+//   이미 KST 달력일)을 `DateTime(y, m, d)` 로 만든다. 즉 **성분 자체가 KST
+//   달력값인 로컬 DateTime** 이다 — Firestore Timestamp 를 그대로 받은
+//   instant 와 다르다.
 //
-//   `+1일` 보정이나 저장 데이터 변경은 하지 않는다. 기존 KST helper 만 쓴다.
+//   그래서 성분을 읽는 쪽이 옳다.
+//     `DateFormat(...).format(workDate)` → 그 성분을 그대로 찍는다 → 모든 기기에서 정확
+//     `DateTime(workDate.year, .month, .day)` → 같은 이유로 정확
+//
+//   DEVICE.1H 는 이것을 DEVICE.1F 와 같은 결함으로 보고 `toKstDate` 로
+//   바꿨다. **그 판단이 틀렸다.** `toKstDate` 는 `toUtc().add(9h)` 이므로
+//   로컬 성분 값에 적용하면 KST 보다 동쪽 기기(예: UTC+13)에서 하루 앞으로
+//   밀린다 — 없던 결함을 만드는 변경이었다. 원래 식으로 되돌린다.
+//
+//   함수만 테스트 가능하게 남겨 둔다(`@visibleForTesting`). 이 형태를
+//   다시 "고치려는" 다음 사람을 위해서다.
+//
+//   instant 를 쓰는 화면은 반대다 — `to_list_dialogs` 의 `to.date` 는
+//   `rangeStart ?? ... ?? createdAt`(전부 Timestamp)이므로 그쪽은 KST helper 로
+//   고쳤다(DEVICE.1H).
 
-/// `9월 28일 월요일` — KST 달력 기준.
+final _dateFmt = DateFormat('M월 d일 EEEE', 'ko_KR');
+
+/// `9월 25일 목요일`. [workDate] 는 성분이 KST 달력일인 로컬 DateTime 이다.
 @visibleForTesting
-String formatUnclosedWorkDate(DateTime workDate) {
-  final kst = FormatHelper.toKstDate(workDate); // 성분이 KST 달력값이다
-  return '${kst.month}월 ${kst.day}일 ${FormatHelper.weekday(workDate)}요일';
-}
+String formatUnclosedWorkDate(DateTime workDate) => _dateFmt.format(workDate);
 
+/// 오늘로부터 며칠 지났는가. 양쪽 모두 로컬 성분으로 자정을 만든다.
 @visibleForTesting
 int unclosedDaysAgo(DateTime workDate) {
-  final todayMidnight = FormatHelper.toKstDate(DateTime.now());
-  final dateMidnight = FormatHelper.toKstDate(workDate);
+  final now = DateTime.now();
+  final todayMidnight = DateTime(now.year, now.month, now.day);
+  final dateMidnight = DateTime(workDate.year, workDate.month, workDate.day);
   return todayMidnight.difference(dateMidnight).inDays;
 }
 
