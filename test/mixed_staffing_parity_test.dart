@@ -797,7 +797,10 @@ void _residuals() {
 
     test('16-e CLOSED가 지원자 0인 새 그룹을 만들지 않는다 — R2 FINAL 유지', () {
       final day = _codeOf(_src(_dayPath));
-      expect(day.contains('if (row.isClosed) continue;'), true);
+      // [R7-P1-2 DEVICE.1I] 술어에 이름이 붙었다(`DayStaffingRow.seedsGroup`).
+      //   머리말 범위 count 가 본문과 같은 projection 을 쓰게 하려고 한 곳에
+      //   모았다. 계약(종료 단위로 새 그룹을 세우지 않는다)은 그대로다.
+      expect(day.contains('if (!row.seedsGroup) continue;'), true);
     });
 
     test('16-f 날짜 범위 밖 사전 차단은 fail-open이다', () {

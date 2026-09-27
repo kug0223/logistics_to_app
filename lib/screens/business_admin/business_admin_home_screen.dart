@@ -2206,6 +2206,24 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   `0명 전원 확정`은 운영이 있는 것처럼 들린다.
     //   shortageCount는 per-wdId 합산이라 required - confirmed와 다를 수 있으므로
     //   둘 다 만족할 때만 '전원 확정'이라고 말한다.
+    // [R7-P1-2 DEVICE.1I] `필요` 와 `더 필요` 가 **다른 모집단**이다 — 기록만 한다.
+    //
+    //   서버(`callableGetStaffingReadiness`)는 이렇게 센다.
+    //     required  += wd.required                        ← 종료된 단위도 포함
+    //     shortage  += wd.closed ? 0 : max(0, req - conf)  ← 종료 단위는 0
+    //   "종료된 단위는 채울 수 없으므로 부족이 아니다" 가 그 규칙이고, 같은
+    //   계약을 일자별 인력 현황도 쓴다(`DayStaffingRow.seedsGroup`).
+    //
+    //   그래서 `5명 필요 · 0명 확정` 옆에 `오늘 2명이 더 필요해요` 가 서는 것은
+    //   **정상이다** — 5 중 3명분은 이미 모집이 끝난 자리다. 다만 두 줄이 같은
+    //   단어(`필요`/`더 필요`)를 쓰니 `5 - 0 = 5` 를 기대한 사람에게 어긋난
+    //   산술로 읽힌다.
+    //
+    //   문구를 바꾸는 것이 옳지만 이 줄은 Home 요약 계약의 일부여서 단어 하나에
+    //   Home contract 8건이 걸려 있다. DEVICE.1I 의 범위(P1-2 목적지 + Home
+    //   진입 요약의 좁은 경계)를 넘으므로 **여기서 바꾸지 않는다.**
+    //   → `[CORRECTION-R7-HOME-REQUIRED-VS-RECRUITABLE-SHORTAGE-COPY]` / owner P1-4
+    //     (근거: 위 서버 두 줄. 새 지표·정책 변경 없이 copy·grouping 으로 해결)
     final allStaffed = required > 0 && shortage == 0 && confirmed >= required;
     final summaryText = allStaffed
         ? '$required명 전원 확정'

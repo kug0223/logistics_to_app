@@ -802,7 +802,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   것이다. 종료된 단위는 채울 수 없으므로 보여 줄 이유가 없다.
       //   이미 지원·초대가 있어 그룹이 선 경우에는 위에서 종료 사실을 실어
       //   주므로, 그 초대가 왜 수락되지 않는지 관리자가 알 수 있다.
-      if (row.isClosed) continue;
+      //   [R7-P1-2 DEVICE.1I] 술어를 이름으로 둔다 — 머리말 count 가 같은
+      //   규칙을 쓸 수 있어야 한다(`DayStaffingRow.seedsGroup`).
+      if (!row.seedsGroup) continue;
       groups[key] = _GroupData(
         toId: row.toId,
         toTitle: row.toTitle,
@@ -855,7 +857,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         children: [
           _buildHeader(context),
           if (!_isLoading) _buildStatsStrip(context),
-          Expanded(
+          // [R7-P1-2 DEVICE.1I] `Expanded` → `Flexible`.
+          //
+          //   DEVICE.1H 가 업무 명단에서 고친 것과 **같은 결함**이고, 이 진입에는
+          //   적용되지 않아 있었다. `AppModalShell` 은
+          //   `Column(mainAxisSize: min)` 이고 그 문서도 `Flexible(child: body)`
+          //   를 규정한다. `Expanded` 는 남은 공간을 강제로 채우므로 높이가 항상
+          //   화면의 95% 가 된다 — 9/30 처럼 그룹이 둘뿐인 날 아래쪽이 크게
+          //   비어 있었다(실기기 캡처).
+          //
+          //   많은 행에서는 그대로 상한까지 자라고 내부 스크롤로 닿는다.
+          Flexible(
             child: _isLoading
                 ? const Padding(
                     padding: EdgeInsets.all(40),
@@ -887,28 +899,34 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   ///   (UNKNOWN)이므로 `공고 0개` 같은 수를 만들어 내지 않고 날짜만 남긴다.
   ///   `전체` 라는 말은 쓰지 않는다 — 사업장 전체인지 진입 시 좁혀진 범위인지
   ///   이 화면이 단정할 수 없다.
+  ///
+  /// [R7-P1-2 DEVICE.1I] **본문과 같은 projection 을 센다.**
+  ///
+  ///   DEVICE.1H 는 `_dayStaffingRows`(filter 이전 raw rows)를 셌다. 그런데
+  ///   `_buildGroups` 는 `row.isClosed` 인 모집 단위로 **새 그룹을 세우지
+  ///   않는다**(채울 수 없으므로). 그래서 종료된 단위가 섞인 날에는 머리말이
+  ///   `공고 8개 · 업무 8개` 라고 하면서 본문에는 2개만 보였다 — 실기기
+  ///   9/28·9/30 캡처가 그것이다.
+  ///
+  ///   제목·머리말 count·요약·본문은 같은 범위를 말해야 한다. 그래서
+  ///   `_cachedGroups`(본문이 그리는 바로 그 목록)에서 센다. 새 query 를
+  ///   만들지 않고 기존 filtered projection 을 그대로 쓴다.
+  ///
+  ///   업무 단위는 그룹 하나 = `toId + wdId` 하나다(그룹 키가 그렇게 만들어
+  ///   진다). 공고 수는 그 그룹들의 distinct `toId` 다.
   String _headerScopeLabel() {
-    final dateLabel = FormatHelper.formatDateLong(widget.date);
-    final rows = _dayStaffingRows;
-    if (rows == null) return dateLabel; // UNKNOWN — 수를 만들지 않는다
-
+    final groups = _cachedGroups;
     final toIds = <String>{};
-    final workUnits = <String>{};
-    for (final r in rows) {
-      if (r.toId.isNotEmpty) toIds.add(r.toId);
-      // [R7-P1-2 DEVICE.1H.1] 업무 단위 키는 **항상 공고로 scope** 한다.
-      //
-      //   `wdId` 만으로 전역 dedup 하면 두 공고가 같은 wdId 를 갖는 경우
-      //   두 업무가 하나로 합쳐진다. DEV 실측으로는 공유 사례가 없었지만
-      //   (wdId 67개 중 공유 0), 그 성질에 기대지 않는다 — 공고 안에서만
-      //   같은 업무다.
-      final within = r.wdId.isNotEmpty
-          ? r.wdId
-          : '${r.workType}_${r.startTime}_${r.endTime}';
-      workUnits.add('${r.toId}|$within');
+    for (final g in groups) {
+      final id = g.toId;
+      if (id != null && id.isNotEmpty) toIds.add(id);
     }
-    if (toIds.isEmpty) return dateLabel;
-    return '$dateLabel · 공고 ${toIds.length}개 · 업무 ${workUnits.length}개';
+    return DayStaffingRow.scopeLabel(
+      dateLabel: FormatHelper.formatDateLong(widget.date),
+      rowsUnknown: _dayStaffingRows == null,
+      postingIds: toIds,
+      workUnitCount: groups.length,
+    );
   }
 
   Widget _buildHeader(BuildContext context) {

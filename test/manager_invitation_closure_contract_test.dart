@@ -535,8 +535,12 @@ void main() {
       // 채울 수 없는 자리를 `N명 부족`이라고 하면 관리자가 채우려 한다.
       final row = _src(_rowPath);
       expect(row.contains('int get shortage => isClosed'), isTrue);
-      // 종료된 row로 새 그룹을 세우지 않는다
-      expect(day.contains('if (row.isClosed) continue;'), isTrue);
+      // 종료된 row로 새 그룹을 세우지 않는다.
+      // [R7-P1-2 DEVICE.1I] 술어가 `DayStaffingRow.seedsGroup` 으로 이름을
+      //   얻었다 — 머리말 범위 count 가 본문과 **같은 규칙**을 쓰려면 그
+      //   판정이 한 곳에 있어야 했다. 계약은 그대로다.
+      expect(day.contains('if (!row.seedsGroup) continue;'), isTrue);
+      expect(row.contains('bool get seedsGroup => !isClosed;'), isTrue);
     });
 
     test('02c-f 관리자 라벨이 두 이유를 구분한다', () {

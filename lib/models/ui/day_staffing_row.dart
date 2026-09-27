@@ -22,6 +22,38 @@ class DayStaffingRow {
   ///   `더 이상 뽑지 않는다`다. 충원 대상에서는 빠지지만, 이유는 다르게 말한다.
   final bool isClosed;
 
+  /// [R7-P1-2 DEVICE.1I] 이 row 로 **새 모집 단위 그룹을 세우는가.**
+  ///
+  ///   일자별 인력 현황의 그룹 보강 루프는 "지원자 0명이어도 채울 수 있는
+  ///   자리" 를 보여 주기 위한 것이다. 종료된 단위는 채울 수 없으므로 새
+  ///   그룹을 만들지 않는다(이미 지원·초대로 그룹이 선 경우에는 종료 사실만
+  ///   실어 준다 — 그 초대가 왜 수락되지 않는지 알 수 있어야 한다).
+  ///
+  ///   이 규칙 때문에 **raw row 수와 화면에 보이는 그룹 수가 다르다.**
+  ///   DEV 실측(9/28·9/30): raw 8건 중 6건이 종료 → 본문 2건.
+  ///   머리말·요약이 raw 를 세면 `공고 8개` 라고 하면서 본문에는 2개만 보인다.
+  ///   그래서 이 술어를 이름으로 두고, 세는 쪽과 그리는 쪽이 같이 쓴다.
+  bool get seedsGroup => !isClosed;
+
+  /// 일자별 인력 현황 머리말의 범위 문구.
+  ///
+  ///   [dateLabel] 뒤에 `· 공고 N개 · 업무 M개` 를 붙인다. 수는 **화면이 그리는
+  ///   그룹**에서 온다 — raw row 수가 아니다.
+  ///   `전체` 라는 말은 쓰지 않는다: 사업장 전체인지 진입 시 좁혀진 범위인지
+  ///   (`filterToId`) 이 화면이 단정할 수 없다.
+  ///   보여 줄 그룹이 없거나 조회가 UNKNOWN 이면 날짜만 남긴다 — 수를 만들지
+  ///   않는다.
+  static String scopeLabel({
+    required String dateLabel,
+    required bool rowsUnknown,
+    required Set<String> postingIds,
+    required int workUnitCount,
+  }) {
+    if (rowsUnknown) return dateLabel;
+    if (postingIds.isEmpty || workUnitCount == 0) return dateLabel;
+    return '$dateLabel · 공고 ${postingIds.length}개 · 업무 $workUnitCount개';
+  }
+
   /// [R7-P1-PRODUCT] 장기(고정) 공고의 모집 단위인가.
   ///
   /// 장기에는 슬롯이라는 개념이 없어 [slotId]가 빈 문자열이다. 그것은

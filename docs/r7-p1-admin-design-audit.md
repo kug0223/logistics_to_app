@@ -330,6 +330,28 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 11. V4 radius 이탈 (같은 화면 3종 이상은 CORRECTION) → 각 군
 12. `splash_screen` `AppColors` 0 · 하드코딩 색 → P1-7
 
+### DEVICE.1I 에서 넘기는 항목
+
+**`[CORRECTION-R7-HOME-REQUIRED-VS-RECRUITABLE-SHORTAGE-COPY]` → owner P1-4**
+
+`오늘 5명 필요 · 0명 확정` 옆에 `오늘 2명이 더 필요해요` 가 서는 것은
+**정상이다.** 서버가 두 축을 다르게 센다(`functions/src/index.ts` per-wdId 루프):
+
+```ts
+// 종료된 단위는 채울 수 없으므로 부족이 아니다.
+const shortage = wd.closed ? 0 : Math.max(0, wd.required - confirmed);
+dayAcc[dayIdx].required += wd.required;   // 종료 포함, 전부
+dayAcc[dayIdx].shortage += shortage;      // 종료 단위는 0
+```
+
+즉 `필요` = 전체 정원, `부족` = **모집 가능분**. 같은 계약을 일자별 인력 현황이
+`DayStaffingRow.seedsGroup` 으로 쓴다. 문제는 두 줄이 같은 단어(`필요`/`더 필요`)를
+써서 `5 − 0 = 5` 로 읽히는 것이고, **copy·grouping 으로 해결된다**(새 지표·정책
+변경 불필요).
+
+DEVICE.1I 에서 문구를 바꿔 봤으나 그 한 단어에 **Home contract 8건**이 걸려 있어
+P1-2 의 좁은 경계를 넘는다 — **되돌리고 근거만 남겼다.** 코드에도 같은 주석이 있다.
+
 ---
 
 ## 5-1. DEVICE.1H 실행 결과 (P1-2 적용분)
@@ -347,7 +369,8 @@ D0 은 반복 강조 축소·행당 강한 강조 제한·완료 정보 낮은 �
 | 날짜 dead 2건 | **NO PATCH** | — | — |
 | 사람 행 표면 (`ApplicantRowSurface`) | **CLOSED** | **ARS-A/B 실행** | 재촬영 대상 |
 | 지원시각 라벨 overflow | **CLOSED** (1H 가 키운 폭) | **ARS-B (320dp·배율 2.0)** | 재촬영 대상 |
-| 홈 일자별 범위 문구 | **CLOSED** | **DH-C 렌더** | 재촬영 대상 |
+| 홈 일자별 범위 문구 | **CLOSED** (1H 는 filter 이전 rows 를 셌다 → 1I 에서 본문 projection 으로 정정) | **DH-C 렌더 · SCOPE 11** | 재촬영 대상 |
+| 일자별 하단 빈 공간 (`Expanded`→`Flexible`) | **CLOSED** (1I — 이 진입에는 1H 수정이 적용돼 있지 않았다) | WCP-C2 가 차이를 고정 | 재촬영 대상 |
 | 지원·확정 단위 `건` (관계 건수) | **CLOSED** | — | 재촬영 대상 |
 | 확정 카드 tint → 테두리 | **CLOSED** | — | 재촬영 대상 |
 | `지원 N일 전` 라벨 | **CLOSED** | — | 재촬영 대상 |
