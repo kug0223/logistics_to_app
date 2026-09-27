@@ -134,13 +134,33 @@ void main() {
       expect(seg.contains('capacity != InviteCapacityState.available'), true);
     });
 
-    test('P1-3-g capacity는 지원서가 아니라 slot이 말한다', () {
+    test('P1-3-g capacity는 지원서가 아니라 canonical 정원 조회가 말한다', () {
+      // [R7-P1-2 DEVICE.1E] 실패 flag 의 **위치**가 바뀌었다.
+      //
+      //   예전에는 부모가 넘긴 `widget.toItem.workDetailStatsFailed` 를 봤다.
+      //   그 snapshot 은 다이얼로그가 갱신할 수 없어서, 한 번 비어 있으면
+      //   닫을 때까지 `정원 확인 불가` 였다. 이제 이 화면이 직접 읽고
+      //   자기 실패 상태(`_capacityFailed`)를 갖는다.
+      //
+      //   계약은 그대로다: 실패는 0 이 아니라 UNKNOWN 이고, 정원은 화면에
+      //   로드된 지원서 부분집합에서 세지 않는다.
       final s = _codeOf(_src(_work));
       final i = s.indexOf('int? get _canonicalConfirmed');
       final seg = s.substring(i, i + 700);
-      expect(seg.contains('workDetailStatsFailed'), true,
+      expect(seg.contains('_capacityFailed'), true,
           reason: '통계 조회 실패는 정원 0이 아니라 UNKNOWN이다');
       expect(seg.contains('return null'), true);
+      expect(seg.contains('_applicants'), false,
+          reason: '정원을 지원서 목록에서 세면 부족이 부풀려진다');
+
+      // 그 상태를 만드는 곳이 canonical 정원 조회여야 한다.
+      final j = s.indexOf('Future<void> _loadCapacity()');
+      expect(j, greaterThan(-1));
+      final load = s.substring(j, j + 900);
+      expect(load.contains('loadTOWorkDetails('), true,
+          reason: '새 정원 경로를 만들지 않는다 — 카드와 같은 조회');
+      expect(load.contains("result['statsFailed'] == true"), true,
+          reason: '전부 0으로 seed 된 map 을 수치로 쓰지 않는다');
     });
 
     test('P1-3-h FULL/CLOSED에서는 ⋮ 메뉴의 초대도 내린다', () {

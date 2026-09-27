@@ -197,6 +197,34 @@ class TOGroupItem {
   DateTime get endDate =>
       singleTO.rangeEnd ?? singleTO.createdAt;
 
+  /// [R7-P1-2 DEVICE.1E §9] 이 공고의 **운영 마지막 날**. 모르면 null.
+  ///
+  ///   [isClosed] 가 이미 쓰는 source 선택을 그대로 따른다 — FLEX 는 실제
+  ///   슬롯 날짜가 canonical 이고, master 의 `rangeEnd` 는 아니다(R8 에서
+  ///   FLEX rangeEnd 를 운영 truth 로 쓰지 않기로 했다). 두 판정이 서로
+  ///   다른 날짜를 보면 같은 카드가 `마감됨` 과 `운영 중` 을 동시에 말한다.
+  ///
+  ///   [endDate] 와 달리 `createdAt` 으로 폴백하지 않는다. 생성일은 운영
+  ///   종료일이 아니다 — 그걸로 폴백하면 거의 모든 공고가 과거가 된다.
+  ///   모르면 null 을 돌려주고, 판정부는 끝났다고 단정하지 않는다.
+  DateTime? get operationEndDate {
+    if (!singleTO.isFlexType) return singleTO.rangeEnd;
+
+    DateTime? last;
+    for (final item in groupTOs) {
+      final date = item.slot?.date;
+      if (date == null) continue;
+      if (last == null || date.isAfter(last)) last = date;
+    }
+    if (last != null) return last;
+
+    if (hasSlotDates && slotDates.isNotEmpty) {
+      return slotDates.reduce((a, b) => a.isAfter(b) ? a : b);
+    }
+    // 슬롯을 아직 못 읽었다 — 모르는 것이지 끝난 것이 아니다.
+    return null;
+  }
+
   /// 날짜 범위 문자열
   String get dateRangeString {
     if (singleTO.isFlexType) {
@@ -275,7 +303,20 @@ class TOItem {
 
   /// [POSTING-V2-01B] 통계 조회가 실패했는지 여부.
   /// true면 [workDetailStats]는 실제 수치가 아니다.
-  bool workDetailStatsFailed = false;
+  ///
+  /// [R7-P1-2 DEVICE.1E] 생성자로도 받는다.
+  ///
+  ///   이 flag 는 `setWorkDetails`/`markWorkDetailStatsFailed` 로만 세울 수
+  ///   있었다. 그래서 공고 카드가 단건/장기용으로 **합성한** TOItem 은 이
+  ///   사실을 전달할 방법 자체가 없었고, 항상 `false` 로 태어났다.
+  ///
+  ///   카드 자신은 행에 `_singleTOStatsFailed() || stats == null` 로 따로
+  ///   OR 해서 넘겼지만, 그 합성 item 을 받은 **다이얼로그는 item 의 flag 를
+  ///   직접 읽는다**. `loadTOWorkDetails` 는 실패해도 전부 0 으로 seed 된
+  ///   map 을 함께 돌려주므로(`statsFailed: true`), 다이얼로그는 그 0 을
+  ///   canonical 정원으로 읽고 `확정 0 · 부족 N` 과 초대 CTA 까지 세울 수
+  ///   있었다 — 아무도 읽지 못한 수치를 읽은 것처럼 말하는 것이다.
+  bool workDetailStatsFailed;
 
   TOItem({
     required this.to,
@@ -286,6 +327,7 @@ class TOItem {
     required this.totalRequired,
     this.workDetailStats,
     this.isWorkDetailLoaded = false,
+    this.workDetailStatsFailed = false,
   }) : _workDetails = workDetails;
 
   List<WorkDetailData> get workDetails => _workDetails ?? [];

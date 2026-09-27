@@ -946,14 +946,24 @@ class ApplicationModel {
 
     // desiredStartDate가 없고 확정일(confirmedAt)이 workDate보다 늦으면
     // 실제 근무 시작은 confirmedAt 당일 — workDate부터 표시하면 미근무 기간이 포함됨
-    DateTime effectiveStart = desiredStartDate ?? workDate;
+    //
+    // [R7-P1-2 DEVICE.1E] 약속 기간은 KST 달력이다 — 기기 달력이 아니다.
+    //
+    //   여기는 `DateTime(confirmedAt.year, .month, .day)` 와
+    //   `${d.month}/${d.day}` 로 **기기 성분을 직접** 읽었다. DEV 실측값
+    //   (workDate 9/9, confirmedAt 9/16 05:00, workEndDate 9/22 — 모두 KST)
+    //   을 UTC 기기에서 그리면 `9/15~9/21` 이 나온다. 실기기 화면이 정확히
+    //   그랬다. 하루가 밀린 근무 약속은 관리자가 읽는 계약 사실이 틀린 것이다.
+    //
+    //   `isWorkingOnDate` 는 이미 같은 식을 KST 로 계산한다(1013행 주석의
+    //   "세 곳이 동일해야 함"). 표시만 기기 달력이면 판정과 화면이 갈라진다.
+    DateTime effectiveStart = FormatHelper.toKstDate(desiredStartDate ?? workDate);
     if (confirmedAt != null && desiredStartDate == null) {
-      final confirmedDay = DateTime(confirmedAt!.year, confirmedAt!.month, confirmedAt!.day);
+      final confirmedDay = FormatHelper.toKstDate(confirmedAt!);
       if (confirmedDay.isAfter(effectiveStart)) effectiveStart = confirmedDay;
     }
-    final startStr = '${effectiveStart.month}/${effectiveStart.day}';
-    final endStr = '${effectiveEnd.month}/${effectiveEnd.day}';
-    return '$startStr~$endStr';
+    return '${FormatHelper.formatDateShort(effectiveStart)}~'
+        '${FormatHelper.formatDateShort(effectiveEnd)}';
   }
   
   /// 근무 요일 표시 (예: "주 5일 (월~금)" 또는 "주 3일 (월,수,금)")

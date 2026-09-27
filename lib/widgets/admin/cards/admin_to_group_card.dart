@@ -719,9 +719,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
   ///
   ///   근로자 한 명의 계약 종료로 공고를 끝내지 않는다 — 공고 자신의
   ///   운영 기간(rangeEnd)만 본다.
+  ///   [R7-P1-2 DEVICE.1E §9] 운영 종료일은 `masterTO.rangeEnd` 가 아니라
+  ///   `groupItem.operationEndDate` 다. FLEX 공고의 운영 truth 는 실제 슬롯
+  ///   날짜이고, master 의 rangeEnd 는 그것과 어긋날 수 있다 — 그러면 같은
+  ///   카드의 마감 판정(`isClosed`)과 운영 종료 판정이 다른 날짜를 본다.
   PostingPresentationMode get _presentationMode =>
       resolvePostingPresentationMode(
-        operationEnd: widget.groupItem.masterTO.rangeEnd,
+        operationEnd: widget.groupItem.operationEndDate,
         recruitmentClosed: widget.groupItem.isClosed,
         now: _buildNow,
       );
@@ -2920,6 +2924,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
       totalRequired: widget.groupItem.totalRequired,
       workDetailStats: widget.groupItem.workDetailStats,
       isWorkDetailLoaded: widget.groupItem.isWorkDetailLoaded,
+      // [R7-P1-2 DEVICE.1E] 실패 사실을 함께 넘긴다.
+      //   이 합성 item 은 업무 상세 행뿐 아니라 **인력 현황 다이얼로그**로도
+      //   간다. 카드가 행에만 OR 로 얹어 주던 flag 를 item 자체에 실어야
+      //   다음 소비자가 같은 사실을 본다.
+      workDetailStatsFailed: _singleTOStatsFailed(),
     );
   }
 
