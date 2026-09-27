@@ -355,12 +355,31 @@ void main() {
   group('R2.4.1-10 지원자 공고 잔여 좌석', () {
     final jp = _codeOf(_src('lib/screens/common/job_posting_screen.dart'));
 
+    // [R7-4 C4] 잔여 계산이 공고 화면 안의 지역 산술에서 공통 판독기로 옮겼다.
+    //   계약은 그대로다 — 잔여는 정원에서 **확정만** 뺀다. 검사 대상만 옮긴다.
     test('10-a 잔여 좌석에서 대기를 빼지 않는다', () {
-      expect(
-          jp.contains('(workRequired - workConfirmed).clamp(0, workRequired)'),
-          isTrue);
-      expect(jp.contains('workRequired - workConfirmed - workPending'), isFalse,
-          reason: '지원자만 다른 부족을 본다');
+      final r =
+          _codeOf(_src('lib/models/ui/work_capacity_reading.dart'));
+      expect(r.contains('final r = requiredCount - c;'), isTrue,
+          reason: '잔여 = 정원 - 확정');
+      expect(r.contains('- pending'), isFalse,
+          reason: '어느 화면도 잔여에서 대기를 빼지 않는다');
+      // 공고 화면은 스스로 계산하지 않고 그 판독기를 쓴다.
+      expect(jp.contains('reading.remaining'), isTrue);
+      expect(jp.contains('workRequired - workConfirmed'), isFalse,
+          reason: '지역 산술이 남아 있으면 판독기와 갈라진다');
+    });
+
+    // [R7-4 C4] map 이 있다는 사실을 "안다"로 쓰지 않는다.
+    test('10-d 정원을 아는지 여부는 identity hit 으로 판정한다', () {
+      expect(jp.contains('widget.workDetailStats != null'), isFalse,
+          reason: 'map 존재는 이 업무를 안다는 뜻이 아니다');
+      expect(jp.contains('final hasWorkStats = reading.isKnown;'), isTrue);
+      final r =
+          _codeOf(_src('lib/models/ui/work_capacity_reading.dart'));
+      expect(r.contains('final s = work.lookupByIdentity(stats);'), isTrue);
+      expect(r.contains('if (s == null) return unknown(work.requiredCount);'),
+          isTrue, reason: 'identity miss 는 0 이 아니라 UNKNOWN');
     });
 
     test('10-b 잔여 0은 정원 마감이라는 뜻이다', () {
@@ -371,9 +390,22 @@ void main() {
     });
 
     test('10-c FULL 판정도 확정만 본다', () {
+      final r =
+          _codeOf(_src('lib/models/ui/work_capacity_reading.dart'));
       expect(
-          jp.contains('workConfirmed >= workRequired && workRequired > 0'),
-          isTrue);
+          r.contains(
+              'isKnown && requiredCount > 0 && (confirmed ?? 0) >= requiredCount'),
+          isTrue,
+          reason: 'FULL 은 확정과 정원만 본다 — 대기는 보지 않는다');
+      expect(jp.contains('final isWorkFull = reading.isFull;'), isTrue);
+    });
+
+    // [R7-4 C4] 모르는 것을 마감이라고 하지 않는다.
+    test('10-e 정원을 모르면 FULL 이라고 말하지 않는다', () {
+      final r =
+          _codeOf(_src('lib/models/ui/work_capacity_reading.dart'));
+      expect(r.contains('bool get isFull =>\n      isKnown &&'), isTrue,
+          reason: 'isKnown 이 첫 조건이어야 UNKNOWN 이 FULL 로 새지 않는다');
     });
   });
 

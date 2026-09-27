@@ -32,7 +32,12 @@ class AvailableWorkersBottomSheet extends StatefulWidget {
   final String startTime;
   final String endTime;
   final int requiredCount;
-  final int confirmedCount;
+
+  /// [R7-4 C7] 확정 인원. **모르면 null** 이다 — 0 이 아니다.
+  ///
+  ///   여기는 초대를 보내는 화면이다. 정원 조회가 빗나간 것을 `확정 0명`으로
+  ///   적으면, 이미 다 찬 자리를 `부족 2명`이라고 말하면서 초대를 권하게 된다.
+  final int? confirmedCount;
 
   const AvailableWorkersBottomSheet({
     super.key,
@@ -517,8 +522,11 @@ class _AvailableWorkersBottomSheetState
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final shortage = widget.requiredCount - widget.confirmedCount;
-    final shortageLabel = shortage <= 0 ? '0' : '$shortage';
+    // [R7-4 C7] 확정 수를 모르면 부족도 말할 수 없다.
+    final confirmed = widget.confirmedCount;
+    final shortage = confirmed == null ? null : widget.requiredCount - confirmed;
+    final shortageLabel =
+        shortage == null ? null : (shortage <= 0 ? '0' : '$shortage');
 
     return ConstrainedBox(
       constraints: BoxConstraints(
@@ -562,7 +570,9 @@ class _AvailableWorkersBottomSheetState
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '정원 ${widget.requiredCount}명 · 확정 ${widget.confirmedCount}명 · 부족 $shortageLabel명',
+                  shortageLabel == null
+                      ? '정원 ${widget.requiredCount}명 · 확정 인원 확인 불가'
+                      : '정원 ${widget.requiredCount}명 · 확정 $confirmed명 · 부족 $shortageLabel명',
                   style: ResponsiveHelper.smallStyle(
                       context, color: AppColors.warning),
                 ),

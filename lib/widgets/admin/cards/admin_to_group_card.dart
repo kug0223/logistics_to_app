@@ -2167,13 +2167,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
           Navigator.push(this.context, MaterialPageRoute(
             builder: (_) => JobPostingScreen(
               to: calSlot.to,
-              workDetails: calSlot.workDetails.isNotEmpty ? calSlot.workDetails : masterTO.workDetails,
+              // [R7-4 C4] 슬롯 업무 정의가 비면 master 로 떨어지지만,
+              //   그때 넘기는 stats 는 **슬롯의 것**이다. 두 identity 원천을
+              //   짝지으면 조회가 빗나가고, 빗나간 자리는 0 으로 접혀
+              //   `잔여 N명`이 된다. 정의가 master 면 슬롯 stats 는 붙이지 않는다.
+              workDetails: calSlot.workDetails.isNotEmpty
+                  ? calSlot.workDetails
+                  : masterTO.workDetails,
               mode: TODetailMode.adminPreview,
               slotDate: calSlot.slot?.date,
               slotTotalRequired: resolvedStats.required,
               slotConfirmedCount: resolvedStats.confirmed,
               slotPendingCount: resolvedStats.pending,
-              workDetailStats: calSlot.workDetailStats,
+              workDetailStats: calSlot.workDetails.isNotEmpty
+                  ? calSlot.workDetailStats
+                  : null,
             ),
           ));
         } else {

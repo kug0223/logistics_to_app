@@ -50,6 +50,7 @@ import '../../../widgets/common/loading_widget.dart';
 import '../../../models/core/business_member_model.dart';
 // [R7-P1-2 DEVICE.1E.1] 화면에서 분리한 판정들 — 실행으로 증명하기 위해서다.
 import '../../../models/ui/capacity_load_state.dart';
+import '../../../models/ui/work_capacity_reading.dart';
 import '../../../utils/applicant_load_outcome.dart';
 import '../../../utils/staffing_relation.dart';
 import '../../../widgets/admin/applicant_row_surface.dart';
@@ -937,6 +938,32 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     await _capacity.load();
   }
 
+  /// [R7-4 C5·C6] 승인 전 정원 관문 — 단건 승인과 일괄 승인이 **같은 계약**을 쓴다.
+  ///
+  ///   막을 이유가 있으면 그 문구를, 없으면 null 을 돌려준다.
+  ///
+  ///   예전에는 두 자리가 각각 `stats?['confirmed'] ?? 0` 으로 정원을 읽었다.
+  ///   identity 가 빗나가면 확정 수가 0 이 되고, 남은 자리는 정원만큼 열려
+  ///   있는 것처럼 보였다. 정원이 다 찬 업무에서 승인 버튼이 열리고,
+  ///   `현재 0명 확정`이라는 틀린 문장까지 붙었다.
+  ///
+  ///   모르는 것은 0 이 아니다. 모르면 모른다고 말하고 멈춘다 —
+  ///   대기(UNKNOWN)를 `인원 충족`이라고 바꿔 말하지도 않는다.
+  ///
+  ///   이 판정은 **최종 권위가 아니다.** 마지막 한 자리를 두고 동시에 누르는
+  ///   경우는 서버 transaction 이 막는다. 여기서 하는 일은 서버가 거절할 것을
+  ///   미리 알려 주는 것뿐이다.
+  ///   판정 본체는 [capacityBlockReason] 에 있다 — 화면 없이 실행해 확인한다.
+  ///   여기서는 canonical 확정 수를 어디서 읽는지만 정한다.
+  String? _capacityBlockReason(WorkDetailModel? work, int addCount) {
+    if (work == null) return null;
+    return capacityBlockReason(
+      confirmed: _capacity.confirmedFor(work),
+      requiredCount: work.requiredCount,
+      addCount: addCount,
+    );
+  }
+
   /// 이 업무의 canonical 확정 수. 정원 조회가 말하는 값이고, 못 읽었으면 null.
   ///
   /// 지원서에서 세지 않는다 — 이 다이얼로그가 로드한 지원서는 권한·페이징에
@@ -1284,7 +1311,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           startTime: work.startTime,
           endTime: work.endTime,
           requiredCount: work.requiredCount,
-          confirmedCount: _canonicalConfirmed ?? 0,
+          // [R7-4 C7] canonical 이 아니면 null — 0 으로 되접지 않는다.
+          //   `workDetailId: work.id` 는 그대로 둔다. 서버
+          //   `callableGetAvailableWorkers` 는 이 값을
+          //   `workType_startTime_endTime`(또는 workType)으로 매칭한 뒤
+          //   거기서 wdId 를 역산한다. canonicalId 를 넘기면 매칭에 실패해
+          //   **첫 번째 업무로 폴백**한다 — 지금 값이 맞는 값이다.
+          confirmedCount: _canonicalConfirmed,
         ),
       );
     } else if (choice == 'direct') {
@@ -2944,17 +2977,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     // 인원 체크 (일괄 승인과 동일 기준)
     final effectiveWork = _getWorkForApp(app) ?? widget.work;
-    final stats = (effectiveWork != null)
-        ? effectiveWork.lookupByIdentity(widget.toItem.workDetailStats)
-        : null;
-    final confirmedCount = (stats?['confirmed'] as int?) ?? 0;
-    final remaining = (effectiveWork != null)
-        ? effectiveWork.requiredCount - confirmedCount
-        : 0;
-    if (effectiveWork != null && remaining <= 0) {
-      ToastHelper.showWarning(
-        '필요 인원(${effectiveWork.requiredCount}명)이 이미 충족되었습니다.',
-      );
+    final blockReason = _capacityBlockReason(effectiveWork, 1);
+    if (blockReason != null) {
+      ToastHelper.showWarning(blockReason);
       return;
     }
 
@@ -3390,15 +3415,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     // 인원 체크 (일괄 승인은 단일 업무 모드에서만 실행됨)
-    if (widget.work != null) {
-      final stats = widget.work!.lookupByIdentity(widget.toItem.workDetailStats);
-      final confirmedCount = stats?['confirmed'] ?? 0;
-      final remaining = widget.work!.requiredCount - confirmedCount;
-
-      if (_selectedIds.length > remaining) {
-        ToastHelper.showWarning('필요 인원(${widget.work!.requiredCount}명)을 초과합니다. 현재 $confirmedCount명 확정, $remaining명 추가 가능');
-        return;
-      }
+    // [R7-4 C6] 단건 승인과 같은 관문을 쓴다.
+    final bulkBlockReason =
+        _capacityBlockReason(widget.work, _selectedIds.length);
+    if (bulkBlockReason != null) {
+      ToastHelper.showWarning(bulkBlockReason);
+      return;
     }
 
     // 첫 번째 await 전에 가드 설정 — 템플릿 선택 다이얼로그가 열려 있는 동안 중복 탭 차단

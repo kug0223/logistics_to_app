@@ -48,6 +48,7 @@ import '../../models/core/employment_contract_model.dart';
 import '../contract/contract_sign_screen.dart';
 // [CROSS-DOMAIN-R5.3D] 통합 초대 상세 — promise / context / acceptability 분리
 import '../../models/ui/invitation_projection.dart';
+import '../../models/ui/work_capacity_reading.dart';
 import '../../widgets/user/invitation_promise_card.dart';
 
 enum TODetailMode {
@@ -1313,8 +1314,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final theme = Theme.of(context);
     final workType = _workTypeMap[work.workType];
 
-    final workStats = work.lookupByIdentity(widget.workDetailStats);
-    final workConfirmed = workStats?['confirmed'] ?? 0;
+    // [R7-4 C4] 정원 판독은 공통 owner 하나로 한다.
+    //
+    //   예전에는 `workDetailStats != null` 하나로 "안다"고 판정했다. 그런데
+    //   map 이 있다는 것과 **이 업무가 그 map 안에 있다**는 것은 다른 사실이다.
+    //   슬롯 stats 에 master 업무 정의를 맞대면 조회가 빗나가고, 그때
+    //   `confirmed = 0` 으로 접히면서 자리가 다 찬 업무가 `잔여 N명`이 된다.
+    final reading = WorkCapacityReading.read(work, widget.workDetailStats);
     final workRequired = work.requiredCount;
     // [SYSTEM-INTEGRATION-R2.4.1 §2] 잔여 좌석에서 대기(PENDING)를 빼지 않는다.
     //
@@ -1325,11 +1331,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     //   열려 있는데 지원자는 거의 찼다고 판단해 지원을 포기한다.
     //
     //   같은 entity, 같은 사건, 같은 truth.
-    final workAvailable =
-        (workRequired - workConfirmed).clamp(0, workRequired);
-    final hasWorkStats = widget.workDetailStats != null;
+    //   [R7-4 C4] 모르면 잔여를 말하지 않는다 — null 이다.
+    final workAvailable = reading.remaining;
+    final hasWorkStats = reading.isKnown;
 
-    final isWorkFull = workConfirmed >= workRequired && workRequired > 0;
+    // 모르는 것을 마감이라고 하지 않는다. `isFull` 은 아는 경우에만 true 다.
+    final isWorkFull = reading.isFull;
     final isTimeExpired = work.isTimeExpired;
     final isClosed = isOverallClosed || isWorkFull || isTimeExpired;
 
@@ -1362,13 +1369,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final isSelected = _isWorkSelected(work);
     final canSelect = widget.mode == TODetailMode.applicant && !isClosed;
 
-    final availableColor = hasWorkStats
-        ? (workAvailable > 1
+    final availableColor = workAvailable == null
+        ? AppColors.grey400
+        : (workAvailable > 1
             ? AppColors.info
             : workAvailable == 1
                 ? AppColors.warning
-                : AppColors.error)
-        : AppColors.grey400;
+                : AppColors.error);
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
@@ -1564,7 +1571,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.grey700),
                             ),
-                            if (hasWorkStats) ...[
+                            if (workAvailable != null) ...[
                               const TextSpan(text: ' · 잔여 '),
                               TextSpan(
                                 // [R2.4.1 §2] 잔여 0은 자리가 다 찼다는 뜻이다.

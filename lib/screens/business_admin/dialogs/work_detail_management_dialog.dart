@@ -11,6 +11,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/ui/work_capacity_reading.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
 
@@ -20,6 +21,14 @@ abstract class _WDS {
   static const String timeExpired = 'TIME_EXPIRED';
   static const String full        = 'FULL';
   static const String emergency   = 'EMERGENCY';
+
+  /// [R7-4 C3] 정원을 **모르는** 상태. 확정 0명과 다르다.
+  ///
+  ///   예전에는 통계 조회가 빗나가면 `confirmed = 0` 으로 접고 곧바로
+  ///   `진행중`이라고 적었다. 정원이 이미 찬 업무가 `0/2 · 진행중`으로
+  ///   보였고, 그 상태로 `N개 마감` 버튼까지 열렸다. 모르는 것은
+  ///   모른다고 말하고, 그 값에 기대는 판단만 멈춘다.
+  static const String unknown     = 'UNKNOWN';
 }
 
 class WorkDetailManagementDialog {
@@ -73,9 +82,7 @@ class WorkDetailManagementDialog {
                   .firstOrNull
               : null;
           if (firstSelected != null) {
-            final stats = firstSelected.lookupByIdentity(toItem.workDetailStats);
-            final confirmed = stats?['confirmed'] ?? 0;
-            selectedStatus = _getWorkStatus(firstSelected, confirmed);
+            selectedStatus = _getWorkStatus(firstSelected, _readingOf(firstSelected));
           } else {
             selectedWorkDetails.clear();
             selectedStatus = null;
@@ -84,9 +91,7 @@ class WorkDetailManagementDialog {
           // 선택 가능한 업무들
           final selectableWorks = toItem.workDetails.where((work) {
             if (selectedStatus == null) return true;
-            final stats = work.lookupByIdentity(toItem.workDetailStats);
-            final confirmed = stats?['confirmed'] ?? 0;
-            final workStatus = _getWorkStatus(work, confirmed);
+            final workStatus = _getWorkStatus(work, _readingOf(work));
             return workStatus == selectedStatus;
           }).toList();
 
@@ -118,18 +123,15 @@ class WorkDetailManagementDialog {
 
                 // 업무 목록
                 ...toItem.workDetails.map((work) {
-                  final stats = work.lookupByIdentity(toItem.workDetailStats);
-                  final confirmed = stats?['confirmed'] ?? 0;
-                  final pending = stats?['pending'] ?? 0;
-                  final workStatus = _getWorkStatus(work, confirmed);
+                  final reading = _readingOf(work);
+                  final workStatus = _getWorkStatus(work, reading);
                   final isSelectable = selectedStatus == null || workStatus == selectedStatus;
                   final isSelected = selectedWorkDetails.contains(work.id);
 
                   return _buildWorkCard(
                     context,
                     work,
-                    confirmed,
-                    pending,
+                    reading,
                     workStatus,
                     isSelectable,
                     isSelected,
@@ -219,8 +221,7 @@ class WorkDetailManagementDialog {
   Widget _buildWorkCard(
     BuildContext context,
     WorkDetailModel work,
-    int confirmed,
-    int pending,
+    WorkCapacityReading reading,
     String workStatus,
     bool isSelectable,
     bool isSelected,
@@ -354,18 +355,24 @@ class WorkDetailManagementDialog {
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                           Text(
-                            '$confirmed/${work.requiredCount}명',
+                            // [R7-4 C3] 모르는 확정 수를 0 으로 적지 않는다.
+                            //   필요 인원은 업무 정의라 언제나 말할 수 있다.
+                            reading.isKnown
+                                ? '${reading.confirmed}/${work.requiredCount}명'
+                                : '확정 ?/${work.requiredCount}명',
                             style: ResponsiveHelper.smallStyle(
                               context,
-                              color: work.requiredCount > 0 && confirmed >= work.requiredCount
-                                  ? AppColors.success
-                                  : AppColors.grey600,
+                              color: !reading.isKnown
+                                  ? AppColors.grey500
+                                  : reading.isFull
+                                      ? AppColors.success
+                                      : AppColors.grey600,
                             ).copyWith(fontWeight: FontWeight.w600),
                           ),
-                          if (pending > 0) ...[
+                          if ((reading.pending ?? 0) > 0) ...[
                             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                             Text(
-                              '(대기 $pending명)',
+                              '(대기 ${reading.pending}명)',
                               style: ResponsiveHelper.tinyStyle(
                                 context,
                                 color: AppColors.warning,
@@ -432,6 +439,27 @@ class WorkDetailManagementDialog {
           },
         );
 
+      // [R7-4 C3] 정원을 모르는 업무에는 정원에 기대는 action 을 열지 않는다.
+      //
+      //   마감·재오픈은 "지금 몇 명 찼는가"를 보고 하는 판단이다. 그 값을
+      //   모르는 채로 버튼을 열면, 모른다는 사실이 아니라 0 이라는 오답을
+      //   근거로 누르게 된다. 대신 왜 막혔고 어떻게 푸는지 말한다.
+      case _WDS.unknown:
+        return StyledDialogButton.primary(
+          text: '정원 확인 필요',
+          backgroundColor: AppColors.grey500,
+          onPressed: () {
+            DialogHelper.showInfo(
+              context,
+              title: '정원 정보를 불러오지 못했습니다',
+              message: '이 업무의 확정 인원을 확인할 수 없어 마감·재오픈을 '
+                  '진행하지 않습니다.\n\n'
+                  '목록을 새로고침한 뒤 다시 시도해주세요. '
+                  '정원을 확인할 수 있는 다른 업무는 그대로 관리할 수 있습니다.',
+            );
+          },
+        );
+
       case _WDS.emergency:
         return StyledDialogButton.primary(
           text: '긴급모집 종료',
@@ -455,13 +483,32 @@ class WorkDetailManagementDialog {
         return {'label': '긴급모집', 'color': AppColors.error, 'icon': Icons.warning};
       case _WDS.full:
         return {'label': '인원충족', 'color': AppColors.success, 'icon': Icons.check_circle};
+      // [R7-4 C3] 확정 0 과 구분되는 라벨. `진행중`으로 내려앉지 않는다.
+      case _WDS.unknown:
+        return {'label': '확인 필요', 'color': AppColors.grey500, 'icon': Icons.sync_problem};
       case _WDS.active:
       default:
         return {'label': '진행중', 'color': AppColors.info, 'icon': Icons.play_circle};
     }
   }
 
-  String _getWorkStatus(WorkDetailModel work, int confirmed) {
+  /// [R7-4 C3] 이 다이얼로그가 정원을 읽는 **단 하나의 창구**.
+  ///
+  ///   `toItem.workDetailStatsFailed` 는 조회 실패라는 사실이고,
+  ///   identity miss 는 `WorkCapacityReading` 안에서 걸러진다.
+  WorkCapacityReading _readingOf(WorkDetailModel work) =>
+      WorkCapacityReading.read(
+        work,
+        toItem.workDetailStats,
+        statsFailed: toItem.workDetailStatsFailed,
+      );
+
+  /// [R7-4 C3] 정원 판독([reading])을 받는다.
+  ///
+  ///   시간만료·마감·긴급모집은 업무 정의만으로 정해지므로 통계와 무관하게
+  ///   그대로 답한다. 통계가 필요한 것은 **인원충족인지 진행중인지** 하나뿐이고,
+  ///   그것을 모를 때 진행중으로 내려앉지 않는 것이 이 수정의 전부다.
+  String _getWorkStatus(WorkDetailModel work, WorkCapacityReading reading) {
     if (work.isTimeExpired) return _WDS.timeExpired;
     if (work.isClosed) return _WDS.closed;
 
@@ -476,7 +523,9 @@ class WorkDetailManagementDialog {
     }
 
     if (work.isEmergencyOpen) return _WDS.emergency;
-    if (work.requiredCount > 0 && confirmed >= work.requiredCount) return _WDS.full;
+    // 여기서부터는 정원 수치가 있어야 답할 수 있다.
+    if (!reading.isKnown) return _WDS.unknown;
+    if (reading.isFull) return _WDS.full;
     return _WDS.active;
   }
 
