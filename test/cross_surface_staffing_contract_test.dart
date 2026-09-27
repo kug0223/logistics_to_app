@@ -210,14 +210,26 @@ void main() {
       expect(day.contains('confirmedCount: g.confirmedApps.length'), isFalse);
     });
 
+    // [R7-5 §7] 머리말 계산이 카드 안에서 공통 projection 으로 옮겼다.
+    //   계약은 그대로다 — 같은 resolver 를 쓰고, 슬롯 카운터를 직접 합산하지
+    //   않는다. 검사 대상만 그 owner 로 옮긴다.
     test('04-c 공고 카드 헤더와 날짜 칩이 같은 source를 쓴다', () {
       final card = _codeOf(_src(_cardPath));
       final agg = _after(card, 'void _updateGroupCache()', 1400);
-      expect(agg.contains('t.resolveStats()'), isTrue);
+      expect(agg.contains('projectGroupHeaderTotals('), isTrue,
+          reason: '카드가 공통 projection 을 거쳐야 한다');
+
+      final proj = _codeOf(_src('lib/models/ui/group_header_totals.dart'));
+      expect(proj.contains('t.resolveStats()'), isTrue);
       // legacy 슬롯 카운터 직접 합산이 남아 있으면 안 된다
-      expect(agg.contains('p += t.pendingCount'), isFalse,
-          reason: 'slot.pendingCount를 사용자 truth로 쓰고 있다');
-      expect(agg.contains('c += t.confirmedCount'), isFalse);
+      for (final s in const [
+        'p += t.pendingCount',
+        'c += t.confirmedCount',
+      ]) {
+        expect(proj.contains(s), isFalse,
+            reason: 'slot 카운터를 사용자 truth로 쓰고 있다: $s');
+        expect(agg.contains(s), isFalse, reason: '카드에도 남아 있다: $s');
+      }
     });
 
     test('04-d 초대 CTA 노출 조건도 같은 값을 쓴다', () {

@@ -11,6 +11,7 @@ import '../../../models/core/to_model.dart';
 import '../../../utils/action_guard.dart';
 import '../../../utils/close_state_utils.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../models/ui/group_header_totals.dart';
 import '../../../models/core/work_detail_data.dart';
 
 // Helper
@@ -196,49 +197,30 @@ class _TOGroupCardState extends State<TOGroupCard> {
             DateUtils.isSameDay(t.slot?.date ?? t.to.date, widget.selectedDate!)).toList()
         : g.groupTOs;
 
-    if (_targetTOs.isEmpty) {
-      // [R7-P1-2 DEVICE.1D] 장기/단건 카드도 같은 resolver 를 거친다.
-      //
-      //   여기는 그룹 카운터(`TO.totalConfirmed`)를 곧바로 썼다. 같은
-      //   카드의 업무 상세는 방금 불러온 집계를 쓴다 — 두 projection 은
-      //   갱신 시점이 달라서, 카운터가 뒤처진 구간에 요약 `충원 1` 과
-      //   상세 `충원 0` 이 한 화면에 동시에 떴다.
-      //
-      //   `resolveStats()` 가 집계가 있으면 집계를, 없으면 카운터를 쓴다.
-      //   두 표면이 같은 함수에서 나오므로 갈라질 수 없다.
-      final single = _getSingleTOItem();
-      final s = single.resolveStats();
-      _totalConfirmed = s.confirmed;
-      _totalPending   = s.pending;
-      _totalRequired  = s.required;
-      _totalShortage  = s.shortage;
-      _isFull = single.resolvedIsFull;
-    } else {
-      // [SYSTEM-INTEGRATION-R2.4 §9] 헤더와 날짜 칩이 같은 source를 쓴다.
-      //
-      //   헤더는 슬롯 문서의 denormalized 카운터(`slot.confirmedCount` /
-      //   `slot.pendingCount`)를 더했고, 같은 카드의 날짜 칩과 업무 행은
-      //   `resolveStats()`(지원서 집계)를 썼다. 한 카드 안에서 두 수치가
-      //   갈라질 수 있었다.
-      //
-      //   특히 `slot.pendingCount`는 초대 발송 시 +1 되었다가 syncTOStats가
-      //   PENDING만 세어 다시 내리는 값이라, 관리자에게 보여 줄 `대기`의
-      //   truth가 아니다. `resolveStats()`는 이미 통계 실패를 알고
-      //   (`workDetailStatsFailed`) 그때만 슬롯 카운터로 폴백한다.
-      int c = 0, p = 0, r = 0, sh = 0;
-      for (final t in _targetTOs) {
-        final s = t.resolveStats();
-        c += s.confirmed;
-        p += s.pending;
-        r += s.required;
-        sh += s.shortage;
-      }
-      _totalConfirmed = c;
-      _totalPending   = p;
-      _totalRequired  = r;
-      _totalShortage  = sh;
-      _isFull = _targetTOs.every((t) => t.resolvedIsFull);
-    }
+    // [R7-P1-2 DEVICE.1D] 장기/단건 카드도 같은 resolver 를 거친다.
+    //
+    //   여기는 그룹 카운터(`TO.totalConfirmed`)를 곧바로 썼다. 같은
+    //   카드의 업무 상세는 방금 불러온 집계를 쓴다 — 두 projection 은
+    //   갱신 시점이 달라서, 카운터가 뒤처진 구간에 요약 `충원 1` 과
+    //   상세 `충원 0` 이 한 화면에 동시에 떴다.
+    //
+    // [SYSTEM-INTEGRATION-R2.4 §9] 헤더와 날짜 칩이 같은 source를 쓴다.
+    //   특히 `slot.pendingCount`는 초대 발송 시 +1 되었다가 syncTOStats가
+    //   PENDING만 세어 다시 내리는 값이라, 관리자에게 보여 줄 `대기`의
+    //   truth가 아니다. `resolveStats()`는 이미 통계 실패를 알고
+    //   (`workDetailStatsFailed`) 그때만 슬롯 카운터로 폴백한다.
+    //
+    // [R7-5 §7] 계산은 `projectGroupHeaderTotals` 하나로 옮겼다 — 화면 없이
+    //   실행해 확인할 수 있게. 여기 남는 것은 **언제 다시 계산하는가** 다.
+    final totals = projectGroupHeaderTotals(
+      targetTOs: _targetTOs,
+      singleFallback: _getSingleTOItem,
+    );
+    _totalConfirmed = totals.confirmed;
+    _totalPending   = totals.pending;
+    _totalRequired  = totals.required;
+    _totalShortage  = totals.shortage;
+    _isFull         = totals.isFull;
     // [PERF-2] 마감시간 캐시 갱신
     _cachedEarliestDeadline = _computeEarliestDeadline();
   }
@@ -291,13 +273,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
   @override
   void didUpdateWidget(TOGroupCard old) {
     super.didUpdateWidget(old);
-    if (!identical(widget.groupItem, old.groupItem) ||
-        widget.selectedDate != old.selectedDate ||
-        widget.calendarSlot != old.calendarSlot) {
-      _updateGroupCache();
-    } else {
-      _buildNow = DateTime.now();
-    }
+    // [R7-5 §7] 부모가 다시 그릴 때마다 머리말 수치를 다시 계산한다.
+    //
+    //   예전에는 `!identical(groupItem)` 으로 걸렀다. 그런데 정원 집계는
+    //   **같은 인스턴스 안에** 채워진다 — `setWorkDetails()` / `setGroupTOs()`
+    //   가 제자리 수정이다. 그래서 집계를 불러온 뒤 부모가 setState 해도
+    //   `identical` 이 참이라 이 캐시는 갱신되지 않았고, 같은 카드의 업무 행은
+    //   `resolveStats()` 를 매 build 에 다시 읽었다. 한쪽만 움직인 것이다.
+    //
+    //   날짜를 고르면 `calendarSlot` 이 바뀌어 갱신되지만, 그 뒤에 도착한
+    //   집계는 다시 갱신을 못 일으켰다. 머리말이 이전 값을 그대로 붙들고
+    //   있던 자리다.
+    //
+    //   비용은 슬롯 수만큼의 덧셈이고 `didUpdateWidget` 은 프레임마다
+    //   불리지 않는다. 틀린 값을 아껴 두는 것보다 싸다.
+    _updateGroupCache();
     // 다른 카드가 활성화되면 날짜 칩 선택 초기화
     if (widget.activeGroupKey != old.activeGroupKey &&
         widget.activeGroupKey != widget.groupItem.id &&

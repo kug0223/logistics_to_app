@@ -212,11 +212,17 @@ void main() {
           reason: '옛 판정이 남아 있으면 다시 갈라진다');
     });
 
+    // [R7-5 §7] 단건·장기 폴백 분기가 공통 projection 안으로 옮겼다.
     test('PSP-A4 카드 요약이 같은 resolver 를 거친다', () {
-      final cache = _slice(card, 'if (_targetTOs.isEmpty) {', '} else {');
-      expect(cache, contains('single.resolveStats()'));
-      expect(cache, isNot(contains('g.totalConfirmed')),
+      final proj = _slice(
+          File('lib/models/ui/group_header_totals.dart').readAsStringSync(),
+          'if (targetTOs.isEmpty) {', '  var c = 0');
+      expect(proj, contains('single.resolveStats()'));
+      expect(proj, isNot(contains('totalConfirmed')),
           reason: '카운터를 직접 읽으면 상세와 갈라진다');
+      // 카드는 그 projection 만 쓴다 — 자기 계산을 따로 두지 않는다.
+      expect(card, contains('projectGroupHeaderTotals('));
+      expect(card, isNot(contains('final s = single.resolveStats();')));
     });
   });
 
