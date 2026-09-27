@@ -2,22 +2,25 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// [R8 O01] 공고 합계(`to.totalPending` / `to.totalConfirmed`) 쓰기 계약.
+/// [R9 O01] 공고 합계(`to.totalPending` / `to.totalConfirmed`) 쓰기 계약.
 ///
-///   슬롯·업무 축은 7차에 transaction 안으로 옮겨 닫았다. TO 축은 아직
-///   transaction 밖 읽기 + 무조건 update 다. 그래도 실측에서 어긋나지 않는
-///   이유는 **읽기와 쓰기가 붙어 있기** 때문이다:
+///   8차에는 이 파일이 "읽기와 쓰기가 붙어 있다"를 고정했다. 그 배치는 창을
+///   줄이지만 **서로 다른 invocation 의 저장 순서를 직렬화하지 않는다.**
+///   9차에 그 순서를 실제로 만들어 재현했다
+///   (`scripts/r9-emu-to-order.js`, 지원서 4008건 = 스캔 9페이지):
 ///
-///     · 트리거(`_syncTOCounters`): 느린 일(슬롯 transaction)이 **읽기 앞**에
-///       있고, 원장 읽기 직후에 바로 쓴다.
-///     · 재집계(`callableRecalculateTOStats`): 원장 스캔 직후에 바로 쓰고,
-///       느린 일(슬롯별 transaction)은 **쓰기 뒤**에 있다.
+///     t=+0ms    재집계가 1페이지를 읽는다(대기 6)
+///     t=+139ms  취소가 커밋된다(원장 대기 5)
+///     t=+269ms  트리거가 대기 5 를 커밋한다      ← statsUpdatedAt 전진
+///     t=+923ms  재집계가 대기 6 을 커밋한다      ← statsUpdatedAt 그대로
+///     그 뒤 8초간 후속 이벤트 없음 → 원장 5 / 저장 6 으로 남는다
 ///
-///   그래서 "먼저 읽고 한참 뒤에 쓰는" 낡은 쓰기가 만들어지지 않는다.
-///   이 테스트는 **그 배치가 깨지면 실패한다** — 누군가 읽기와 쓰기 사이에
-///   오래 걸리는 일을 넣으면 stale 창이 열리기 때문이다.
+///   그래서 계약을 바꿨다. **값과 함께 그 값을 만든 읽기 시각을 적고, 더 낡은
+///   스냅샷은 쓰지 않는다**(`srvCommitToTotals`). 기준은 누가 먼저 썼는지가
+///   아니라 누가 더 최신 원장을 보았는지다 — "TO 가 그 사이에 바뀌었는가"로
+///   막으면 최신 쪽이 거부되는 경우가 생긴다.
 ///
-///   실행 증거는 `scripts/r8-emu-to-total-race.js` 에 있다(T2·T3·T4·T5).
+///   슬롯·업무 축은 7차부터 transaction 이 지킨다(TTW-C, 변경 없음).
 
 String _src(String p) => File(p).readAsStringSync();
 String _codeOf(String b) => b
@@ -38,6 +41,7 @@ String _slice(String s, String from, String to) {
 
 void main() {
   final cf = _codeOf(_src(_cfPath));
+  final flatCf = cf.replaceAll(RegExp(r'\s+'), '');
 
   group('TTW-A 절대 쓰기 owner 는 셋뿐이다', () {
     test('A-1 TO 합계를 절대값으로 쓰는 곳을 고정한다', () {
@@ -46,8 +50,11 @@ void main() {
           reason: 'flex 분기');
       expect('totalPending: pendingSnap.data().count,'.allMatches(cf).length, 1,
           reason: '비슬롯 분기');
-      expect(cf.contains('const toUpdate: Record<string, unknown> = {totalPending, totalConfirmed};'),
-          isTrue, reason: '재집계');
+      expect(
+          cf.contains(
+              'const toUpdate: Record<string, unknown> = {totalPending, totalConfirmed};'),
+          isTrue,
+          reason: '재집계');
     });
 
     test('A-2 delta 쓰기는 transaction 안에서만 한다', () {
@@ -58,37 +65,77 @@ void main() {
     });
   });
 
-  group('TTW-B 읽기와 쓰기가 붙어 있다', () {
-    test('B-1 트리거 flex — 원장 읽기 직후에 TO 를 쓴다', () {
-      // 읽기가 **끝난 뒤**부터 쓰기까지의 구간만 본다.
-      final gap = _codeOf(_slice(
-        cf,
-        'const confirmedCount = seats.bySlot.get(slotId) ?? 0;',
-        'await toRef.update({',
-      ));
-      // 읽기와 쓰기 사이에 await 이 남아 있으면 stale 창이 열린다.
-      expect(gap.contains('await '), isFalse,
-          reason: '원장 읽기와 TO 쓰기 사이에 기다리는 일을 넣으면 낡은 값이 생긴다');
+  group('TTW-B 낡은 스냅샷이 최신을 덮지 않는다', () {
+    test('B-1 절대 writer 셋 모두 fence 를 지나간다', () {
+      // 정의 1 + 트리거 비슬롯 1 + 트리거 flex 1 + 재집계 1.
+      expect('srvCommitToTotals('.allMatches(cf).length, 4,
+          reason: '늘거나 줄면 fence 를 우회하는 경로가 생긴 것이다');
+      // 우회 쓰기가 남아 있지 않다 — 합계를 직접 update 하지 않는다.
+      expect(flatCf.contains('toRef.update({totalConfirmed:'), isFalse,
+          reason: '트리거가 fence 없이 직접 쓰면 9차 재현이 되살아난다');
+      expect(cf.contains('await db.collection("tos").doc(toId).update(toUpdate);'),
+          isFalse, reason: '재집계의 무조건 쓰기는 제거됐다');
     });
 
-    test('B-2 트리거 flex — 느린 슬롯 transaction 은 읽기 **앞**에 있다', () {
-      final body = cf.substring(cf.indexOf('async function _syncTOCounters('));
-      final slotTx = body.indexOf('await srvSyncSlotCountersTx(toRef, slotId, occupiesSeatToday);');
-      final read = body.indexOf('const [seats, toPendingSnap, slotDoc] = await Promise.all([');
-      expect(slotTx, greaterThan(0));
-      expect(read, greaterThan(0));
-      expect(slotTx, lessThan(read),
-          reason: '느린 일이 읽기 뒤로 가면 읽기→쓰기 간격이 벌어진다');
+    test('B-2 fence 는 transaction 안에서 저장된 읽기 시각과 비교한다', () {
+      final fn = _codeOf(_slice(cf,
+          'async function srvCommitToTotals(', 'function srvEarliestReadAt('));
+      final flat = fn.replaceAll(RegExp(r'\s+'), '');
+      expect(flat.contains('returndb.runTransaction(async(tx)=>{'), isTrue,
+          reason: '비교와 쓰기가 같은 transaction 안이어야 한다');
+      expect(flat.contains('awaittx.get(toRef)'), isTrue);
+      expect(flat.contains('cur.get("statsSourceReadAt")'), isTrue);
+      // 더 낡거나 같으면 쓰지 않는다.
+      expect(flat.contains('if(prev&&srvTsAtLeast(prev,sourceReadAt)){'), isTrue);
+      expect(flat.contains('returnfalse;'), isTrue);
+      // 쓸 때는 읽기 시각을 함께 남긴다 — 다음 writer 의 비교 기준이다.
+      expect(flat.contains('tx.update(toRef,{...totals,statsSourceReadAt:sourceReadAt})'),
+          isTrue);
     });
 
-    test('B-3 재집계 — 스캔 직후 TO 를 쓰고, 슬롯 작업은 그 **뒤**다', () {
+    test('B-3 신선도는 **가장 이른** 읽기 시각이다', () {
+      // 값의 신선도는 가장 오래된 입력이 정한다.
+      final earliest = _codeOf(_slice(cf,
+          'function srvEarliestReadAt(', 'type SrvSlotWdShape'));
+      final flat = earliest.replaceAll(RegExp(r'\s+'), '');
+      expect(flat.contains('if(!out||srvTsAtLeast(out,t))out=t;'), isTrue);
+
+      // 페이지네이션은 **첫 페이지**의 읽기 시각만 기억한다.
+      expect('if (!readAt) readAt = page.readTime;'.allMatches(cf).length, 1,
+          reason: '트리거의 좌석 스캔');
+      expect('if (!scanReadAt) scanReadAt = pageSnap.readTime;'.allMatches(cf).length, 1,
+          reason: '재집계의 원장 스캔');
+
+      // 트리거는 좌석 스캔과 대기 count() 중 이른 쪽을 쓴다.
+      expect(flatCf.contains('srvEarliestReadAt([seats.readAt,pendingSnap.readTime])'),
+          isTrue, reason: '비슬롯 분기');
+      expect(flatCf.contains('srvEarliestReadAt([seats.readAt,toPendingSnap.readTime])'),
+          isTrue, reason: 'flex 분기');
+    });
+
+    test('B-4 합계를 건너뛰면 status 도 쓰지 않는다', () {
+      // status 는 같은 스냅샷의 confirmedCnt 로 판정한다 — 함께 건너뛴다.
+      expect(flatCf.contains('if(applied)awaitsrvSyncToStatusSafely(toRef,totalRequired,confirmedCnt);'),
+          isTrue, reason: '비슬롯 분기');
+      expect(flatCf.contains('if(flexApplied){awaitsrvSyncToStatusSafely(toRef,flexTotalRequired,flexConfirmedCnt);}'),
+          isTrue, reason: 'flex 분기');
+    });
+
+    test('B-5 재집계는 건너뛴 사실을 응답으로 알린다', () {
+      expect(cf.contains('return {success: true, applied: toTotalsApplied,'), isTrue,
+          reason: 'applied=false 는 실패가 아니라 더 최신 값이 있다는 뜻이다');
+    });
+
+    test('B-6 슬롯 구간은 여전히 TO 쓰기 뒤에 있다', () {
+      // 순서 자체가 안전의 근거는 아니지만(그건 fence 가 한다),
+      // 슬롯 재집계를 앞으로 옮기면 스캔과 쓰기의 간격이 더 벌어진다.
       final body = cf.substring(cf.indexOf('export const callableRecalculateTOStats'));
-      final toWrite = body.indexOf('await db.collection("tos").doc(toId).update(toUpdate);');
-      final slotPhase = body.indexOf('const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();');
+      final toWrite = body.indexOf('const toTotalsApplied = await srvCommitToTotals(');
+      final slotPhase = body.indexOf(
+          'const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();');
       expect(toWrite, greaterThan(0));
       expect(slotPhase, greaterThan(0));
-      expect(toWrite, lessThan(slotPhase),
-          reason: '슬롯 구간이 TO 쓰기 앞으로 오면 그만큼 낡은 값이 된다');
+      expect(toWrite, lessThan(slotPhase));
     });
   });
 

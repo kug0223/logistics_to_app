@@ -17453,6 +17453,90 @@ async function srvSyncToStatusSafely(
   }
 }
 
+/**
+ * [R9] 두 Timestamp 비교 — a 가 b 보다 같거나 나중인가.
+ *
+ * @param {FirebaseFirestore.Timestamp} a 왼쪽
+ * @param {FirebaseFirestore.Timestamp} b 오른쪽
+ * @return {boolean} a >= b
+ */
+function srvTsAtLeast(
+  a: FirebaseFirestore.Timestamp,
+  b: FirebaseFirestore.Timestamp
+): boolean {
+  if (a.seconds !== b.seconds) return a.seconds > b.seconds;
+  return a.nanoseconds >= b.nanoseconds;
+}
+
+/**
+ * [R9] 공고 합계(`totalPending`/`totalConfirmed`)의 **절대값 쓰기**.
+ *
+ *   절대 writer 는 원장을 transaction 밖에서 읽고 그 스냅샷을 무조건 썼다.
+ *   그래서 **먼저 읽은 쪽이 나중에 커밋**하면 최신값이 낡은 값으로 덮였다.
+ *   후속 원장 이벤트가 없으면 그대로 남는다.
+ *
+ *   실측(scripts/r9-emu-to-order.js, 지원서 4008건 = 스캔 9페이지):
+ *     · 재집계가 1페이지를 읽은 뒤(대기 6) 취소가 커밋됐다
+ *     · 트리거가 +269ms 에 대기 5 를 커밋했다(statsUpdatedAt 전진)
+ *     · 재집계가 +923ms 에 대기 6 을 커밋했다(statsUpdatedAt 그대로)
+ *     · 8초간 후속 이벤트 없이 원장 5 / 저장 6 으로 남았다
+ *
+ *   "TO 문서가 그 사이에 바뀌었는가"로 막으면 안 된다. 그러면 이번에는
+ *   **더 최신 원장을 본 쪽이** 거부되어 낡은 값이 남는 경우가 생긴다.
+ *   기준은 누가 먼저 썼는지가 아니라 **누가 더 최신 원장을 보았는지**다.
+ *
+ *   그래서 값과 함께 그 값을 만든 **서버 읽기 시각**(`readTime`)을 적고,
+ *   transaction 안에서 저장된 시각과 비교해 더 낡으면 쓰지 않는다.
+ *   delta writer(`FieldValue.increment`)는 그대로 둔다 — 원장 변경이 트리거를
+ *   깨우고, 그 트리거의 읽기 시각이 더 최신이므로 결국 그 값이 이긴다.
+ *
+ * @param {FirebaseFirestore.DocumentReference} toRef 공고
+ * @param {FirebaseFirestore.Timestamp} sourceReadAt 이 값을 만든 **가장 이른**
+ *   원장 읽기 시각. 값의 신선도는 가장 오래된 입력에 의해 정해진다.
+ * @param {Record<string, unknown>} totals 쓸 필드들(합계·상태·업무별 카운터)
+ * @return {Promise<boolean>} 실제로 썼으면 true, 낡아서 건너뛰면 false
+ */
+async function srvCommitToTotals(
+  toRef: FirebaseFirestore.DocumentReference,
+  sourceReadAt: FirebaseFirestore.Timestamp,
+  totals: Record<string, unknown>
+): Promise<boolean> {
+  return db.runTransaction(async (tx) => {
+    const cur = await tx.get(toRef);
+    if (!cur.exists) return false;
+    const prev = cur.get("statsSourceReadAt") as
+      FirebaseFirestore.Timestamp | undefined;
+    if (prev && srvTsAtLeast(prev, sourceReadAt)) {
+      console.log(
+        `[srvCommitToTotals] 낡은 스냅샷 — 건너뜀: ${toRef.id} ` +
+        `내읽기=${sourceReadAt.toDate().toISOString()} ` +
+        `저장된읽기=${prev.toDate().toISOString()}`);
+      return false;
+    }
+    tx.update(toRef, {...totals, statsSourceReadAt: sourceReadAt});
+    return true;
+  });
+}
+
+/**
+ * [R9] 여러 읽기로 만든 값의 신선도 — **가장 이른** 읽기 시각.
+ *
+ * @param {Array<FirebaseFirestore.Timestamp | undefined>} times 읽기 시각들
+ * @return {FirebaseFirestore.Timestamp} 그중 가장 이른 것
+ */
+function srvEarliestReadAt(
+  times: Array<FirebaseFirestore.Timestamp | undefined>
+): FirebaseFirestore.Timestamp {
+  let out: FirebaseFirestore.Timestamp | undefined;
+  for (const t of times) {
+    if (!t) continue;
+    if (!out || srvTsAtLeast(out, t)) out = t;
+  }
+  // 읽기 시각을 못 얻는 구현은 없다. 그래도 값이 없으면 지금으로 둔다 —
+  // 그러면 이 쓰기가 최신으로 취급된다(기존 동작과 같다).
+  return out ?? admin.firestore.Timestamp.now();
+}
+
 // ═══════════════════════════════════════════════════════════
 // [R7-6] 업무 단위 카운터 — identity 해석과 쓰기 모양을 한 곳에 둔다
 // ═══════════════════════════════════════════════════════════
@@ -17680,10 +17764,14 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
     to: number;
     bySlot: Map<string, number>;
     byWorkType: Map<string, number>;
+    readAt?: FirebaseFirestore.Timestamp;
   }> => {
     const bySlot = new Map<string, number>();
     const byWorkType = new Map<string, number>();
     let to = 0;
+    // [R9] 이 값의 신선도는 **첫 페이지**를 읽은 시각이다 — 그 뒤의 변경은
+    //   앞 페이지에 반영되지 않는다.
+    let readAt: FirebaseFirestore.Timestamp | undefined;
     let cursor: FirebaseFirestore.DocumentSnapshot | undefined;
     for (;;) {
       let q = appsRef
@@ -17693,6 +17781,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
         .limit(500);
       if (cursor) q = q.startAfter(cursor);
       const page = await q.get();
+      if (!readAt) readAt = page.readTime;
       if (page.empty) break;
       for (const d of page.docs) {
         if (d.get("staffingReleasedAt") != null) continue; // 반납된 자리
@@ -17706,7 +17795,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       if (page.size < 500) break;
       cursor = page.docs[page.size - 1];
     }
-    return {to, bySlot, byWorkType};
+    return {to, bySlot, byWorkType, readAt};
   };
 
   if (!slotId) {
@@ -17744,13 +17833,18 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
 
     const confirmedCnt = seats.to;
     const totalRequired = (toData?.totalRequired as number) ?? 0;
-    await toRef.update({
-      totalConfirmed: confirmedCnt,
-      totalPending: pendingSnap.data().count,
-      statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      ...workTypeConfirmedUpdate,
-    });
-    await srvSyncToStatusSafely(toRef, totalRequired, confirmedCnt);
+    // [R9] 낡은 스냅샷이 최신을 덮지 않는다 — srvCommitToTotals 참고.
+    const applied = await srvCommitToTotals(
+      toRef,
+      srvEarliestReadAt([seats.readAt, pendingSnap.readTime]),
+      {
+        totalConfirmed: confirmedCnt,
+        totalPending: pendingSnap.data().count,
+        statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...workTypeConfirmedUpdate,
+      });
+    // 건너뛴 경우 status 도 쓰지 않는다 — 같은 낡은 스냅샷에서 나온 판단이다.
+    if (applied) await srvSyncToStatusSafely(toRef, totalRequired, confirmedCnt);
     return;
   }
 
@@ -17784,13 +17878,20 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const flexConfirmedCnt = seats.to;
   // [R7-7] 슬롯 문서는 위에서 transaction 으로 이미 썼다.
   //   여기서는 공고 단위 합계만 쓴다 — 슬롯 값을 다시 덮지 않는다.
-  await toRef.update({
-    totalConfirmed: flexConfirmedCnt,
-    totalPending: toPendingSnap.data().count,
-    statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  // [R9] 낡은 스냅샷이 최신을 덮지 않는다 — srvCommitToTotals 참고.
+  const flexApplied = await srvCommitToTotals(
+    toRef,
+    srvEarliestReadAt([seats.readAt, toPendingSnap.readTime]),
+    {
+      totalConfirmed: flexConfirmedCnt,
+      totalPending: toPendingSnap.data().count,
+      statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
   // [CROSS-DOMAIN-R5.3D.1] TO status는 커밋 시점 상태로 판정한다.
-  await srvSyncToStatusSafely(toRef, flexTotalRequired, flexConfirmedCnt);
+  // [R9] 합계를 건너뛰었으면 status 도 쓰지 않는다 — 같은 스냅샷의 판단이다.
+  if (flexApplied) {
+    await srvSyncToStatusSafely(toRef, flexTotalRequired, flexConfirmedCnt);
+  }
   // [CROSS-DOMAIN-R5.3D.1] 슬롯 status도 TO와 같은 이유로 트랜잭션에서 정한다.
   //   [BUG-E-01]의 수동 마감 가드가 **집계 시작 때 읽은** slotDoc 기준이라,
   //   그 사이에 관리자가 마감하면 배치가 open으로 되돌렸다.
@@ -24414,6 +24515,9 @@ export const callableRecalculateTOStats = onCall(
         slotWorkDetailMap[sPreDoc.id] = {wds, isNewSchema};
       }
     }
+    // [R9] 이 스캔으로 만든 합계의 신선도는 **첫 페이지를 읽은 시각**이다.
+    //   뒤 페이지를 읽는 동안 앞 페이지의 원장이 바뀌어도 반영되지 않는다.
+    let scanReadAt: FirebaseFirestore.Timestamp | undefined;
     {
       let lastApp2: FirebaseFirestore.DocumentSnapshot | undefined;
       while (true) {
@@ -24423,6 +24527,7 @@ export const callableRecalculateTOStats = onCall(
           .limit(499);
         if (lastApp2) q = q.startAfter(lastApp2);
         const pageSnap = await q.get();
+        if (!scanReadAt) scanReadAt = pageSnap.readTime;
         if (pageSnap.empty) break;
         for (const doc of pageSnap.docs) {
           const d = doc.data();
@@ -24498,7 +24603,18 @@ export const callableRecalculateTOStats = onCall(
         toUpdate[`workTypeConfirmedCounts.${wt}`] = workTypeConfirmedCounts[wt] ?? 0;
       }
     }
-    await db.collection("tos").doc(toId).update(toUpdate);
+    // [R9] 낡은 스냅샷이 최신을 덮지 않는다 — srvCommitToTotals 참고.
+    //   이 함수는 사람이 부르는 복구 경로이고 스캔이 길다. 그 사이에 원장이
+    //   바뀌면 트리거가 이미 더 최신 값을 썼을 수 있다 — 그때는 쓰지 않는다.
+    const toTotalsApplied = await srvCommitToTotals(
+      db.collection("tos").doc(toId),
+      srvEarliestReadAt([scanReadAt]),
+      toUpdate);
+    if (!toTotalsApplied) {
+      console.log(
+        "[callableRecalculateTOStats] 공고 합계는 더 최신 값이 있어 건너뜀: " +
+        toId);
+    }
 
     if (isFlexType) {
       const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
@@ -24543,7 +24659,10 @@ export const callableRecalculateTOStats = onCall(
     if (isFlexType) {
       console.log(`[callableRecalculateTOStats] wdId resolution diagnostics: ${JSON.stringify(diagnostics)}`);
     }
-    return {success: true, totalPending, totalConfirmed, diagnostics};
+    // [R9] `applied=false` 는 실패가 아니다 — 더 최신 값이 이미 저장돼 있다는 뜻.
+    //   슬롯·업무 카운터는 쓰기 시점에 다시 세므로 위와 무관하게 정확하다.
+    return {success: true, applied: toTotalsApplied,
+      totalPending, totalConfirmed, diagnostics};
   }
 );
 
