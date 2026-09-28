@@ -460,7 +460,10 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('10. worker surface', () {
     test('10-a 홈 Task 의 출처는 제안 문서다 — 알림이 아니다', () {
-      expect(workerHome, contains('getMyRenewalProposals()'));
+      // [R7-P2-1] 홈이 UserHomeReads 경계를 탄다 — 출처는 여전히 제안 문서다.
+      expect(workerHome, contains('myRenewalProposals()'));
+      expect(_src('lib/screens/user/user_home_reads.dart'),
+          contains('getMyRenewalProposals'));
       expect(workerHome, contains('_buildRenewalProposalCard'));
       final card =
           _after(workerHome, 'Widget _buildRenewalProposalCard(', 700);

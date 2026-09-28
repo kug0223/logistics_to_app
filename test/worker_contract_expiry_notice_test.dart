@@ -349,7 +349,10 @@ void main() {
 
     test('11-b 근로자 홈 Task 의 출처는 여전히 제안 문서다', () {
       final home = _codeOf(_src('lib/screens/user/user_home_screen.dart'));
-      expect(home, contains('getMyRenewalProposals()'));
+      // [R7-P2-1] 홈이 UserHomeReads 경계를 탄다 — 출처는 여전히 제안 문서다.
+      expect(home, contains('myRenewalProposals()'));
+      expect(_src('lib/screens/user/user_home_reads.dart'),
+          contains('getMyRenewalProposals'));
       expect(home.contains('workerContractEnded'), false);
       expect(home.contains('workerContractExpiring'), false);
     });

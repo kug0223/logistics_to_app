@@ -18,7 +18,6 @@ import '../../models/ui/pending_id_request_surface.dart';
 import '../../models/ui/pending_termination_surface.dart';
 import '../../utils/format_helper.dart';
 import '../../providers/user_provider.dart';
-import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
 import '../../widgets/section_header.dart';
@@ -46,10 +45,16 @@ import '../auth/pass_auth_recovery_screen.dart';
 import '../../services/payroll_correction_service.dart';
 import '../../models/core/renewal_proposal_model.dart';
 import 'renewal_proposal_screen.dart';
+import 'user_home_reads.dart';
 
 // ── 지원자 홈 화면 ────────────────────────────────────────────────
 class UserHomeScreen extends StatefulWidget {
-  const UserHomeScreen({super.key});
+  const UserHomeScreen({super.key, this.reads});
+
+  /// [R7-P2-1 P21-E] 홈이 나가서 읽는 **원시 외부 호출**만 모은 경계.
+  ///   production 은 null — 기존 `FirestoreService` 인스턴스를 그대로 쓴다.
+  ///   파싱·Hero 판정·주간 7일·집계·문구는 전부 이 화면에 남는다.
+  final UserHomeReads? reads;
 
   @override
   State<UserHomeScreen> createState() => _UserHomeScreenState();
@@ -57,7 +62,7 @@ class UserHomeScreen extends StatefulWidget {
 
 class _UserHomeScreenState extends State<UserHomeScreen>
     with WidgetsBindingObserver {
-  final _appFirestore = FirestoreService();
+  late final UserHomeReads _reads = widget.reads ?? UserHomeReads.of();
   List<ApplicationModel> _applications = [];
   List<AttendanceModel> _attendances = [];
   List<TOModel> _publishedTos = [];
@@ -131,10 +136,17 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     // ── Priority Hero 캐시 계산 ──────────────────────────────────
     // STATE B: 오늘 확정 근무 존재 여부 (출퇴근 CTA 최우선)
+    //
+    // [R7-P2-1 P21-H] 예전에는 `toKstDate(workDate) == today` 만 봤다.
+    //   장기 근무의 `workDate` 는 **계약 시작일(고정값)** 이라, 시작일 하루를
+    //   빼면 오늘 실제로 일하는 장기 근무자에게 Hero 가 비어 버렸다 —
+    //   출퇴근 CTA 를 홈에서 잃는다. 같은 화면의 주간 7일(위 `_cachedThisWeekEntryDates`)
+    //   과 출근 화면(`attendance_check_screen`)은 이미 `isWorkingOnDate` 를 쓴다
+    //   (그 화면 주석이 같은 이유를 적고 있다). 한 화면이 두 가지로 말하지 않게
+    //   **같은 canonical 술어**로 맞춘다 — 휴무일·추가근무·퇴사일이 함께 반영된다.
     final todayList = _applications.where((a) {
       if (!AppStatus.confirmedStatuses.contains(a.status)) return false;
-      final wd = FormatHelper.toKstDate(a.workDate);
-      return wd == today;
+      return a.isWorkingOnDate(today);
     }).toList();
     _heroTodayApp = todayList.isEmpty ? null : todayList.first;
 
@@ -375,12 +387,29 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     await TourHelper.markCompleted(TourHelper.userHome);
   }
 
+  /// [R7-P2-1 P21-E] 홈 로드의 늦은 응답 가드.
+  ///
+  ///   `_loadHomeData` 를 깨우는 경로가 여럿이다: initState · FCM · 앱 복귀 ·
+  ///   당겨서 새로고침 · 각 목적지에서 돌아올 때 · 재시도 버튼.
+  ///   가드가 없으면 먼저 보낸 응답이 늦게 도착해 **방금 읽은 값을 덮는다.**
+  ///   더 나쁜 경우는 계정이 바뀐 뒤다 — uid 를 await 이전에 잡아 두므로
+  ///   이전 사용자의 지원·근태가 새 사용자의 홈에 앉을 수 있다.
+  ///   그래서 **가장 마지막에 시작한 호출만**, 그리고 **그 사이 uid 가 바뀌지
+  ///   않았을 때만** state 를 쓴다.
+  int _homeLoadSeq = 0;
+
   Future<void> _loadHomeData() async {
     if (_isLoadingHomeData) return; // 동시 실행 방어
     final uid = context.read<UserProvider>().currentUser?.uid;
     // 추천 점수 계산에 사용 — await 이전에 동기 캡처 (갱신 주기와 무관하게 안전)
     final user = context.read<UserProvider>().currentUser;
     if (uid == null || !mounted) return;
+    final seq = ++_homeLoadSeq;
+    bool superseded() {
+      if (seq != _homeLoadSeq) return true;
+      // 계정이 바뀌었으면 이 응답은 다른 사람의 것이다.
+      return context.read<UserProvider>().currentUser?.uid != uid;
+    }
     _isLoadingHomeData = true;
     setState(() => _isLoadingData = true);
     final now = DateTime.now();
@@ -405,27 +434,27 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       Object? tosErr;
       Object? idErr;
       final results = await Future.wait([
-        _appFirestore.getMyApplications(uid).catchError((Object e) {
+        _reads.myApplications(uid).catchError((Object e) {
           appsErr = e;
           return <ApplicationModel>[];
         }),
-        _appFirestore
-            .getMyMonthlyAttendances(userId: uid, year: now.year, month: now.month)
+        _reads
+            .myMonthlyAttendances(userId: uid, year: now.year, month: now.month)
             .catchError((Object e) {
           attsErr = e;
           return <AttendanceModel>[];
         }),
-        _appFirestore.getPublishedTOs().catchError((Object e) {
+        _reads.publishedTOs().catchError((Object e) {
           tosErr = e;
           return <TOModel>[];
         }),
         // [DS-03] 홈 요청 진입점 — 기존 홈 로드 1회에 합류시킨다 (중복 호출 없음)
-        _appFirestore.getPendingIdCardRequestsForUser(uid).catchError((Object e) {
+        _reads.pendingIdCardRequests(uid).catchError((Object e) {
           idErr = e;
           return <IdCardAccessRequestModel>[];
         }),
       ]);
-      if (!mounted) return;
+      if (!mounted || superseded()) return;
 
       // 지원 내역이 실패했으면 이전 값을 유지한다 — 0으로 덮어쓰지 않는다.
       if (appsErr == null) {
@@ -453,7 +482,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       //   가져오고, 실패해도 다른 영역을 오류 상태로 만들지 않는다.
       //   단 실패를 "할 일 없음"으로 바꾸지는 않는다 — 카드를 숨길 뿐이다.
       unawaited(PayrollCorrectionService.loadMine().then((s) {
-        if (!mounted) return;
+        if (!mounted || superseded()) return;
         setState(() {
           _correctionSurface = s;
           _correctionsLoaded = true;
@@ -468,8 +497,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       //
       //   실패를 "제안 없음"으로 바꾸지 않는다: 못 읽었으면 카드를
       //   숨기고 다음 조회를 기다린다. 없는 할 일을 지어내지도 않는다.
-      unawaited(_appFirestore.getMyRenewalProposals().then((list) {
-        if (!mounted) return;
+      unawaited(_reads.myRenewalProposals().then((list) {
+        if (!mounted || superseded()) return;
         final now = DateTime.now();
         setState(() {
           _renewalProposals =
@@ -509,7 +538,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       }
       if (targetBizIds.isNotEmpty) {
         final bizResults = await Future.wait(
-          targetBizIds.map((id) => _appFirestore.getBusinessById(id)),
+          targetBizIds.map((id) => _reads.businessById(id)),
         );
         if (!mounted) return;
         final cache = <String, BusinessModel>{};
@@ -549,7 +578,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
     try {
-      final reqs = await _appFirestore.getPendingIdCardRequestsForUser(uid);
+      final reqs = await _reads.pendingIdCardRequests(uid);
       if (!mounted) return;
       setState(() => _idRequestSurface = PendingIdRequestSurface.from(reqs));
     } catch (e) {
@@ -614,7 +643,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   child: RefreshIndicator(
                     // pull-to-refresh: 공개 공고 TTL 캐시 무효화 후 재로드
                     onRefresh: () {
-                      _appFirestore.invalidatePublishedTOsCache();
+                      _reads.invalidatePublishedTOsCache();
                       return _loadHomeData();
                     },
                     child: SingleChildScrollView(
@@ -2679,22 +2708,30 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // 1줄: "지원 준비  0/2"
-                    Row(children: [
-                      Text('지원 준비',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          )),
-                      SizedBox(width: 6 * s),
-                      Text('$completed / 2',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            // ALfit Blue — Warning Orange 사용 금지
-                            color: theme.primaryColor,
-                          )),
-                    ]),
+                    // [R7-P2-1 P21-H] flex 가 없어 배율 2.0 에서 진행도가
+                    //   잘렸다(320dp 83px · 360dp 57px · 412dp 17px).
+                    //   `0 / 2` 가 안 보이면 **몇 개가 남았는지**를 잃는다 —
+                    //   줄이지 말고 줄바꿈시킨다.
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6 * s,
+                      runSpacing: 2 * s,
+                      children: [
+                        Text('지원 준비',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            )),
+                        Text('$completed / 2',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              // ALfit Blue — Warning Orange 사용 금지
+                              color: theme.primaryColor,
+                            )),
+                      ],
+                    ),
                     SizedBox(height: 3 * s),
                     // 2줄: 안내 문구
                     Text(subText,
@@ -3311,31 +3348,44 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     required Color valueColor,
     required bool valueBold,
   }) {
-    return Row(children: [
-      Text(label,
-          style: TextStyle(
-            fontSize: 13,
-            color: labelColor,
-            fontWeight: valueBold ? FontWeight.w700 : FontWeight.w500,
-          )),
-      const Spacer(),
-      value == null
-          ? SizedBox(
-              width: 80 * s,
-              height: 16 * s,
-              child: LinearProgressIndicator(
-                borderRadius: BorderRadius.circular(4),
-                color: AppColors.infoDark.withValues(alpha: 0.25),
-                backgroundColor: AppColors.borderLight,
-              ))
-          : Text(value,
-              style: TextStyle(
-                fontSize: valueBold ? 15 : 13,
-                fontWeight: valueBold ? FontWeight.w900 : FontWeight.w600,
-                color: valueColor,
-                letterSpacing: -0.3,
-              )),
-    ]);
+    // [R7-P2-1 P21-H] 라벨·금액 어느 쪽에도 flex 가 없어서 320dp·배율 1.3 에
+    //   `1,250,000원` 이 17px, 배율 2.0 에 36px 넘쳤다. **금액은 끝자리가
+    //   잘리면 다른 금액으로 읽힌다** — 줄이지 않는다. 대신 자리가 모자라면
+    //   금액이 다음 줄로 내려가게 한다(`Wrap`). 들어갈 때의 모양은
+    //   이전과 같다(라벨 왼쪽 · 금액 오른쪽).
+    //   (부모 Column 이 가운데 정렬이라 폭을 명시해야 좌·우가 갈린다)
+    return SizedBox(
+      width: double.infinity,
+      child: Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 4 * s,
+      children: [
+        Text(label,
+            style: TextStyle(
+              fontSize: 13,
+              color: labelColor,
+              fontWeight: valueBold ? FontWeight.w700 : FontWeight.w500,
+            )),
+        value == null
+            ? SizedBox(
+                width: 80 * s,
+                height: 16 * s,
+                child: LinearProgressIndicator(
+                  borderRadius: BorderRadius.circular(4),
+                  color: AppColors.infoDark.withValues(alpha: 0.25),
+                  backgroundColor: AppColors.borderLight,
+                ))
+            : Text(value,
+                style: TextStyle(
+                  fontSize: valueBold ? 15 : 13,
+                  fontWeight: valueBold ? FontWeight.w900 : FontWeight.w600,
+                  color: valueColor,
+                  letterSpacing: -0.3,
+                )),
+        ],
+      ),
+    );
   }
 
   /// 아이콘 + 텍스트 한 줄 행 (날짜/지역 공통)

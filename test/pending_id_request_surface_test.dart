@@ -187,7 +187,7 @@ void main() {
       final code = _codeOf(_src(homePath));
       final reload = _bodyOf(code, 'Future<void> _reloadPendingIdRequests(');
       expect(reload.contains('otification'), isFalse);
-      expect(reload.contains('getPendingIdCardRequestsForUser'), isTrue);
+      expect(reload.contains('pendingIdCardRequests('), isTrue);
     });
 
     test('노출 조건은 요청 건수다', () {
@@ -250,7 +250,7 @@ void main() {
     test('홈 로드에 요청 조회가 포함된다', () {
       final code = _codeOf(_src(homePath));
       final load = _bodyOf(code, 'Future<void> _loadHomeData(');
-      expect(load.contains('getPendingIdCardRequestsForUser(uid)'), isTrue);
+      expect(load.contains('pendingIdCardRequests(uid)'), isTrue);
       expect(load.contains('PendingIdRequestSurface.from('), isTrue);
     });
 
@@ -265,8 +265,15 @@ void main() {
     test('요청 조회는 홈 로드에서 한 번만 호출된다', () {
       final code = _codeOf(_src(homePath));
       final load = _bodyOf(code, 'Future<void> _loadHomeData(');
-      final hits = 'getPendingIdCardRequestsForUser'.allMatches(load).length;
+      final hits = 'pendingIdCardRequests('.allMatches(load).length;
       expect(hits, 1, reason: '중복 조회 금지');
+    });
+
+    test('읽기 경계는 실제 요청 조회로 이어진다', () {
+      // [R7-P2-1] 이름만 바꾸고 다른 곳을 읽게 되는 것을 막는다.
+      final reads = _src('lib/screens/user/user_home_reads.dart');
+      expect(reads.contains('pendingIdCardRequests'), isTrue);
+      expect(reads.contains('getPendingIdCardRequestsForUser'), isTrue);
     });
 
     test('로그인 정보가 없으면 조회하지 않는다', () {

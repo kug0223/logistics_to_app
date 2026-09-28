@@ -4,7 +4,7 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-28 (R7-P1-7)
+> 마지막 갱신: 2026-09-28 (R7-P2-1)
 
 ## 0. 이 장부가 지키는 불변식
 
@@ -40,6 +40,9 @@
 | 17 | P1-7 | super-admin 5화면의 흰 탭 라벨·흰 헤더 아이콘이 밝은 배경에서 사라질 수 있었다 | 전환과 함께 대비를 옮김(flat TabBar 계약), 헤더 새로고침 → `actions` | RENDER 3 · CODE |
 | 18 | P1-7 | 문서 관리의 `확인 완료` 만 raw 초록이라 같은 화면에서 완료가 두 색이었다 | `AppColors.success` | CODE |
 | 19 | P1-7 후속 | 통계·월상세의 flex 없는 Row 5곳이 큰 수·긴 라벨·배율에서 잘렸다(53·42·26·4.7·275·110px) | Flexible/Wrap — 수치·범례·칩을 없애지 않음 | RENDER 7 |
+| 20 | P2-1 | 지원자 홈 Hero 가 `workDate == today` 로 오늘 근무를 판정해, **계약 시작일이 아닌 날 일하는 장기 근무자에게 출퇴근 CTA 가 사라졌다** | 같은 화면·출근 화면과 같은 canonical 술어 `isWorkingOnDate` | RENDER 4 + 수정 전 대조 |
+| 21 | P2-1 | 홈 로드가 uid 를 await 이전에 잡고 늦은 응답을 반영해, 계정 전환 후 **이전 사용자의 근무가 새 계정 홈에 앉았다** | seq + uid 가드를 state 반영 3곳에 | RENDER + 가드 제거 대조 |
+| 22 | P2-1 | 수입 행·지원 준비 진행도·`SectionHeader` 액션에 flex·상한이 없어 좁은 화면·큰 배율에서 잘렸다(17·36·83·57·31px) | 금액·진행도·목적지 문구를 **줄이지 않고** 줄바꿈 | RENDER 6조합 |
 
 ## 2. NO PATCH — 근거를 남긴 판정
 
@@ -51,6 +54,10 @@
 | P1-7 | `AppSummaryHeader` 채택 0 | 채택 횟수는 결함 근거가 아니다. `AppStatusCard` 는 **컴포넌트 자체가 없다**(감사표의 "채택 0" 표현 정정) |
 | P1-7 | 문서 관리 중립 회색 7곳 | 상태·행동 의미가 없다. 색 상수 개수는 결함 근거가 아니다 |
 | P1-7 | 문서 관리 `mismatch`/`review_required` 색 | 폐기된 상태라 서버가 값을 만들지 않고 호출부도 넘기지 않는다 — **도달 불가 분기** |
+| P2-1 | 지원자 화면에 관리자 capability 덧씌움 | `lib/screens/user/` 에 `canManage*`·`MemberPermissions` 0건. 남은 `isSubAdmin` 은 역할 전환 토글이다 |
+| P2-1 | 수입 "월 선택 bottom sheet" 미구현 주장 | 시트는 `IncomeDetailScreen` 안에 있다(`DialogHelper.showSheet`, 즉시 적용). 홈 헤더는 그 진입이다 |
+| P2-1 | 홈 Hero 와 날짜 탐색 동시 노출 | 설계상 독립 상시 섹션(소스 주석 명시) |
+| P2-1 | 같은 계정 홈 로드 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 겹치지 않는다(측정). seq 는 이중 방어이지 관측된 사건의 수정이 아니다 |
 
 ## 3. 미결 (이 장부에서 닫히지 않은 것)
 
@@ -59,7 +66,8 @@
 | Staffing 11TO/21업무 보정 | 사용자 | 결정(현재 DEFERRED) |
 | Staffing O08 | P1-2 | DEVICE |
 | 계약 법률 사후 정비 | P16-C | 정책 결정 |
-| `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | USER 6화면 3축 실측 → 전환 → `gradient_scaffold` 폐기 판단 |
+| `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | 3축 실측 **완료** → 전환(셋은 `onRefresh` 설계 먼저) → `gradient_scaffold` 폐기 판단 |
+| `[R7-P2-1-RESIDUAL-TAB-DESTINATIONS]` | P2 | 일자리·일정·MY 탭 **내부** 화면군 |
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 내부 필드명(표시 단위는 정상) |
 | ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |

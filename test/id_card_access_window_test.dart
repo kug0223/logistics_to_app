@@ -585,7 +585,14 @@ void main() {
 
     test('DS-03 홈 진입점은 건드리지 않았다', () {
       final home = File('lib/screens/user/user_home_screen.dart').readAsStringSync();
-      expect(home.contains('getPendingIdCardRequestsForUser'), isTrue);
+      // [R7-P2-1] 홈이 UserHomeReads 경계를 타므로 이름이 바뀌었다 —
+      //   경계가 같은 조회로 이어지는지까지 확인한다(계약은 그대로).
+      expect(home.contains('pendingIdCardRequests('), isTrue);
+      expect(
+          File('lib/screens/user/user_home_reads.dart')
+              .readAsStringSync()
+              .contains('getPendingIdCardRequestsForUser'),
+          isTrue);
       expect(home.contains('MyRequestsDialog.show('), isTrue);
     });
   });
