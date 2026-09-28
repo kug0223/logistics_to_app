@@ -8,7 +8,9 @@ import '../../services/monthly_review_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_actions.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/user/pending_contract_bar.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/review_card.dart';
 
@@ -111,10 +113,17 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    // [R7-P3-4] 알림(flat)에서 들어오는데 이 화면만 파란 헤더였다.
+    //   우상단 새로고침·홈·알림과 미서명 계약 바를 그대로 옮긴다.
+    return AppPageScaffold(
       title: '내 근무 평가',
-      onRefresh: _loadReviews,
-      body: _isLoading
+      actions: appPageActions(context, onRefresh: _loadReviews),
+      bottomNavigationBar: const PendingContractBar(useSafeArea: true),
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: _isLoading
           ? const LoadingWidget()
           : _loadError != null
               ? AppEmptyState(
@@ -187,6 +196,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                     ],
                   ),
                 ),
+      ),
     );
   }
 

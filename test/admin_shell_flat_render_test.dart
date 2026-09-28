@@ -177,24 +177,28 @@ void main() {
     expect(find.text('김의관'), findsWidgets);
   });
 
-  testWidgets('ASF-2 USER 의 설정은 지원자 공통 레이아웃 그대로다', (tester) async {
+  testWidgets('ASF-2 USER 의 설정도 flat shell 이다', (tester) async {
     await _pump(tester, const SettingsScreen(),
         provider: _RoleProvider(UserRole.USER));
 
     expect(tester.takeException(), isNull);
-    // 이 화면은 역할이 공유한다 — 지원자 쪽은 P2 소유이므로 바꾸지 않았다.
-    expect(find.byType(GradientScaffold), findsOneWidget);
-    expect(find.byType(AppPageScaffold), findsNothing);
+    // [R7-P3-4] 갱신. 예전에는 지원자 경로가 그라디언트로 남아 있어야 PASS 였다.
+    //   P3-4 에서 지원자 경로도 flat 으로 옮겼으므로 기대값을 새 사실로 바꾼다.
+    //   역할 차이는 사라지지 않았다 — 제목·우상단 액션·계약 바가 갈린다(SHU-5/6).
+    expect(find.byType(GradientScaffold), findsNothing);
+    expect(find.byType(AppPageScaffold), findsOneWidget);
     expect(find.text('설정'), findsWidgets);
   });
 
-  testWidgets('ASF-3 SubAdmin 은 모드에 따라 두 shell 을 오간다', (tester) async {
-    // 사용자 모드 — 지원자 레이아웃
+  testWidgets('ASF-3 SubAdmin 은 모드에 따라 같은 flat shell 의 제목이 바뀐다',
+      (tester) async {
+    // 사용자 모드 — 제목 '설정'
     await _pump(tester, const SettingsScreen(),
         provider: _RoleProvider(UserRole.USER, subAdminAdminMode: false));
-    expect(find.byType(GradientScaffold), findsOneWidget);
+    expect(find.byType(AppPageScaffold), findsOneWidget);
+    expect(find.text('설정'), findsWidgets);
 
-    // 관리 모드 — flat admin shell
+    // 관리 모드 — 제목 '관리'
     await _pump(tester, const SettingsScreen(),
         provider: _RoleProvider(UserRole.USER, subAdminAdminMode: true));
     expect(tester.takeException(), isNull);

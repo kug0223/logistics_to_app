@@ -62,10 +62,15 @@ void main() {
       expect(s.contains('final useAdminShell ='), isTrue);
       expect(s.contains('showAdminSection || user?.role == UserRole.SUPER_ADMIN'),
           isTrue);
-      expect(s.contains('if (!useAdminShell) {'), isTrue);
-      // 두 shell 이 모두 남아 있다 — 지원자 쪽은 P2 소유다.
-      expect(s.contains('return GradientScaffold('), isTrue);
+      // [R7-P3-4] 갱신. 예전에는 지원자 경로가 GradientScaffold 로 남아 있어야
+      //   PASS 였다(그때는 그게 사실이었다). P3-4 에서 지원자 경로도 flat 으로
+      //   옮겼으므로 기대값을 새 사실로 바꾼다 — 테스트를 지우지 않는다.
+      //   `useAdminShell` 은 여전히 **역할별 차이**를 가른다: 제목·우상단 액션·
+      //   미서명 계약 바가 갈린다.
       expect(s.contains('return AppPageScaffold('), isTrue);
+      expect(s.contains('return GradientScaffold('), isFalse);
+      expect(s.contains('actions: useAdminShell ? const [] : appPageActions('),
+          isTrue);
     });
 
     test('M-2 프로필 블록을 지우지 않고 대비를 유지한 카드로 내렸다', () {
@@ -145,7 +150,7 @@ void main() {
       expect(offenders, isEmpty);
     });
 
-    test('A-4 관리자 화면에 남은 GradientScaffold 는 역할 공유 화면 하나뿐이다', () {
+    test('A-4 관리자 화면에 GradientScaffold 가 없다', () {
       final dir = Directory('lib/screens/business_admin');
       final offenders = <String>[];
       for (final f in dir.listSync(recursive: true)) {
@@ -154,8 +159,9 @@ void main() {
       }
       expect(offenders, isEmpty,
           reason: 'business_admin 트리에는 이미 남아 있지 않았다(주석만)');
-      // 역할을 공유하는 settings_screen 은 사용자 경로용으로 유지한다.
-      expect(_src(_settings).contains('GradientScaffold('), isTrue);
+      // [R7-P3-4] 역할 공유 화면인 settings_screen 도 이제 flat 이다.
+      //   (전체 lib 의 호출부 0 은 `shell_unification_render_test` 의 SHU-0.)
+      expect(_src(_settings).contains('GradientScaffold('), isFalse);
     });
   });
 

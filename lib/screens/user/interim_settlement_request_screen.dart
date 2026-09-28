@@ -21,7 +21,9 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_batch_action_bar.dart';
 import '../../widgets/common/app_empty_state.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_actions.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/user/pending_contract_bar.dart';
 import '../../widgets/common/loading_widget.dart';
 
 class InterimSettlementRequestScreen extends StatefulWidget {
@@ -199,10 +201,17 @@ class _InterimSettlementRequestScreenState
   @override
   Widget build(BuildContext context) {
     final netAmount = _cachedNetAmount;
-    return GradientScaffold(
+    // [R7-P3-4] 내 지원(flat)에서 들어오는데 이 화면만 파란 헤더였다.
+    //   제목에 사업장명이 붙어 길어질 수 있어 좁은 화면 렌더를 함께 확인한다.
+    return AppPageScaffold(
       title: '중간정산 요청 · ${widget.app.businessName}',
-      onRefresh: _loadConfirmedAttendances,
-      body: _isLoading
+      actions: appPageActions(context, onRefresh: _loadConfirmedAttendances),
+      bottomNavigationBar: const PendingContractBar(useSafeArea: true),
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: _isLoading
           ? const LoadingWidget(message: '출근기록 로딩 중...')
           : _records.isEmpty
               ? (_loadError != null
@@ -287,6 +296,7 @@ class _InterimSettlementRequestScreenState
                     ),
                   ],
                 ),
+      ),
     );
   }
 

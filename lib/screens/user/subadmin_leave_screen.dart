@@ -15,7 +15,8 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/user/pending_contract_bar.dart';
 
 class SubadminLeaveScreen extends StatefulWidget {
   const SubadminLeaveScreen({super.key});
@@ -104,11 +105,17 @@ class _SubadminLeaveScreenState extends State<SubadminLeaveScreen> {
     final s = ResponsiveHelper.getScale(context);
     final theme = Theme.of(context);
 
-    return GradientScaffold(
+    // [R7-P3-4] 설정(지원자 모드)에서 들어오는 하위 화면. 이 화면은 원래도
+    //   홈·알림을 끄고 있었다 — 되돌릴 수 없는 결정에 옆길을 만들지 않는다.
+    //   그 선택을 그대로 옮기고, 미서명 계약 바만 유지한다.
+    return AppPageScaffold(
       title: '서브관리자 탈퇴',
-      showHomeButton: false,
-      showNotificationBell: false,
-      body: Selector<UserProvider, List<String>>(
+      bottomNavigationBar: const PendingContractBar(useSafeArea: true),
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: Selector<UserProvider, List<String>>(
         selector: (_, p) =>
             List.from(p.currentUser?.subAdminBusinessIds ?? const []),
         builder: (ctx, bizIds, _) {
@@ -242,6 +249,7 @@ class _SubadminLeaveScreenState extends State<SubadminLeaveScreen> {
             },
           );
         },
+      ),
       ),
     );
   }

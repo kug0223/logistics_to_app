@@ -1447,3 +1447,16 @@ A1-1 은 "도달 가능할 때만" 실행하는 셀이다. 위에서 도달이 �
 
 **VJ01 은 PRODUCT OPEN 을 유지한다** — 지원 결과 문구를 사용자가 어떻게 읽는지에
 대한 관찰은 여전히 **없다.**
+
+---
+
+## [R7-P3-4 영향] 지원자 하위 화면 shell 전환
+
+P23-G·P24-G 에서 `GradientScaffold` 를 **전환 불가**로 적었다. 근거는
+"`AppPageScaffold` 에 onRefresh·벨·홈·계약 바 인자가 없다" 였다. 그 관찰은
+맞았지만 결론이 한 칸 빨랐다 — 그 넷은 **인자가 아니라 caller 가 넘기는 것**이고
+(관리자 화면들이 이미 그렇게 쓴다), `bottomNavigationBar` 가 계약 바를 받는다.
+
+P3-4 에서 다섯 곳(출퇴근·내 리뷰·중간정산·서브관리자 탈퇴·지원자 설정)을 옮겼고
+네 기능을 모두 보존했다. `AppPageScaffold` 자체는 고치지 않았다.
+상세는 `docs/r7-p3-4-shell-unification-audit.md`. **DEVICE·USER 는 OPEN.**

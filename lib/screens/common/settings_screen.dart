@@ -66,7 +66,8 @@ import '../../utils/image_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/business_picker_helper.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_actions.dart';
+import '../../widgets/user/pending_contract_bar.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 
 /// 설정 화면 진입 시 바로 보여줄 항목.
@@ -729,15 +730,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
         );
 
-        if (!useAdminShell) {
-          return GradientScaffold(
-            title: '설정',
-            headerContent: _buildHeaderProfile(context, userProvider),
-            body: listBody,
-          );
-        }
+        // [R7-P3-4] 지원자 경로도 flat shell 로 맞춘다.
+        //
+        //   P1-6 에서 관리자 경로만 바꾸고 지원자 쪽은 P2 소유라 남겨 뒀다.
+        //   그 사이 MY 탭·홈·일정·일자리가 모두 flat 이 되어, 이 화면만
+        //   파란 헤더로 열리고 있었다. 프로필 블록의 대비 문제는 관리자 경로가
+        //   이미 푼 방식(brand 색 카드)을 **그대로** 쓴다 — 내용·문구 동일.
+        //
+        //   지원자 경로에만 있던 기능은 잃지 않는다:
+        //   우상단 홈·알림(배지 포함)과 미서명 계약 바. 새로고침은 원래 없었다.
+        //   관리자 경로에는 이 셋을 **더하지 않는다** — 없던 것을 만들지 않는다.
         return AppPageScaffold(
-          title: showAdminSection ? '관리' : '설정',
+          title: useAdminShell
+              ? (showAdminSection ? '관리' : '설정')
+              : '설정',
+          actions: useAdminShell ? const [] : appPageActions(context),
+          bottomNavigationBar: useAdminShell
+              ? null
+              : const PendingContractBar(useSafeArea: true),
           body: Column(
             children: [
               Padding(

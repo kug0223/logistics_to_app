@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P3-3(행동 직전 판단) 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P3-4(shell 일관성) 커밋
 
 ## 1. 문서 지도
 
@@ -39,6 +39,7 @@
 | P3-1 | 네 역할 과업·인계·가치 후보(P31-H/W/D/X/F) | CLOSED(H·W·D) · **CODE only**(X) | **CLOSED**(서브관리자 전환 RSW-1~4) · 슈퍼관리자 **NOT SEEN** | **PENDING** · 후보 F1~F7 전부 **VERIFY** |
 | P3-2 | 제안·권한·운영 판단의 내용 렌더(P32-H/D/X1/X2) | CLOSED | **CLOSED** — 네 셀 모두 내용 RENDER(IHK/WPD/SAU/TOL 22건). 수락 확인창만 CODE only | **PENDING** · F4/F6/F7 **VERIFY** 유지 |
 | P3-3 | 행동 직전 판단(P33-D/X1/X2) | CLOSED | **CLOSED**(ACX-1~12) — 세 셀 **PATCH**: 무안내 pop · 확인창 대상 식별자 · 한도 단위·적용 시점 | **PENDING** · 급여 안내·사용량 표시·사람 인지는 **VERIFY/USER OPEN** |
+| P3-4 | shell 일관성·기능 보존(5 호출부) | CLOSED | **CLOSED**(SHU-0~7, R×6) — 다섯 곳 전환, refresh·홈·알림·계약 바 보존 | **PENDING** · DEVICE 미실행 · F1~F3/F5 는 shell 로 닫히지 않는다 |
 | P2 나머지 | — | 지원자 화면군 여섯 묶음 결산 완료(PRODUCT 는 OPEN) | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
@@ -65,7 +66,7 @@ CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰
 | 계약의 법률상 사후 정비 정책 | P16-C | **OPEN** |
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 유지보수 메모(표시 단위는 정상) |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭은 fl_chart 콜백 — DEVICE 에서 확인 |
-| `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | **실측 정정** — `GradientScaffold` 는 `onRefresh` 외에 알림 벨·홈 버튼·미서명 계약 바를 더 준다. `AppPageScaffold` 에 없으므로 최소 전환 불가. 실제 사용처 0 전 공통 scaffold 삭제 금지 |
+| ~~`[R7-P2-RESIDUAL-USER-SHELL-UNIFY]`~~ | P2 → **P3-4 CLOSED(CODE/RENDER)** | 네 기능은 `AppPageScaffold` 의 `actions`+`bottomNavigationBar` 로 caller 가 넘기면 된다(관리자 화면들이 이미 그 방식). 다섯 곳 전환, 기능 보존 확인(SHU-1~7). **scaffold 파일은 남겨 둔다** · DEVICE·USER 는 OPEN |
 | `[R7-P2-1-RESIDUAL-TAB-DESTINATIONS]` | P2 | 일자리·일정·MY 탭 **내부** 화면군 |
 | ~~`[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]`~~ | P2 | **CLOSED** — 퇴근 카드 신설 |
 | ~~`[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]`~~ | P1-3 temporal | **CLOSED** — KST 로 통일 |
@@ -92,11 +93,13 @@ CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰
 |---|---|---|
 | `lib/screens/business_admin/` | **0** | 주석에만 이름이 남아 있다 |
 | `lib/screens/super_admin/` | **0** | P1-6 에서 6, P1-7 에서 5 전환 |
-| `lib/screens/common/settings_screen.dart` | 1 | **USER 경로용** — 관리자 역할은 `AppPageScaffold` |
-| `lib/screens/user/` | **4** | `attendance_check` · `interim_settlement_request` · `my_reviews` · `subadmin_leave`. `apply_prerequisites` 는 **P2-2 에서 전환 완료**(3축 실측 후 순수 교체). 가운데 둘 + `attendance_check` 는 shell `onRefresh` 를 쓴다 |
+| `lib/screens/common/settings_screen.dart` | **0** | P3-4 에서 지원자 경로도 flat. 역할 차이는 제목·우상단 액션·계약 바로 남는다 |
+| `lib/screens/user/` | **0** | `attendance_check` · `interim_settlement_request` · `my_reviews` · `subadmin_leave`. `apply_prerequisites` 는 **P2-2 에서 전환 완료**(3축 실측 후 순수 교체). 가운데 둘 + `attendance_check` 는 shell `onRefresh` 를 쓴다 |
 
 **죽은 화면은 없다.** `lib/screens` 아래 화면 위젯 79개 전부 외부 참조가 있다(2026-09-28 실측).
-`gradient_scaffold.dart` 는 남은 6화면이 전환되면 사용처 0이 되어 폐기 대상이 된다.
+`gradient_scaffold.dart` 는 **실제 사용처 0**(P3-4). 그래도 **삭제하지 않았다** — 호출부 0 은
+제품 성과가 아니고 DEVICE 확인 전이다. 파일 머리말의 "홈·일정·일자리와 동일한 디자인 언어"는
+이미 거짓이라 현재 사실로 고쳤다.
 
 ## 5. 반복 금지 (반례 없이는 재감사하지 않는다)
 

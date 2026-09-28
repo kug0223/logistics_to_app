@@ -17,7 +17,9 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_actions.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/user/pending_contract_bar.dart';
 import '../../services/device_integrity_service.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/privacy_inline_notice.dart';
@@ -693,25 +695,34 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    // [R7-P3-4] 홈(flat)에서 들어오는데 이 화면만 파란 헤더였다.
+    //   기능은 그대로 옮긴다 — 우상단 새로고침 버튼·홈·알림(배지 포함)과
+    //   미서명 계약 바. 본문 SafeArea(top:false) 도 같은 자리에 둔다.
+    return AppPageScaffold(
       title: '출퇴근 체크',
-      onRefresh: _loadTodayWorks,
-      body: _isLoading
-          ? const LoadingWidget(message: '근무 정보를 불러오는 중...')
-          : _todayWorks.isEmpty
-              ? (_loadError != null ? _buildErrorState() : _buildEmptyState())
-              : RefreshIndicator(
-                  onRefresh: _loadTodayWorks,
-                  child: ListView.builder(
-                    padding: ResponsiveHelper.listPadding(context),
-                    itemCount: _todayWorks.length,
-                    itemBuilder: (context, index) {
-                      final work = _todayWorks[index];
-                      final attendance = _attendanceMap[work.id];
-                      return _buildWorkCard(work, attendance);
-                    },
+      actions: appPageActions(context, onRefresh: _loadTodayWorks),
+      bottomNavigationBar: const PendingContractBar(useSafeArea: true),
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: _isLoading
+            ? const LoadingWidget(message: '근무 정보를 불러오는 중...')
+            : _todayWorks.isEmpty
+                ? (_loadError != null ? _buildErrorState() : _buildEmptyState())
+                : RefreshIndicator(
+                    onRefresh: _loadTodayWorks,
+                    child: ListView.builder(
+                      padding: ResponsiveHelper.listPadding(context),
+                      itemCount: _todayWorks.length,
+                      itemBuilder: (context, index) {
+                        final work = _todayWorks[index];
+                        final attendance = _attendanceMap[work.id];
+                        return _buildWorkCard(work, attendance);
+                      },
+                    ),
                   ),
-                ),
+      ),
     );
   }
 
