@@ -67,6 +67,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/business_picker_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 
 /// 설정 화면 진입 시 바로 보여줄 항목.
 ///
@@ -315,10 +316,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final showAdminSection =
             user?.role == UserRole.BUSINESS_ADMIN || isSubAdminInAdminMode;
 
-        return GradientScaffold(
-          title: showAdminSection ? '관리' : '설정',
-          headerContent: _buildHeaderProfile(context, userProvider),
-          body: ListView(
+        // [R7-P1-6 P16-M] 관리자 역할만 D0 의 flat admin shell 로 바꾼다.
+        //
+        //   이 화면은 **역할이 공유한다**. USER·SubAdmin(사용자 모드)도 들어와
+        //   '설정' 으로 본다(`showUserItems`). 이전 감사 메모는 "USER 진입 경로가
+        //   없다"고 적었는데 현행 HEAD 에서는 사실이 아니다 —
+        //   `contract_sign_screen`·`job_posting_screen`·`notification_screen` 이
+        //   여는 경로가 있고 SubAdmin 은 모드 전환으로 이 화면을 양쪽에서 쓴다.
+        //   그래서 shell 을 통째로 바꾸면 **지원자 공통 레이아웃까지** 바뀐다.
+        //   지원자 쪽은 P2 소유이므로 건드리지 않는다.
+        //
+        //   프로필 블록은 그라디언트 헤더 위에 흰 글자로 그려져 있다. flat 배경
+        //   (grey100)에 그대로 내리면 보이지 않으므로, 관리자 경로에서는 같은
+        //   블록을 **brand 색 카드**(radius 16)에 담아 대비를 유지한다 —
+        //   내용·문구·정보량은 그대로다.
+        final useAdminShell =
+            showAdminSection || user?.role == UserRole.SUPER_ADMIN;
+        final listBody = ListView(
             controller: _scrollCtrl,
             padding: ResponsiveHelper.listPadding(context),
             children: [
@@ -712,6 +726,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               _buildDeleteAccountButton(context, userProvider),
               SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+            ],
+        );
+
+        if (!useAdminShell) {
+          return GradientScaffold(
+            title: '설정',
+            headerContent: _buildHeaderProfile(context, userProvider),
+            body: listBody,
+          );
+        }
+        return AppPageScaffold(
+          title: showAdminSection ? '관리' : '설정',
+          body: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  ResponsiveHelper.spacing(context, 16),
+                  ResponsiveHelper.spacing(context, 12),
+                  ResponsiveHelper.spacing(context, 16),
+                  0,
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: theme.primaryColor,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: _buildHeaderProfile(context, userProvider),
+                ),
+              ),
+              Expanded(child: listBody),
             ],
           ),
         );
@@ -1548,15 +1592,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(height: 12),
                     ],
                     if (warnings.isNotEmpty) ...[
+                      // [R7-P1-6 P16-M] 상태색은 AppColors 계약 안에서만 쓴다 —
+                      //   바로 위 hardBlocks 는 이미 error/errorBg 를 쓰고 있었다.
                       Text('확인 권장 사항',
                           style: ResponsiveHelper.smallStyle(ctx,
-                              color: const Color(0xFFB45309),
+                              color: AppColors.warningDark,
                               fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       for (final w in warnings)
                         blockRow(
-                          color: const Color(0xFFB45309),
-                          bgColor: const Color(0xFFFFFBEB),
+                          color: AppColors.warningDark,
+                          bgColor: AppColors.warningBg,
                           icon: Icons.warning_amber_rounded,
                           label: warnLabel(w),
                           navKey: warnNavKey(w),
@@ -1567,19 +1613,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF0FDF4),
+                          color: AppColors.successBg,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFBBF7D0)),
+                          border: Border.all(color: AppColors.successLight),
                         ),
                         child: Row(
                           children: [
                             const Icon(Icons.check_circle_outline,
-                                size: 18, color: Color(0xFF16A34A)),
+                                size: 18, color: AppColors.success),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text('탈퇴 가능한 상태입니다.',
                                   style: ResponsiveHelper.smallStyle(ctx,
-                                      color: const Color(0xFF166534))),
+                                      color: AppColors.successDark)),
                             ),
                           ],
                         ),

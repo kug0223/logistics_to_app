@@ -1,4 +1,8 @@
 ﻿// lib/screens/super_admin/system_settings_screen.dart
+// [R7-P1-6 P16-A] GradientScaffold(지원자 공통 레이아웃) → AppPageScaffold
+//   (D0 관리자 표준 flat shell). 이 화면은 headerContent 를 쓰지 않고 헤더에
+//   TabBar 도 없으며 가로 스크롤 표도 없다 — 그래서 위젯 이름만 바뀐다.
+//   본문의 흰 카드는 flat 배경(grey100) 위에서 그대로 카드로 읽힌다.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -13,7 +17,7 @@ import 'minimum_wage_settings_screen.dart';
 import 'insurance_rate_settings_screen.dart';
 import 'to_limit_settings_screen.dart';
 import 'business_approval_settings_screen.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
 ///
@@ -41,7 +45,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '시스템 설정',
       body: ListView(
         padding: ResponsiveHelper.listPadding(context),

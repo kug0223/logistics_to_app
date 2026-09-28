@@ -29,6 +29,7 @@ import '../../widgets/common/app_tab_label.dart';
 import '../../providers/user_provider.dart';
 import '../../services/member_service.dart';
 import '../../widgets/dialogs/contract_template_selector_dialog.dart';
+import 'admin_contract_reads.dart';
 import 'historical_contracts_screen.dart';
 
 class AdminContractManagementScreen extends StatefulWidget {
@@ -36,11 +37,15 @@ class AdminContractManagementScreen extends StatefulWidget {
   final String? businessName;
   final int initialTab;
 
+  /// [R7-P1-6 P16-C] 원시 외부 읽기 경계. production 은 null → `AdminContractReads.of`.
+  final AdminContractReads? reads;
+
   const AdminContractManagementScreen({
     super.key,
     required this.businessId,
     this.businessName,
     this.initialTab = 0,
+    this.reads,
   });
 
   @override
@@ -68,7 +73,20 @@ class _AdminContractManagementScreenState
 
   late final TabController _tabCtrl;
 
+  late final AdminContractReads _reads =
+      widget.reads ?? AdminContractReads.of();
+
   List<EmploymentContractModel> _items = [];
+
+  /// [R7-P1-6 P16-C] 조회 실패를 상태로 들고 있다.
+  ///
+  ///   예전에는 두 로더가 실패를 토스트 한 번으로 흘리고 목록을 빈 채로 뒀다.
+  ///   그러면 미발송 탭이 **체크 아이콘 + `미발송 계약서 없음` + "확정된 모든
+  ///   지원자에게 계약서를 보냈습니다"** 로 그려졌다 — 조회가 실패했을 뿐인데
+  ///   **해야 할 일을 완료 이력처럼** 말한 것이다. 계약서 목록 탭도 같은 모양으로
+  ///   `계약서가 없습니다` 였다. 없음과 모름을 구분한다.
+  bool _listLoadFailed = false;
+  bool _unsentLoadFailed = false;
   bool _isLoading = true;
   bool _fetchInProgress = false;
   bool _isLoadingMore = false;
@@ -279,6 +297,7 @@ class _AdminContractManagementScreenState
     _fetchInProgress = true;
     setState(() {
       _isLoading = true;
+      _listLoadFailed = false;
       _items = [];
       _unsentApps = [];
       _lastDoc = null;
@@ -289,7 +308,7 @@ class _AdminContractManagementScreenState
         await _loadUnsentContracts();
         _unsentCache = List.from(_unsentApps);
       } else {
-        final result = await _contractService.getByBusinessPaged(
+        final result = await _reads.contractsPaged(
           widget.businessId,
           statusFilter: _currentFilter,
         );
@@ -307,7 +326,10 @@ class _AdminContractManagementScreenState
       }
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
-      if (mounted) ToastHelper.showError('계약서 목록을 불러오는데 실패했습니다.');
+      if (mounted) {
+        ToastHelper.showError('계약서 목록을 불러오는데 실패했습니다.');
+        setState(() => _listLoadFailed = true);
+      }
     } finally {
       _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
@@ -332,13 +354,19 @@ class _AdminContractManagementScreenState
 
   Future<void> _loadUnsentContracts() async {
     try {
-      final unsent = await _firestoreService
-          .getUnsentApplicationsByBusiness(widget.businessId)
+      // [R7-P1-6 P16-C] 읽어 온 목록을 **제자리에서** 정렬하지 않는다 —
+      //   reader 가 불변 목록을 돌려줘도 되어야 한다(경계가 그 요구를 드러냈다).
+      final unsent = List<ApplicationModel>.of(
+          await _reads.unsentApplications(widget.businessId))
         ..sort((a, b) => a.workDate.compareTo(b.workDate));
       if (!mounted) return;
-      setState(() => _unsentApps = unsent);
+      setState(() {
+        _unsentApps = unsent;
+        _unsentLoadFailed = false;
+      });
     } catch (e) {
       debugPrint('❌ 미발송 계약서 조회 실패: $e');
+      if (mounted) setState(() => _unsentLoadFailed = true);
     }
   }
 
@@ -346,7 +374,7 @@ class _AdminContractManagementScreenState
     if (_isUnsentTab || _isLoadingMore || !_hasMore || _lastDoc == null) return;
     setState(() => _isLoadingMore = true);
     try {
-      final result = await _contractService.getByBusinessPaged(
+      final result = await _reads.contractsPaged(
         widget.businessId,
         statusFilter: _currentFilter,
         startAfterId: _lastDoc,
@@ -728,6 +756,23 @@ class _AdminContractManagementScreenState
 
   Widget _buildEmpty(BuildContext context) {
     final isSearching = _searchQuery.isNotEmpty;
+    // [R7-P1-6 P16-C] 실패를 '없음'으로 말하지 않는다. 특히 미발송 탭의 '없음'은
+    //   **보낼 계약서가 없다**는 완료 주장이라 조회 실패와 섞으면 안 된다.
+    final failed = _isUnsentTab ? _unsentLoadFailed : _listLoadFailed;
+    if (failed && !isSearching) {
+      return AppEmptyState(
+        icon: Icons.cloud_off_outlined,
+        title: _isUnsentTab
+            ? '미발송 계약서를 확인하지 못했습니다'
+            : '계약서 목록을 불러오지 못했습니다',
+        subtitle: '네트워크 상태를 확인한 뒤 다시 시도해 주세요.',
+        action: OutlinedButton.icon(
+          onPressed: () => unawaited(_refresh()),
+          icon: const Icon(Icons.refresh),
+          label: const Text('다시 시도'),
+        ),
+      );
+    }
     if (_isUnsentTab) {
       return AppEmptyState(
         icon: isSearching ? Icons.search_off : Icons.check_circle_outline,

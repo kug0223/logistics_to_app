@@ -1695,3 +1695,172 @@ fail-closed 로 쓴다). 이제 상한 도달은 실패와 같은 **모름**이�
 
 오류·상한·권한 회수는 **테스트에서 주입해 이미 확인했다** — 실기기에서 망 장애를
 만들어 달라고 요청하지 않는다. 월 응답 역전·처리 성공은 정적 캡처로 증명하지 않는다.
+
+---
+
+## R7-P1-6 — 관리자 계약·관리·통계 (2026-09-28)
+
+기준 `49ca49e`(직전 `ba9305e`) — 요청서 SHA 와 **실제 HEAD 일치**. branch `main`,
+시작 시 tracked 변경 0, 사용자 소유 untracked 8건 보존. 인벤토리를 새로 만들지 않고
+현행 HEAD 의 도달 경로로 확인했다. P1-2/P1-3/P1-4/P1-5 의 종료 증거와 계약서 서명 흐름·
+문서 승인·R5 권한 검증은 재사용했고 다시 감사하지 않았다. P1-5 PRODUCT/DEVICE·
+Staffing O08 대기, 11TO/21업무 보정 **DEFERRED**. 공유 DEV 쓰기·CF 배포·Rules·PROD·
+APK **없음**.
+
+### 0. 먼저 정정한 두 가지 (이전 보고의 후보 수치)
+
+1. **관리자 트리에 남은 `GradientScaffold` 는 이미 0 이었다.** 이전 보고가 후보로 적은
+   `admin_stats`·`admin_month_detail`·`business_detail`·`member_management`·
+   `payroll_overview`·`payroll_worker_detail` 여섯은 **주석에만** 이름이 남아 있고
+   실제 호출은 없다(`GradientScaffold(` 0건). 실제 대상은 역할을 공유하는
+   `common/settings_screen` **하나**였다.
+2. **`settings_screen` 에 USER 진입 경로가 있다.** 이전 메모는 "USER 진입 없음 →
+   shell 교체에 역할 공유 제약 없음"이라고 적었는데 현행 HEAD 에서는 사실이 아니다 —
+   `role == USER` 이면 `showUserItems` 로 '설정' 을 보고, `contract_sign_screen`·
+   `job_posting_screen`·`notification_screen` 이 그 화면을 연다. SubAdmin 은 모드
+   전환으로 양쪽에서 쓴다. 그래서 shell 을 통째로 바꾸면 **지원자 공통 레이아웃까지**
+   바뀐다. 지원자 쪽은 **P2 소유**이므로 건드리지 않았다.
+   super_admin 의 **11** 이라는 수치는 HEAD 에서도 성립한다(12개 중 home 만 예외).
+
+### 1. 실제 도달 화면 × 계약 표
+
+| 화면 | 진입/역할 | source·계산 owner | 상태·단위·기간 | loading/empty/error/partial/권한 | action·서버 guard | shell/D0 |
+|---|---|---|---|---|---|---|
+| `settings_screen`(관리/설정) | shell 탭4(ADMIN·SubAdmin admin) · super_admin_home(SUPER) · contract_sign·job_posting·notification(USER) | provider(역할·권한) + 각 메뉴 목적지 | — | 메뉴는 권한별 분기, 탈퇴 사전 점검은 차단/경고/가능 3분기 | 목적지별 기존 guard(재사용) | **수정** — 관리자 역할만 `AppPageScaffold` |
+| `admin_contract_management` | 홈 `계약 미발송` · 공고/인력 · 관리 탭 | `contractsPaged`(상태 필터) + `unsentApplications` | 5탭: 전체/미발송/근무자 대기/완료/무효 · 건 | 권한 회수 = `접근 권한이 없습니다`(유지) · **실패 = 이번에 분리** | 계약 생성/발송/서명 — 기존 CF guard | 이미 flat |
+| `admin_stats_screen` | 관리 탭 → 분석 | `AdminStatsService`(엄격 envelope) | 총 인건비(원) · 근무 건수(건) · 출근율·노쇼율(%) · 연/월 | 실패 → `확인 불가`/`조회 실패`, `limitReached` fail-closed | 월 카드 → 월 상세(범위 동반) | 이미 flat |
+| `admin_month_detail` | 통계 월 카드 | 같은 서비스 | 근무일(**고유 날짜**) · 정상/지각/결근(건, 단위어 없음) · 임금(원) | `다시 시도` 있음 | 근무자 행 → 상세 | 이미 flat |
+| super_admin 11화면 | `settings_screen`(SUPER) · `super_admin_home` · `system_settings` | 각 화면 자체 | 설정값·목록 | 각 화면 유지 | 각 화면 유지 | **6 수정 / 5 이관** |
+| `user_my_tab` | USER MY | — | — | — | — | **P2** (이번 대상 아님) |
+
+`today_payment_screen` 은 존재하지 않는다(P1-5 에서 확인) — 패치 대상에서 제외.
+
+### 2. P16-C — 계약·문서의 진실 → **수정**
+
+**확인된 결함:** 두 로더(`_load`·`_loadUnsentContracts`)가 실패를 **토스트 한 번**으로
+흘리고 목록을 빈 채로 뒀다. 그래서 미발송 탭이
+
+> ✅ `미발송 계약서 없음` / "확정된 모든 지원자에게 계약서를 …"
+
+로 그려졌다 — **조회가 실패했을 뿐인데 해야 할 일을 완료 이력처럼** 말한 것이다
+(체크 아이콘까지 붙는다). 계약서 목록 탭도 같은 모양으로 `계약서가 없습니다` 였다.
+`_load` 는 fetch 전에 `_items = []` 를 먼저 세팅하므로 실패가 곧 "없음"이 된다.
+
+→ `_listLoadFailed`/`_unsentLoadFailed` 를 상태로 들고, 빈 상태에서 **실패 분기를
+먼저** 가른다: `미발송 계약서를 확인하지 못했습니다` / `계약서 목록을 불러오지
+못했습니다` + `다시 시도`. 권한 회수(`접근 권한이 없습니다`)는 기존 계약 그대로다.
+
+**경계 신설:** `admin_contract_reads.dart`(원시 읽기 **2개**) — 실패/정상을 골라 넣어
+production 화면을 그릴 수 있게 했다. 경계가 숨은 요구도 드러냈다: 화면이 읽어 온 목록을
+**제자리에서 정렬**(`..sort`)하고 있었다 → 불변 목록을 돌려주면 던진다. 복사본을 정렬한다.
+
+**NO PATCH (재사용):** 서명 단계(pending_employer → pending_worker → completed)와 탭
+분류, 종료 관계 제외(`CONTRACT_ENDED_STATUSES`), 문서 버전·권한·민감정보, 계약 생성/발송
+CF guard 는 기존 종료 증거를 연결한다. 법률상 사후 계약 정비 정책은 **OPEN 유지** —
+자동 과거 계약을 만들지 않았다.
+
+### 3. P16-M / P16-A — 관리자 화면 틀
+
+**P16-M 수정.** `settings_screen` 은 역할이 공유하므로 **관리자 역할만**
+`AppPageScaffold`(D0 flat admin)로 바꿨다(`showAdminSection || SUPER_ADMIN`).
+USER·SubAdmin(사용자 모드)는 `GradientScaffold` 그대로다. 프로필 블록은 흰 글자로
+그려져 있어 grey100 위에 그대로 내리면 보이지 않으므로 **brand 색 카드(radius 16)**
+안에 담아 대비를 유지했다 — 내용·문구·정보량은 그대로다.
+하드코딩 색 **6종 7곳**(amber/green 계열)을 `AppColors.warningDark/warningBg/
+successBg/successLight/success/successDark` 로 바꿨다. 바로 위 hardBlocks 는 이미
+`error/errorBg` 를 쓰고 있었으므로 같은 계약 안으로 들어온 것이다.
+
+**P16-A: 11화면을 기계적으로 바꾸지 않았다.** 축으로 분류했다(전부 `headerContent` 미사용):
+
+| 분류 | 화면 | 근거 | 조치 |
+|---|---|---|---|
+| 순수 shell 교체 | `system_settings` · `business_approval_settings` · `insurance_rate_settings` · `minimum_wage_settings` · `legal_terms_management` · `badge_settings` | headerContent 0 · 헤더 TabBar 없음 · 가로 표 없음 · `title`/`body`/`actions`/`floatingActionButton` 인자명 동일 | **6 전환** |
+| 헤더 TabBar | `help_faq_management` · `review_tags_settings` · `to_limit_settings` | `labelColor: Colors.white` — 그라디언트 위 흰 라벨이라 flat app bar 에서 **보이지 않는다**. 라벨 색까지 함께 고쳐야 한다 | **이관**(owner P16-A, 남은 조건: 탭 라벨 색 + 렌더 증거) |
+| 넓은 표·관리 도구 | `all_businesses` · `all_users` | `Axis.horizontal` 가로 스크롤 표 + 입력 | **이관**(owner P16-A, 남은 조건: 표 레이아웃 위험 확인) |
+
+`direct AlertDialog/showModalBottomSheet` 는 이번에 잘림·safe-area·닫기 결함을 확인한
+호출이 없어 **사용 자체를 결함으로 분류하지 않았다**(NO PATCH).
+`bool can()` collapse 는 기존 종료 근거를 확인했고 새 bypass 를 찾지 못했다 — 권한 설계를
+새로 열지 않았다.
+
+**이 단계로 앱 전체 관리자 디자인이 끝난 것이 아니다**: super_admin 5화면 이관,
+`document_management_screen` 하드코딩 색 10곳(P1-7), `AppSummaryHeader`/`AppStatusCard`
+채택 0(P1-7), radius 혼재(POLISH)가 남아 있다.
+
+### 4. P16-S — 통계의 분자·분모 → **NO PATCH (근거 제출)**
+
+| 지표 | 이름/단위 | 모집단 | source·owner | freshness | 목적지 |
+|---|---|---|---|---|---|
+| 총 인건비 | 원 | 선택 연/월 · 사업장(필터) | `AdminStatsService` | 실패 시 `확인 불가` | — |
+| 근무 건수 | **건** | 같은 범위의 attendance | 같음 | 같음 | — |
+| 출근율·노쇼율 | % | 같음 | 같음 | 같음 | — |
+| 월별 인건비(막대) | 원 | 12개월 | 같음 | 실패 월은 `조회 실패` | 월 카드 → 월 상세 |
+| 근무일 | **일 = 고유 날짜 수** | 근로자×월 | `WorkerMonthSummary.totalDays` = `workDate` 집합 크기 | — | 근무자 행 |
+| 정상/지각/결근 | **건**(단위어 없음) | 같음 | 같음 | — | — |
+| 임금 | 원 | 확정 기준 · 미확정은 `미확정` | 같음 | — | — |
+
+- 실패·부분·상한을 0/데이터 없음으로 숨기지 않는다 — `확인 불가`·`조회 실패`,
+  서비스가 `limitReached` 를 **fail-closed(UNAVAILABLE)** 로 읽는다.
+- 숫자를 누르면 `businessIds`·`filterBusinessId`·`year`·`month` 가 함께 간다 →
+  대상 목록의 범위가 현재 선택과 일치한다.
+- **근무일은 고유 날짜**로 세고(P1-5 에서 고친 것과 같은 함정을 이미 피하고 있다),
+  건 단위 지표에는 `일` 을 붙이지 않는다.
+- **기록만:** 필드 이름이 `presentDays/lateDays/absentDays` 인데 값은 **건**이다
+  (주석이 그렇게 말한다). 표시에는 단위어가 없어 사용자에게 보이는 결함은 없다 —
+  다음 소비자가 `일` 로 읽을 위험만 남는다. 이름 변경은 이번 범위 밖으로 기록한다.
+  `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]`
+
+### 5. 이번에 실행한 증거
+
+**RENDER·행동** `admin_shell_flat_render_test` **10건** (production 위젯, `tester.view`):
+
+| 증거 | 확인 |
+|---|---|
+| ASF-1 | BUSINESS_ADMIN → `AppPageScaffold`, Gradient 0, '관리', 프로필 유지 |
+| ASF-2 | USER → `GradientScaffold` 유지, `AppPageScaffold` 0, '설정' |
+| ASF-3 | SubAdmin 모드 전환에 따라 두 shell 을 오간다 |
+| ASF-4 | 320dp·배율 1.3 — 프로필 카드 + 목록, 스크롤 가능, 예외 0 |
+| ASF-5 | super-admin `시스템 설정` → flat shell (**shell 범위**) |
+| ASF-6 | 같은 화면 320dp·**배율 2.0** 예외 0 |
+| ACM-1 | 계약 목록 실패 → `불러오지 못했습니다` + 재시도, `계약서가 없습니다` **없음** |
+| ACM-2 | 미발송 실패 → `확인하지 못했습니다`, `미발송 계약서 없음`·체크 아이콘 **없음** |
+| ACM-3 | 320dp·배율 1.3 에서 실패 상태·재시도 접근 가능 |
+| ACM-4 | **정상 0건**은 `미발송 계약서 없음` — 실패와 다른 문구 |
+
+**CODE** `admin_p16_shell_and_truth_contract_test` **16건**: 역할 경계(M-1~3) ·
+super_admin 전환/이관 근거(A-1~4) · 계약 실패 분기·경계·비파괴 정렬(C-1~5) ·
+통계 단위·모집단·목적지 범위(S-1~4).
+
+**DEV READ** 없음. **Emulator** 사용 없음(상태 변경 검증이 필요한 수정이 없었다).
+
+### 6. 회귀 (같은 SHA·같은 환경·이름별)
+
+- 변경 파일을 참조하는 테스트 13파일 **367 PASS**
+- 시뮬레이션 2파일 **957 PASS**
+- 새 렌더 10 + 새 계약 16
+- `flutter analyze lib test` **No issues**
+
+전체 suite 총 실패 수로 완료를 주장하지 않는다.
+
+### 7. 종료 판단
+
+| ID | 이전 → 현재 | 실제 진입 화면 | 수정/NO PATCH/이관 | 기존/이번 증거 | CODE/행동/RENDER/DEV READ/DEVICE | 남은 조건 |
+|---|---|---|---|---|---|---|
+| **P16-C** | 실패가 "없음/완료" → 분리 | `admin_contract_management`(홈·공고·관리 진입) | **수정** + 경계 신설 | 서명 흐름·문서 권한(기존) / ACM-1~4·C-1~5 | CODE 5 · RENDER 4 · DEV READ 0 | 실기기 실패 유도 불필요(주입으로 확인) · 법률 사후 정비 **OPEN** |
+| **P16-M** | 파란 구형 shell + 하드코딩 색 | `settings_screen`(역할 공유) | **수정**(관리자 역할만) | — / ASF-1~4·M-1~3 | CODE 3 · RENDER 4 | 지원자 경로는 **P2** |
+| **P16-S** | — | `admin_stats`·`admin_month_detail` | **NO PATCH**(근거) | 엄격 envelope·fail-closed / S-1~4 | CODE 4 | 필드 이름 `...Days` 기록 |
+| **P16-A** | 구형 11화면 | super_admin 11 | **6 수정 / 5 이관** | — / ASF-5·6·A-1~4 | CODE 4 · RENDER 2(shell 범위) | 헤더 TabBar 3 · 넓은 표 2 |
+| 대비·터치 | — | — | — | — | **미측정** | P4 |
+
+#### 최소 DEVICE 캡처·조작안 (바뀐 화면만)
+
+1. **관리 탭**: 관리자 계정에서 상단이 흰 app bar + 프로필 카드인지, 목록이 스크롤되고
+   하단 safe area 가 가려지지 않는지. 배율 1.3/2.0 에서 프로필 카드의 글자가 보이는지.
+2. **관리 탭(사용자 계정)**: USER 로 들어가면 예전 파란 헤더 그대로인지(바뀌지 않았음).
+3. **SubAdmin 모드 전환**: 사용자 모드 ↔ 관리 모드에서 두 shell 이 바뀌는지, 뒤로·탭
+   상태가 유지되는지.
+4. **계약 관리**: 정상 0건일 때 `미발송 계약서 없음` 이 그대로인지(실패 문구가 잘못
+   뜨지 않는지). 실패 유도는 요청하지 않는다 — 주입으로 이미 확인했다.
+5. **super-admin 시스템 설정**: 흰 app bar + 목록, 하위 설정 화면 6개 진입/뒤로.
+6. 탈퇴 사전 점검 화면에서 경고(주황)·가능(초록) 블록의 색이 앱의 다른 경고/성공과
+   같은 색인지.

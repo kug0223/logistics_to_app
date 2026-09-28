@@ -1,4 +1,8 @@
 ﻿// lib/screens/super_admin/badge_settings_screen.dart
+// [R7-P1-6 P16-A] GradientScaffold(지원자 공통 레이아웃) → AppPageScaffold
+//   (D0 관리자 표준 flat shell). 이 화면은 headerContent 를 쓰지 않고 헤더에
+//   TabBar 도 없으며 가로 스크롤 표도 없다 — 그래서 위젯 이름만 바뀐다.
+//   본문의 흰 카드는 flat 배경(grey100) 위에서 그대로 카드로 읽힌다.
 
 import 'dart:math' show max;
 import 'package:flutter/material.dart';
@@ -12,7 +16,7 @@ import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/app_select_field.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
 
@@ -241,7 +245,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     final specialtyBadges = _specialtyBadges;
     final experienceBadges = _experienceBadges;
     
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '배지 관리',
       floatingActionButton: FloatingActionButton.extended(
         onPressed: (_isAdding || isLoading) ? null : _addBadge,

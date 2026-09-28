@@ -1,11 +1,15 @@
 // lib/screens/super_admin/business_approval_settings_screen.dart
+// [R7-P1-6 P16-A] GradientScaffold(지원자 공통 레이아웃) → AppPageScaffold
+//   (D0 관리자 표준 flat shell). 이 화면은 headerContent 를 쓰지 않고 헤더에
+//   TabBar 도 없으며 가로 스크롤 표도 없다 — 그래서 위젯 이름만 바뀐다.
+//   본문의 흰 카드는 flat 배경(grey100) 위에서 그대로 카드로 읽힌다.
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../utils/loading_state_mixin.dart';
 import 'package:provider/provider.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -82,7 +86,7 @@ class _BusinessApprovalSettingsScreenState
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '사업장 승인 정책',
       body: isLoading
           ? const LoadingWidget(message: '설정을 불러오는 중...')
