@@ -82,6 +82,20 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   없다고 말한 것**이다. 근로자는 앱이 정상이라 믿고 미지급을 놓친다.
   ///   (지원 내역은 `_homeLoadFailed` 가 이미 같은 구분을 한다.)
   bool _attendancesFailed = false;
+
+  /// [R7-P2-1 잔여] **어제 달**의 근태 꼬리.
+  ///
+  ///   자정을 넘겨 계속되는 근무의 기록은 `workDate` 가 **어제**다. 달의
+  ///   1일에는 그 어제가 지난달이라 이번 달 조회에 들어오지 않는다 —
+  ///   그날만 같은 조회를 한 번 더 한다(같은 CF·같은 self-uid 계약).
+  ///   polling 도 listener 도 아니고, 1일이 아니면 호출 자체가 없다.
+  List<AttendanceModel> _prevMonthTail = const [];
+
+  /// 어제 근무의 퇴근 여부를 **판단할 수 없다**.
+  ///
+  ///   근태를 못 읽으면 "퇴근이 남지 않았다"고 말할 수 없다. 침묵하면
+  ///   미퇴근이 `missed_checkout` 으로 자동 처리돼 임금 분쟁이 된다.
+  bool _overnightUnknown = false;
   /// businessId → BusinessModel 캐시 — 사업장 이미지·혜택 정보 표시용
   Map<String, BusinessModel> _businessCache = {};
   bool _isLoadingData = false;
@@ -442,6 +456,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       Object? attsErr;
       Object? tosErr;
       Object? idErr;
+      Object? tailErr;
+      // [R7-P2-1 잔여] 어제가 지난달인 날(=1일)에만 꼬리를 함께 읽는다.
+      final needsTail = now.day == 1;
+      final prevMonthDay = DateTime(now.year, now.month, 0); // 지난달 말일
       final results = await Future.wait([
         _reads.myApplications(uid).catchError((Object e) {
           appsErr = e;
@@ -462,6 +480,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           idErr = e;
           return <IdCardAccessRequestModel>[];
         }),
+        if (needsTail)
+          _reads
+              .myMonthlyAttendances(
+                  userId: uid,
+                  year: prevMonthDay.year,
+                  month: prevMonthDay.month)
+              .catchError((Object e) {
+            tailErr = e;
+            return <AttendanceModel>[];
+          })
+        else
+          Future<List<AttendanceModel>>.value(const <AttendanceModel>[]),
       ]);
       if (!mounted || superseded()) return;
 
@@ -491,6 +521,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             PendingIdRequestSurface.from(results[3] as List<IdCardAccessRequestModel>);
         _idRequestsLoaded = true;
       }
+      if (tailErr == null) {
+        _prevMonthTail = results[4] as List<AttendanceModel>;
+      } else {
+        debugPrint('⚠️ 지난달 근태 꼬리 로드 실패: $tailErr');
+        _prevMonthTail = const [];
+      }
+      // 어느 쪽이든 못 읽었으면 어제의 퇴근 여부를 말할 수 없다.
+      _overnightUnknown = attsErr != null || tailErr != null;
       _rebuildCaches();
 
       // [PII-DOC-R1.6.1] 보완 요청은 홈의 숫자를 만들지 않으므로 별도로
@@ -856,6 +894,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       children: [
         // ① 인사말
         _buildGreeting(context, s, up),
+        // [R7-P2-1 잔여] 자정을 넘긴 근무의 **퇴근**은 이미 시작된 일이다.
+        //   앞으로의 약속(아래 Priority Hero)보다 먼저 둔다 — 응답하지 않으면
+        //   `missed_checkout` 으로 자동 처리돼 임금이 다퉈진다.
+        //   Hero 를 대체하지 않는다: 오늘 출근 약속이 함께 있으면 두 카드가
+        //   **둘 다** 보인다.
+        _buildOvernightCheckoutCard(context, s),
         // ② Priority Card — State B(오늘 출근) / State A(새 확정) / 없으면 사라짐
         // 날짜 탐색과 독립 — 확정이 있어도 아래 날짜 탐색은 항상 표시
         _buildPriorityCard(context, s, theme),
@@ -1009,6 +1053,173 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // ─────────────────────────────────────────────────────────────
   // ── Priority Card: State B(오늘 출근) / State A(새 확정) / 없으면 숨김 ──
   // 날짜 탐색(_buildDateExplorer)과 독립 — 확정이 있어도 날짜 탐색은 항상 노출
+  // ── 자정을 넘겨 아직 퇴근하지 않은 근무 ────────────────────────
+  //
+  // [R7-P2-1 잔여 · UHR-18] 출퇴근 화면은 **어제 날짜의 진행 중 기록**을
+  //   목록에 남긴다(자정 넘겨 퇴근하는 근무). 홈 Hero 는 오늘만 보므로,
+  //   퇴근만 남은 사람에게 홈에서 갈 길이 없었다.
+  //
+  //   자격은 "어제 날짜 확정 근무"가 아니라 **실제로 출근했고 퇴근이 남은
+  //   진행 중인 기록**이다. 목적지(`attendance_check_screen`)가 어제 기록을
+  //   숨기는 조건과 같은 술어를 쓴다 — 두 화면이 다른 대상을 말하지 않는다:
+  //     · `checkOut != null`            → 이미 퇴근
+  //     · `missed_checkout`             → 자동 처리됨
+  //     · `NO_SHOW` / `absent`          → 출근 자체가 없다
+  //   여기에 홈 쪽 조건을 더한다:
+  //     · `checkIn == null`             → 미출근이면 퇴근 CTA 를 만들지 않는다
+  //     · 지원서가 `confirmedStatuses` 가 아니면 제외(취소·해지)
+  //     · `userId` 재확인 — self-uid 계약을 화면에서도 깨지 않는다
+  AttendanceModel? _openOvernightAttendance() {
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return null;
+    // 지원 내역을 못 읽었으면 확정 여부를 확인할 수 없다 — 거짓 CTA 금지.
+    if (_homeLoadFailed) return null;
+    final yesterday = FormatHelper.toKstDate(DateTime.now())
+        .subtract(const Duration(days: 1));
+
+    for (final att in [..._attendances, ..._prevMonthTail]) {
+      if (att.userId != uid) continue;
+      if (FormatHelper.toKstDate(att.workDate) != yesterday) continue;
+      if (att.checkInAt == null) continue;   // 출근하지 않았다
+      if (att.checkOutAt != null) continue;  // 이미 퇴근했다
+      if (att.status == 'missed_checkout' ||
+          att.status == AttendanceModel.statusNoShow ||
+          att.status == AttendanceModel.statusAbsent) {
+        continue;
+      }
+      final app = _applications
+          .where((a) => a.id == att.applicationId)
+          .firstOrNull;
+      if (app == null) continue;
+      if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+      return att;
+    }
+    return null;
+  }
+
+  Widget _buildOvernightCheckoutCard(BuildContext context, double s) {
+    if (_isLoadingData) return const SizedBox.shrink();
+
+    // [ERROR ≠ EMPTY] 못 읽었으면 "퇴근이 남지 않았다"고 말하지 않는다.
+    if (_overnightUnknown) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+        child: GestureDetector(
+          onTap: _isLoadingData ? null : () => _loadHomeData(),
+          child: Container(
+            padding:
+                EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Row(children: [
+              Icon(Icons.cloud_off_outlined,
+                  size: 20 * s, color: AppColors.textSecondary),
+              SizedBox(width: 10 * s),
+              Expanded(
+                child: Text(
+                  '어제 근무의 퇴근 여부를 확인하지 못했어요',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              Text('다시 시도',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.infoDark,
+                  )),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    final att = _openOvernightAttendance();
+    if (att == null) return const SizedBox.shrink();
+
+    final wd = FormatHelper.toKstDate(att.workDate);
+    final started = att.checkIn; // HH:mm — 반올림 적용 후 최종 출근 시각
+    const accent = AppColors.warning;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      child: GestureDetector(
+        onTap: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+                builder: (_) => const AttendanceCheckScreen()),
+          );
+          if (mounted) _loadHomeData();
+        },
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.32)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38 * s,
+                height: 38 * s,
+                decoration:
+                    const BoxDecoration(color: accent, shape: BoxShape.circle),
+                child: Icon(Icons.logout_rounded,
+                    size: 20 * s, color: Colors.white),
+              ),
+              SizedBox(width: 12 * s),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '퇴근 기록이 남았어요',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 3 * s),
+                    Text(
+                      [
+                        '${wd.month}/${wd.day} 근무',
+                        if (att.businessName.isNotEmpty) att.businessName,
+                        if (started != null) '$started 출근',
+                      ].join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8 * s),
+              const Text('퇴근하기',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: accent)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPriorityCard(BuildContext context, double s, ThemeData theme) {
     // 로딩 중: skeleton (State B/A 여부 미확정이므로 자리 유지)
     if (_isLoadingData) {

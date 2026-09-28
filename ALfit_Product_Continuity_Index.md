@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-1 후속 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-1 잔여 커밋
 
 ## 1. 문서 지도
 
@@ -30,7 +30,7 @@
 | P1-5 | 급여 개요·상세·대시보드 | CLOSED | CLOSED | **PENDING** |
 | P1-6 | 계약·관리·통계 | CLOSED | CLOSED | **PENDING** |
 | P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | **CLOSED**(super-admin 5화면 CODE only · 통계 hop 제스처 NOT SEEN) | **PENDING** |
-| P2-1 | 지원자 Home·4탭 진입 | CLOSED | **CLOSED**(P21-R 행동은 12경로 중 2 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
+| P2-1 | 지원자 Home·4탭 진입 | CLOSED | **CLOSED**(P21-R 행동은 12경로 중 3 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
 | P2 나머지 | 일자리·일정·MY 탭 내부 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
@@ -45,7 +45,8 @@
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭은 fl_chart 콜백 — DEVICE 에서 확인 |
 | `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | 6화면 + 낡은 주석 정정 — 3축 실측 완료, 셋은 `onRefresh` 설계가 먼저 |
 | `[R7-P2-1-RESIDUAL-TAB-DESTINATIONS]` | P2 | 일자리·일정·MY 탭 **내부** 화면군 |
-| `[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]` | P2 | 어제 야간 근무 퇴근 진입점 — 새 상태·문구 결정 |
+| ~~`[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]`~~ | P2 | **CLOSED** — 퇴근 카드 신설 |
+| `[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]` | P1-3 temporal | 출퇴근 화면이 기기 로컬 자정으로 어제를 만든다(홈은 KST) |
 | `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
 | `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
 | 대비·터치영역 수치 | P4 | 미측정 |
@@ -74,3 +75,4 @@
 - 통계 집계 의미·필터·fail-closed(P16-S)
 - 지원자 홈 Hero 술어·늦은 응답 가드·4탭 뒤로 경로(P2-1)
 - 홈 CTA entity key 표·상태 분류·FCM 대상 권한(P2-1 후속)
+- 자정 넘긴 근무의 퇴근 자격 술어·경계 9종(P2-1 잔여)

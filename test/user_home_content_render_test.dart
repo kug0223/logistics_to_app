@@ -174,6 +174,32 @@ RenewalProposalModel _proposal() => RenewalProposalModel(
       effectiveEnd: _day(60),
     );
 
+/// 근태 기록 — 자정 넘긴 근무 판정용. `workDate` 는 **출근한 날**이다.
+AttendanceModel _att({
+  String id = 'att1',
+  String applicationId = 'night1',
+  String userId = 'u1',
+  required DateTime workDate,
+  DateTime? checkInAt,
+  DateTime? checkOutAt,
+  String status = AttendanceModel.statusPresent,
+}) =>
+    AttendanceModel(
+      id: id,
+      applicationId: applicationId,
+      userId: userId,
+      businessId: _biz,
+      businessName: '강남 물류센터',
+      workDate: workDate,
+      workType: '상하차',
+      status: status,
+      wageStatus: AttendanceModel.wagePending,
+      adminConfirmed: false,
+      checkInAt: checkInAt,
+      checkOutAt: checkOutAt,
+      createdAt: workDate,
+    );
+
 BusinessModel _business() => BusinessModel(
       id: _biz,
       name: '강남 물류센터',
@@ -245,6 +271,13 @@ Future<void> _pump(
   double textScale = 1.0,
   _UserProviderDouble? provider,
 }) async {
+  final isolationKey = UniqueKey();
+  // 같은 테스트에서 두 번째 화면을 그리기 전에 앞 화면을 **내린다** —
+  //   남은 State·타이머가 다음 시나리오의 로드와 섞이지 않게 한다.
+  if (tester.binding.rootElement != null) {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
+  }
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -263,7 +296,9 @@ Future<void> _pump(
               .copyWith(textScaler: TextScaler.linear(textScale)),
           // 같은 타입 화면을 연달아 pump 하면 State 가 재사용돼 시나리오가
           // 섞인다 — 매 pump 를 새 State 로 격리한다.
-          child: KeyedSubtree(key: UniqueKey(), child: child!),
+          //   키는 **pump 당 하나**다. builder 안에서 만들면 매 rebuild 마다
+          //   State 가 버려져 로드가 처음부터 다시 돈다.
+          child: KeyedSubtree(key: isolationKey, child: child!),
         ),
         home: UserHomeScreen(reads: reads),
       ),
@@ -589,24 +624,253 @@ void main() {
     expect(dest.contains('isWorkingOnDate(todayStart)'), isTrue);
   });
 
-  testWidgets('UHR-18 어제 시작한 야간 근무는 Home 에 진입점이 없다 — 관측 기록',
+  // ══════════════════════════════════════════════════════════
+  // P21-R 잔여 — 자정 넘긴 근무의 퇴근 진입점
+  // ══════════════════════════════════════════════════════════
+
+  /// (A) 23시 출근 → 익일 미퇴근. 어제 기록이 진행 중이다.
+  List<AttendanceModel> _ongoingYesterday() =>
+      [_att(workDate: _day(-1), checkInAt: _day(-1).add(const Duration(hours: 23)))];
+
+  testWidgets('UHR-18 (A) 자정 넘긴 근무는 Home 에서 퇴근으로 갈 수 있다',
       (tester) async {
-    // 출퇴근 화면은 단기의 **어제** workDate 도 목록에 넣는다(자정 이후 퇴근).
-    //   Home Hero 는 오늘만 본다 → 퇴근만 남은 사람에게 Home CTA 가 없다.
-    //   반례를 고정해 둔다(고치는 것은 새 문구·새 상태가 필요해 범위 밖).
     await _pump(
       tester,
-      reads: _reads(applications: [
-        _shortTerm(id: 'night1', workDate: _day(-1), start: '22:00', end: '06:00'),
-      ]),
+      reads: _reads(
+        applications: [
+          _shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00'),
+        ],
+        attendances: _ongoingYesterday(),
+      ),
     );
 
+    expect(tester.takeException(), isNull);
+    expect(find.text('퇴근 기록이 남았어요'), findsOneWidget,
+        reason: '출근했고 퇴근이 남은 근무에 Home 진입점이 있어야 한다');
+    expect(find.text('퇴근하기'), findsOneWidget);
+    // 어제 근무를 "오늘 출근"으로 둔갑시키지 않는다.
     expect(find.text('오늘의 근무'), findsNothing);
-    expect(find.text('출근하기'), findsNothing);
-    // 목적지 쪽 술어는 어제를 포함한다 — 두 화면이 다른 모집단을 본다.
+  });
+
+  testWidgets('UHR-19 (A) 퇴근 CTA 는 실제로 출퇴근 화면을 연다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [
+          _shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00'),
+        ],
+        attendances: _ongoingYesterday(),
+      ),
+    );
+
+    await tester.tap(find.text('퇴근하기'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(AttendanceCheckScreen), findsOneWidget);
+
+    // 목적지는 인자를 받지 않는다 — 대상 동일성은 **같은 제외 술어**가 만든다.
     final dest =
         File('lib/screens/user/attendance_check_screen.dart').readAsStringSync();
-    expect(dest.contains('DateUtils.isSameDay(app.workDate, yesterday)'), isTrue);
+    final home =
+        File('lib/screens/user/user_home_screen.dart').readAsStringSync();
+    for (final token in [
+      "att.status == 'missed_checkout'",
+      "AttendanceModel.statusNoShow",
+      "AttendanceModel.statusAbsent",
+    ]) {
+      expect(dest.contains(token), isTrue, reason: token);
+      expect(home.contains(token), isTrue, reason: token);
+    }
+  });
+
+  testWidgets('UHR-20 (B) 자정 전 정상 퇴근한 근무는 카드가 없다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [_shortTerm(id: 'night1', workDate: _day(-1))],
+        attendances: [
+          _att(
+            workDate: _day(-1),
+            checkInAt: _day(-1).add(const Duration(hours: 9)),
+            checkOutAt: _day(-1).add(const Duration(hours: 18)),
+          ),
+        ],
+      ),
+    );
+
+    expect(find.text('퇴근 기록이 남았어요'), findsNothing);
+  });
+
+  testWidgets('UHR-21 (C) 미출근·NO_SHOW·자동처리에는 퇴근 CTA 를 만들지 않는다',
+      (tester) async {
+    // 마지막 항목은 **양성 대조**다 — 같은 반복 장치에서 카드가 실제로
+    //   나타나는 것을 보여 주지 않으면 findsNothing 들이 공허할 수 있다.
+    final cases = <({AttendanceModel att, bool shows, String why})>[
+      (att: _att(workDate: _day(-1)), shows: false, why: '출근 기록 없음'),
+      (
+        att: _att(workDate: _day(-1), status: AttendanceModel.statusNoShow),
+        shows: false,
+        why: 'NO_SHOW'
+      ),
+      (
+        att: _att(
+            workDate: _day(-1),
+            checkInAt: _day(-1).add(const Duration(hours: 23)),
+            status: 'missed_checkout'),
+        shows: false,
+        why: '자동 처리됨'
+      ),
+      (
+        att: _att(
+            workDate: _day(-1),
+            checkInAt: _day(-1).add(const Duration(hours: 23)),
+            status: AttendanceModel.statusAbsent),
+        shows: false,
+        why: 'absent'
+      ),
+      (
+        att: _att(
+            workDate: _day(-1),
+            checkInAt: _day(-1).add(const Duration(hours: 23))),
+        shows: true,
+        why: '양성 대조 — 출근했고 퇴근이 남았다'
+      ),
+    ];
+
+    for (final c in cases) {
+      await _pump(
+        tester,
+        reads: _reads(
+          applications: [_shortTerm(id: 'night1', workDate: _day(-1))],
+          attendances: [c.att],
+        ),
+      );
+      expect(find.text('퇴근 기록이 남았어요'),
+          c.shows ? findsOneWidget : findsNothing,
+          reason: c.why);
+    }
+  });
+
+  testWidgets('UHR-22 (C2) 취소된 지원서의 어제 기록은 제외한다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [
+          _shortTerm(id: 'night1', workDate: _day(-1), status: AppStatus.canceled),
+        ],
+        attendances: _ongoingYesterday(),
+      ),
+    );
+
+    expect(find.text('퇴근 기록이 남았어요'), findsNothing);
+  });
+
+  testWidgets('UHR-23 (D) 어제 퇴근 + 오늘 근무는 **둘 다** 보인다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [
+          _shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00'),
+          _shortTerm(id: 'today1', workDate: _today),
+        ],
+        attendances: _ongoingYesterday(),
+      ),
+    );
+
+    expect(find.text('퇴근 기록이 남았어요'), findsOneWidget);
+    expect(find.text('퇴근하기'), findsOneWidget);
+    expect(find.text('오늘의 근무'), findsOneWidget,
+        reason: '퇴근 카드가 오늘 근무를 가리면 안 된다');
+    expect(find.text('출근하기'), findsOneWidget);
+  });
+
+  testWidgets('UHR-24 (E) 근태를 못 읽으면 "퇴근 남지 않음"으로 말하지 않는다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [_shortTerm(id: 'night1', workDate: _day(-1))],
+        attendancesError: Exception('attendance read failed'),
+      ),
+    );
+
+    expect(find.text('어제 근무의 퇴근 여부를 확인하지 못했어요'), findsOneWidget);
+    expect(find.text('퇴근 기록이 남았어요'), findsNothing,
+        reason: '모르는 상태에서 퇴근 CTA 를 지어내지 않는다');
+  });
+
+  testWidgets('UHR-25 (E2) 지원 내역을 못 읽으면 퇴근 CTA 를 만들지 않는다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applicationsError: Exception('network'),
+        attendances: _ongoingYesterday(),
+      ),
+    );
+
+    expect(find.text('퇴근 기록이 남았어요'), findsNothing,
+        reason: '확정 여부를 확인할 수 없으면 거짓 CTA 를 만들지 않는다');
+    expect(find.text('지원 현황을 불러오지 못했어요'), findsOneWidget);
+  });
+
+  testWidgets('UHR-26 (F) 자정 전에는 Hero, 자정 후에는 퇴근 카드 — 빈틈이 없다',
+      (tester) async {
+    // 자정 **전**: 같은 근무가 오늘이라 Hero 가 받는다.
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [_shortTerm(id: 'night1', workDate: _today, start: '23:00', end: '06:00')],
+        attendances: [
+          _att(workDate: _today, checkInAt: DateTime.now()),
+        ],
+      ),
+    );
+    expect(find.text('오늘의 근무'), findsOneWidget);
+    expect(find.text('퇴근 기록이 남았어요'), findsNothing,
+        reason: '오늘 진행 중인 근무는 Hero 의 몫이다 — 두 번 말하지 않는다');
+
+    // 자정 **후**: 같은 근무가 어제가 되면 퇴근 카드가 받는다.
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [_shortTerm(id: 'night1', workDate: _day(-1), start: '23:00', end: '06:00')],
+        attendances: _ongoingYesterday(),
+      ),
+    );
+    expect(find.text('퇴근 기록이 남았어요'), findsOneWidget);
+  });
+
+  testWidgets('UHR-27 다른 사람의 근태 기록은 내 홈에 CTA 를 만들지 않는다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [_shortTerm(id: 'night1', workDate: _day(-1))],
+        attendances: [
+          _att(
+              userId: 'someone-else',
+              workDate: _day(-1),
+              checkInAt: _day(-1).add(const Duration(hours: 23))),
+        ],
+      ),
+    );
+
+    expect(find.text('퇴근 기록이 남았어요'), findsNothing);
+  });
+
+  test('UHR-28 퇴근 술어의 어제는 **KST 근무일**이다 — 기기 시간대가 바꾸지 못한다', () {
+    // DATE_ONLY canonical 은 KST 자정 instant 다(P1-3 temporal owner).
+    //   홈은 비교 양쪽을 모두 FormatHelper.toKstDate 로 정규화한다.
+    final home =
+        File('lib/screens/user/user_home_screen.dart').readAsStringSync();
+    final body = home.substring(home.indexOf('AttendanceModel? _openOvernightAttendance('));
+    final until = body.substring(0, body.indexOf('Widget _buildOvernightCheckoutCard('));
+    expect(until.contains('FormatHelper.toKstDate(DateTime.now())'), isTrue);
+    expect(until.contains('FormatHelper.toKstDate(att.workDate) != yesterday'), isTrue);
+    // 기기 로컬 자정으로 어제를 만들지 않는다.
+    expect(until.contains('DateTime(now.year'), isFalse);
   });
 
   // ══════════════════════════════════════════════════════════
@@ -622,19 +886,30 @@ void main() {
           tester,
           size: size,
           textScale: scale,
-          reads: _reads(applications: [
+          reads: _reads(
+            attendances: _ongoingYesterday(),
+            applications: [
             _shortTerm(
               workDate: _today,
               businessName: '서울특별시 강남구 테헤란로 물류센터 제2창고',
               workType: '상하차 및 분류 보조 업무',
               wage: 1250000,
             ),
+            // 어제 진행 중인 근무도 함께 — 퇴근 카드까지 같은 조합에서 잰다.
+            _shortTerm(
+                id: 'night1',
+                workDate: _day(-1),
+                businessName: '서울특별시 강남구 테헤란로 물류센터 제2창고',
+                start: '23:00',
+                end: '06:00'),
           ]),
         );
 
         expect(tester.takeException(), isNull);
         expect(find.text('오늘의 근무'), findsOneWidget);
         expect(find.text('출근하기'), findsOneWidget);
+        expect(find.text('퇴근 기록이 남았어요'), findsOneWidget);
+        expect(find.text('퇴근하기'), findsOneWidget);
         expect(find.text('지원 현황'), findsOneWidget);
       });
     }

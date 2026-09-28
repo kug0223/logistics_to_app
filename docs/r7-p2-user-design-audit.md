@@ -246,3 +246,131 @@ DEVICE/PRODUCT **대기**. P2 전체와 실기기는 계속 대기.
 - 제거 대조 3종: Hero 술어 · seq 가드 · `_attendancesFailed` — 각각 해당 테스트 FAIL 후 복원 PASS
 - 영향집합 **3966 PASS / 6 FAIL** — 6건 전부 기준선(HEAD)에서도 같은 이름으로 실패하는 기존 항목
 - `flutter analyze lib test` **No issues** · DEV READ 없음 · DEVICE 미실행
+
+---
+
+## R7-P2-1 잔여 — 자정 넘긴 근무의 Home 퇴근 진입점 (2026-09-28)
+
+기준 제출 `6a96276`(기준 `7fe1ce3`). 수행 전 HEAD·dirty 확인(tracked 0, untracked 8).
+owner P21-R/P21-H. 공유 DEV READ ONLY — 출퇴근/지원/확정/급여 쓰기·fixture·CF·Rules·
+PROD·APK 없음. 상태 전이는 **주입된 읽기 경계**에서만 확인했다.
+
+### 1. READ — 같은 근무의 정확한 자격
+
+목적지 `attendance_check_screen` 의 어제 기록 **제외** 조건(`visibleWorks`)과
+홈 술어를 같은 벌로 맞췄다.
+
+| 축 | 목적지(`attendance_check_screen`) | 홈(`_openOvernightAttendance`) |
+|---|---|---|
+| 대상 | `confirmedStatuses` + 단기 `workDate ∈ {오늘, 어제}` / 장기 `isWorkingOnDate(오늘)` | 어제 **근태 기록**에서 출발한다 |
+| 이미 퇴근 | `att.checkOut != null` → 숨김 | `att.checkOutAt != null` → 제외 |
+| 자동 처리 | `status == 'missed_checkout'` → 숨김 | 동일 |
+| 미출근 | `NO_SHOW` · `absent` → 숨김 | 동일 **+ `checkInAt == null` 도 제외** |
+| 취소·해지 | — | 지원서가 `confirmedStatuses` 아니면 제외 |
+| 소유 | 서버 self-uid | `att.userId != uid` 재확인 |
+
+**"workDate == 어제" 만으로 CTA 를 만들지 않는다.** 자격은 *실제로 출근했고
+퇴근이 남은 진행 중인 기록*이다. 목적지는 `att == null` 인 어제 근무도 목록에
+남기지만(미출근), 홈은 `checkInAt == null` 에서 잘라 **거짓 퇴근 CTA 를 만들지
+않는다** — 두 화면의 차이를 의도적으로 좁힌 쪽이다.
+
+**entity key:** `attendance.id` ↔ `attendance.applicationId` ↔ `application.id`.
+날짜는 `attendance.workDate`(= 출근한 날의 KST 자정), 시각은 `att.checkIn`(반올림
+적용 후 최종 출근 시각). 약속 시각(`app.startTime/endTime`)은 판정에 쓰지 않는다 —
+예정 시간이 지났다는 사실은 퇴근 자격이 아니다.
+
+**오류·부분 자료**
+
+| 상황 | 처리 |
+|---|---|
+| 이번 달 근태 조회 실패 | `_overnightUnknown` → **`어제 근무의 퇴근 여부를 확인하지 못했어요` + 다시 시도**. 침묵하지 않는다(미퇴근은 `missed_checkout` 으로 자동 처리된다) |
+| 지난달 꼬리 조회 실패(1일) | 위와 동일 표면 |
+| 지원 내역 조회 실패 | 확정 여부를 확인할 수 없으므로 **CTA 를 만들지 않는다**. 사용자는 같은 화면의 `지원 현황을 불러오지 못했어요` + 재시도를 본다 |
+| 로딩 중 | 카드 없음(자리 차지 없음) |
+
+### 2. PATCH — 현재 reader 로 판정, 달 경계만 같은 entity 보완
+
+판정에 필요한 자료는 **이미 홈 reader 에 있다**(`myApplications` + 이번 달
+`myMonthlyAttendances`). 단 하나의 구멍은 **달의 1일**이다 — 그날의 "어제" 는
+지난달이라 이번 달 조회에 들어오지 않는다. 그래서 `now.day == 1` 일 때만
+**같은 CF·같은 self-uid 계약**으로 지난달을 한 번 더 읽어 `_prevMonthTail` 에
+담는다. 기존 `Future.wait` 에 합류시켜 **왕복이 늘지 않는다**. polling·listener·
+full reload·새 query·새 권한 **없음**.
+
+**Hero 우선순위와 충돌하지 않는다.** 퇴근은 Hero 의 새 상태가 아니라
+**별도 카드**다(`_buildOvernightCheckoutCard`, Priority Hero **앞**). 이유는
+이미 시작된 일이 앞으로의 약속보다 먼저이고, 무엇보다 **둘 다 보여야** 하기
+때문이다. 오늘 확정 근무가 함께 있으면 퇴근 카드와 `오늘의 근무` Hero 가
+동시에 렌더된다(UHR-23). 알림으로 대체하지 않았다 — 카드 자체가 행동이다.
+
+문구: `퇴근 기록이 남았어요` / `M/D 근무 · 사업장 · HH:mm 출근` / `퇴근하기`.
+어제 근무를 "오늘 출근"으로 부르지 않는다.
+
+### 3. 경계 사례 결과
+
+| 사례 | 결과 | 증거 |
+|---|---|---|
+| (A) 23시 출근 → 익일 미퇴근 | 카드 표시 · `퇴근하기` → **실제로 `AttendanceCheckScreen` 열림** | UHR-18 · UHR-19(행동) |
+| (B) 자정 전 정상 퇴근 완료 | 카드 없음 | UHR-20 |
+| (C) 미출근 / NO_SHOW / `missed_checkout` / `absent` | 전부 카드 없음 (+ **양성 대조** 1건으로 반복 장치가 공허하지 않음을 고정) | UHR-21 |
+| (C2) 취소된 지원서의 어제 기록 | 카드 없음 | UHR-22 |
+| (D) 어제 진행 중 + 오늘 또 다른 확정 | **둘 다** 표시(`퇴근하기` + `출근하기`) | UHR-23 |
+| (E) 근태 읽기 실패 | `확인하지 못했어요` + 재시도, CTA 없음 | UHR-24 |
+| (E2) 지원 내역 읽기 실패 | CTA 없음 + 기존 실패 문구 | UHR-25 |
+| (F) 23:59 → 00:00 KST | 자정 전 = Hero(카드 없음) · 자정 후 = 카드 — **빈틈도 중복도 없다** | UHR-26 |
+| 타인 기록 | 카드 없음(`userId` 재확인) | UHR-27 |
+| 시간대 | 비교 양쪽을 `FormatHelper.toKstDate` 로 정규화 — 기기 로컬 자정을 쓰지 않는다 | UHR-28 (temporal owner P1-3 재사용) |
+| 320/360/412dp × 1.3/2.0 | 퇴근 카드 + 오늘 Hero 동시 렌더, 예외 0 | UHR-R 6조합 |
+| 복귀 갱신 | 목적지에서 돌아오면 `_loadHomeData()` 재호출 → 퇴근 후 카드가 사라진다 | CODE(카드 `onTap`) · 행동 미실행 |
+
+**수정 전/후:** UHR-18 은 수정 전 "진입점 없음"을 고정한 반례였다. 이번에
+**같은 fixture 에서 진입점이 있어야 한다**로 뒤집었고, 카드를 제거한 대조에서
+FAIL 하는 것을 확인했다(복원 후 PASS).
+
+**기존 오늘 근무 회귀:** UHR-1~4·UHR-23·UHR-26 전반부에서 `오늘의 근무` Hero 가
+그대로다. 오늘 진행 중인 근무는 카드가 **가져가지 않는다**(중복 방지).
+
+### 4. writer → reader → 술어 → 행동 → 목적지 → 복귀
+
+| 단계 | 내용 |
+|---|---|
+| writer / state | 출퇴근 화면의 체크인이 `attendances/{id}` 에 `checkIn`·`workDate`(KST 자정)·`status` 를 쓴다. 미퇴근은 배치가 `missed_checkout` 으로 전이시킨다 |
+| Home reader | `myApplications(uid)` + `myMonthlyAttendances(년,월)` (+ 1일에만 지난달 1회) — 전부 기존 self-uid CF |
+| 술어 | 어제(KST) · `checkIn != null` · `checkOut == null` · status ∉ {missed_checkout, NO_SHOW, absent} · app ∈ confirmedStatuses · `userId == uid` |
+| Hero/행동 | Priority Hero **앞**의 독립 카드, `퇴근 기록이 남았어요` / `퇴근하기` |
+| 목적지 | `AttendanceCheckScreen()` (인자 없음) — 같은 제외 술어를 쓰므로 그 근무가 목록에 남는다(UHR-19 가 두 소스의 술어를 함께 고정) |
+| 복귀 | pop 후 `_loadHomeData()` → 퇴근이 기록되면 카드가 사라진다 |
+
+### 5. 범위·잔여
+
+| 구분 | 결과 |
+|---|---|
+| CODE | 종료 |
+| 행동 | 종료 — 카드 탭 → 목적지 도달 실행(UHR-19). 퇴근 **버튼 누름**은 미실행(공유 DEV 쓰기 금지) |
+| RENDER | 종료 — 경계 9종 + 6조합 |
+| DEV READ | 없음 |
+| DEVICE | **대기** |
+
+- `[BLOCKER-P2-HOME-NIGHT-SHIFT-CHECKOUT-MISSING]` → **CODE/행동/RENDER 수용**,
+  DEVICE/PRODUCT 대기. RESIDUAL `[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]` 는 닫는다.
+- 새 RESIDUAL `[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]` — 목적지는
+  `todayStart`/`yesterday` 를 **기기 로컬 자정**으로 만든다(`DateTime(y,m,d)`).
+  홈은 KST 정규화다. KST 기기에서는 일치하지만 비-KST 기기에서 하루 어긋날 수 있다.
+  **이번에 건드리지 않았다**(근태 화면 재감사 금지) — owner P1-3 temporal.
+- `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` — production cross-uid 재현 주장 **철회**
+  (AuthWrapper 가 계정 변경 시 State 를 파괴한다). 같은 uid 의 `unawaited` 꼬리
+  응답 역전(UHR-15)은 **별도 CODE 수정 증거로 재분류**한다.
+- `[BLOCKER-P2-HOME-ATTENDANCE-FAILURE-AS-ZERO-INCOME]` — UHR-12 범위에서
+  CODE/RENDER 수용 · DEVICE 대기 유지.
+- 12 CTA 중 나머지 10 제스처와 FCM cold-start 는 **DEVICE/P4·P5** 로 남긴다 —
+  코드 매핑을 사용자 행동 실행으로 쓰지 않는다.
+
+**P2-1 판정:** CODE **종료** · RENDER **종료** · 행동 종료(위 단서) ·
+DEVICE/PRODUCT **대기**.
+
+#### 최소 실기기 확인안 (이번에 바뀐 자리만)
+
+1. 자정을 넘겨 근무 중인 계정으로 00:00 이후 홈 → `퇴근 기록이 남았어요` 가 보이고
+   탭하면 그 근무가 출퇴근 화면 목록에 있는지. 퇴근 후 홈 복귀 시 카드가 사라지는지.
+2. 매월 **1일** 00:00 이후 같은 확인(지난달 꼬리 경로).
+3. 어제 `NO_SHOW`/미출근 계정에서 카드가 **뜨지 않는지**.
