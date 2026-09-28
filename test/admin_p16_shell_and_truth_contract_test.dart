@@ -31,10 +31,11 @@ const _converted = <String>[
   'badge_settings_screen',
 ];
 
-/// P16-A 에서 **남긴** super_admin 화면과 그 이유.
-///   headerTab: 헤더 TabBar 라벨이 흰색이라 flat app bar 에서 보이지 않는다.
-///   wideTable: 가로 스크롤 표/도구라 레이아웃 위험을 따로 봐야 한다.
-const _deferred = <String, String>{
+/// P16-A 에서 남겼다가 **P1-7(P17-A)에서 전환한** super_admin 화면과 그 제약.
+///   headerTab: 헤더 TabBar 라벨이 흰색이었다 → 전환과 함께 대비를 옮겼다.
+///   wideTable: 가로 스크롤 표/도구 → 헤더 의존 색이 없어 shell 만 바뀌었고,
+///             표 접근성은 좁은 폭 렌더로 확인했다.
+const _formerlyDeferred = <String, String>{
   'help_faq_management_screen': 'headerTab',
   'review_tags_settings_screen': 'headerTab',
   'to_limit_settings_screen': 'headerTab',
@@ -105,18 +106,43 @@ void main() {
       }
     });
 
-    test('A-3 남긴 5화면은 그대로이고 그 이유가 소스에 있다', () {
-      for (final e in _deferred.entries) {
+    test('A-3 [P1-7] 남겼던 5화면도 전환됐고 제약이 함께 처리됐다', () {
+      for (final e in _formerlyDeferred.entries) {
         final src = _superSrc(e.key);
-        expect(src.contains('GradientScaffold('), isTrue, reason: e.key);
+        expect(src.contains('GradientScaffold('), isFalse, reason: e.key);
+        expect(src.contains('AppPageScaffold('), isTrue, reason: e.key);
         if (e.value == 'headerTab') {
-          expect(src.contains('labelColor: Colors.white'), isTrue,
-              reason: '${e.key}: 흰 탭 라벨이 flat app bar 에서 보이지 않는다');
+          // 흰 라벨을 밝은 배경에 그대로 두지 않았다.
+          expect(src.contains('labelColor: Colors.white'), isFalse, reason: e.key);
+          expect(src.contains('unselectedLabelColor: Colors.white70'), isFalse,
+              reason: e.key);
+          expect(src.contains('headerBottom: TabBar('), isFalse, reason: e.key);
+          expect(src.contains('bottom: TabBar('), isTrue, reason: e.key);
         } else {
-          expect(src.contains('Axis.horizontal'), isTrue,
-              reason: '${e.key}: 가로 스크롤 표');
+          // 표는 그대로 가로 스크롤이고, 헤더가 그려 주던 새로고침은 actions 로 옮겼다.
+          expect(src.contains('Axis.horizontal'), isTrue, reason: e.key);
+          // scaffold 인자로서의 onRefresh 만 사라졌다 — 목록의 RefreshIndicator 는 그대로다.
+          final at = src.indexOf('AppPageScaffold(');
+          expect(src.substring(at, at + 400).contains('onRefresh:'), isFalse,
+              reason: e.key);
+          // all_businesses 는 예전에 GradientScaffold.onRefresh 와 겹친다는 이유로
+          //   RefreshIndicator 를 **의도적으로 뺐다** — 그래서 새로고침 수단은
+          //   화면마다 하나이고, 그 하나가 actions 로 옮겨졌다(위 단언).
+          expect(src.contains('Icons.refresh_rounded'), isTrue, reason: e.key);
         }
       }
+    });
+
+    test('A-5 [P1-7] super_admin 에 실제 GradientScaffold 호출이 0 이다', () {
+      final dir = Directory('lib/screens/super_admin');
+      final offenders = <String>[];
+      for (final f in dir.listSync()) {
+        if (f is! File || !f.path.endsWith('.dart')) continue;
+        if (_codeOf(_src(f.path)).contains('GradientScaffold(')) {
+          offenders.add(f.path);
+        }
+      }
+      expect(offenders, isEmpty);
     });
 
     test('A-4 관리자 화면에 남은 GradientScaffold 는 역할 공유 화면 하나뿐이다', () {
@@ -230,6 +256,35 @@ void main() {
         'month: month',
       ]) {
         expect(body.contains(arg), isTrue, reason: arg);
+      }
+    });
+  });
+// ══════════════════════════════════════════════════════════
+  group('P17-D 문서 관리 색 — 실제 위반만 고쳤다', () {
+    late String d;
+    setUpAll(() => d = _src('lib/screens/common/document_management_screen.dart'));
+
+    test('D-1 확인 완료가 앱의 success 색을 쓴다', () {
+      expect(d.contains('0xFF22C55E'), isFalse,
+          reason: '같은 함수의 다른 분기는 error/warning/infoDark 를 쓴다');
+      final i = d.indexOf("label: '확인 완료',");
+      expect(i, greaterThan(-1));
+      expect(d.substring(i, i + 400).contains('color: AppColors.success'), isTrue);
+    });
+
+    test('D-2 도달 불가 분기의 색은 건드리지 않았다 (근거 보존)', () {
+      // bankVerificationStatus 는 폐기됐고 서버가 그 값을 만들지 않는다.
+      //   호출부가 isPending/isError 를 넘기지 않으므로 그 색은 화면에 나오지 않는다.
+      expect(d.contains("bool isPending = false,"), isTrue);
+      expect(d.contains("bool isError   = false,"), isTrue);
+      expect(d.contains('isPending: '), isFalse);
+      expect(d.contains('isError: '), isFalse);
+    });
+
+    test('D-3 중립 회색은 상태·행동 의미가 없어 그대로 둔다', () {
+      // 개수 자체는 결함 근거가 아니다 — 판정을 기록으로 남긴다.
+      for (final hex in const ['0xFF1F2937', '0xFF111827', '0xFFE5E7EB', '0xFF9CA3AF']) {
+        expect(d.contains(hex), isTrue, reason: '$hex 는 이번 판정에서 유지');
       }
     });
   });

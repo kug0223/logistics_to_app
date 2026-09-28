@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+// [R7-P1-7 P17-A] GradientScaffold → AppPageScaffold(D0 flat admin shell).
+//   이 화면의 Colors.white 는 전부 **본문**이다(버튼 전경색·전체화면 이미지 뷰어
+//   오버레이) — 헤더에 의존하는 색이 없어 위젯 이름만 바뀐다. 가로 스크롤 표의
+//   열·행동·현재 선택 접근성은 좁은 폭 렌더로 따로 확인한다.
 import 'package:provider/provider.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -12,7 +16,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../utils/loading_state_mixin.dart';
 
 /// ✅ 모든 사업장 조회·관리 화면 (최고관리자 전용)
@@ -260,9 +264,18 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     }
     final filtered = _filtered;
 
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '전체 사업장 관리',
-      onRefresh: _loadAllBusinesses,
+      // [R7-P1-7 P17-A] GradientScaffold 가 헤더에 그려 주던 새로고침을
+      //   flat shell 의 actions 로 옮긴다 — 행동과 자리는 그대로다.
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          color: AppColors.textSecondary,
+          tooltip: '새로고침',
+          onPressed: _loadAllBusinesses,
+        ),
+      ],
       body: isLoading
           ? const LoadingWidget(message: '사업장 목록을 불러오는 중...')
           : _businesses.isEmpty

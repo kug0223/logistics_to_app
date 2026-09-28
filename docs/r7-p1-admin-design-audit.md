@@ -1864,3 +1864,126 @@ super_admin 전환/이관 근거(A-1~4) · 계약 실패 분기·경계·비파�
 5. **super-admin 시스템 설정**: 흰 app bar + 목록, 하위 설정 화면 6개 진입/뒤로.
 6. 탈퇴 사전 점검 화면에서 경고(주황)·가능(초록) 블록의 색이 앱의 다른 경고/성공과
    같은 색인지.
+
+---
+
+## R7-P1-7 — 관리자 화면 간 일관성 · P1-6 잔여 종료 (2026-09-28)
+
+기준 `8712c6e`. branch `main`, 시작 시 tracked 변경 0, 사용자 소유 untracked 8건 보존.
+P16-C ERROR→EMPTY, P16-M 역할 shell, P16-S 집계 의미, P16-A 6화면 전환은 반례 없이
+반복하지 않았다. P1-5 DEVICE/PRODUCT · Staffing O08 · 11TO/21업무 DEFERRED ·
+계약 법률 사후 정비 OPEN 은 각 owner 에 그대로 둔다 — **이 보고는 그 항목들의 완료
+선언이 아니다.** 공유 DEV 쓰기·CF 배포·Rules·PROD·APK **없음**.
+
+### P17-A — 남겼던 5화면 (이름별 결산) → **5/5 수정**
+
+| # | 파일 | 역할·진입 | 제약(P1-6 판정) | 이번 조치 | 결과 |
+|---|---|---|---|---|---|
+| 1 | `super_admin/help_faq_management_screen.dart` | SUPER · `settings_screen` | 헤더 TabBar 흰 라벨 **+ actions 흰 아이콘·스피너** | shell 전환 + 라벨/인디케이터 → `theme.primaryColor`·`grey500`, 아이콘 → `textSecondary` | **수정** |
+| 2 | `super_admin/review_tags_settings_screen.dart` | SUPER · `system_settings_screen` | 헤더 TabBar 흰 라벨 | 위와 동일 | **수정** |
+| 3 | `super_admin/to_limit_settings_screen.dart` | SUPER · `system_settings_screen` | 헤더 TabBar 흰 라벨 | 위와 동일 | **수정** |
+| 4 | `super_admin/all_businesses_screen.dart` | SUPER · `settings_screen`·`super_admin_home` | 가로 스크롤 표 | shell 전환(헤더 의존 흰색 **0**) + 헤더 새로고침 → `actions` | **수정** |
+| 5 | `super_admin/all_users_screen.dart` | SUPER · `settings_screen`·`super_admin_home` | 가로 스크롤 표 | 위와 동일 | **수정** |
+
+**P1-6 의 이관 사유를 실측으로 좁혔다.** 두 표 화면의 `Colors.white` 는 전부 **본문**
+이었다(버튼 전경색·전체화면 이미지 뷰어 오버레이) — 헤더에 의존하는 색이 없어 shell 만
+바뀐다. 남은 위험은 **표 자체의 접근성**이고 그건 좁은 폭 렌더로 확인했다.
+탭 3화면은 P1-6 이 본 라벨 외에 **`actions` 의 흰 아이콘**도 같은 문제였다(help_faq).
+
+`AppPageScaffold` 에는 `onRefresh` 가 없어 헤더 새로고침을 `actions` 로 옮겼다 —
+행동과 위치(우상단)는 같다. `all_businesses` 는 예전에 `GradientScaffold.onRefresh` 와
+겹친다는 이유로 `RefreshIndicator` 를 **의도적으로 뺐으므로**, 새로고침 수단은 여전히
+화면당 하나다(손실 없음).
+
+**결과: `lib/screens/super_admin/` 의 실제 `GradientScaffold(` 호출 = 0.**
+
+### P17-D — 문서 관리 색 후보 10곳 → **1곳 수정 · 9곳 NO PATCH**
+
+`lib/screens/common/document_management_screen.dart` (USER 공용 경로 — 보존 대상).
+
+| 줄 | 색 | 의미 | 판정 |
+|---|---|---|---|
+| 1084 | `0xFF22C55E` | `MANUAL_APPROVED` = **확인 완료** | **수정 → `AppColors.success`**. 같은 함수의 다른 분기는 `error`·`warning`·`infoDark` 를 쓴다 — 이 한 줄만 raw 초록이라 **같은 화면에서 '완료'가 두 색**이었다 |
+| 769 · 771 | 빨강·앰버 | `bankVerificationStatus == mismatch / review_required` | **NO PATCH — 도달 불가**. 그 상태는 폐기됐고(서버가 값을 만들지 않음) 호출부도 `isPending/isError` 를 넘기지 않는다(`isComplete:` 만). 코드 주석이 이미 그 사실을 적고 있다 |
+| 115 · 122 · 131 · 1389 · 1391 · 1501 · 1502 | 중립 회색(text/divider/secondary) | 상태·행동 의미 없음 | **NO PATCH**. 색 상수 개수 자체는 결함 근거가 아니고, 사용자가 상태를 오해할 자리가 아니다 |
+
+의미색과 USER 공용 경로를 보존하면서 **실제 위반 1곳만** 고쳤다.
+
+### P17-H — 공통 헤더·위계 → **NO PATCH (정정 포함)**
+
+- **정정:** 감사표의 "`AppSummaryHeader`/`AppStatusCard` 채택 0" 중 `AppStatusCard` 는
+  **컴포넌트 자체가 존재하지 않는다**(`lib/widgets/common/` 에 파일 없음).
+  "미사용"이 아니라 "미존재"다. `AppSummaryHeader` 는 존재하고 사용 0.
+- 채택률은 결함 근거가 아니므로 일괄 교체하지 않았다. 실제 **혼동·잘림**만 보았고,
+  이번 단계에서 바뀐 화면들의 렌더에서 새 잘림은 나오지 않았다(아래 증거, 예외 0).
+  이전 단계에서 발견된 잘림(`AppTabLabel` overflow · 월 카드 높이 · 월 상세 1·2행)은
+  이미 각 owner 에서 고쳤다.
+- 카드 radius 혼재는 **POLISH 유지**(미수정).
+
+### P17-S — 통계 production 콘텐츠 → **NO PATCH · 렌더는 범위 명시**
+
+P16-S 의 CODE 근거(단위·모집단·fail-closed·드릴다운 범위)를 재사용한다.
+이번에 실행한 렌더는 **오류 경로**뿐이다 — 실패 시 `0원` 이 화면에 없다는 것을 확인했다.
+
+**콘텐츠 렌더는 미실행이고 그 이유가 구조적이다:** `AdminStatsScreen` 은
+`AdminStatsService()` 를 내부에서 만들고 CF 타임아웃 타이머를 남겨, 주입 없이는
+위젯 테스트가 타이머 pending 으로 끝난다(90초 fake 시간을 흘려보내야 통과).
+큰 수·긴 라벨·부분/상한 상태를 실제로 그리려면 **읽기 seam** 이 필요하고, 그것은
+이번 최소 diff 범위를 넘는다.
+→ `[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]` · owner **P17-S** ·
+종료 조건: 통계 읽기 seam + 큰 수/긴 라벨/부분·상한 렌더.
+
+### P17-X — 화면 간 이동·복귀 → **NO PATCH (기존 증거 재사용)**
+
+| 대표 이동 | 전달되는 context | 복귀 갱신 | 증거 |
+|---|---|---|---|
+| 홈 → 당일명단 | 오늘(KST 달력일) · 홈 scope 사업장 목록 | `pop(true)` → 인력·출근 재조회 | P1-4 AHR-22(실행) |
+| 홈 → 부족 행 → 그날 지원자 | 그 날짜 · **부족 사업장만**(부족 큰 순) | `pop(true)` → 인력 재조회 | P1-4 AHR-23(실행) |
+| 홈 → 할 일 행 | 사업장 선택 시트에 **사업장별 건수** | 처리 후 canonical summary 재조회 | P1-4 AHR-24(실행) |
+| 급여 개요 → 월 상세 → 지급 현황 | 사업장·연·월 | 왕복 후 **원장 + 집계 문서 둘 다** 재조회 | P1-5 PNT-1(실행, 호출 수 증명) |
+| 통계 → 월 상세 | `businessIds` · `filterBusinessId` · `year` · `month` | — | P16-S S-4(**CODE only**) |
+| 권한 없는 역할 | 같은 자리에서 **진입 자체가 없다** | — | P1-4 AHR-25(실행) |
+
+읽기 실패를 성공 0건으로 바꾸는 반례(P1-5 #8·#9, P1-6 #14)와 권한 없는 역할에서 행동이
+노출되는 반례(AHR-25)를 우선 확인했고, 이번 단계에서 새 반례는 나오지 않았다.
+도메인 writer 는 다시 감사하지 않았다. **DEV READ: 없음.**
+
+### 실행 증거 (이번 단계)
+
+`admin_shell_flat_render_test` **14건**(기존 10 + P17 신규 4):
+
+| 증거 | 확인 |
+|---|---|
+| P17A-1 | 탭 3화면 — `AppPageScaffold`, Gradient 0, TabBar 의 label/unselected/indicator 가 **흰색이 아님** |
+| P17A-2 | 320dp·배율 1.3 에서 **탭 전환 실행**, 라벨 유지, 예외 0 |
+| P17A-3 | 표 2화면 320dp — flat shell + `actions` 새로고침 **실제 탭 실행** |
+| P17S-1 | 통계 조회 실패에서 `0원` 이 화면에 없다 |
+
+`admin_p16_shell_and_truth_contract_test` **20건**(기존 16 + P17-D 3 + A-5):
+A-3 은 "남겼다"에서 **"전환됐고 제약이 함께 처리됐다"**로 갱신, A-5 는 super_admin
+실제 호출 0 을 못박는다.
+
+**회귀(같은 SHA·같은 환경·이름별):** 변경 파일을 참조하는 18파일 **476 PASS**,
+`flutter analyze lib test` **No issues**. 전체 suite 총수로 결론내지 않았다.
+
+### 결산 — P1-6 에서 남긴 조건을 실제로 닫았는가
+
+| P1-6 잔여 | 상태 |
+|---|---|
+| super_admin 헤더 TabBar 3화면 | **닫힘**(전환 + 대비 이동 + 탭 전환 실행) |
+| super_admin 가로 표 2화면 | **닫힘**(전환 + 좁은 폭 렌더 + 새로고침 행동 유지) |
+| `document_management_screen` 색 10곳 | **닫힘**(1 수정 · 9 근거 있는 NO PATCH) |
+| `AppSummaryHeader`/`AppStatusCard` 채택 0 | **닫힘**(NO PATCH · `AppStatusCard` 미존재로 정정) |
+| radius 혼재 | POLISH 유지 |
+| 통계 콘텐츠 렌더 | **이관** `[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]` |
+
+**P1-7 CODE·RENDER 종료.** 관리자 화면군의 PRODUCT/DEVICE 종료는 **별개**이며
+각 단계의 DEVICE 항목이 남아 있다.
+
+#### 최소 실기기 확인안 (이번에 바뀐 자리만)
+
+1. super-admin → 도움말 FAQ / 리뷰 태그 / TO 등록 제한: 흰 app bar에서 **탭 라벨이 보이고**
+   탭 전환이 되는지(배율 1.3).
+2. super-admin → 전체 사업장 / 전체 사용자: 우상단 **새로고침**이 보이고 눌리는지,
+   좁은 폭에서 표를 가로로 밀 수 있고 행 행동에 닿는지.
+3. 문서 관리에서 `확인 완료` 배지의 초록이 앱의 다른 완료 초록과 같은지.

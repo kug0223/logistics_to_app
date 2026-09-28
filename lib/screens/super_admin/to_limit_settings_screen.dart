@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+// [R7-P1-7 P17-A] GradientScaffold → AppPageScaffold(D0 flat admin shell).
+//   이 화면은 헤더에 TabBar 가 있고 라벨·인디케이터가 흰색이었다 — 파란 그라디언트
+//   위에서만 읽히는 색이다. 밝은 app bar 에 그대로 두면 라벨이 보이지 않으므로
+//   같은 전환에서 **대비까지 함께** 옮긴다(계약 관리 화면이 쓰는 flat TabBar 계약).
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -8,7 +12,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 
 /// 슈퍼관리자 — 공고 등록 개수 제한 설정
 /// - 탭 1 (전역 기본값): settings/app_config.maxActiveTOPerBusiness
@@ -212,13 +216,14 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    final theme = Theme.of(context);
+    return AppPageScaffold(
       title: '공고 등록 개수 제한',
-      headerBottom: TabBar(
+      bottom: TabBar(
         controller: _tabController,
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.white70,
-        indicatorColor: Colors.white,
+        labelColor: theme.primaryColor,
+        unselectedLabelColor: AppColors.grey500,
+        indicatorColor: theme.primaryColor,
         tabs: const [
           Tab(text: '전역 기본값'),
           Tab(text: '관리자별 한도'),

@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+// [R7-P1-7 P17-A] GradientScaffold → AppPageScaffold(D0 flat admin shell).
+//   이 화면의 Colors.white 는 전부 **본문**이다(버튼 전경색·전체화면 이미지 뷰어
+//   오버레이) — 헤더에 의존하는 색이 없어 위젯 이름만 바뀐다. 가로 스크롤 표의
+//   열·행동·현재 선택 접근성은 좁은 폭 렌더로 따로 확인한다.
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
@@ -9,7 +13,7 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
 // badge_service, flutter/services: [5A.2A] trustScore 관련 제거로 불필요
@@ -244,9 +248,17 @@ class _AllUsersScreenState extends State<AllUsersScreen>
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '전체 사용자 관리 (${_users.length}명)',
-      onRefresh: _loadAllUsers,
+      // [R7-P1-7 P17-A] 헤더 새로고침 → flat shell 의 actions (행동 동일).
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          color: AppColors.textSecondary,
+          tooltip: '새로고침',
+          onPressed: _loadAllUsers,
+        ),
+      ],
       body: Column(
         children: [
           _buildSearchBar(),

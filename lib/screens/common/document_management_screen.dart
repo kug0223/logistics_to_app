@@ -1081,7 +1081,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       case 'MANUAL_APPROVED':
         return (
           label: '확인 완료',
-          color: const Color(0xFF22C55E),
+          // [R7-P1-7 P17-D] 같은 함수의 다른 분기는 error/warning/infoDark 를 쓰는데
+          //   이 한 줄만 raw 초록이었다 — 앱의 success 초록과 달라 '완료'가 두 색이 된다.
+          color: AppColors.success,
           icon: Icons.check_circle_rounded
         );
       case 'MANUAL_REJECTED':

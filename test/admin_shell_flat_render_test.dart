@@ -15,6 +15,12 @@ import 'package:ALfit/models/core/employment_contract_model.dart';
 import 'package:ALfit/screens/business_admin/admin_contract_management_screen.dart';
 import 'package:ALfit/screens/business_admin/admin_contract_reads.dart';
 import 'package:ALfit/screens/common/settings_screen.dart';
+import 'package:ALfit/screens/business_admin/admin_stats_screen.dart';
+import 'package:ALfit/screens/super_admin/all_businesses_screen.dart';
+import 'package:ALfit/screens/super_admin/all_users_screen.dart';
+import 'package:ALfit/screens/super_admin/help_faq_management_screen.dart';
+import 'package:ALfit/screens/super_admin/review_tags_settings_screen.dart';
+import 'package:ALfit/screens/super_admin/to_limit_settings_screen.dart';
 import 'package:ALfit/screens/super_admin/system_settings_screen.dart';
 import 'package:ALfit/widgets/common/app_page_scaffold.dart';
 import 'package:ALfit/widgets/common/gradient_scaffold.dart';
@@ -295,5 +301,93 @@ testWidgets('ACM-4 정상 0건은 실패와 다른 문구다', (tester) async {
     expect(tester.takeException(), isNull);
     expect(find.text('미발송 계약서 없음'), findsOneWidget);
     expect(find.text('미발송 계약서를 확인하지 못했습니다'), findsNothing);
+  });
+// ══════════════════════════════════════════════════════════
+  // [R7-P1-7 P17-A] 남겼던 5화면 — 탭 대비와 넓은 표 접근성
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('P17A-1 헤더 TabBar 3화면이 flat shell 에서 라벨을 잃지 않는다',
+      (tester) async {
+    for (final entry in <String, Widget>{
+      '도움말 FAQ 관리': const HelpFaqManagementScreen(),
+      '리뷰 태그 관리': const ReviewTagsSettingsScreen(),
+      'TO 등록 제한 관리': const TOLimitSettingsScreen(),
+    }.entries) {
+      await _pump(tester, entry.value,
+          provider: _RoleProvider(UserRole.SUPER_ADMIN));
+      tester.takeException(); // 각 화면의 자체 조회 실패는 대상이 아니다
+
+      expect(find.byType(AppPageScaffold), findsOneWidget, reason: entry.key);
+      expect(find.byType(GradientScaffold), findsNothing, reason: entry.key);
+      expect(find.byType(TabBar), findsOneWidget, reason: entry.key);
+
+      // 흰 라벨을 밝은 배경에 그대로 두지 않았다.
+      final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+      expect(tabBar.labelColor, isNot(Colors.white), reason: entry.key);
+      expect(tabBar.unselectedLabelColor, isNot(Colors.white), reason: entry.key);
+      expect(tabBar.unselectedLabelColor, isNot(Colors.white70), reason: entry.key);
+      expect(tabBar.indicatorColor, isNot(Colors.white), reason: entry.key);
+    }
+  });
+
+  testWidgets('P17A-2 탭 전환이 실제로 동작한다 (320dp·배율 1.3)', (tester) async {
+    await _pump(tester, const HelpFaqManagementScreen(),
+        provider: _RoleProvider(UserRole.SUPER_ADMIN),
+        size: const Size(320, 700),
+        textScale: 1.3);
+    tester.takeException();
+
+    expect(find.text('지원자 FAQ'), findsOneWidget);
+    expect(find.text('관리자 FAQ'), findsOneWidget);
+    await tester.tap(find.text('관리자 FAQ'));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(tester.takeException(), isNull, reason: '탭 전환에서 예외 0');
+    // 라벨이 잘려 사라지지 않는다.
+    expect(find.text('관리자 FAQ'), findsOneWidget);
+  });
+
+  testWidgets('P17A-3 넓은 표 2화면 — flat shell + 새로고침 행동 유지',
+      (tester) async {
+    for (final entry in <String, Widget>{
+      '전체 사업장 관리': const AllBusinessesScreen(),
+      '전체 사용자 관리': const AllUsersScreen(),
+    }.entries) {
+      await _pump(tester, entry.value,
+          provider: _RoleProvider(UserRole.SUPER_ADMIN),
+          size: const Size(320, 700));
+      tester.takeException();
+
+      expect(find.byType(AppPageScaffold), findsOneWidget, reason: entry.key);
+      expect(find.byType(GradientScaffold), findsNothing, reason: entry.key);
+      // 헤더가 그려 주던 새로고침이 actions 로 옮겨져 **여전히 접근 가능**하다.
+      expect(find.byIcon(Icons.refresh_rounded), findsOneWidget, reason: entry.key);
+      await tester.tap(find.byIcon(Icons.refresh_rounded));
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      tester.takeException();
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // [R7-P1-7 P17-S] 통계 — 오류 상태가 실제 렌더에서 읽힌다
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('P17S-1 통계 조회가 안 되면 0원이 아니라 확인 불가로 읽힌다',
+      (tester) async {
+    await _pump(
+        tester,
+        const AdminStatsScreen(businessIds: ['biz1']),
+        provider: _RoleProvider(UserRole.BUSINESS_ADMIN),
+        size: const Size(360, 800));
+    tester.takeException();
+
+    // 실패를 0원·0건으로 말하지 않는다(P16-S 계약의 렌더 확인).
+    expect(find.textContaining('0원'), findsNothing);
+    // CF 타임아웃 타이머를 흘려보낸다 — 남으면 하네스가 실패한다.
+    await tester.pump(const Duration(seconds: 90));
+    tester.takeException();
   });
 }
