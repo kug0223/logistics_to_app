@@ -32,7 +32,10 @@ const _appSvcPath = 'lib/services/firestore/application_firestore.dart';
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
-  return f.readAsStringSync();
+  // [R7-P1-4 후속] 여러 줄을 이어 붙여 대조하는 앵커가 있어서, 내용이 같아도
+  //   작업트리가 CRLF 로 체크아웃되면 실패한다 — 읽는 자리에서 정규화한다.
+  //   (제품 수정이 아니라 대조 방식의 문제다)
+  return f.readAsStringSync().replaceAll('\r\n', '\n');
 }
 
 /// 주석 줄을 지운 본문. 앵커는 주석이 아니라 **코드**여야 한다.
@@ -311,7 +314,8 @@ void main() {
 
     test('06-b 늦은 건수를 따로 말한다', () {
       expect(home.contains('expiredCount > 0'), true);
-      expect(home.contains("'\$totalDecisions명 · 만료 \$expiredCount'"), true);
+      // [R7-P1-4 H1] 단위는 건이다 — 서버가 세는 것은 갱신 결정 대상 장기 관계다.
+      expect(home.contains("'\$totalDecisions건 · 만료 \$expiredCount'"), true);
     });
 
     test('06-c 서버가 만료 건수를 따로 보낸다', () {

@@ -435,9 +435,13 @@ void main() {
       final body = _region(_codeOf(_homePath),
           'Future<void> _loadPostingReadiness() async {',
           'BusinessModel? _firstBusinessWhere(');
-      expect('BusinessPostingReadiness.forBusinesses('.allMatches(body).length,
-          1);
-      expect('getTemplates('.allMatches(body).length, 1);
+      // [R7-P1-4] 원시 조회는 admin_home_reads.dart 경계로 옮겼다.
+      //   화면 쪽 호출 지점도, 경계의 실제 owner 매핑도 각각 한 번뿐이어야 한다.
+      expect('_reads.postingReadiness('.allMatches(body).length, 1);
+      expect('_reads.contractTemplates('.allMatches(body).length, 1);
+      final seam = _codeOf('lib/screens/business_admin/admin_home_reads.dart');
+      expect('BusinessPostingReadiness.forBusinesses('.allMatches(seam).length, 1);
+      expect('templateSvc.getTemplates'.allMatches(seam).length, 1);
       expect(body.contains('httpsCallable'), false);
     });
 

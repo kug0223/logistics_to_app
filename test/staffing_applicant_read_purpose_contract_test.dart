@@ -202,8 +202,9 @@ void main() {
       expect(confirmed, contains("'purpose': 'workerOperation'"));
       expect(confirmed, isNot(contains('applicantReview')));
 
+      // [R7-P1-4] 홈의 원시 읽기는 admin_home_reads.dart 경계에 있다.
       for (final path in [
-        'lib/screens/business_admin/business_admin_home_screen.dart',
+        'lib/screens/business_admin/admin_home_reads.dart',
         'lib/screens/business_admin/workforce_management/workforce_operational_view.dart',
       ]) {
         final s = _codeOf(_read(path));

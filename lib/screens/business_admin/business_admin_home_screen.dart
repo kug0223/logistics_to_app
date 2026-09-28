@@ -218,20 +218,39 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       _renderedEffectiveBizId = _cachedUp!.effectiveBusinessId;
       _cachedUp!.addListener(_onBusinessSwitchCheck);
 
-      final results = await Future.wait([
-        _loadApprovedBusinessStatus(),
-        TourHelper.isCompleted(TourHelper.adminHome),
-      ]);
-      final tourDone = results[1] as bool;
-      if (!tourDone && mounted) {
-        await pushTourScreen(context, role: 'BUSINESS_ADMIN');
-        if (mounted) await TourHelper.markCompleted(TourHelper.adminHome);
-      }
+      // [R7-P1-4 후속 H2] 투어는 **데이터의 전제가 아니다.**
+      //
+      //   이전에는 `Future.wait([사업장 조회, 투어 완료 여부])` 를 기다린 뒤에야
+      //   네 loader 를 시작했다. 투어 여부는 로컬 저장소(SharedPreferences) 한 줄이고
+      //   권한·사업장·수치 어디에도 쓰이지 않는데, 그 future 가 늦거나 던지면
+      //   `await` 가 거기서 멈춰 **네 loader 가 시작조차 하지 않았다** — 화면 전체가
+      //   끝나지 않는 spinner 로 남고 재시도 버튼도 나오지 않는다(각 재시도는
+      //   loader 가 한 번은 돌아 error 상태가 돼야 그려진다).
+      //
+      //   그래서 순서를 데이터 의존만으로 정한다: 사업장 → 네 loader.
+      //   (`_loadPostingReadiness` 는 `_businesses` 를 읽으므로 이 순서가 필요하다.
+      //    나머지 셋은 `_getBusinesses()` 로 자체 조회한다.)
+      //   투어는 그 뒤에 **독립적으로** 확인하고, 실패는 삼켜서 데이터·화면을
+      //   막지 않는다. 실패·timeout 을 완료로 저장하지 않는다 —
+      //   `markCompleted` 는 투어를 실제로 끝낸 뒤에만 호출된다(아래 그대로).
+      await _loadApprovedBusinessStatus();
       if (mounted) {
         unawaited(_loadCanonicalSummary());   // [PHASE-2C] canonical actions
         unawaited(_loadStaffingReadiness()); // [PHASE-2C] D0~D+7 인력 현황
         unawaited(_loadTodayAttendance());   // [PHASE-2C] 오늘 출근 현황
         unawaited(_loadPostingReadiness());   // [5D.2] compact setup checklist
+      }
+      try {
+        final tourDone = await _reads.tourCompleted();
+        // 화면이 사라진 뒤 도착한 결과가 투어를 열지 않는다.
+        if (!tourDone && mounted) {
+          await pushTourScreen(context, role: 'BUSINESS_ADMIN');
+          if (mounted) await TourHelper.markCompleted(TourHelper.adminHome);
+        }
+      } catch (e) {
+        // 투어 판정 실패는 데이터와 무관하다. 완료로 저장하지도, 지우지도 않는다 —
+        // 다음 진입에서 다시 판정한다.
+        debugPrint('⚠️ 투어 완료 여부 확인 실패(데이터 로드에 영향 없음): $e');
       }
     });
   }
@@ -2315,9 +2334,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         //   _todayWorkSummary는 오늘 전체 근무 context라 부족 위치와 다를 수 있다.
         //   [AH-V2-04B] 단일 사업장은 header가 이미 사업장명을 말한다.
         final where = _isMultiBusinessScope ? day.shortageLocationLabel() : null;
+        // [R7-P1-4 후속 H1] 위 줄의 정원과 이 줄의 부족은 **다른 모집단**이다.
+        //   두 수가 정원 - 확정으로 이어지지 않는 날에만 부족의 범위를 말한다.
+        //   그 어긋남의 원인은 하나가 아니다 — 모집이 끝난 업무 단위가 정원에는
+        //   남아 있거나(`wd.closed`), 어떤 단위가 과충원돼 다른 단위의 부족을
+        //   상쇄하지 못하기 때문이다(부족은 단위별 max(0, req-conf) 합산).
+        //   그래서 **원인을 단정하지 않고 부족이 세는 범위만** 말한다.
+        //   조건은 비교일 뿐이다 — 정원-확정을 부족으로 쓰거나 화면에 보이지 않는다.
+        final scopeDiffers =
+            (day.requiredCount - day.confirmedCount) != shortage;
         rows.add(_todayIssueRow(s,
           icon: Icons.error_outline,
           label: where == null ? '$shortage명 부족' : '$shortage명 부족 · $where',
+          note: scopeDiffers ? '지금 모집 중인 업무만 센 숫자예요' : null,
           color: AppColors.error,
           onTap: canManageTo
               ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
@@ -2358,6 +2387,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     required IconData icon,
     required String label,
     required Color color,
+    /// [R7-P1-4 후속 H1] 수치의 **범위**를 말하는 보조 한 줄. 없으면 그리지 않는다.
+    ///   숫자를 담지 않는다 — 여기서 새 값을 계산하거나 주장하지 않는다.
+    String? note,
     VoidCallback? onTap,
   }) {
     final row = Padding(
@@ -2366,13 +2398,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         Icon(icon, size: 17 * s, color: color),
         SizedBox(width: 8 * s),
         Expanded(
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+              if (note != null) ...[
+                SizedBox(height: 2 * s),
+                Text(note,
+                    style: TextStyle(fontSize: 12, color: AppColors.grey500),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ],
+          ),
         ),
         // chevron은 실제로 갈 곳이 있을 때만 — 권한이 없으면 상태만 남는다.
         if (onTap != null)

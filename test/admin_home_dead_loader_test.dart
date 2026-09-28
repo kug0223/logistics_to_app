@@ -332,4 +332,56 @@ void main() {
           .contains('WorkforceController.dataRevision.addListener'), isTrue);
     });
   });
+// ─────────────────────────────────────────────────────────
+  // [R7-P1-4 후속 H2] 투어는 데이터 loader 의 전제가 아니다
+  // ─────────────────────────────────────────────────────────
+  group('[R7-P1-4 후속] 투어 판정과 데이터 로드의 의존관계', () {
+    test('네 loader 도, 권한 판정도 투어 값을 읽지 않는다', () {
+      for (final sig in const [
+        'Future<void> _loadCanonicalSummary(',
+        'Future<void> _loadStaffingReadiness(',
+        'Future<void> _loadTodayAttendance(',
+        'Future<void> _loadPostingReadiness(',
+      ]) {
+        final body = _codeOf(_bodyOf(home, sig));
+        expect(body.toLowerCase().contains('tour'), isFalse, reason: sig);
+      }
+      // 권한은 provider 에서만 온다.
+      final verified = _codeOf(_bodyOf(home, 'bool _verified('));
+      expect(verified.toLowerCase().contains('tour'), isFalse);
+    });
+
+    test('initState 는 사업장 → loader → 투어 순서이고 투어와 함께 기다리지 않는다', () {
+      final init = _codeOf(_bodyOf(home, 'void initState()'));
+      final bizAt = init.indexOf('await _loadApprovedBusinessStatus();');
+      final loadersAt = init.indexOf('_loadCanonicalSummary()');
+      final tourAt = init.indexOf('_reads.tourCompleted()');
+      expect(bizAt, isNot(-1));
+      expect(bizAt, lessThan(loadersAt),
+          reason: '_loadPostingReadiness 가 _businesses 를 읽으므로 이 순서가 필요하다');
+      expect(loadersAt, lessThan(tourAt),
+          reason: '투어 판정이 늦거나 던져도 수치 조회는 이미 시작돼 있어야 한다');
+      expect(init.contains('Future.wait(['), isFalse,
+          reason: '투어를 데이터와 같은 wait 에 묶으면 한쪽이 멈출 때 둘 다 멈춘다');
+    });
+
+    test('투어 판정 실패는 삼키고 완료로 저장하지 않는다', () {
+      final init = _codeOf(_bodyOf(home, 'void initState()'));
+      // 실패 경로에 markCompleted 가 없다 — 완료 저장은 투어를 실제로 끝낸 뒤에만.
+      final pushAt = init.indexOf('pushTourScreen');
+      final markAt = init.indexOf('markCompleted');
+      expect(pushAt, isNot(-1));
+      expect(markAt, isNot(-1));
+      expect(pushAt, lessThan(markAt));
+      expect(init.contains('catch'), isTrue);
+      // 투어 기록을 지우는 경로를 만들지 않았다.
+      expect(home.contains('TourHelper.reset'), isFalse);
+      expect(home.contains('markCompleted(TourHelper.adminHome)'), isTrue);
+    });
+
+    test('늦게 도착한 투어 결과는 mounted 뒤에만 화면을 연다', () {
+      final init = _codeOf(_bodyOf(home, 'void initState()'));
+      expect(init.contains('if (!tourDone && mounted)'), isTrue);
+    });
+  });
 }

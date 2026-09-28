@@ -27,10 +27,14 @@ const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
 const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _cfPath = 'functions/src/index.ts';
 
+/// [R7-P1-4 후속] 줄바꿈에 기대지 않는다 — 이 파일의 앵커 중에 여러 줄을
+///   '\n' 으로 이어 붙여 대조하는 것이 있어서, 내용이 같아도 작업트리가 CRLF 로
+///   체크아웃되면(core.autocrlf=true) 그 대조가 통째로 실패한다. 소스 내용 검증이
+///   체크아웃 방식에 좌우되지 않게 **읽는 자리에서** 정규화한다.
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
-  return f.readAsStringSync();
+  return f.readAsStringSync().replaceAll('\r\n', '\n');
 }
 
 String _codeOf(String b) =>

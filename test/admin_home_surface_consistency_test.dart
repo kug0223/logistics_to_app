@@ -195,7 +195,9 @@ void main() {
       expect('fontSize: 15'.allMatches(home).length, 5,
           reason: 'Hero 이름 · 오늘 issue · 다가오는 날짜 · task label · task count');
       expect('fontSize: 13'.allMatches(home).length, 9);
-      expect('fontSize: 12'.allMatches(home).length, 17);
+      // [R7-P1-4 후속] 17 → 18: 부족 행의 범위 보조 줄(grey 12) 한 개가 늘었다.
+      //   위계 규칙은 그대로다 — 18 금지 · 11 금지 · 15 는 다섯 자리.
+      expect('fontSize: 12'.allMatches(home).length, 18);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 

@@ -1132,3 +1132,233 @@ SharedPreferences 가 실패할 때 같은 정지가 가능하다 — **관측·
 3. 처리 후 돌아와 그 행의 수치가 줄어드는지(복귀 갱신).
 4. 좁은 폭/큰 글자에서 요약·부족·할 일 수치가 잘리지 않는지.
 5. SubAdmin 사업장 전환 직후 수치가 **이전 사업장 값으로 되돌아가지 않는지**(seq 가드).
+
+---
+
+## R7-P1-4 후속 — 홈 계약·초기 로드·이동 검증 (2026-09-28)
+
+기준 `4b6804f`(그 전 `6135916`). branch `main`, 시작 시 tracked 변경 없음, 사용자 소유
+untracked 8건 보존. 수용된 단위·`_s` 위임·렌더 10건 증거는 **재사용**했고 재조사하지
+않았다. 사용자 화면 배율 사본 3곳 = P2/P3, 대비·터치영역 = P4 그대로.
+Staffing 보정 **DEFERRED**, O08 **PENDING**. 공유 DEV 쓰기·fixture·보정·배포·Rules·
+PROD·APK·P1-5 **없음**.
+
+### 1. H1 — 실제 문구 조합과 부족의 범위 → **수정**
+
+production 홈을 그려 얻은 **실제 순서**(단일 사업장·정원 5·확정 0·부족 2):
+
+```
+ALfit · 김관리님 · 관리자 · 강남 물류센터
+[Hero]    오늘 2명이 더 필요해요
+[섹션]    오늘                                  · 당일 명단
+          5명 중 0명 확정
+        ⚠ 2명 부족
+          출근 예정 전
+[섹션]    처리할 일   → 지원 검토 3건 · 계약 미발송 2건
+```
+
+계약은 그대로다 — `required` 는 종료된 모집 단위까지 포함하고, `shortage` 는 모집
+가능한 단위만 반영한다(`wd.closed ? 0 : max(0, req-conf)`). 목적지도 **같은 술어**를
+쓴다: `DayApplicantsDialog` 의 `_GroupData.shortage` → `staffingShortageOf` 가
+`closed` 에서 0 을 돌려준다. 즉 홈의 `2명 부족` 과 목적지 총 부족은 같은 정의다.
+
+**그러나 화면 어디에도 부족의 범위를 말하는 문장이 없었다.** `N명 중 M명 확정` 은
+정원 축을 정확히 말하지만 그것만으로 `5 - 0 ≠ 2` 를 설명하지 않는다 → NO PATCH 로
+닫지 않고 **보조 한 줄**을 부족 행에만 붙였다.
+
+- 문구: `지금 모집 중인 업무만 센 숫자예요` (12px grey, 배지·색 추가 없음 → D0 의
+  "행당 강한 강조 제한" 유지)
+- 조건: `(정원 - 확정) != 부족` 인 날만. **비교일 뿐이고 그 차이를 화면에 쓰지 않는다** —
+  정원-확정=부족 공식을 강제하지도, 새 지표·통계 모델을 만들지도 않았다.
+- **원인을 단정하지 않는다.** 어긋남의 원인이 하나가 아니다 — 모집이 끝난 단위가
+  정원에 남아 있거나(`closed`), 어떤 단위의 과충원이 다른 단위의 부족을 상쇄하지
+  못하기 때문이다(부족은 단위별 `max(0,·)` 합산). 그래서 "모집이 끝난 자리" 같은
+  단정 문구를 쓰지 않고 부족이 세는 **범위**만 말한다.
+- 다가오는 7일 행은 `부족` 이 오른쪽 배지로 분리돼 같은 오해가 약하고, 이 후속의
+  범위가 오늘 요약이므로 **바꾸지 않았다**(판단 기록).
+
+증거(모두 production 위젯): AHR-11 어긋나는 날 → 보조 줄 표시 + 원인 단정 문구 없음 +
+새 숫자 없음 / AHR-12 맞아떨어지는 날 → 보조 줄 없음 / AHR-13 과충원 상쇄로 부족이
+더 큰 날 → 같은 보조 줄 / AHR-14 320dp·배율 1.3 + 긴 사업장명 + 128·32 에서 라벨과
+보조 줄이 **둘 다 남고** 예외 0. 전체 render matrix 는 다시 돌리지 않았다.
+
+### 2. H2 — 투어 판정과 초기 데이터 로드 → **수정**
+
+**실제 의존관계(수정 전):**
+
+```
+addPostFrameCallback
+  └ await Future.wait([ _loadApprovedBusinessStatus(), TourHelper.isCompleted(adminHome) ])
+      └ (투어 미완료면) pushTourScreen → markCompleted
+          └ if (mounted) { 4 loader 시작 }        ← 투어 future 뒤에 있었다
+```
+
+`TourHelper.isCompleted` 는 SharedPreferences 한 줄이고 **권한·사업장·수치 어디에도
+쓰이지 않는다**(증거: `admin_home_dead_loader_test` 의 새 group — 네 loader 본문과
+`_verified` 에 `tour` 문자열 0건). 즉 **데이터·권한 준비의 전제가 아니다.**
+그런데 `await` 가 그 future 를 함께 기다려서, 그것이 늦거나 던지면 네 loader 가
+**시작조차 하지 않았다** — 화면 전체가 끝나지 않는 spinner 로 남고, 각 영역의 재시도
+행조차 나오지 않는다(재시도는 loader 가 한 번 돌아 error 상태가 돼야 그려진다).
+
+**수정:** 순서를 데이터 의존만으로 정한다 — `await _loadApprovedBusinessStatus()`
+(→ `_loadPostingReadiness` 가 `_businesses` 를 읽으므로 필요) → 네 loader 시작 →
+그 뒤에 투어를 **독립적으로** 확인하고 실패는 삼킨다. 투어 실패·timeout 을 완료로
+저장하지 않고(`markCompleted` 는 `pushTourScreen` 뒤에만), 투어 기록을 지우지 않으며
+(`TourHelper.reset` 경로 0건), 새 고정 timeout 정책도 넣지 않았다.
+
+좁은 투어 상태 주입은 기존 읽기 경계에 한 칸을 더해서 했다 —
+`AdminHomeReads.tourCompleted`(기본값 `TourHelper.isCompleted(adminHome)`).
+
+| 시나리오 | 결과 |
+|---|---|
+| AHR-15 투어 future 영구 pending | 인력·출근·할 일 수치 **모두 표시**, spinner 0 |
+| AHR-16 투어 판정 실패(throw) | 수치 표시 + 화면 예외 0, 완료로 저장하지 않음 |
+| AHR-17 화면 파기 후 늦게 `미완료` 도착 | 투어를 열지 않고 예외 0 (`if (!tourDone && mounted)`) |
+| 정상 완료(true) | 기존 동작 — 나머지 render 증거 22건이 이 경로다 |
+
+production 영구 spinner 는 여전히 **미관측**이다(재현은 주입 경로에서만 했다).
+
+### 3. H2 — 늦은 응답 · 실제 목적지 · 복귀 갱신
+
+**seq 가드는 소스만 있었다 → 실제 순서를 실행했다.** 두 번째 로드는 테스트용 훅이
+아니라 production 회수 신호(`WorkforceController.notifyDataChanged` → `_onAdminMutation`
+→ `_autoRefresh`)로 일으켰다.
+
+| 증거 | 순서 | 기대 |
+|---|---|---|
+| AHR-18 동일 scope 역전 | staffing#1 늦게(9/0/9) · #2 먼저(5/3/2) | 화면은 `5명 중 3명 확정` 유지, `9명…` 미표시 |
+| AHR-19 늦은 **실패** | staffing#1 늦게 throw · #2 성공(4/4/0) | `4명 전원 확정` 유지, 에러 행 미표시 |
+| AHR-20 처리 후 옛 응답 | summary#1 늦게(지원 3·퇴사 1) · #2 전부 0 | 처리한 행이 되살아나지 않음 |
+| AHR-21 파기 후 도착 | 홈 dispose 후 완료 | 예외 0, 다른 화면 유지 |
+
+**가드가 그 결함을 막는지 확인했다** — `seq != _staffingSeq` 를 일시 제거하면
+AHR-18 이 `5명 중 3명 확정` 을 찾지 못하고 실패한다(원복 후 25건 PASS).
+사업장/날짜 변경과 동일 scope 역전은 구분했다 — 위 넷은 **동일 scope** 이고,
+사업장 전환 경로(`_onBusinessSwitchCheck`)는 같은 가드가 덮는다(소스 계약).
+모든 loader·앱 전체 race 감사로 확장하지 않았다.
+
+**실제 이동은 실행했다 — DEVICE 로 미루지 않았다.** 서로 다른 context 형태의 대표
+진입 셋을 골랐다(모두 기존 영역 표의 입력만 사용).
+
+| 진입 | 전달된 context | 복귀 |
+|---|---|---|
+| AHR-22 `당일 명단` | `AttendanceStatusDialog(date = 오늘 KST 달력일, businessIds = 홈 scope 2곳, businesses 동일 순서)` | `pop(true)` → **인력·출근 재조회**(호출 수 증가로 확인) |
+| AHR-23 부족 행 | `DayApplicantsDialog(date = 그 날, businessIds = 부족 사업장만 `[biz2]`)` | `pop(true)` → **인력 재조회** |
+| AHR-24 할 일(퇴사 요청, 2사업장) | 사업장 선택 시트에 `총 3건` + 두 사업장 이름 — 홈 수치와 같은 단위 | 시트에서 멈춤(관리 다이얼로그 진입 없음) |
+| AHR-25 권한 없는 SubAdmin | `당일 명단`·`지원 검토`·`퇴사 요청`·`계약 미발송` **전부 비노출** | — |
+
+목적지 내부 계산·렌더는 P1-2/P1-3 증거를 재사용한다 — 이 테스트들은 **문맥 전달과
+복귀 갱신만** 본다(목적지가 자기 조회로 내는 예외는 대상 밖으로 명시해 흘려보냈다).
+공유 DEV 근태·급여 처리·초대 발송·확정 취소는 **실행하지 않았다** — 실제 도메인
+쓰기의 검증은 DEVICE 로 남는다.
+
+### 4. H4 — 회귀 비교의 정확한 범위
+
+| 항목 | 값 |
+|---|---|
+| 기준 SHA(수정 전) | `6135916` |
+| 비교 시점의 수정 | **working tree 의 uncommitted 변경** — `git stash push -- lib test` 로 되돌린 뒤 tree 가 정확히 `6135916` 이었다(그래서 "이미 commit 된 같은 코드"를 대조로 세지 않았다) |
+| 수정 SHA | `4b6804f`(+ `9f45090`), 이번 후속은 그 위 |
+| 테스트 집합 | **10파일**(attendance_dialog_content_render · payroll_simulation_extended · my_applications_simulation · longterm_renewal_boundary · posting_close_reopen_contract · invitation_detail_projection · mixed_staffing_parity · noshow_replacement_cross_slice_contract · longterm_seat_counter_contract · active_reader_error_not_empty) |
+| 환경·날짜 | 같은 기기·같은 flutter, 2026-09-28 |
+| 결과 | 기준 **19 실패** → 현재 **16 실패**. 사라진 3건 = ACR-5·6·7(시계 의존 제거). `active_reader` AR-7 은 기준에서 PASS 였고 내 seam 이 깨뜨렸다가 재앵커로 PASS |
+
+**정정:** 첫 P1-4 보고와 commit 메시지의 "전체 스위트 실패 41건은 기준선과 동일" 은
+**측정 범위를 넘은 주장이었다.** 기준선을 잰 것은 위 10파일뿐이고, 전체 스위트는
+수정 후 한 번만 돌렸다. 전체에 대한 "신규 실패 0" 은 주장하지 않는다.
+기존 실패 다수는 날짜·시각 의존(`payroll_simulation_extended` D2 등)이지만 이번
+범위에서 고치지 않았고, CRLF·고정시각 차이를 제품 수정 성과로 세지 않는다.
+
+**`attendance_dialog_content_render` 의 검증 목적:** ACR-1~7 은 **탭 전환·업무 그룹·
+행·관계 문맥·수치 단위**를 본다. 탭을 여는 것은 행에 도달하기 위한 수단이고,
+`정상`/`확인필요` **분류 경계 자체의 계약은 owner 가 따로 있다** —
+`admin_home_attendance_actionability_test` 가 `AttendanceReviewHelper.requiresReviewNow`
+에 **고정 now**(`_t(8,59)` false / `_t(9,0)` true …)를 주입해 경계를 직접 검증한다.
+그래서 내일 fixture 로 안정화한 것은 경계를 피한 것이 아니라 **다른 계약의 시계
+의존을 없앤 것**이다. 변경은 두 줄뿐이고(`_day` 정의 + 머리말 날짜 파생) **원래
+assert 는 전부 그대로다**(`git show 9f45090` 로 확인: 15 insert / 2 delete).
+같은 기준으로 홈 렌더 테스트의 고정 날짜 `'2026-09-28'` 도 없앴다 — 이 파일의
+날짜 기준은 `_todayStr`(오늘 KST) 하나다.
+
+#### 4-1. 전체 스위트를 처음 제대로 읽고 나온 정정 (중요)
+
+이번 후속에서 **전체 스위트를 돌려 이름별로 확인**했더니, 첫 P1-4 보고가 놓친
+**내 변경 탓의 실패 5건**이 있었다. `admin_home_*` 만 돌려서 생긴 누락이다 —
+첫 보고의 "전체 실패는 기준선과 동일" 이 왜 잘못된 주장이었는지가 이것으로 드러난다.
+
+| 실패 | 원인 | 조치 |
+|---|---|---|
+| `admin_home_surface_consistency` SURFACE-05 §13 typography | 새 보조 줄이 `fontSize: 12` 개수를 17→18 로 | 개수 갱신(위계 규칙 18 금지·11 금지·15=5 는 그대로) |
+| `home_readiness_refresh` HRR-42 | `Future.wait` 목록 형태를 앵커로 쓰고 있었다 | `await _loadApprovedBusinessStatus();` 로 재앵커 + **투어가 그 사이에 끼지 않는다**는 단언 추가 |
+| `posting_home_readiness_identity` READINESS-09-b | `forBusinesses(`·`getTemplates(` 가 경계로 이동(4b6804f) | 화면 호출 1회 + 경계의 owner 매핑 1회 **쌍**으로 요구 |
+| `staffing_applicant_read_purpose` SAP-H3 | 홈의 원시 reader 가 경계로 이동(4b6804f) | 경계 파일을 같은 목적으로 검사 |
+| `renewal_decision_surface` 06-b | `명`→`건` 단위 변경(4b6804f) | 건으로 갱신 + 근거 주석 |
+
+최종 전체 스위트(수정 후): **13763 passed / 67 실패**. 위 5건을 고친 뒤 재실행한 값이고,
+잔존 실패는 아래 "무관" 분류에 해당한다. **전체 기준선은 여전히 미측정**이므로 이 숫자로
+"신규 실패 0" 을 주장하지 않는다.
+
+**내 변경과 무관한 것으로 확인한 것:**
+- `renewal_decision_surface` 07-a·07-b·07-d — `fixed_worker_management_dialog.dart` 를
+  `'\n'` 로 이어붙인 여러 줄 코드로 대조하는데 그 파일이 작업트리에서 **전부 CRLF** 다.
+  내 diff 는 그 파일을 0줄 건드렸고, `git stash` 로 되돌린 HEAD 에서도 같은 3건이 실패한다.
+  **CRLF 차이를 제품 수정 성과로 세지 않는다** — 고치지 않고 사실만 기록한다.
+- `typography_device_scaling` TYPO-42 — `FittedBox` 개수 6 기대 / 현재 7. 내 diff 의
+  `FittedBox` 추가는 **0건**이다(기존 실패).
+- 날짜·시각 의존 다수(`payroll_simulation_extended` D2 · `unit/to_model` ·
+  `models/application_model_test` · `weekly_work_count` · `my_applications_simulation` 등).
+
+#### 4-2. 줄바꿈이 검증을 좌우하고 있었다 (기록)
+
+`git stash` 로 기준선을 잰 뒤 `pop` 하면 `core.autocrlf=true` 때문에 되돌아온 파일이
+**CRLF 로 다시 쓰인다.** 그런데 소스를 `'\n'` 으로 이어 붙여 대조하는 앵커가 몇 개 있어서,
+**내용이 같아도** 그 순간 실패한다 — 실제로 `admin_home_expiring_permission` 02-a 가
+그렇게 한 번 빨간색이 됐다(내 편집이 LF 로 써 두는 동안에는 통과했다).
+
+조치: **읽는 자리에서 정규화**했다(`_src` 에서 `\r\n → \n`) — 대조 방식의 문제이므로
+제품 수정 성과로 세지 않는다. 적용은 이번 변경 경로의 두 파일뿐이다
+(`admin_home_expiring_permission_test`, `renewal_decision_surface_test`).
+그 결과 `renewal_decision_surface` 07-b·07-d 도 함께 통과한다.
+
+**남긴 것:** `renewal_decision_surface` 07-a 는 줄바꿈 문제가 아니라 **낡은 앵커**다 —
+`'w.application.resignStatus == null && !isExpiredUndecided(w)'` 를 한 줄로 기대하는데
+소스는 두 줄로 포매팅돼 있다(`fixed_worker_management_dialog.dart:919-920`).
+**계약 자체는 소스가 만족한다**(정상 집계가 `isExpiredUndecided` 를 제외한다).
+그 화면은 이번 변경 경로가 아니므로 고치지 않고 기록한다.
+`typography_device_scaling` TYPO-42(FittedBox 6 기대 / 현재 7)도 내 diff 와 무관하다.
+
+### 5. 종료 자료
+
+| ID | 이전 → 현재 | 수정 / NO PATCH | 재사용 증거 | 이번 실행 | 남은 조건 |
+|---|---|---|---|---|---|
+| H1 정원/부족 문구 | 단어 충돌 해소 → **범위 설명 추가** | **수정**(보조 한 줄, 조건부) | AHR-1·2, 서버 두 줄, 목적지 동일 술어 | AHR-11·12·13·14 | 없음 |
+| H1 할 일 단위 | `명`→`건` 4곳 | 수정(완료) | AHR-3 | 재사용 | 없음 |
+| H2 투어 게이트 | RESIDUAL → **판정 완료** | **수정**(독립 로드) | — | AHR-15·16·17 + 소스 계약 4건 | production 영구 spinner 는 미관측 |
+| H2 늦은 응답 | 소스만 → **순서 실행** | 수정(완료) | — | AHR-18·19·20·21 + 가드 제거 대조 | 없음 |
+| H2 목적지 context·복귀 | 미실행 → **실행** | NO PATCH(계약 성립) | P1-2/P1-3 목적지 내부 | AHR-22·23·24·25 | 실제 도메인 쓰기 = DEVICE |
+| H3 공용 배율 | 위임 완료 | 수정(완료) | AHR-10(폭 5종) | 재사용 | 사용자 화면 사본 3곳 = P2/P3 |
+| H4 회귀 범위 | 과대 주장 → **정정** | — | 10파일 기준선 | 10파일 재측정(19→16) | 전체 기준선은 미측정(주장 안 함) |
+| H4 시간 fixture | 3건 실패 → **의미 정리** | 수정(완료) | 분류 owner 고정 now | diff 확인 | 없음 |
+| 대비·터치영역 | — | — | — | **미측정** | P4 owner |
+
+**필수 결론**
+1. **정원/모집 가능 부족의 의미는 이제 화면에서 구분된다** — 정원 축은 `N명 중 M명 확정`,
+   부족 축은 `N명 부족` + 어긋나는 날에만 `지금 모집 중인 업무만 센 숫자예요`.
+2. **투어 지연·실패는 홈 데이터를 영구 차단하지 않는다** — pending·throw 두 경우 모두
+   수치가 그려진다(AHR-15·16). 투어는 데이터·권한의 전제가 아니라는 것도 소스로 확인했다.
+3. **실제 목적지 context 와 복귀 갱신을 실행했다** — 날짜·사업장·부족 사업장·건수 context
+   전달과 `pop(true)` 후 재조회를 production 경로에서 확인했다(AHR-22·23·24), 권한 없는
+   경로의 기존 차단도 함께(AHR-25).
+4. **비교 범위는 10파일이고 시간 fixture 수정은 분류 계약을 피한 것이 아니다** — 전체
+   스위트 기준선은 측정하지 않았음을 명시한다.
+
+#### 최소 DEVICE 안 (이번에 바뀐 화면만)
+
+1. 홈 `오늘`: 정원과 확정이 부족과 이어지지 않는 날에 부족 아래 보조 줄이 보이고,
+   맞아떨어지는 날에는 보이지 않는다.
+2. 앱을 처음 설치한 계정(투어 미완료)으로 홈 진입 → 투어를 닫은 뒤 수치가 있고,
+   비행기 모드/저장소 이상에서도 홈이 끝나지 않는 spinner 로 남지 않는다.
+3. `당일 명단`·부족 행·할 일 행에서 목적지의 날짜·사업장·건수가 홈과 같고,
+   처리 후 돌아오면 그 수치가 줄어든다.
+4. SubAdmin 사업장 전환 직후 수치가 이전 사업장 값으로 되돌아가지 않는다.
+5. 권한 없는 SubAdmin 계정에서 같은 자리들이 아예 보이지 않는다.

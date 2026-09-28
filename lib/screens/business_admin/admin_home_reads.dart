@@ -10,6 +10,7 @@ import '../../services/contract_template_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/staffing_readiness_service.dart';
 import '../../services/work_detail_time_service.dart';
+import '../../utils/tour_helper.dart';
 
 /// [R7-P1-4 H4] 관리자 홈의 **원시 외부 읽기 경계**.
 ///
@@ -29,6 +30,7 @@ class AdminHomeReads {
     required this.workDetailTimes,
     required this.postingReadiness,
     required this.contractTemplates,
+    required this.tourCompleted,
   });
 
   /// CF `callableGetAdminHomeSummary` — 처리할 일 canonical.
@@ -61,6 +63,10 @@ class AdminHomeReads {
   final Future<List<ContractTemplateModel>> Function(String businessId)
       contractTemplates;
 
+  /// 관리자 홈 투어를 이미 봤는지(로컬 저장소 한 줄).
+  /// **데이터의 전제가 아니다** — 이 future 가 늦거나 던져도 수치 조회는 진행된다.
+  final Future<bool> Function() tourCompleted;
+
   factory AdminHomeReads.of(
     FirestoreService svc, {
     AdminHomeSummaryService? summaryService,
@@ -84,6 +90,7 @@ class AdminHomeReads {
       postingReadiness: (businesses) =>
           BusinessPostingReadiness.forBusinesses(businesses, svc),
       contractTemplates: templateSvc.getTemplates,
+      tourCompleted: () => TourHelper.isCompleted(TourHelper.adminHome),
     );
   }
 }

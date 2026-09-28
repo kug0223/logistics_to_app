@@ -198,12 +198,17 @@ void main() {
     });
 
     test('HRR-42 initState는 사업장 확정 후 readiness를 계산한다', () {
-      // 기존 순서를 깨지 않았는지 — Future.wait로 사업장 조회가 끝난 뒤 호출된다.
+      // [R7-P1-4 후속] 투어 future 와 함께 기다리던 Future.wait 를 없애고
+      //   사업장 조회를 **명시적으로 await** 한 뒤 loader 를 시작한다.
+      //   계약(사업장 확정 → readiness)은 그대로이고 순서는 더 분명해졌다.
       final src = _source(_homePath);
-      final a = src.indexOf('_loadApprovedBusinessStatus(),');
+      final a = src.indexOf('await _loadApprovedBusinessStatus();');
       final b = src.indexOf('unawaited(_loadPostingReadiness());');
       expect(a, greaterThan(-1));
       expect(b, greaterThan(a));
+      // 투어 판정이 그 사이에 끼지 않는다 — 데이터가 투어를 기다리지 않는다.
+      final tour = src.indexOf('_reads.tourCompleted()');
+      expect(tour, greaterThan(b));
     });
   });
 
