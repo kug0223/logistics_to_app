@@ -1368,7 +1368,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   ),
                 ),
                 // 업무별 통계 배지
-                _buildGroupStats(context, g),
+                // [R7-P1-2 DEVICE.1H.1] 고정 폭이라 대기 인원이 있는 묶음의
+                //   머리줄이 320dp·배율 2.0 에서 6px 넘쳤다. 수치를 지우지 않고
+                //   남은 폭 안으로 접는다.
+                Flexible(child: _buildGroupStats(context, g)),
               ],
             ),
           ),
@@ -1922,8 +1925,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             // _toCache에 TO가 없으면 true(낙관적 허용) — CF가 최종 gate
             if (isPending && !_isBatchMode && canManageTo) ...[
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              // [R7-P1-2 DEVICE.1H.1] 고정 Row 라 320dp·배율 2.0 에서 버튼이
+              //   행 밖으로 밀려 **눌리지 않았다**(세 개 중 하나가 사라졌다).
+              //   버튼을 지우거나 글자 배율을 무효화하지 않는다 — 줄을 넘긴다.
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   // [CROSS-DOMAIN-R5.3B] 다른 업무 제안 — WorkApplicants와 같은 행동.
                   //   후보 판정에 필요한 슬롯 WorkDetail은 이 화면이 들고 있지
@@ -1935,16 +1943,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       color: AppColors.info,
                       onTap: () => _offerAlternativeWork(app, user),
                     ),
-                  if (app.slotId != null && app.toId != null)
-                    const SizedBox(width: 8),
                   _actionButton(
                     context,
                     label: '거절',
                     color: AppColors.error,
                     onTap: () => _rejectApp(app),
                   ),
-                  if (_toCache[app.toId]?.canApprovePending ?? true) ...[
-                    const SizedBox(width: 8),
+                  if (_toCache[app.toId]?.canApprovePending ?? true)
                     _actionButton(
                       context,
                       label: '확정',
@@ -1952,7 +1957,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       filled: true,
                       onTap: () => _approveApp(app),
                     ),
-                  ],
                 ],
               ),
             ] else if (!isPending) ...[
@@ -1991,8 +1995,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       !app.isLongTermApplication && canManageTo &&
                       _isReplacementActionable && !isRecruitClosed))) ...[
                 const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                // [R7-P1-2 DEVICE.1H.1] 확정 행의 버튼 줄도 같은 이유로 넘쳤다.
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
                     // [R5.1] 대체 인력 충원 버튼 — NO_SHOW 확인 후 미반납 상태에서만 표시
                     if (_noShowApplicationIds.contains(app.id) &&
@@ -2008,7 +2015,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                         filled: true,
                         onTap: () => _releaseNoshowSeat(app),
                       ),
-                      const SizedBox(width: 8),
                     ],
                     // 계약 미작성 시 개별 계약서 작성 버튼
                     if ((_contractStatusMap[app.id] == null ||
@@ -2022,7 +2028,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                         filled: true,
                         onTap: () => _createContractForOne(app),
                       ),
-                      const SizedBox(width: 8),
                     ],
                     // [BUG-CANCEL-01] 근무 완료·장기계약 시작 후에는 확정취소 버튼 숨김
                     if (_canCancelConfirmation(app) && canManageTo) ...[
@@ -2199,15 +2204,19 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
+      // [R7-P1-2 DEVICE.1H.1] 글자가 커지면 `계약서 작성 필요` 가 Wrap 의 남은
+      //   폭을 넘어 칩 안에서 잘렸다. 값을 줄이지 않고 **두 줄로 흐르게** 한다.
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 9, color: color),
           const SizedBox(width: 2),
-          Text(
-            label,
-            style: ResponsiveHelper.tinyStyle(context, color: color)
-                .copyWith(fontWeight: FontWeight.bold),
+          Flexible(
+            child: Text(
+              label,
+              style: ResponsiveHelper.tinyStyle(context, color: color)
+                  .copyWith(fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
@@ -2243,72 +2252,65 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final isFull = required > 0 && confirmed >= required;
     final statusColor = isFull ? AppColors.successDark : AppColors.infoDark;
 
+    // [R7-P1-2 DEVICE.1H.1] 고정 Row 라 글자가 커지면 머리줄이 넘쳤다.
+    //   아이콘과 그 숫자는 한 덩어리로 붙여 두고, **덩어리끼리** 줄을 넘긴다.
+    //   수치를 지우거나 합치지 않는다 — 지원과 초대는 다른 사실이다.
+    return Wrap(
+      spacing: ResponsiveHelper.spacing(context, 6),
+      runSpacing: ResponsiveHelper.spacing(context, 2),
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _statGroup(
+          context,
+          icon: isFull ? Icons.check_circle : Icons.people_outline,
+          iconSize: 14,
+          label: required > 0 ? '$confirmed/$required명' : '$confirmed명',
+          color: statusColor,
+        ),
+        // [SYSTEM-INTEGRATION-R2.2] 지원 대기와 초대 중을 합치지 않는다.
+        //   하나로 합치면 몇이 내가 보낸 초대이고 몇이 들어온 지원인지 모른다.
+        if (pending > 0)
+          _statGroup(context,
+              icon: Icons.schedule,
+              label: '지원 $pending',
+              color: AppColors.warningDark),
+        // [SYSTEM-INTEGRATION-R2.2.1] 지금 수락될 수 있는 초대만 센다.
+        if (g.activeInvites.isNotEmpty)
+          _statGroup(context,
+              icon: Icons.send_outlined,
+              label: '초대 ${g.activeInvites.length}',
+              color: AppColors.infoDark),
+        // [R2.2.1 CORRECTION] capacity 를 모르는 초대는 숫자 대신 물음표로 둔다.
+        if (g.unknownInvites.isNotEmpty)
+          _statGroup(context,
+              icon: Icons.help_outline,
+              label: '초대 ?',
+              color: AppColors.grey500),
+      ],
+    );
+  }
+
+  /// 아이콘과 그 수치는 떨어지면 뜻을 잃는다 — 한 덩어리로 유지한다.
+  Widget _statGroup(BuildContext context,
+      {required IconData icon,
+      required String label,
+      required Color color,
+      double iconSize = 12}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(
-          isFull ? Icons.check_circle : Icons.people_outline,
-          size: ResponsiveHelper.iconSize(context, 14),
-          color: statusColor,
+        Icon(icon,
+            size: ResponsiveHelper.iconSize(context, iconSize), color: color),
+        SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+        // 한 덩어리가 남은 폭보다 넓어지는 마지막 한 픽셀까지 접히게 둔다.
+        Flexible(
+          child: Text(
+            label,
+            style: ResponsiveHelper.smallStyle(context, color: color)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
         ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text(
-          required > 0 ? '$confirmed/$required명' : '$confirmed명',
-          style: ResponsiveHelper.smallStyle(context, color: statusColor)
-              .copyWith(fontWeight: FontWeight.bold),
-        ),
-        // [SYSTEM-INTEGRATION-R2.2] 지원 대기와 초대 중을 합치지 않는다.
-        //   `대기 N명` 하나로 보여주면 관리자는 그중 몇이 자기가 보낸 초대이고
-        //   몇이 들어온 지원인지 모른다 — 더 초대해야 하는지 판단할 수 없다.
-        if (pending > 0) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Icon(
-            Icons.schedule,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.warningDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            '지원 $pending',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
-                .copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
-        // [SYSTEM-INTEGRATION-R2.2.1] `초대 N` = INVITED **이면서 지금 수락될 수
-        //   있는** 초대. 자리가 이미 찬 초대를 여기 세면 관리자는 아직 응답을
-        //   기다리는 중이라고 읽고, 오지 않을 수락을 기다린다.
-        //   별도 inviteCount 필드를 만들지 않는다 — Application + 현재 capacity로 센다.
-        if (g.activeInvites.isNotEmpty) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Icon(
-            Icons.send_outlined,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.infoDark,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            '초대 ${g.activeInvites.length}',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
-                .copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
-        // [R2.2.1 CORRECTION] capacity를 모르는 초대를 요약에서 지우지 않는다.
-        //   숫자를 세지 않을 뿐, 초대가 떠 있다는 사실은 사실이다.
-        //   숫자로 세면 `초대 중`이라고 단정하는 것이 되므로 `?`로 둔다.
-        if (g.unknownInvites.isNotEmpty) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Icon(
-            Icons.help_outline,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: AppColors.grey500,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            '초대 ?',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)
-                .copyWith(fontWeight: FontWeight.bold),
-          ),
-        ],
       ],
     );
   }
@@ -2543,16 +2545,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ),
           ),
           const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppColors.grey100,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              label,
-              style: ResponsiveHelper.smallStyle(context, color: color)
-                  .copyWith(fontWeight: FontWeight.w600),
+          // [R7-P1-2 DEVICE.1H.1] 상태 배지가 고정 폭이라, 글자가 커지면
+          //   `초대 수락 · 확정` 처럼 긴 라벨이 행 밖으로 나갔다. 이 라벨은
+          //   초대가 어떻게 끝났는지를 말하는 값이라 줄이지 않는다 — 대신
+          //   배지 자체가 남은 폭 안에서 두 줄로 흐르게 한다.
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppColors.grey100,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                label,
+                style: ResponsiveHelper.smallStyle(context, color: color)
+                    .copyWith(fontWeight: FontWeight.w600),
+              ),
             ),
           ),
         ],

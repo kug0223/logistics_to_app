@@ -59,8 +59,15 @@ const kWdId = 'wd1';
 const kWorkType = '홀서빙';
 const kStart = '09:00';
 const kEnd = '18:00';
-final kDate = DateTime(2026, 9, 29);
-final kInvitedAt = DateTime(2026, 9, 27, 10);
+// [R7-P1-2 후속] 원래 `DateTime(2026, 9, 29)` 로 못박아 두었는데, 그날이 오늘이
+//   되자 IHK-4 의 '출근 예정' 분기를 벗어나 깨졌다(제품 결함이 아니라 시한부
+//   fixture 였다). 이 사건 키에 필요한 것은 **아직 오지 않은 근무일**이다.
+final kDate = DateTime(
+  DateTime.now().year,
+  DateTime.now().month,
+  DateTime.now().day,
+).add(const Duration(days: 3));
+final kInvitedAt = kDate.subtract(const Duration(days: 2));
 
 class _Worker extends UserProvider {
   _Worker(this.uid, {this.ready = true});
@@ -372,7 +379,8 @@ void main() {
     expect(find.textContaining(kBizName), findsWidgets);
     expect(find.text('근무 초대'), findsOneWidget);
     expect(find.text('근무 초대가 도착했어요'), findsOneWidget);
-    expect(find.text('9월 29일 (화) · 09:00~18:00'), findsOneWidget);
+    // 날짜는 fixture 가 미는 값이라 문자열을 못박지 않는다 — 시간대만 고정.
+    expect(find.textContaining('09:00~18:00'), findsOneWidget);
 
     // 자리가 있다고 **서버가 확인해 준** 경우에만 수락 CTA 가 뜬다.
     expect(find.text('수락하기'), findsOneWidget);
@@ -435,7 +443,7 @@ void main() {
     expect(find.textContaining('출근 예정이에요'), findsOneWidget);
   });
 
-  testWidgets('[IHK-5] 320dp × 2.0 — 관리자 초대 결과 세 갈래가 예외 없이 그려진다',
+  testWidgets('[IHK-5] 320dp × 2.0 — 초대 결과 세 갈래와 확정 명단 행이 넘치지 않는다',
       (tester) async {
     await _pumpAdmin(
       tester,
@@ -469,13 +477,11 @@ void main() {
     expect(find.text('초대 거절'), findsOneWidget);
     expect(find.text('초대 철회'), findsOneWidget);
 
-    // ── 같은 조건에서 **확정 명단 행**(ApplicantRowSurface)에 RenderFlex
-    //    overflow 가 3건 난다(62px·14px 등). 이 셀이 묻는 정보가 아니고
-    //    이미 R7-P1-2 DEVICE.1H.1 이 같은 Row 를 손댄 적이 있는 영역이라
-    //    **여기서 고치지 않고 그 owner 로 넘긴다.** 재현 조건이 이 테스트다.
-    //    takeException 으로 통과시키지 않는다 — 아래에서 사실대로 확인한다.
-    final ex = tester.takeException();
-    expect(ex, isNotNull,
-        reason: '이 줄이 실패하면 확정 명단 행 overflow 가 사라진 것이다 — 좋은 신호다');
+    // ── [R7-P1-2 DEVICE.1H.1 후속] 여기에는 원래 "확정 명단 행에 overflow 가
+    //    3건 난다(62/14/104px)" 는 **결함 지속 기대**가 있었다. 그 owner 에서
+    //    고쳤으므로 기대를 **정상값으로 옮긴다** — 기대를 지우지 않는다.
+    //    같은 표본의 상세 검증은 `applicant_row_overflow_test.dart`(ARO-1~7).
+    expect(tester.takeException(), isNull,
+        reason: '확정 명단 행이 320dp·배율 2.0 에서 다시 넘치면 여기서 잡힌다');
   });
 }
