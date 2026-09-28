@@ -4,7 +4,7 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-28 (R7-P2-2 · 일자리·지원 흐름)
+> 마지막 갱신: 2026-09-28 (R7-P2-2 후속 · 상세·내 지원)
 
 ## 0. 이 장부가 지키는 불변식
 
@@ -43,6 +43,8 @@
 | 20 | P2-1 | 지원자 홈 Hero 가 `workDate == today` 로 오늘 근무를 판정해, **계약 시작일이 아닌 날 일하는 장기 근무자에게 출퇴근 CTA 가 사라졌다** | 같은 화면·출근 화면과 같은 canonical 술어 `isWorkingOnDate` | RENDER 4 + 수정 전 대조 |
 | 21 | P2-1 (후속 정정) | 홈 로드가 늦은 응답을 그대로 반영했다. **실제 도달 경로는 `unawaited` 꼬리(연장 제안·보완 요청)** — 사라진 제안이 낡은 응답으로 되살아났다. 계정 전환은 `AuthWrapper` 가 State 를 파괴하므로 production 재현 경로가 **아니다**(첫 보고 문장 정정) | seq + uid 가드를 state 반영 3곳에 | UHR-15 + seq 제거 대조 |
 | 22 | P2-1 | 수입 행·지원 준비 진행도·`SectionHeader` 액션에 flex·상한이 없어 좁은 화면·큰 배율에서 잘렸다(17·36·83·57·31px) | 금액·진행도·목적지 문구를 **줄이지 않고** 줄바꿈 | RENDER 6조합 |
+| 31 | P2-2 후속 | 공고 상세의 날짜 칩이 `height:82`·`width:62` 고정이라 요일·날짜·**가능한 업무 수**가 기본 배율에서도 18px, 2.0 에서 241px 잘렸다 | 글자 배율을 따라가게(상한 있음) + 기본값을 실제 필요분으로 | RENDER 두 기기 · 4조합 |
+| 30 | P2-2 후속 | 공고 상세가 슬롯 날짜를 **필드 비교**로 찾고 **로컬 필드로 표시**했다 | 비-KST 기기에서 **고른 날의 슬롯을 못 찾고**, 찾아도 `10월 11일 근무`를 **10월 10일**로 말했다 | 매칭은 `toKstDate` 로, 찾은 뒤 선택값은 슬롯 표현으로 되돌림, 표시는 KST | 수정 전 9 FAIL → 10 PASS |
 | 29 | P2-2 | 지원 준비 항목의 액션 버튼에 상한이 없어 320dp·배율 2.0 에서 **4개 항목 전부 15px 잘렸다** | 넘칠 때만 폭 40% 로 묶고 라벨 줄바꿈 — 항목명도 행동명도 지우지 않는다 | RENDER 4조합 |
 | 28 | P2-2 | 목록에서 고른 **하루가 공고 상세로 넘어가지 않았다** | 하루를 가리킬 때만 `slotDate` 전달(범위·미선택은 null). 수치는 목적지가 재조회해 만든다 | 실행 2건 |
 | 27 | P2-2 | 날짜 같은 클라이언트 조건이 첫 페이지를 다 걸러 내면 `필터 조건에 맞는 공고가 없습니다` 라고 **없음을 단언**했다. 같은 화면 머리말은 `N개 이상` 이었고, `더 보기` 버튼은 ListView 안이라 **길까지 닫혔다** | 남은 페이지가 있으면 "아직 찾지 못했어요" + 더 보기, 이어 읽기 기준을 서버 페이지 → **화면에 남은 것**으로 | 수정 전 7 FAIL → 11 PASS |
@@ -67,6 +69,10 @@
 | P2-1 후속 | 홈 로드 **본문**의 같은 계정 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 본문은 겹치지 않는다(앱 복귀 경로로 재측정). 겹치는 것은 `unawaited` 꼬리뿐이고 그쪽은 결함 #21 로 고쳤다 |
 | P2-1 후속 | 홈의 NO_PERMISSION 상태 | 홈의 읽기가 전부 **자기 uid 스코프**+공개 데이터라 도달 불가. 억지 fixture 를 만들지 않았다 |
 | P2-1 후속 | CTA 가 다른 사람/근무를 여는가 | 12경로 중 스냅샷을 넘기는 것은 추천 카드 하나뿐, 나머지는 키·계정 스코프라 목적지가 다시 읽는다. `출근하기` 는 인자 없이 **같은 canonical 술어**로 대상을 맞춘다 |
+| P2-2 후속 | 상세에서 무엇이 화면을 지배하는가 | **재조회**다 — seed(`workDetails`)를 빈 목록으로 줘도 그 날짜의 업무가 나온다(JPD-3) |
+| P2-2 후속 | 내 지원의 취소 기록이 활성으로 세어지는가 | 진행 1 + 자동취소 1 → 머리 카운트 `전체 2 · 진행중 1 · 종료 1`(MAS-4) |
+| P2-2 후속 | 자동취소 사유를 모를 때 | `취소된 지원이에요` — 지어내지 않는다(MAS-3 양성 대조) |
+| P2-2 후속 | Gradient 실제 호출부 총수 | `common/settings_screen` 1 + `user/` 4 = **5곳**. 첫 보고의 "4곳" 은 `user/` 기준(Index 표와 일치) |
 | P2-2 | 지원 실패·마감·자격 미충족이 성공처럼 보이는가 | `ApplyResult` 가 success/alreadyApplied/failed/**unknown** 네 갈래. UNKNOWN 은 canonical 재확인 후에도 모르면 "내 지원 목록에서 확인해주세요"로 남는다(R8-P3A.1) |
 | P2-2 | 겹치는 지원을 apply 에서 차단하는가 | 막지 않는다 — 지원=관심(정책 그대로) |
 | P2-2 | 자동취소가 generic 배지로 뭉개지는가 | 사유 코드별 문구가 있다(SCHEDULE_CONFLICT·TO_EXPIRED·TO_DELETED …) |
@@ -92,8 +98,10 @@
 | ~~`[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]`~~ | P21-H | **CLOSED** — 불일치 입증 후 KST 로 통일(결함 #26) |
 | `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` | P2 | CODE/행동/RENDER 수용 — DEVICE/PRODUCT |
 | `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 — DEVICE |
-| `[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]` | P2-2 후속 | 공고 상세 내부(날짜·업무슬롯 선택, FULL/마감 배지) 미관찰 |
-| `[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]` | P2-2 후속 | 내 지원 화면 렌더·필터 미관찰(소스 계약만) |
+| `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 — DEVICE |
+| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | 지원 writer 결과를 주입한 다이얼로그 렌더(격리) — 이번엔 읽기 경계만 만들었다 |
+| ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** — 두 기기 × 날짜별 슬롯 렌더(JPD 10건) |
+| ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** — 상태·사유·카운트 렌더(MAS 10건) |
 | `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | 알림·FCM → 공고 상세 제스처 NOT SEEN — DEVICE |
 | `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` | P2 | CODE/행동/RENDER 수용 — DEVICE/PRODUCT(실제 퇴근 mutation) |
 | `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 — DEVICE/PRODUCT |

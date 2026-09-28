@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-2 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-2 후속 커밋
 
 ## 1. 문서 지도
 
@@ -31,7 +31,7 @@
 | P1-6 | 계약·관리·통계 | CLOSED | CLOSED | **PENDING** |
 | P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | **CLOSED**(super-admin 5화면 CODE only · 통계 hop 제스처 NOT SEEN) | **PENDING** |
 | P2-1 | 지원자 Home·4탭 진입 | **CLOSED** | **CLOSED**(P21-R 행동은 12경로 중 4 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
-| P2-2 | 일자리 탭·공고 상세 전달·지원 준비 | CLOSED | **CLOSED**(상세 내부·내 지원 렌더는 후속) | **PENDING** |
+| P2-2 | 일자리·공고 상세·지원 흐름 | CLOSED | **CLOSED**(A1 지원 버튼 제스처 제외) | **PENDING** |
 | P2 나머지 | 일정·MY 탭 내부 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
@@ -51,8 +51,10 @@
 | ~~`[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]`~~ | P21-H | **CLOSED** — KST 로 통일 |
 | `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` | P2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
-| `[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]` | P2-2 후속 | 공고 상세 내부 미관찰 |
-| `[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]` | P2-2 후속 | 내 지원 렌더 미관찰 |
+| ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** |
+| `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 · DEVICE 대기 |
+| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | 지원 writer 주입 렌더 |
+| ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | FCM → 공고 상세 제스처 NOT SEEN |
 | `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` | P2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
@@ -87,3 +89,4 @@
 - 홈↔출퇴근 화면의 KST 날짜 일치(P2-1 잔여) — 두 화면 모두 `toKstDate` 기준
 - 수입 월의 KST 기준(P2-1 최종) — `FormatHelper.isSameKstMonth` 한 벌, 서버 KST 슬라이스와 동일
 - 일자리 탭의 부분 결과≠없음·선택 날짜 전달(P2-2)
+- 공고 상세의 슬롯 날짜 KST 매칭·표시, 내 지원 상태·사유·카운트(P2-2 후속)

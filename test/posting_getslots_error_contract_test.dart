@@ -668,7 +668,13 @@ void main() {
           _codeOf(_bodyOf(_src(_jobPostingPath), 'Future<void> _loadSlots(')));
       expect(body.contains('requireComplete'), false,
           reason: 'malformed 1개로 정상 날짜까지 못 보게 되면 과교정이다');
-      expect(body.contains("getSlots(_to!.id, visibleOnly: false)"), true);
+      // [R7-P2-2 후속] 상세가 JobPostingReads 경계를 타면서 호출 이름이 바뀌었다.
+      //   계약(전체 슬롯을 visibleOnly:false 로 읽는다)은 그대로이므로 닻만
+      //   옮기고, 경계가 실제 getSlots 로 이어지는지 함께 본다.
+      expect(body.contains("slots(_to!.id, visibleOnly: false)"), true);
+      final reads = _src("lib/screens/common/job_posting_reads.dart");
+      expect(reads.contains("svc.getSlots(toId, visibleOnly: visibleOnly)"), true);
+      expect(reads.contains("requireComplete"), false);
     });
 
     test('04-c legacy 슬롯도 지원 flow를 막지 않는다', () {

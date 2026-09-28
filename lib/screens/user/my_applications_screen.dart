@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'my_applications_reads.dart';
 import 'dart:async' show unawaited;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -96,11 +97,15 @@ class MyApplicationsScreen extends StatefulWidget {
   /// Application이다. null이면 예전처럼 목록만 연다(legacy payload).
   final String? focusApplicationId;
 
+  /// [R7-P2-2 후속 P22-M] 목록을 만들 때의 읽기 경계. production 은 null.
+  final MyApplicationsReads? reads;
+
   const MyApplicationsScreen({
     super.key,
     this.initialTabIndex = 0,
     this.onBack,
     this.focusApplicationId,
+    this.reads,
   });
 
   @override
@@ -118,6 +123,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // ─── 서비스 ───────────────────────────────────────────────────────────────
   final FirestoreService    _firestoreService = FirestoreService();
   final ContractService     _contractService  = ContractService();
+  late final MyApplicationsReads _reads =
+      widget.reads ?? MyApplicationsReads.of(_firestoreService, _contractService);
   final MonthlyReviewService _reviewService   = MonthlyReviewService();
   final ScrollController    _scrollController = ScrollController();
 
@@ -224,11 +231,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     });
 
     try {
-      unawaited(_firestoreService.autoExpirePendingApplications(uid).catchError((e) {
+      unawaited(_reads.autoExpirePending(uid).catchError((e) {
         debugPrint('⚠️ autoExpirePendingApplications 실패 (무시): $e');
       }));
 
-      final page = await _firestoreService.getMyApplicationsPaged(
+      final page = await _reads.myApplicationsPaged(
         uid: uid, pageSize: _pageSize,
       );
       final items      = page['items'] as List<ApplicationModel>;
@@ -378,7 +385,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     setState(() => _isLoadingMore = true);
     try {
-      final page = await _firestoreService.getMyApplicationsPaged(
+      final page = await _reads.myApplicationsPaged(
         uid: uid, pageSize: _pageSize, startAfterDocId: _lastDocId,
       );
       final items      = page['items'] as List<ApplicationModel>;
@@ -440,7 +447,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 공고를 '삭제된 공고'로 말하지 않는다.
       //   근로자에게는 자기 약속이 사라진 것처럼 읽힌다.
       final fetched = await Future.wait(
-          uncachedIds.map((id) => _firestoreService.getTOOrFailure(id)));
+          uncachedIds.map((id) => _reads.toOrFailure(id)));
       for (var i = 0; i < uncachedIds.length; i++) {
         final r = fetched[i];
         if (r.to != null) {
@@ -469,7 +476,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         a.application.status == AppStatus.confirmed ||
         a.application.status == AppStatus.contractPending);
     if (!hasConfirmed) return {};
-    final contracts = await _contractService.getByWorker(uid);
+    final contracts = await _reads.contractsByWorker(uid);
     final result = <String, EmploymentContractModel>{};
     for (final c in contracts) {
       final ids = c.applicationIds.isNotEmpty ? c.applicationIds : [c.applicationId];

@@ -670,3 +670,110 @@ P2-1 결과와 R1~R6 Golden Path·R5 권한 계약은 재감사하지 않았다.
 2. 목록에서 날짜를 고른 채 카드를 눌러 상세가 **그 날짜로** 열리는지.
 3. 지원 준비 화면을 **글자 크게(2.0)** 로 열어 4개 항목의 등록 버튼이 잘리지 않는지,
    뒤로가 호출 화면으로 돌아오는지.
+
+---
+
+## R7-P2-2 후속 — 공고 상세·지원 결과·내 지원의 같은 대상 (2026-09-28)
+
+기준 제출 `78adb05`. 실행 전 HEAD·dirty 0·untracked 8 확인·보존.
+공유 DEV READ ONLY — 지원/취소 mutation·fixture·CF·Rules·PROD·APK 없음.
+첫 보고의 목록 증거(UJT)와 P2-1 은 재실행하지 않았다.
+
+### D1 상세 — 고른 하루가 재조회 뒤에도 그 하루인가
+
+| 축 | 내용 |
+|---|---|
+| 도달 | 홈 날짜 → 목록(필터) → 카드 → `JobPostingScreen(to:, workDetails:, slotDate:)` |
+| entity key | `to.id` + **KST 정규화된 slotDate** → 재조회한 `slots` 에서 그 날 슬롯 |
+| reader | `JobPostingReads`(신설): `toOrFailure`·`workDetails`·`businessById`·`slots`·`myApplications`·`businessWorkTypes`·`applicationOnce` |
+| 무엇이 지배하는가 | **재조회.** seed(`workDetails`)를 **빈 목록**으로 주고도 그 날짜의 업무가 나온다(JPD-3) |
+
+**발견한 결함 2건 — 둘 다 수정:**
+
+| # | 결함 | 사용자에게 | 수정 |
+|---|---|---|---|
+| D1-a | 슬롯 매칭이 **필드 비교**(`s.date.year == sd.year …`)였다. 들어오는 `slotDate` 는 KST 정규화 키, 슬롯의 `date` 는 기기 로컬 표현이다 | 비-KST 기기에서 **방금 고른 날의 슬롯을 못 찾는다** — 목록에서 고른 날짜가 상세에서 사라진다 | `FormatHelper.toKstDate` 비교 + 찾으면 `_selectedSlotDate` 를 **슬롯의 표현**으로 되돌려 이후 비교를 자기 일관으로 |
+| D1-b | 날짜 칩·머리말이 슬롯의 **로컬 필드**를 그대로 표시했다 | 비-KST 기기에서 `10월 11일 근무`가 **10월 10일**로 보인다 | **표시만** KST 로(비교는 슬롯 표현끼리) |
+
+**D2 상태 — 같은 날짜의 업무슬롯별 임금·정원**
+
+날짜별로 임금·정원이 다른 두 슬롯(10/10 상하차 11,000원 2명 · 10/11 피킹 13,000원 3명)을
+주고 두 기기에서 실행: 고른 날의 업무만 나오고 **다른 날 업무가 그 날의 것처럼 섞이지
+않는다**(JPD-1·2, KST·UTC 각각). 슬롯 조회 **실패**는 `_slotLoadError` 로 남아
+`근무 날짜 없음` 과 구분된다(JPD-4) — ERROR ≠ EMPTY.
+
+**추가로 잡은 렌더 결함:** 날짜 칩 줄이 `height: 82` · `width: 62` 로 **고정**이라
+요일·날짜·`업무 N개` 세 줄이 **기본 배율에서도 18px, 배율 2.0 에서 241px 넘쳤다**.
+→ 글자 배율을 따라가고(상한 있음) 기본값을 실제 필요분으로 올렸다.
+
+**전후 대조:** D1·D2 수정을 되돌리면 **9 FAIL**, 복원하면 **10 PASS**.
+
+### M1 내 지원 — 같은 Application
+
+| 축 | 내용 |
+|---|---|
+| 도달 | 지원 후 · 홈 Hero · 초대 배너 → `MyApplicationsScreen` |
+| reader | `MyApplicationsReads`(신설): `myApplicationsPaged`·`toOrFailure`·`contractsByWorker`·`autoExpirePending` |
+| 보이는 것 | 사업장 · 공고 제목 · `M월 D일 (요일) · HH:mm~HH:mm` · 임금 · 상태 문구 · CTA |
+
+| 시나리오 | 결과 |
+|---|---|
+| 지원한 건 | 같은 날짜·제목·임금·`지원 검토 중` 으로 렌더(MAS-1) |
+| 자동취소 **사유별** | `SCHEDULE_CONFLICT` → `다른 업무가 확정되어 자동 취소되었어요`. generic 문구로 뭉개지지 않는다(MAS-2) |
+| 사유 없음 | `취소된 지원이에요` — **지어내지 않는다**(MAS-3, 양성 대조) |
+| 취소가 활성으로 세어지는가 | 진행 1 + 자동취소 1 → 머리 카운트 `전체 2 · 진행중 1 · 종료 1`(MAS-4) |
+| 목록 조회 실패 | "아직 지원이 없다" 류 문구 없음(MAS-5) |
+| 계약 조회만 실패 | 목록은 그대로(MAS-6, 부분 실패) |
+| 320/412dp × 1.3/2.0 | 긴 사업장명·임금 예외 0(MAS-R 4조합) |
+
+### A1 지원 결과 — **CODE only 유지**
+
+`ApplyResult` 네 갈래와 UNKNOWN 재확인은 첫 보고에서 소스로 확정했고 이번에도
+그대로다. 다만 **실제 지원 버튼 → 문구 → 다음 행동**은 `ApplyWorkDialog` 안의
+쓰기 경로라 이번에 주입 경계를 만들지 않았다 — 읽기 경계만 신설하고 **쓰기는
+경계에 넣지 않는다**는 이번 범위 규칙을 지켰다.
+→ `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` · owner P22-A · 종료 조건: 지원 writer
+결과를 주입한 다이얼로그 렌더(격리 환경).
+
+### N1 뒤로
+
+| 구간 | 결과 |
+|---|---|
+| 지원 준비 → 상세(호출 화면) | **실행**(APS-2, 첫 보고) |
+| 목록 → 상세 → 목록 | 상세는 root Navigator push 이고 목록 State 는 유지된다(`NavigationHelper.push` 후 `onApplySuccess` 만 갱신) — **CODE** |
+| 내 지원 → 원래 탭 | `onBack` 이 null 이면 `Navigator.pop` — **CODE** |
+| 목적지 재진입 늦은 응답 | 목록은 `_generation`+`_fetchInProgress`, 내 지원은 `_fetchInProgress` 로 직렬화 — **CODE** |
+
+### 부수 확인
+
+- **Gradient 실제 호출부**: `common/settings_screen` 1 + `user/` 4
+  (`attendance_check`·`interim_settlement_request`·`my_reviews`·`subadmin_leave`)
+  = **총 5곳**. 첫 보고의 "4곳" 은 `lib/screens/user/` 기준이며 Index 표와 일치한다
+  — 전체 합계로는 5임을 여기 적어 둔다. 새 전환은 하지 않았다.
+- 무한 로드 양성 대조: 모든 서버 페이지가 조건으로 제외되는 **진짜 끝**에서
+  `hasMore == false` 가 되면 "없습니다"로 끝난다(UJT-3, 첫 보고에서 실행) — 이번에
+  추가 반례를 만들지 않았다.
+- city 우선 추천: 이번 상세/지원 경계에서 실제 불일치를 찾지 못해 다루지 않았다.
+
+### 판정
+
+| 구분 | 결과 |
+|---|---|
+| CODE | **종료**(D1·D2·M1·N1) |
+| 행동 | **종료** — 상세·내 지원을 실제 reader 경계로 렌더. **A1 지원 버튼 제스처는 미실행** |
+| RENDER | **종료** — 320/412dp × 1.3/2.0, 두 기기 표현 |
+| DEV READ | 없음 |
+| DEVICE / PRODUCT | **대기** |
+
+**P2-2 전체:** CODE **종료** · RENDER **종료** · 행동 **종료(단, A1 제스처 제외)**.
+DEVICE/PRODUCT 는 대기. 아래는 이 묶음의 완료로 **지우지 않는다**:
+알림/FCM → 공고 상세 제스처, 공유 DEV 지원·자동취소 mutation, 실기기,
+P2-1 DEVICE 잔여(상세 수입 월 시트·Home CTA 9개·FCM cold-start·실제 퇴근 mutation),
+P1-7/P1-5 DEVICE, Staffing DEFERRED/O08, 계약 사후 정책, 출시 gate.
+
+#### 최소 실기기 확인안
+
+1. 기기 시간대를 KST 가 아닌 곳으로 둔 단말에서 목록의 날짜를 고르고 상세로 →
+   **그 날짜가 머리말·칩에 그대로** 뜨는지, 그 날의 업무만 보이는지.
+2. 글자 크게(2.0) 로 공고 상세 → 날짜 칩의 `업무 N개` 가 잘리지 않는지.
+3. 내 지원에서 자동취소 건의 **사유 문구**가 보이고 진행중 카운트에 섞이지 않는지.

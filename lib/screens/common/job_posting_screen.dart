@@ -1,4 +1,5 @@
 import 'dart:math' show max;
+import 'job_posting_reads.dart';
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -71,6 +72,9 @@ class JobPostingScreen extends StatefulWidget {
   /// 내 지원 화면에서 진입할 때 전달. null이면 일자리 찾기 진입(기존 동작).
   final ApplicationModel? myApplication;
 
+  /// [R7-P2-2 후속 P22-D] 재조회 경계. production 은 null.
+  final JobPostingReads? reads;
+
   /// CONTRACT_PENDING 상태의 계약서 정보. myApplication과 함께 사용.
   final EmploymentContractModel? myContract;
 
@@ -87,6 +91,7 @@ class JobPostingScreen extends StatefulWidget {
     this.slotPendingCount,
     this.workDetailStats,
     this.myApplication,
+    this.reads,
     this.myContract,
   }) : assert(toId != null || to != null || myApplication != null,
             // [R5.3D] 공고를 특정할 수 없어도 초대 자체는 열 수 있어야 한다 —
@@ -99,6 +104,8 @@ class JobPostingScreen extends StatefulWidget {
 
 class _JobPostingScreenState extends State<JobPostingScreen> {
   final FirestoreService _firestoreService = FirestoreService();
+  late final JobPostingReads _reads =
+      widget.reads ?? JobPostingReads.of(_firestoreService);
   UserProvider? _userProvider;
 
   bool _isLoading = true;
@@ -347,13 +354,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         _loadFailed = true;
       } else {
         // [SYSTEM-INTEGRATION-POSTING-1] 못 읽은 것과 없는 것을 구분해서 받는다.
-        final loaded = await _firestoreService.getTOOrFailure(widget.toId!);
+        final loaded = await _reads.toOrFailure(widget.toId!);
         _to = loaded.to;
         _loadFailed = loaded.failed;
         if (_to != null) {
           final results = await Future.wait([
-            _firestoreService.getWorkDetails(_to!.id),
-            _firestoreService.getBusinessById(_to!.businessId),
+            _reads.workDetails(_to!.id),
+            _reads.businessById(_to!.businessId),
           ]);
           _workDetails = results[0] as List<WorkDetailModel>;
           _business = results[1] as BusinessModel?;
@@ -361,11 +368,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       }
       if (_business == null && _to != null) {
         await Future.wait([
-          _firestoreService.getBusinessById(_to!.businessId)
+          _reads.businessById(_to!.businessId)
               .then((biz) { _business = biz; }),
           if (_to!.isFlexType) _loadSlots(),
           if (widget.mode == TODetailMode.applicant && _applicantUid != null)
-            _firestoreService.getMyApplications(_applicantUid!)
+            _reads.myApplications(_applicantUid!)
                 .then((apps) { _myApplications = apps; }),
         ]);
         if (_business != null) await _loadWorkTypes();
@@ -374,7 +381,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           if (_to != null && _to!.isFlexType) _loadSlots(),
           if (_business != null) _loadWorkTypes(),
           if (widget.mode == TODetailMode.applicant && _applicantUid != null)
-            _firestoreService.getMyApplications(_applicantUid!)
+            _reads.myApplications(_applicantUid!)
                 .then((apps) { _myApplications = apps; }),
         ]);
       }
@@ -389,7 +396,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   Future<void> _loadSlots() async {
     try {
       _slotLoadError = false;
-      final slots = await _firestoreService.getSlots(_to!.id, visibleOnly: false);
+      final slots = await _reads.slots(_to!.id, visibleOnly: false);
       final now = DateTime.now();
       _allSlots = slots
           .where((s) => !s.isEffectivelyClosed)
@@ -412,13 +419,22 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       }
 
       if (widget.slotDate != null) {
-        final sd = widget.slotDate!;
-        _slot = slots.where((s) =>
-            s.date.year == sd.year &&
-            s.date.month == sd.month &&
-            s.date.day == sd.day).firstOrNull;
-        if (_workDetails.isEmpty && _slot != null) {
-          _workDetails = _slot!.workDetails;
+        // [R7-P2-2 후속 P22-D] 밖에서 들어온 날짜는 **이 목록과 표현이 다르다.**
+        //
+        //   슬롯의 `date` 는 Firestore 가 내려준 값(`toDate().toLocal()`)이고,
+        //   목록이 넘겨 주는 선택 날짜는 KST 정규화 키다. 비-KST 기기에서는
+        //   두 값의 `.year/.month/.day` 가 하루 어긋나 **고른 날의 슬롯을
+        //   못 찾는다** — 방금 고른 날짜가 상세에서 사라진다.
+        //   날짜 owner(P1-3)의 KST 달력일로 맞춘다.
+        final sd = FormatHelper.toKstDate(widget.slotDate!);
+        _slot = slots
+            .where((s) => FormatHelper.toKstDate(s.date) == sd)
+            .firstOrNull;
+        if (_slot != null) {
+          // 찾았으면 **목록의 표현**으로 되돌린다 — 이 화면의 나머지 비교는
+          //   전부 슬롯의 `date` 를 기준으로 돌아간다.
+          _selectedSlotDate = _slot!.date;
+          if (_workDetails.isEmpty) _workDetails = _slot!.workDetails;
         }
       }
       _selectedSlotDate ??= _allSlots.firstOrNull?.date;
@@ -447,7 +463,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   Future<void> _loadWorkTypes() async {
     try {
-      final workTypes = await _firestoreService.getBusinessWorkTypes(_business!.id);
+      final workTypes = await _reads.businessWorkTypes(_business!.id);
       _workTypeMap = {for (var wt in workTypes) wt.name: wt};
     } catch (e) {
       debugPrint('⚠️ 업무유형 로드 실패: $e');
@@ -543,7 +559,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final srcId = app?.sourceApplicationId;
     if (app == null || !app.isAlternativeWorkOffer || srcId == null) return;
     try {
-      final one = await _firestoreService.getApplicationOnce(srcId);
+      final one = await _reads.applicationOnce(srcId);
       if (!mounted) return;
       // 본인 소유일 때만 쓴다 — 남의 지원서가 화면에 오지 않게.
       if (one != null && one.uid == app.uid) {
@@ -1109,8 +1125,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          // [R7-P2-2 후속 P22-D] 날짜 칩 줄은 높이 82·폭 62 로 고정돼 있었다.
+          //   요일·날짜·가능한 업무 수 세 줄이 들어가는 칸이라 글자를 키우면
+          //   **업무 수가 잘려 어느 날에 무엇이 열려 있는지 잃는다.**
+          //   글자 배율을 따라간다(상한은 둬서 목록이 화면을 삼키지 않게).
           SizedBox(
-            height: 82,
+            height: _dateChipHeight(context),
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: EdgeInsets.symmetric(horizontal: s),
@@ -1123,13 +1143,21 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     );
   }
 
+  double _dateChipHeight(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(100).clamp(100.0, 210.0);
+
+  double _dateChipWidth(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(66).clamp(66.0, 140.0);
+
   Widget _buildDateChip(BuildContext context, SlotModel slot) {
     final theme = Theme.of(context);
-    final date = slot.date;
+    // [R7-P2-2 후속 P22-D] **보이는 날짜**는 KST 달력일이다.
+    //   슬롯의 `date` 는 기기 로컬 표현이라 비-KST 기기에서는 그 필드가
+    //   하루 어긋난다 — 그대로 쓰면 "10월 11일 근무"가 "10월 10일"로 보인다.
+    //   비교는 슬롯 표현끼리(자기 일관), 표시만 KST 로 바꾼다.
+    final date = FormatHelper.toKstDate(slot.date);
     final isSelected = _selectedSlotDate != null &&
-        date.year == _selectedSlotDate!.year &&
-        date.month == _selectedSlotDate!.month &&
-        date.day == _selectedSlotDate!.day;
+        FormatHelper.toKstDate(_selectedSlotDate!) == date;
 
     final weekDays = ['월', '화', '수', '목', '금', '토', '일'];
     final dayLabel = weekDays[date.weekday - 1];
@@ -1143,11 +1171,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
     return GestureDetector(
       onTap: isClosed ? null : () {
-        setState(() => _selectedSlotDate = date);
+        // 선택은 **슬롯의 표현**으로 저장한다 — 나머지 비교가 그 기준이다.
+        setState(() => _selectedSlotDate = slot.date);
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        width: 62,
+        width: _dateChipWidth(context),
         margin: const EdgeInsets.only(right: 8),
         decoration: BoxDecoration(
           color: isSelected
@@ -1238,7 +1267,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     String sectionTitle = '업무 목록';
     if (_selectedSlotDate != null && _to!.isFlexType) {
       final weekDays = ['월', '화', '수', '목', '금', '토', '일'];
-      final d = _selectedSlotDate!;
+      final d = FormatHelper.toKstDate(_selectedSlotDate!);
       final dayStr = weekDays[d.weekday - 1];
       final available = workDetails.where((wd) => !wd.isTimeExpired).length;
       sectionTitle = '${d.month}월 ${d.day}일($dayStr) · 가능한 업무 $available개';
