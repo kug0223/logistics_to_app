@@ -21,6 +21,8 @@ import 'work_selection_card.dart';
 
 import 'confirm_cancel_dialog.dart';
 import 'apply_confirm_dialog.dart';
+import 'apply_work_reads.dart';
+import 'apply_work_submit.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/network_checker.dart';
 import '../../../screens/common/job_posting_screen.dart';
@@ -71,6 +73,12 @@ class ApplyWorkDialog extends StatefulWidget {
   /// 사전 로드된 내 전체 지원 목록 (없으면 다이얼로그 내에서 로드)
   final List<ApplicationModel>? myApplications;
 
+  /// [R7-P2-2 A1 후속] 초기 로딩 세 읽기의 경계. production 은 null.
+  final ApplyWorkReads? reads;
+
+  /// [R7-P2-2 A1-U] 지원 호출 한 곳만 받는 주입점. production 은 null.
+  final ApplyWorkSubmit? submit;
+
   const ApplyWorkDialog({
     super.key,
     required this.mainTO,
@@ -81,6 +89,8 @@ class ApplyWorkDialog extends StatefulWidget {
     this.groupSlotIdsByDate,
     required this.businessName,
     this.myApplications,
+    this.reads,
+    this.submit,
   });
 
   /// 다이얼로그 표시 (간편 호출)
@@ -124,6 +134,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   final FirestoreService _firestoreService = FirestoreService();
   final ScheduleConflictService _conflictService = ScheduleConflictService();
+  late final ApplyWorkReads _reads = widget.reads ??
+      ApplyWorkReads.of(_firestoreService, _conflictService);
+  late final ApplyWorkSubmit _submit =
+      widget.submit ?? ApplyWorkSubmit.of(_firestoreService);
 
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
@@ -345,7 +359,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (to == null) return;
 
     try {
-      final applications = await _firestoreService.getApplicationsForTO(
+      final applications = await _reads.applicationsForTO(
         toId: to.id,
         uid: _currentUserId!,
       );
@@ -395,7 +409,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (_currentUserId == null) return;
 
     try {
-      final schedules = await _firestoreService.getConfirmedSchedules(
+      final schedules = await _reads.confirmedSchedules(
         uid: _currentUserId!,
         workDate: date,
       );
@@ -527,7 +541,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (workDetails.isEmpty) return;
 
     try {
-      final conflicts = await _conflictService.checkConflictsForWorkDetails(
+      final conflicts = await _reads.conflictsForWorkDetails(
         workDate: date,
         workDetails: workDetails,
       );
@@ -2397,26 +2411,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         : widget.groupSlotIdsByDate?[DateTime.utc(date.year, date.month, date.day)]);
 
     try {
-      final result = await _firestoreService.applyToTOWithWorkType(
+      final result = await _submit.apply(
         uid: _currentUserId!,
-        businessId: to.businessId,
-        businessName: to.businessName,
-        toTitle: to.title,
+        to: to,
+        work: work,
         workDate: date ?? to.date,
-        selectedWorkType: work.workType,
-        workDetailId: work.id,
-        wage: work.wage,
-        wageType: work.wageType,
-        workTypeIcon: work.workTypeIcon,
-        workTypeColor: work.workTypeColor,
-        workTypeBackgroundColor: work.workTypeBackgroundColor,
-        startTime: work.startTime,
-        endTime: work.endTime,
-        workEndDate: _isLongTerm ? _effectiveEndDate : to.endDate,
-        workDays: to.workDays,
-        type: to.type,
-        toId: to.id,
         slotId: resolvedSlotId,
+        workEndDate: _isLongTerm ? _effectiveEndDate : to.endDate,
         desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       );
       // [R8-P3A.1] 서비스는 더 이상 Toast 를 띄우지 않는다 — 결과만 돌려준다.
@@ -2425,7 +2426,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (applied.isUnknown) {
         // 대답을 못 들었을 뿐 기록됐을 수 있다 — canonical 상태를 다시 본다.
         try {
-          final mine = await _firestoreService.getMyApplicationsForTOFresh(to.id);
+          final mine = await _reads.myApplicationsForTOFresh(to.id);
           if (_firestoreService.hasLandedApplication(mine,
               toId: to.id,
               slotId: resolvedSlotId,
@@ -2648,7 +2649,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       if (to == null) return;
 
-      final applications = await _firestoreService.getApplicationsForTO(
+      final applications = await _reads.applicationsForTO(
         toId: to.id,
         uid: _currentUserId!,
       );

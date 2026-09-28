@@ -210,7 +210,15 @@ void main() {
 
     test('AR-72 단건도 UNKNOWN 을 되묻는다', () {
       expect(_flat(single), contains('if (applied.isUnknown)'));
-      expect(_flat(single), contains('getMyApplicationsForTOFresh(to.id)'));
+      // [R7-P2-2 A1 후속] 이 되묻기는 읽기 경계를 지나게 됐다.
+      //   행동은 같다 — 닻만 옮긴다. 그리고 그 경계의 기본값이 정말
+      //   그 서비스 메서드인지 **짝으로** 확인한다(이름만 맞추지 않는다).
+      expect(_flat(single), contains('_reads.myApplicationsForTOFresh(to.id)'));
+      final reads = _flat(File(
+              'lib/widgets/dialogs/apply/apply_work_reads.dart')
+          .readAsStringSync());
+      expect(reads,
+          contains('myApplicationsForTOFresh: svc.getMyApplicationsForTOFresh'));
     });
 
     test('AR-73 장기 시트도 UNKNOWN 을 실패로 말하지 않는다', () {

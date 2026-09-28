@@ -51,7 +51,7 @@
 
 | VJ | 과제 | 기존 owner / 문서 | 현재 증거 등급 | 회수할 빈칸 |
 |---|---|---|---|---|
-| VJ01 | 지원자: 날짜의 일을 찾고 지원 | P2-2 / P2-2 후속 · 최종 | CODE·행동·RENDER 종료 | **A1** 실제 지원 버튼·네 결과·중복 탭 → `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` |
+| VJ01 | 지원자: 날짜의 일을 찾고 지원 | P2-2 / 후속 / **A1 후속** | CODE·행동·RENDER 종료 — **A1 도 격리에서 실행 완료**: 카드 도달(ARR-1~7) · 확인 시트와 네 결과·중복 탭(APR-1~9) | **실제 서버 전이 NOT SEEN**(UI 성공 ≠ 서버 성공) · 서버 중복 적용 방지 NOT SEEN · 뒤로·재진입 NOT SEEN · **실사용자 이해 없음 → PRODUCT OPEN** |
 | VJ02 | 지원자: 제안받기 설정·해제 | P2-3 / P2-3 후속 / P23-V | CODE·행동·RENDER 종료 | **날짜 선택→저장→결과 NOT SEEN**(쓰기 seam 미도입) · **실사용자 이해** → `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]` · 진입 발견성 |
 | VJ03 | 관리자↔지원자: 초대·응답 | P1 Staffing + P2-3 + **P3-2** | **양측 내용 RENDER 종료**(IHK-1~5, 같은 entity key) — 관리자 "초대 수락 · 확정"/"초대 거절"/"초대 철회", 지원자 "근무 초대가 도착했어요" · UNKNOWN 이면 수락 CTA 없음 | 수락 **확인창 CODE only**(서류 문턱에 막힘, 자격 우회 안 함) · 실제 mutation·FCM 미실행 |
 | VJ04 | 관리자↔지원자: 확정 | P1 Staffing / R0~R6 | CODE | 양쪽 결과 이해(P5) |

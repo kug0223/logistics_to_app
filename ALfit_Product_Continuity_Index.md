@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-29 · 기준 HEAD: R7-P1-2 후속(확정 명단 잘림 수정) 커밋
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: R7-P2-2 A1 후속(지원 결과 렌더) 커밋
 
 ## 1. 문서 지도
 
@@ -77,7 +77,7 @@ CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰
 | `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 · DEVICE 대기 |
-| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | **NOT SEEN** — 원인 확정: `FirestoreService` 하드 싱글턴 + extension 정적 디스패치로 초기 조회가 격리에서 끝나지 않아 로딩 고착(ABR-2). **격리 실행 불가**, production 경로 결함 아님. 종료 조건 = 주입점/읽기 경계 분리 |
+| ~~`[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]`~~ | P22-A → **A1 후속 CLOSED(격리 CODE/행동/RENDER)** | 원인 정정: 세 초기 읽기가 플랫폼 채널을 지나고 `testWidgets` 가짜 시계가 그 future 를 돌리지 않았다(제품 결함 아님). `ApplyWorkReads` 로 카드 도달(ARR-1~7), `ApplyWorkSubmit` 으로 네 결과·중복 탭 렌더(APR-1~9). **실제 서버 전이·서버 중복 방지는 NOT SEEN** · VJ01 PRODUCT **OPEN** |
 | `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]` | P2-3 | 발견성·이해 과제는 실제 사용자 관찰로만 닫는다 |
 | ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | FCM → 공고 상세 제스처 NOT SEEN |

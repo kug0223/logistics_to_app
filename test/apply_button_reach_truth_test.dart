@@ -141,7 +141,7 @@ void main() {
     expect(find.byType(LoadingWidget), findsNothing);
   });
 
-  testWidgets('[ABR-2] 로그인 상태여도 격리 환경에서는 초기 조회가 끝나지 않아 카드가 없다',
+  testWidgets('[ABR-2] reads 를 주지 않으면 가짜 시계에서 초기 조회가 끝나지 않는다',
       (tester) async {
     await tester.pumpWidget(_app(_LoggedIn()));
     await _settleish(tester);
@@ -157,8 +157,17 @@ void main() {
     expect(find.text('업무 선택'), findsNothing);
     expect(find.text('상하차'), findsNothing);
 
-    // ── 이 테스트가 깨지면 그것은 회귀가 아니라 **신호**다.
-    //    `FirestoreService` 싱글턴에 주입점이 생겼거나 읽기 경계가 분리된 것이고,
-    //    그때 비로소 A1-1(성공/이미지원/실패/모름 네 결과 + 중복 탭)을 실행할 수 있다.
+    // ── [R7-P2-2 A1 후속] 그 신호가 왔다. 읽기 경계가 생겼고(`ApplyWorkReads`)
+    //    카드 도달과 네 결과를 실제로 실행했다:
+    //      · `apply_dialog_initial_reads_test.dart` — 대기면 스피너(ARR-1),
+    //        완료면 카드·지원 버튼(ARR-3)
+    //      · `apply_result_render_test.dart` — 확인 시트와 네 결과(APR-1~9)
+    //
+    //    이 테스트는 **지우지 않는다.** 지금 고정하는 것은 제품 결함이 아니라
+    //    하네스 사실이다: `reads` 를 주지 않으면(production 기본값) 초기 읽기가
+    //    실제 Firestore/CF 채널로 나가고, `testWidgets` 의 가짜 시계는 그
+    //    future 를 돌리지 않으므로 로딩이 풀리지 않는다.
+    //    (`runAsync` 로 진짜 async 를 한 틱 돌려야 움직인다 — 새 테스트가 그렇게 한다.)
+    //    실기기에서는 응답이 오거나 오류가 오므로 이 상태가 아니다.
   });
 }
