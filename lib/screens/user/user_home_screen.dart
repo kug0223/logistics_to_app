@@ -463,20 +463,23 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       Object? tosErr;
       Object? idErr;
       Object? tailErr;
+      // [R7-P2-1 최종] 월별 원장의 연·월도 **KST 달력월**이다 — 서버가 그
+      //   자로 자른다(`getMyMonthlyAttendances`).
+      final kstNow = FormatHelper.toKstDate(now);
       // [R7-P2-1 잔여] 어제가 지난달인 날(=1일)에만 꼬리를 함께 읽는다.
       //   기준은 **KST 달력일**이다 — 기기 로컬 1일로 재면 비-KST 기기에서
       //   하루 어긋나 정작 필요한 날 꼬리를 안 읽거나 필요 없는 날 읽는다.
-      final kstToday = FormatHelper.toKstDate(_now());
-      final needsTail = kstToday.day == 1;
+      final needsTail = kstNow.day == 1;
       final prevMonthDay =
-          DateTime.utc(kstToday.year, kstToday.month, 0); // 지난달 말일(KST)
+          DateTime.utc(kstNow.year, kstNow.month, 0); // 지난달 말일(KST)
       final results = await Future.wait([
         _reads.myApplications(uid).catchError((Object e) {
           appsErr = e;
           return <ApplicationModel>[];
         }),
         _reads
-            .myMonthlyAttendances(userId: uid, year: now.year, month: now.month)
+            .myMonthlyAttendances(
+                userId: uid, year: kstNow.year, month: kstNow.month)
             .catchError((Object e) {
           attsErr = e;
           return <AttendanceModel>[];
@@ -2236,7 +2239,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── 수입 현황 — 이번 달 compact (섹션 → IncomeDetailScreen) ──────────
   Widget _buildIncomeSection(BuildContext context, double s, ThemeData theme) {
-    final now = DateTime.now();
+    // [R7-P2-1 최종] '이번 달'의 기준은 **KST 달력월**이다.
+    //   원장(`getMyMonthlyAttendances`)은 서버가 KST 로 잘라 준다. 여기서
+    //   기기 로컬 연·월을 쓰면 비-KST 기기에서 라벨과 금액이 **다른 달**을
+    //   말하고, KST 1일에 일한 돈이 이번 달에서 빠진다.
+    final now = FormatHelper.toKstDate(_now());
     final monthApps = CalendarHelper.getThisMonthApplications(_applications, now);
 
     // 근무 완료: 관리자가 임금 확정/지급 처리한 금액 (attendance.finalWage)

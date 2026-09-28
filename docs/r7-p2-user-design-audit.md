@@ -485,3 +485,105 @@ DEVICE/PRODUCT **대기**. P2 전체는 별도.
    계정으로 홈 → 퇴근 카드 탭 → **그 근무가 목록에 있는지**.
 2. 같은 단말에서 **오늘 퇴근까지 끝낸 근무**가 목록에서 사라지지 않는지.
 3. 매월 1일 KST 기준으로 꼬리 경로가 동작하는지.
+
+---
+
+## R7-P2-1 최종 경계 — Home 수입 월의 KST 기준 (2026-09-28)
+
+기준 제출 `61c139a`(기준 `d6a7274`). 수행 전 HEAD·dirty 확인(tracked 0, untracked 8).
+`[VERIFY-R7-P2-1-INCOME-MONTH-LOCAL]`. 공유 DEV READ ONLY — 급여·이체·지원·출퇴근
+쓰기·fixture·CF·Rules·PROD·APK 없음. **기기 TZ 조작을 요구하지 않았다.**
+수용된 Home→AttendanceCheck 결과·야간 카드·CTA·P1-3 기준은 재감사하지 않았다.
+급여 계산·지급 상태·주휴·계약 snapshot 은 열지 않았다.
+
+### 1. READ — 월 기준이 무엇을 말하고 있었나
+
+| 소비자 | 라벨/선택 월 | 실제 조회 월 | 금액 모집단 | 기준(수정 전) |
+|---|---|---|---|---|
+| Home 수입 요약 | `'${now.year}년 ${now.month}월 ›'` | `myMonthlyAttendances(now.year, now.month)` | `CalendarHelper.getConfirmedIncome/settlementPendingCount(_attendances, now)` | **기기 로컬** |
+| Home → 상세 | `IncomeDetailScreen(initialYear: now.year, initialMonth: now.month)` | 상세가 `_year/_month` 로 재조회 | 상세의 자체 필터 | **기기 로컬**(홈에서 넘어온 값) |
+| IncomeDetail 기본 선택 | `initState` 에서 `widget.initial*` 1회 — 이후 "지금"으로 덮지 않는다 | `getMyMonthlyAttendances(_year, _month)` | `a.workDate.year == _year …` | 선택 월은 **유지**(정상) |
+| 월 시트 활성 규칙 | `_confirmedFutureYearMonths` · `_maxAccessibleYear` | — | `app.workDate.year/month` vs `DateTime.now()` | **기기 로컬** |
+| 서비스 캐시 key | `{uid}_{year}_{month}` | — | — | 요청 연월 그대로 |
+| 서버 원장 | — | `getMyMonthlyAttendances` 는 `Date.UTC(y,m-1,1) − 9h` ~ `Date.UTC(y,m,1) − 9h` | — | **KST 달력월** |
+
+**핵심 어긋남:** 서버는 **KST 달력월**로 잘라 주는데, 클라이언트는 요청 연월도
+필터도 **기기 로컬 필드**로 만들었다. `workDate` 는 KST 자정 instant 이고
+`Timestamp.toDate().toLocal()` 로 읽히므로 비-KST 기기에서 두 자가 다르다.
+
+### 2. 사용자에게 보인 것 — 경계 실행 결과
+
+표본은 **월별로 다른 액수**다: KST 9/30 근무 90,000원 · KST 10/1 근무 10,000원.
+시각은 **KST 10/1 05:00**(UTC 기기 달력으로는 아직 9/30 20:00).
+
+| 기기 | 보이는 월 라벨 | 조회 연월 | 반환 금액 | 상세 첫 선택 | 수정 전 |
+|---|---|---|---|---|---|
+| KST | `2026년 10월` | `2026-10` | `10,000원` | 10월 | 이미 정상 |
+| **UTC** | `2026년 10월` | `2026-10` | `10,000원` | 10월 | **수정 후**. 수정 전에는 `2026년 9월` · `2026-9` · 10/1 금액 누락 · 상세도 9월 |
+
+즉 수정 전 UTC 기기에서는 **① 라벨이 지난달을 말하고 ② 지난달 원장을 읽고
+③ KST 1일에 번 돈이 이번 달에서 사라지고 ④ 상세까지 지난달로 열렸다.**
+같은 entity·같은 event 의 돈과 기간이 서로 다른 이름을 갖고 있었다.
+
+**전후 대조:** 월 기준을 기기 로컬로 되돌리면 **5건 FAIL**(IMK-1·2·3·4·6, 전부
+UTC 기기), 복원하면 **11건 PASS**. KST 기기 케이스는 전후 모두 PASS —
+결함이 기기 시간대 의존임을 같은 파일이 보여 준다. 월 중간(10/15)은
+전후 모두 두 기기가 같은 달을 말한다(IMK-5, 경계 한정 회귀).
+
+### 3. 최소 조치 (branch 1 — 수정)
+
+기존 KST owner(P1-3 `FormatHelper`)를 재사용했다. 새 poll·listener·full reload 없다.
+
+| 위치 | 전 | 후 |
+|---|---|---|
+| `FormatHelper` | — | `isSameKstMonth(workDate, month)` 신설 — **기록 쪽만** KST 로 정규화하고 월 표식은 호출부의 civil 연월을 그대로 쓴다 |
+| `CalendarHelper` 월 필터 6곳 | `workDate.year/month == focusedDay.year/month` | `isSameKstMonth(...)` |
+| Home 수입 섹션 | `DateTime.now()` | `toKstDate(_now())` — 라벨·금액·상세 인자가 한 값에서 나온다 |
+| Home 원장 조회 | `now.year/month` | `kstNow.year/month`(= 서버가 자르는 자) |
+| IncomeDetail 자체 필터 | `a.workDate.year == _year …` | `isSameKstMonth(a.workDate, DateTime(_year,_month))` |
+| IncomeDetail "지금" 5곳 | `DateTime.now()` | `toKstDate(DateTime.now())` — 미래 이동 방지·시트 활성 규칙 |
+| MySchedule 확정임금 필터 | 필드 비교 | `isSameKstMonth(...)` |
+
+**건드리지 않은 것:** `_year/_month` 자체(명시 선택 월). 상세는 `initState` 에서
+한 번만 읽고 이후 "지금"으로 덮지 않는다 — 자정이나 재조회가 선택 월을 현재
+월로 바꾸지 않는 것을 렌더로 고정했다(IMK-7).
+
+**월 시트 활성 규칙·캐시 key 영향:** 시트의 "미래 월 활성" 판정과
+`_maxAccessibleYear` 가 KST 연월로 바뀌었다. 활성/비활성이 달라지는 지점은
+기기 로컬과 KST 가 갈리는 **경계 시각**뿐이고, 그때의 정답은 KST 다.
+서비스 캐시 key(`{uid}_{y}_{m}`)는 **요청 연월을 그대로 쓰므로 형식이 바뀌지
+않았다** — 다만 경계 시각에 요청하는 연월이 달라지므로 그 시각에는 다른 키를
+채운다(캐시 무효화나 마이그레이션 불필요).
+
+**ERROR/UNKNOWN 은 0원이 되지 않는다:** 원장 조회가 실패하면 `확인 못함` +
+재시도이고(기존 `_attendancesFailed`), 그 상태에서도 **말하는 달은 흔들리지
+않는다**(IMK-6).
+
+### 4. 범위·종료
+
+| 구분 | 결과 |
+|---|---|
+| CODE | 종료 |
+| 행동 | 종료 — 홈 헤더 탭 → `IncomeDetailScreen` 인자 확인까지 production 경로로 실행(IMK-4). 상세 내부 월 시트 **제스처**는 미실행 |
+| RENDER | 종료 — 두 기기 × 경계/월중간, 정상 금액·0·조회 실패 |
+| DEV READ | 없음 |
+| DEVICE / PRODUCT | **대기** |
+
+- `[VERIFY-R7-P2-1-INCOME-MONTH-LOCAL]` → **불일치 입증 → 수정 → 종료.**
+  `[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]` 를 닫고
+  `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` 로 분류(CODE/행동/RENDER 수용 · DEVICE 대기).
+- 이름만 적어 이관하지 않았다 — 소비자 5곳(Home 요약 · Home→상세 인자 ·
+  IncomeDetail 필터/시트 · MySchedule 확정임금 · MonthlyStatsCard)을 모두
+  같은 자로 맞췄다. `MonthlyStatsCard` 는 `CalendarHelper` 를 통해 함께 닫힌다.
+- 남은 별도 항목: **P2 전체 · 실기기/PRODUCT · 출퇴근 실제 mutation ·
+  12 CTA 중 9 제스처 · FCM cold-start · 상세 월 시트 제스처.**
+
+**P2-1 판정:** CODE **종료** · RENDER **종료** · 행동 종료(위 단서) ·
+DEVICE/PRODUCT **대기**.
+
+#### 최소 실기기 확인안
+
+1. 기기 시간대를 **KST 가 아닌 곳**으로 둔 단말에서 **매월 1일 KST 새벽**에 홈 →
+   수입 라벨이 그 달인지, 1일 근무 금액이 들어와 있는지.
+2. 같은 단말에서 `N년 M월 ›` → 상세가 **같은 달**로 열리는지.
+3. 상세에서 과거 월을 고른 뒤 자정을 넘겨도 그 월이 유지되는지.

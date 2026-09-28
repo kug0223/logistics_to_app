@@ -157,7 +157,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   }
 
   void _nextMonth() {
-    final now = DateTime.now();
+    final now = FormatHelper.toKstDate(DateTime.now()); // KST 달력월 기준
     if (_year == now.year && _month >= now.month) return; // 미래 이동 방지
     setState(() {
       if (_month == 12) {
@@ -171,7 +171,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   }
 
   bool get _isCurrentOrFuture {
-    final now = DateTime.now();
+    final now = FormatHelper.toKstDate(DateTime.now()); // KST 달력월 기준
     return _year > now.year || (_year == now.year && _month >= now.month);
   }
 
@@ -181,11 +181,11 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   /// pending/검토중 지원서는 "확정 근무"가 아니므로 제외.
   /// 반환 형식: {'2026-9', '2026-11', '2027-2', ...}
   Set<String> get _confirmedFutureYearMonths {
-    final now = DateTime.now();
+    final now = FormatHelper.toKstDate(DateTime.now()); // KST 달력월 기준
     final result = <String>{};
     for (final app in _allApplications) {
       if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
-      final wd = app.workDate;
+      final wd = FormatHelper.toKstDate(app.workDate);
       // 현재 월 이후(엄격히 미래)만 포함 — 현재 월은 항상 조회 가능이므로 불필요
       if (wd.year > now.year ||
           (wd.year == now.year && wd.month > now.month)) {
@@ -198,11 +198,12 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   /// 기간 선택에서 이동할 수 있는 최대 연도
   /// = 현재 연도 또는 확정 미래 근무가 있는 가장 먼 연도 중 큰 값
   int get _maxAccessibleYear {
-    final now = DateTime.now();
+    final now = FormatHelper.toKstDate(DateTime.now()); // KST 달력월 기준
     int maxYear = now.year;
     for (final app in _allApplications) {
       if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
-      if (app.workDate.year > maxYear) maxYear = app.workDate.year;
+      final wy = FormatHelper.toKstDate(app.workDate).year;
+      if (wy > maxYear) maxYear = wy;
     }
     return maxYear;
   }
@@ -217,7 +218,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   //   월 선택 즉시 적용 — 확인 버튼 없음
   //   useRootNavigator: true — AppBar/BottomNavBar 포함 전체 Dim 처리
   Future<void> _showMonthPicker() async {
-    final now = DateTime.now();
+    final now = FormatHelper.toKstDate(DateTime.now()); // KST 달력월 기준
     final futureActive = _confirmedFutureYearMonths; // 미리 계산 (불변)
     final maxYear = _maxAccessibleYear;
 
@@ -416,8 +417,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   /// 이 달에 실제로 일한 근태. 지원서 상태를 보지 않는다.
   List<AttendanceModel> get _workedThisMonth => _attendances
       .where((a) =>
-          a.workDate.year == _year &&
-          a.workDate.month == _month &&
+          FormatHelper.isSameKstMonth(a.workDate, DateTime(_year, _month)) &&
           _isActualWork(a))
       .toList();
 

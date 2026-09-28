@@ -127,14 +127,12 @@ class CalendarHelper {
 
     return applications.where((app) {
       if (!app.isLongTermApplication) {
-        return app.workDate.year == focusedDay.year &&
-               app.workDate.month == focusedDay.month;
+        return FormatHelper.isSameKstMonth(app.workDate, focusedDay);
       }
 
       // 장기 미확정: 지원일 기준 (해당 달에만 PENDING으로 집계 — 의도된 설계)
       if (!AppStatus.confirmedStatuses.contains(app.status)) {
-        return app.workDate.year == focusedDay.year &&
-               app.workDate.month == focusedDay.month;
+        return FormatHelper.isSameKstMonth(app.workDate, focusedDay);
       }
 
       // 장기 확정: 계약 기간이 이번 달과 겹치는지
@@ -206,8 +204,7 @@ class CalendarHelper {
   ) =>
       attendances
           .where((att) =>
-              att.workDate.year == focusedDay.year &&
-              att.workDate.month == focusedDay.month &&
+              FormatHelper.isSameKstMonth(att.workDate, focusedDay) &&
               isSettlementPending(att))
           .length;
 
@@ -249,8 +246,7 @@ class CalendarHelper {
           final nonEarningDays = attendances
               .where((att) =>
                   att.applicationId == app.id &&
-                  att.workDate.year == focusedDay.year &&
-                  att.workDate.month == focusedDay.month &&
+                  FormatHelper.isSameKstMonth(att.workDate, focusedDay) &&
                   isNonEarning(att))
               .length;
           final payable = workDaysCount - nonEarningDays;
@@ -293,8 +289,7 @@ class CalendarHelper {
   static int getActualWorkDays(List<AttendanceModel> attendances, DateTime focusedDay) {
     final uniqueDates = <String>{};
     for (var att in attendances) {
-      if (att.workDate.year == focusedDay.year &&
-          att.workDate.month == focusedDay.month &&
+      if (FormatHelper.isSameKstMonth(att.workDate, focusedDay) &&
           att.checkIn != null) {
         uniqueDates.add('${att.workDate.year}-${att.workDate.month}-${att.workDate.day}');
       }
@@ -313,8 +308,7 @@ class CalendarHelper {
   /// 대부분의 경우 [getAttendanceStats]를 사용해 두 값을 단일 순회로 계산하는 것을 권장.
   static int getConfirmedIncome(List<AttendanceModel> attendances, DateTime focusedDay) {
     final confirmedList = attendances.where((att) =>
-      att.workDate.year == focusedDay.year &&
-      att.workDate.month == focusedDay.month &&
+      FormatHelper.isSameKstMonth(att.workDate, focusedDay) &&
       (att.wageStatus == 'confirmed' || att.wageStatus == 'transferred') &&
       att.finalWage != null
     ).toList();

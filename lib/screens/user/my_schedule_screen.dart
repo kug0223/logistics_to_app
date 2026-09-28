@@ -96,7 +96,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     final year = _focusedDay.year;
     final month = _focusedDay.month;
     _cachedConfirmedWageRecords = attendances.where((a) =>
-      a.workDate.year == year && a.workDate.month == month &&
+      FormatHelper.isSameKstMonth(a.workDate, DateTime(year, month)) &&
       (a.wageStatus == AttendanceModel.wageConfirmed ||
        a.wageStatus == AttendanceModel.wageTransferred) &&
       a.wageDetail != null,

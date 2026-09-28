@@ -115,6 +115,22 @@ class FormatHelper {
     return DateTime.utc(kst.year, kst.month, kst.day);
   }
 
+  /// [R7-P2-1 최종] 기록이 **그 달력월(KST)** 에 속하는가.
+  ///
+  ///   근무일은 KST 자정 instant 로 저장되고 `Timestamp.toDate().toLocal()` 로
+  ///   읽힌다. 그래서 비-KST 기기에서는 그 값의 `.year/.month` 필드가 KST
+  ///   달력월과 어긋난다 — 서쪽 기기에서는 **KST 1일에 일한 돈**이, 동쪽
+  ///   기기에서는 말일 근무가 그 달에서 빠진다. 월별 원장은 서버가 KST 로
+  ///   잘라 주므로(`getMyMonthlyAttendances`), 화면의 필터도 같은 자로 잰다.
+  ///
+  ///   [month] 는 **달력월 표식**이다(연·월만 쓴다). 호출부가 이미 civil
+  ///   연월을 들고 있으면 그대로 넘기고, "지금"에서 만들 때는 호출부가
+  ///   `toKstDate(now)` 로 KST 연월을 만들어 넘긴다.
+  static bool isSameKstMonth(DateTime workDate, DateTime month) {
+    final d = toKstDate(workDate);
+    return d.year == month.year && d.month == month.month;
+  }
+
   /// [R8-P9D] KST 달력일을 'YYYY-MM-DD' 문자열로.
   ///
   /// 공고 문서의 `dates` 필드가 이 포맷이다. 같은 포맷끼리는 문자열 비교만으로
