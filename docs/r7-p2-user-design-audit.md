@@ -1282,3 +1282,81 @@ P2-2 A1(지원 버튼·네 결과) · P23-N 일정 복귀·VJ02 날짜 저장 ·
 FCM cold-start·실제 출퇴근 mutation · P1-5/P1-7 DEVICE · Staffing DEFERRED/O08 ·
 계약 사후 정책 · 출시 gate — 전부 각 owner 에 그대로 남는다.
 지원자 PRODUCT 나 P2 전체 종료를 선언하지 않는다.
+
+---
+
+## R7-P2-4 잔여 두 셀 — 수입 월 선택·내 리뷰 실제 렌더 (2026-09-28)
+
+기준 `365d1ee`. 착수 전 HEAD·tracked dirty 0·untracked 8 확인·보존.
+공유 DEV READ ONLY — 리뷰 작성·급여/이체·fixture·CF·Rules·PROD·APK 없음.
+IMK(KST 월·명시 선택 월)·MMR(정산 ERROR≠EMPTY)·선택 바 Wrap·해지 Home Task 는
+**재사용**하고 재검증하지 않았다. MY 에 CTA 를 만들지 않았다.
+
+### P24-I — 월 선택 시트, **실제로 열고 골랐다**
+
+| 축 | 내용 |
+|---|---|
+| 진입 | Home 수입 헤더 → `IncomeDetailScreen(initialYear, initialMonth)` |
+| entity key | `(year, month)` 한 쌍 — 라벨·조회 연월·금액 모집단이 모두 이 값에서 나온다 |
+| reader | `IncomeDetailReads`(신설, 읽기 2). 달마다 **다른 액수**(이번 달 110,000 / 지난달 220,000)를 줘서 잘못된 달을 잡는다 |
+| 제스처 | 머리말 `YYYY년 M월` 탭 → **시트 열림 확인**(월 칩 존재) → 지난달 칩 탭 |
+| 결과 | 라벨 `지난 연·월` · `reader 호출 연월 = 지난 연·월` · 금액 `220,000` · **이전 달 금액 미표시** |
+
+- **IMS-1** 넘겨받은 달이 라벨·조회·금액으로 일치.
+- **IMS-2** 시트를 **실제로 열어** 다른 달 선택 → 세 축이 같은 달로 이동.
+  시트를 열지 않은 렌더나 소스 호출은 PASS 로 세지 않았다.
+- **IMS-3** 확정 근무가 없는 **미래 월**은 탭해도 **조회를 만들지 않는다**
+  (호출 맵 크기 불변). 비활성 규칙이 잘못된 선택을 만들지 않는다.
+- 연 경계: 1월이면 지난달이 전년 12월이 되도록 fixture 가 파생된다(시계 의존 없음).
+
+**판정: NO PATCH.** 관찰된 잘못된 월/금액 없음.
+명시 선택 월이 현재 월로 덮이는지는 **IMK-7 재사용**(상세는 `initState` 1회
+설정 후 "지금" 으로 덮지 않는다) — 새 반례를 만들지 않았다.
+
+### P24-R — 내 근무 평가, 본문 렌더
+
+**먼저 계약을 바로잡는다.** 이 화면은 **내가 받은 평가**를 읽는다
+(`callableGetReviewsForUser`, `targetUserId = 내 uid`, 제목 `내 근무 평가`).
+리뷰 **작성**은 이 화면이 아니라 **내 지원 화면**이 담당한다:
+`근무 완료 후` → `리뷰를 작성해 주세요`(작성 창: 근무월 말일 +15일) →
+`showBusinessReviewDialog` → 작성 후 `근무 완료 · 리뷰 작성 완료`.
+따라서 요청서의 `작성 가능`/`작성 완료` 두 상태는 **이 화면에서 N/A** 이고,
+그 두 상태는 `MyApplicationsScreen` 의 키(`application.id` + 근무월)로 표시된다.
+
+| 상태 | 이 화면의 진실 | 증거 |
+|---|---|---|
+| 받은 평가 있음 | 사업장별 행으로 렌더 — 두 사업장이 섞이지 않는다 | **MRV-1** |
+| 정상 빈 목록 | `아직 받은 평가가 없습니다` + 사유 설명 | **MRV-2** |
+| 읽기 실패 | `리뷰를 불러오지 못했습니다` + `다시 시도` — 빈 목록 문구 없음 | **MRV-3** |
+| 작성 가능/완료 | **N/A** — 다른 화면(내 지원)의 상태 | 소스 |
+
+**추가 렌더 결함 1건(수정):** 요약 헤더의 세 칸(`총 평가`·`평균 별점`·`별점`)이
+flex 없이 한 줄 고정이라 **320dp·배율 2.0 에서 172px** 넘쳤다 →
+각 칸 `Expanded` + 값·라벨 1줄 ellipsis. 수치를 없애지 않았다(**MRV-4**).
+
+**알림 진입:** 알림 화면에서 `MyReviewsScreen` 으로 가는 경로는 CODE 로 확인했고
+(`notification_screen.dart:1314`), 자격 있는 알림 원장을 만들지 않고는 그 제스처를
+실행할 수 없어 **NOT SEEN** 으로 둔다(알림 fixture 를 꾸미지 않는다).
+FCM cold-start·기기 전달은 기존 DEVICE owner.
+
+### 증거·회귀
+
+| 구분 | 내용 |
+|---|---|
+| CODE | 수입 (year,month) 단일 키 · 리뷰 화면은 **수신 전용**, 작성은 내 지원 |
+| 제스처 | **시트 열기→월 선택**(IMS-2) · 미래 월 비활성(IMS-3) |
+| RENDER | 리뷰 3상태 + 320dp×2.0 |
+| 전후 대조 | 요약 헤더 flex 제거 시 172px 오버플로 재현 → 수정 후 0 |
+| 회귀 | 영향집합 **1646 PASS / 3 FAIL** — 3건 모두 기준선 실패(`weekly_work_count` W-D) |
+| 정적 분석 | `flutter analyze lib test` **No issues** |
+| DEV READ | **없음** · DEVICE **미실행** · USER OBSERVATION **없음** |
+
+변경 파일: `income_detail_reads.dart`·`my_reviews_reads.dart`(신규 읽기 경계) ·
+`income_detail_screen.dart`·`my_reviews_screen.dart`(경계 배선 + 요약 헤더 flex) ·
+`income_month_sheet_reviews_test.dart`(신규 7건).
+
+### 닫히지 않는 것
+
+P24-N 발견성(VJ07/VJ14) · P2-2 A1 · VJ02 날짜 저장 · P23-N 일정 복귀 ·
+Home CTA 9개 · FCM cold-start · 실제 mutation · DEVICE · 네 역할 USER/PRODUCT.
+리뷰가 알림 중심이라는 이유로 상시 Task 나 MY CTA 를 **추가하지 않았다.**

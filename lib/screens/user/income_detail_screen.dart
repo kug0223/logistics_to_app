@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'income_detail_reads.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/core/application_model.dart';
@@ -50,7 +51,11 @@ class IncomeDetailScreen extends StatefulWidget {
     super.key,
     required this.initialYear,
     required this.initialMonth,
+    this.reads,
   });
+
+  /// [R7-P2-4 P24-I] 그 달을 만드는 읽기 경계. production 은 null.
+  final IncomeDetailReads? reads;
 
   @override
   State<IncomeDetailScreen> createState() => _IncomeDetailScreenState();
@@ -58,6 +63,8 @@ class IncomeDetailScreen extends StatefulWidget {
 
 class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
   final _firestore = FirestoreService();
+  late final IncomeDetailReads _reads =
+      widget.reads ?? IncomeDetailReads.of(_firestore);
 
   late int _year;
   late int _month;
@@ -97,8 +104,8 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
     setState(() => _isLoading = true);
     try {
       final results = await Future.wait([
-        _firestore.getMyApplications(uid),
-        _firestore.getMyMonthlyAttendances(
+        _reads.myApplications(uid),
+        _reads.myMonthlyAttendances(
             userId: uid, year: _year, month: _month),
       ]);
       if (!mounted) return;
@@ -125,7 +132,7 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
     if (uid == null) return;
     setState(() => _isLoading = true);
     try {
-      final atts = await _firestore.getMyMonthlyAttendances(
+      final atts = await _reads.myMonthlyAttendances(
           userId: uid, year: _year, month: _month);
       if (!mounted) return;
       setState(() {

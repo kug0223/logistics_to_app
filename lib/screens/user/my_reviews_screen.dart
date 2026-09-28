@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'my_reviews_reads.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/core/monthly_review_model.dart';
@@ -12,7 +13,10 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/review_card.dart';
 
 class MyReviewsScreen extends StatefulWidget {
-  const MyReviewsScreen({super.key});
+  const MyReviewsScreen({super.key, this.reads});
+
+  /// [R7-P2-4 P24-R] 목록을 만드는 읽기 경계. production 은 null.
+  final MyReviewsReads? reads;
 
   @override
   State<MyReviewsScreen> createState() => _MyReviewsScreenState();
@@ -20,6 +24,8 @@ class MyReviewsScreen extends StatefulWidget {
 
 class _MyReviewsScreenState extends State<MyReviewsScreen> {
   final MonthlyReviewService _reviewService = MonthlyReviewService();
+  late final MyReviewsReads _reads =
+      widget.reads ?? MyReviewsReads.of(_reviewService);
 
   List<MonthlyReviewModel> _reviews = [];
   double _avgRating = 0.0;
@@ -49,7 +55,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     }
     setState(() { _isLoading = true; _loadError = null; _cursor = null; _hasMore = false; });
     try {
-      final page = await _reviewService.getAllReviewsForUserPaged(
+      final page = await _reads.reviewsForUserPaged(
         targetUserId: uid,
       );
       // 평균 점수는 공개된 리뷰(isPublished=true)만으로 계산 — 미공개는 확정 전 상태
@@ -79,7 +85,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     if (!mounted) return; // dispose 직후 스크롤 이벤트 재진입 방지
     setState(() => _isLoadingMore = true);
     try {
-      final page = await _reviewService.getAllReviewsForUserPaged(
+      final page = await _reads.reviewsForUserPaged(
         targetUserId: uid,
         startAfterId: _cursor,
       );
@@ -202,20 +208,28 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
           color: Colors.white.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(16),
         ),
+        // [R7-P2-4 P24-R] 세 칸이 flex 없이 한 줄 고정이라 320dp·배율 2.0 에서
+        //   172px 넘쳤다 — 평가 수·평균·별점은 이 화면의 요약 수치라 지우지
+        //   않는다. 각 칸에 flex 를 주고 값은 한 줄로 줄인다.
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            _buildStat(context, '총 평가', '${_reviews.length}건'),
+            Expanded(
+                child: _buildStat(context, '총 평가', '${_reviews.length}건')),
             _buildDivider(),
-            _buildStat(context, '평균 별점',
-                avgRating == 0 ? '-' : avgRating.toStringAsFixed(1)),
+            Expanded(
+              child: _buildStat(context, '평균 별점',
+                  avgRating == 0 ? '-' : avgRating.toStringAsFixed(1)),
+            ),
             _buildDivider(),
-            _buildStat(
-              context,
-              '별점',
-              avgRating == 0
-                  ? '-'
-                  : '★' * avgRating.round() + '☆' * (5 - avgRating.round()),
+            Expanded(
+              child: _buildStat(
+                context,
+                '별점',
+                avgRating == 0
+                    ? '-'
+                    : '★' * avgRating.round() + '☆' * (5 - avgRating.round()),
+              ),
             ),
           ],
         ),
@@ -228,6 +242,9 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               color: Colors.white,
               fontWeight: FontWeight.bold,
@@ -235,6 +252,9 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
             )),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
         Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: ResponsiveHelper.tinyStyle(context,
                 color: Colors.white.withValues(alpha: 0.85))),
       ],
