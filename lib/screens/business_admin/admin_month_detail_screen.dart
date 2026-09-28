@@ -26,6 +26,9 @@ class AdminMonthDetailScreen extends StatefulWidget {
   final int month;
   final List<BusinessOption> businesses;
 
+  /// [R7-P1-7 후속 P17-S] 통계 reader 주입점 — production 은 null.
+  final AdminStatsService? service;
+
   const AdminMonthDetailScreen({
     super.key,
     required this.businessIds,
@@ -33,6 +36,7 @@ class AdminMonthDetailScreen extends StatefulWidget {
     required this.year,
     required this.month,
     required this.businesses,
+    this.service,
   });
 
   @override
@@ -42,7 +46,7 @@ class AdminMonthDetailScreen extends StatefulWidget {
 enum _SortType { days, wage, name }
 
 class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
-  final _service = AdminStatsService();
+  late final AdminStatsService _service = widget.service ?? AdminStatsService();
 
   bool _isLoading = true;
   bool _fetchInProgress = false;
@@ -441,7 +445,13 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
           // 통계 행
-          Row(
+          // [R7-P1-7 후속 P17-S] 칩 3개와 금액 묶음이 flex 없이 한 줄에 있었다 —
+          //   좁은 폭·큰 글자에서 가로로 넘쳐 금액이 잘렸다. 프로젝트 규칙대로
+          //   줄바꿈을 허용한다(수치를 숨기거나 글자를 줄이지 않는다).
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 12),
+            runSpacing: ResponsiveHelper.spacing(context, 8),
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _AttStat(
                 color: AppColors.success,
@@ -463,7 +473,6 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
                   count: data.absentCount,
                   total: total,
                 ),
-              const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -593,12 +602,18 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 헤더 + 정렬
+          // [R7-P1-7 후속 P17-S] 제목과 정렬 칩 3개가 flex 없이 서 있었다 —
+          //   좁은 폭에서 칩이 잘려 정렬을 바꿀 수 없었다. 제목부터 줄인다.
           Row(
             children: [
-              Text(
-                '직원별 요약 (${workers.length}명)',
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
+              Flexible(
+                child: Text(
+                  '직원별 요약 (${workers.length}명)',
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               const Spacer(),
               _SortChip(

@@ -28,7 +28,7 @@
 | P1-4 | 홈·할 일·요약 | CLOSED | CLOSED | **PENDING** |
 | P1-5 | 급여 개요·상세·대시보드 | CLOSED | CLOSED | **PENDING** |
 | P1-6 | 계약·관리·통계 | CLOSED | CLOSED | **PENDING** |
-| P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | CLOSED(범위 명시) | **PENDING** |
+| P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | **CLOSED**(super-admin 5화면 CODE only · 통계 hop 제스처 NOT SEEN) | **PENDING** |
 | P2 | 지원자(USER) 화면군 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
@@ -40,6 +40,7 @@
 | Staffing O08 | P1-2 | DEVICE PENDING |
 | 계약의 법률상 사후 정비 정책 | P16-C | **OPEN** |
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 유지보수 메모(표시 단위는 정상) |
+| `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭은 fl_chart 콜백 — DEVICE 에서 확인 |
 | `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | 6화면 + 낡은 주석 정정 |
 | 대비·터치영역 수치 | P4 | 미측정 |
 | radius 혼재(V4) | POLISH | 미수정 |

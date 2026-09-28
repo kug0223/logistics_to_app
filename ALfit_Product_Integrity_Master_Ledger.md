@@ -39,6 +39,7 @@
 | 16 | P1-6 | 탈퇴 점검 블록이 상태색을 하드코딩했다 | `AppColors` warning/success 로 | CODE |
 | 17 | P1-7 | super-admin 5화면의 흰 탭 라벨·흰 헤더 아이콘이 밝은 배경에서 사라질 수 있었다 | 전환과 함께 대비를 옮김(flat TabBar 계약), 헤더 새로고침 → `actions` | RENDER 3 · CODE |
 | 18 | P1-7 | 문서 관리의 `확인 완료` 만 raw 초록이라 같은 화면에서 완료가 두 색이었다 | `AppColors.success` | CODE |
+| 19 | P1-7 후속 | 통계·월상세의 flex 없는 Row 5곳이 큰 수·긴 라벨·배율에서 잘렸다(53·42·26·4.7·275·110px) | Flexible/Wrap — 수치·범례·칩을 없애지 않음 | RENDER 7 |
 
 ## 2. NO PATCH — 근거를 남긴 판정
 
@@ -60,6 +61,7 @@
 | 계약 법률 사후 정비 | P16-C | 정책 결정 |
 | `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | USER 6화면 3축 실측 → 전환 → `gradient_scaffold` 폐기 판단 |
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 내부 필드명(표시 단위는 정상) |
-| `[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]` | P17-S | `AdminStatsScreen` 이 서비스를 내부 생성하고 CF 타임아웃 타이머를 남겨 콘텐츠 렌더가 막힌다 → 읽기 seam 필요 |
+| ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
+| `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |
 | 대비·터치영역 수치 | P4 | 정량 계측 |
 | 각 단계 DEVICE | 각 owner | 실기기 확인 |

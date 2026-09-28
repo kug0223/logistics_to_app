@@ -19,14 +19,25 @@ import '../../widgets/common/notification_badge.dart';
 class AdminStatsScreen extends StatefulWidget {
   final List<String> businessIds;
 
-  const AdminStatsScreen({super.key, required this.businessIds});
+  /// [R7-P1-7 후속 P17-S] 통계 reader 주입점.
+  ///
+  ///   production 은 null → `AdminStatsService()` 그대로다. 화면의 파싱·파생·
+  ///   문구·필터는 **바뀌지 않는다** — 읽기 한 칸만 갈아끼워 실제 콘텐츠를 그릴 수
+  ///   있게 한 것이다. 테스트가 막혔던 이유는 화면의 lifecycle 이 아니라
+  ///   `AdminStatsService.getBusinessOptions` 안의 `Future.timeout(15s)` 가
+  ///   끝나지 않는 Firestore future 위에서 타이머로 남았기 때문이다(아래 참조).
+  final AdminStatsService? service;
+
+
+  const AdminStatsScreen(
+      {super.key, required this.businessIds, this.service});
 
   @override
   State<AdminStatsScreen> createState() => _AdminStatsScreenState();
 }
 
 class _AdminStatsScreenState extends State<AdminStatsScreen> {
-  final _service = AdminStatsService();
+  late final AdminStatsService _service = widget.service ?? AdminStatsService();
 
   DateTime _buildNow = DateTime.now();
   late int _selectedYear;
@@ -493,15 +504,26 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // [R7-P1-7 후속 P17-S] 세 조각이 flex 없이 서 있어서 큰 글자·좁은 폭
+              //   에서 가로로 넘쳤다(320dp·배율 1.3 에서 53px). 금액 머리말이라
+              //   글자를 줄이지 않고, 모자라면 **기간 라벨부터** 줄인다.
               Row(children: [
-                Text('총 인건비',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey500)),
+                Flexible(
+                  child: Text('총 인건비',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
                 const Spacer(),
-                Text(
-                  '$_selectedYear년 전체',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey400),
+                Flexible(
+                  child: Text(
+                    '$_selectedYear년 전체',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.grey400),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 if (attOk && prevAttOk && hasPrevWage && data.wageDeltaPct != 0) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -682,12 +704,18 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [R7-P1-7 후속 P17-S] 제목과 범례가 flex 없이 한 줄에 있어 배율 2.0 에서
+          //   가로로 넘쳤다 — 범례를 지우지 않고 제목부터 줄인다.
           Row(
             children: [
-              Text(
-                '월별 인건비',
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
+              Flexible(
+                child: Text(
+                  '월별 인건비',
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               const Spacer(),
               // 범례
@@ -1116,14 +1144,20 @@ class _DeltaBadge extends StatelessWidget {
         color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
       ),
+      // [R7-P1-7 후속 P17-S] 부모가 좁아지면 배지 안에서 다시 넘쳤다 —
+      //   숫자를 줄이지 않고 배지가 줄어들 수 있게 한다.
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 10, color: color),
-          Text(
-            '${delta.abs().toStringAsFixed(1)}%',
-            style: ResponsiveHelper.tinyStyle(context)
-                .copyWith(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+          Flexible(
+            child: Text(
+              '${delta.abs().toStringAsFixed(1)}%',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: ResponsiveHelper.tinyStyle(context)
+                  .copyWith(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+            ),
           ),
         ],
       ),

@@ -1987,3 +1987,118 @@ A-3 은 "남겼다"에서 **"전환됐고 제약이 함께 처리됐다"**로 �
 2. super-admin → 전체 사업장 / 전체 사용자: 우상단 **새로고침**이 보이고 눌리는지,
    좁은 폭에서 표를 가로로 밀 수 있고 행 행동에 닿는지.
 3. 문서 관리에서 `확인 완료` 배지의 초록이 앱의 다른 완료 초록과 같은지.
+
+---
+
+## R7-P1-7 후속 — 통계 콘텐츠 렌더 · 통계 hop (2026-09-28)
+
+기준 `8b2bf34`. branch `main`, 시작 시 tracked 변경 0, untracked 8건 보존.
+P17-A 5화면 · P17-D 1수정9유지 · P17-H NO PATCH · P16-S CODE 계약 · P17-X 기존 다섯
+이동 실행은 **재사용**한다. 공유 DEV 쓰기·CF 배포·Rules·PROD·APK **없음**.
+
+### 1. 타이머 원인 — production 결함이 아니다
+
+보고했던 "CF 타임아웃 타이머"의 실제 위치는 화면이 아니라 **서비스**였다:
+`AdminStatsService.getBusinessOptions` 가 각 문서 조회에 `.timeout(const Duration(seconds: 15))`
+를 건다. 가짜 Firebase 에서는 그 future 가 끝나지 않으므로 타이머가 남아 하네스가 실패한다.
+
+**production 흐름을 따라가 분리했다:**
+- 화면은 `_statsRequestId` 로 늦은 응답을 버리고(`requestId != _statsRequestId` → 무시),
+  모든 `setState` 앞에 `mounted` 를 본다. `dispose()` 는 자기 `ValueNotifier` 를 정리한다.
+- 타임아웃 타이머는 **SDK/Future 소유**이고 조회가 끝나거나 15초에 풀린다.
+  화면 이탈 후 남는 요청·타이머가 아니다.
+→ **dispose 결함 없음. 테스트 주입 불가가 원인이다.**
+그래서 timeout 을 줄이거나 로딩을 강제 완료하지 않고 **reader 한 칸만 주입**했다:
+`AdminStatsScreen({... AdminStatsService? service})` ·
+`AdminMonthDetailScreen({... AdminStatsService? service})` — production 은 null →
+기존 인스턴스 그대로. 파싱·파생·문구·필터는 화면의 기존 경로를 그대로 지난다.
+
+### 2. P17-S 실제 콘텐츠 렌더 — 결함 4건 발견·수정
+
+| 시나리오 | 결과 |
+|---|---|
+| 큰 수·긴 라벨, 320dp·배율 1.3 (**ASC-1**) | `총 인건비 1.3억` · `근무 건수 1472건` · `출근율 97.4%` · 범위 `2026년 전체`·`전체 사업장` — 금액/건/% 단위가 서로 바뀌지 않는다 |
+| 배율 **2.0** 스크롤 (**ASC-2**) | 예외 0 · 스크롤 접근 가능 |
+| 정상 0 ≠ 전체 실패 (**ASC-3**) | 정상 0 → `0건`. 전체 실패 → `통계를 불러오지 못했습니다` 로 **수치를 아예 내지 않는다**(`0건`·`근무 건수` 자체가 없다, "데이터가 없습니다" 아님) |
+| 부분·상한 (**ASC-4**) | `AttendanceStatsState.unavailable` → `확인 불가`, `1472건`·`1.3억` 미표시 |
+| 사업장 전환 중 늦은 응답 (**ASC-5**) | 전환 후 `7건` 유지, 늦게 온 `9999건` 미표시 |
+| 사업장 선택 반영 (**ASC-6**) | 선택이 **조회 범위**(`filterBusinessId='biz2'`)와 머리말에 반영 |
+| 월 상세 콘텐츠 320dp·1.3 (**ASC-7**) | `김근로` · `12일`(고유 날짜) · `지각 2`(건, 단위어 없음) |
+
+**렌더가 잡은 잘림 4건(전부 flex 없는 Row — 프로젝트 규칙 위반):**
+
+| 위치 | 증상 | 수정 |
+|---|---|---|
+| `admin_stats_screen` 총 인건비 머리 Row | 320dp·1.3 에서 **53px** | 라벨·기간을 `Flexible`+ellipsis(금액은 줄이지 않음) |
+| `_DeltaBadge` 내부 Row | 부모가 좁아지면 **42/26px** | 퍼센트 텍스트 `Flexible`+ellipsis |
+| `admin_stats_screen` 월별 인건비 제목+범례 Row | 배율 2.0 에서 **4.7px** | 제목 `Flexible`+ellipsis(범례 유지) |
+| `admin_month_detail` 출결 통계 행 | 320dp·1.3 에서 **275px** | `Wrap` 으로 줄바꿈 허용 |
+| `admin_month_detail` 직원별 요약 헤더 | **110px** | 제목 `Flexible`+ellipsis(정렬 칩 유지) |
+
+글자를 숨기거나 배율을 끄지 않았고, 수치·범례·정렬 칩을 없애지 않았다.
+
+**하네스 메모:** 같은 타입 화면을 연달아 pump 하면 State 가 재사용돼 시나리오가 섞인다
+(첫 성공값이 두 번째 실패 화면에 남아 보였다) → `KeyedSubtree(key: UniqueKey())` 로 격리.
+
+### 3. P17-X 통계 hop — **부분 실행 · 제스처는 NOT SEEN**
+
+| 구간 | 결과 |
+|---|---|
+| 사업장 선택 → **조회 범위·머리말** | **실행**(ASC-6) — `filterBusinessId` 가 실제 조회로 간다 |
+| 월 카드 → 월 상세 **생성 인자** | **CODE only**(P16-S S-4: `businessIds`·`filterBusinessId`·`year`·`month`) |
+| 월 상세 **화면 자체** | **실행**(ASC-7) |
+| 월 카드 **탭 제스처** | **NOT SEEN** — 드릴다운이 `fl_chart` `BarTouchData.touchCallback` 안에 있어 위젯 테스트로 누를 수 없다(차트 내부 히트테스트) |
+
+→ `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` · owner **P17-X** ·
+종료 조건: 실기기에서 월 막대 탭 → 월 상세의 월·사업장 일치 확인(DEVICE).
+권한 경로는 기존 guard 를 재사용한다(통계 진입은 `canManageWage` 가 아닌 관리자 진입
+경로이며 이번에 새 bypass 를 찾지 못했다).
+
+### 4. 용어 정정과 기존 증거 매핑
+
+**`AppSummaryHeader` 와 `AppStatusCard` 는 서로 다른 대상이다** —
+`lib/widgets/common/app_summary_header.dart` 에 `AppSummaryHeader` 가 **존재**하고
+호출부는 **0**이다. `AppStatusCard` 는 **클래스·파일이 없다**. 감사표의
+"`AppSummaryHeader`/`AppStatusCard` 채택 0" 은 한 덩어리로 읽히지만 **하나는 미사용,
+하나는 미존재**다 — 표현만 바로잡고 UI 는 교체하지 않았다(사용 횟수는 결함 근거가 아니다).
+
+**P17-A 증거 ↔ 화면 매핑**(기존 14건 중 super-admin 관련):
+
+| 증거 | 대응 화면 | 범위 |
+|---|---|---|
+| P17A-1 | `help_faq_management` · `review_tags_settings` · `to_limit_settings` | shell + TabBar 색 계약(3화면 반복) |
+| P17A-2 | `help_faq_management` | **탭 전환 행동**(320dp·1.3) |
+| P17A-3 | `all_businesses` · `all_users` | shell + `actions` 새로고침 **탭 실행**(320dp) |
+| ASF-5 · ASF-6 | `system_settings` | **shell 범위**(배율 2.0 포함) |
+| (증거 없음) | `business_approval_settings` · `insurance_rate_settings` · `minimum_wage_settings` · `legal_terms_management` · `badge_settings` | **CODE only** — A-1·A-2 계약으로만 확인 |
+
+즉 super-admin 11화면 중 **렌더로 확인한 것은 6**(탭 3 + 표 2 + system_settings)이고
+나머지 5는 소스 계약뿐이다. 기존 증거로 충분한 범위는 새 테스트를 만들지 않았다.
+
+### 5. P1-7 결론 재판정
+
+| 구분 | 이전 주장 | 이번 판정 |
+|---|---|---|
+| P1-7 CODE | 종료 | **종료** |
+| P1-7 RENDER | 종료 | **종료** — 통계 콘텐츠가 렌더됐고, 그 과정에서 잘림 5건을 고쳤다. 다만 **super-admin 5화면은 CODE only**, **통계 hop 제스처는 NOT SEEN** 으로 범위를 명시한다 |
+| P1-7 PRODUCT/DEVICE | 미주장 | **미주장 유지**(DEV READ 없음·DEVICE 미실행) |
+
+첫 보고의 "P1-7 전체 CODE·RENDER 종료" 는 통계 콘텐츠가 미렌더인 동안 **PARTIAL** 이었고,
+이번에 그 조건을 채워 종료로 올린다.
+
+### 6. 증거·회귀
+
+- **행동·RENDER** `admin_stats_content_render_test` **7건**(ASC-1~7)
+- **CODE** 기존 P16-S S-1~4 재사용(재구현하지 않았다)
+- **DEV READ** 없음 · **DEVICE** 미실행
+- **회귀(이름별)**: 통계·월상세·서비스를 참조하는 **8파일 156 PASS**,
+  `flutter analyze lib test` **No issues**. 전체 suite 총수로 신규 실패를 판단하지 않았다.
+
+#### 최소 실기기 확인안 (이번에 바뀐 자리만)
+
+1. 통계에서 **글자 크게(1.3·2.0)** — 총 인건비 머리줄, 증감 배지, `월별 인건비` 범례가
+   잘리지 않는지.
+2. 월 상세 320dp — 정상/지각/결근 칩과 총 인건비가 **줄바꿈되어 모두 보이는지**,
+   직원별 요약의 정렬 칩(근무일·임금·이름)을 누를 수 있는지.
+3. 통계에서 **월 막대를 탭** → 월 상세의 월·사업장이 통계의 현재 선택과 같은지
+   (위젯 테스트로 못 누르는 유일한 구간).
