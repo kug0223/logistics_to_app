@@ -176,13 +176,18 @@ void main() {
     await Firebase.initializeApp();
   });
 
-  testWidgets('[WPD-1] 처음부터 계약 권한이 없으면 화면은 말없이 닫힌다', (tester) async {
+  // [R7-P3-3 P33-D] 이 자리에는 원래 "처음부터 권한이 없으면 화면이 **말없이**
+  //   닫힌다" 는 사실이 고정돼 있었다. P3-3 에서 그 무안내 종료를 고쳤으므로
+  //   기대값을 새 정상 동작으로 옮긴다 — 재현 테스트를 지우지 않고 갱신한다.
+  //   같은 사건의 상세 검증은 `action_context_truth_test.dart` (ACX-1~5) 에 있다.
+  testWidgets('[WPD-1] 처음부터 계약 권한이 없으면 화면이 남아 이유와 담당자를 말한다',
+      (tester) async {
     await _pushContract(tester, contract: false);
 
-    // 화면이 열리지 않고 되돌아온다 — 이유도 담당자도 나오지 않는다.
-    expect(find.text('계약 관리 열기'), findsOneWidget);
-    expect(find.text('접근 권한이 없습니다'), findsNothing);
-    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsNothing);
+    // 더 이상 말없이 사라지지 않는다.
+    expect(find.text('계약 관리 열기'), findsNothing);
+    expect(find.text('접근 권한이 없습니다'), findsOneWidget);
+    expect(find.text('계약 관리 권한이 있는 관리자에게 문의하세요.'), findsOneWidget);
   });
 
   testWidgets('[WPD-2] 권한이 있으면 화면이 열린다 (양성 대조)', (tester) async {

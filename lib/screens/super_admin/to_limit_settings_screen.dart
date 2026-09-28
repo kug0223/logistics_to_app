@@ -274,6 +274,15 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
                   child: Text(
+                    // [R7-P3-3 P33-X2] 단위와 적용 시점을 화면이 말하지 않았다.
+                    //   둘 다 source 에서 확정된 정적 사실이다 —
+                    //   scope 는 `ADMIN:{ownerUid}`(계정 단위 합산), 세는 대상은
+                    //   `status in [ACTIVE, FULL]` 인 공고, 강제 지점은
+                    //   `callableCreateTO` 의 생성 시점이다.
+                    //   현재 사용량은 reader 에 없으므로 만들지 않는다.
+                    '한도는 한 관리자 계정이 동시에 진행 중인 공고 수입니다.\n'
+                    '그 계정의 모든 사업장을 합쳐서 셉니다 — 사업장 수가 아닙니다.\n'
+                    '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.\n'
                     '관리자별 개별 한도가 설정되지 않은 경우 이 값이 적용됩니다.\n'
                     'draft 상태로는 제한 없이 저장 가능합니다.',
                     style: ResponsiveHelper.smallStyle(context,
@@ -403,12 +412,33 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                 color: AppColors.textSecondary)),
       );
     }
+    // [R7-P3-3 P33-X2] 카드 한 줄에 `2개 사업장 관리 중` 과 `개별 3개` 가 나란히
+    //   놓인다. 둘 다 숫자 + `개` 라서 무엇의 수인지 문맥이 없었다.
+    //   배지를 길게 만들어 320dp 를 위협하는 대신, 목록 앞에서 단위를 못박는다.
     return ListView.separated(
       padding: ResponsiveHelper.listPadding(context),
-      itemCount: _admins.length,
+      itemCount: _admins.length + 1,
       separatorBuilder: (_, __) =>
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-      itemBuilder: (context, index) => _buildAdminCard(_admins[index]),
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Container(
+            padding: ResponsiveHelper.cardPadding(context),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '한도는 동시에 진행 중인 공고 수입니다 — 사업장 수가 아닙니다.\n'
+              '그 관리자 계정의 모든 사업장을 합쳐서 셉니다.\n'
+              '새 공고를 등록할 때만 적용되고, 이미 등록된 공고는 닫히지 않습니다.',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.infoDark),
+            ),
+          );
+        }
+        return _buildAdminCard(_admins[index - 1]);
+      },
     );
   }
 

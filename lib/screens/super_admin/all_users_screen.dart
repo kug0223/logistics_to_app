@@ -123,13 +123,31 @@ class _AllUsersScreenState extends State<AllUsersScreen>
 
   // ── 관리 액션 ───────────────────────────────────────────────────
 
+  /// [R7-P3-3 P33-X1] 쓰기 직전 **대상을 다시 말한다**.
+  ///
+  ///   상세 시트는 확인창을 띄우기 전에 `Navigator.pop` 으로 닫힌다. 그래서
+  ///   시트 안에만 있던 `@아이디` 가 정작 실행 직전에는 사라져 있었고,
+  ///   이름이 같은 계정이면 확인창 문구가 **글자 하나 다르지 않았다**.
+  ///   목록 행에 긴 식별자를 강제하지 않고, 되돌릴 수 없는 순간에만 붙인다.
+  ///   연락처·신분번호는 더하지 않는다 — 이미 상세에 있는 정보만 옮긴다.
+  String _targetLine(UserModel u) {
+    final role = switch (u.role) {
+      UserRole.SUPER_ADMIN => '슈퍼관리자',
+      UserRole.BUSINESS_ADMIN => '사업장관리자',
+      UserRole.USER => '지원자',
+    };
+    final biz = u.businessName;
+    return '${u.name} · @${u.username} · $role'
+        '${biz != null && biz.isNotEmpty ? ' · $biz' : ''}';
+  }
+
   Future<void> _toggleBlacklist(UserModel user) async {
     if (_isProcessing) return;
     if (user.isBlacklisted) {
       final confirmed = await DialogHelper.showDangerConfirm(
         context,
         title: '블랙리스트 해제',
-        message: '${user.name}님의 블랙리스트를 해제하시겠습니까?\n해제 후 로그인이 가능해집니다.',
+        message: '${_targetLine(user)}\n\n이 계정의 블랙리스트를 해제하시겠습니까?\n해제 후 로그인이 가능해집니다.',
         confirmText: '해제',
       );
       if (!confirmed || !mounted) return;
@@ -150,6 +168,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     } else {
       // 등록: 사유 입력
       final reason = await _showReasonDialog(
+        subject: _targetLine(user),
         title: '블랙리스트 등록',
         hint: '예: 반복 노쇼, 사기 피해 신고, 이용 약관 위반 등',
         confirmLabel: '등록',
@@ -186,7 +205,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '제재 해제',
-      message: '${user.name}님의 제재를 해제하시겠습니까?\n현재: $restrictionText\n해제 후 즉시 이용 가능해집니다.',
+      message: '${_targetLine(user)}\n\n이 계정의 제재를 해제하시겠습니까?\n현재: $restrictionText\n해제 후 즉시 이용 가능해집니다.',
       confirmText: '해제',
     );
     if (!confirmed || !mounted) return;
@@ -209,6 +228,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   // [5A.2A] _adjustTrustScore 제거 — callableAdjustTrustScore 폐기
 
   Future<String?> _showReasonDialog({
+    required String subject,
     required String title,
     required String hint,
     required String confirmLabel,
@@ -218,6 +238,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       context: context,
       barrierDismissible: false,
       builder: (ctx) => _ReasonDialog(
+        subject: subject,
         title: title,
         hint: hint,
         confirmLabel: confirmLabel,
@@ -757,13 +778,20 @@ class _UserDetailSheet extends StatelessWidget {
       ('리뷰', '${user.reviewCount}건', AppColors.info),
     ];
 
+    // [R7-P3-3 P33-X1] 타일 비율이 2.2 로 고정이라 글자 배율을 키우면 값·라벨
+    //   두 줄이 타일보다 커졌다 — 320dp · 배율 2.0 에서 아래로 70~104px 넘쳤다.
+    //   이 시트는 조치 대상을 확인하는 자리라 수치를 지우지 않는다. 대신
+    //   글자가 커진 만큼 타일을 낮춘다.
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final ratio = (2.2 / (textScale <= 0 ? 1.0 : textScale)).clamp(1.0, 2.2);
+
     return GridView.count(
       crossAxisCount: 3,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: ResponsiveHelper.spacing(context, 8),
       crossAxisSpacing: ResponsiveHelper.spacing(context, 8),
-      childAspectRatio: 2.2,
+      childAspectRatio: ratio,
       children: items.map((item) {
         final (label, value, color) = item;
         return Container(
@@ -773,9 +801,12 @@ class _UserDetailSheet extends StatelessWidget {
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: ResponsiveHelper.bodyStyle(context).copyWith(
                   color: color,
                   fontWeight: FontWeight.bold,
@@ -783,6 +814,8 @@ class _UserDetailSheet extends StatelessWidget {
               ),
               Text(
                 label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
               ),
             ],
@@ -880,12 +913,16 @@ class _UserDetailSheet extends StatelessWidget {
 
 // ── 사유 입력 다이얼로그 (블랙리스트/제재) ──────────────────────────────
 class _ReasonDialog extends StatefulWidget {
+  /// [R7-P3-3 P33-X1] 되돌리기 어려운 쓰기의 **대상**. 제목만으로는
+  ///   누구에게 하는 일인지 알 수 없었다.
+  final String subject;
   final String title;
   final String hint;
   final String confirmLabel;
   final Color confirmColor;
 
   const _ReasonDialog({
+    required this.subject,
     required this.title,
     required this.hint,
     required this.confirmLabel,
@@ -917,14 +954,28 @@ class _ReasonDialogState extends State<_ReasonDialog> {
       title: widget.title,
       icon: Icons.edit_note_outlined,
       headerColor: widget.confirmColor,
-      content: StyledDialogTextField(
-        controller: _controller,
-        labelText: '사유',
-        hintText: widget.hint,
-        prefixIcon: Icons.notes_outlined,
-        maxLines: 3,
-        maxLength: 500,
-        autofocus: true,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // [R7-P3-3 P33-X1] 대상 먼저 — 이름이 같은 계정이 있어도 여기서 갈린다.
+          Text(
+            widget.subject,
+            style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey700)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          StyledDialogTextField(
+            controller: _controller,
+            labelText: '사유',
+            hintText: widget.hint,
+            prefixIcon: Icons.notes_outlined,
+            maxLines: 3,
+            maxLength: 500,
+            autofocus: true,
+          ),
+        ],
       ),
       actions: [
         // [FC-06 FIX] autofocus: true — cancel도 unfocus 필수

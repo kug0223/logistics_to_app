@@ -32,6 +32,21 @@ import '../../widgets/dialogs/contract_template_selector_dialog.dart';
 import 'admin_contract_reads.dart';
 import 'historical_contracts_screen.dart';
 
+/// [R7-P3-3 P33-D] 진입 판정의 네 결과. 거부의 **종류**를 잃지 않기 위해 있다.
+enum _EntryAccess {
+  /// 계약을 볼 수 있다.
+  allowed,
+
+  /// 이 사업장의 서브관리자인데 계약 권한이 없다 — 화면에 남아 이유를 말한다.
+  denied,
+
+  /// 권한을 **확인하지 못했다**. 거부와 같은 말이 아니다(fail closed 는 유지).
+  unknown,
+
+  /// 이 사업장과 관계가 없는 진입 — 머물 이유가 없다.
+  notMember,
+}
+
 class AdminContractManagementScreen extends StatefulWidget {
   final String businessId;
   final String? businessName;
@@ -114,6 +129,8 @@ class _AdminContractManagementScreenState
   // [CROSS-DOMAIN-R5.1F.1] 진입 시점 한 번이 아니라, 머무는 동안에도 본다.
   UserProvider? _userProvider;
   bool _accessRevoked = false;
+  /// [R7-P3-3 P33-D] 권한을 확인하지 못한 상태. `_accessRevoked` 와 다른 사실이다.
+  bool _accessUnknown = false;
   VoidCallback? _releasePermsWatch;
 
   bool get _isUnsentTab => _tabCtrl.index == 1;
@@ -160,16 +177,55 @@ class _AdminContractManagementScreenState
         if (mounted) setState(() => _searchQuery = _searchCtrl.text.trim());
       });
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _enterScreen());
+  }
+
+  /// [R7-P3-3 P33-D] `다시 시도` 는 같은 진입 판정을 다시 돌린다 —
+  ///   권한을 새로 만들지 않고, 못 읽었던 것을 다시 읽을 뿐이다.
+  void _retryAccess() {
+    setState(() {
+      _accessUnknown = false;
+      _isLoading = true;
+    });
+    _enterScreen();
+  }
+
+  Future<void> _enterScreen() async {
+    {
       if (!mounted) return;
       // [PATCH-CONTRACT-MGMT-PERMISSION-01] target-B 기준 canManageContract 재검증
       // — up.can()의 current-selected-A snapshot에서 widget.businessId(B) 기준으로 교체.
       // [AUDIT.2-M002] screen-level guard — caller가 guard하더라도 직접 진입 경로 방어
-      final allowed = await _canAccessTargetBusiness();
+      // [R7-P3-3 P33-D] 진입 거부가 **아무 말 없이** 화면을 닫던 자리다.
+      //
+      //   거부(권한 없음)·미확인(조회 실패)·비소속을 한 덩어리로 pop 했다.
+      //   머무는 중 회수될 때는 이미 `접근 권한이 없습니다` + 담당자 안내를
+      //   보여주고 있었으므로, 처음부터 없을 때만 말이 없던 셈이다.
+      //   셋을 가르고, 이 사업장의 서브관리자인 경우에는 **같은 문구를 그대로**
+      //   보여준다 — 계약 내용은 여전히 한 줄도 열지 않는다.
+      final access = await _resolveTargetAccess();
       if (!mounted) return;
-      if (!allowed) {
-        Navigator.of(context).pop();
-        return;
+      switch (access) {
+        case _EntryAccess.denied:
+          setState(() {
+            _accessRevoked = true;
+            _isLoading = false;
+          });
+          return;
+        case _EntryAccess.unknown:
+          setState(() {
+            _accessUnknown = true;
+            _isLoading = false;
+          });
+          return;
+        case _EntryAccess.notMember:
+          // 이 사업장과 관계가 없는 진입 — 여기서 머물 이유가 없다.
+          // 다만 말없이 사라지지는 않는다.
+          ToastHelper.showWarning('접근 권한이 없습니다.');
+          Navigator.of(context).pop();
+          return;
+        case _EntryAccess.allowed:
+          break;
       }
       // [CROSS-DOMAIN-R5.1F.1] 진입 후 회수/부여도 화면에 닿아야 한다.
       final up = context.read<UserProvider>();
@@ -179,7 +235,7 @@ class _AdminContractManagementScreenState
       //   화면이 살아 있는 동안만 구독한다.
       _releasePermsWatch = up.watchBusinessPermissions(widget.businessId);
       _load();
-    });
+    }
   }
 
   /// [CROSS-DOMAIN-R5.1F.1] 대상 사업장(widget.businessId) 권한 변화 반영.
@@ -205,24 +261,28 @@ class _AdminContractManagementScreenState
   /// widget.businessId(target B) 기준 canManageContract 권한 확인.
   /// [GAPFIX-CONTRACT-MGMT-IDENTITY-GATE-02] 명시적 positive allow-list 방식.
   /// 부정형(!isSubAdmin) 기반 admin 판별을 제거하여 null user / 일반 USER 모두 DENY.
-  Future<bool> _canAccessTargetBusiness() async {
+  /// [R7-P3-3 P33-D] 같은 allow-list 를 쓰되 **거부의 종류**를 잃지 않는다.
+  ///   허용 판정 조건은 바뀌지 않았다 — 갈라진 것은 거부의 이유뿐이다.
+  Future<_EntryAccess> _resolveTargetAccess() async {
     final up = context.read<UserProvider>();
     final user = up.currentUser;
 
     // 1. 인증되지 않은 사용자 → DENY
-    if (user == null) return false;
+    if (user == null) return _EntryAccess.notMember;
 
     // 2. BUSINESS_ADMIN → 서버가 소속 검증하므로 client gate 통과
-    if (user.isBusinessAdmin) return true;
+    if (user.isBusinessAdmin) return _EntryAccess.allowed;
 
     // 3. SubAdmin이 아닌 나머지 (일반 USER 포함) → 명시적 DENY
-    if (!user.isSubAdmin) return false;
+    if (!user.isSubAdmin) return _EntryAccess.notMember;
 
     // 4. 이하 SUB_ADMIN 경로
     final uid = user.uid;
 
     // SUB_ADMIN: target business 멤버십 확인 (subAdminBusinessIds 포함 여부)
-    if (!user.subAdminBusinessIds.contains(widget.businessId)) return false;
+    if (!user.subAdminBusinessIds.contains(widget.businessId)) {
+      return _EntryAccess.notMember;
+    }
 
     // 현재 선택 사업장 == target이고 권한이 로드됐으면 캐시 사용 (네트워크 절약)
     if (up.permissionsLoaded &&
@@ -232,7 +292,9 @@ class _AdminContractManagementScreenState
       final cached = up.checkCurrentBusiness((p) => p.canManageContract);
       if (cached != PermissionCheck.error &&
           cached != PermissionCheck.unknown) {
-        return cached == PermissionCheck.allowed;
+        return cached == PermissionCheck.allowed
+            ? _EntryAccess.allowed
+            : _EntryAccess.denied;
       }
     }
 
@@ -240,10 +302,16 @@ class _AdminContractManagementScreenState
     try {
       final perms =
           await MemberService().getMemberPermissions(widget.businessId, uid);
-      return perms?.canManageContract == true;
+      // 멤버 문서가 없으면 이 사업장과의 관계 자체를 확인하지 못한 것이다.
+      if (perms == null) return _EntryAccess.unknown;
+      return perms.canManageContract
+          ? _EntryAccess.allowed
+          : _EntryAccess.denied;
     } catch (e) {
       debugPrint('❌ [CONTRACT-MGMT] target business 권한 조회 실패: $e');
-      return false; // fail closed
+      // fail closed — 계약은 한 줄도 열지 않는다. 다만 "권한 없음"이라고
+      // 단정하지도 않는다. 못 읽은 것과 거부된 것은 다른 사실이다.
+      return _EntryAccess.unknown;
     }
   }
 
@@ -668,10 +736,22 @@ class _AdminContractManagementScreenState
       ),
       body: _accessRevoked
           // [CROSS-DOMAIN-R5.1F.1] 권한 회수 — "계약 없음"이 아니라 "볼 수 없음"이다.
+          // [R7-P3-3 P33-D] 처음부터 권한이 없는 진입도 같은 문구로 온다.
           ? const AppEmptyState(
               icon: Icons.lock_outline,
               title: '접근 권한이 없습니다',
               subtitle: '계약 관리 권한이 있는 관리자에게 문의하세요.',
+            )
+          : _accessUnknown
+          // [R7-P3-3 P33-D] 못 읽은 것을 "권한 없음"이라고 단정하지 않는다.
+          ? AppEmptyState(
+              icon: Icons.error_outline,
+              title: '권한을 확인하지 못했습니다',
+              subtitle: '권한이 없다는 뜻이 아닙니다.',
+              action: TextButton(
+                onPressed: _retryAccess,
+                child: const Text('다시 시도'),
+              ),
             )
           : _isLoading
           ? const LoadingWidget(message: '계약서 목록을 불러오는 중...')
