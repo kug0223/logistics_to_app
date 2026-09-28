@@ -4,7 +4,7 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-28 (R7-P2-2 후속 · 상세·내 지원)
+> 마지막 갱신: 2026-09-28 (R7-P2-2 최종 · 세 셀)
 
 ## 0. 이 장부가 지키는 불변식
 
@@ -69,6 +69,8 @@
 | P2-1 후속 | 홈 로드 **본문**의 같은 계정 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 본문은 겹치지 않는다(앱 복귀 경로로 재측정). 겹치는 것은 `unawaited` 꼬리뿐이고 그쪽은 결함 #21 로 고쳤다 |
 | P2-1 후속 | 홈의 NO_PERMISSION 상태 | 홈의 읽기가 전부 **자기 uid 스코프**+공개 데이터라 도달 불가. 억지 fixture 를 만들지 않았다 |
 | P2-1 후속 | CTA 가 다른 사람/근무를 여는가 | 12경로 중 스냅샷을 넘기는 것은 추천 카드 하나뿐, 나머지는 키·계정 스코프라 목적지가 다시 읽는다. `출근하기` 는 인자 없이 **같은 canonical 술어**로 대상을 맞춘다 |
+| P2-2 최종 | FULL/마감이 기존 확정 약속을 끝난 일로 만드는가 | 아니다 — 내 지원 경로의 하단 바는 Application 상태의 것(`_buildApplicationBottomBar`)이라 `마감된 공고입니다` 가 뜨지 않는다(JPD-7) |
+| P2-2 최종 | 상세 → 뒤로 시 선택 날짜·조건 | 그대로 유지되고, 홈이 넘긴 날짜는 **한 번만** 소비된다(UJT-8) |
 | P2-2 후속 | 상세에서 무엇이 화면을 지배하는가 | **재조회**다 — seed(`workDetails`)를 빈 목록으로 줘도 그 날짜의 업무가 나온다(JPD-3) |
 | P2-2 후속 | 내 지원의 취소 기록이 활성으로 세어지는가 | 진행 1 + 자동취소 1 → 머리 카운트 `전체 2 · 진행중 1 · 종료 1`(MAS-4) |
 | P2-2 후속 | 자동취소 사유를 모를 때 | `취소된 지원이에요` — 지어내지 않는다(MAS-3 양성 대조) |
@@ -99,7 +101,7 @@
 | `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` | P2 | CODE/행동/RENDER 수용 — DEVICE/PRODUCT |
 | `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 — DEVICE |
 | `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 — DEVICE |
-| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | 지원 writer 결과를 주입한 다이얼로그 렌더(격리) — 이번엔 읽기 경계만 만들었다 |
+| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | **NOT SEEN(원인 기록)** — 다이얼로그가 열리지만 단일 flex TO 경로에서 업무 카드가 렌더되지 않아 지원 버튼에 도달 못함. 임시 주입 지점은 되돌렸다(증거 없는 production 표면 금지). 종료: 업무 카드 렌더 전제를 찾아 버튼→확인→토스트 실행 |
 | ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** — 두 기기 × 날짜별 슬롯 렌더(JPD 10건) |
 | ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** — 상태·사유·카운트 렌더(MAS 10건) |
 | `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | 알림·FCM → 공고 상세 제스처 NOT SEEN — DEVICE |

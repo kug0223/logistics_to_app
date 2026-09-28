@@ -297,6 +297,45 @@ void main() {
         reason: '고르지 않은 날짜를 상세가 고른 것처럼 만들지 않는다');
   });
 
+  // ══════════════════════════════════════════════════════════
+  // N1 — 상세에서 돌아오면 고른 날짜·조건이 그대로인가
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('UJT-8 상세 → 뒤로 → 목록의 선택 날짜·조건·결과가 그대로다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(pages: twoPages()),
+      pendingJobDate: _day(2),
+    );
+
+    final d = _day(2);
+    // 돌아왔을 때와 비교할 "떠나기 전" 상태.
+    expect(find.textContaining('${d.month}월 ${d.day}일'), findsWidgets);
+    expect(find.text('2페이지 공고'), findsOneWidget);
+
+    await tester.tap(find.text('2페이지 공고'));
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(JobPostingScreen, skipOffstage: false), findsOneWidget);
+
+    // 실제 navigator 로 뒤로.
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    nav.pop();
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byType(JobPostingScreen, skipOffstage: false), findsNothing);
+    expect(find.textContaining('${d.month}월 ${d.day}일'), findsWidgets,
+        reason: '돌아왔는데 고른 날짜가 풀려 있으면 다시 찾아야 한다');
+    expect(find.text('2페이지 공고'), findsOneWidget,
+        reason: '조건에 맞던 결과가 그대로여야 한다');
+    // 홈이 넘긴 날짜는 **한 번만** 소비된다 — 재진입으로 다시 걸리지 않는다.
+    expect(find.text('1페이지 공고 A'), findsNothing);
+  });
+
   for (final size in const [Size(320, 1400), Size(412, 1400)]) {
     for (final scale in const [1.3, 2.0]) {
       testWidgets(

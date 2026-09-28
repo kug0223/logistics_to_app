@@ -777,3 +777,83 @@ P1-7/P1-5 DEVICE, Staffing DEFERRED/O08, 계약 사후 정책, 출시 gate.
    **그 날짜가 머리말·칩에 그대로** 뜨는지, 그 날의 업무만 보이는지.
 2. 글자 크게(2.0) 로 공고 상세 → 날짜 칩의 `업무 N개` 가 잘리지 않는지.
 3. 내 지원에서 자동취소 건의 **사유 문구**가 보이고 진행중 카운트에 섞이지 않는지.
+
+---
+
+## R7-P2-2 최종 세 셀 — 지원 결과·FULL/마감·뒤로 (2026-09-28)
+
+기준 제출 `548452f`. 실행 전 HEAD·dirty 0·untracked 8 확인·보존.
+공유 DEV READ ONLY — 지원/취소 mutation·fixture·CF·Rules·PROD·APK 없음.
+이미 수용한 목록·지원 준비·상세 선택일·내 지원 증거는 재사용했다.
+**production 코드 변경 없음** — 세 셀 모두 기존 동작을 확인하는 검증이었고,
+D2·N1 은 **NO PATCH**, A1 은 도달 실패를 원인과 함께 남긴다.
+
+### D2 — FULL/마감이 기존 약속을 끝난 일로 만들지 않는가
+
+| 표본 | 보이는 것 | 결과 |
+|---|---|---|
+| 같은 날짜 슬롯 **모집중** | 배지 `모집중`, 하단 CTA 열림 | JPD-5 |
+| 같은 날짜 슬롯 **FULL**(status=full, confirmed=required) | `마감된 공고입니다` — 지원 CTA 닫힘 | JPD-6 |
+| FULL + **내 확정 약속**(`myApplication` 경로) | `마감된 공고입니다` **아님**, `취소된 지원이에요` **아님** | JPD-7 |
+
+세 번째가 이 셀의 핵심이다: 공고가 마감돼도 **내 확정 근무의 하단 바는
+Application 상태의 것**(`_buildApplicationBottomBar`)이라, 모집 마감이 과거
+약속을 완료·취소로 바꾸지 않는다. **NO PATCH.**
+
+### N1 — 복귀
+
+| 구간 | 결과 | 증거 |
+|---|---|---|
+| 목록 → 상세 → **뒤로** | 고른 날짜(`M월 D일`)·조건·결과 목록이 **그대로**. 홈이 넘긴 날짜는 한 번만 소비돼 재진입으로 다시 걸리지 않는다 | **행동** UJT-8 |
+| 내 지원 → **뒤로** → 원래 화면 | `onBack == null` → `Navigator.pop`, 호출 화면 복귀 | **행동** MAS-7 |
+| 지원 준비 → 상세 | 재사용(APS-2) | 기존 |
+| 늦은 응답 | 기존 `_generation`/`_fetchInProgress` 가드 재사용 — 재진입 문제 **관측되지 않음** | CODE |
+
+**NO PATCH.**
+
+### A1 — 지원 결과 네 갈래: **NOT SEEN (원인 기록)**
+
+**무엇을 시도했나:** `ApplyWorkDialog` 의 기존 쓰기 호출 경계
+(`FirestoreService.applyToTOWithWorkType`)를 통제해 SUCCESS/ALREADY/FAILED/
+UNKNOWN 을 주고, 실제 지원 버튼 → 확인 시트 `지원하기` → 토스트 문구를
+확인하려 했다. 토스트는 전역 `navigatorKey` overlay 로 들어가므로
+`MaterialApp(navigatorKey: navigatorKey)` 로 렌더하면 문구를 볼 수 있다.
+
+**왜 못 했나:** 다이얼로그를 열면 헤더(`지원하기`·공고명·사업장명)와 `닫기`
+까지는 그려지지만 **업무 선택 카드가 렌더되지 않아 지원 버튼에 도달하지
+못했다.** `_isLoading` 은 풀리고(초기 로드 실패 로그 없음) `_buildContent` 가
+빈 목록을 만든다 — 단일 flex TO 경로가 harness 에서 요구하는 전제
+(슬롯/날짜 상태)를 더 채워야 한다. 40프레임×200ms 까지 늘려도 같다.
+
+**그래서 무엇을 남겼나:** 임시로 넣었던 주입 지점은 **되돌렸다** — 통과하는
+증거 없이 production 표면을 남기지 않는다. 대체 증거는 기존 소스 계약
+(`ApplyResult` 네 갈래 · UNKNOWN 재확인 → `reconciledAsApplied` · 실패해도
+경고로 남김)뿐이며, 이는 **CODE only** 다.
+
+→ `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` 유지 · owner P22-A ·
+종료 조건: 단일 flex TO 에서 업무 카드가 렌더되는 최소 전제를 찾아
+버튼→확인→토스트까지 실행(격리). **중복 탭 UI 상태도 같은 이유로 NOT SEEN.**
+
+### 셀별 판정
+
+| 셀 | CODE | 행동 | RENDER | DEV READ | DEVICE | 미관찰 |
+|---|---|---|---|---|---|---|
+| A1 지원 결과 | 종료(소스 계약) | **NOT SEEN** | **NOT SEEN** | 없음 | 대기 | 네 갈래 문구·다음 행동·중복 탭 |
+| D2 FULL/마감 | 종료 | **종료**(3경로) | **종료** | 없음 | 대기 | — |
+| N1 복귀 | 종료 | **종료**(2경로 실행) | 종료 | 없음 | 대기 | — |
+
+### P2-2 종료 판정
+
+**CODE 종료 · RENDER 종료 · 행동 종료(A1 제외).**
+A1 의 실제 버튼 제스처가 남아 있으므로 **P2-2 전체 행동 종료는 주장하지
+않는다.** DEVICE/PRODUCT 대기.
+
+별도 owner 로 유지: 공유 DEV 지원·자동취소 mutation, FCM→공고 제스처,
+실기기/PRODUCT, P2-1 DEVICE 잔여, P1-5/P1-7 DEVICE, Staffing DEFERRED/O08,
+계약 사후 정책, 출시 gate.
+
+**증거:** `job_posting_selected_date_test` 13건(JPD-5·6·7 신규) ·
+`user_job_tab_partial_truth_test` 12건(UJT-8 신규) ·
+`my_applications_same_target_test` 11건(MAS-7 신규) — 세 파일 **36 PASS**.
+`flutter analyze lib test` **No issues**. production 변경 0 이므로 영향집합
+재실행은 하지 않았다(기존 3011 PASS 수치를 이 세 제스처의 증거로 쓰지 않는다).

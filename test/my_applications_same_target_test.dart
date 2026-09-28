@@ -270,6 +270,52 @@ void main() {
         reason: '계약을 못 읽어도 지원 목록 자체는 유효하다');
   });
 
+  testWidgets('MAS-7 내 지원에서 뒤로 → 원래 화면으로 돌아온다', (tester) async {
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const SizedBox.shrink());
+    final reads = _reads([
+      _app(id: 'a1', status: AppStatus.pending, workDate: _day(3)),
+    ]);
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<UserProvider>(create: (_) => _P()),
+          ChangeNotifierProvider<NotificationProvider>(
+              create: (_) => NotificationProvider()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) => TextButton(
+                onPressed: () => Navigator.push(
+                    ctx,
+                    MaterialPageRoute<void>(
+                        builder: (_) => MyApplicationsScreen(reads: reads))),
+                child: const Text('원래 탭'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('원래 탭'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('내 지원 내역'), findsWidgets);
+
+    // onBack 이 null 이면 Navigator.pop — 원래 화면으로 돌아온다.
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    nav.pop();
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('내 지원 내역'), findsNothing);
+    expect(find.text('원래 탭'), findsOneWidget);
+  });
+
   for (final size in const [Size(320, 1600), Size(412, 1600)]) {
     for (final scale in const [1.3, 2.0]) {
       testWidgets(

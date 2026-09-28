@@ -159,6 +159,7 @@ JobPostingReads _reads({
   required List<SlotModel> slots,
   Object? slotsError,
   List<WorkDetailModel> seedDetails = const [],
+  List<ApplicationModel> myApps = const [],
 }) =>
     JobPostingReads(
       toOrFailure: (id) async => (to: _to(), failed: false),
@@ -168,7 +169,7 @@ JobPostingReads _reads({
         if (slotsError != null) throw slotsError;
         return slots;
       },
-      myApplications: (uid) async => const <ApplicationModel>[],
+      myApplications: (uid) async => myApps,
       businessWorkTypes: (id) async => const <BusinessWorkTypeModel>[],
       applicationOnce: (id) async => null,
     );
@@ -179,6 +180,7 @@ Future<void> _pump(
   DateTime? slotDate,
   Size size = const Size(390, 1600),
   double textScale = 1.0,
+  ApplicationModel? myApplication,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -203,6 +205,7 @@ Future<void> _pump(
           to: _to(),
           workDetails: const [],
           slotDate: slotDate,
+          myApplication: myApplication,
           reads: reads,
         ),
       ),
@@ -290,6 +293,88 @@ void main() {
         File('lib/screens/common/job_posting_screen.dart').readAsStringSync();
     expect(src.contains('_slotLoadError = true'), isTrue);
     expect(find.text('피킹'), findsNothing);
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // D2 — FULL/마감이 기존 약속을 끝난 일로 만들지 않는가
+  // ══════════════════════════════════════════════════════════
+
+  ApplicationModel _confirmed() => ApplicationModel(
+        id: 'mine1',
+        toId: 'to1',
+        uid: 'u1',
+        businessId: 'biz1',
+        businessName: '강남 물류센터',
+        toTitle: '단기 모집',
+        status: AppStatus.confirmed,
+        selectedWorkType: '피킹',
+        startTime: '09:00',
+        endTime: '18:00',
+        wage: 13000,
+        workDate: _d2,
+        appliedAt: _d1,
+      );
+
+  testWidgets('JPD-5 모집중 슬롯은 모집중이라고 말하고 지원 CTA 가 열려 있다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(slots: slotsFor(_Device.kst)),
+      slotDate: FormatHelper.toKstDate(_d2),
+    );
+
+    expect(find.text('모집중'), findsWidgets);
+    expect(find.text('마감'), findsNothing);
+    expect(find.text('마감된 공고입니다'), findsNothing);
+  });
+
+  testWidgets('JPD-6 같은 날짜가 FULL 이면 마감이라 말하고 CTA 가 닫힌다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(slots: [
+        _slot(
+          id: 's2',
+          date: _dev(_d2, _Device.kst),
+          details: [_wd(id: 'wd2', type: '피킹', wage: 13000, required_: 3)],
+          status: SlotStatus.full,
+          confirmed: 3,
+        ),
+      ]),
+      slotDate: FormatHelper.toKstDate(_d2),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('마감된 공고입니다'), findsWidgets,
+        reason: 'FULL 이면 지원 CTA 가 닫혀야 한다');
+  });
+
+  testWidgets('JPD-7 FULL 이어도 **이미 확정된 내 약속**은 완료·취소로 보이지 않는다',
+      (tester) async {
+    // 내 지원에서 들어온 경로 — 공고가 마감돼도 내 약속의 CTA 는 지원 CTA 가
+    //   아니라 Application 상태의 것이다(`_buildApplicationBottomBar`).
+    await _pump(
+      tester,
+      reads: _reads(
+        slots: [
+          _slot(
+            id: 's2',
+            date: _dev(_d2, _Device.kst),
+            details: [_wd(id: 'wd2', type: '피킹', wage: 13000, required_: 3)],
+            status: SlotStatus.full,
+            confirmed: 3,
+          ),
+        ],
+        myApps: [_confirmed()],
+      ),
+      slotDate: FormatHelper.toKstDate(_d2),
+      myApplication: _confirmed(),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('마감된 공고입니다'), findsNothing,
+        reason: '모집 마감이 내 확정 근무를 끝난 일로 만들면 안 된다');
+    expect(find.text('취소된 지원이에요'), findsNothing);
   });
 
   for (final size in const [Size(320, 1600), Size(412, 1600)]) {
