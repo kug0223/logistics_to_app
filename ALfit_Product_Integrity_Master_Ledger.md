@@ -41,8 +41,9 @@
 | 18 | P1-7 | 문서 관리의 `확인 완료` 만 raw 초록이라 같은 화면에서 완료가 두 색이었다 | `AppColors.success` | CODE |
 | 19 | P1-7 후속 | 통계·월상세의 flex 없는 Row 5곳이 큰 수·긴 라벨·배율에서 잘렸다(53·42·26·4.7·275·110px) | Flexible/Wrap — 수치·범례·칩을 없애지 않음 | RENDER 7 |
 | 20 | P2-1 | 지원자 홈 Hero 가 `workDate == today` 로 오늘 근무를 판정해, **계약 시작일이 아닌 날 일하는 장기 근무자에게 출퇴근 CTA 가 사라졌다** | 같은 화면·출근 화면과 같은 canonical 술어 `isWorkingOnDate` | RENDER 4 + 수정 전 대조 |
-| 21 | P2-1 | 홈 로드가 uid 를 await 이전에 잡고 늦은 응답을 반영해, 계정 전환 후 **이전 사용자의 근무가 새 계정 홈에 앉았다** | seq + uid 가드를 state 반영 3곳에 | RENDER + 가드 제거 대조 |
+| 21 | P2-1 (후속 정정) | 홈 로드가 늦은 응답을 그대로 반영했다. **실제 도달 경로는 `unawaited` 꼬리(연장 제안·보완 요청)** — 사라진 제안이 낡은 응답으로 되살아났다. 계정 전환은 `AuthWrapper` 가 State 를 파괴하므로 production 재현 경로가 **아니다**(첫 보고 문장 정정) | seq + uid 가드를 state 반영 3곳에 | UHR-15 + seq 제거 대조 |
 | 22 | P2-1 | 수입 행·지원 준비 진행도·`SectionHeader` 액션에 flex·상한이 없어 좁은 화면·큰 배율에서 잘렸다(17·36·83·57·31px) | 금액·진행도·목적지 문구를 **줄이지 않고** 줄바꿈 | RENDER 6조합 |
+| 23 | P2-1 후속 | 근태 조회 실패가 `_homeLoadFailed` 에 잡히지 않아 수입이 **`0원` · "아직 이번 달 수입이 없어요"** 로 보였다 — 못 읽은 달을 번 돈이 없다고 말했다 | `_attendancesFailed` → 두 금액 `확인 못함` + 재시도, 빈 상태 문구 차단 | UHR-12 + 제거 대조 |
 
 ## 2. NO PATCH — 근거를 남긴 판정
 
@@ -57,7 +58,10 @@
 | P2-1 | 지원자 화면에 관리자 capability 덧씌움 | `lib/screens/user/` 에 `canManage*`·`MemberPermissions` 0건. 남은 `isSubAdmin` 은 역할 전환 토글이다 |
 | P2-1 | 수입 "월 선택 bottom sheet" 미구현 주장 | 시트는 `IncomeDetailScreen` 안에 있다(`DialogHelper.showSheet`, 즉시 적용). 홈 헤더는 그 진입이다 |
 | P2-1 | 홈 Hero 와 날짜 탐색 동시 노출 | 설계상 독립 상시 섹션(소스 주석 명시) |
-| P2-1 | 같은 계정 홈 로드 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 겹치지 않는다(측정). seq 는 이중 방어이지 관측된 사건의 수정이 아니다 |
+| P2-1 후속 | 홈 로드 **본문**의 같은 계정 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 본문은 겹치지 않는다(앱 복귀 경로로 재측정). 겹치는 것은 `unawaited` 꼬리뿐이고 그쪽은 결함 #21 로 고쳤다 |
+| P2-1 후속 | 홈의 NO_PERMISSION 상태 | 홈의 읽기가 전부 **자기 uid 스코프**+공개 데이터라 도달 불가. 억지 fixture 를 만들지 않았다 |
+| P2-1 후속 | CTA 가 다른 사람/근무를 여는가 | 12경로 중 스냅샷을 넘기는 것은 추천 카드 하나뿐, 나머지는 키·계정 스코프라 목적지가 다시 읽는다. `출근하기` 는 인자 없이 **같은 canonical 술어**로 대상을 맞춘다 |
+| P2-1 후속 | FCM payload 가 타인 데이터를 여는가 | 근로자 목적지 4종이 인자를 받지 않는다(현재 계정으로 재조회). 권한 타입은 canonical dispatcher 경유 — 기존 R5.1 증거 |
 
 ## 3. 미결 (이 장부에서 닫히지 않은 것)
 
@@ -68,6 +72,9 @@
 | 계약 법률 사후 정비 | P16-C | 정책 결정 |
 | `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | 3축 실측 **완료** → 전환(셋은 `onRefresh` 설계 먼저) → `gradient_scaffold` 폐기 판단 |
 | `[R7-P2-1-RESIDUAL-TAB-DESTINATIONS]` | P2 | 일자리·일정·MY 탭 **내부** 화면군 |
+| `[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]` | P2 | 어제 시작한 야간 근무의 퇴근 진입점이 Home 에 없다(UHR-18). 새 상태·새 문구 결정 필요 |
+| `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 — DEVICE/PRODUCT |
+| `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` | P2 | CODE/행동 수용 — DEVICE/PRODUCT |
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 내부 필드명(표시 단위는 정상) |
 | ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |

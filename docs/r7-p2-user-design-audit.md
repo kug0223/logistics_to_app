@@ -122,3 +122,127 @@
    섹션 액션(`2026년 9월 ›`)이 잘리지 않고 모두 보이는지.
 3. 계정 전환(로그아웃 → 다른 계정) 직후 홈에 이전 계정의 오늘 근무가
    잠깐이라도 나타나지 않는지.
+
+---
+
+## R7-P2-1 후속 — Home 행동·상태 증거 결산 (2026-09-28)
+
+기준 제출 `7fe1ce3`(기준 `7f6d32b`). 실제 HEAD 확인, tracked dirty 0,
+untracked 8건(`scripts/r7-*.js`) 보존. 공유 DEV READ ONLY, CF·Rules·PROD·APK 없음.
+첫 보고의 수용 결과(UHR-1~11·URN-1~3·6조합 렌더·NO PATCH 4건)는 **재사용**했고
+다시 테스트하거나 재설계하지 않았다.
+
+### A. P21-R — CTA → entity key → 목적지 → 뒤로
+
+| # | domain event / state | entity key | 보이는 문구·대상 | route | 목적지에서 같은 대상 | 뒤로 | 근거 |
+|---|---|---|---|---|---|---|---|
+| 1 | 오늘 확정 근무(`isWorkingOnDate`) | **없음(계정 스코프)** | `오늘의 근무` · `출근하기` | `AttendanceCheckScreen()` | **같은 canonical 술어**로 재도출 — 인자 대신 술어가 대상을 정한다 | tab0 스택 pop | **실행** UHR-17 |
+| 2 | 72h 내 미확인 신규 확정 | `app.id`(seen 마킹만) | `새로운 소식` 카드 | `MyApplicationsScreen()` (rootNavigator) | 목록 — **focus 인자 없음** | pop 후 `_rebuildCaches()` | CODE(1224행) |
+| 3 | 연장 제안 PENDING | **`first.id`** | `계약 연장 제안` · `확인하기` | `RenewalProposalScreen(focusProposalId:)` | **키 전달됨** | pop 후 `_loadHomeData()` | CODE + UHR-16 |
+| 4 | 신분증 열람 요청 PENDING | `uid` | `신분증 열람 요청` | `MyRequestsDialog.show(applicantUid:)` | 같은 uid 의 요청 인박스 | 닫은 뒤 `_reloadPendingIdRequests()` | CODE |
+| 5 | 계약해지 요청 PENDING | `uid` | `계약해지 응답` | 같은 `MyRequestsDialog` | 같은 인박스가 **신분증·해지 두 종류를 각각의 카드로** 렌더 — 홈의 두 카드를 합치지 말라는 주석과 모순 아님 | 위와 같음 | CODE(dialog 98~141행) |
+| 6 | 급여 보완 요청 | `uid` | 서류 보완 카드 | `DocumentManagementScreen()` | 내 문서 | pop | CODE |
+| 7 | 추천 공고 | **`to`(모델 전체)** | 추천 카드 | `JobPostingScreen(to:, workDetails:)` | **스냅샷 전달** — 목록이 낡아도 연 대상은 그 TO | 결과 true 면 `_loadHomeData()` | CODE |
+| 8 | 초대 INVITED N건 | 탭 index 6 | 초대 배너 | `MyApplicationsScreen(initialTabIndex: 6)` | 초대 탭 | pop 후 `_loadHomeData()` | CODE |
+| 9 | 수입(월) | `year`·`month` | `N년 N월 ›` | `IncomeDetailScreen(initialYear:, initialMonth:)` | **키 전달됨** | pop | CODE |
+| 10 | 주간 일정 | 없음 | `일정 ›` | `switchToTab(2)` | 일정 탭 루트 | 탭 뒤로 | URN-2 |
+| 11 | 근무 기록 | 현재 달 | `근무 기록 보기` | `switchToScheduleNow()` | 일정 탭 + 현재 달 리셋 | 탭 뒤로 | CODE |
+| 12 | 날짜 선택 | 선택 날짜 | `N월 N일 일자리 보기` | `switchToTabWithDate(1, date)` | 일자리 탭이 소비 후 clear | 탭 뒤로 | CODE |
+| — | 급여 이체·리뷰 작성 CTA | — | **N/A** — Home 에 없다 | — | — | — | grep 0건 |
+
+**지원=관심 / 확정=약속:** 홈의 카운트는 `pending`(검토중) · `confirmedStatuses`(확정) ·
+`contractPending`(결과 대기)로 **상태별로 따로** 센다(`_rebuildCaches`). 지원 카드가
+약속으로 승격되는 순간은 `confirmedStatuses` 진입이고, 그때만 Hero·주간 dot·
+`근무 예정` 수입에 들어간다. FULL(정원 충족) 뒤에도 기존 확정은 그대로 남는다 —
+홈은 TO 정원을 보지 않고 **내 Application 상태**만 본다.
+
+**snapshot 경계:** 7번 추천 카드만 모델 스냅샷을 넘긴다. 나머지는 키(또는 계정
+스코프)만 넘기고 목적지가 다시 읽는다 — 낡은 스냅샷이 목적지 판단을 만들지 않는다.
+
+**발견한 반례 1건 (수정하지 않음, 이유 기록):**
+`AttendanceCheckScreen` 은 단기의 **어제** `workDate` 도 목록에 넣는다(자정 넘겨
+퇴근하는 야간 근무). Home Hero 는 오늘만 본다 → **퇴근만 남은 사람에게 Home 진입점이
+없다**(UHR-18 로 고정). 고치려면 "어제 근무 퇴근 미완료" 라는 **새 상태와 새 문구**가
+필요하고 이는 이번 결산 범위(기존 증거 연결·최소 수정) 밖이다 →
+`[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]`.
+
+### B. P21-E — 지원자 reader 가 낼 수 있는 상태
+
+| 상태 | 지원자 Home 에서 가능한가 | 근거 / 문구 |
+|---|---|---|
+| LOADING | 가능 | Hero skeleton · 수입 행 progress placeholder(`value: null`) |
+| SUCCESS_ZERO | 가능 | `아직 지원한 일자리가 없어요` · `아직 이번 달 수입이 없어요` (UHR-8·13) |
+| ERROR | 가능 | `지원 현황을 불러오지 못했어요` + `다시 시도`, 0건으로 말하지 않는다 (UHR-7) |
+| PARTIAL | 가능 | 공고만 실패해도 지원 현황·Hero 유지 (UHR-9) |
+| UNKNOWN | 가능 | 근태 실패 → `확인 못함` + 재시도 (UHR-12) · 계약해지 → `계약해지 요청이 있는지 확인하지 못했어요` (UHR-14) |
+| NO_PERMISSION | **불가능(canonical)** | 홈의 여섯 읽기는 전부 **자기 uid 스코프**다(`getMyApplications`·`getMyMonthlyAttendances`·`getPendingIdCardRequestsForUser`·`getMyRenewalProposals`)와 공개 공고·사업장 공개 정보. rules 가 본인 문서를 거절하면 그것은 권한 없음이 아니라 장애이고 ERROR 로 떨어진다. **억지 fixture 를 만들지 않았다.** |
+
+**이번에 고친 것 — 돈이 0으로 보였다:** 근태 조회 실패가 `_homeLoadFailed` 에
+잡히지 않아 `_attendances = []` 로 계산됐다. 결과는 `근무 완료 0원` ·
+`예상 수입 0원` · `아직 이번 달 수입이 없어요` — **못 읽은 달을 "번 돈이 없다"고
+말한 것**이다. `_attendancesFailed` 를 도입해 두 금액을 `확인 못함` 으로, 빈 상태
+문구를 차단하고 재시도 줄을 붙였다(UHR-12 · 제거 대조 FAIL 확인).
+
+**계정 전환 시 화면에 남은 기존 state — 정정:**
+production 의 계정 전환은 `AuthWrapper` 가 `currentUser == null` 구간에서
+`LoginScreen` 을 그리므로 `UserHomeScreen` 의 State 가 **파괴된다.** 즉 이전
+사용자의 **이미 그려진** 값이 새 계정 화면에 남지는 않는다. 첫 보고의
+"계정 전환 후 이전 사용자의 근무가 새 계정 홈에 앉았다" 는 **위젯 수준 재현
+(UHR-11)** 에서는 참이지만 **production 경로로는 입증되지 않았다** — 이 문장을
+정정한다. uid 가드는 그 위험군에 대한 이중 방어로 유지한다.
+
+**대신 같은 uid 에서 실제로 도달하는 순서 역전을 찾았다:**
+`_loadHomeData` 의 `unawaited` 꼬리(연장 제안 · 급여 보완)는 `_isLoadingHomeData`
+직렬화 **밖**이다. 1번 로드의 꼬리가 2번 로드 완료 뒤 도착하면 사라진 제안이
+되살아난다 → **seq 가드가 고치는 실제 사건**(UHR-15, seq 제거 시 FAIL).
+본문은 겹치지 않는다(UHR-10 을 실제 경로 `앱 복귀` 로 다시 측정 — 이전 측정에
+쓴 fling 은 RefreshIndicator 를 깨우지 못해 근거가 되지 못했다. 그 측정 방법을 교체했다).
+
+### C. P21-N/G — 알림·FCM 진입과 leaf 6
+
+**payload 대상·권한(기존 R5.1 증거에 연결):** 권한이 걸린 타입은 `type` 기준으로
+canonical dispatcher 에 넘어가고, 근로자 목적지(`attendance_check`·`my_reviews`·
+`my_applications`·`my_schedule`)는 **인자를 받지 않는다** — 목적지가 현재 계정으로
+다시 읽으므로 payload 가 다른 사람의 데이터를 열 수 없다. **stale:** 알림 화면의
+재확인 경로는 `reconfirmRespondedAt` 를 먼저 보고 이미 처리됐으면 안내 후
+일정 화면으로 보낸다. **뒤로:** `_pushFcmScreen` 은 root Navigator 에
+`RouteSettings(name:'fcm:<key>')` 로 push 하고 같은 key 가 top 이면 중복 push 를
+건너뛴다 → 뒤로는 탭 루트로 돌아온다. 새 경로를 만들지 않았다(EVIDENCE LINK).
+
+| leaf | 역할 | 시작점 | 뒤로 | headerContent | 헤더 TabBar | shell `onRefresh` | 판정 |
+|---|---|---|---|---|---|---|---|
+| `apply_prerequisites` | 지원자 | 공고 상세 · 내 지원 · 지원 다이얼로그 | 호출 화면 | 0 | 0 | 0 | 순수 교체 가능 |
+| `subadmin_leave` | **SubAdmin** | 설정 ×2 | 설정 | 0 | 0 | 0 | 순수 교체 가능 |
+| `attendance_check` | 지원자 | 홈 Hero · 알림 · **FCM** | 탭 루트/호출 화면 | 0 | 0 | **1** | body 에 `RefreshIndicator` 중복 — shell 인자만 제거하면 교체 가능 |
+| `interim_settlement_request` | 지원자 | 내 지원 | 호출 화면 | 0 | 0 | **1** | body `RefreshIndicator` 신설 필요 |
+| `my_reviews` | 지원자 | 알림 · 설정 · **FCM** | 탭 루트/설정 | 0 | 0 | **1** | body `RefreshIndicator` 신설 필요 |
+| `common/settings` | 역할 공유 | MY 탭 · 관리 탭 | 탭 루트 | **1** | 0 | 0 | 단순 교체 아님(P1-6 에서 역할 분기 완료) |
+
+전환은 하지 않았다.
+
+### D. 범위 판정
+
+| ID | CODE | 행동 | RENDER | DEV READ | DEVICE | NOT SEEN |
+|---|---|---|---|---|---|---|
+| P21-N | 종료 | 종료(URN-1~3) | 종료 | 없음 | 대기 | 실기기 FCM cold-start |
+| P21-H | 종료 | 종료 | 종료(6조합) | 없음 | 대기 | — |
+| P21-R | 종료(표 A) | **부분** — 12경로 중 1·10 실행, 나머지는 CODE | 종료 | 없음 | 대기 | 2·3·4·5·6·7·8·9·11·12 의 제스처 |
+| P21-E | 종료 | 종료(UHR-10·12·14·15) | 종료 | 없음 | 대기 | NO_PERMISSION(도달 불가) |
+| P21-G | 종료(실측표) | N/A(전환 안 함) | N/A | 없음 | 대기 | — |
+
+**BLOCKER 기록**
+- `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` — CODE/행동 **수용**, DEVICE/PRODUCT **대기**.
+- `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` — CODE/행동 **수용**(가드 유지), 단
+  **production 재현 경로는 계정 전환이 아니라 같은 uid 의 `unawaited` 꼬리**다(위 B).
+  DEVICE/PRODUCT 대기.
+- 새 BLOCKER 는 열지 않았다. 야간 근무 퇴근 진입점은 **RESIDUAL** 로 남긴다.
+
+**P2-1 판정:** CODE **종료** · RENDER **종료**(P21-R 행동은 부분, 범위 명시) ·
+DEVICE/PRODUCT **대기**. P2 전체와 실기기는 계속 대기.
+
+### E. 증거·회귀 (이번 결산분)
+
+- `user_home_content_render_test` **24건**(UHR-1~18 + 6조합) · `user_root_tab_navigation_test` **3건**
+- 제거 대조 3종: Hero 술어 · seq 가드 · `_attendancesFailed` — 각각 해당 테스트 FAIL 후 복원 PASS
+- 영향집합 **3966 PASS / 6 FAIL** — 6건 전부 기준선(HEAD)에서도 같은 이름으로 실패하는 기존 항목
+- `flutter analyze lib test` **No issues** · DEV READ 없음 · DEVICE 미실행

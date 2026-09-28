@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
+import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
 
 /// [R7-P2-1 P21-H/E] **실제 지원자 홈 위젯**을 콘텐츠와 함께 그린다.
@@ -160,6 +162,18 @@ ApplicationModel _longTerm({
       appliedAt: _day(-20),
     );
 
+/// 지금 응답할 수 있는 연장 제안 — 효력 시작은 내일(시계 의존 없음).
+RenewalProposalModel _proposal() => RenewalProposalModel(
+      id: 'rp1',
+      businessId: _biz,
+      businessName: '강남 물류센터',
+      workerUid: 'u1',
+      oldApplicationId: 'long1',
+      status: RenewalProposalStatus.pending,
+      effectiveStart: _day(1),
+      effectiveEnd: _day(60),
+    );
+
 BusinessModel _business() => BusinessModel(
       id: _biz,
       name: '강남 물류센터',
@@ -179,11 +193,15 @@ UserHomeReads _reads({
   List<TOModel> tos = const [],
   Object? applicationsError,
   Object? tosError,
+  Object? attendancesError,
   /// n 번째 호출의 지원 목록을 직접 준다(순서 역전 재현용).
   List<Future<List<ApplicationModel>>>? applicationsByCall,
+  /// n 번째 호출의 연장 제안 응답 — unawaited 꼬리의 순서 역전 재현용.
+  List<Future<List<RenewalProposalModel>>>? renewalByCall,
   Map<String, int>? calls,
 }) {
   var appCall = 0;
+  var renewalCall = 0;
   return UserHomeReads(
     myApplications: (uid) {
       if (calls != null) calls['apps'] = (calls['apps'] ?? 0) + 1;
@@ -198,16 +216,23 @@ UserHomeReads _reads({
           applications ?? const <ApplicationModel>[]);
     },
     myMonthlyAttendances: (
-            {required String userId,
-            required int year,
-            required int month}) async =>
-        attendances,
+        {required String userId, required int year, required int month}) async {
+      if (attendancesError != null) throw attendancesError;
+      return attendances;
+    },
     publishedTOs: () async {
       if (tosError != null) throw tosError;
       return tos;
     },
     pendingIdCardRequests: (uid) async => const <IdCardAccessRequestModel>[],
-    myRenewalProposals: () async => const <RenewalProposalModel>[],
+    myRenewalProposals: () {
+      final i = renewalCall++;
+      if (renewalByCall != null && i < renewalByCall.length) {
+        return renewalByCall[i];
+      }
+      return Future<List<RenewalProposalModel>>.value(
+          const <RenewalProposalModel>[]);
+    },
     businessById: (id) async => _business(),
     invalidatePublishedTOsCache: () {},
   );
@@ -393,13 +418,12 @@ void main() {
     expect(find.text('지원 현황을 불러오지 못했어요'), findsNothing);
   });
 
-  testWidgets('UHR-10 같은 계정의 재진입은 이미 직렬화돼 있다 — 순서 역전이 생기지 않는다',
-      (tester) async {
+  testWidgets('UHR-10 홈 로드 **본문**은 같은 계정에서 겹치지 않는다', (tester) async {
     // 측정해서 남긴다: `_isLoadingHomeData` 가 진행 중 재진입을 막으므로
-    //   **같은 uid** 의 두 로드는 애초에 겹치지 않는다. 그래서 seq 카운터는
-    //   관측된 사건을 고치는 것이 아니라 uid 가드와 함께 두는 이중 방어다.
-    //   이 사실을 적어 두지 않으면 다음 사람이 "seq 가 이 버그를 고쳤다"고
-    //   읽는다.
+    //   같은 uid 의 두 로드 **본문**은 겹치지 않는다. 겹치는 것은
+    //   `unawaited` 꼬리(연장 제안·보완 요청)뿐이고 그쪽이 seq 가드의
+    //   실제 대상이다(UHR-15). 이 구분을 적어 두지 않으면 다음 사람이
+    //   "본문에도 순서 역전이 있었다"고 읽는다.
     final slow = Completer<List<ApplicationModel>>();
     final calls = <String, int>{};
 
@@ -408,9 +432,8 @@ void main() {
       reads: _reads(calls: calls, applicationsByCall: [slow.future]),
     );
 
-    // 1번째가 미완인 채로 당겨서 새로고침을 시도한다.
-    await tester.fling(
-        find.byType(SingleChildScrollView).first, const Offset(0, 400), 1000);
+    // 1번째가 미완인 채로 **실제 경로**(앱 복귀)로 재로드를 시도한다.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -447,6 +470,143 @@ void main() {
 
     expect(find.text('오늘의 근무'), findsNothing,
         reason: '다른 사람의 확정 근무가 새 계정 홈에 앉으면 안 된다');
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // P21-E 후속 — 돈·약속이 조회 실패로 0/없음이 되지 않는가
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('UHR-12 근태 조회 실패를 "수입이 없다"로 말하지 않는다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: const [],
+        attendancesError: Exception('attendance read failed'),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('아직 이번 달 수입이 없어요'), findsNothing,
+        reason: '못 읽은 달을 "번 돈이 없다"로 말하면 미지급을 놓친다');
+    expect(find.text('확인 못함'), findsWidgets,
+        reason: '근무 완료·예상 수입은 근태에서 나온다 — 모르면 모른다고 말한다');
+    expect(find.text('이번 달 근무 기록을 불러오지 못했어요 · 다시 시도'), findsOneWidget);
+  });
+
+  testWidgets('UHR-13 정상 0원은 실패와 다른 화면이다', (tester) async {
+    await _pump(tester, reads: _reads(applications: const []));
+
+    expect(find.text('아직 이번 달 수입이 없어요'), findsOneWidget);
+    expect(find.text('확인 못함'), findsNothing);
+  });
+
+  testWidgets('UHR-14 계약해지 요청은 확인 못하면 "없음"으로 접지 않는다', (tester) async {
+    // 지원 조회 실패 → 계약해지 표면이 UNKNOWN. D+3 자동 승인되는 일이라
+    // 침묵이 가장 위험하다.
+    await _pump(
+      tester,
+      reads: _reads(applicationsError: Exception('network')),
+    );
+
+    expect(find.text('계약해지 요청이 있는지 확인하지 못했어요'), findsOneWidget);
+  });
+
+  testWidgets('UHR-15 늦게 온 이전 로드의 연장 제안이 현재 화면을 덮지 않는다',
+      (tester) async {
+    // 연장 제안은 `unawaited` 꼬리라 `_isLoadingHomeData` 직렬화 밖이다 —
+    //   같은 uid 에서도 **실제로** 순서 역전이 가능한 경로다(seq 가드의 대상).
+    final slowRenewal = Completer<List<RenewalProposalModel>>();
+    final calls = <String, int>{};
+
+    await _pump(
+      tester,
+      reads: _reads(
+        calls: calls,
+        applications: const [],
+        renewalByCall: [
+          slowRenewal.future, // 1번째 로드의 꼬리 — 아주 늦게 온다
+          Future.value(const <RenewalProposalModel>[]), // 2번째 로드 — 제안 없음
+        ],
+      ),
+    );
+
+    // 1번째 로드는 이미 끝났다(꼬리만 떠 있다) → 2번째 로드를 **실제 경로**로
+    //   깨운다: 앱 복귀(didChangeAppLifecycleState → _autoRefresh).
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(calls['apps'], greaterThanOrEqualTo(2),
+        reason: '두 번째 로드가 시작돼야 순서 역전을 볼 수 있다');
+
+    // 이제 1번째 로드의 꼬리가 낡은 제안을 들고 도착한다.
+    slowRenewal.complete([_proposal()]);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('계약 연장 제안'), findsNothing,
+        reason: '이미 사라진 제안이 낡은 응답으로 되살아나면 안 된다');
+  });
+
+  testWidgets('UHR-16 살아 있는 연장 제안은 그대로 보인다(회귀)', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: const [],
+        renewalByCall: [Future.value([_proposal()])],
+      ),
+    );
+
+    expect(find.text('계약 연장 제안'), findsOneWidget);
+    expect(find.text('확인하기'), findsOneWidget);
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // P21-R 후속 — CTA 가 같은 대상을 여는가 (production navigation)
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('UHR-17 `출근하기` 는 실제로 출퇴근 화면을 연다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(applications: [_shortTerm(workDate: _today)]),
+    );
+
+    expect(find.text('오늘의 근무'), findsOneWidget);
+    await tester.tap(find.text('출근하기'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byType(AttendanceCheckScreen), findsOneWidget,
+        reason: 'Hero 의 출근 CTA 가 출퇴근 화면으로 가야 한다');
+    // 목적지는 인자를 받지 않는다 — 대상 동일성은 **같은 canonical 술어**가
+    //   보장한다(두 화면 모두 isWorkingOnDate). 그 계약을 소스로 고정한다.
+    final home = File('lib/screens/user/user_home_screen.dart').readAsStringSync();
+    final dest =
+        File('lib/screens/user/attendance_check_screen.dart').readAsStringSync();
+    expect(home.contains('isWorkingOnDate(today)'), isTrue);
+    expect(dest.contains('isWorkingOnDate(todayStart)'), isTrue);
+  });
+
+  testWidgets('UHR-18 어제 시작한 야간 근무는 Home 에 진입점이 없다 — 관측 기록',
+      (tester) async {
+    // 출퇴근 화면은 단기의 **어제** workDate 도 목록에 넣는다(자정 이후 퇴근).
+    //   Home Hero 는 오늘만 본다 → 퇴근만 남은 사람에게 Home CTA 가 없다.
+    //   반례를 고정해 둔다(고치는 것은 새 문구·새 상태가 필요해 범위 밖).
+    await _pump(
+      tester,
+      reads: _reads(applications: [
+        _shortTerm(id: 'night1', workDate: _day(-1), start: '22:00', end: '06:00'),
+      ]),
+    );
+
+    expect(find.text('오늘의 근무'), findsNothing);
+    expect(find.text('출근하기'), findsNothing);
+    // 목적지 쪽 술어는 어제를 포함한다 — 두 화면이 다른 모집단을 본다.
+    final dest =
+        File('lib/screens/user/attendance_check_screen.dart').readAsStringSync();
+    expect(dest.contains('DateUtils.isSameDay(app.workDate, yesterday)'), isTrue);
   });
 
   // ══════════════════════════════════════════════════════════

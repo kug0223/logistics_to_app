@@ -73,6 +73,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   /// 구분한다. 구분하지 않으면 조회 실패가 "지원 가능한 일자리가 없어요"로
   /// 보이고, 사용자는 앱이 정상이라고 믿은 채 공고를 놓친다.
   bool _postingsFailed = false;
+
+  /// [R7-P2-1 후속 P21-E] 이번 달 근태를 **읽지 못했다**.
+  ///
+  ///   수입의 `근무 완료`·`정산 중`·`예상 수입` 은 근태에서 나온다.
+  ///   조회가 실패해도 지금까지는 빈 목록으로 계산돼 `0원` 과
+  ///   "아직 이번 달 수입이 없어요" 가 나왔다 — **못 읽은 것을 번 돈이
+  ///   없다고 말한 것**이다. 근로자는 앱이 정상이라 믿고 미지급을 놓친다.
+  ///   (지원 내역은 `_homeLoadFailed` 가 이미 같은 구분을 한다.)
+  bool _attendancesFailed = false;
   /// businessId → BusinessModel 캐시 — 사업장 이미지·혜택 정보 표시용
   Map<String, BusinessModel> _businessCache = {};
   bool _isLoadingData = false;
@@ -462,7 +471,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       } else {
         debugPrint('⚠️ 지원 내역 로드 실패: $appsErr');
       }
-      if (attsErr == null) _attendances = results[1] as List<AttendanceModel>;
+      if (attsErr == null) {
+        _attendances = results[1] as List<AttendanceModel>;
+        _attendancesFailed = false;
+      } else {
+        debugPrint('⚠️ 이번 달 근태 로드 실패: $attsErr');
+        _attendancesFailed = true;
+      }
       // [R8-P7.4] 실패했으면 이전 값을 유지하고, 비어 있는 이유를 기록해 둔다.
       if (tosErr == null) {
         _publishedTos = results[2] as List<TOModel>;
@@ -2043,7 +2058,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           ),
           SizedBox(height: 14 * s),
           // 신규 사용자 Empty State — 수입 기록 없음
-          if (!_isLoadingData && wageCompleted == 0 && wageScheduled == 0)
+          // [R7-P2-1 후속 P21-E] 근태를 못 읽었으면 "수입이 없다"고 말할 수
+          //   없다 — 0원은 조회 성공일 때만 쓸 수 있는 말이다.
+          if (!_isLoadingData &&
+              !_attendancesFailed &&
+              wageCompleted == 0 &&
+              wageScheduled == 0)
             Container(
               width: double.infinity,
               padding: EdgeInsets.symmetric(vertical: 20 * s, horizontal: 16 * s),
@@ -2085,8 +2105,14 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     s: s,
                     label: '근무 완료',
                     labelColor: AppColors.textSecondary,
-                    value: _isLoadingData ? null : FormatHelper.formatWage(wageCompleted),
-                    valueColor: wageCompleted > 0 ? AppColors.successDark : AppColors.textSecondary,
+                    value: _isLoadingData
+                        ? null
+                        : (_attendancesFailed
+                            ? '확인 못함'
+                            : FormatHelper.formatWage(wageCompleted)),
+                    valueColor: (!_attendancesFailed && wageCompleted > 0)
+                        ? AppColors.successDark
+                        : AppColors.textSecondary,
                     valueBold: false,
                   ),
                   // ── 근무 예정 행 — 확정된 미출근 근무의 예상 수입 ────────
@@ -2120,14 +2146,39 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   Divider(height: 1, color: AppColors.borderLight),
                   SizedBox(height: 12 * s),
                   // ── 예상 수입 합계 ────────────────────────────────────
+                  // 합계는 확정 부분을 모르면 만들 수 없다 — 반쪽을 총액이라
+                  //   부르지 않는다.
                   _incomeRow(
                     s: s,
                     label: '예상 수입',
                     labelColor: AppColors.infoDark,
-                    value: _isLoadingData ? null : FormatHelper.formatWage(wageTotal),
+                    value: _isLoadingData
+                        ? null
+                        : (_attendancesFailed
+                            ? '확인 못함'
+                            : FormatHelper.formatWage(wageTotal)),
                     valueColor: AppColors.infoDark,
                     valueBold: true,
                   ),
+                  if (_attendancesFailed) ...[
+                    SizedBox(height: 10 * s),
+                    GestureDetector(
+                      onTap: _isLoadingData ? null : () => _loadHomeData(),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.cloud_off_rounded,
+                            size: 14 * s, color: AppColors.textSecondary),
+                        SizedBox(width: 5 * s),
+                        Flexible(
+                          child: Text('이번 달 근무 기록을 불러오지 못했어요 · 다시 시도',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.infoDark,
+                              )),
+                        ),
+                      ]),
+                    ),
+                  ],
                 ],
               ),
             ),
