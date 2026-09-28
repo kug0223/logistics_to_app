@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'my_schedule_reads.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/application_model.dart';
@@ -26,7 +27,10 @@ import 'invite_region_settings_screen.dart';
 import '../../utils/person_label.dart';
 
 class MyScheduleScreen extends StatefulWidget {
-  const MyScheduleScreen({super.key});
+  const MyScheduleScreen({super.key, this.reads});
+
+  /// [R7-P2-3 READ] 화면을 만들 때의 읽기 경계. production 은 null.
+  final MyScheduleReads? reads;
 
   @override
   State<MyScheduleScreen> createState() => _MyScheduleScreenState();
@@ -36,6 +40,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   static final _fmt = NumberFormat('#,###');
   final FirestoreService _firestoreService = FirestoreService();
   final AvailabilityService _availabilityService = AvailabilityService();
+  late final MyScheduleReads _reads = widget.reads ??
+      MyScheduleReads.of(
+          _firestoreService, _availabilityService, _inviteRegionService);
   // [R2.3] 초대 받을 지역 — null = 아직 안 읽음(로딩). UNKNOWN과 구분한다.
   final InviteRegionService _inviteRegionService = InviteRegionService();
   InviteRegionPreference? _invitePref;
@@ -176,7 +183,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
     // Phase 1: 지원 내역 먼저 로드 (1분 TTL 캐시 — 재방문 시 즉시 반환)
     try {
-      final applications = await _firestoreService.getMyApplications(uid);
+      final applications = await _reads.myApplications(uid);
       if (!mounted) return;
       _applications = applications;
       _attendanceMap = {};
@@ -197,7 +204,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     // Phase 2: 출근 기록 백그라운드 로드 (2분 TTL 캐시)
     // 실패해도 스케줄 카드는 이미 표시되어 있으므로 토스트 없이 조용히 처리
     try {
-      final attendances = await _firestoreService.getMyMonthlyAttendances(
+      final attendances = await _reads.myMonthlyAttendances(
         userId: uid,
         year: _focusedDay.year,
         month: _focusedDay.month,
@@ -226,8 +233,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     if (uid == null) return;
     try {
       final results = await Future.wait([
-        _firestoreService.getMyApplications(uid),
-        _firestoreService.getMyMonthlyAttendances(
+        _reads.myApplications(uid),
+        _reads.myMonthlyAttendances(
           userId: uid,
           year: focusedDay.year,
           month: focusedDay.month,
@@ -253,7 +260,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
     try {
-      final model = await _availabilityService.loadMyAvailability(uid);
+      final model = await _reads.myAvailability(uid);
       if (!mounted) return;
       setState(() {
         _availabilityDates = model?.dateSet ?? {};
@@ -654,7 +661,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     final uid =
         Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) return;
-    final pref = await _inviteRegionService.loadMine(uid);
+    final pref = await _reads.invitePreference(uid);
     if (!mounted) return;
     setState(() => _invitePref = pref);
   }
@@ -665,8 +672,35 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// count > 0  : 등록된 일 수 표시 + 근무 제안 설명 부제목
   Widget _buildAvailabilityBanner() {
     final count = _availabilityDates.length;
-    const descText =
-        '가능일을 등록하면 조건이 맞는 사업장에서 근무 제안을 받을 수 있어요.';
+
+    // [R7-P2-3] 가능일만으로는 제안이 오지 않는다.
+    //
+    //   서버가 초대를 허용하는 조건은 세 가지다(`callableInviteWorker`):
+    //     ① 그 날짜가 `dates` 에 있다        ← 이 화면의 가능일
+    //     ② `inviteEnabled == true`          ← 아래 '초대 받을 지역'
+    //     ③ 사업장 근무지역이 `inviteRegionKeys` 에 있다  ← 같은 곳
+    //   ②③ 가 없으면 `callableSetAvailability` 가 `inviteKeys` 를 **빈 배열**로
+    //   만들어, 관리자 후보 조회에 아예 잡히지 않는다.
+    //
+    //   그런데 이 배너는 등록을 마친 사람에게도 "제안을 받을 수 있어요"라고
+    //   조건 없이 말했다 — **하지 않은 설정을 한 것처럼 확인해 주는 문구**다.
+    //   그래서 나머지 절반의 상태를 함께 본다. 모르면 모른다고 말한다.
+    final inviteState = _invitePref?.state;
+    final String descText;
+    if (count == 0) {
+      // 아직 등록 전 — 무엇을 위한 기능인지 안내한다(약속이 아니다).
+      descText = '가능일을 등록하면 조건이 맞는 사업장에서 근무 제안을 받을 수 있어요.';
+    } else {
+      descText = switch (inviteState) {
+        InvitePreferenceState.on =>
+          '조건이 맞는 사업장에서 근무 제안을 받을 수 있어요.',
+        InvitePreferenceState.unset =>
+          '아래 \'초대 받을 지역\'까지 설정해야 제안을 받을 수 있어요.',
+        InvitePreferenceState.off =>
+          '지금은 초대를 받지 않도록 설정돼 있어 제안이 오지 않아요.',
+        _ => '초대 설정을 확인하지 못해 제안이 올지 알 수 없어요.',
+      };
+    }
 
     if (count == 0) {
       // 미등록 상태 — 등록 유도 타일
@@ -819,17 +853,18 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         horizontal: ResponsiveHelper.spacing(context, 12),
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      // [R7-P2-3] 범례 다섯 항목이 한 줄 고정이라 배율 2.0 에서 넘쳤다
+      //   (320dp 41px · 360dp 4.1px). 어느 표시가 무슨 뜻인지 알려 주는
+      //   줄이라 항목을 지우지 않고 줄바꿈을 허용한다.
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        spacing: ResponsiveHelper.spacing(context, 10),
+        runSpacing: ResponsiveHelper.spacing(context, 6),
         children: [
           _legendDot(primaryColor, '확정', star: false),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.amberDark, '장기', star: true),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.warningMedium, '대기', star: false),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.grey400, '휴무', star: true),
-          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.info, '가능', star: false),
         ],
       ),

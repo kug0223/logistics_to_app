@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-2 최종 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-3 선행 READ 커밋
 
 ## 1. 문서 지도
 
@@ -32,7 +32,8 @@
 | P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | **CLOSED**(super-admin 5화면 CODE only · 통계 hop 제스처 NOT SEEN) | **PENDING** |
 | P2-1 | 지원자 Home·4탭 진입 | **CLOSED** | **CLOSED**(P21-R 행동은 12경로 중 4 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
 | P2-2 | 일자리·공고 상세·지원 흐름 | CLOSED | **CLOSED**(D2·N1 행동 실행 · **A1 제스처 NOT SEEN**) | **PENDING** |
-| P2 나머지 | 일정·MY 탭 내부 | 미착수 | — | — |
+| P2-3 선행 READ | 근무가능일↔초대 의미 | CLOSED(계약 확정) | **CLOSED**(배너·범례) | **PENDING** · 사용자 관찰 **없음** |
+| P2 나머지 | 일정 탭 그 외·MY 탭 내부 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
 ## 3. 소유자별 미결 (완료 선언 금지 항목)
@@ -54,6 +55,7 @@
 | ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | **NOT SEEN** — 업무 카드 미렌더로 버튼 미도달(원인 기록) |
+| `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]` | P2-3 | 발견성·이해 과제는 실제 사용자 관찰로만 닫는다 |
 | ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | FCM → 공고 상세 제스처 NOT SEEN |
 | `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` | P2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
@@ -91,3 +93,4 @@
 - 일자리 탭의 부분 결과≠없음·선택 날짜 전달(P2-2)
 - 공고 상세의 슬롯 날짜 KST 매칭·표시, 내 지원 상태·사유·카운트(P2-2 후속)
 - FULL/마감이 기존 약속을 끝내지 않음·상세 뒤로의 조건 유지(P2-2 최종, NO PATCH)
+- 근무가능일은 초대의 절반이다 — `inviteEnabled`+`inviteRegionKeys` 가 없으면 후보에 잡히지 않는다(P2-3)

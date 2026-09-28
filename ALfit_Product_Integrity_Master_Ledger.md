@@ -4,7 +4,7 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-28 (R7-P2-2 최종 · 세 셀)
+> 마지막 갱신: 2026-09-28 (R7-P2-3 선행 READ · 근무가능일↔초대)
 
 ## 0. 이 장부가 지키는 불변식
 
@@ -43,6 +43,8 @@
 | 20 | P2-1 | 지원자 홈 Hero 가 `workDate == today` 로 오늘 근무를 판정해, **계약 시작일이 아닌 날 일하는 장기 근무자에게 출퇴근 CTA 가 사라졌다** | 같은 화면·출근 화면과 같은 canonical 술어 `isWorkingOnDate` | RENDER 4 + 수정 전 대조 |
 | 21 | P2-1 (후속 정정) | 홈 로드가 늦은 응답을 그대로 반영했다. **실제 도달 경로는 `unawaited` 꼬리(연장 제안·보완 요청)** — 사라진 제안이 낡은 응답으로 되살아났다. 계정 전환은 `AuthWrapper` 가 State 를 파괴하므로 production 재현 경로가 **아니다**(첫 보고 문장 정정) | seq + uid 가드를 state 반영 3곳에 | UHR-15 + seq 제거 대조 |
 | 22 | P2-1 | 수입 행·지원 준비 진행도·`SectionHeader` 액션에 flex·상한이 없어 좁은 화면·큰 배율에서 잘렸다(17·36·83·57·31px) | 금액·진행도·목적지 문구를 **줄이지 않고** 줄바꿈 | RENDER 6조합 |
+| 33 | P2-3 READ | 캘린더 범례 5항목이 한 줄 고정이라 배율 2.0 에서 320dp 41px · 360dp 4.1px 넘쳤다 | `Wrap` 으로 줄바꿈(항목 삭제 없음) | RENDER 6조합 |
+| 32 | P2-3 READ | 가능일을 등록한 사람에게도 배너가 **조건 없이** "근무 제안을 받을 수 있어요" 라고 말했다. 실제로는 `inviteEnabled`·`inviteRegionKeys` 가 없으면 `inviteKeys` 가 빈 배열이라 **관리자 후보 조회에 잡히지 않는다** — 하지 않은 설정을 한 것처럼 확인해 줬다 | 같은 화면이 들고 있는 초대 설정 상태(ON/UNSET/OFF/UNKNOWN)로 문구를 가른다. UNKNOWN 을 OFF 로 단정하지 않는다 | 수정 전 4 FAIL → 12 PASS |
 | 31 | P2-2 후속 | 공고 상세의 날짜 칩이 `height:82`·`width:62` 고정이라 요일·날짜·**가능한 업무 수**가 기본 배율에서도 18px, 2.0 에서 241px 잘렸다 | 글자 배율을 따라가게(상한 있음) + 기본값을 실제 필요분으로 | RENDER 두 기기 · 4조합 |
 | 30 | P2-2 후속 | 공고 상세가 슬롯 날짜를 **필드 비교**로 찾고 **로컬 필드로 표시**했다 | 비-KST 기기에서 **고른 날의 슬롯을 못 찾고**, 찾아도 `10월 11일 근무`를 **10월 10일**로 말했다 | 매칭은 `toKstDate` 로, 찾은 뒤 선택값은 슬롯 표현으로 되돌림, 표시는 KST | 수정 전 9 FAIL → 10 PASS |
 | 29 | P2-2 | 지원 준비 항목의 액션 버튼에 상한이 없어 320dp·배율 2.0 에서 **4개 항목 전부 15px 잘렸다** | 넘칠 때만 폭 40% 로 묶고 라벨 줄바꿈 — 항목명도 행동명도 지우지 않는다 | RENDER 4조합 |
@@ -69,6 +71,10 @@
 | P2-1 후속 | 홈 로드 **본문**의 같은 계정 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 본문은 겹치지 않는다(앱 복귀 경로로 재측정). 겹치는 것은 `unawaited` 꼬리뿐이고 그쪽은 결함 #21 로 고쳤다 |
 | P2-1 후속 | 홈의 NO_PERMISSION 상태 | 홈의 읽기가 전부 **자기 uid 스코프**+공개 데이터라 도달 불가. 억지 fixture 를 만들지 않았다 |
 | P2-1 후속 | CTA 가 다른 사람/근무를 여는가 | 12경로 중 스냅샷을 넘기는 것은 추천 카드 하나뿐, 나머지는 키·계정 스코프라 목적지가 다시 읽는다. `출근하기` 는 인자 없이 **같은 canonical 술어**로 대상을 맞춘다 |
+| P2-3 READ | 가능일 저장 단위·범위 | 날짜 full-day(KST) · 최대 60개 · 오늘~+90일 · 시간대/status 필드 없음. 코드와 화면이 일치 — **KEEP** |
+| P2-3 READ | 초대 지역 행의 UNSET/OFF/ON/UNKNOWN | 이미 상태를 그대로 말한다 — **KEEP** |
+| P2-3 READ | 대체 제안(이미 PENDING 인 사람)의 availability 요구 | 요구하지 않는다(`callableOfferAlternativeWork` 주석 명시). 이 예외를 설정 UI 대표 설명으로 올리지 않았다 |
+| P2-3 READ | 가능일 해제 시 **이미 발송된 초대**의 효력 | 초대 시점 재검증은 있으나 **회수 경로는 없다**(실측). 기록만 — 정책 변경 제안 아님 |
 | P2-2 최종 | FULL/마감이 기존 확정 약속을 끝난 일로 만드는가 | 아니다 — 내 지원 경로의 하단 바는 Application 상태의 것(`_buildApplicationBottomBar`)이라 `마감된 공고입니다` 가 뜨지 않는다(JPD-7) |
 | P2-2 최종 | 상세 → 뒤로 시 선택 날짜·조건 | 그대로 유지되고, 홈이 넘긴 날짜는 **한 번만** 소비된다(UJT-8) |
 | P2-2 후속 | 상세에서 무엇이 화면을 지배하는가 | **재조회**다 — seed(`workDetails`)를 빈 목록으로 줘도 그 날짜의 업무가 나온다(JPD-3) |
@@ -101,6 +107,7 @@
 | `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` | P2 | CODE/행동/RENDER 수용 — DEVICE/PRODUCT |
 | `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 — DEVICE |
 | `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 — DEVICE |
+| `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]` | P2-3 | 발견성(일정 탭 단일 진입)·"수락이 남는다"·"해제해도 기존 초대는 그대로"·"미설정이어도 직접 지원 가능" 은 **실제 신규 지원자 관찰**로만 닫는다. 설명문을 더 얹지 않았다 |
 | `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | **NOT SEEN(원인 기록)** — 다이얼로그가 열리지만 단일 flex TO 경로에서 업무 카드가 렌더되지 않아 지원 버튼에 도달 못함. 임시 주입 지점은 되돌렸다(증거 없는 production 표면 금지). 종료: 업무 카드 렌더 전제를 찾아 버튼→확인→토스트 실행 |
 | ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** — 두 기기 × 날짜별 슬롯 렌더(JPD 10건) |
 | ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** — 상태·사유·카운트 렌더(MAS 10건) |
