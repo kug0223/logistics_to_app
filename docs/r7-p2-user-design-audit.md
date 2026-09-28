@@ -1051,3 +1051,104 @@ P2-2 A1 및 다른 owner 는 그대로 유지한다.
    조건·수락 필요성이 보이는지.
 2. 저장 후 배너가 "알림은 받고, 사업장 제안은 오지 않는다"를 함께 말하는지.
 3. `초대 받을 지역`을 켜고 돌아오면 배너가 ON 문구로 바뀌는지.
+
+---
+
+## R7-P2-3 후속 — 지원자 일정·출퇴근 화면군 결산 (2026-09-28)
+
+기준 `0100b78`. 실행 전 HEAD·tracked dirty 0·untracked 8 확인·보존.
+공유 DEV READ ONLY — 실제 출퇴근/지원/급여 쓰기·fixture·CF·Rules·PROD·APK 없음.
+GAP-02 의 VJ02·VJ06·VJ09 는 **관찰 범위 표식**으로만 쓴다(새 이슈 개설·PRODUCT 완료 없음).
+
+### 0. 고정 화면·진입 (소스 확정)
+
+| 화면 | 실제 하위 목적지 |
+|---|---|
+| `MyScheduleScreen` | `ScheduleCard` → `ContractSignScreen`(미서명 계약) · `WageDetailDialog`(확정 임금) · 에디트 모드 → `InviteRegionSettingsScreen` |
+| `AttendanceCheckScreen` | 카드 내 행동(출근/퇴근/재확인) · `공고 보러가기` → 일자리 탭 |
+| 진입 | 하단 일정 탭 · Home `근무 기록 보기`(`switchToScheduleNow`) · Home Hero `출근하기` · Home 퇴근 카드 `퇴근하기` · 알림/FCM(`attendanceCheck`·`workReminder`) |
+
+Home 쪽 진입(출근하기·퇴근 카드·KST 동일 row·계정 범위)은 **기존 실행 증거 재사용**
+(UHR-17·18·19, JPD/KDP 계열). 알림·FCM 목적지는 **CODE only**.
+
+### 1. 확정 결함 1건 — 출퇴근 화면의 ERROR ≠ EMPTY
+
+`_loadTodayWorks` 의 catch 가 로딩만 끄고 토스트를 띄웠다. `_todayWorks` 가 빈 채로
+남아 화면은 **`오늘 확정된 근무가 없습니다`** 를 그렸고, 토스트가 사라지면
+**확정 근무가 있는 사람이 없다고 믿는다 — 그날 출근을 놓치고 노쇼가 된다.**
+일정 탭은 이미 같은 구분을 하고 있었다(`_loadError` → `일정을 불러오지 못했습니다`).
+
+→ `_loadError` 를 두고 빈 상태보다 **먼저** 가른다:
+`근무 정보를 불러오지 못했습니다 / 확정된 근무가 없다는 뜻이 아닙니다. / 다시 시도`
+
+**전후 대조:** 분기를 되돌리면 **SAT-7 FAIL**, 복원하면 15 PASS.
+양성 대조 SAT-8(정말 없을 때는 없다고 말한다)은 전후 모두 PASS.
+
+### 2. 셀별 결산
+
+| ID | 진입/역할/동일 대상 key | 보이는 상태·CTA·뒤로 | CODE | 제스처/행동 | RENDER | 미관찰·owner | PATCH |
+|---|---|---|---|---|---|---|---|
+| **P23-N** | 일정 탭·Home `근무 기록 보기`·Home Hero/퇴근 카드 → 출퇴근. key = `application.id` + KST 날짜 | 카드 → 계약 서명 / 임금 상세, 뒤로 pop | 종료(목적지 표) | **재사용**(Home→출퇴근 UHR-17·19, 상세→뒤로 UJT-8, 내 지원→뒤로 MAS-7) | 재사용 | 알림·FCM 제스처 **CODE only** — DEVICE owner | **NO PATCH** |
+| **P23-S** | 일정의 지원/확정 구분 | 확정 근무는 사업장·업무로, PENDING 에 확정 문구가 붙지 않음 | 종료 | SAT-10·11 | 기존 6조합 재사용 | 월 경계·명시 월 선택은 **기존 증거**(IMK·KDP) 재사용 | **NO PATCH** |
+| **P23-A** | 출퇴근 대상 = 내 uid·확정·KST 오늘(+어제 진행 중) | 단기·장기 병존, 어제 미퇴근 `출근 완료`, 오늘 카드 별도 | 종료 | SAT-1~6 | SAT-R 4조합 | **실제 출퇴근 mutation·GPS·기기 시각** — DEVICE/PRODUCT | **NO PATCH** |
+| **P23-V** | 가능일 편집 | OFF/UNSET/ON/UNKNOWN 문구, 두 효과 분리 | 종료 | 에디트 진입·설정 왕복(AIP-7·8) | AIP-R 6조합 | **날짜 선택→저장→결과는 NOT SEEN**(아래) | **NO PATCH** |
+| **P23-E** | 로딩/정상 0/실패 | 출퇴근·일정 모두 실패를 "없음"과 구분 | 종료 | SAT-7·8·9 | — | NO_PERMISSION 은 **도달 경로 미확인** → 측정 안 함 | **PATCH 1건**(위) |
+| **P23-G** | 출퇴근 shell | `GradientScaffold(title·onRefresh·body)` | 종료(차이 실측) | — | SAT-R | shell 전환 보류 근거 아래 | **NO PATCH** |
+
+### 3. P23-V — 이름별 실행 여부 (요청대로 정확히)
+
+| 셀 | 실행 여부 |
+|---|---|
+| 일정에서 가능일 찾기 → 에디트 모드 진입 | **실행**(AIP-7) |
+| OFF/UNSET/ON/UNKNOWN 문구 구분 | **실행**(AIP-1~4) |
+| 초대 설정 왕복 후 복귀 재조회 | **실행**(AIP-8) |
+| 날짜 선택이 초대를 자동 ON 하지 않음 | **실행**(AIP-9, 소스 계약) |
+| **날짜 선택 → 저장 → 결과** | **NOT SEEN** — `_saveAvailability` 는 `_availabilityService` 쓰기를 직접 부르고, 그 쓰기는 읽기 경계(`MyScheduleReads`)에 **넣지 않았다**(통과 목적의 쓰기 seam 을 production 에 남기지 않는다). |
+
+두 효과 구분은 문구로 확인된다 — 새 일자리 알림은 `내 지역`(거주 도시),
+일반 초대는 `초대 받을 지역`+ON. **OFF 문구가 대체 제안까지 막는다고 읽히는가:**
+현재 문구는 `사업장의 제안은 오지 않아요` 로 **일반 초대**를 가리키고,
+`callableOfferAlternativeWork`(이미 지원한 건의 대체 제안)는 availability 를
+요구하지 않는다 — 화면이 그 예외를 부정하지 않는다. 다만 **명시적으로 구분해
+말하지도 않는다** → HEURISTIC, 실사용자 관찰 전 문구를 더 얹지 않는다.
+
+### 4. P23-G — shell 전환은 **하지 않는다**(실측 근거)
+
+`GradientScaffold` 가 `AppPageScaffold` 보다 더 하는 일을 실측했다:
+
+| 기능 | GradientScaffold | AppPageScaffold |
+|---|---|---|
+| `onRefresh` | **우상단 새로고침 아이콘 버튼**(pull-to-refresh 아님) | 없음 → `actions:[IconButton]` 으로 대체 가능 |
+| `showNotificationBell`(기본 true) | 있음 | **없음** |
+| `showHomeButton`(기본 true) | 있음 | **없음** |
+| `showPendingContractBar`(기본 true) | 있음 | **없음** |
+
+즉 **앞선 보고에서 "onRefresh 만 다르다"고 적은 것은 부정확했다** — 알림 벨·홈
+버튼·미서명 계약 바 세 가지가 더 있다. 출퇴근 화면에서 미서명 계약 바는
+특히 의미가 있다(그 화면이 계약 안내를 함께 다룬다). 최소 전환으로 보존할 수
+없으므로 **NO PATCH**, `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` 에 이 실측을 남긴다.
+공통 scaffold 는 실제 사용처 0 확인 전 삭제하지 않는다.
+
+### 5. 증거·회귀
+
+| 구분 | 내용 |
+|---|---|
+| CODE | 목적지 표 · 출퇴근 후보 술어 · shell 기능 차이 |
+| 행동 | `schedule_attendance_truth_test` **15건**(SAT-1~11 + 4조합) |
+| RENDER | 320/412dp × 1.3/2.0 |
+| 전후 대조 | SAT-7 FAIL → 복원 15 PASS |
+| 회귀 | 영향집합 **1942 PASS / 5 FAIL** — 5건 모두 기준선에서도 같은 이름으로 실패(`mixed_staffing` 14-d · `posting_close_reopen` 03-f · `weekly_work_count` W-D 3) |
+| 정적 분석 | `flutter analyze lib test` **No issues** |
+| DEV READ | **없음** · DEVICE **미실행** · USER OBSERVATION **없음** |
+
+변경 파일: `lib/screens/user/attendance_check_screen.dart`(ERROR≠EMPTY 1건),
+`test/schedule_attendance_truth_test.dart`(신규).
+
+### 6. 이 묶음이 **주장하지 않는 것**
+
+- 지원자 PRODUCT 나 P2 전체 출시 준비 완료를 선언하지 않는다(GAP-02 기준).
+- 실제 출퇴근 기록 mutation·GPS·기기 시각 오차·FCM cold-start·실제 초대/수락은
+  DEVICE/PRODUCT owner 의 미관찰로 유지한다.
+- `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]`, P2-1 Home CTA 9개·수입 월 시트,
+  P1-5/P1-7 DEVICE·통계 hop, Staffing DEFERRED/O08, 계약 사후 정책, 출시 gate 는
+  각 owner 에 그대로 남는다.

@@ -52,14 +52,14 @@
 | VJ | 과제 | 기존 owner / 문서 | 현재 증거 등급 | 회수할 빈칸 |
 |---|---|---|---|---|
 | VJ01 | 지원자: 날짜의 일을 찾고 지원 | P2-2 / P2-2 후속 · 최종 | CODE·행동·RENDER 종료 | **A1** 실제 지원 버튼·네 결과·중복 탭 → `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` |
-| VJ02 | 지원자: 제안받기 설정·해제 | P2-3 / P2-3 후속 | CODE·행동·RENDER 종료 | **실사용자 이해** → `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]`, 진입 발견성 |
+| VJ02 | 지원자: 제안받기 설정·해제 | P2-3 / P2-3 후속 / P23-V | CODE·행동·RENDER 종료 | **날짜 선택→저장→결과 NOT SEEN**(쓰기 seam 미도입) · **실사용자 이해** → `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]` · 진입 발견성 |
 | VJ03 | 관리자↔지원자: 초대·응답 | P1 Staffing + P2-3 | CODE(자격 계약) | 관리자 쪽 초대 발송→응답 UI, 실제 mutation |
 | VJ04 | 관리자↔지원자: 확정 | P1 Staffing / R0~R6 | CODE | 양쪽 결과 이해(P5) |
 | VJ05 | 계약 요구·서명 | P1-6 / P2 MY | CODE | 남은 단계·완료 증빙의 사용자 이해. 사후 법률 정책 **OPEN 별도** |
-| VJ06 | 출근·퇴근·당일 기록 | P1-3 / P2-1 잔여 | CODE·행동·RENDER | **실제 퇴근 mutation**, DEVICE |
+| VJ06 | 출근·퇴근·당일 기록 | P1-3 / P2-1 잔여 / P23-A·E | CODE·행동·RENDER 종료(대상 판정·ERROR≠EMPTY) | **실제 출퇴근 mutation·GPS·기기 시각**, DEVICE |
 | VJ07 | 급여 자료·처리 상태 | P1-5 / P2-1 최종 | CODE·RENDER | DEVICE, 실제 송금은 앱 기록으로 입증 금지 |
 | VJ08 | 취소·해지·미출근·정정 | 각 도메인 owner | CODE(사유별 문구 확인) | 출시 핵심 예외 표본 |
-| VJ09 | 오늘 할 일·알림 재진입 | P1 Home / P2-1 | CODE·행동·RENDER | **Home CTA 9개 제스처 · FCM cold-start** |
+| VJ09 | 오늘 할 일·알림 재진입 | P1 Home / P2-1 / P23-N | CODE·행동·RENDER(일정·출퇴근 진입·복귀 재사용) | **Home CTA 9개 제스처 · 알림/FCM 목적지 제스처 · FCM cold-start** |
 | VJ10 | 서브관리자: 위임 업무 | P1 + P3 | CODE(권한 계약) | 허용 1·제한 1 과제 선정 **미착수** |
 | VJ11 | 서브관리자: 역할 전환 | P3 | CODE(모드 토글 실측) | 전환·해제 경로 관찰 **미착수** |
 | VJ12 | 슈퍼관리자: 문의 대상 판별 | P1-7 + P3 | CODE·RENDER(11/11 shell) | 대표 운영 과제 **미선정** |

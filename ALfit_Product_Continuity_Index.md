@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: GAP-02 기준 고정 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-3 후속(일정·출퇴근) 커밋
 
 ## 1. 문서 지도
 
@@ -34,7 +34,8 @@
 | P2-1 | 지원자 Home·4탭 진입 | **CLOSED** | **CLOSED**(P21-R 행동은 12경로 중 4 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
 | P2-2 | 일자리·공고 상세·지원 흐름 | CLOSED | **CLOSED**(D2·N1 행동 실행 · **A1 제스처 NOT SEEN**) | **PENDING** |
 | P2-3 | 근무가능일↔초대 의미 | CLOSED(consumer 전수) | **CLOSED**(첫 선택 전 안내·4상태·왕복) | **PENDING** · 실사용자 이해 **NOT SEEN** |
-| P2 나머지 | 일정 탭 그 외·MY 탭 내부 | 미착수 | — | — |
+| P2-3 후속 | 일정·출퇴근 화면군(P23-N/S/A/V/E/G) | CLOSED | **CLOSED** | **PENDING** · 저장 제스처·실제 mutation **NOT SEEN** |
+| P2 나머지 | MY 탭 내부 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
 ## 2.5 네 역할 PRODUCT 결산 (GAP-02)
@@ -60,7 +61,7 @@ CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰
 | 계약의 법률상 사후 정비 정책 | P16-C | **OPEN** |
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 유지보수 메모(표시 단위는 정상) |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭은 fl_chart 콜백 — DEVICE 에서 확인 |
-| `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | 6화면 + 낡은 주석 정정 — 3축 실측 완료, 셋은 `onRefresh` 설계가 먼저 |
+| `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | **실측 정정** — `GradientScaffold` 는 `onRefresh` 외에 알림 벨·홈 버튼·미서명 계약 바를 더 준다. `AppPageScaffold` 에 없으므로 최소 전환 불가. 실제 사용처 0 전 공통 scaffold 삭제 금지 |
 | `[R7-P2-1-RESIDUAL-TAB-DESTINATIONS]` | P2 | 일자리·일정·MY 탭 **내부** 화면군 |
 | ~~`[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]`~~ | P2 | **CLOSED** — 퇴근 카드 신설 |
 | ~~`[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]`~~ | P1-3 temporal | **CLOSED** — KST 로 통일 |

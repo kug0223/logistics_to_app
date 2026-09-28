@@ -51,6 +51,14 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   List<ApplicationModel> _todayWorks = [];
   final Map<String, AttendanceModel?> _attendanceMap = {};
   bool _isLoading = false; // 초기값 false — initState에서 _loadTodayWorks() 첫 호출 시 재진입 방어에 걸리지 않도록
+
+  /// [R7-P2-3 P23-E] 오늘 근무를 **읽지 못했다**.
+  ///
+  ///   예전에는 catch 에서 로딩만 끄고 토스트를 띄웠다. `_todayWorks` 는 빈
+  ///   채로 남으니 화면이 `오늘 확정된 근무가 없습니다` 를 그렸고, 토스트가
+  ///   사라진 뒤에는 **확정된 근무가 있는 사람이 없다고 믿는다** — 그날 출근을
+  ///   놓치고 노쇼가 된다. 일정 탭은 이미 같은 구분을 한다(`_loadError`).
+  Object? _loadError;
   bool _isProcessing = false;
   bool _isReconfirming = false;
 
@@ -163,6 +171,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           _attendanceMap.addAll(tempMap);
           _todayWorks = visibleWorks;
           _isLoading = false;
+          _loadError = null;
         });
       }
 
@@ -170,7 +179,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     } catch (e) {
       debugPrint('❌ 오늘 근무 조회 실패: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
+        // 실패를 **화면에 남는 상태**로 둔다 — 토스트는 사라진다.
+        setState(() {
+          _isLoading = false;
+          _loadError = e;
+        });
         ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
       }
     }
@@ -686,7 +699,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       body: _isLoading
           ? const LoadingWidget(message: '근무 정보를 불러오는 중...')
           : _todayWorks.isEmpty
-              ? _buildEmptyState()
+              ? (_loadError != null ? _buildErrorState() : _buildEmptyState())
               : RefreshIndicator(
                   onRefresh: _loadTodayWorks,
                   child: ListView.builder(
@@ -699,6 +712,21 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                     },
                   ),
                 ),
+    );
+  }
+
+  /// [R7-P2-3 P23-E] 읽지 못한 상태 — "근무 없음" 과 구분한다.
+  Widget _buildErrorState() {
+    return AppEmptyState(
+      icon: Icons.cloud_off_outlined,
+      iconColor: AppColors.grey500,
+      title: '근무 정보를 불러오지 못했습니다',
+      subtitle: '확정된 근무가 없다는 뜻이 아닙니다.\n잠시 후 다시 시도해주세요.',
+      action: TextButton.icon(
+        onPressed: _isLoading ? null : _loadTodayWorks,
+        icon: const Icon(Icons.refresh, size: 18),
+        label: const Text('다시 시도'),
+      ),
     );
   }
 
