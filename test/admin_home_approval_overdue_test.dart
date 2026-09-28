@@ -411,11 +411,14 @@ void main() {
 
     test('staffing·attendance를 건드리지 않았다', () {
       expect(cf.contains('available: failedBusinessCount === 0,'), isTrue);
+      // [R7-P1-4 H4] 원시 읽기는 admin_home_reads.dart 경계로 옮겼다 — 함께 읽는다.
       final home = _codeOf(
-          _src('lib/screens/business_admin/business_admin_home_screen.dart'));
+              _src('lib/screens/business_admin/business_admin_home_screen.dart')) +
+          _codeOf(_src('lib/screens/business_admin/admin_home_reads.dart'));
       expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
-      expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
+      expect(home.contains('_reads.workDetailTimes(allConfirmed)'), isTrue);
+      expect(home.contains('workDetailTimes: WorkDetailTimeService.load'), isTrue);
     });
 
     test('04B scope 표시 유지', () {

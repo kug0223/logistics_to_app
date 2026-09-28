@@ -128,6 +128,10 @@ int _dialogReviewCount(
 
 // ── 소스 배선 ──────────────────────────────────────────────────
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _dialogPath =
     'lib/screens/business_admin/dialogs/attendance_status_dialog.dart';
 const _servicePath = 'lib/services/work_detail_time_service.dart';
@@ -168,7 +172,7 @@ void main() {
   late String dialog;
 
   setUpAll(() {
-    home = _codeOf(_src(_homePath));
+    home = _codeOf(_src(_homePath)) + _codeOf(_src(_readsPath));
     // [R7-P1-3 P13-R] 바깥 읽기는 `attendance_reads.dart` 로 옮겼다 —
     //   읽는 주체가 이 화면이라는 계약은 두 파일을 합쳐 확인한다.
     dialog = _codeOf(_src(_dialogPath)) +
@@ -409,7 +413,8 @@ void main() {
     });
 
     test('Home과 Dialog가 같은 로더를 쓴다', () {
-      expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
+      expect(home.contains('_reads.workDetailTimes(allConfirmed)'), isTrue);
+      expect(home.contains('workDetailTimes: WorkDetailTimeService.load'), isTrue);
       expect(dialog.contains('WorkDetailTimeService.load('), isTrue);
     });
 

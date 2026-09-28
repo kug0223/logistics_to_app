@@ -14,6 +14,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 
 String _src(String p) => File(p).readAsStringSync();
 String _codeOf(String b) =>
@@ -78,7 +82,7 @@ void main() {
   late String rows;
 
   setUpAll(() {
-    raw = _src(_homePath);
+    raw = _src(_homePath) + _codeOf(_src(_readsPath));
     home = _codeOf(raw);
     rows = _bodyOf(home, '_makeActionRows(BuildContext context');
   });
@@ -247,7 +251,7 @@ void main() {
     test('각 행의 permission 게이트가 그대로다', () {
       // 각 블록은 '// N. <라벨> — <permission>' 주석으로 시작한다.
       // 재배열 과정에서 라벨과 가드가 어긋나지 않았는지 확인한다.
-      final raw = _src(_homePath);
+      final raw = _src(_homePath) + _codeOf(_src(_readsPath));
       final blocks = RegExp(r'^    // \d\. (.+?) — (canManage\w+)$', multiLine: true)
           .allMatches(raw);
       final mapped = {
@@ -393,7 +397,7 @@ void main() {
     });
 
     test('AH-V2-01 ERROR != ZERO 유지', () {
-      expect(home.contains('getBusinessesByIdsOrThrow('), isTrue);
+      expect(home.contains('businessesByIds: svc.getBusinessesByIdsOrThrow'), isTrue);
       final att = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(att.contains('_todayCheckedIn      = null'), isTrue);
     });
@@ -410,7 +414,8 @@ void main() {
     test('AH-V2-04 근태·scope 유지', () {
       expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
-      expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
+      expect(home.contains('_reads.workDetailTimes(allConfirmed)'), isTrue);
+      expect(home.contains('workDetailTimes: WorkDetailTimeService.load'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);
       expect(home.contains('targetLocationLabel()'), isTrue);
     });

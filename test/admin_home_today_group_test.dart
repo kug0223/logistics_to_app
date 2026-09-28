@@ -2,7 +2,7 @@
 //
 // 3-column KPI(필요·확정·부족 / 현재 출근·근태 확인)를 폐기하고
 //
-//     8명 필요 · 5명 확정      ← 요약 (context, tap 없음)
+//     8명 중 5명 확정          ← 요약 (context, tap 없음)
 //     ⚠ 3명 부족 · 평택센터 ›   ← 실제 문제
 //     ⏱ 근태 확인 2건 ›
 //     출근 4/5                ← 보조 정보
@@ -12,7 +12,7 @@
 // 이번 Phase의 핵심 계약:
 //   · `부족 0` / `근태 확인 0`은 행 자체가 없다 — 0을 지면에 남기지 않는다
 //   · 부족 위치는 shortageBusinesses에서만 온다 (_todayWorkSummary와 섞지 않는다)
-//   · ERROR ≠ ZERO — 실패를 `0명 필요 · 0명 확정` / `출근 0/0`으로 쓰지 않는다
+//   · ERROR ≠ ZERO — 실패를 `0명 중 0명 확정` / `출근 0/0`으로 쓰지 않는다
 //   · 권한 없음 → issue row는 상태만, `당일 명단` CTA는 비노출
 
 import 'dart:io';
@@ -81,7 +81,7 @@ String? summaryText({
   final allStaffed = required_ > 0 && shortage == 0 && confirmed >= required_;
   return allStaffed
       ? '$required_명 전원 확정'
-      : '$required_명 필요 · $confirmed명 확정';
+      : '$required_명 중 $confirmed명 확정';
 }
 
 /// `_buildTodayAttendanceLine`의 문장 규칙.
@@ -227,7 +227,7 @@ void main() {
       expect(rows.any((r) => r.label.contains('근태 확인')), isFalse);
     });
 
-    test('01-c shortage: 요약은 필요·확정, 문제는 별도 행', () {
+    test('01-c shortage: 요약은 정원·확정, 문제는 별도 행', () {
       expect(
         summaryText(
             loading: false,
@@ -236,7 +236,7 @@ void main() {
             required_: 8,
             confirmed: 5,
             shortage: 3),
-        '8명 필요 · 5명 확정',
+        '8명 중 5명 확정',
       );
       final rows = issueRows(
         day: _day(
@@ -301,7 +301,7 @@ void main() {
           confirmed: 0,
           shortage: 0);
       expect(text, '__error__');
-      expect(text, isNot(contains('0명 필요')));
+      expect(text, isNot(contains('0명 중 0명 확정')));
     });
 
     test('01-h attendance error: zero attendance 금지', () {
@@ -336,7 +336,7 @@ void main() {
           confirmed: 0,
           shortage: 0);
       expect(text, isNot('0명 전원 확정'));
-      expect(text, '0명 필요 · 0명 확정');
+      expect(text, '0명 중 0명 확정');
     });
 
     test('01-l hasTodayTarget == false면 요약 덩어리 자체가 없다', () {
@@ -362,7 +362,7 @@ void main() {
             required_: 8,
             confirmed: 8,
             shortage: 2),
-        '8명 필요 · 8명 확정',
+        '8명 중 8명 확정',
       );
     });
   });
@@ -679,7 +679,7 @@ void main() {
             required_: 5,
             confirmed: 3,
             shortage: 2),
-        '5명 필요 · 3명 확정',
+        '5명 중 3명 확정',
       );
     });
 

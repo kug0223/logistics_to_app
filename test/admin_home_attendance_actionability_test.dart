@@ -446,7 +446,7 @@ void main() {
     test('필요·확정·부족은 그대로, 출근은 같은 로스터를 쓴다', () {
       // [HOME-V2-08D.3] KPI 라벨이 문장·issue row로 바뀌었다.
       //   이 테스트의 요지는 표현이 아니라 **어떤 수치를 세는가**다.
-      expect(home.contains('명 필요 · '), isTrue);
+      expect(home.contains(r"$required명 중 $confirmed명 확정"), isTrue);
       expect(home.contains('명 확정'), isTrue);
       expect(home.contains('명 부족'), isTrue);
       expect(home.contains(r"'출근 ${_todayCheckedIn!}/$dueNow'"), isTrue);

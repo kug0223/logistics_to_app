@@ -19,6 +19,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _indexPath = 'functions/src/index.ts';
 
 String _src(String path) => File(path).readAsStringSync();
@@ -84,7 +88,7 @@ void main() {
   late String cf;
 
   setUpAll(() {
-    home = _codeOf(_src(_homePath));
+    home = _codeOf(_src(_homePath)) + _codeOf(_src(_readsPath));
     cf = _codeOf(_src(_indexPath));
   });
 
@@ -261,7 +265,7 @@ void main() {
       // [HOME-V2-08D.2] '대상 없음'은 이제 gate가 섹션을 숨기고 Hero가 말한다.
 
       final noTargetAt = t.indexOf('hasTodayTarget');
-      final metricAt = t.indexOf('명 필요 · ');
+      final metricAt = t.indexOf(r"$required명 중 $confirmed명 확정");
       expect(noTargetAt, lessThan(metricAt),
           reason: '대상 없음 분기가 수치 표시보다 먼저 와야 한다');
     });
@@ -289,7 +293,7 @@ void main() {
     test('출근 로더의 ERROR != ZERO 배선이 유지된다', () {
       final att = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(att.contains('_todayCheckedIn      = null'), isTrue);
-      expect(home.contains('getBusinessesByIdsOrThrow('), isTrue);
+      expect(home.contains('businessesByIds: svc.getBusinessesByIdsOrThrow'), isTrue);
     });
 
     test('staffing 로더 실패는 여전히 null이다', () {

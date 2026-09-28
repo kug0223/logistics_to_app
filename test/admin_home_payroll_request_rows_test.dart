@@ -14,6 +14,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _dtoPath = 'lib/models/ui/admin_home_summary_model.dart';
 const _indexPath = 'functions/src/index.ts';
 
@@ -67,7 +71,7 @@ void main() {
   late String dto;
 
   setUpAll(() {
-    home = _codeOf(_src(_homePath));
+    home = _codeOf(_src(_homePath)) + _codeOf(_src(_readsPath));
     // 호출부(_buildActionDashboard)가 파일에서 먼저 나오므로 정의부를 특정한다.
     rows = _bodyOf(home, '_makeActionRows(BuildContext context');
     dto = _src(_dtoPath);
@@ -148,7 +152,7 @@ void main() {
     });
 
     test('새 에러 UI를 만들지 않았다', () {
-      final home2 = _src(_homePath);
+      final home2 = _src(_homePath) + _codeOf(_src(_readsPath));
       expect(home2.contains('중간정산 요청을 불러오지 못했습니다'), isFalse);
       expect(home2.contains('급여 변경 요청을 불러오지 못했습니다'), isFalse);
     });
@@ -364,7 +368,7 @@ void main() {
     });
 
     test('AH-V2-01의 ERROR≠ZERO 배선이 유지된다', () {
-      expect(home.contains('getBusinessesByIdsOrThrow('), isTrue);
+      expect(home.contains('businessesByIds: svc.getBusinessesByIdsOrThrow'), isTrue);
       final att = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(att.contains('_todayCheckedIn      = null'), isTrue);
     });

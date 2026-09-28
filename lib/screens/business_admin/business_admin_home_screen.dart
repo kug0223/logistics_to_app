@@ -19,8 +19,8 @@ import '../../controllers/workforce_controller.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/attendance_list_pdf.dart';
 import '../../utils/attendance_review_helper.dart';
+import '../../utils/responsive_helper.dart';
 import '../../utils/work_detail_helper.dart';
-import '../../services/work_detail_time_service.dart';
 
 // Screens
 import '../common/settings_screen.dart';
@@ -37,9 +37,7 @@ import 'expiring_contracts_screen.dart';
 import 'unclosed_action_queue_screen.dart';
 import 'Business_form_screen.dart';
 import 'work_type_management_screen.dart';
-import '../../services/admin_home_summary_service.dart';
 import '../../services/business_posting_readiness.dart';
-import '../../services/contract_template_service.dart';
 import '../../models/core/contract_template_model.dart';
 import 'contract_template_list_screen.dart';
 import '../../models/ui/admin_home_summary_model.dart';
@@ -49,7 +47,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/admin_tab_switcher.dart';
 import '../../utils/navigation_helper.dart';
 import 'to_management/create_to_screen.dart';
-import '../../services/staffing_readiness_service.dart';
+import 'admin_home_reads.dart';
 import '../../models/ui/staffing_readiness_model.dart';
 import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
 import 'dialogs/day_applicants_dialog.dart'; // [PHASE-2D] 인력 부족 → 지원자 관리 다이얼로그
@@ -97,7 +95,12 @@ typedef _AdminHomeData = ({
 });
 
 class BusinessAdminHomeScreen extends StatefulWidget {
-  const BusinessAdminHomeScreen({super.key});
+  const BusinessAdminHomeScreen({super.key, this.reads});
+
+  /// [R7-P1-4 H4] 원시 외부 읽기 경계. production 은 null → `AdminHomeReads.of`.
+  ///   테스트가 실제 홈 위젯을 띄워 내용을 렌더할 수 있게 하기 위한 것이며,
+  ///   화면의 파생·수치·문구·권한 판정은 이 경계 **바깥이 아니라 안**에 있다.
+  final AdminHomeReads? reads;
 
   @override
   State<BusinessAdminHomeScreen> createState() => _BusinessAdminHomeScreenState();
@@ -106,6 +109,24 @@ class BusinessAdminHomeScreen extends StatefulWidget {
 class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     with WidgetsBindingObserver {
   final _firestoreService = FirestoreService();
+  late final AdminHomeReads _reads =
+      widget.reads ?? AdminHomeReads.of(_firestoreService);
+
+  // [R7-P1-4 H2] 늦은 응답 가드 — loader 별 단조 증가 seq.
+  //
+  //   같은 loader 를 동시에 깨우는 경로가 여러 개다: initState · FCM
+  //   (`_onFcmRefresh`) · 앱 복귀(`didChangeAppLifecycleState`) · 당겨서
+  //   새로고침 · 사업장 전환(`_onBusinessSwitchCheck`) · 각 목적지에서 돌아올 때.
+  //   `_isRefreshing` 은 **전체 refresh 끼리만** 막고 개별 loader 는 막지 않는다.
+  //
+  //   가드가 없으면 먼저 보낸 요청이 늦게 도착해 **방금 처리한 결과를 덮는다**
+  //   (처리한 할 일이 다시 대기로 보이고, 눌러도 `count == 0` 으로 조용히 닫힌다).
+  //   사업장 전환에서는 더 나쁘다 — 이전 사업장의 수치가 새 사업장 화면에 앉는다.
+  //   그래서 **가장 마지막에 시작한 호출만** state 를 쓴다. 로딩 플래그도 그
+  //   호출이 소유하므로, 밀려난 호출은 spinner 도 끄지 않는다.
+  int _summarySeq = 0;
+  int _staffingSeq = 0;
+  int _attendanceSeq = 0;
   bool? _hasApprovedBusiness;
   List<BusinessModel> _businesses = [];
   bool _isNavigating = false;
@@ -115,7 +136,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   bool _readinessLoaded = false;
 
   /// [FP-01] 첫 공고까지 남은 준비 — CreateTO와 같은 canonical fact에서 derive.
-  final _contractTemplateService = ContractTemplateService();
   FirstPostingReadiness? _firstPosting;
 
   /// [POSTING-V2-02C.1] 사업장별 readiness — 4개 task로 접기 전의 원본.
@@ -294,6 +314,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // 실패 시 _canonicalSummary = null 유지 — false zero 방지
   Future<void> _loadCanonicalSummary() async {
     if (!mounted) return;
+    final seq = ++_summarySeq;
     setState(() => _canonicalSummaryLoading = true);
     try {
       // [PH1D] SUB_ADMIN: effectiveBusinessId scope → 서버가 membership 검증 후 단일 사업장 집계
@@ -302,17 +323,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final selectedBizId = up.currentUser?.isSubAdmin == true
           ? up.effectiveBusinessId
           : null;
-      final summary = await AdminHomeSummaryService().fetchSummary(
+      final summary = await _reads.summary(
         selectedBusinessId: selectedBizId,
       );
-      if (!mounted) return;
+      if (!mounted || seq != _summarySeq) return;
       setState(() {
         _canonicalSummary = summary;
         _canonicalSummaryLoading = false;
       });
     } catch (e) {
       debugPrint('❌ _loadCanonicalSummary 실패: $e');
-      if (!mounted) return;
+      if (!mounted || seq != _summarySeq) return;
       setState(() {
         _canonicalSummary = null; // 에러 상태 유지 — 0건으로 표시 금지
         _canonicalSummaryLoading = false;
@@ -360,7 +381,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   []로 받으면 _hasApprovedBusiness=false + _businesses=[] 가 되어
       //   사업장이 있는 관리자에게 '사업장을 등록하세요' 배너가 뜬다.
       //   throw하면 아래 catch가 _hasApprovedBusiness를 null로 유지 → 배너 미표시.
-      final businesses = await _firestoreService.getBusinessesByIdsOrThrow(ids);
+      final businesses = await _reads.businessesByIds(ids);
       if (mounted) {
         setState(() {
           _hasApprovedBusiness = businesses.any((b) => b.isApproved);
@@ -385,10 +406,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final approvedBizs = _businesses.where((b) => b.isApproved).toList();
     final readinessMap = approvedBizs.isEmpty
         ? <String, BusinessPostingReadiness>{}
-        : await BusinessPostingReadiness.forBusinesses(
-            approvedBizs,
-            _firestoreService,
-          );
+        : await _reads.postingReadiness(approvedBizs);
 
     // [FP-01] 계약서 템플릿은 관리자 보유분 전체 합산 — CreateTO와 동일 semantics.
     //   (템플릿 소유 모델은 이번에 바꾸지 않는다)
@@ -396,7 +414,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     if (_businesses.isNotEmpty) {
       try {
         final lists = await Future.wait(
-          _businesses.map((b) => _contractTemplateService.getTemplates(b.id)),
+          _businesses.map((b) => _reads.contractTemplates(b.id)),
         );
         hasTemplate = ContractTemplateModel.selectableForNewContract(
           lists.expand((l) => l),
@@ -500,23 +518,24 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // 실패 시 _staffingReadiness = null 유지 — false zero 방지 (ERROR≠ZERO)
   Future<void> _loadStaffingReadiness() async {
     if (!mounted) return;
+    final seq = ++_staffingSeq;
     setState(() => _staffingLoading = true);
     try {
       final up = context.read<UserProvider>();
       final selectedBizId = up.currentUser?.isSubAdmin == true
           ? up.effectiveBusinessId
           : null;
-      final result = await StaffingReadinessService.fetchReadiness(
+      final result = await _reads.staffingReadiness(
         selectedBusinessId: selectedBizId,
       );
-      if (!mounted) return;
+      if (!mounted || seq != _staffingSeq) return;
       setState(() {
         _staffingReadiness = result;
         _staffingLoading = false;
       });
     } catch (e) {
       debugPrint('❌ _loadStaffingReadiness 실패: $e');
-      if (!mounted) return;
+      if (!mounted || seq != _staffingSeq) return;
       setState(() {
         _staffingReadiness = null; // 에러 상태 — 0 표시 금지
         _staffingLoading = false;
@@ -554,6 +573,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   Future<void> _loadTodayAttendance() async {
     if (!mounted) return;
+    final seq = ++_attendanceSeq;
     setState(() => _attendanceLoading = true);
     try {
       // [AH-V2-01] 여기 도달했다는 것은 사업장 조회가 성공했다는 뜻이다.
@@ -562,7 +582,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   (SubAdmin 권한 0개 포함) → 정상 0 표시.
       final businesses = await _getBusinesses();
       if (businesses.isEmpty) {
-        if (mounted) {
+        if (mounted && seq == _attendanceSeq) {
           setState(() {
             _todayCheckedIn      = 0;
             _todayDueNow         = 0;
@@ -578,11 +598,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
       // 병렬 로드 — 두 Future를 미리 생성해 동시에 실행
       final attFuture = Future.wait(
-        businesses.map((b) => _firestoreService.getAttendanceByDate(
+        businesses.map((b) => _reads.attendanceByDate(
           businessId: b.id, date: today)),
       );
       final rosterFuture = Future.wait(
-        businesses.map((b) => _firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow(
+        businesses.map((b) => _reads.confirmedWorkers(
           date: today, businessId: b.id)),
       );
 
@@ -599,7 +619,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   같은 소스. 지원서 원본 시각만 쓰면 workDetail override가 걸린 근무에서
       //   Home과 Dialog의 시간 경계가 갈린다.
       //   비용은 근로자 수가 아니라 고유 (toId, slotId) 쌍 수에 비례한다.
-      final timeMap = await WorkDetailTimeService.load(allConfirmed);
+      final timeMap = await _reads.workDetailTimes(allConfirmed);
 
       // [AH-V2-06] 출근 x / y — 오늘 확정 로스터 하나의 모집단에서 센다.
       //   이전에는 분자를 attendance 문서에서 세어, 로스터에 없는 문서(취소된
@@ -630,8 +650,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       //   단일 기준이다. 처리를 끝낸 건(NO_SHOW·결근·정산 진입·관리자 확인)은
       //   빠지므로, 처리하면 이 숫자가 실제로 줄어든다.
       //
-      //   모수는 오늘 확정 로스터 — dialog와 동일하며, 지원서 단위 Set이라
-      //   근태 문서가 중복돼도 한 사람은 1로 센다 ('N명' 단위 보장).
+      //   모수는 오늘 확정 로스터 — dialog와 동일하다. Set 의 원소는
+      //   **applicationId** 라 근태 문서가 중복돼도 한 근무는 1로 센다.
+      //   [R7-P1-4 H1] uid Set 이 아니므로 인원수 보장이 아니다 — 한 사람이
+      //   같은 날 겹치지 않는 두 근무를 확정받으면 2 가 된다. 그래서 이 값의
+      //   단위는 **건**이고 표시도 `근태 확인 N건` 이다.
       final reviewAppIds = <String>{};
       for (final app in allConfirmed) {
         if (AttendanceReviewHelper.requiresReviewNow(
@@ -664,7 +687,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         if (start.isNotEmpty && end.isNotEmpty) ranges.add('$start–$end');
       }
 
-      if (!mounted) return;
+      if (!mounted || seq != _attendanceSeq) return;
       setState(() {
         _todayCheckedIn      = checkedIn;
         _todayDueNow         = dueNow;
@@ -676,7 +699,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       });
     } catch (e) {
       debugPrint('❌ _loadTodayAttendance 실패: $e');
-      if (!mounted) return;
+      if (!mounted || seq != _attendanceSeq) return;
       setState(() {
         _todayCheckedIn      = null; // 에러 상태 — 0 표시 금지 (ERROR≠ZERO)
         _todayDueNow         = null;
@@ -740,7 +763,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final ids = up.currentUser?.isSubAdmin == true
         ? [if (up.effectiveBusinessId != null) up.effectiveBusinessId!]
         : (up.currentUser?.managedBusinessIds ?? []);
-    final businesses = await _firestoreService.getBusinessesByIdsOrThrow(ids);
+    final businesses = await _reads.businessesByIds(ids);
     _businesses = businesses; // 캐시만 갱신 — UI에 직접 영향 없으므로 setState 불필요
     return businesses;
   }
@@ -1023,13 +1046,21 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   // ── 반응형 스케일 ──────────────────────────────────────────────
-  double _s(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    if (w < 360) return 0.82;
-    if (w < 400) return 0.92;
-    if (w < 480) return 1.0;
-    return 1.08;
-  }
+  /// [R7-P1-4 H3] 레이아웃 배율 — 공용 owner 에 위임한다.
+  ///
+  ///   이 화면에는 사설 사본이 있었다(`0.82/0.92/1.0/1.08`). 책임은
+  ///   `ResponsiveHelper.getScale` 과 **같다** — 둘 다 화면 폭으로 정하는
+  ///   **레이아웃 치수 전용** 배율이고, 폰트는 [TYPO-01] 에 따라 어느 쪽도
+  ///   건드리지 않는다(글자 크기는 base × OS TextScaler 뿐이다).
+  ///   같은 책임이 두 벌 있으면 한쪽만 조정돼 화면마다 간격 체계가 갈린다.
+  ///
+  ///   위임으로 값이 바뀌는 구간: `<360` 0.82→0.85, `<400` 0.92→0.90,
+  ///   `>=480` 1.08→1.0(태블릿 여백 확대 없어짐). 정보가 숨거나 줄지 않는다 —
+  ///   320·360·390·480·600dp 렌더로 확인했다(`admin_home_content_render_test`).
+  ///
+  ///   남은 사설 사본 3벌(`user_home_screen`·`income_detail_screen`·
+  ///   `wage_detail_screen`)은 같은 곡선이지만 **이 Phase 소유가 아니다.**
+  double _s(BuildContext context) => ResponsiveHelper.getScale(context);
 
   @override
   Widget build(BuildContext context) {
@@ -2088,7 +2119,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // [HOME-V2-08D.3] 3-column KPI(필요·확정·부족 / 현재 출근·근태 확인)를 폐기하고
   //   operational group으로 바꾼다:
   //
-  //     8명 필요 · 5명 확정      ← 요약(context, tap 없음)
+  //     8명 중 5명 확정          ← 요약(context, tap 없음)
   //     ⚠ 3명 부족 · 평택센터 ›   ← 실제 문제(actionable)
   //     ⏱ 근태 확인 2건 ›
   //     출근 4/5                ← 보조 정보
@@ -2163,7 +2194,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     ]);
   }
 
-  /// [HOME-V2-08D.3] Staffing 요약 한 줄 — `8명 필요 · 5명 확정`.
+  /// [HOME-V2-08D.3] Staffing 요약 한 줄 — `8명 중 5명 확정`.
   ///
   /// 이 줄은 action이 아니라 context다. tap도 chevron도 없다.
   /// 보여줄 것이 없으면 null을 돌려준다 (divider까지 함께 빠진다).
@@ -2178,7 +2209,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
     // 쿼리 실패 — null 또는 쓸 수 있는 데이터 없음
     // [AH-V2-03.1] partial(부분합)은 여기서 걸리지 않고 아래로 내려간다.
-    // [HOME-V2-08D.3] 실패를 `0명 필요 · 0명 확정`으로 요약하지 않는다. ERROR≠ZERO.
+    // [HOME-V2-08D.3] 실패를 `0명 중 0명 확정`으로 요약하지 않는다. ERROR≠ZERO.
     if (_staffingReadiness == null || !_staffingReadiness!.hasUsableData) {
       return _todayOpsErrorRow(s,
         message: '인력 정보를 불러오지 못했습니다',
@@ -2201,12 +2232,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final confirmed = day?.confirmedCount ?? 0;
     final shortage  = day?.shortageCount  ?? 0;
 
-    // [HOME-V2-08D.3] 전원 확정은 `8명 필요 · 8명 확정`보다 `8명 전원 확정`이
+    // [HOME-V2-08D.3] 전원 확정은 `8명 중 8명 확정`보다 `8명 전원 확정`이
     //   한 번에 읽힌다. 단 required == 0에서는 쓰지 않는다 —
     //   `0명 전원 확정`은 운영이 있는 것처럼 들린다.
     //   shortageCount는 per-wdId 합산이라 required - confirmed와 다를 수 있으므로
     //   둘 다 만족할 때만 '전원 확정'이라고 말한다.
-    // [R7-P1-2 DEVICE.1I] `필요` 와 `더 필요` 가 **다른 모집단**이다 — 기록만 한다.
+    // [R7-P1-4 H1] `필요` 와 `더 필요` 는 **다른 모집단**이었다 — 문구로 해결했다.
     //
     //   서버(`callableGetStaffingReadiness`)는 이렇게 센다.
     //     required  += wd.required                        ← 종료된 단위도 포함
@@ -2214,20 +2245,19 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   "종료된 단위는 채울 수 없으므로 부족이 아니다" 가 그 규칙이고, 같은
     //   계약을 일자별 인력 현황도 쓴다(`DayStaffingRow.seedsGroup`).
     //
-    //   그래서 `5명 필요 · 0명 확정` 옆에 `오늘 2명이 더 필요해요` 가 서는 것은
-    //   **정상이다** — 5 중 3명분은 이미 모집이 끝난 자리다. 다만 두 줄이 같은
-    //   단어(`필요`/`더 필요`)를 쓰니 `5 - 0 = 5` 를 기대한 사람에게 어긋난
-    //   산술로 읽힌다.
+    //   그래서 정원 축이 `5명 필요` 이고 옆에 `2명 부족` 이 서는 것은 데이터로는
+    //   정상인데(5 중 3명분은 모집이 끝난 자리), 두 축이 같은 단어(`필요`/`더 필요`)를
+    //   쓰는 바람에 `5 - 0 = 5` 를 기대한 사람에게 어긋난 산술로 읽혔다.
     //
-    //   문구를 바꾸는 것이 옳지만 이 줄은 Home 요약 계약의 일부여서 단어 하나에
-    //   Home contract 8건이 걸려 있다. DEVICE.1I 의 범위(P1-2 목적지 + Home
-    //   진입 요약의 좁은 경계)를 넘으므로 **여기서 바꾸지 않는다.**
-    //   → `[CORRECTION-R7-HOME-REQUIRED-VS-RECRUITABLE-SHORTAGE-COPY]` / owner P1-4
-    //     (근거: 위 서버 두 줄. 새 지표·정책 변경 없이 copy·grouping 으로 해결)
+    //   → **정원 축에서 `필요` 를 뺀다.** 같은 화면의 D+1~D+7 행이 같은 서버 세
+    //     필드로 이미 `N명 중 M명 확정` + `N명 부족` 을 쓰고 있다
+    //     (`_buildFutureShortageRow`). 오늘 카드만 다른 단어를 쓰고 있었다 —
+    //     새 라벨을 만드는 대신 그 계약에 합친다. 서버 산술·모집단·지표는 그대로다.
+    //   [CORRECTION-R7-HOME-REQUIRED-VS-RECRUITABLE-SHORTAGE-COPY] RESOLVED
     final allStaffed = required > 0 && shortage == 0 && confirmed >= required;
     final summaryText = allStaffed
         ? '$required명 전원 확정'
-        : '$required명 필요 · $confirmed명 확정';
+        : '$required명 중 $confirmed명 확정';
 
     // [AH-V2-04B] 다사업장에서 이 숫자가 어느 범위의 합계인지.
     //   scope label은 partial일 때 숨긴다 — 성공 사업장 수를 클라이언트가
@@ -2946,7 +2976,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         icon: Icons.assignment_late_outlined, label: '지원 검토',
         color: AppColors.warning,
         badge: (approval?.overdueCount ?? 0) > 0 ? '긴급 ${approval!.overdueCount}건' : null,
-        count: approval?.count ?? 0, countStr: '${approval?.count ?? 0}명',
+        // [R7-P1-4 H1] 단위는 **건**이다 — 서버(`srvHomeApproval`)가 세는 것은
+        //   `applications where status == PENDING` 이고, 한 사람이 여러 공고에
+        //   PENDING 을 동시에 낼 수 있다(Application = 관심 표현). `명` 이라고 하면
+        //   없는 사람을 센다. 같은 행의 배지가 이미 `긴급 N건` 이고, 목적지
+        //   drill-down 시트도 `총 N건` 이다.
+        count: approval?.count ?? 0, countStr: '${approval?.count ?? 0}건',
         available: approval?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           final businesses = await _getBusinesses();
@@ -3024,7 +3059,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       add(
         icon: Icons.folder_off_outlined, label: '계약 미발송',
         color: AppColors.warning,
-        count: unsent?.count ?? 0, countStr: '${unsent?.count ?? 0}명',
+        // [R7-P1-4 H1] 단위는 **건**이다 — 서버는 좌석을 가진 지원서를 순회하며
+        //   `아직 발송되지 않은 계약서`를 센다(`CONTRACT_SEAT_STATUSES`).
+        //   한 사람이 두 자리를 확정받으면 보낼 계약서도 두 건이다.
+        count: unsent?.count ?? 0, countStr: '${unsent?.count ?? 0}건',
         available: unsent?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageContract)) {
@@ -3131,7 +3169,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       final wage = cs?.actions.unpaidWage;
       final wageParts = <String>[];
       if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
-      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명');
+      // [R7-P1-4 H1] 단위는 **건**이다. 서버는 이 값을 고유 userId 수로 세지만
+      //   (`missingUserIds.size`), 목적지 급여 화면에서 그 사람 하나가 카드
+      //   하나(`userId::no_date`)이고 아래 `wageTotal` 이 그 카드 수를 `건` 으로
+      //   합산한다. 같은 값이 배지에서는 `명`, 합계에서는 `건` 이면 두 숫자의
+      //   관계가 끊긴다 — 처리 단위(카드=이체 묶음)로 맞춘다.
+      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}건');
       // count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산
       final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
       // [AH-V2-05B.3] 지급예정일이 지난 급여가 있으면 퇴사 요청 바로 뒤로 올린다.
@@ -3186,9 +3229,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         icon: Icons.event_busy_outlined, label: '계약 확인 필요',
         color: expiredCount > 0 ? AppColors.error : AppColors.warning,
         count: totalDecisions,
+        // [R7-P1-4 H1] 단위는 **건**이다 — 서버(`srvHomeExpiringContract`)는 갱신
+        //   결정이 필요한 **장기 지원서(관계)**를 센다. 한 사람이 같은 사업장에서
+        //   두 관계를 가지면 결정도 두 건이다.
         countStr: expiredCount > 0
-            ? '$totalDecisions명 · 만료 $expiredCount'
-            : '$totalDecisions명',
+            ? '$totalDecisions건 · 만료 $expiredCount'
+            : '$totalDecisions건',
         available: expiring?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_verified(up, (p) => p.canManageContract)) {

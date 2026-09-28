@@ -19,6 +19,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _bizServicePath = 'lib/services/firestore/business_firestore.dart';
 
 String _src(String path) => File(path).readAsStringSync();
@@ -64,7 +68,7 @@ void main() {
   late String bizService;
 
   setUpAll(() {
-    home = _src(_homePath);
+    home = _src(_homePath) + _codeOf(_src(_readsPath));
     homeCode = _codeOf(home);
     bizService = _codeOf(_src(_bizServicePath));
   });
@@ -106,7 +110,12 @@ void main() {
 
     test('화면 헬퍼가 strict 변형을 쓰고 실패를 삼키지 않는다', () {
       final body = _bodyOf(homeCode, 'Future<List<BusinessModel>> _getBusinesses(');
-      expect(body.contains('getBusinessesByIdsOrThrow('), isTrue);
+      // [R7-P1-4 H4] 화면은 경계를 부르고, 경계가 strict 변형으로 매핑한다.
+      expect(body.contains('_reads.businessesByIds('), isTrue);
+      expect(
+          _src('lib/screens/business_admin/admin_home_reads.dart')
+              .contains('businessesByIds: svc.getBusinessesByIdsOrThrow'),
+          isTrue);
       expect(body.contains('catch'), isFalse,
           reason: '실패를 []로 변환하던 계약이 제거되어야 한다');
       expect(body.contains('return [];'), isFalse);
@@ -121,8 +130,13 @@ void main() {
     test('상태 배너 입력도 실패를 0개로 받지 않는다', () {
       final body =
           _bodyOf(homeCode, 'Future<void> _loadApprovedBusinessStatus(');
-      expect(body.contains('getBusinessesByIdsOrThrow('), isTrue,
+      expect(body.contains('_reads.businessesByIds('), isTrue,
           reason: '실패 시 사업장 있는 관리자에게 등록 배너가 뜨면 안 된다');
+      expect(
+          _src('lib/screens/business_admin/admin_home_reads.dart')
+              .contains('businessesByIds: svc.getBusinessesByIdsOrThrow'),
+          isTrue,
+          reason: '경계가 throw 하는 strict 변형으로 매핑해야 한다');
     });
   });
 
@@ -181,7 +195,7 @@ void main() {
       final body = _bodyOf(homeCode, 'Future<List<BusinessModel>> _getBusinesses(');
       // 캐시는 성공 경로에서만 채워진다 — 실패 시 _businesses는 비어 있어 재조회된다
       final assignAt = body.indexOf('_businesses = businesses');
-      final awaitAt = body.indexOf('await _firestoreService.getBusinessesByIdsOrThrow');
+      final awaitAt = body.indexOf('await _reads.businessesByIds');
       expect(assignAt, greaterThan(awaitAt));
     });
 

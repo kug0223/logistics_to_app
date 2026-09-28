@@ -971,3 +971,164 @@ Staffing 보정 **DEFERRED**, O08 **PENDING** 유지. 공유 DEV 쓰기·보정�
 
 **구 문서 자연 표본이 DEV 에 없으면 3번은 넘어간다** — 그 경우 개발 fixture 증거(ACR-5·6·7)로
 남기고 **실DEV 데이터를 만들거나 고치지 않는다.**
+
+---
+
+## R7-P1-4 — 관리자 홈·할 일·요약 (2026-09-28)
+
+기준 `6135916`. branch `main`, 시작 시 tracked 변경 없음, 사용자 소유 untracked 8건 보존.
+Staffing 보정 **DEFERRED**, O08 **PENDING** 유지. 공유 DEV 쓰기·보정·migration·fixture 생성·
+CF 배포·Rules·APK·PROD·P1-5 **없음**.
+
+### 실제 영역별 표 (홈 화면 = `business_admin_home_screen.dart`)
+
+| 홈 영역 | 수치 source / 계산 owner | 사업장·날짜·모집단·단위 | 표시 문구 | action · 목적지 문맥 | loading / error / 권한 | 판정 |
+|---|---|---|---|---|---|---|
+| 헤더(ALfit·이름·사업장) | `UserProvider` | 선택 사업장 | 이름·사업장명 | 없음 | 권한 변경은 `Selector` 로 재구독 | NO PATCH |
+| 상태 배너 | `_hasApprovedBusiness`(조회 성공 여부) | 관리 사업장 전체 | 승인 대기·미등록 | 사업장 등록 | 조회 실패는 `null` 유지 → 배너 미표시(AHV2-01) | NO PATCH |
+| Hero | `_heroStateOf` (staffing + roster + readiness) | 오늘 | 상태 1종 | 상태별 CTA | 로딩·실패가 각자 상태 | NO PATCH |
+| 권한 요약 줄 | `checkCurrentBusiness` | 선택 사업장 | 권한 목록 | 없음 | `PermissionWatchState.error` 를 별도 표시 | NO PATCH |
+| 공고 준비 카드 | `FirstPostingReadiness`(4단계) | 사업장별 | `N / 4 완료` = 단계 | 단계별 CTA | 템플릿 조회 실패 시 "준비됨"으로 올리지 않음 | NO PATCH |
+| **오늘 — 인력 요약** | CF `callableGetStaffingReadiness` `requiredCount`/`confirmedCount` | 오늘(KST) · 좌석(정원) · `명` | ~~`N명 필요 · M명 확정`~~ → **`N명 중 M명 확정`** | 없음(context) | 로딩 spinner · 실패 행 · `hasTodayTarget` 없으면 null | **수정** |
+| 오늘 — 부족 행 | 같은 CF `shortageCount`(종료 단위 제외) | 오늘 · 충원 가능 좌석 · `명` | `N명 부족 [· 사업장]` | `DayApplicantsDialog`(그날 · 부족 사업장 우선) | 로딩·실패면 숫자 주장 안 함 | NO PATCH |
+| 오늘 — 근태 확인 행 | roster 파생 `AttendanceReviewHelper` | 오늘 · **지원서(근무 건)** · `건` | `근태 확인 N건` | `AttendanceStatusDialog`(오늘·사업장 목록) | `_todayCheckedIn == null` 이면 행 없음 | NO PATCH (주석 근거 정정) |
+| 오늘 — 출근 줄 | 같은 roster + `attendance` | 오늘 · 같은 모집단 | `출근 x/y` · 분모 0 → `출근 예정 전` | 없음 | 실패 → 실패 행(ERROR≠ZERO) | NO PATCH |
+| 오늘 — 부분합 고지 | CF `partial`/`failedBusinessCount` | 성공 사업장 합 | `사업장 N곳 … 나머지 기준` + 재시도 | 재시도 | partial 이면 scope 라벨 숨김 | NO PATCH |
+| 다가오는 7일 | 같은 CF `days[1..7]` | D+1~D+7 · 좌석 · `명`, 대기 `건` | `N명 중 M명 확정` / `N명 전원 확정` · `N명 부족` · `지원 대기 N건` | 행 전체 → 그날 지원자 | 로딩·실패·빈 목록 3분기 | NO PATCH (오늘 요약이 여기에 맞춰졌다) |
+| 처리할 일 — 퇴사 요청 | CF `actions.resignRequest` | 사업장별 요청 · `건` | `N건` + `내일 자동 승인 N건` | 사업장 선택 시트(건수 동반) → 기존 관리 다이얼로그 | UNKNOWN 은 행 없음 + section notice | NO PATCH |
+| 처리할 일 — **지원 검토** | CF `srvHomeApproval` = `applications where status==PENDING` | 사업장 · **지원서** | ~~`N명`~~ → **`N건`** (배지는 이미 `긴급 N건`) | `SupportReviewQueueScreen`(긴급>0 이면 overdue 필터) | 같음 | **수정** |
+| 처리할 일 — 스케줄 변경 | CF `scheduleChangeRequest` | 요청 · `건` | `N건` | 사업장 선택 → 관리 다이얼로그 | 같음 | NO PATCH |
+| 처리할 일 — **계약 미발송** | CF: 좌석 보유 지원서 중 미발송 계약서 | **계약서(건)** | ~~`N명`~~ → **`N건`** | 계약 관리 화면 `initialTab: 1` | 같음 | **수정** |
+| 처리할 일 — 마감 필요 | CF `unclosedDates.size` | **고유 날짜** | `N일` + `가장 오래된: date` | `UnclosedActionQueueScreen` | 같음 | NO PATCH (단위 정확) |
+| 처리할 일 — 중간정산·급여변경 | CF 각 요청 수 | 요청 · `건` | `N건` | 급여 탭 drilldown(탭 지정) | 같음 | NO PATCH |
+| 처리할 일 — 이체 대기 | CF `groups.size`(근로자×지급일) + `missingUserIds.size` | 처리 카드(이체 묶음) | `N건` · 배지 `연체 N건 · 지급일 확인 필요 ~~N명~~ → N건` | 급여 탭 drilldown | 연체>0 이면 자리만 상향 | **수정(배지 단위)** |
+| 처리할 일 — **계약 확인 필요** | CF `srvHomeExpiringContract` = 갱신 결정 대상 장기 지원서 | **관계(건)** | ~~`N명 · 만료 N`~~ → **`N건 · 만료 N`** | 만료 계약 화면 | 같음 | **수정** |
+| 처리할 일 — health notice | `cs == null` 또는 `_unknownTaskCount > 0` | — | `확인하지 못한 …` | 재시도 | **미조회를 `할 일 없어요` 로 바꾸지 않음** | NO PATCH |
+
+### H1 — 숫자·모집단·문구
+
+**carry `[CORRECTION-R7-HOME-REQUIRED-VS-RECRUITABLE-SHORTAGE-COPY]` RESOLVED.**
+
+서버는 `required += wd.required`(종료 단위 포함), `shortage += wd.closed ? 0 : max(0, req-conf)`
+로 **다른 모집단**을 센다. 그래서 `5명 필요 · 0명 확정` 옆의 `2명 부족` 은 데이터로는 정상인데,
+두 축이 같은 단어(`필요`/`더 필요`)를 써서 `5-0=5` 를 기대한 사람에게 어긋난 산술로 읽혔다.
+
+→ **정원 축에서 `필요` 를 뺀다.** 근거는 **같은 화면 안에 이미 있던 표현**이다 —
+`_buildFutureShortageRow`(D+1~D+7)가 **같은 서버 세 필드**로 `N명 중 M명 확정` +
+`N명 부족` 을 쓴다. 오늘 카드만 다른 단어였다. 새 라벨을 만들지 않고 그 계약에 합쳤다.
+`전원 확정` 문구·Hero `오늘 N명이 더 필요해요`·서버 산술·모집단·지표는 **그대로**다.
+
+**단위를 원천에 맞춘 3곳**(위 표의 `수정`): 지원 검토·계약 미발송·계약 확인 필요는 모두
+서버가 **지원서/계약서/관계**를 세는데 홈만 `명` 이라 없는 사람을 셌다. 목적지 drill-down
+시트는 이미 `총 N건` 이고, 지원 검토 행은 한 행 안에서 `N명 · 긴급 M건` 으로 갈라져 있었다.
+`이체 대기` 배지도 합계(`건`)와 같은 단위로 맞췄다.
+
+**정원 축은 `명` 을 유지한다** — `confirmed` 는 업무단위 좌석 카운터의 합이라 한 사람이
+겹치지 않는 두 자리를 채우면 2 가 되지만, 관리자가 채우는 대상은 **자리**이고 제품 전반이
+모집 인원을 `명` 으로 쓴다. 분자·분모가 같은 축(좌석)이라 단위도 어긋나지 않는다.
+**고유 인원 지표는 만들지 않았다.** 단, `근태 확인` 의 코드 주석이 "지원서 Set 이라 한 사람은
+1 로 센다(`N명` 보장)" 라고 잘못 말하고 있었다 — Set 원소는 `uid` 가 아니라 `applicationId`
+이므로 그 근거를 정정했다(표시는 이미 `건`).
+
+### H2 — 할 일·권한·목적지·복귀
+
+분류 owner 는 CF canonical summary 하나다(`AdminHomeSummaryService`). 홈은
+`available && count > 0` 만 행으로 만들고(`KNOWN_ZERO`/`UNKNOWN` 은 행 없음),
+UNKNOWN 은 section notice 가 말한다 — **미조회·권한없음·실패를 `0` 이나 `할 일 없음` 으로
+바꾸지 않는다.** icon 은 중립 grey, 긴급은 배지 한 채널, count 는 전부 같은 무게 →
+**정상 0 을 위험으로 칠하는 자리가 없다.** 목적지는 사업장 선택 시트(사업장별 건수 동반)·
+`initialFilter: overdue`·`initialTab` 로 문맥을 넘기고, 복귀 시 각 행이
+`_loadCanonicalSummary()` 를 다시 돌리며 다른 탭에는 `WorkforceController` 로 알린다.
+권한은 행 생성 시점(`_verified`) + onTap 재확인 + `sec.available` + CF 재검증의 4중이다.
+
+**수정 — 늦은 응답 가드가 없었다.** 같은 loader 를 동시에 깨우는 경로가 6개다(initState ·
+FCM `_onFcmRefresh` · 앱 복귀 · 당겨서 새로고침 · 사업장 전환 `_onBusinessSwitchCheck` ·
+각 목적지 복귀). `_isRefreshing` 은 **전체 refresh 끼리만** 막아서, 먼저 보낸 응답이 늦게
+도착하면 **방금 처리한 결과를 덮었다**(처리한 할 일이 다시 대기로 보이고 눌러도
+`count == 0` 으로 조용히 닫힌다). 사업장 전환에서는 더 나쁘다 — 이전 사업장 수치가 새
+사업장 화면에 앉는다. → 세 loader 에 단조 증가 seq 를 넣어 **마지막에 시작한 호출만**
+state·로딩 플래그를 쓴다(P1-3 `_attRefreshSeq` 와 같은 패턴).
+
+### H3 — 위계·공용 책임·반응형
+
+**`_s()` 와 `ResponsiveHelper.getScale` 은 같은 책임이다** — 둘 다 화면 폭으로 정하는
+**레이아웃 치수 전용** 배율이고, 폰트는 [TYPO-01] 로 양쪽 다 건드리지 않는다(글자 크기는
+base × OS TextScaler). 홈의 `_s()` 는 사설 사본이었고(`0.82/0.92/1.0/1.08`), 같은 곡선이
+`user_home_screen`·`income_detail_screen`·`wage_detail_screen` 에도 있어 **총 4벌**이었다.
+→ 홈은 공용 owner 에 위임했다. 값이 바뀌는 구간(`<360` 0.82→0.85, `<400` 0.92→0.90,
+`>=480` 1.08→1.0)에서 정보가 숨거나 줄지 않는지 **320/360/390/480/600dp 렌더로 확인**했다.
+남은 사설 3벌은 사용자 화면이라 **이 Phase 소유가 아니다**(별도 항목).
+radius 16·flat surface·중립 icon 은 현행 관리자 기준 그대로 — 새 컴포넌트·새 기준 도입 0.
+탭 본문에 Scaffold 를 덧붙이는 기계적 변경도 하지 않았다.
+
+### H4 — 실제 콘텐츠 렌더 (production 위젯)
+
+지금까지 홈을 pump 하는 테스트는 shell 하나뿐이었고(`shell_lazy_tab_contract`) 숫자·할 일·
+문구는 전부 소스 문자열 검증이었다. → 원시 외부 읽기 **7개만** 주입하는 경계
+`lib/screens/business_admin/admin_home_reads.dart` 를 넣고(파싱 이전에서 끊어 파생·수치·
+문구·권한 판정·게이트는 화면에 남긴다) 실제 `BusinessAdminHomeScreen` 을 렌더했다.
+권한은 provider 경계에서 BUSINESS_ADMIN 으로 준다 — **권한 없는 provider 가 숨긴 버튼을
+확인했다고 세지 않는다.**
+
+`admin_home_content_render_test` 10건:
+
+| 증거 | 확인 |
+|---|---|
+| AHR-1 | 오늘 요약 `5명 중 0명 확정` · `5명 필요` **없음** · `2명 부족` 별도 행 |
+| AHR-2 | `4명 전원 확정` · 부족 문구 없음 |
+| AHR-3 | 할 일 `3건`·`긴급 1건`·`2건`·`4건 · 만료 1` · `3명`/`2명`/`4명 · 만료 1` **없음** |
+| AHR-4 | 0건이면 행 없음 + 전부 성공일 때만 `처리할 업무가 없어요` |
+| AHR-5 | 할 일 CF 실패 → `처리할 업무가 없어요` **아님**, `확인하지 못…` 표시 |
+| AHR-6 | 인력·출근 실패 → 각 실패 문구 + 재시도, `0명 중 0명`·`출근 0/0` 없음 |
+| AHR-7 | partial → `사업장 1곳 …` 고지, `전체 2개 사업장 합계` 주장 안 함 |
+| AHR-8 | 320dp·배율 1.3 + 긴 사업장명 + 큰 수(128/96/32·147) 예외 0, 수치 유지 |
+| AHR-9 | 다사업장 scope 라벨 + 합계 |
+| AHR-10 | 320/360/390/480/600dp 전 폭 예외 0 · 핵심 수치·섹션 유지 |
+
+렌더가 드러낸 사실 하나: 투어 게이트(`TourHelper.isCompleted`)가 끝나지 않으면
+`initState` 의 `Future.wait` 가 멈춰 **네 loader 가 아예 시작하지 않는다**(영구 spinner).
+테스트에서는 SharedPreferences mock 으로 완료 상태를 준다. production 경로에서는
+SharedPreferences 가 실패할 때 같은 정지가 가능하다 — **관측·수정 안 했고 이번 범위 밖**
+(`[R7-P1-4-RESIDUAL-TOUR-GATE-BLOCKS-LOADERS]`).
+
+### 회귀
+
+- `admin_home_*` 전체 + shell: **1022 passed**
+- 전체 스위트: `13738 passed / 41 실패` — **기준선과 동일**. 샘플 10파일을 HEAD(`6135916`)에
+  `git stash` 로 되돌려 재실행해 **같은 19건**이 실패함을 확인했다(날짜·시각 의존 다수:
+  `payroll_simulation_extended` D2, `longterm_renewal_boundary`, `my_applications_simulation` 등).
+- 내 변경이 만든 실패 **1건**: `active_reader_error_not_empty` AR-7(홈이 OrThrow 를 쓰는지) —
+  경계 이전으로 앵커가 옮겨진 것이라 **화면은 경계를 부르고 경계가 OrThrow 로 매핑한다**
+  두 단언으로 재앵커(요구는 낮추지 않았다).
+- **P1-3 증거 결함을 발견해 고쳤다**: `attendance_dialog_content_render`(ACR-1~7)가
+  고정 날짜 `2026-09-28` + 고정 시각(09:00~13:00)을 써서 **실행 시각에 따라 탭 분류가
+  갈렸다**(오전 `정상`, 저녁 `확인필요`). HEAD 에서도 3건 실패 상태였다 — 선택일을 **내일**로
+  바꿔(항상 '출근 전') 시계 의존을 없앴고 7/7 PASS. 이 테스트들이 보는 것은 그룹·문맥·수치다.
+- `flutter analyze lib test`: No issues.
+- 재앵커한 기존 계약 파일 13개 — 읽기 배선 단언은 **화면 + 경계**를 함께 읽게 바꿨고,
+  `getBusinessesByIdsOrThrow` 같은 문자열은 `_reads.X(` + 경계의 `svc.X` **쌍**으로 요구한다.
+
+### 남은 것 / 이관
+
+| 항목 | 상태 |
+|---|---|
+| H1 문구·단위 (오늘 요약 + 할 일 4곳) | CLOSED (CODE·RENDER) |
+| H2 분류 owner·권한 4중·목적지 문맥·복귀 갱신 | CLOSED (CODE, 기존 증거 연결) |
+| H2 늦은 응답 가드 | CLOSED (수정) |
+| H3 배율 공용 위임 | CLOSED (폭 5종 렌더) |
+| H4 production 콘텐츠·실패·부분실패·좁은 폭 렌더 | CLOSED |
+| 권한 있는 상태의 **실제 목적지 이동·처리 실행** | **DEVICE** |
+| 사용자 화면 사설 `_s()` 3벌 | 이관(P1-4 소유 아님) |
+| 투어 게이트 정지 가능성 | `[R7-P1-4-RESIDUAL-TOUR-GATE-BLOCKS-LOADERS]` 미수정 |
+| 대비·터치영역 수치 | P4 owner · **이번에 미측정**(PASS 아님) |
+| 기존 전체 스위트 실패 41건 | 기준선 — 이번 범위 아님 |
+
+#### 최소 DEVICE 확인안 (이번에 바뀐 화면만)
+
+1. 홈 `오늘`: 요약이 `N명 중 M명 확정`(또는 `N명 전원 확정`)이고 그 아래 `N명 부족`.
+   화면에 `N명 필요` 가 없다.
+2. `처리할 일`: 지원 검토·계약 미발송·계약 확인 필요가 **`건`**, 이체 대기 배지도 `건`.
+   각 행을 눌러 사업장 선택 시트의 건수와 목적지 목록 건수가 홈 수치와 같은지.
+3. 처리 후 돌아와 그 행의 수치가 줄어드는지(복귀 갱신).
+4. 좁은 폭/큰 글자에서 요약·부족·할 일 수치가 잘리지 않는지.
+5. SubAdmin 사업장 전환 직후 수치가 **이전 사업장 값으로 되돌아가지 않는지**(seq 가드).

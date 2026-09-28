@@ -12,6 +12,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 
 String _src(String p) => File(p).readAsStringSync();
 String _codeOf(String b) =>
@@ -49,7 +53,7 @@ void main() {
   late String home;
 
   setUpAll(() {
-    raw = _src(_homePath);
+    raw = _src(_homePath) + _codeOf(_src(_readsPath));
     home = _codeOf(raw);
   });
 
@@ -212,13 +216,13 @@ void main() {
     test('strict fetch semantics 유지', () {
       final g = _bodyOf(home, 'Future<List<BusinessModel>> _getBusinesses(');
       expect(g.contains('if (_businesses.isNotEmpty) return _businesses;'), isTrue);
-      expect(g.contains('getBusinessesByIdsOrThrow('), isTrue);
+      expect(g.contains('_reads.businessesByIds('), isTrue);
       expect(g.contains('up.effectiveBusinessId'), isTrue);
       expect(g.contains('managedBusinessIds'), isTrue);
     });
 
     test('AH-V2-01 ERROR != ZERO 유지', () {
-      expect(home.contains('getBusinessesByIdsOrThrow('), isTrue);
+      expect(home.contains('businessesByIds: svc.getBusinessesByIdsOrThrow'), isTrue);
       final att = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
       expect(att.contains('_todayCheckedIn      = null'), isTrue);
       final st = _bodyOf(home, 'Future<void> _loadStaffingReadiness(');
@@ -286,7 +290,8 @@ void main() {
     test('AH-V2-04A/B/C 계약 유지', () {
       expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
-      expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
+      expect(home.contains('_reads.workDetailTimes(allConfirmed)'), isTrue);
+      expect(home.contains('workDetailTimes: WorkDetailTimeService.load'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);
       expect(home.contains('targetLocationLabel()'), isTrue);
       expect(home.contains('initialFilter: (approval?.overdueCount ?? 0) > 0'),

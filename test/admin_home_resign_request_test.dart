@@ -18,6 +18,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _indexPath = 'functions/src/index.ts';
 const _indexesJson = 'firestore.indexes.json';
 
@@ -80,7 +84,7 @@ void main() {
   late String cf;
 
   setUpAll(() {
-    home = _codeOf(_src(_homePath));
+    home = _codeOf(_src(_homePath)) + _codeOf(_src(_readsPath));
     rows = _bodyOf(home, '_makeActionRows(BuildContext context');
     cf = _codeOf(_src(_indexPath));
   });
@@ -379,7 +383,7 @@ void main() {
     });
 
     test('AH-V2-01의 ERROR≠ZERO 배선이 유지된다', () {
-      expect(home.contains('getBusinessesByIdsOrThrow('), isTrue);
+      expect(home.contains('businessesByIds: svc.getBusinessesByIdsOrThrow'), isTrue);
     });
   });
 }

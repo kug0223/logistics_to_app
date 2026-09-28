@@ -208,8 +208,8 @@ void main() {
       // [HOME-V2-08D.3] 요약 줄과 issue row는 서로 다른 builder가 됐지만
       //   ERROR/대상없음에서 아무 수치도 주장하지 않는 순서는 같다.
       final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
-      expect(m.indexOf('hasUsableData'), lessThan(m.indexOf('명 필요 · ')));
-      expect(m.indexOf('hasTodayTarget'), lessThan(m.indexOf('명 필요 · ')),
+      expect(m.indexOf('hasUsableData'), lessThan(m.indexOf(r"$required명 중 $confirmed명 확정")));
+      expect(m.indexOf('hasTodayTarget'), lessThan(m.indexOf(r"$required명 중 $confirmed명 확정")),
           reason: '대상 없음 상태에도 수치를 억지로 붙이지 않는다');
       // issue row도 staffing이 로딩/실패면 숫자를 말하지 않는다
       final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
@@ -259,7 +259,7 @@ void main() {
       // [HOME-V2-08D.3] 세 수치는 KPI 셀에서 문장·issue row로 표현만 바뀌었다.
       //   어떤 수치를 말하는가는 그대로다.
       final m = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
-      expect(m.contains('명 필요 · '), isTrue);
+      expect(m.contains(r"$required명 중 $confirmed명 확정"), isTrue);
       expect(m.contains('명 확정'), isTrue);
       final i = _bodyOf(home, 'List<Widget> _buildTodayIssueRows(');
       expect(i.contains('명 부족'), isTrue);

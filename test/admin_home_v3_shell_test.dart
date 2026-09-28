@@ -16,6 +16,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 
 String _src(String p) {
   final f = File(p);
@@ -56,7 +60,7 @@ String _bodyOf(String source, String signature) {
 }
 
 void main() {
-  final home = _src(_homePath);
+  final home = _src(_homePath) + _codeOf(_src(_readsPath));
   final code = _codeOf(home);
   final header = _codeOf(_bodyOf(home, 'Widget _buildHeader('));
 
@@ -304,7 +308,7 @@ void main() {
       expect(code.contains('Widget _opsMetric('), false);
       expect(code.contains('Widget _opsMetricDivider('), false);
       final st = _codeOf(_bodyOf(home, 'Widget? _buildTodayStaffingSummary('));
-      expect(st.contains('명 필요 · '), true);
+      expect(st.contains(r"$required명 중 $confirmed명 확정"), true);
       final issues = _codeOf(_bodyOf(home, 'List<Widget> _buildTodayIssueRows('));
       expect(issues.contains('_todayIssueRow(s,'), true);
     });
@@ -409,12 +413,13 @@ void main() {
     final loader = _codeOf(_bodyOf(home, 'Future<void> _loadTodayAttendance('));
 
     test('07-a 이미 읽은 로스터에서만 파생한다', () {
-      expect(loader.contains('getConfirmedWorkersByDateAndBusinessOrThrow'), true);
+      expect(loader.contains('_reads.confirmedWorkers('), true);
+      expect(home.contains('svc.getConfirmedWorkersByDateAndBusinessOrThrow('), true);
       // 조회는 기존 두 개뿐 — 새 쿼리를 넣지 않았다
       expect('await _firestoreService.'.allMatches(loader).length, 0);
-      expect('_firestoreService.getAttendanceByDate'.allMatches(loader).length, 1);
+      expect('_reads.attendanceByDate('.allMatches(loader).length, 1);
       expect(
-        '_firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow'
+        '_reads.confirmedWorkers('
             .allMatches(loader)
             .length,
         1,

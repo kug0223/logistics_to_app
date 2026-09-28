@@ -256,7 +256,7 @@ void main() {
       expect(issues.contains('명 부족'), true);
       expect(issues.contains('근태 확인 '), true);
       final st = _codeOf(_bodyOf(home, 'Widget? _buildTodayStaffingSummary('));
-      expect(st.contains('명 필요 · '), true);
+      expect(st.contains(r"$required명 중 $confirmed명 확정"), true);
       expect(st.contains('명 확정'), true);
     });
 

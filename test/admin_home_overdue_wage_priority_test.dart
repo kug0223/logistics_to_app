@@ -349,7 +349,7 @@ void main() {
       );
       expect(rows.contains(r"wageParts.add('연체 ${wage!.overdueCount}건')"), isTrue);
       expect(
-        rows.contains(r"wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명')"),
+        rows.contains(r"wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}건')"),
         isTrue,
       );
       expect(rows.contains('icon: Icons.account_balance_wallet_outlined'), isTrue);

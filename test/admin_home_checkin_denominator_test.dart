@@ -14,6 +14,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _appFsPath = 'lib/services/firestore/application_firestore.dart';
 
 String _src(String p) => File(p).readAsStringSync();
@@ -102,7 +106,7 @@ void main() {
   late String appFs;
 
   setUpAll(() {
-    raw = _src(_homePath);
+    raw = _src(_homePath) + _codeOf(_src(_readsPath));
     home = _codeOf(raw);
     loader = _bodyOf(home, 'Future<void> _loadTodayAttendance(');
     appFs = _src(_appFsPath);
@@ -277,7 +281,7 @@ void main() {
       expect(loader.contains('WorkDetailHelper.effectiveStart(app, timeMap)'), isTrue);
       expect(loader.contains('scheduledStart: app.startTime'), isFalse);
       // §12 새 lookup 없음 — load 호출은 1회
-      expect('WorkDetailTimeService.load('.allMatches(loader).length, 1);
+      expect('_reads.workDetailTimes('.allMatches(loader).length, 1);
     });
 
     test('§10 lateGrace를 쓰지 않는다', () {
@@ -316,7 +320,8 @@ void main() {
     });
 
     test('Home이 strict variant를 쓴다', () {
-      expect(loader.contains('getConfirmedWorkersByDateAndBusinessOrThrow('), isTrue);
+      expect(loader.contains('_reads.confirmedWorkers('), isTrue);
+      expect(raw.contains('svc.getConfirmedWorkersByDateAndBusinessOrThrow('), isTrue);
       expect(
         loader.contains(
             '_firestoreService.getConfirmedWorkersByDateAndBusiness(\n'),
@@ -386,7 +391,7 @@ void main() {
       //   "attendance 전용 표현이 staffing 수치로 새지 않는다"는 더 강하게 성립한다.
       expect(home.contains('Widget _opsMetric('), isFalse);
       final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
-      expect(t.contains('명 필요 · '), isTrue);
+      expect(t.contains(r"$required명 중 $confirmed명 확정"), isTrue);
       expect(t.contains('명 확정'), isTrue);
       expect(t.contains('_todayCheckedIn'), isFalse, reason: 'staffing은 출근을 세지 않는다');
       expect(t.contains('valueText'), isFalse);

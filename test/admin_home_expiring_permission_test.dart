@@ -21,6 +21,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 const _cfPath = 'functions/src/index.ts';
 
 String _src(String p) {
@@ -137,7 +141,7 @@ int unknownCount({
 }
 
 void main() {
-  final home = _src(_homePath);
+  final home = _src(_homePath) + _codeOf(_src(_readsPath));
   final cf = _src(_cfPath);
   final make = _bodyOf(home, '_makeActionRows(BuildContext context');
   final makeCode = _codeOf(make);
@@ -384,8 +388,8 @@ void main() {
       // [CORRECTION-EXPIRED-UNDECIDED-RENEWAL-ACTION-SURFACE]
       //   count 는 여전히 결정 대기 인원 수다. 늦은 건수만 뒤에 덧붙었다.
       expect(seg, contains('count: totalDecisions,'));
-      expect(seg, contains("? '\$totalDecisions명 · 만료 \$expiredCount'"));
-      expect(seg, contains(": '\$totalDecisions명',"));
+      expect(seg, contains("? '\$totalDecisions건 · 만료 \$expiredCount'"));
+      expect(seg, contains(": '\$totalDecisions건',"));
       expect(seg, contains('ExpiringContractsScreen('));
       // source 바인딩은 라벨 앞줄에 있다
       expect(makeCode, contains('final expiring = cs?.upcoming.expiringContract;'));

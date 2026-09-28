@@ -114,8 +114,12 @@ void main() {
     });
 
     test('AR-7 Home 은 계속 OrThrow 를 쓴다', () {
+      // [R7-P1-4 H4] 원시 읽기는 admin_home_reads.dart 경계로 옮겼다 —
+      //   화면은 경계를 부르고, 경계가 OrThrow 변형으로 매핑한다. 요구는 그대로다.
       final code = _codeOf(_read('lib/screens/business_admin/business_admin_home_screen.dart'));
-      expect(code.contains('getConfirmedWorkersByDateAndBusinessOrThrow('), isTrue);
+      expect(code.contains('_reads.confirmedWorkers('), isTrue);
+      final seam = _codeOf(_read('lib/screens/business_admin/admin_home_reads.dart'));
+      expect(seam.contains('svc.getConfirmedWorkersByDateAndBusinessOrThrow('), isTrue);
     });
   });
 

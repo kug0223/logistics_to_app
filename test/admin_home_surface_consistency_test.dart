@@ -14,6 +14,10 @@ import 'package:flutter_test/flutter_test.dart';
 // ═══════════════════════════════════════════════════════════════
 
 const _homePath = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P1-4 H4] 홈의 원시 외부 읽기는 `admin_home_reads.dart` 경계로 옮겼다.
+//   배선 계약은 "홈의 읽기 경로" 전체에 대한 것이므로 화면 + 경계를 함께 읽는다.
+//   판정 기준은 낮추지 않았다 — strict variant·같은 로더 재사용을 여전히 요구한다.
+const _readsPath = 'lib/screens/business_admin/admin_home_reads.dart';
 
 String _src(String p) => File(p).readAsStringSync();
 String _codeOf(String b) =>
@@ -51,7 +55,7 @@ void main() {
   late String home;
 
   setUpAll(() {
-    raw = _src(_homePath);
+    raw = _src(_homePath) + _codeOf(_src(_readsPath));
     home = _codeOf(raw);
   });
 
@@ -359,7 +363,8 @@ void main() {
       expect(home.contains('hasUsableData'), isTrue);
       expect(home.contains(r"'근태 확인 $needsAttention건'"), isTrue);
       expect(home.contains('AttendanceReviewHelper.requiresReviewNow('), isTrue);
-      expect(home.contains('WorkDetailTimeService.load(allConfirmed)'), isTrue);
+      expect(home.contains('_reads.workDetailTimes(allConfirmed)'), isTrue);
+      expect(home.contains('workDetailTimes: WorkDetailTimeService.load'), isTrue);
       expect(home.contains('_isMultiBusinessScope'), isTrue);
       expect(home.contains('initialFilter: (approval?.overdueCount ?? 0) > 0'), isTrue);
     });

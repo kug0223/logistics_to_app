@@ -340,7 +340,7 @@ void main() {
       final t = _bodyOf(home, 'Widget? _buildTodayStaffingSummary(');
       final err = t.indexOf('hasUsableData');
       final noTarget = t.indexOf('hasTodayTarget');
-      final metric = t.indexOf('명 필요 · ');
+      final metric = t.indexOf(r"$required명 중 $confirmed명 확정");
       final notice = t.indexOf('_partialStaffingNotice(s)');
       expect(err, lessThan(noTarget));
       expect(noTarget, lessThan(metric));
