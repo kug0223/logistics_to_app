@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-3 후속 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: GAP-02 기준 고정 커밋
 
 ## 1. 문서 지도
 
@@ -12,6 +12,7 @@
 | `ALfit_Product_Integrity_Master_Ledger.md` | 제품 진실성 원장 — 결함/판정/미결의 누적 장부 |
 | `docs/r7-p1-admin-design-audit.md` | R7-P1 감사 본문(단계별 표·근거·증거) |
 | `docs/r7-p2-user-design-audit.md` | R7-P2 지원자(USER) 감사 본문 |
+| `docs/r7-gap02-product-value-criteria.md` | **GAP-02 제품 가치·사용성 기준** — VJ01~14 레지스트리, 증거 등급 규칙, 역할별 PRODUCT 상태 |
 | `docs/r7-staffing-count-lineage-audit.md` | Staffing 카운터 계보 감사 |
 | `docs/functional_test_*.md` | 기능별 시나리오 인벤토리(일부 낡음 — 아래 주의) |
 | `CLAUDE.md` | 작업 지침·설계 확정 항목·금지 사항 |
@@ -35,6 +36,20 @@
 | P2-3 | 근무가능일↔초대 의미 | CLOSED(consumer 전수) | **CLOSED**(첫 선택 전 안내·4상태·왕복) | **PENDING** · 실사용자 이해 **NOT SEEN** |
 | P2 나머지 | 일정 탭 그 외·MY 탭 내부 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
+
+## 2.5 네 역할 PRODUCT 결산 (GAP-02)
+
+CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰이 없으면 OPEN 이다.
+
+| 역할 | CODE/RENDER | USER OBSERVATION | PRODUCT |
+|---|---|---|---|
+| 지원자 | P2-1·P2-2·P2-3 종료(잔여 명시) | **없음** | **OPEN** |
+| 관리자 | P1-2~P1-7 종료(DEVICE 대기) | **없음** | **OPEN** |
+| 서브관리자 | 권한 계약 CODE | **없음** | **OPEN** |
+| 슈퍼관리자 | shell 11/11 · 일부 CODE only | **없음** | **OPEN** |
+
+기존 잔여는 **새 VJ 번호로 재등록하지 않는다** — 기존 ID 에 VJ 를 연결한다
+(매핑표는 `docs/r7-gap02-product-value-criteria.md` §2).
 
 ## 3. 소유자별 미결 (완료 선언 금지 항목)
 
