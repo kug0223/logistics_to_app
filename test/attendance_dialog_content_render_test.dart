@@ -50,7 +50,16 @@ class _FakeCore extends FirebasePlatform with MockPlatformInterfaceMixin {
 }
 
 const _biz = 'biz1';
-final _day = DateTime(2026, 9, 28); // 달력에서 고른 날(civil day)
+/// [R7-P1-4] 선택일은 **내일**이다 — 고정 날짜(2026-09-28)를 쓰던 동안에는
+///   실행 시각에 따라 09:00~13:00 근무가 이미 끝난 것으로 분류돼(미출근 →
+///   `확인필요`) 같은 fixture 가 오전에는 `정상`, 저녁에는 두 탭으로 갈렸다.
+///   이 테스트들이 보는 것은 그룹·문맥·수치이고 상태 분류가 아니므로,
+///   항상 '출근 전'이 되는 날을 골라 시계 의존을 없앤다.
+///   (상태 분류 자체의 계약은 `admin_home_attendance_actionability_test` 소유)
+final DateTime _day = () {
+  final t = DateTime.now().add(const Duration(days: 1));
+  return DateTime(t.year, t.month, t.day);
+}();
 final _dayKey = FormatHelper.kstDayKeyOfCivil(_day);
 
 /// CF 가 Timestamp 를 내려보내는 모양 — `parseTimestamp` 가 이것을 받는다.
@@ -247,7 +256,11 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('당일명단'), findsOneWidget);
-    expect(find.textContaining('09월 28일'), findsOneWidget);
+    expect(
+        find.textContaining(
+            '${_day.month.toString().padLeft(2, '0')}월 '
+            '${_day.day.toString().padLeft(2, '0')}일'),
+        findsOneWidget);
     // 정상 조회 + 결과 있음 → "확정된 근무자가 없습니다"(조회 0건)가 아니다.
     expect(find.text('확정된 근무자가 없습니다'), findsNothing);
     expect(find.text('명단을 확인하지 못했습니다'), findsNothing);
