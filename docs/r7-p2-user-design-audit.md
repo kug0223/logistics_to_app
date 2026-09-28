@@ -374,3 +374,114 @@ DEVICE/PRODUCT **대기**.
    탭하면 그 근무가 출퇴근 화면 목록에 있는지. 퇴근 후 홈 복귀 시 카드가 사라지는지.
 2. 매월 **1일** 00:00 이후 같은 확인(지난달 꼬리 경로).
 3. 어제 `NO_SHOW`/미출근 계정에서 카드가 **뜨지 않는지**.
+
+---
+
+## R7-P2-1 잔여 — Home→출퇴근 화면 KST 날짜 일치 (2026-09-28)
+
+기준 제출 `d6a7274`(기준 `6a96276`). 수행 전 HEAD·dirty 확인(tracked 0, untracked 8).
+`[VERIFY-R7-P2-1-ATTENDANCE-LOCAL-MIDNIGHT]`. 공유 DEV READ ONLY — 쓰기·fixture·CF·
+Rules·PROD·APK 없음. **사용자에게 기기 시간대 조작을 요구하지 않았다.**
+수용된 UHR-18~28·UHR-R 은 재실행하지 않았고(회귀로만 통과 확인), 실제 퇴근 mutation 은
+여전히 미검증이다.
+
+### 1. 판정 — **실제 불일치가 있다. NO PATCH 아님.**
+
+현재 HEAD 에서 확인한 두 기준:
+
+| 화면 | 오늘/어제를 만드는 식 | 성질 |
+|---|---|---|
+| Home | `FormatHelper.toKstDate(now)` · `toKstDate(att.workDate)` | **instant 기반** — 기기 시간대와 무관 |
+| 출퇴근(수정 전) | `DateTime(now.y, now.m, now.d)` · `DateUtils.isSameDay(workDate, …)` | **필드 기반** — `Timestamp.toDate().toLocal()` 이 만든 기기 로컬 필드 |
+
+저장된 근무일은 KST 자정 instant 다. 비-KST 기기에서는 그 instant 의 **로컬 필드**가
+KST 날짜와 다르므로 두 화면이 같은 근무를 다른 날로 부른다.
+
+**도달 가능성:** `processMissedCheckouts` 는 자정 실행이면서 `createdAt` 이 **24시간
+이상** 지난 문서만 `missed_checkout` 으로 바꾼다. 09-28 23:00 KST 체크인 건은
+09-29 자정에 1시간밖에 안 됐으므로 마킹되지 않는다 → **09-29 하루 종일 퇴근 가능
+상태**다. 따라서 아래 사례는 "이미 자동 처리돼 도달 불가"가 아니다.
+
+| 기기 TZ / KST 시각 | canonical workDate·상태 | Home 카드 | 목적지 같은 근무 | 판정 |
+|---|---|---|---|---|
+| KST(+9) · 09-29 01:00 | 09-28 · checkIn 23:00, checkOut null, present | 표시 | **있음** | 일치(수정 전에도) |
+| KST(+9) · 09-29 10:00 | 동일 | 표시 | **있음** | 일치(수정 전에도) |
+| **UTC(+0) · 09-29 10:00** | 동일 | 표시 | **없음 → 수정 후 있음** | **불일치(방향 A)** |
+| UTC(+0) · 09-29 01:00 | 동일 | 표시 | 있음 | 일치(정렬 구간) |
+| **UTC(+0) · 09-29 20:00** | **09-29**(오늘) · checkIn 09:00, checkOut 18:00 | 없음(오늘=Hero) | **없음 → 수정 후 있음** | **불일치(방향 B)** — 오늘 끝낸 근무가 "어제 기록" 규칙에 걸려 사라졌다 |
+| UTC(+0) · 09-29 10:00 | 09-28 · checkOut 06:00 | 없음 | 없음 | 일치(제외가 같이 움직인다) |
+| UTC(+0) · 09-29 10:00 | 09-28 · 미출근 | 없음 | 있음(출근 후보) | **의도된 차이** — 퇴근 CTA 가 아니다 |
+| UTC(+0) · 09-29 10:00 | 09-28 · NO_SHOW | 없음 | 없음 | 일치 |
+| **UTC(+0) · 10-01 10:00** | 09-30 · checkIn 23:00 | 표시 | **없음 → 수정 후 있음** | **불일치(월말→1일)** |
+| **UTC(+0) · 09-29 10:00** | 어제 진행 중 + 오늘 확정 2건 | 퇴근 카드 + 오늘 Hero | **1건만 → 수정 후 2건** | **불일치(같은 날 또 다른 근무)** |
+
+**방향 두 가지:** 기기가 KST 보다 **뒤처진** 구간에서는 어제 근무가 사라지고(A),
+같은 기기의 다른 시각대에서는 **오늘** 근무가 어제로 읽혀 사라진다(B). 기기가
+KST 보다 **앞선** 경우는 같은 식의 부호만 반대인 대칭 사례다 — 이번 수정은
+필드 의존 자체를 없애므로 두 방향이 함께 닫힌다.
+
+**흉내 낸 방법(기기 조작 없음):** Dart 의 `DateTime` 은 instant 와 wall-clock 필드가
+묶여 있어, "필드는 그 기기 것 · instant 는 그대로"를 만들 수 있는 것은 호스트
+시간대(KST)와 UTC 두 가지뿐이다. 그래서 **UTC 기기**로 비-KST 기기를 대표했다.
+시계는 `clock` 주입으로 제어하고, 근무일은 그 기기의 `Timestamp.toDate().toLocal()`
+이 내놓을 값으로 준다 — production parser·필터를 그대로 지난다.
+
+### 2. 최소 수정
+
+`attendance_check_screen` 의 날짜 기준을 **날짜 owner(P1-3)의 KST** 로 옮겼다.
+Home 에 local 시계 예외를 덧대지 않았다.
+
+| 위치 | 전 | 후 |
+|---|---|---|
+| `todayStart` | `DateTime(today.y, today.m, today.d)` | `FormatHelper.toKstDate(today)` |
+| 단기 후보 | `DateUtils.isSameDay(app.workDate, …)` ×2 | `toKstDate(app.workDate) == todayStart \|\| == yesterday` |
+| 어제 기록 제외 | `DateUtils.isSameDay(att.workDate, yesterday)` | `toKstDate(att.workDate) == yesterday` |
+| 장기 체크인 근무일 | `DateTime(todayDate.y,m,d)` | `FormatHelper.toKstDate(_now())` — 서버 docId 가 KST 다 |
+| 홈 꼬리 판정 | `now.day == 1`(기기 로컬) | `toKstDate(_now()).day == 1` |
+
+경계 두 칸을 새로 냈다: `AttendanceCheckReads`(읽기 2개) · `clock`(두 화면 모두,
+production 은 null). **체크인·체크아웃 mutation 은 경계에 넣지 않았다.**
+서비스 계층(`getTodayAttendance`)은 이미 `[PREDEVICE-ATTENDANCE-KST]` 로 KST 였다 —
+남아 있던 것은 화면의 후보 필터뿐이다.
+
+### 3. 보고 정밀도 정정 — 지난달 꼬리 읽기
+
+앞 보고의 "왕복 증가 없음"은 **순차 대기 단계** 기준으로만 맞다. 정정한다:
+
+| 축 | 사실 | 근거 |
+|---|---|---|
+| 순차 대기 단계 | 늘지 않는다 — 기존 `Future.wait` 의 5번째 원소로 **병렬** 합류 | 코드(`Future.wait([...4개, if (needsTail) ... else Future.value([])])`) |
+| 원격 요청 수 | **매월 1일에 1회 증가**(4→5). 그 외의 날은 증가 0 | 계측 KDP-C1: `['2026-9']` 1회 · KDP-C2: 2회(`2026-10`+`2026-9`) |
+| 실행 조건 | `toKstDate(_now()).day == 1` — **KST 1일에만** | 계측 KDP-C3: 기기(UTC)로는 9/30 21:00 이어도 KST 10/1 이면 읽는다 |
+| 캐시 | `getMyMonthlyAttendances` 는 `{uid}_{y}_{m}` TTL 캐시를 쓴다 — 같은 날 반복 로드는 재요청이 아니다 | 서비스 코드 |
+
+R8 전체 성능 재감사는 하지 않았다.
+
+### 4. 범위
+
+| 구분 | 결과 |
+|---|---|
+| CODE | 종료 — 두 화면이 같은 KST 기준을 쓴다 |
+| 행동 | 종료 — **같은 fixture 로 두 production 화면을 돌려** 목록 포함 여부를 비교(13건). 목적지가 열렸다는 사실만으로 판단하지 않았다 |
+| RENDER | 종료 — 기존 UHR-R 6조합 회귀 |
+| DEV READ | 없음 |
+| DEVICE / PRODUCT | **대기** — 실제 퇴근 버튼 mutation 미검증 |
+
+- `[VERIFY-R7-P2-1-ATTENDANCE-LOCAL-MIDNIGHT]` → **불일치 입증 → 수정 → 종료.**
+  `[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]` 는 닫는다.
+- 실제 오판이 입증됐으므로 `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` 로 분류하고
+  **수정 전 5건 FAIL → 수정 후 13건 PASS** 로 전후를 남긴다.
+- 남은 관찰: 수입의 월 조회는 여전히 기기 로컬 `now.year/now.month` 를 쓴다.
+  이번 범위(Home→출퇴근 날짜 일치)가 아니고 급여 정책 재감사도 하지 않으므로
+  `[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]` 로만 남긴다 — owner P1-5/P1-3.
+- 12 CTA 중 나머지 9 제스처·FCM cold-start 는 DEVICE/P4·P5 로 유지.
+
+**P2-1 판정:** CODE **종료** · RENDER **종료** · 행동 종료(퇴근 mutation 제외) ·
+DEVICE/PRODUCT **대기**. P2 전체는 별도.
+
+#### 최소 실기기 확인안
+
+1. 기기 시간대를 **KST 가 아닌 곳**(예: UTC)으로 둔 단말에서, 자정을 넘겨 근무 중인
+   계정으로 홈 → 퇴근 카드 탭 → **그 근무가 목록에 있는지**.
+2. 같은 단말에서 **오늘 퇴근까지 끝낸 근무**가 목록에서 사라지지 않는지.
+3. 매월 1일 KST 기준으로 꼬리 경로가 동작하는지.

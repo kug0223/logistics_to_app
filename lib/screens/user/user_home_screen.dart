@@ -49,12 +49,17 @@ import 'user_home_reads.dart';
 
 // ── 지원자 홈 화면 ────────────────────────────────────────────────
 class UserHomeScreen extends StatefulWidget {
-  const UserHomeScreen({super.key, this.reads});
+  const UserHomeScreen({super.key, this.reads, this.clock});
 
   /// [R7-P2-1 P21-E] 홈이 나가서 읽는 **원시 외부 호출**만 모은 경계.
   ///   production 은 null — 기존 `FirestoreService` 인스턴스를 그대로 쓴다.
   ///   파싱·Hero 판정·주간 7일·집계·문구는 전부 이 화면에 남는다.
   final UserHomeReads? reads;
+
+  /// [R7-P2-1 잔여] "지금"의 출처. production 은 null → `DateTime.now`.
+  ///   출퇴근 화면과 **같은 시각**으로 두 화면의 날짜 판정을 맞대 보기 위한
+  ///   자리다. 화면 로직은 그대로 지난다.
+  final DateTime Function()? clock;
 
   @override
   State<UserHomeScreen> createState() => _UserHomeScreenState();
@@ -63,6 +68,7 @@ class UserHomeScreen extends StatefulWidget {
 class _UserHomeScreenState extends State<UserHomeScreen>
     with WidgetsBindingObserver {
   late final UserHomeReads _reads = widget.reads ?? UserHomeReads.of();
+  DateTime _now() => (widget.clock ?? DateTime.now)();
   List<ApplicationModel> _applications = [];
   List<AttendanceModel> _attendances = [];
   List<TOModel> _publishedTos = [];
@@ -435,7 +441,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }
     _isLoadingHomeData = true;
     setState(() => _isLoadingData = true);
-    final now = DateTime.now();
+    final now = _now();
     try {
       // [PREDEVICE-CONTRACT-CONTEXT] 미서명 계약 목록도 홈 로드에 합류시킨다.
       //   지금까지는 로그인 시점과 FCM 수신 시에만 갱신됐다. push를 놓치면
@@ -458,8 +464,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       Object? idErr;
       Object? tailErr;
       // [R7-P2-1 잔여] 어제가 지난달인 날(=1일)에만 꼬리를 함께 읽는다.
-      final needsTail = now.day == 1;
-      final prevMonthDay = DateTime(now.year, now.month, 0); // 지난달 말일
+      //   기준은 **KST 달력일**이다 — 기기 로컬 1일로 재면 비-KST 기기에서
+      //   하루 어긋나 정작 필요한 날 꼬리를 안 읽거나 필요 없는 날 읽는다.
+      final kstToday = FormatHelper.toKstDate(_now());
+      final needsTail = kstToday.day == 1;
+      final prevMonthDay =
+          DateTime.utc(kstToday.year, kstToday.month, 0); // 지난달 말일(KST)
       final results = await Future.wait([
         _reads.myApplications(uid).catchError((Object e) {
           appsErr = e;
@@ -1074,8 +1084,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (uid == null) return null;
     // 지원 내역을 못 읽었으면 확정 여부를 확인할 수 없다 — 거짓 CTA 금지.
     if (_homeLoadFailed) return null;
-    final yesterday = FormatHelper.toKstDate(DateTime.now())
-        .subtract(const Duration(days: 1));
+    final yesterday =
+        FormatHelper.toKstDate(_now()).subtract(const Duration(days: 1));
 
     for (final att in [..._attendances, ..._prevMonthTail]) {
       if (att.userId != uid) continue;

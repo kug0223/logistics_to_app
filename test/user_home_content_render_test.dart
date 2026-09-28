@@ -867,10 +867,21 @@ void main() {
         File('lib/screens/user/user_home_screen.dart').readAsStringSync();
     final body = home.substring(home.indexOf('AttendanceModel? _openOvernightAttendance('));
     final until = body.substring(0, body.indexOf('Widget _buildOvernightCheckoutCard('));
-    expect(until.contains('FormatHelper.toKstDate(DateTime.now())'), isTrue);
+    expect(until.contains('FormatHelper.toKstDate(_now())'), isTrue);
+    // 시계 주입은 production 에서 DateTime.now 로 떨어진다.
+    expect(home.contains('DateTime _now() => (widget.clock ?? DateTime.now)();'),
+        isTrue);
     expect(until.contains('FormatHelper.toKstDate(att.workDate) != yesterday'), isTrue);
     // 기기 로컬 자정으로 어제를 만들지 않는다.
     expect(until.contains('DateTime(now.year'), isFalse);
+
+    // [R7-P2-1 잔여] 목적지도 같은 기준이어야 홈이 보낸 근무를 찾는다.
+    final dest =
+        File('lib/screens/user/attendance_check_screen.dart').readAsStringSync();
+    expect(dest.contains('FormatHelper.toKstDate(today)'), isTrue);
+    // 주석에 남은 설명이 아니라 **코드**를 본다.
+    expect(dest.contains('final todayStart = DateTime('), isFalse,
+        reason: '기기 로컬 자정으로 오늘/어제를 만들면 비-KST 기기에서 하루 어긋난다');
   });
 
   // ══════════════════════════════════════════════════════════

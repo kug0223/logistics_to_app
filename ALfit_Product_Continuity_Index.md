@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-1 잔여 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-1 잔여(KST 날짜 일치) 커밋
 
 ## 1. 문서 지도
 
@@ -46,7 +46,9 @@
 | `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` | P2 | 6화면 + 낡은 주석 정정 — 3축 실측 완료, 셋은 `onRefresh` 설계가 먼저 |
 | `[R7-P2-1-RESIDUAL-TAB-DESTINATIONS]` | P2 | 일자리·일정·MY 탭 **내부** 화면군 |
 | ~~`[R7-P2-1-RESIDUAL-HOME-NIGHT-SHIFT-CHECKOUT]`~~ | P2 | **CLOSED** — 퇴근 카드 신설 |
-| `[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]` | P1-3 temporal | 출퇴근 화면이 기기 로컬 자정으로 어제를 만든다(홈은 KST) |
+| ~~`[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]`~~ | P1-3 temporal | **CLOSED** — KST 로 통일 |
+| `[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]` | P1-5/P1-3 | 수입 월 조회가 기기 로컬 월을 쓴다 |
+| `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` | P2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
 | `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
 | 대비·터치영역 수치 | P4 | 미측정 |
@@ -76,3 +78,4 @@
 - 지원자 홈 Hero 술어·늦은 응답 가드·4탭 뒤로 경로(P2-1)
 - 홈 CTA entity key 표·상태 분류·FCM 대상 권한(P2-1 후속)
 - 자정 넘긴 근무의 퇴근 자격 술어·경계 9종(P2-1 잔여)
+- 홈↔출퇴근 화면의 KST 날짜 일치(P2-1 잔여) — 두 화면 모두 `toKstDate` 기준

@@ -7,6 +7,8 @@ import '../../models/core/business_model.dart';
 import '../../widgets/common/loading_button.dart';
 import '../../services/firestore_service.dart';
 import '../../services/analytics_service.dart';
+import '../../utils/format_helper.dart';
+import 'attendance_check_reads.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/beacon_helper.dart';
 import '../../utils/location_helper.dart';
@@ -24,7 +26,16 @@ import 'user_tab_scope.dart';
 
 /// 출퇴근 체크 화면
 class AttendanceCheckScreen extends StatefulWidget {
-  const AttendanceCheckScreen({super.key});
+  const AttendanceCheckScreen({super.key, this.reads, this.clock});
+
+  /// [R7-P2-1 잔여] 목록을 만들 때의 읽기 경계. production 은 null.
+  final AttendanceCheckReads? reads;
+
+  /// [R7-P2-1 잔여] "지금"의 출처. production 은 null → `DateTime.now`.
+  ///
+  ///   시간대 경계를 **기기 조작 없이** 검증하기 위한 자리다. 비-KST 기기를
+  ///   흉내 낼 때는 그 기기의 로컬 필드를 가진 시각을 넣는다.
+  final DateTime Function()? clock;
 
   @override
   State<AttendanceCheckScreen> createState() => _AttendanceCheckScreenState();
@@ -33,6 +44,9 @@ class AttendanceCheckScreen extends StatefulWidget {
 class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   static final _fmt = NumberFormat('#,###'); // 카드 build마다 인스턴스 생성 방지
   final FirestoreService _firestoreService = FirestoreService();
+  late final AttendanceCheckReads _reads =
+      widget.reads ?? AttendanceCheckReads.of(_firestoreService);
+  DateTime _now() => (widget.clock ?? DateTime.now)();
 
   List<ApplicationModel> _todayWorks = [];
   final Map<String, AttendanceModel?> _attendanceMap = {};
@@ -66,10 +80,18 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
         return;
       }
 
-      final allApplications = await _firestoreService.getMyApplications(uid);
+      final allApplications = await _reads.myApplications(uid);
 
-      final today = DateTime.now();
-      final todayStart = DateTime(today.year, today.month, today.day);
+      // [R7-P2-1 잔여 · VERIFY-ATTENDANCE-LOCAL-MIDNIGHT]
+      //   여기는 `DateTime(today.year, today.month, today.day)` 였다 —
+      //   **기기 로컬 자정**이다. 저장된 근무일은 KST 자정 instant 이고
+      //   `Timestamp.toDate().toLocal()` 로 읽히므로, 비-KST 기기에서는
+      //   그 필드가 KST 날짜와 하루 어긋난다. 그러면 홈이 "퇴근이 남았다"고
+      //   보낸 바로 그 근무가 이 목록에서 빠져 **퇴근할 방법이 사라진다.**
+      //   날짜 owner(P1-3)의 KST 기준으로 맞춘다 — 같은 날을 두 화면이
+      //   같은 이름으로 부른다.
+      final today = _now();
+      final todayStart = FormatHelper.toKstDate(today);
       // [C-001] yesterday를 루프 밖으로 — 퇴근 완료 필터에서도 사용
       final yesterday = todayStart.subtract(const Duration(days: 1));
       final todayWorks = <ApplicationModel>[];
@@ -82,8 +104,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
         if (!isReallyLongTerm) {
           // 어제 시작한 야간 근무(자정 이후 퇴근 대기)도 포함
-          if (DateUtils.isSameDay(app.workDate, todayStart) ||
-              DateUtils.isSameDay(app.workDate, yesterday)) {
+          final wd = FormatHelper.toKstDate(app.workDate);
+          if (wd == todayStart || wd == yesterday) {
             todayWorks.add(app);
           }
           continue;
@@ -100,7 +122,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       final tempMap = <String, AttendanceModel?>{};
       await Future.wait(
         todayWorks.map((work) async {
-          final attendance = await _firestoreService.getTodayAttendance(
+          final attendance = await _reads.todayAttendance(
             userId: uid,
             applicationId: work.id,
           );
@@ -121,7 +143,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       final visibleWorks = todayWorks.where((work) {
         final att = tempMap[work.id];
         if (att == null) return true;
-        if (DateUtils.isSameDay(att.workDate, yesterday)) {
+        if (FormatHelper.toKstDate(att.workDate) == yesterday) {
           // [G-3 수정] 어제 기록은 퇴근 완료 또는 missed_checkout 상태 모두 오늘 화면에서 숨김
           // [BUG-M2 수정 2026-07-27] NO_SHOW/absent 상태도 어제 기록이면 숨김
           // — 배치 자동처리 후 어제 카드가 "출근하기" 버튼과 함께 오늘 화면에 남는 UX 버그 방지
@@ -243,9 +265,12 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       // 3. Firestore 출근 기록 저장 (비콘 방식은 lat/lng null — 불필요)
       // 단기 근무: work.workDate 사용 — 야간 근무 자정 이후 체크인 시 docId가 다음 날로 밀리는 것 방지 [060]
       // 장기 근무: 오늘 날짜 사용 — work.workDate는 계약 시작일(고정값)이라 날짜별 docId 분리 불가
-      final todayDate = DateTime.now();
+      // [R7-P2-1 잔여] 장기 근무의 근무일도 **KST 자정**으로 만든다 —
+      //   서버가 docId 를 KST 로 만들고(callableCheckIn), 홈·목록도 KST 로
+      //   읽는다. 여기만 기기 로컬 자정이면 비-KST 기기에서 하루 밀린
+      //   근무일이 저장된다.
       final attendanceWorkDate = work.isLongTermApplication
-          ? DateTime(todayDate.year, todayDate.month, todayDate.day)
+          ? FormatHelper.toKstDate(_now())
           : work.workDate;
       final attendanceId = await _firestoreService.checkIn(
         applicationId: work.id,
