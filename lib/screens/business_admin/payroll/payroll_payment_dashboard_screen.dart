@@ -360,6 +360,12 @@ class _PayrollPaymentDashboardScreenState
       await _loadBankInfo(uids);
 
       if (!mounted) return;
+      // [R7-P1-5 PAY-2] 이 결과는 요청을 보낼 때의 연·월 것이다. 그 사이에 월을
+      //   바꾸거나 mutation 갱신이 걸리면 `_pendingReload` 가 서 있고, 아래
+      //   `finally` 가 새 범위로 다시 읽는다. 그때 낡은 목록을 먼저 앉히면
+      //   **다른 달의 기록이 현재 달 제목 아래에 로딩이 끝난 모습으로** 보인다.
+      //   적용하지 않고 로딩을 유지한 채 새 결과를 기다린다.
+      if (_pendingReload) return;
       setState(() {
         _allRecords         = allRecs;
         _selectedIds.clear();

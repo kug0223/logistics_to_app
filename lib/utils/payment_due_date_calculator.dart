@@ -76,11 +76,19 @@ class PaymentDueDateCalculator {
 
   /// 해당 월 또는 다음 달의 목표 일자 반환
   /// 해당 월에 targetDay가 없으면(ex: 2월 30일) 말일로 클램프
+  /// [R7-P1-5 PAY-2] 이 계산기의 기준값은 `FormatHelper.toKstDate` 가 만든
+  ///   **UTC 플래그 달력일**이다(`DateTime.utc(y,m,d)`). 그런데 월별 분기만
+  ///   `DateTime(...)` 로 **기기 local** 날짜를 만들고 있었다. 한국 기기에서는
+  ///   두 값이 같은 KST 날짜로 정규화돼 표가 났지만, 다른 시간대 기기에서는
+  ///   `toKstDate` 를 거칠 때 하루가 밀린다 — 지급 예정일은 연체 판정과
+  ///   홈 배지까지 흐르는 값이라 기기에 따라 달라지면 안 된다.
+  ///   같은 분기 안에서 `from` 과 비교도 하므로(`isBefore`) 플래그가 섞이면
+  ///   비교 자체가 9시간 어긋난다. 전부 utc 로 만든다.
   static DateTime _nextMonthlyDay(DateTime from, int targetDay) {
     // 이번 달 가능 여부 확인
     final lastDayOfMonth = _lastDayOf(from.year, from.month);
     final clampedDay = targetDay.clamp(1, lastDayOfMonth);
-    final thisMonthDue = DateTime(from.year, from.month, clampedDay);
+    final thisMonthDue = DateTime.utc(from.year, from.month, clampedDay);
 
     if (!thisMonthDue.isBefore(from)) {
       return thisMonthDue; // 아직 지급일 안 지남 → 이번 달
@@ -88,16 +96,16 @@ class PaymentDueDateCalculator {
 
     // 이번 달 지급일 이미 지남 → 다음 달
     final nextMonth = from.month == 12
-        ? DateTime(from.year + 1, 1, 1)
-        : DateTime(from.year, from.month + 1, 1);
+        ? DateTime.utc(from.year + 1, 1, 1)
+        : DateTime.utc(from.year, from.month + 1, 1);
     final lastDayOfNext = _lastDayOf(nextMonth.year, nextMonth.month);
     final nextDay = targetDay.clamp(1, lastDayOfNext);
-    return DateTime(nextMonth.year, nextMonth.month, nextDay);
+    return DateTime.utc(nextMonth.year, nextMonth.month, nextDay);
   }
 
   // DateTime(y, month+1, 0) — Dart가 월 오버플로우(13월→1월)를 자동 처리; day=0은 전달 마지막 날
   static int _lastDayOf(int year, int month) =>
-      DateTime(year, month + 1, 0).day;
+      DateTime.utc(year, month + 1, 0).day;
 
   /// payScheduleType 한국어 라벨
   static String label(String? type) {

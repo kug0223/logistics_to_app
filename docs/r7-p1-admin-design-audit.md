@@ -1362,3 +1362,214 @@ assert 는 전부 그대로다**(`git show 9f45090` 로 확인: 15 insert / 2 de
    처리 후 돌아오면 그 수치가 줄어든다.
 4. SubAdmin 사업장 전환 직후 수치가 이전 사업장 값으로 되돌아가지 않는다.
 5. 권한 없는 SubAdmin 계정에서 같은 자리들이 아예 보이지 않는다.
+
+---
+
+## R7-P1-5 — 관리자 급여 화면군 (2026-09-28)
+
+**기준 SHA 차이:** 요청서는 `ebcd16a`(P1-4 후속 보고)를 기준으로 적었고 **실제 HEAD 도
+`ebcd16a`** 였다 — 차이 없음. branch `main`, 시작 시 tracked 변경 0, 사용자 소유
+untracked 8건 보존. Staffing 11TO/21업무 보정 **DEFERRED**, O08 **PENDING** 유지.
+공유 DEV 쓰기·fixture·CF 배포·Rules·PROD·APK **없음**. 실제 은행 이체 **없음**.
+
+### 0. 도달 가능한 surface 목록 (실제 확인)
+
+인벤토리 문서(`functional_test_Q_payroll_screens.md`)는 `today_payment_screen.dart` 를
+대상으로 적고 있으나 **그 파일은 존재하지 않는다**(삭제됨). Q-01 로 적힌
+`payroll_worker_detail_screen` 의 `limit(500)` 도 지금은 없다 — 조회가 CF 로 옮겨졌다.
+실제 도달 경로는 다섯이다.
+
+| surface | 진입 | 진입 파라미터 |
+|---|---|---|
+| `PayrollOverviewScreen` | 관리자 shell 탭 3 | 사업장(picker, 1곳이면 자동) · 연도 |
+| `PayrollMonthScreen` | 개요의 월 카드 | `PayrollSummaryModel`(사업장×YYYY-MM) + 건수 모름 여부 |
+| `PayrollWorkerDetailScreen` | 월 상세의 근무자 행 | businessId · year · month · workerId |
+| `PayrollPaymentDashboardScreen` | 개요 `지급 현황` · 홈 `이체 대기` · 알림 · 설정 · FCM | businessId · year · month · initialTab(0~3) · showAllOutstanding |
+| `WageConfirmDialog` | 근태·급여 확정 경로 | (이번 감사에서 재판정하지 않음 — 기존 계약 재사용) |
+
+대시보드 탭은 실제로 네 개다: **미이체 · 이체현황 · 변경요청 · 중간정산**
+(+ 필터 전체/월급/주급/일급, 주차·일자 필터).
+
+### 1. surface × 계약 표
+
+| surface | source → 계산 owner → 표시 | 단위·범위 | loading/empty/partial/error/권한 | action · 복귀 refresh |
+|---|---|---|---|---|
+| 개요 월 그리드 | `payroll_summaries` projection(CF) → 화면이 12개월 구성 → 금액·`N명 · M건` | 금액 원 · 인원 명 · **확정+이체 건** | 로딩 skeleton · `데이터 없음` · **출근 집계 실패 → 이제 `미이체 확인 못함`** · 진입 전 `canManageWage` 확인 | 카드 탭 → 월 상세, 복귀 시 `_loadYear` |
+| 개요 월 카드 `미이체 N` | **`callableGetAdminAttendances` 만**(projection 값을 덮어쓴다) | 건 | 실패 시 예전에는 0 → 줄 사라짐 → **수정** | — |
+| 월 상세 헤더 금액 | projection `totalPayout` | 원 | — | `지급 현황` → 대시보드 |
+| 월 상세 `이체 완료 / 미이체` | `confirmedCount − notTransferredCount`(clamp) / `notTransferredCount` | 건 | **모르면 이제 `확인 못함`** (예전엔 전부 이체된 것처럼) | — |
+| 월 상세 근무자 목록 | `payroll_summaries/{id}/workers` 직접 읽기 → 정렬·검색 | 금액 원 · **확정 근무 건** | **조회 실패 ↔ 집계 없음 분리(수정)** · 검색 0건 · `확정된 급여가 없습니다` | 행 → 근무자 상세 |
+| 근무자 상세 상단 | `callableGetAdminAttendances`(userId·월) → 확정·이체만 필터 | **확정 근무 건** · 총 근무시간 | `_loadError` 분리(유지) | 정산·명세 경로 |
+| 대시보드 미이체/이체현황 | `PayrollPaymentService.getPayrollRecords`(월×wageStatus) | 건 · 원 | `_loadError` 로 남김(0원 위장 금지, 유지) · 요청 탭은 배지 전 미표시 | 이체 완료 처리/취소 → write-set 기준 scoped refresh(유지) |
+| 대시보드 연체/당일 | `attendance.paymentDueDate` → `toKstDate` 비교 | 날짜 | — | — |
+| 대시보드 계좌 줄 | **Attendance 스냅샷**(`buildTransferExportPlan`) — users 에서는 이름만 | — | — | — |
+
+### 2. PAY-1 — 돈과 근무의 의미
+
+**수정 3건.**
+
+1. **출근 집계 실패를 0 으로 렌더했다.** 월별 `미확정`·`미이체` 는
+   `callableGetAdminAttendances` 하나에서만 온다. 그 호출이 실패하면 12개월 전부 0 이
+   되어 월 카드의 미이체 줄이 **사라지고**(줄이 없는 것과 0 은 관리자에게 같은 뜻이다),
+   월 상세는 `이체 완료 = 확정 − 미이체` 를 계산해 **전부 이체된 달**이라고 말했다.
+   → 실패를 `_attCountsUnknown` 으로 들고 다니며 `미이체 확인 못함` / `확인 못함` ×2 로
+   말한다. 집계 문서를 실제로 받으면(`_refreshSummary`) 해제된다.
+   토스트만으로는 부족했다 — 숫자가 남아 있는 화면이 사실을 말해야 한다.
+2. **근무자 목록 조회 실패를 `집계 데이터가 없습니다` + 복원 버튼으로 말했다.**
+   조회 실패에 **서버 재집계(쓰기)** 를 권하는 것은 원인을 틀리게 말하는 것이다.
+   → `_workersLoadFailed` 를 분리하고 `근무자 목록을 불러오지 못했습니다` + `다시 시도`.
+3. **`N일 근무` / `근무일수` 는 날짜가 아니라 기록 수였다.** 서버
+   `srvPayrollContribution` 은 attendance **1건당 `workDays: 1`** 을 더하고, 근무자
+   상세는 `_records.length` 를 그대로 `일` 로 불렀다. 한 사람이 같은 날 겹치지 않는 두
+   근무를 확정받을 수 있으므로(P1-3 확정) 없는 날을 센다. 또 이 모집단은 **확정·이체된
+   기록만**이라, 실제로 4일 일했는데 2건만 확정돼 있으면 `2일` 로 보였다 —
+   **이것이 "실제 4일/8시간인데 2일/4시간" 으로 보고된 경험의 원인이다**(reader 는
+   `allowedStatuses = {confirmed, transferred}` 로 좁힌다). 금액 owner 를 다시 계산하지
+   않고 **세는 대상을 이름에 넣었다**: `확정 근무 N건`.
+
+**판정 기록(미수정):** 같은 `notTransferredCount` 를 개요는 **출근 집계**에서,
+월 상세는 새로고침 후 **projection** 에서 읽는다. 값이 어긋날 수 있어 화면에 clamp 가
+들어 있다(`confirmedCount < notTransferredCount 가능`). owner 를 하나로 정하는 것은
+어느 숫자를 보여줄지 바꾸는 제품 결정이고, projection 은 존재 여부 oracle 때문에 CF 로
+옮긴 경로다 — **작은 패치로 고칠 문제가 아니므로 이번에 바꾸지 않았다.**
+[R7-P1-5-RESIDUAL-NOTTRANSFERRED-OWNER]
+
+주휴수당·세금·과거 snapshot 정책은 이번 감사에서 새로 정하지 않았다.
+
+### 3. PAY-2 — 처리 상태와 행동
+
+**수정 2건.**
+
+1. **낡은 in-flight 결과가 현재 월 아래에 앉았다.** `_load()` 에는 직렬화 가드가
+   있다(`_fetchInProgress` + `_pendingReload`) — **첫 판단을 정정한다.** 문제는 다른
+   곳이었다: 월을 바꾸면 이미 떠 있는 요청은 **이전 달** 것인데 그 결과를 그대로
+   `_allRecords` 에 앉히고 `_isLoading = false` 로 내렸다. 그래서 새 요청이 끝나기
+   전까지 **다른 달 기록이 현재 달 제목 아래에 로딩이 끝난 모습으로** 보였다.
+   → 밀려 있는 로드가 있으면 적용하지 않고 로딩을 유지한다(`finally` 가 최신 범위로
+   다시 읽는다). 선택은 어차피 적용 시점에 비워지므로 금전 action 위험은 낮았지만,
+   표시가 사실과 달랐다.
+2. **지급 예정일이 기기 시간대에 좌우됐다.** `PaymentDueDateCalculator` 의 기준값은
+   `toKstDate` 가 만든 UTC 플래그 달력일인데 **월별 분기만** `DateTime(...)` 로 기기
+   local 날짜를 만들었다(그래서 D2-07·08 은 통과하고 나머지는 실패했다). 서버
+   `srvCalculatePaymentDueDate` 는 UTC 런타임에서 `new Date(y,m,d)` → `00:00Z` 를
+   쓰므로, 한국 기기에서 두 값이 **9시간** 어긋났고 다른 시간대에서는 **하루**가
+   밀린다. → 계산기 전부 `DateTime.utc`. 지금 `calculate()` 의 production caller 는
+   없다(서버가 writer이고 화면은 `label` 만 쓴다) — **사용자에게 보이는 변화는 없고**,
+   서버와 같은 모양으로 맞춰 다음 caller 가 같은 함정을 다시 밟지 않게 한 것이다.
+   저장 shape 자체(`00:00Z` vs KST 자정)는 소비자가 모두 KST 달력일로 정규화하므로
+   (`isDueToday`·`isDueOnOrBefore`·`_earliestDue`·CF 연체 비교) **바꾸지 않았다.**
+
+**NO PATCH (재사용):**
+- 이체 처리/취소가 **앱 내부 기록**이라는 계약이 문구에 있다 —
+  `실제 은행 이체를 완료한 건만 처리해 주세요.` / `실제 은행 이체는 취소되지 않습니다`.
+  실제 송금으로 오인시키는 문구는 없다(`송금` 은 코드 주석에만 있다).
+- 서버 write-set 기준 scoped refresh, 멱등(`이미 이체된 건을 processed 로 세지 않는다`),
+  `화면이 새로 처리한 건수만 성공으로 말한다`, NO_SHOW·결근 0원 skip —
+  `payroll_mutation_scoped_refresh_contract_test` · `transfer_money_state_contract_test`
+  가 이미 고정한다. 이번 화면에서 그 계약을 우회하는 새 경로는 찾지 못했다.
+- 연체·당일 판정은 저장값과 화면이 **같은 정규화**(`toKstDate`)를 쓴다.
+
+미이체 / 이체현황 / 변경요청 / 중간정산 네 라벨은 실제 상태·대상과 일치하며
+전역 rename 은 하지 않았다.
+
+### 4. PAY-3 — 권한·문서·개인정보 (NO PATCH, 재사용)
+
+- 진입: `checkCurrentBusiness(canManageWage)`, **확인된 허용에서만** 조회하고
+  `error/unknown` 을 `denied` 로 바꾸지 않는다.
+- 취소: `canManageWage && canCancelTransfer`, 다이얼로그를 띄운 사이 권한이 회수됐을
+  수 있어 **전송 직전 재검증**, 확인 못한 상태는 거부. 서버도 두 권한을 차례로 본다.
+- 개인정보: 카드의 계좌 줄은 **Attendance 스냅샷**을 읽는다(`buildTransferExportPlan`).
+  users 문서에서 가져오는 것은 **이름뿐**이다 — 화면이 보여주는 계좌와 실제로 돈이
+  가는 계좌가 달라질 수 있던 문제는 이미 닫혀 있다. 현재 이름과 확정 당시 예금주
+  snapshot 을 덮어쓰지 않는다.
+- 테스트·로그에 실제 계좌·식별번호를 쓰지 않았다(fixture 는 `u1`·`김근로` 수준).
+
+새로운 우회는 발견하지 못했다 — 목록·건수·직접 읽기 모두 기존 종료 근거가 유효하다.
+
+### 5. PAY-4 — 제품 화면과 반응형 (수정 3건)
+
+실제 위젯을 그려 보니 **두 곳이 잘리고 있었다.** 둘 다 이번 문구 추가와 무관하게
+기존 콘텐츠에서 먼저 터지고, 새 문구가 폭을 더 먹어 커졌다.
+
+1. **월 카드 높이가 100dp 고정**이었다. 기기 폭과 무관한 것은 맞지만 **OS 글자 배율을
+   반영하지 않아** 기본 배율에서 1px, 1.3 배에서 20px 이 아래로 잘렸다.
+   → 네 줄의 base font 합이 배율을 받는 만큼(줄 높이 ≈1.25배) 높이를 늘렸다.
+   **글자 축소·배율 무효화·FittedBox 로 덮지 않았다.**
+2. **월 상세 1행(총 지급액 + 지급 현황 버튼)** 에 flex 가 없어 7자리 금액과 함께
+   가로 18px 이 넘쳤다 → 금액 묶음을 `Expanded` 로, 모자라면 **라벨부터** 줄인다.
+3. **월 상세 2행(이체 완료 · 미이체 · 인원/건수)** 이 flex 없는 Row + `Spacer` 여서
+   값이 길어지면 오른쪽 칩이 잘렸다 → 프로젝트 규칙대로 `Wrap`(줄바꿈 허용),
+   세로 구분선은 제거(줄바꿈되면 선이 줄 앞에 남는다).
+
+radius 16 · `AppPageScaffold` · 색·타이포 체계는 그대로다. 새 색 체계·대시보드 재설계·
+컴포넌트 채택률 목표는 만들지 않았다. 대비·터치 영역 수치는 **P4**, 전 기기 확인은 DEVICE.
+
+### 6. 이번에 실행한 증거
+
+**RENDER·행동 (production 위젯 + 주입 경계)** — `payroll_overview_unknown_render_test` 6건:
+
+| 증거 | 확인 |
+|---|---|
+| POV-1 | 정상 → `미이체 3` 표시 |
+| POV-2 | 출근 집계 실패 → 금액(4,800,000)은 남고 `미이체 확인 못함`, `미이체 0` 없음 |
+| POV-3 | 월 상세 진입 → `이체 완료`/`미이체` 둘 다 `확인 못함`, 파생 `5건` 미주장 |
+| POV-4 | 근무자 조회 실패 → `근무자 목록을 불러오지 못했습니다` + `다시 시도`, `집계 데이터 복원` **없음** |
+| POV-5 | 근무자 행 `확정 근무 2건`, `2일 근무` 없음 |
+| POV-6 | 320dp·배율 1.3 + 128,400,000원 → 예외 0 |
+
+**CODE (소스 배선)** — `payroll_unknown_and_scope_contract_test` 16건:
+모름 분기 순서(U-1~U-4) · 서버 `workDays: 1` 과 화면 단위 일치(U-5~U-7) ·
+낡은 결과 미적용과 직렬화 유지(S-1) · 연체 정규화(S-2) · 계산기 UTC 와 서버 정책 일치
+(D-1·D-2) · 반응형 우회 금지(R-1·R-2) · 권한·문구 계약 유지(P-1~P-3).
+
+**읽기 경계 신설:** `lib/screens/business_admin/payroll/payroll_overview_reads.dart`
+— 원시 외부 읽기 6개만(사업장·집계 projection·출근 집계·근무자 집계·집계 복원·오늘 건수).
+합계 구성·판정·문구는 화면에 남는다. 화면에서 Firestore 직접 접근은 **0** 이 됐다.
+
+**DEV READ:** 없음. **DEVICE/PRODUCT:** 아래 최소안.
+
+### 7. 회귀
+
+같은 SHA·같은 환경·이름별. **영향 세트 전부 초록:**
+- 급여·이체·임금·지급예정일·홈 급여 행: **746 PASS**
+- 변경 파일을 참조하는 나머지 테스트(권한·부분실패·신원·CF 마이그레이션 등): **308 PASS**
+- 새 렌더 6 + 새 계약 16
+- `flutter analyze lib test`: No issues
+
+**되살린 기존 실패 23건:** `unit/payment_due_date_calculator_test` 17건 +
+`payroll_simulation_extended` D2 6건은 계속 빨간색이었다. 원인은 둘이었다 —
+기대값이 local `DateTime` 이라 **같은 날짜인데도** 실패(UTC 플래그), 그리고 `weekly`
+같은 요일 정책을 **반대로** 기대(서버 `[CF-MED-4-FIX]` 는 +7). 규약을 표현하도록
+기대값을 고쳤고, 월별 분기의 local 생성은 제품 쪽에서 고쳤다.
+전체 suite 총 실패 수만으로 완료를 선언하지 않는다 — 위 두 세트가 이번 판정의 범위다.
+
+### 8. 종료 자료
+
+| ID | 이전 → 현재 | 수정/NO PATCH/이관 | source · owner | 재사용 근거 | 이번 CODE/실행/RENDER/DEV READ | DEVICE 조건 |
+|---|---|---|---|---|---|---|
+| PAY-1 출근 집계 실패 | 0·줄 사라짐 → **모름 표시** | 수정 | `callableGetAdminAttendances` · 개요 화면 | — | CODE U-1·U-2, RENDER POV-2 | 실제 CF 실패 재현 |
+| PAY-1 월 상세 파생 | `이체 완료 = 확정−미이체` → 모르면 미주장 | 수정 | 화면 계산 | — | CODE U-3, RENDER POV-3 | 같음 |
+| PAY-1 근무자 조회 실패 | `집계 없음`+복원 → **재시도** | 수정 | `workers` 서브컬렉션 | 존재 oracle(O-3x) | CODE U-4, RENDER POV-4 | 권한 거부 계정 |
+| PAY-1 근무일 단위·모집단 | `N일`·`근무일수` → `확정 근무 N건` | 수정 | 서버 `srvPayrollContribution` · 상세 `allowedStatuses` | P1-3 관계 건수 | CODE U-5~U-7, RENDER POV-5 | 같은 날 2건 표본 |
+| PAY-1 notTransferred owner | 경로마다 다름 | **이관**(RESIDUAL) | 출근 집계 ↔ projection | clamp 주석 | 기록만 | 제품 결정 필요 |
+| PAY-2 낡은 결과 적용 | 다른 달이 현재 달로 → 미적용 | 수정 | 대시보드 `_load` | R8 scoped refresh | CODE S-1 | 느린 망에서 월 연타 |
+| PAY-2 지급 예정일 | 월별만 local → 전부 UTC | 수정 | `PaymentDueDateCalculator` / 서버 writer | CF `srvCalculatePaymentDueDate` | CODE D-1·D-2 + 23건 복구 | 비KST 기기 |
+| PAY-2 이체 문구·write-set·멱등 | — | NO PATCH | 서버 + 대시보드 | transfer_money_state · scoped_refresh | CODE P-1 | 실제 처리 = DEVICE |
+| PAY-3 권한·스냅샷·PII | — | NO PATCH | provider + Attendance 스냅샷 | bankbook·export truth | CODE P-2·P-3 | 권한 회수 시나리오 |
+| PAY-4 카드 높이 배율 | 1px·20px 잘림 → 배율 반영 | 수정 | 개요 그리드 | — | RENDER POV-1·POV-6 | 배율 2.0 실기기 |
+| PAY-4 1행·2행 가로 넘침 | 18px·13px → Expanded·Wrap | 수정 | 월 상세 헤더 | 프로젝트 Row 규칙 | CODE R-2, RENDER POV-3 | 긴 사업장명 실기기 |
+| 대비·터치 영역 | — | **P4 유지** | — | — | **미측정** | P4 |
+
+#### 최소 DEVICE/조작안 (변경 화면만)
+
+1. 급여 탭 진입 → 월 그리드에서 **글자 크게(1.3·2.0)** 설정으로 카드 아래가 잘리지 않는지.
+2. 비행기 모드 등으로 출근 집계만 실패시켜 월 카드가 `미이체 확인 못함` 이 되는지,
+   그 달을 열었을 때 `이체 완료`·`미이체` 가 둘 다 `확인 못함` 인지.
+3. 월 상세에서 7자리 이상 금액 + 긴 사업장명으로 1행·2행이 잘리지 않는지(줄바꿈 허용).
+4. 근무자 상세 상단이 `확정 근무 N건` 이고, 확정되지 않은 근무는 포함되지 않는다는 것이
+   그 라벨로 읽히는지.
+5. 대시보드에서 느린 망으로 월을 연타했을 때 **다른 달 기록이 현재 달로 보이지 않는지**.
+6. (권한) 급여 권한 없는 SubAdmin 진입 차단, 이체 취소 권한만 회수했을 때 취소 거부.
+
+**PRODUCT 판단 대기:** `[R7-P1-5-RESIDUAL-NOTTRANSFERRED-OWNER]` — 미이체 건수의
+owner 를 출근 집계와 projection 중 하나로 정할지.

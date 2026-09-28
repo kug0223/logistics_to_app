@@ -1,15 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/attendance_model.dart';
-import '../../../models/core/business_model.dart';
 import '../../../models/core/payroll_summary_model.dart';
+import 'payroll_overview_reads.dart';
 import '../../../providers/user_provider.dart';
-import '../../../services/firestore_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -17,7 +15,6 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import 'payroll_worker_detail_screen.dart';
 import 'payroll_payment_dashboard_screen.dart';
-import '../../../services/payroll_payment_service.dart';
 import '../../../screens/common/notification_screen.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../widgets/common/app_page_scaffold.dart';
@@ -28,13 +25,19 @@ import '../../../widgets/common/app_empty_state.dart';
 import '../../../utils/business_picker_helper.dart';
 
 class PayrollOverviewScreen extends StatefulWidget {
-  const PayrollOverviewScreen({super.key});
+  /// [R7-P1-5 PAY-4] 원시 외부 읽기 경계. production 은 null → `PayrollOverviewReads.of`.
+  final PayrollOverviewReads? reads;
+
+  const PayrollOverviewScreen({super.key, this.reads});
 
   @override
   State<PayrollOverviewScreen> createState() => _PayrollOverviewScreenState();
 }
 
 class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
+  late final PayrollOverviewReads _reads =
+      widget.reads ?? PayrollOverviewReads.of();
+
   // [PERF-7] DateTime.now()를 필드에 1회만 캡처 — _buildMonthGrid build()마다 재생성 방지
   final DateTime _now = DateTime.now();
   int _selectedYear = DateTime.now().year;
@@ -131,16 +134,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     }
 
     try {
-      List<BusinessModel> businesses;
       // SubAdmin은 adminIds에 없으므로 effectiveBusinessId로 직접 조회
-      final effectiveBizId = userProvider.effectiveBusinessId;
-      if (userProvider.isSubAdmin && effectiveBizId != null) {
-        final biz = await FirestoreService().getBusinessById(effectiveBizId);
-        businesses = biz != null ? [biz] : [];
-      } else {
-        final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
-        businesses = await FirestoreService().getBusinessesByIds(managedIds);
-      }
+      final businesses = await _reads.businesses(
+        isSubAdmin: userProvider.isSubAdmin,
+        effectiveBusinessId: userProvider.effectiveBusinessId,
+        managedIds: userProvider.currentUser?.managedBusinessIds ?? [],
+      );
       if (!mounted) return;
       if (businesses.isEmpty) {
         // Tab 루트일 때 pop 불가 → noData empty state. Push 컨텍스트에서도 empty state가 더 명확함.
@@ -166,6 +165,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     }
   }
 
+  /// [R7-P1-5 PAY-1] 출근 집계 CF 가 실패했는가.
+  ///
+  ///   월별 `미확정`·`미이체` 건수는 `callableGetAdminAttendances` 에서만 온다.
+  ///   그 호출이 실패하면 예전에는 12개월 전부 0 이 되어, 금액은 그대로인데
+  ///   미이체 줄이 사라졌다 — **다 이체된 달처럼** 보였다. 0 과 모름을 구분한다.
+  bool _attCountsUnknown = false;
+
   Future<void> _loadYear(int year) async {
     final bizId = _businessId;
     if (bizId == null) return;
@@ -174,23 +180,16 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 
     try {
       // [PERF] 두 CF 병렬 호출 — 순차 최대 90초 → 병렬로 절반 단축
-      final psCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetPayrollSummaries',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
-
-      HttpsCallableResult<Map<String, dynamic>>? attResult;
+      List<Map<String, dynamic>>? attItems;
       final results = await Future.wait<Object?>([
-        psCallable.call<Map<String, dynamic>>({'businessId': bizId, 'year': year}),
+        _reads.payrollSummaries(businessId: bizId, year: year),
         () async {
           try {
-            attResult = await attCallable.call<Map<String, dynamic>>({
-              'businessId': bizId,
-              'yearMonthGte': '$year-01',
-              'yearMonthLte': '$year-12',
-            });
+            attItems = await _reads.adminAttendances(
+              businessId: bizId,
+              yearMonthGte: '$year-01',
+              yearMonthLte: '$year-12',
+            );
           } catch (e) {
             debugPrint('⚠️ 출근 집계 CF 실패: $e');
             if (mounted) ToastHelper.showWarning('출근 집계를 불러오지 못했습니다. 새로고침 해주세요.');
@@ -198,14 +197,14 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           return null;
         }(),
       ]);
-      final psResult = results[0] as HttpsCallableResult<Map<String, dynamic>>;
+      final psItemsRaw = results[0] as List<Map<String, dynamic>>;
+      // [R7-P1-5 PAY-1] 출근 집계 실패 → 건수는 **모름**이다(0 이 아니다).
+      final attUnknown = attItems == null;
 
       // 1. payroll_summaries 파싱
       // [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전, year 서버 필터링으로 전환
-      final psItems = (psResult.data['items'] as List<dynamic>?) ?? [];
-
       final summaryMap = <int, PayrollSummaryModel>{};
-      for (final e in psItems.whereType<Map>()) {
+      for (final e in psItemsRaw) {
         final raw = Map<String, dynamic>.from(e);
         final id = raw.remove('id') as String? ?? '';
         final m = PayrollSummaryModel.tryFromMap(raw, id);
@@ -220,8 +219,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       final transferredByMonth  = List.filled(12, 0); // wageStatus='transferred' (이체완료)
       final totalPayoutByMonth  = List.filled(12, 0);
       final workersByMonth      = List.generate(12, (_) => <String>{});
-      for (final raw in (attResult?.data['items'] as List? ?? [])) {
-        final data = raw as Map? ?? {};
+      for (final data in (attItems ?? const <Map<String, dynamic>>[])) {
         final ym = data['yearMonth'] as String?;
         final ws = data['wageStatus'] as String?;
         if (ym == null) continue;
@@ -304,7 +302,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         );
       });
 
-      if (mounted) setState(() { _summaries = summaries; _isLoading = false; });
+      if (mounted) {
+        setState(() {
+          _summaries = summaries;
+          _attCountsUnknown = attUnknown;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
     }
@@ -314,9 +318,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     final bizId = _businessId;
     if (bizId == null) return;
     try {
-      final count = await PayrollPaymentService().getTodayPaymentCount(
-        businessId: bizId,
-      );
+      final count = await _reads.todayPaymentCount(bizId);
       if (mounted && count != null) setState(() => _todayPaymentCount = count);
     } catch (e) {
       debugPrint('⚠️ 오늘 급여 건수 조회 실패: $e');
@@ -482,8 +484,16 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final itemWidth = (constraints.maxWidth - gridPadding * 2 - columnSpacing) / 2;
-        // 미이체 행까지 포함한 최대 콘텐츠 높이를 dp로 고정 (기기 폭과 무관하게 일정)
-        const itemHeight = 100.0;
+        // [R7-P1-5 PAY-4] 높이를 100dp 로 못박고 있었다. 기기 폭과 무관하게
+        //   일정한 것은 맞지만 **OS 글자 배율은 반영되지 않는다** — 카드 안의
+        //   네 줄(월·금액·인원/건수·미이체)이 배율을 그대로 받으므로 1.3 배만
+        //   돼도 아래가 잘렸고, 기본 배율에서도 1px 이 모자랐다.
+        //   글자를 줄이거나 배율을 무효화해서 덮지 않는다 — 줄 높이만큼 늘린다.
+        //   네 줄의 base font 합(13+13+12+12=50)이 배율을 받는 부분이다.
+        const baseTextPx = 50.0;
+        final scaledText = MediaQuery.textScalerOf(context).scale(baseTextPx);
+        // 글자는 font size 보다 줄 높이(≈1.25배)만큼 자리를 차지한다.
+        final itemHeight = 104.0 + (scaledText - baseTextPx) * 1.25;
         final ratio = itemWidth / itemHeight;
         return GridView.builder(
           padding: ResponsiveHelper.listPadding(context),
@@ -514,7 +524,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
               await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => PayrollMonthScreen(summary: summary),
+                  builder: (_) => PayrollMonthScreen(
+                    summary: summary,
+                    reads: _reads,
+                    // [R7-P1-5 PAY-1] 건수를 모르는 상태를 그대로 넘긴다 —
+                    //   상세 화면이 `이체 완료`를 계산해 말하지 않도록.
+                    countsUnknown: _attCountsUnknown,
+                  ),
                 ),
               );
               if (!mounted) return;
@@ -590,7 +606,21 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              if (summary.notTransferredCount > 0) ...[
+              // [R7-P1-5 PAY-1] 모름을 0 으로 말하지 않는다. 출근 집계가 실패하면
+              //   미이체 줄을 지우지 않고 **확인하지 못했다**고 말한다 —
+              //   줄이 없는 것과 0 건인 것은 관리자에게 같은 뜻이기 때문이다.
+              if (_attCountsUnknown) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                Text(
+                  '미이체 확인 못함',
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: AppColors.grey500,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ] else if (summary.notTransferredCount > 0) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   '미이체 ${summary.notTransferredCount}',
@@ -626,7 +656,19 @@ enum _SortOrder { amountDesc, amountAsc, nameAsc, workDaysDesc }
 class PayrollMonthScreen extends StatefulWidget {
   final PayrollSummaryModel summary;
 
-  const PayrollMonthScreen({super.key, required this.summary});
+  /// [R7-P1-5 PAY-1] `미확정`·`미이체` 건수를 확인하지 못한 채 들어왔는가.
+  ///   true 면 이 화면은 이체 완료 건수를 **계산해서 주장하지 않는다.**
+  final bool countsUnknown;
+
+  /// [R7-P1-5 PAY-4] 원시 외부 읽기 경계(개요에서 그대로 내려받는다).
+  final PayrollOverviewReads? reads;
+
+  const PayrollMonthScreen({
+    super.key,
+    required this.summary,
+    this.countsUnknown = false,
+    this.reads,
+  });
 
   @override
   State<PayrollMonthScreen> createState() => _PayrollMonthScreenState();
@@ -639,10 +681,23 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   _SortOrder _sortOrder = _SortOrder.amountDesc;
   List<PayrollWorkerSummary> _workers = [];
   bool _workersLoading = true;
+
+  /// [R7-P1-5 PAY-1] 근무자 목록 **조회가 실패**했는가.
+  ///
+  ///   예전에는 실패도 빈 목록이 되어, 확정 건수가 있으면 `집계 데이터가 없습니다`
+  ///   (+ 복원 버튼)로, 없으면 `확정된 급여가 없습니다`로 보였다. 둘 다 사실이
+  ///   아닐 수 있고, 앞의 경우는 조회 실패에 **서버 재집계**를 권한다.
+  bool _workersLoadFailed = false;
   bool _isRepairing = false;
 
   // 이체 취소 후 notTransferredCount가 변경될 수 있으므로 mutable로 유지
   late PayrollSummaryModel _liveSummary;
+
+  /// [R7-P1-5 PAY-1] 건수를 모르는 상태. 집계 문서를 실제로 받으면 해제된다.
+  late bool _countsUnknown = widget.countsUnknown;
+
+  late final PayrollOverviewReads _reads =
+      widget.reads ?? PayrollOverviewReads.of();
 
   // 필터·정렬 결과 캐시 — _workers/sort/search 변경 시 null로 무효화
   List<PayrollWorkerSummary>? _cachedFiltered;
@@ -699,18 +754,14 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   ///   그 문제가 없다. 없음·권한 없음·실패를 각각 다르게 다룬다.
   Future<void> _refreshSummary() async {
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetPayrollSummaries',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final r = await callable.call<Map<String, dynamic>>({
-        'businessId': _liveSummary.businessId,
-        'year': _liveSummary.year,
-      });
+      final items = await _reads.payrollSummaries(
+        businessId: _liveSummary.businessId,
+        year: _liveSummary.year,
+      );
       if (!mounted) return;
-      final items = (r.data['items'] as List? ?? []).whereType<Map>();
       final hit = items.firstWhere(
         (m) => m['id']?.toString() == _liveSummary.id,
-        orElse: () => const {},
+        orElse: () => const <String, dynamic>{},
       );
       // 없는 것은 정상이다 — 아직 집계가 만들어지지 않은 달이다.
       //   화면이 들고 있는 값을 그대로 둔다(빈 값으로 덮지 않는다).
@@ -719,7 +770,11 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       final raw = Map<String, dynamic>.from(hit)..remove('id');
       final fresh = PayrollSummaryModel.tryFromMap(raw, _liveSummary.id);
       if (fresh == null) return;
-      setState(() => _liveSummary = fresh);
+      // [R7-P1-5 PAY-1] 집계 문서를 실제로 받았다 — 건수는 이제 모름이 아니다.
+      setState(() {
+        _liveSummary = fresh;
+        _countsUnknown = false;
+      });
     } on FirebaseFunctionsException catch (e) {
       // 권한 없음과 통신 실패를 "집계 없음"으로 바꾸지 않는다.
       debugPrint('❌ 급여 요약 새로고침 실패(${e.code}): ${e.message}');
@@ -735,22 +790,27 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
 
   Future<void> _loadWorkers() async {
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('payroll_summaries')
-          .doc(widget.summary.id)
-          .collection('workers')
-          .get();
-      final loaded = snap.docs.map((doc) {
-        return PayrollWorkerSummary.tryFromMap(doc.id, doc.data());
-      }).whereType<PayrollWorkerSummary>().toList();
+      final rows = await _reads.workerSummaries(widget.summary.id);
+      final loaded = rows
+          .map((r) => PayrollWorkerSummary.tryFromMap(r.id, r.data))
+          .whereType<PayrollWorkerSummary>()
+          .toList();
       if (!mounted) return;
-      setState(() { _workers = loaded; _workersLoading = false; _cachedFiltered = null; });
+      setState(() {
+        _workers = loaded;
+        _workersLoading = false;
+        _workersLoadFailed = false;
+        _cachedFiltered = null;
+      });
     } catch (e) {
       // payroll_summaries 문서 미존재 시 workers 서브컬렉션 접근이 PERMISSION_DENIED 됨
       // → 에러 토스트 대신 조용히 실패 후 UI에서 "집계 데이터 복원" 버튼으로 처리
       debugPrint('⚠️ workers 서브컬렉션 로드 실패 (payroll_summaries 미존재 가능): $e');
       if (!mounted) return;
-      setState(() => _workersLoading = false);
+      setState(() {
+        _workersLoading = false;
+        _workersLoadFailed = true;
+      });
     }
   }
 
@@ -758,13 +818,10 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   Future<void> _repairSummary() async {
     setState(() => _isRepairing = true);
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableRepairPayrollSummaries',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      await callable.call<Map<String, dynamic>>({
-        'businessId': widget.summary.businessId,
-        'yearMonth': widget.summary.yearMonth,
-      });
+      await _reads.repairSummary(
+        businessId: widget.summary.businessId,
+        yearMonth: widget.summary.yearMonth,
+      );
       if (!mounted) return;
       ToastHelper.showSuccess('집계가 복원되었습니다.');
       Navigator.pop(context, true); // overview에서 true 수신 시 리로드
@@ -842,7 +899,45 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
             child: _workersLoading
                 ? const PayrollWorkerListSkeleton()
                 : filtered.isEmpty
-                    ? (_searchQuery.isEmpty && widget.summary.confirmedCount > 0
+                    // [R7-P1-5 PAY-1] 조회 실패를 먼저 가른다. 실패에 서버 재집계
+                    //   (복원)를 권하면 원인을 틀리게 말하는 것이다.
+                    ? _workersLoadFailed
+                        ? Column(
+                            children: [
+                              Expanded(
+                                child: AppEmptyState(
+                                  icon: Icons.cloud_off_outlined,
+                                  title: '근무자 목록을 불러오지 못했습니다',
+                                ),
+                              ),
+                              SafeArea(
+                                top: false,
+                                child: Padding(
+                                  padding: EdgeInsets.fromLTRB(
+                                    ResponsiveHelper.spacing(context, 24),
+                                    0,
+                                    ResponsiveHelper.spacing(context, 24),
+                                    ResponsiveHelper.spacing(context, 24),
+                                  ),
+                                  child: SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: () {
+                                        setState(() {
+                                          _workersLoading = true;
+                                          _workersLoadFailed = false;
+                                        });
+                                        unawaited(_loadWorkers());
+                                      },
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('다시 시도'),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                    : (_searchQuery.isEmpty && widget.summary.confirmedCount > 0
                         // payroll_summaries 문서 누락 — 집계 복원 버튼 노출
                         ? Column(
                             children: [
@@ -906,7 +1001,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       (_SortOrder.amountDesc,   '지급액 높은순',   Icons.arrow_downward),
       (_SortOrder.amountAsc,    '지급액 낮은순',   Icons.arrow_upward),
       (_SortOrder.nameAsc,      '이름순',          Icons.sort_by_alpha),
-      (_SortOrder.workDaysDesc, '근무일수 많은순',  Icons.calendar_today),
+      (_SortOrder.workDaysDesc, '근무 건수 많은순',  Icons.calendar_today),
     ];
     DialogHelper.showSheet(
       context,
@@ -1005,7 +1100,11 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     // CF 트리거(비동기) 갱신 지연으로 confirmedCount < notTransferredCount 가능 → clamp
     final transferredCount = (_liveSummary.confirmedCount - _liveSummary.notTransferredCount).clamp(0, 999999);
     final pendingCount     = _liveSummary.notTransferredCount;
-    final hasPending       = pendingCount > 0;
+    // [R7-P1-5 PAY-1] 건수를 모를 때는 `이체 완료 N건`을 빼서 만들지 않는다 —
+    //   미이체가 0 으로 들어오므로 그 뺄셈은 **전부 이체됐다**고 말해 버린다.
+    //   새로고침(`_refreshSummary`)이 집계 문서를 실제로 받아오면 해제된다.
+    final countsUnknown    = _countsUnknown;
+    final hasPending       = !countsUnknown && pendingCount > 0;
 
     return Container(
       color: theme.primaryColor.withValues(alpha: 0.06),
@@ -1019,24 +1118,37 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── 1행: 총 지급액 히어로 + 지급 현황 버튼
+          // [R7-P1-5 PAY-4] 왼쪽 묶음에 flex 가 없어서 실제 금액(7자리)과 버튼이
+          //   함께 서면 가로로 넘쳤다(390dp 에서 18px). 금액은 줄이지 않고
+          //   남는 공간을 차지하게 하되, 모자라면 **라벨부터** 줄인다.
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.payments_outlined,
-                    size: 16, color: AppColors.successDark),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Text(
-                  _liveSummary.formattedTotalPayout,
-                  style: ResponsiveHelper.titleStyle(context,
-                      color: AppColors.successDark),
-                ),
-              ]),
+              Expanded(
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.payments_outlined,
+                      size: 16, color: AppColors.successDark),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Flexible(
+                    child: Text(
+                      _liveSummary.formattedTotalPayout,
+                      style: ResponsiveHelper.titleStyle(context,
+                          color: AppColors.successDark),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Flexible(
+                    child: Text('총 지급액',
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.grey700),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ]),
+              ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text('총 지급액',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey700)),
-              const Spacer(),
               OutlinedButton.icon(
                 onPressed: () async {
                   await Navigator.push(
@@ -1076,28 +1188,34 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           const Divider(height: 1, color: AppColors.grey200),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           // ── 2행: 이체완료 | 미이체 상태
-          Row(children: [
+          // [R7-P1-5 PAY-4] 세 묶음(이체완료 · 미이체 · 인원/건수)이 flex 없이
+          //   한 Row 에 있고 사이에 Spacer 가 있었다. 값이 길어지면(확인 못함,
+          //   네 자리 건수) 가로로 넘쳐 오른쪽 칩이 잘렸다 — 프로젝트 규칙대로
+          //   Wrap 으로 줄바꿈을 허용한다. 짝인 이체완료·미이체는 붙여 둔다.
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 12),
+            runSpacing: ResponsiveHelper.spacing(context, 6),
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
             Row(mainAxisSize: MainAxisSize.min, children: [
               Container(
                 width: 8, height: 8,
-                decoration: const BoxDecoration(
-                  color: AppColors.success, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: countsUnknown ? AppColors.grey300 : AppColors.success,
+                  shape: BoxShape.circle),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
               Text('이체 완료',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('$transferredCount건',
+              Text(countsUnknown ? '확인 못함' : '$transferredCount건',
                   style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.successDark,
+                      color: countsUnknown
+                          ? AppColors.grey500
+                          : AppColors.successDark,
                       fontWeight: FontWeight.w700)),
             ]),
-            Container(
-                width: 1, height: 12,
-                color: AppColors.grey200,
-                margin: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12))),
             Row(mainAxisSize: MainAxisSize.min, children: [
               Container(
                 width: 8, height: 8,
@@ -1111,12 +1229,13 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('$pendingCount건',
+              Text(countsUnknown ? '확인 못함' : '$pendingCount건',
                   style: ResponsiveHelper.smallStyle(context,
-                      color: hasPending ? AppColors.warningDark : AppColors.grey400,
+                      color: countsUnknown
+                          ? AppColors.grey500
+                          : (hasPending ? AppColors.warningDark : AppColors.grey400),
                       fontWeight: FontWeight.w700)),
             ]),
-            const Spacer(),
             Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.people_outline, size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -1132,7 +1251,8 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                       color: AppColors.grey500,
                       fontWeight: FontWeight.w600)),
             ]),
-          ]),
+            ],
+          ),
         ],
       ),
     );
@@ -1193,7 +1313,10 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                             ),
                             SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                             Text(
-                              '${worker.workDays}일 근무',
+                              // [R7-P1-5 PAY-1] projection 의 workDays 는 확정·이체된
+                              //   attendance 1건당 +1 이다(서버 srvPayrollContribution).
+                              //   같은 날 두 근무를 확정받으면 2 가 되므로 날짜 수가 아니다.
+                              '확정 근무 ${worker.workDays}건',
                               style: ResponsiveHelper.tinyStyle(context,
                                   color: AppColors.grey500),
                             ),

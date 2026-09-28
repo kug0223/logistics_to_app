@@ -314,7 +314,14 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           const Divider(height: 1, color: AppColors.grey200),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-          // ── 3행: 근무일수 | 총 근무시간
+          // ── 3행: 확정 근무 건수 | 총 근무시간
+          // [R7-P1-5 PAY-1] `_records` 는 이 달의 **확정·이체된 근무 기록**이다
+          //   (`allowedStatuses`). 두 가지를 라벨이 말하지 않고 있었다.
+          //   1) 한 사람이 같은 날 겹치지 않는 두 근무를 확정받을 수 있어
+          //      기록 수는 달력 날짜 수가 아니다 — `N일` 은 없는 날을 센다.
+          //   2) 아직 확정되지 않은 근무는 여기 없다. 실제로 4일 일했는데
+          //      2건만 확정돼 있으면 `2일` 로 보였고, 그것이 근무일 오류처럼
+          //      읽혔다. 세는 대상을 이름에 넣어 그 오해를 없앤다.
           // 외부 Row에 Flexible 없으면 장기근무(100시간+) 시 overflow 가능
           Row(children: [
             Flexible(
@@ -323,12 +330,12 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
                 Icon(Icons.calendar_today_outlined,
                     size: 12, color: theme.primaryColor),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Text('${_records.length}일',
+                Text('${_records.length}건',
                     style: ResponsiveHelper.smallStyle(context,
                         color: theme.primaryColor, fontWeight: FontWeight.w600),
                     overflow: TextOverflow.ellipsis),
                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Text('근무일수',
+                Text('확정 근무',
                     style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
                     overflow: TextOverflow.ellipsis),
               ]),

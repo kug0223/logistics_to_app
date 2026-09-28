@@ -1,3 +1,7 @@
+// [R7-P1-5 PAY-2] 이 계산기는 `FormatHelper.toKstDate` 가 만든 **UTC 플래그
+//   달력일**(`DateTime.utc(y,m,d)`)을 돌려준다 — 기기 시간대와 무관한 KST 날짜다.
+//   기대값을 local `DateTime` 으로 쓰면 같은 날짜인데도 실패한다(그 상태로
+//   실패가 남아 있었다). 월별 분기만 local 을 만들던 것도 이번에 utc 로 맞췄다.
 // test/unit/payment_due_date_calculator_test.dart
 // PaymentDueDateCalculator 단위 테스트 — 지급예정일 계산 검증
 //
@@ -22,7 +26,7 @@ void main() {
         payScheduleDay: null,
         workDate: DateTime(2026, 6, 1),
       );
-      expect(result, equals(DateTime(2026, 6, 1)));
+      expect(result, equals(DateTime.utc(2026, 6, 1)));
     });
 
     test('월말일도 당일 반환', () {
@@ -31,7 +35,7 @@ void main() {
         payScheduleDay: null,
         workDate: DateTime(2026, 6, 30),
       );
-      expect(result, equals(DateTime(2026, 6, 30)));
+      expect(result, equals(DateTime.utc(2026, 6, 30)));
     });
   });
 
@@ -45,7 +49,7 @@ void main() {
         payScheduleDay: null,
         workDate: DateTime(2026, 6, 1),
       );
-      expect(result, equals(DateTime(2026, 6, 2)));
+      expect(result, equals(DateTime.utc(2026, 6, 2)));
     });
 
     test('월말일 → 다음달 1일', () {
@@ -54,7 +58,7 @@ void main() {
         payScheduleDay: null,
         workDate: DateTime(2026, 6, 30),
       );
-      expect(result, equals(DateTime(2026, 7, 1)));
+      expect(result, equals(DateTime.utc(2026, 7, 1)));
     });
 
     test('12월 31일 → 다음해 1월 1일', () {
@@ -63,7 +67,7 @@ void main() {
         payScheduleDay: null,
         workDate: DateTime(2026, 12, 31),
       );
-      expect(result, equals(DateTime(2027, 1, 1)));
+      expect(result, equals(DateTime.utc(2027, 1, 1)));
     });
   });
 
@@ -74,14 +78,17 @@ void main() {
     // 2026-06-01은 월요일 (weekday=1)
     // 2026-06-05는 금요일 (weekday=5)
 
-    test('근무일이 목표 요일과 동일 → 당일', () {
-      // 2026-06-05(금), 목표 5(금) → 당일
+    test('근무일이 목표 요일과 동일 → 다음 주 같은 요일', () {
+      // 2026-06-05(금), 목표 5(금).
+      // [R7-P1-5 PAY-2] 당일을 돌려주면 same_day 와 구분할 수 없다.
+      //   서버 srvNextWeekday 도 diff==0 에서 +7 을 쓴다([CF-MED-4-FIX]) —
+      //   이 테스트는 그 정책을 반대로 기대하고 있었다.
       final result = PaymentDueDateCalculator.calculate(
         payScheduleType: 'weekly',
         payScheduleDay: 5,
         workDate: DateTime(2026, 6, 5),
       );
-      expect(result, equals(DateTime(2026, 6, 5)));
+      expect(result, equals(DateTime.utc(2026, 6, 12)));
     });
 
     test('근무일(월) 이후 금요일', () {
@@ -91,7 +98,7 @@ void main() {
         payScheduleDay: 5,
         workDate: DateTime(2026, 6, 1),
       );
-      expect(result, equals(DateTime(2026, 6, 5)));
+      expect(result, equals(DateTime.utc(2026, 6, 5)));
     });
 
     test('근무일(금) 이후 수요일 → 다음주 수요일', () {
@@ -101,7 +108,7 @@ void main() {
         payScheduleDay: 3,
         workDate: DateTime(2026, 6, 5),
       );
-      expect(result, equals(DateTime(2026, 6, 10)));
+      expect(result, equals(DateTime.utc(2026, 6, 10)));
     });
 
     test('목표 요일 null → 기본 금요일(5) 사용', () {
@@ -112,7 +119,7 @@ void main() {
         workDate: DateTime(2026, 6, 1),
       );
       // 금요일=5, 월요일에서 +4일 = 2026-06-05
-      expect(result, equals(DateTime(2026, 6, 5)));
+      expect(result, equals(DateTime.utc(2026, 6, 5)));
     });
 
     test('주말 넘김: 근무일(목) → 다음주 월요일', () {
@@ -122,7 +129,7 @@ void main() {
         payScheduleDay: 1,
         workDate: DateTime(2026, 6, 4),
       );
-      expect(result, equals(DateTime(2026, 6, 8)));
+      expect(result, equals(DateTime.utc(2026, 6, 8)));
     });
   });
 
@@ -137,7 +144,7 @@ void main() {
         payScheduleDay: 25,
         workDate: DateTime(2026, 6, 1),
       );
-      expect(result, equals(DateTime(2026, 6, 25)));
+      expect(result, equals(DateTime.utc(2026, 6, 25)));
     });
 
     test('이번달 지급일 당일 → 이번달', () {
@@ -146,7 +153,7 @@ void main() {
         payScheduleDay: 25,
         workDate: DateTime(2026, 6, 25),
       );
-      expect(result, equals(DateTime(2026, 6, 25)));
+      expect(result, equals(DateTime.utc(2026, 6, 25)));
     });
 
     test('이미 지급일 지남 → 다음달', () {
@@ -156,7 +163,7 @@ void main() {
         payScheduleDay: 25,
         workDate: DateTime(2026, 6, 26),
       );
-      expect(result, equals(DateTime(2026, 7, 25)));
+      expect(result, equals(DateTime.utc(2026, 7, 25)));
     });
 
     test('12월 지급일 지남 → 다음해 1월', () {
@@ -166,7 +173,7 @@ void main() {
         payScheduleDay: 25,
         workDate: DateTime(2026, 12, 26),
       );
-      expect(result, equals(DateTime(2027, 1, 25)));
+      expect(result, equals(DateTime.utc(2027, 1, 25)));
     });
 
     test('2월 30일 → 2월 말일(28일)로 클램프', () {
@@ -176,7 +183,7 @@ void main() {
         payScheduleDay: 30,
         workDate: DateTime(2026, 2, 1),
       );
-      expect(result, equals(DateTime(2026, 2, 28)));
+      expect(result, equals(DateTime.utc(2026, 2, 28)));
     });
 
     test('31일 목표, 6월(30일) → 30일로 클램프', () {
@@ -185,7 +192,7 @@ void main() {
         payScheduleDay: 31,
         workDate: DateTime(2026, 6, 1),
       );
-      expect(result, equals(DateTime(2026, 6, 30)));
+      expect(result, equals(DateTime.utc(2026, 6, 30)));
     });
 
     test('payScheduleDay=null → 기본 25일 사용', () {
@@ -194,7 +201,7 @@ void main() {
         payScheduleDay: null,
         workDate: DateTime(2026, 6, 1),
       );
-      expect(result, equals(DateTime(2026, 6, 25)));
+      expect(result, equals(DateTime.utc(2026, 6, 25)));
     });
   });
 

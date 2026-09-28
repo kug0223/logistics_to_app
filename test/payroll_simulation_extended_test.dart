@@ -436,20 +436,23 @@ void main() {
   // Group D2: 지급 예정일 계산
   // ════════════════════════════════════════════════════════════════════
   group('D2 지급 예정일', () {
+    // [R7-P1-5 PAY-2] 이 계산기는 `toKstDate` 로 정규화한 **UTC 플래그 달력일**을
+    //   돌려준다. 기대값도 같은 규약으로 쓴다 — local DateTime 과 비교하면
+    //   같은 날짜인데도 실패하고, 실제로 그 상태로 6건이 빨간색이었다.
     final jun15 = DateTime(2026, 6, 15); // 월요일
 
     test('D2-01 same_day → 당일 반환', () {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'same_day', payScheduleDay: null, workDate: jun15,
       );
-      expect(r, DateTime(2026, 6, 15));
+      expect(r, DateTime.utc(2026, 6, 15));
     });
 
     test('D2-02 next_day → 익일 반환', () {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'next_day', payScheduleDay: null, workDate: jun15,
       );
-      expect(r, DateTime(2026, 6, 16));
+      expect(r, DateTime.utc(2026, 6, 16));
     });
 
     test('D2-03 weekly 금요일 (2026-06-15 월→금)', () {
@@ -457,22 +460,25 @@ void main() {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'weekly', payScheduleDay: 5, workDate: jun15,
       );
-      expect(r, DateTime(2026, 6, 19));
+      expect(r, DateTime.utc(2026, 6, 19));
     });
 
-    test('D2-04 weekly 당일 일치 (2026-06-19 금→금)', () {
+    test('D2-04 weekly 같은 요일 (2026-06-19 금→금) → 다음 주 금요일', () {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'weekly', payScheduleDay: 5,
         workDate: DateTime(2026, 6, 19),
       );
-      expect(r, DateTime(2026, 6, 19));
+      // [R7-P1-5 PAY-2] D2-05 와 같은 정책이다 — 같은 요일은 다음 주.
+      expect(r, DateTime.utc(2026, 6, 26));
     });
 
-    test('D2-05 weekly 월요일 (2026-06-15 월→월, 당일)', () {
+    test('D2-05 weekly 같은 요일 (2026-06-15 월→월) → 다음 주 월요일', () {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'weekly', payScheduleDay: 1, workDate: jun15,
       );
-      expect(r, DateTime(2026, 6, 15));
+      // 같은 요일에 당일을 돌려주면 same_day 와 구분할 수 없다 —
+      //   CF [CF-MED-4-FIX] 와 같은 정책으로 다음 주를 돌려준다.
+      expect(r, DateTime.utc(2026, 6, 22));
     });
 
     test('D2-06 weekly 수요일 (2026-06-15 월→수, +2일)', () {
@@ -480,14 +486,14 @@ void main() {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'weekly', payScheduleDay: 3, workDate: jun15,
       );
-      expect(r, DateTime(2026, 6, 17));
+      expect(r, DateTime.utc(2026, 6, 17));
     });
 
     test('D2-07 monthly 25일 (2026-06-15 → 2026-06-25)', () {
       final r = PaymentDueDateCalculator.calculate(
         payScheduleType: 'monthly', payScheduleDay: 25, workDate: jun15,
       );
-      expect(r, DateTime(2026, 6, 25));
+      expect(r, DateTime.utc(2026, 6, 25));
     });
 
     test('D2-08 monthly 25일 지난 후 (2026-06-28 → 2026-07-25)', () {
@@ -495,7 +501,7 @@ void main() {
         payScheduleType: 'monthly', payScheduleDay: 25,
         workDate: DateTime(2026, 6, 28),
       );
-      expect(r, DateTime(2026, 7, 25));
+      expect(r, DateTime.utc(2026, 7, 25));
     });
 
     test('D2-09 monthly 31일 2월 (이월 → 2026-02-28)', () {
@@ -503,7 +509,7 @@ void main() {
         payScheduleType: 'monthly', payScheduleDay: 31,
         workDate: DateTime(2026, 2, 15),
       );
-      expect(r, DateTime(2026, 2, 28));
+      expect(r, DateTime.utc(2026, 2, 28));
     });
 
     test('D2-10 monthly 연말이월 (2026-12-31 → 2027-01-25)', () {
@@ -511,7 +517,7 @@ void main() {
         payScheduleType: 'monthly', payScheduleDay: 25,
         workDate: DateTime(2026, 12, 31),
       );
-      expect(r, DateTime(2027, 1, 25));
+      expect(r, DateTime.utc(2027, 1, 25));
     });
 
     test('D2-11 null payScheduleType → null 반환', () {

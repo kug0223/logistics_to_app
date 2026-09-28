@@ -65,11 +65,16 @@ bool ruleAllowsMissingAfter(Actor a) => false;
 void main() {
   late String rules;
   late String screen;
+  late String seam;
 
   setUpAll(() {
     rules = _codeOf(File('firestore.rules').readAsStringSync());
     screen = _codeOf(File(
       'lib/screens/business_admin/payroll/payroll_overview_screen.dart',
+    ).readAsStringSync());
+    // [R7-P1-5] 원시 읽기 경계 — 배선 계약은 화면 + 경계 둘로 본다.
+    seam = _codeOf(File(
+      'lib/screens/business_admin/payroll/payroll_overview_reads.dart',
     ).readAsStringSync());
   });
 
@@ -163,11 +168,15 @@ void main() {
       final end = screen.indexOf('Future<void> _loadWorkers()', i);
       expect(end, greaterThan(i));
       final body = screen.substring(i, end);
-      expect(body.contains("httpsCallable('callableGetPayrollSummaries'"), isTrue);
+      // [R7-P1-5] 원시 호출은 payroll_overview_reads.dart 경계로 옮겼다.
+      //   화면은 경계를 부르고, 경계가 같은 canonical reader 로 매핑한다.
+      expect(body.contains('_reads.payrollSummaries('), isTrue);
+      expect(seam.contains("callableGetPayrollSummaries"), isTrue);
       expect(body.contains("collection('payroll_summaries')"), isFalse,
           reason: '있을 수도 없을 수도 있는 조회는 서버가 판정해야 한다');
-      // 화면 전체에서 이 컬렉션 직접 접근은 workers 로더 하나만 남는다.
-      expect("collection('payroll_summaries')".allMatches(screen).length, 1);
+      // 화면에는 이 컬렉션 직접 접근이 **아예 없고**, 경계에 workers 하나만 있다.
+      expect("collection('payroll_summaries')".allMatches(screen).length, 0);
+      expect("collection('payroll_summaries')".allMatches(seam).length, 1);
     });
 
     test('§8 없음은 정상이다 — 들고 있던 값을 빈 값으로 덮지 않는다', () {
@@ -202,9 +211,15 @@ void main() {
       //   조용히 실패하고 복원 버튼으로 넘기는 기존 처리를 유지한다.
       final i = screen.indexOf('Future<void> _loadWorkers()');
       expect(i, greaterThan(-1));
-      final body = screen.substring(i, i + 1400);
-      expect(body.contains("collection('payroll_summaries')"), isTrue);
-      expect(body.contains("collection('workers')"), isTrue);
+      // [R7-P1-5] 고정 길이 창은 경계 이전으로 본문이 짧아지면 다음 메서드로
+      //   넘쳐 그쪽 토스트를 잡는다. 실제 메서드 경계로 자른다.
+      final end = screen.indexOf("Future<void> _repairSummary()", i);
+      expect(end, greaterThan(i));
+      final body = screen.substring(i, end);
+      // [R7-P1-5] 직접 읽기는 경계에 있다 — 화면은 그 경계를 부른다.
+      expect(body.contains('_reads.workerSummaries('), isTrue);
+      expect(seam.contains("collection('payroll_summaries')"), isTrue);
+      expect(seam.contains("collection('workers')"), isTrue);
       expect(body.contains('_workersLoading = false'), isTrue);
       expect(body.contains('ToastHelper.showError'), isFalse,
           reason: '부재를 오류로 말하지 않는 기존 동작 유지');
