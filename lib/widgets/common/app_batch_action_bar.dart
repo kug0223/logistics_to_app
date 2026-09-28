@@ -54,7 +54,11 @@ class AppBatchActionBar extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Row(
+            // [R7-P2-4 P24-G] 선택 컨트롤 줄에 flex 가 없어 320dp·배율 1.3 에서
+            //   14px, 2.0 에서 146px 넘쳤다. `전체선택`·`해제` 는 **행동 이름**이라
+            //   줄이지 않고 줄바꿈시킨다(금액은 기존대로 Flexible+ellipsis).
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 TextButton(
                   onPressed: onSelectAll,
@@ -79,14 +83,12 @@ class AppBatchActionBar extends StatelessWidget {
                 ),
                 if (selectedCount > 0 && selectedAmount > 0) ...[
                   const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
+                  Text(
                       FormatHelper.formatWage(selectedAmount),
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.infoDark,
-                          fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.infoDark,
+                        fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ],

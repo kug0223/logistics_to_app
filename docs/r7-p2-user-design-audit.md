@@ -1152,3 +1152,133 @@ Home 쪽 진입(출근하기·퇴근 카드·KST 동일 row·계정 범위)은 *
 - `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]`, P2-1 Home CTA 9개·수입 월 시트,
   P1-5/P1-7 DEVICE·통계 hop, Staffing DEFERRED/O08, 계약 사후 정책, 출시 gate 는
   각 owner 에 그대로 남는다.
+
+---
+
+## R7-P2-4 — 지원자 MY·수입·리뷰·요청 화면군 (2026-09-28)
+
+기준 `6d9e797`. 시작 전 HEAD·tracked dirty 0·untracked 8 확인·보존.
+공유 DEV READ ONLY — 리뷰·정산·계약해지·급여·이체 실제 쓰기·fixture·CF·Rules·
+PROD·APK 없음. P2-1/P2-2/P2-3 의 수용된 증거는 재사용하고 재검증하지 않았다.
+
+### 0. 선행 READ — `[BLOCKER-TERMINATION-REQUEST-NO-WORKER-TASK]` 현재 상태
+
+**해결됨(현재 HEAD).** 저장소 문서에는 이 ID 가 남아 있지 않고(grep 0건), 코드가
+해결 형태를 갖추고 있다:
+
+- `lib/models/ui/pending_termination_surface.dart` — 표면이 **알림이 아니라
+  canonical 도메인 상태**(`applications.terminationStatus == 'PENDING'`)에서만
+  파생된다고 명시. `available == false` 는 "없음" 이 아니라 **"확인 못함"**.
+- `user_home_screen.dart` 본문에 `_buildTerminationRequestCard` 가 **상시 배치**
+  (신분증 요청과 **별도 표면** — 정보 제공 동의와 고용 종료 동의를 합치지 않음).
+- 목적지는 기존 `MyRequestsDialog`(홈은 discovery 만 담당).
+- UNKNOWN 표면은 이미 렌더로 고정돼 있다 — **UHR-14**
+  (`계약해지 요청이 있는지 확인하지 못했어요`).
+
+→ `Notification ≠ Task` 위반은 **재현되지 않는다.** 효력일·자동승인 writer 와
+법률 사후 정책은 이번 화면 수정 대상이 아니며 기존 owner 유지.
+
+### 1. 실제 진입 지도 (소스 확정)
+
+| 화면 | 실제 진입 | MY 탭에서 |
+|---|---|---|
+| `UserMyTab`(StatelessWidget, 자체 read 없음) | 하단 MY 탭 | — |
+| `UserContractsScreen` | MY `계약서` · 알림 3곳 | **있음** |
+| `DocumentManagementScreen` | MY `내 서류 관리` · 홈 서류 카드 | **있음** |
+| `SignatureScreen` · `ProfileEditScreen` · `UserSettingsScreen` | MY | **있음** |
+| `MyActivityScreen` | MY `나의 활동 전체보기` | **있음** |
+| `IncomeDetailScreen` | **Home 수입 헤더 1곳뿐** | **없음** |
+| `MyReviewsScreen` | 알림 · **관리자용 공용 `SettingsScreen`** · FCM | **없음** |
+| `InterimSettlementRequestScreen` | **내 지원 카드 1곳뿐** | **없음** |
+
+**관찰:** 공용 `common/settings_screen.dart` 의 push 지점은 전부 **관리자 트리**다
+(`business_admin_home`·`business_admin_shell` 탭4·관리자 다이얼로그·`create_to`).
+따라서 일반 지원자에게 **내 리뷰의 상시 입구는 알림/FCM 뿐**이고,
+**MY 에는 '내 돈' 으로 가는 길이 없다.**
+→ 요청 §5 지침대로 **CTA 를 임의로 추가하지 않고** GAP-02 후보로만 올린다
+(VJ07 = 수입 발견성, VJ14 = 리뷰·MY 목적). 사용 빈도로 화면을 제거하지 않는다.
+
+### 2. 확정 결함 1건 — 중간정산의 ERROR ≠ EMPTY (돈)
+
+`InterimSettlementRequestScreen._loadConfirmedAttendances` 의 catch 가 로딩만 끄고
+**토스트조차 없었다.** `_records` 가 빈 채로 남아 화면은
+`정산 가능한 출근기록이 없습니다` 를 그렸고, 부제는 한술 더 떠 **이유까지 단정**했다 —
+`급여 확정된 근무일이 없거나 이미 모두 정산 처리되었습니다.`
+조회 한 번 실패했을 뿐인데 사용자는 **받을 돈이 없다고 믿고 돌아간다.**
+
+→ `_loadError` 를 두고 빈 상태보다 **먼저** 가른다:
+`정산 가능한 근무를 확인하지 못했습니다 / 정산할 근무가 없다는 뜻이 아닙니다. / 다시 시도`
+읽기 경계 `InterimSettlementReads`(읽기 1) 신설 — **신청(쓰기)은 넣지 않았다.**
+
+**전후 대조:** 분기를 되돌리면 **MMR-1 FAIL** → 복원 9 PASS.
+양성 대조 MMR-2(정말 없을 때는 없다고 말한다)는 전후 모두 PASS.
+
+### 3. 추가 렌더 결함 1건 — 공용 선택 바
+
+`AppBatchActionBar` 의 선택 컨트롤 줄에 flex 가 없어 **320dp·1.3 에서 14px,
+2.0 에서 146px** 넘쳤다(`전체선택`·`해제`가 잘린다). `Wrap` 으로 줄바꿈 —
+행동 이름을 지우지 않는다. 사용처 2곳(관리자 급여 대시보드 · 지원자 중간정산)
+모두 회귀에 포함해 통과.
+
+### 4. 셀별 결산
+
+| ID | 실제 화면/역할·entity | 정상·0·오류/부분의 UI | 진입·행동·복귀 | CODE | RENDER | DEV/DEVICE/USER | 판정 |
+|---|---|---|---|---|---|---|---|
+| **P24-N** | `UserMyTab`(uid = 본인, Provider 기반) | 메뉴 7종, 계정 전환 시 Provider 교체 → 이전 사람 데이터 잔상 없음(Selector `currentUser`) | MY→각 leaf→pop 재사용 | 종료(진입 지도) | 기존 | USER **없음** | **NO PATCH** · 수입/리뷰 발견성 → VJ07·VJ14 후보 |
+| **P24-I** | `IncomeDetailScreen`(연·월 명시) | KST 월·명시 선택 월 유지·근태 실패 `확인 못함` 은 **기존 수용 증거**(IMK 11건) | Home→상세 인자 전달 **실행**(IMK-4) · 명시 과거 월 유지 **실행**(IMK-7) | 재사용 | 재사용 | **월 시트 제스처 NOT SEEN**(기존과 동일) | **NO PATCH** |
+| **P24-R** | `MyReviewsScreen` | `_loadError` → `리뷰를 불러오지 못했습니다` 이미 구현 | 진입이 알림·FCM·관리자 Settings 뿐 | 종료(소스) | — | 리뷰 목록 렌더 **미실행** | **NO PATCH** · 발견성 VJ14 후보 |
+| **P24-Q** | `MyRequestsDialog`(신분증+계약해지 한 인박스) · `InterimSettlementRequestScreen` | 해지 응답 상시 입구 **있음**(홈 카드) · 정산 실패 구분 **신설** | 홈 카드 → 다이얼로그 CODE · 정산 화면 렌더 **실행** | 종료 | MMR-R 4조합 | 실제 응답·신청 **미실행** | **PATCH 1건** |
+| **P24-E** | 위 화면들 | 실패≠0/없음, 원인 단정 제거 | — | 종료 | — | NO_PERMISSION **도달 경로 미확인 → fixture 만들지 않음** | **PATCH**(P24-Q 와 동일 건) |
+| **P24-G** | `InterimSettlementRequestScreen`·`MyReviewsScreen` shell | 선택 바 잘림 수정 | — | shell 기능 실측(아래) | MMR-R | — | **PATCH 1건**(선택 바) · shell **NO PATCH** |
+
+### 5. P24-G — shell 은 화면별로 다르다 (이름별 실측)
+
+지난 P23-G 는 **컴포넌트가 제공하는 기능 목록**을 셌다. 이번에는 **화면별 사용
+여부**를 셌다 — 둘은 다르다.
+
+| 화면 | `onRefresh` | `showNotificationBell` | `showHomeButton` | `showPendingContractBar` | 판정 |
+|---|---|---|---|---|---|
+| `my_reviews_screen` | **사용** | 기본값(true) | 기본값(true) | 기본값(true) | 전환 시 3기능 재현 필요 → **NO PATCH** |
+| `interim_settlement_request_screen` | **사용** | 기본값(true) | 기본값(true) | 기본값(true) | 동일 → **NO PATCH** |
+| `attendance_check_screen` | 사용 | 기본값 | 기본값 | 기본값 | P23-G 판정 유지 |
+
+세 화면 모두 **기본값을 끄지 않았다** = 알림 벨·홈·미서명 계약 바가 실제로
+렌더된다. `AppPageScaffold` 에 없는 기능이므로 최소 전환이 아니다.
+`[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` 유지 — **사용처가 남은 공통 scaffold 삭제를
+종료 KPI 로 삼지 않는다.** `common/SettingsScreen` 은 실측만 했고 치환하지 않았다.
+
+### 6. 제품 가치 한 줄 (§5, GAP-02 후보)
+
+| 화면 | 지원자가 다시 여는 이유 | 후보 |
+|---|---|---|
+| MY 루트 | 내 계약서·서류·서명·프로필을 찾으려고 | — |
+| 수입 상세 | 이번 달/특정 달에 얼마가 어떤 상태인지 확인하려고 | **VJ07** — MY 에 입구 없음 |
+| 내 리뷰 | 내가 받은 평가와 이미 쓴 리뷰를 보려고 | **VJ14** — 상시 입구 없음(알림/FCM) |
+| 중간정산 | 확정된 급여를 먼저 받을 수 있는지 판단하려고 | VJ07 — 내 지원 카드에서만 |
+| 내 요청 | 응답해야 할 신분증·계약해지 요청을 처리하려고 | 홈 표면 있음(해결) |
+
+**이 후보들은 사람 대상 이해·총수고 감소를 입증하지 않는다** — CODE/RENDER 로
+완료 처리하지 않는다.
+
+### 7. 증거
+
+| 구분 | 내용 |
+|---|---|
+| CODE | 진입 지도 · 해지 Task 표면 · shell 기능/사용 여부 |
+| 행동 | `my_money_request_truth_test` **9건**(MMR-1~5 + 4조합) |
+| RENDER | 320/412dp × 1.3/2.0 |
+| 전후 대조 | MMR-1 FAIL → 복원 9 PASS |
+| 회귀 | 영향집합 **1037 PASS / 0 FAIL** |
+| 정적 분석 | `flutter analyze lib test` **No issues** |
+| DEV READ | **없음** · DEVICE **미실행** · USER OBSERVATION **없음** |
+
+변경 파일: `interim_settlement_request_screen.dart`(ERROR≠EMPTY) ·
+`interim_settlement_reads.dart`(신규 읽기 경계) ·
+`app_batch_action_bar.dart`(선택 바 줄바꿈) · `my_money_request_truth_test.dart`(신규).
+
+### 8. 이 묶음이 닫지 않는 것
+
+P2-2 A1(지원 버튼·네 결과) · P23-N 일정 복귀·VJ02 날짜 저장 · P2-1 Home CTA 9개·
+FCM cold-start·실제 출퇴근 mutation · P1-5/P1-7 DEVICE · Staffing DEFERRED/O08 ·
+계약 사후 정책 · 출시 gate — 전부 각 owner 에 그대로 남는다.
+지원자 PRODUCT 나 P2 전체 종료를 선언하지 않는다.

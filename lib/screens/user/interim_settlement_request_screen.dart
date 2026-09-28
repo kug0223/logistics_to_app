@@ -4,6 +4,7 @@
 // 서버사이드 검증: callableRequestInterimSettlement CF (ownership, duplicate 방어).
 
 import 'dart:async';
+import 'interim_settlement_reads.dart';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -26,7 +27,11 @@ import '../../widgets/common/loading_widget.dart';
 class InterimSettlementRequestScreen extends StatefulWidget {
   final ApplicationModel app;
 
-  const InterimSettlementRequestScreen({super.key, required this.app});
+  const InterimSettlementRequestScreen(
+      {super.key, required this.app, this.reads});
+
+  /// [R7-P2-4 P24-Q] 정산 후보를 읽는 경계. production 은 null.
+  final InterimSettlementReads? reads;
 
   @override
   State<InterimSettlementRequestScreen> createState() =>
@@ -39,6 +44,17 @@ class _InterimSettlementRequestScreenState
   static final _timeFmt = DateFormat('HH:mm');
 
   final FirestoreService _firestoreService = FirestoreService();
+  late final InterimSettlementReads _reads =
+      widget.reads ?? InterimSettlementReads.of(_firestoreService);
+
+  /// [R7-P2-4 P24-Q] 정산 후보를 **읽지 못했다**.
+  ///
+  ///   catch 가 로딩만 껐고 토스트조차 없었다. `_records` 가 빈 채로 남아
+  ///   화면은 `정산 가능한 출근기록이 없습니다` 를 그렸고, 부제는 한술 더 떠
+  ///   **이유까지 단정했다** — "급여 확정된 근무일이 없거나 이미 모두 정산
+  ///   처리되었습니다." 조회 한 번 실패했을 뿐인데 사용자는 받을 돈이 없다고
+  ///   믿고 돌아간다. 돈을 다루는 화면에서 ERROR 를 EMPTY 로 접지 않는다.
+  Object? _loadError;
   final PayrollPaymentService _payService = PayrollPaymentService();
   final TextEditingController _reasonController = TextEditingController();
 
@@ -80,7 +96,7 @@ class _InterimSettlementRequestScreenState
       for (var i = 0; i < _monthsToLoad; i++) {
         final target = DateTime(now.year, now.month - i);
         futures.add(
-          _firestoreService.getMyMonthlyAttendances(
+          _reads.myMonthlyAttendances(
             userId: uid,
             year: target.year,
             month: target.month,
@@ -101,10 +117,16 @@ class _InterimSettlementRequestScreenState
       setState(() {
         _records = all;
         _isLoading = false;
+        _loadError = null;
       });
     } catch (e) {
       debugPrint('❌ 중간정산 출근기록 로드 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadError = e;
+        });
+      }
     }
   }
 
@@ -183,15 +205,28 @@ class _InterimSettlementRequestScreenState
       body: _isLoading
           ? const LoadingWidget(message: '출근기록 로딩 중...')
           : _records.isEmpty
-              ? AppEmptyState(
-                  icon: Icons.account_balance_wallet_outlined,
-                  title: '정산 가능한 출근기록이 없습니다',
-                  subtitle: '급여 확정된 근무일이 없거나\n이미 모두 정산 처리되었습니다.',
-                  action: TextButton(
-                    onPressed: _loadConfirmedAttendances,
-                    child: const Text('새로고침'),
-                  ),
-                )
+              ? (_loadError != null
+                  ? AppEmptyState(
+                      icon: Icons.cloud_off_outlined,
+                      iconColor: AppColors.grey500,
+                      title: '정산 가능한 근무를 확인하지 못했습니다',
+                      subtitle: '정산할 근무가 없다는 뜻이 아닙니다.\n'
+                          '잠시 후 다시 시도해주세요.',
+                      action: TextButton.icon(
+                        onPressed: _isLoading ? null : _loadConfirmedAttendances,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('다시 시도'),
+                      ),
+                    )
+                  : AppEmptyState(
+                      icon: Icons.account_balance_wallet_outlined,
+                      title: '정산 가능한 출근기록이 없습니다',
+                      subtitle: '급여 확정된 근무일이 없거나\n이미 모두 정산 처리되었습니다.',
+                      action: TextButton(
+                        onPressed: _loadConfirmedAttendances,
+                        child: const Text('새로고침'),
+                      ),
+                    ))
               : Column(
                   children: [
                     // 안내 배너
