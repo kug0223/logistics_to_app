@@ -685,20 +685,27 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     //   그런데 이 배너는 등록을 마친 사람에게도 "제안을 받을 수 있어요"라고
     //   조건 없이 말했다 — **하지 않은 설정을 한 것처럼 확인해 주는 문구**다.
     //   그래서 나머지 절반의 상태를 함께 본다. 모르면 모른다고 말한다.
+    // [R7-P2-3 후속 정정] 앞 단계에서 OFF/UNSET 을 "제안이 오지 않아요"로만
+    //   말했는데, 그러면 **저장한 날짜가 아무 일도 안 한다**고 읽힌다.
+    //   실제로는 `_dispatchToMatchNotifications` 가 초대 설정과 무관하게
+    //   `dates` + 거주 도시로 공고 알림을 보낸다(active consumer, 호출부 4곳).
+    //   날짜를 지우면 그 알림까지 잃는다 — 두 효과를 갈라서 말한다.
     final inviteState = _invitePref?.state;
+    const kMatchAlert = '등록한 날 내 지역에 새 공고가 열리면 알림을 받아요.';
     final String descText;
     if (count == 0) {
-      // 아직 등록 전 — 무엇을 위한 기능인지 안내한다(약속이 아니다).
-      descText = '가능일을 등록하면 조건이 맞는 사업장에서 근무 제안을 받을 수 있어요.';
+      // 아직 등록 전 — 두 이득을 함께 말한다(약속이 아니라 안내다).
+      descText = '가능일을 등록하면 그 날 새 공고 알림을 받고, '
+          '\'초대 받을 지역\'까지 설정하면 사업장의 근무 제안도 받을 수 있어요.';
     } else {
       descText = switch (inviteState) {
         InvitePreferenceState.on =>
-          '조건이 맞는 사업장에서 근무 제안을 받을 수 있어요.',
+          '$kMatchAlert 조건이 맞는 사업장이 먼저 제안할 수도 있어요.',
         InvitePreferenceState.unset =>
-          '아래 \'초대 받을 지역\'까지 설정해야 제안을 받을 수 있어요.',
+          '$kMatchAlert 사업장이 먼저 제안하게 하려면 아래 \'초대 받을 지역\'을 설정하세요.',
         InvitePreferenceState.off =>
-          '지금은 초대를 받지 않도록 설정돼 있어 제안이 오지 않아요.',
-        _ => '초대 설정을 확인하지 못해 제안이 올지 알 수 없어요.',
+          '$kMatchAlert 지금은 초대를 받지 않도록 설정돼 있어 사업장의 제안은 오지 않아요.',
+        _ => '$kMatchAlert 초대 설정은 확인하지 못했어요.',
       };
     }
 
@@ -806,10 +813,30 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         horizontal: ResponsiveHelper.spacing(context, 12),
         vertical: ResponsiveHelper.spacing(context, 6),
       ),
-      child: Text(
-        '날짜를 눌러 근무 가능일을 선택/해제하세요 (최대 60일, 오늘~90일 이내)',
-        style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-        textAlign: TextAlign.center,
+      // [R7-P2-3 후속] 첫 날짜를 고르기 **전** 에 왜 고르는지 말한다.
+      //
+      //   저장된 날짜에는 **두 개의 서로 다른 효과**가 있다(CF 실측):
+      //     · `_dispatchToMatchNotifications` — 내 지역에 그 날 공고가 열리면
+      //       알림. **초대 설정과 무관하게** 동작한다.
+      //     · `callableGetAvailableWorkers`/`callableInviteWorker` — 사업장이
+      //       먼저 제안. 이쪽은 초대 ON + 초대 받을 지역이 **함께** 있어야 한다.
+      //   그리고 어느 쪽도 근무 확정이 아니다 — 제안은 수락해야 성립한다.
+      //   저장한 뒤 배너로 뒤늦게 정정하지 않고 여기서 먼저 말한다.
+      child: Column(
+        children: [
+          Text(
+            '등록한 날 내 지역에 새 공고가 열리면 알림을 받아요.\n'
+            "사업장이 먼저 제안하게 하려면 '초대 받을 지역'도 설정하세요.",
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '제안을 수락해야 근무가 확정돼요 · 최대 60일, 오늘~90일 이내',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
