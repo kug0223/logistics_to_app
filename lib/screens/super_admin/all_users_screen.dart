@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 //   열·행동·현재 선택 접근성은 좁은 폭 렌더로 따로 확인한다.
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
+import 'all_users_reads.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
@@ -21,7 +22,10 @@ import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 모든 사용자 조회·관리 화면 (최고관리자 전용)
 class AllUsersScreen extends StatefulWidget {
-  const AllUsersScreen({super.key});
+  const AllUsersScreen({super.key, this.reads});
+
+  /// [R7-P3-2 P32-X1] 목록을 만드는 읽기 경계. production 은 null.
+  final AllUsersReads? reads;
 
   @override
   State<AllUsersScreen> createState() => _AllUsersScreenState();
@@ -29,7 +33,9 @@ class AllUsersScreen extends StatefulWidget {
 
 class _AllUsersScreenState extends State<AllUsersScreen>
     with LoadingStateMixin {
+  late final AllUsersReads _reads = widget.reads ?? AllUsersReads.of();
   List<UserModel> _users = [];
+  Object? _loadError;
   String _roleFilter = 'ALL';
   String _searchQuery = '';
   List<UserModel> _cachedFiltered = []; // 필터 결과 캐시 — build()마다 재계산 방지
@@ -71,12 +77,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
 
   Future<void> _loadAllUsers() async {
     setLoading(true);
+    if (mounted) setState(() => _loadError = null);
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetAllUsers',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>();
-      final rawList = (result.data['users'] as List?) ?? [];
+      final rawList = await _reads.allUsersRaw();
 
       if (!mounted) return;
       final users = rawList.whereType<Map>().map((data) {
@@ -90,7 +93,11 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       setLoading(false);
     } catch (e) {
       if (!mounted) return;
+      // [R7-P3-2 P32-X1] 조회 실패를 **대상 없음**으로 말하지 않는다.
+      //   토스트는 사라지고 화면에는 `해당하는 사용자가 없습니다` 만 남았다 —
+      //   문의 대상이 정말 없는 것과 못 읽은 것은 다른 사실이다.
       ToastHelper.showError('사용자 목록 불러오기 실패: $e');
+      setState(() => _loadError = e);
       setLoading(false);
     }
   }
@@ -339,6 +346,18 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   }
 
   Widget _buildEmptyState() {
+    // [R7-P3-2 P32-X1] 못 읽은 것은 없는 것이 아니다.
+    if (_loadError != null) {
+      return AppEmptyState(
+        icon: Icons.error_outline,
+        title: '사용자 목록을 불러오지 못했습니다',
+        subtitle: '해당하는 사용자가 없다는 뜻이 아닙니다.',
+        action: TextButton(
+          onPressed: _loadAllUsers,
+          child: const Text('다시 시도'),
+        ),
+      );
+    }
     return const AppEmptyState(
       icon: Icons.people_outline,
       title: '해당하는 사용자가 없습니다',

@@ -13,12 +13,16 @@ import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
+import 'to_limit_reads.dart';
 
 /// 슈퍼관리자 — 공고 등록 개수 제한 설정
 /// - 탭 1 (전역 기본값): settings/app_config.maxActiveTOPerBusiness
 /// - 탭 2 (관리자별 한도): users/{uid}.maxActiveTOs (null이면 전역값 사용)
 class TOLimitSettingsScreen extends StatefulWidget {
-  const TOLimitSettingsScreen({super.key});
+  /// [R7-P3-2 P32-X2] 값을 읽는 경계. production 은 null.
+  final ToLimitReads? reads;
+
+  const TOLimitSettingsScreen({super.key, this.reads});
 
   @override
   State<TOLimitSettingsScreen> createState() => _TOLimitSettingsScreenState();
@@ -26,11 +30,9 @@ class TOLimitSettingsScreen extends StatefulWidget {
 
 class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
     with SingleTickerProviderStateMixin {
+  late final ToLimitReads _reads = widget.reads ?? ToLimitReads.of();
   final _firestore = FirebaseFirestore.instance;
   final _service = FirestoreService();
-  final _getAdminsCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-      .httpsCallable('callableGetBusinessAdmins',
-          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
   final _setLimitCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
       .httpsCallable('callableSetAdminTOLimit',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
@@ -41,10 +43,12 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   bool _isLoadingGlobal = true;
   bool _isSavingGlobal = false;
   int _globalLimit = 4;
+  bool _globalLoadFailed = false;
 
   // ── 관리자별 한도 탭 ──
   List<_AdminItem> _admins = [];
   bool _isLoadingAdmins = true;
+  bool _adminsLoadFailed = false;
 
   @override
   void initState() {
@@ -74,11 +78,10 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   // ── 전역 기본값 로드/저장 ──
 
   Future<void> _loadGlobal() async {
+    if (mounted) setState(() => _globalLoadFailed = false);
     try {
-      final doc =
-          await _firestore.collection('settings').doc('app_config').get();
-      final v =
-          (doc.data()?['maxActiveTOPerBusiness'] as num?)?.toInt() ?? 4;
+      final data = await _reads.globalConfigRaw();
+      final v = (data?['maxActiveTOPerBusiness'] as num?)?.toInt() ?? 4;
       if (mounted) {
         setState(() {
           _globalLimit = v;
@@ -87,9 +90,13 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
         });
       }
     } catch (e) {
+      // [R7-P3-2 P32-X2] 못 읽은 값을 확정 숫자로 말하지 않는다.
+      //   전에는 실패해도 `현재 기본 한도: 4개` 가 그대로 남고 입력칸에 `4` 가
+      //   미리 채워졌다 — 그대로 저장하면 실제 값을 4로 덮어쓴다.
       if (mounted) {
         setState(() {
-          _globalCtrl.text = '4';
+          _globalCtrl.text = '';
+          _globalLoadFailed = true;
           _isLoadingGlobal = false;
         });
         ToastHelper.showError('설정을 불러오는데 실패했습니다');
@@ -124,10 +131,10 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   // ── 관리자별 한도 로드 ──
 
   Future<void> _loadAdmins() async {
+    if (mounted) setState(() => _adminsLoadFailed = false);
     try {
       // [CF-MIGRATED] USER list CF 정책 — callableGetBusinessAdmins
-      final result = await _getAdminsCF.call<Map<String, dynamic>>({});
-      final rawList = (result.data['admins'] as List?) ?? [];
+      final rawList = await _reads.businessAdminsRaw();
       final items = rawList.whereType<Map>().map((m) {
         final data = Map<String, dynamic>.from(m);
         final custom = (data['maxActiveTOs'] as num?)?.toInt();
@@ -152,8 +159,12 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
         }
       }
     } catch (e) {
+      // [R7-P3-2 P32-X2] 조회 실패를 **관리자 없음**으로 말하지 않는다.
       if (mounted) {
-        setState(() => _isLoadingAdmins = false);
+        setState(() {
+          _adminsLoadFailed = true;
+          _isLoadingAdmins = false;
+        });
         ToastHelper.showError('관리자 목록 조회에 실패했습니다');
       }
     }
@@ -273,11 +284,34 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          Text(
-            '현재 기본 한도: $_globalLimit개',
-            style: ResponsiveHelper.subtitleStyle(context)
-                .copyWith(fontWeight: FontWeight.bold),
-          ),
+          // [R7-P3-2 P32-X2] 모르는 값을 아는 값처럼 말하지 않는다.
+          _globalLoadFailed
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.error_outline,
+                        size: ResponsiveHelper.iconSize(context, 20),
+                        color: AppColors.errorDark),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Expanded(
+                      child: Text(
+                        '현재 기본 한도를 불러오지 못했습니다.\n'
+                        '지금 값을 저장하면 실제 설정을 덮어씁니다.',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.errorDark),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _loadGlobal,
+                      child: const Text('다시 시도'),
+                    ),
+                  ],
+                )
+              : Text(
+                  '현재 기본 한도: $_globalLimit개',
+                  style: ResponsiveHelper.subtitleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           TextField(
             controller: _globalCtrl,
@@ -327,6 +361,40 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   Widget _buildAdminTab() {
     if (_isLoadingAdmins) {
       return const Center(child: CircularProgressIndicator());
+    }
+    if (_adminsLoadFailed) {
+      // [R7-P3-2 P32-X2] 못 읽은 것은 없는 것이 아니다.
+      return Center(
+        child: Padding(
+          padding: ResponsiveHelper.cardPadding(context),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline,
+                  size: ResponsiveHelper.iconSize(context, 40),
+                  color: AppColors.grey400),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              Text(
+                '관리자 목록을 불러오지 못했습니다',
+                style: ResponsiveHelper.bodyStyle(context,
+                    color: AppColors.grey600),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                '등록된 관리자가 없다는 뜻이 아닙니다.',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey500),
+                textAlign: TextAlign.center,
+              ),
+              TextButton(
+                onPressed: _loadAdmins,
+                child: const Text('다시 시도'),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     if (_admins.isEmpty) {
       return Center(

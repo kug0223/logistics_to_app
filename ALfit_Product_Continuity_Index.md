@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P3-1(네 역할 과업·인계) 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P3-2(역할 경계 내용 렌더) 커밋
 
 ## 1. 문서 지도
 
@@ -37,6 +37,7 @@
 | P2-3 후속 | 일정·출퇴근 화면군(P23-N/S/A/V/E/G) | CLOSED | **CLOSED** | **PENDING** · 저장 제스처·실제 mutation **NOT SEEN** |
 | P2-4 | MY·수입·리뷰·요청(P24-N/I/R/Q/E/G) | CLOSED | **CLOSED**(월 시트 제스처·리뷰 3상태 렌더 실행 완료) | **PENDING** · 알림→리뷰 제스처 NOT SEEN · 발견성 VJ07/VJ14 |
 | P3-1 | 네 역할 과업·인계·가치 후보(P31-H/W/D/X/F) | CLOSED(H·W·D) · **CODE only**(X) | **CLOSED**(서브관리자 전환 RSW-1~4) · 슈퍼관리자 **NOT SEEN** | **PENDING** · 후보 F1~F7 전부 **VERIFY** |
+| P3-2 | 제안·권한·운영 판단의 내용 렌더(P32-H/D/X1/X2) | CLOSED | **CLOSED** — 네 셀 모두 내용 RENDER(IHK/WPD/SAU/TOL 22건). 수락 확인창만 CODE only | **PENDING** · F4/F6/F7 **VERIFY** 유지 |
 | P2 나머지 | — | 지원자 화면군 여섯 묶음 결산 완료(PRODUCT 는 OPEN) | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
@@ -49,7 +50,7 @@ CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰
 | 지원자 | P2-1·P2-2·P2-3 종료(잔여 명시) | **없음** | **OPEN** |
 | 관리자 | P1-2~P1-7 종료(DEVICE 대기) | **없음** | **OPEN** |
 | 서브관리자 | 권한 계약 CODE + **전환 RENDER 종료**(P3-1) | **없음** | **OPEN** |
-| 슈퍼관리자 | shell 11/11 · 대표 과제 2건 **CODE only**(P3-1, 내용 RENDER NOT SEEN) | **없음** | **OPEN** |
+| 슈퍼관리자 | shell 11/11 · 대표 과제 2건 **내용 RENDER 종료**(P3-2) · ERROR≠EMPTY 결함 3건 수정 | **없음** | **OPEN** |
 
 기존 잔여는 **새 VJ 번호로 재등록하지 않는다** — 기존 ID 에 VJ 를 연결한다
 (매핑표는 `docs/r7-gap02-product-value-criteria.md` §2).
