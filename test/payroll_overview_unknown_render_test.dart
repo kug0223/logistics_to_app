@@ -12,6 +12,7 @@ import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/business_admin/payroll/payroll_overview_reads.dart';
 import 'package:ALfit/screens/business_admin/payroll/payroll_overview_screen.dart';
+import 'package:ALfit/screens/business_admin/payroll/payroll_payment_dashboard_screen.dart';
 
 /// [R7-P1-5 PAY-1·PAY-4] 급여 개요·월 상세를 **실제 위젯으로** 그린다.
 ///
@@ -100,6 +101,7 @@ Map<String, dynamic> _summaryItem({
   required int totalPayout,
   required int confirmedCount,
   required int workerCount,
+  int notTransferredCount = 0,
 }) =>
     {
       'id': '${_biz}_$_ym',
@@ -110,7 +112,7 @@ Map<String, dynamic> _summaryItem({
       'totalPayout': totalPayout,
       'confirmedCount': confirmedCount,
       'workerCount': workerCount,
-      'notTransferredCount': 0,
+      'notTransferredCount': notTransferredCount,
       'updatedAt': DateTime.now().toIso8601String(),
     };
 
@@ -120,8 +122,10 @@ Map<String, dynamic> _attItem({
   required int finalWage,
   String status = 'present',
   String userId = 'u1',
+  String id = 'r1',
 }) =>
     {
+      'id': id,
       'yearMonth': _ym,
       'wageStatus': wageStatus,
       'status': status,
@@ -133,8 +137,10 @@ PayrollOverviewReads _reads({
   List<Map<String, dynamic>>? summaries,
   List<Map<String, dynamic>>? attendances,
   Object? attendanceError,
+  bool attendanceLimitReached = false,
   List<({String id, Map<String, dynamic> data})>? workers,
   Object? workersError,
+  Map<String, int>? calls,
 }) =>
     PayrollOverviewReads(
       businesses: ({
@@ -143,24 +149,30 @@ PayrollOverviewReads _reads({
         required List<String> managedIds,
       }) async =>
           [_business(_biz, '강남 물류센터')],
-      payrollSummaries: ({required String businessId, required int year}) async =>
-          summaries ??
-          [
-            _summaryItem(totalPayout: 4800000, confirmedCount: 5, workerCount: 3),
-          ],
+      payrollSummaries: ({required String businessId, required int year}) async {
+        if (calls != null) calls['summaries'] = (calls['summaries'] ?? 0) + 1;
+        return summaries ??
+            [
+              _summaryItem(totalPayout: 4800000, confirmedCount: 5, workerCount: 3),
+            ];
+      },
       adminAttendances: ({
         required String businessId,
         required String yearMonthGte,
         required String yearMonthLte,
       }) async {
+        if (calls != null) calls['ledger'] = (calls['ledger'] ?? 0) + 1;
         if (attendanceError != null) throw attendanceError;
-        return attendances ??
-            [
-              _attItem(wageStatus: 'confirmed', finalWage: 1600000),
-              _attItem(wageStatus: 'confirmed', finalWage: 1600000, userId: 'u2'),
-              _attItem(wageStatus: 'confirmed', finalWage: 1600000, userId: 'u3'),
-              _attItem(wageStatus: 'pending', finalWage: 0, userId: 'u4'),
-            ];
+        return (
+          items: attendances ??
+              [
+                _attItem(wageStatus: 'confirmed', finalWage: 1600000),
+                _attItem(wageStatus: 'confirmed', finalWage: 1600000, userId: 'u2'),
+                _attItem(wageStatus: 'confirmed', finalWage: 1600000, userId: 'u3'),
+                _attItem(wageStatus: 'pending', finalWage: 0, userId: 'u4'),
+              ],
+          limitReached: attendanceLimitReached,
+        );
       },
       workerSummaries: (summaryId) async {
         if (workersError != null) throw workersError;
@@ -313,5 +325,136 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('미이체 확인 못함'), findsOneWidget);
     expect(find.textContaining('128,400,000'), findsWidgets);
+  });
+// ══════════════════════════════════════════════════════════
+  // [R7-P1-5 후속] 미이체 건수의 owner — 원장 하나
+  //   집계 문서(projection)는 트리거가 유지하므로 지연·누락될 수 있다.
+  //   같은 계약을 두 owner 가 계산하면 화면이 낡은 값을 확정 사실로 말한다.
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('PNT-1 복귀 갱신이 낡은 집계 문서로 미이체를 덮지 않는다',
+      (tester) async {
+    final calls = <String, int>{};
+    // 원장: 확정 2건(= 이체 취소 직후) / 집계 문서: 아직 1건만 반영(트리거 지연)
+    await _pump(tester,
+        reads: _reads(
+          calls: calls,
+          summaries: [
+            _summaryItem(
+                totalPayout: 48000,
+                confirmedCount: 2,
+                workerCount: 1,
+                notTransferredCount: 1),
+          ],
+          attendances: [
+            _attItem(wageStatus: 'confirmed', finalWage: 24000),
+            _attItem(wageStatus: 'confirmed', finalWage: 24000, id: 'r2'),
+          ],
+        ));
+
+    // 개요는 원장 기준이다.
+    expect(find.textContaining('미이체 2'), findsOneWidget);
+
+    // 월 상세 진입
+    await tester.tap(find.textContaining('미이체 2'));
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('2건'), findsWidgets, reason: '미이체 2건');
+
+    // 지급 현황으로 갔다가 돌아온다 → 복귀 시 _refreshSummary 가 돈다.
+    //   (권한 gate 가 스스로 닫는 경로라 pop 을 따로 누르지 않는다 —
+    //    중요한 것은 **복귀 갱신이 실제로 돌았다는 것**이고 호출 수로 증명한다.)
+    final ledgerBefore = calls['ledger'] ?? 0;
+    final summariesBefore = calls['summaries'] ?? 0;
+    await tester.tap(find.byIcon(Icons.receipt_long_outlined), warnIfMissed: false);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    tester.takeException(); // 목적지의 자체 조회 실패는 이 테스트의 대상이 아니다
+
+    expect(calls['summaries']! > summariesBefore, isTrue,
+        reason: '복귀 갱신이 집계 문서를 다시 읽었다');
+    expect(calls['ledger']! > ledgerBefore, isTrue,
+        reason: '복귀 갱신이 **원장도** 다시 읽는다 — 건수의 owner 이기 때문이다');
+
+    // 복귀 후에도 원장 값이다 — 집계 문서의 1 로 되돌아가지 않는다.
+    expect(find.text('1건'), findsNothing,
+        reason: '낡은 집계 문서 값(미이체 1)이 확정 사실로 앉으면 안 된다');
+    expect(find.text('2건'), findsWidgets);
+    expect(find.text('확인 못함'), findsNothing, reason: '원장을 받았으므로 모름이 아니다');
+  });
+
+  testWidgets('PNT-2 네 상태·동일인 복수 근무 — 파생이 한 owner 안에서 정확하다',
+      (tester) async {
+    // 같은 사람, 같은 달: 확정 1 · 이체완료 1 · 미확정 1 · 노쇼 0원 1(제외)
+    // 집계 문서의 확정 건수는 낡아 있다(5) — 파생에 섞이면 이체 완료가 4가 된다.
+    await _pump(tester,
+        reads: _reads(
+          summaries: [
+            _summaryItem(
+                totalPayout: 48000,
+                confirmedCount: 5,
+                workerCount: 1,
+                notTransferredCount: 3),
+          ],
+          attendances: [
+            _attItem(wageStatus: 'confirmed', finalWage: 24000),
+            _attItem(wageStatus: 'transferred', finalWage: 24000, id: 'r2'),
+            _attItem(wageStatus: 'calculated', finalWage: 0, id: 'r3'),
+            _attItem(
+                wageStatus: 'confirmed',
+                finalWage: 0,
+                status: 'NO_SHOW',
+                id: 'r4'),
+          ],
+        ));
+
+    expect(find.textContaining('미이체 1'), findsOneWidget);
+
+    await tester.tap(find.textContaining('미이체 1'));
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // 이체 완료 = 확정(원장 2) - 미이체(원장 1) = 1. 낡은 5 를 섞으면 4 가 된다.
+    final transferRow = find.ancestor(
+      of: find.text('이체 완료'),
+      matching: find.byType(Row),
+    );
+    expect(
+      find.descendant(of: transferRow.first, matching: find.text('1건')),
+      findsOneWidget,
+    );
+    expect(find.text('4건'), findsNothing, reason: '낡은 확정 건수가 파생에 섞였다');
+  });
+
+  testWidgets('PNT-3 상한에 걸린 응답은 작은 수를 사실처럼 보여주지 않는다',
+      (tester) async {
+    await _pump(tester,
+        reads: _reads(
+          attendances: [
+            _attItem(wageStatus: 'confirmed', finalWage: 1600000),
+          ],
+          attendanceLimitReached: true,
+        ));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('미이체 확인 못함'), findsOneWidget);
+    expect(find.textContaining('미이체 1'), findsNothing);
+  });
+
+  testWidgets('PNT-4 집계 문서도 없고 원장도 못 읽은 달은 데이터 없음이 아니다',
+      (tester) async {
+    await _pump(tester,
+        reads: _reads(
+          summaries: const [],
+          attendanceError: StateError('attendance cf down'),
+        ));
+
+    expect(tester.takeException(), isNull);
+    // 근무가 없었다고 말하지 않는다.
+    expect(find.text('데이터 없음'), findsNothing);
+    expect(find.text('확인 못함'), findsWidgets);
   });
 }

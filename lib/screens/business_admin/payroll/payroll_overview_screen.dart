@@ -180,12 +180,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 
     try {
       // [PERF] 두 CF 병렬 호출 — 순차 최대 90초 → 병렬로 절반 단축
-      List<Map<String, dynamic>>? attItems;
+      ({List<Map<String, dynamic>> items, bool limitReached})? attResult;
       final results = await Future.wait<Object?>([
         _reads.payrollSummaries(businessId: bizId, year: year),
         () async {
           try {
-            attItems = await _reads.adminAttendances(
+            attResult = await _reads.adminAttendances(
               businessId: bizId,
               yearMonthGte: '$year-01',
               yearMonthLte: '$year-12',
@@ -199,7 +199,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       ]);
       final psItemsRaw = results[0] as List<Map<String, dynamic>>;
       // [R7-P1-5 PAY-1] 출근 집계 실패 → 건수는 **모름**이다(0 이 아니다).
-      final attUnknown = attItems == null;
+      // [R7-P1-5 후속] 상한에 걸린 응답도 모름이다 — 실제보다 작은 합계를
+      //   사실처럼 보여주지 않는다(통계 서비스와 같은 fail-closed).
+      final attUnknown = attResult == null || attResult!.limitReached;
+      if (attResult?.limitReached == true) {
+        debugPrint('⚠️ 출근 집계 상한 도달 — 월별 건수를 모름으로 둔다');
+      }
 
       // 1. payroll_summaries 파싱
       // [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전, year 서버 필터링으로 전환
@@ -211,46 +216,14 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         if (m != null) summaryMap[m.month] = m;
       }
 
-      // 2. pendingCount + notTransferredCount
-      //    [CF 이전 2026-07-13] callableGetAdminAttendances (yearMonthGte/Lte)
-      //    wageStatus·yearMonth 집계는 클라이언트에서 처리
-      final pendingByMonth      = List.filled(12, 0);
-      final confirmedByMonth    = List.filled(12, 0); // wageStatus='confirmed' (미이체)
-      final transferredByMonth  = List.filled(12, 0); // wageStatus='transferred' (이체완료)
-      final totalPayoutByMonth  = List.filled(12, 0);
-      final workersByMonth      = List.generate(12, (_) => <String>{});
-      for (final data in (attItems ?? const <Map<String, dynamic>>[])) {
-        final ym = data['yearMonth'] as String?;
-        final ws = data['wageStatus'] as String?;
-        if (ym == null) continue;
-        final parts = ym.split('-');
-        if (parts.length != 2) continue;
-        final month = int.tryParse(parts[1]);
-        if (month == null || month < 1 || month > 12) continue;
-        final idx = month - 1;
-        if (ws == 'pending' || ws == 'calculated') {
-          pendingByMonth[idx]++;
-        } else if (ws == 'confirmed' || ws == 'transferred') {
-          // [.6-P1] 서버 srvPayrollContribution 과 같은 식 — 노쇼·결근 0원은
-          //   근무일도 미이체 건수도 만들지 않는다. 금액이 남은 비정상
-          //   기록은 그대로 집계해 관리자가 볼 수 있게 둔다.
-          if (AttendanceModel.isNonPayableZeroOf(
-              data['status'] as String?, data['finalWage'] as num?)) {
-            continue;
-          }
-          // payroll_summaries 미생성 시 attendance에서 직접 집계
-          // confirmed(미이체) + transferred(이체완료) 모두 월별 인건비에 포함
-          if (ws == 'confirmed') {
-            confirmedByMonth[idx]++;
-          } else {
-            transferredByMonth[idx]++;
-          }
-          final wage = (data['finalWage'] as num?)?.toInt() ?? 0;
-          totalPayoutByMonth[idx] += wage;
-          final uid = data['userId'] as String?;
-          if (uid != null) workersByMonth[idx].add(uid);
-        }
-      }
+      // 2. 미확정·미이체 — **원장 하나**에서 센다(공유 reading).
+      final ledger = _LedgerMonthCounts.of(
+          attResult?.items ?? const <Map<String, dynamic>>[]);
+      final pendingByMonth      = ledger.pending;
+      final confirmedByMonth    = ledger.notTransferred;
+      final transferredByMonth  = ledger.transferred;
+      final totalPayoutByMonth  = ledger.payout;
+      final workersByMonth      = ledger.workers;
       final pendingResults        = pendingByMonth;
       final notTransferredResults = confirmedByMonth;
 
@@ -271,7 +244,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
             year: existing.year,
             month: existing.month,
             totalPayout: existing.totalPayout,
-            confirmedCount: existing.confirmedCount,
+            // [R7-P1-5 후속] `이체 완료` 는 `확정 - 미이체` 로 파생된다.
+            //   두 항이 다른 owner 면 그 뺄셈은 한쪽의 지연을 다른 쪽에 섞는다.
+            //   원장을 쓸 수 있으면 **같은 원장의 확정 건수**를 넣어 파생이
+            //   정확히 이체완료 건수가 되게 한다(문서 없는 달의 식과 동일).
+            confirmedCount:
+                attUnknown ? existing.confirmedCount : (ntCount + tCount),
             workerCount: existing.workerCount,
             pendingCount: pCount,
             notTransferredCount: ntCount,
@@ -582,7 +560,9 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 const SizedBox.shrink()
               else
                 Text(
-                  '데이터 없음',
+                  // [R7-P1-5 후속] 집계 문서도 없고 원장도 못 읽은 달은
+                  //   **빈 달이 아니라 모르는 달**이다. 근무가 없었다고 말하지 않는다.
+                  _attCountsUnknown ? '확인 못함' : '데이터 없음',
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
                     color: AppColors.grey400,
                   ),
@@ -650,6 +630,65 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 // 월별 근무자 목록 화면
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// [R7-P1-5 후속] 미이체·미확정의 **canonical 계산 하나**.
+///
+///   같은 `미이체` 를 개요는 출근 집계에서, 월 상세는 새로고침 때 집계 문서에서
+///   읽고 있었다. 두 경로는 모집단·기간·단위가 같은 계약인데(둘 다 KST 월의
+///   attendance 문서 수, confirmed 만, 노쇼·결근 0원 제외) 트리거 지연·누락으로
+///   값이 갈릴 수 있었다 — 이체 취소 직후 복귀하면 낡은 값이 확정 사실로 보였다.
+///   그래서 **원장(attendance)** 을 owner 로 정하고 두 화면이 이 계산을 공유한다.
+///   집계 문서는 금액·인원의 owner 로 남는다(트랜잭션 delta + 복구 CF).
+///
+///   서버 `srvPayrollContribution` 과 같은 식이다 — 한쪽만 바꾸지 않는다.
+class _LedgerMonthCounts {
+  final List<int> pending;        // wagePending + wageCalculated (미확정)
+  final List<int> notTransferred; // wageConfirmed (미이체)
+  final List<int> transferred;    // wageTransferred (이체완료)
+  final List<int> payout;         // 지급 대상 finalWage 합
+  final List<Set<String>> workers;
+
+  _LedgerMonthCounts._(
+      this.pending, this.notTransferred, this.transferred, this.payout, this.workers);
+
+  factory _LedgerMonthCounts.of(Iterable<Map<String, dynamic>> items) {
+    final counts = _LedgerMonthCounts._(
+      List.filled(12, 0),
+      List.filled(12, 0),
+      List.filled(12, 0),
+      List.filled(12, 0),
+      List.generate(12, (_) => <String>{}),
+    );
+    for (final data in items) {
+      final ym = data['yearMonth'] as String?;
+      final ws = data['wageStatus'] as String?;
+      if (ym == null) continue;
+      final parts = ym.split('-');
+      if (parts.length != 2) continue;
+      final month = int.tryParse(parts[1]);
+      if (month == null || month < 1 || month > 12) continue;
+      final idx = month - 1;
+      if (ws == 'pending' || ws == 'calculated') {
+        counts.pending[idx]++;
+      } else if (ws == 'confirmed' || ws == 'transferred') {
+        // [.6-P1] 노쇼·결근 0원은 근무일도 미이체 건수도 만들지 않는다.
+        if (AttendanceModel.isNonPayableZeroOf(
+            data['status'] as String?, data['finalWage'] as num?)) {
+          continue;
+        }
+        if (ws == 'confirmed') {
+          counts.notTransferred[idx]++;
+        } else {
+          counts.transferred[idx]++;
+        }
+        counts.payout[idx] += (data['finalWage'] as num?)?.toInt() ?? 0;
+        final uid = data['userId'] as String?;
+        if (uid != null) counts.workers[idx].add(uid);
+      }
+    }
+    return counts;
+  }
+}
 
 enum _SortOrder { amountDesc, amountAsc, nameAsc, workDaysDesc }
 
@@ -754,6 +793,20 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   ///   그 문제가 없다. 없음·권한 없음·실패를 각각 다르게 다룬다.
   Future<void> _refreshSummary() async {
     try {
+      // [R7-P1-5 후속] **건수의 owner 는 원장이다.**
+      //
+      //   예전에는 집계 문서만 다시 읽어 `notTransferredCount` 까지 그 값으로
+      //   덮었다. 트리거는 비동기라, 지급 현황에서 **이체를 취소하고 돌아오면**
+      //   아직 반영되지 않은 낡은 값이 그 자리에 앉았고 P1-5 이후로는 그것이
+      //   `확인 못함` 도 아닌 **확정된 사실**로 보였다(모름 해제).
+      //   그래서 이 갱신도 개요 로더와 **같은 원장·같은 계산**을 쓴다.
+      //   금액·인원은 집계 문서가 owner 로 남는다(트랜잭션 delta + 복구 CF).
+      final ym = _liveSummary.yearMonth;
+      final ledgerFuture = _reads.adminAttendances(
+        businessId: _liveSummary.businessId,
+        yearMonthGte: ym,
+        yearMonthLte: ym,
+      );
       final items = await _reads.payrollSummaries(
         businessId: _liveSummary.businessId,
         year: _liveSummary.year,
@@ -763,17 +816,54 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         (m) => m['id']?.toString() == _liveSummary.id,
         orElse: () => const <String, dynamic>{},
       );
+
+      // 원장 — 실패·상한은 '모름'이고, 그때는 들고 있던 값을 건드리지 않는다.
+      ({List<Map<String, dynamic>> items, bool limitReached})? ledgerResult;
+      try {
+        ledgerResult = await ledgerFuture;
+      } catch (e) {
+        debugPrint('⚠️ 미이체 원장 재조회 실패: $e');
+      }
+      if (!mounted) return;
+      final ledgerUnknown =
+          ledgerResult == null || ledgerResult.limitReached;
+      final monthIdx = _liveSummary.month - 1;
+      final ledger = ledgerUnknown
+          ? null
+          : _LedgerMonthCounts.of(ledgerResult.items);
+
       // 없는 것은 정상이다 — 아직 집계가 만들어지지 않은 달이다.
-      //   화면이 들고 있는 값을 그대로 둔다(빈 값으로 덮지 않는다).
-      if (hit.isEmpty) return;
-      // 로더와 같은 방식으로 파싱한다 — id 는 map 에서 빼고 따로 넘긴다.
-      final raw = Map<String, dynamic>.from(hit)..remove('id');
-      final fresh = PayrollSummaryModel.tryFromMap(raw, _liveSummary.id);
-      if (fresh == null) return;
-      // [R7-P1-5 PAY-1] 집계 문서를 실제로 받았다 — 건수는 이제 모름이 아니다.
+      //   화면이 들고 있는 금액·인원을 빈 값으로 덮지 않는다.
+      final fresh = hit.isEmpty
+          ? null
+          : PayrollSummaryModel.tryFromMap(
+              Map<String, dynamic>.from(hit)..remove('id'), _liveSummary.id);
+
+      if (fresh == null && ledger == null) return;
       setState(() {
-        _liveSummary = fresh;
-        _countsUnknown = false;
+        final base = fresh ?? _liveSummary;
+        _liveSummary = PayrollSummaryModel(
+          id: base.id,
+          businessId: base.businessId,
+          yearMonth: base.yearMonth,
+          year: base.year,
+          month: base.month,
+          totalPayout: base.totalPayout,
+          // 파생(`확정 - 미이체`)이 한 owner 안에서 끝나게 둘 다 원장에서.
+          confirmedCount: ledger == null
+              ? base.confirmedCount
+              : ledger.notTransferred[monthIdx] + ledger.transferred[monthIdx],
+          workerCount: base.workerCount,
+          pendingCount:
+              ledger == null ? base.pendingCount : ledger.pending[monthIdx],
+          notTransferredCount: ledger == null
+              ? base.notTransferredCount
+              : ledger.notTransferred[monthIdx],
+          workers: base.workers,
+          updatedAt: base.updatedAt,
+        );
+        // 원장을 실제로 받았을 때만 모름이 풀린다.
+        if (ledger != null) _countsUnknown = false;
       });
     } on FirebaseFunctionsException catch (e) {
       // 권한 없음과 통신 실패를 "집계 없음"으로 바꾸지 않는다.

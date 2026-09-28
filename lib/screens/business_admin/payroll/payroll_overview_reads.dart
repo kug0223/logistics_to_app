@@ -33,9 +33,13 @@ class PayrollOverviewReads {
     required int year,
   }) payrollSummaries;
 
-  /// CF `callableGetAdminAttendances` — 미확정·미이체 건수의 유일한 원천.
-  /// 실패는 **throw** 한다. 호출부가 0 이 아니라 '모름'으로 다룬다.
-  final Future<List<Map<String, dynamic>>> Function({
+  /// CF `callableGetAdminAttendances` — 미확정·미이체 건수의 **canonical 원장**.
+  ///
+  ///   실패는 **throw** 한다. 호출부가 0 이 아니라 '모름'으로 다룬다.
+  ///   `limitReached` 를 함께 돌려준다 — 서버가 10,000건에서 끊으므로 그때의
+  ///   합계는 실제보다 작다. 통계 서비스와 같은 관례로 **fail-closed**,
+  ///   즉 사실이 아닌 작은 수를 보여주지 않고 모름으로 다룬다.
+  final Future<({List<Map<String, dynamic>> items, bool limitReached})> Function({
     required String businessId,
     required String yearMonthGte,
     required String yearMonthLte,
@@ -97,10 +101,14 @@ class PayrollOverviewReads {
           'yearMonthGte': yearMonthGte,
           'yearMonthLte': yearMonthLte,
         });
-        return ((r.data['items'] as List<dynamic>?) ?? const [])
+        final items = ((r.data['items'] as List<dynamic>?) ?? const [])
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
+        return (
+          items: items,
+          limitReached: r.data['limitReached'] == true,
+        );
       },
       workerSummaries: (summaryId) async {
         final snap = await FirebaseFirestore.instance

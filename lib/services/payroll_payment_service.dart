@@ -370,20 +370,11 @@ class PayrollPaymentService {
     }
   }
 
-  /// 미이체(wageStatus=confirmed) 건수 (홈 배지용) — callableGetNotTransferredCount 경유
-  /// attendance.businessId 단일 필터 → wageStatus만 읽고 서버 카운트 (복합 인덱스 불필요)
-  Future<int?> getTotalNotTransferredCount({required String businessId}) async {
-    try {
-      final result = await _cf
-          .httpsCallable('callableGetNotTransferredCount',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)))
-          .call<Map<String, dynamic>>({'businessId': businessId});
-      return (result.data['count'] as num?)?.toInt() ?? 0;
-    } catch (e) {
-      debugPrint('❌ 미이체 건수 조회 실패: $e');
-      return null;
-    }
-  }
+  // [R7-P1-5 후속] `getTotalNotTransferredCount` 를 제거했다.
+  //   같은 '미이체' 를 **월 없이 전 기간**으로 세는 세 번째 정의였고, 호출부가
+  //   하나도 없었다(홈 배지는 canonical summary 의 unpaidWage 로 옮겨간 뒤였다).
+  //   남겨 두면 다음 호출부가 개요·월 상세와 다른 수를 같은 단어로 보여준다.
+  //   서버 `callableGetNotTransferredCount` 는 배포 범위라 그대로 두었다(사용 0).
 
   // ══════════════════════════════════════════════════════════
   // CSV 내보내기

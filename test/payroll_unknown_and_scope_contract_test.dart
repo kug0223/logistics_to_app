@@ -53,8 +53,11 @@ void main() {
   group('PAY-1 모름을 0 으로 말하지 않는다', () {
     test('U-1 출근 집계 실패를 상태로 들고 있다', () {
       expect(ov.contains('bool _attCountsUnknown = false;'), isTrue);
-      expect(ov.contains('final attUnknown = attItems == null;'), isTrue,
-          reason: '실패는 null 로 오고, 그것이 곧 모름이다');
+      expect(
+          ov.contains(
+              'final attUnknown = attResult == null || attResult!.limitReached;'),
+          isTrue,
+          reason: '실패(null)와 상한 도달(limitReached) 둘 다 모름이다');
       expect(ov.contains('_attCountsUnknown = attUnknown;'), isTrue);
     });
 
@@ -198,6 +201,74 @@ void main() {
     test('P-3 급여 화면 진입은 확인된 허용에서만', () {
       expect(ov.contains('userProvider.checkCurrentBusiness((p) => p.canManageWage)'), isTrue);
       expect(ov.contains('_accessUnverified = entryCheck == PermissionCheck.error'), isTrue);
+    });
+  });
+// ══════════════════════════════════════════════════════════
+  // [R7-P1-5 후속] 미이체 건수의 owner 는 원장 하나다
+  // ══════════════════════════════════════════════════════════
+  group('OWN 미이체 owner 수렴', () {
+    test('OWN-1 계산이 한 곳에만 있다 (공유 reading)', () {
+      expect(ov.contains('class _LedgerMonthCounts'), isTrue);
+      // 월별 집계 루프가 화면에 중복으로 남아 있지 않다.
+      expect("data['wageStatus'] as String?".allMatches(ov).length, 1,
+          reason: '같은 판정을 두 곳에서 하면 다시 갈린다');
+      expect("AttendanceModel.isNonPayableZeroOf".allMatches(ov).length, 1);
+    });
+
+    test('OWN-2 로더와 복귀 갱신이 같은 계산을 쓴다', () {
+      final loader = _bodyOf(ov, 'Future<void> _loadYear(', 'Future<void> _loadTodayCount(');
+      final refresh = _bodyOf(ov, 'Future<void> _refreshSummary(', 'Future<void> _loadWorkers(');
+      expect(loader.contains('_LedgerMonthCounts.of('), isTrue);
+      expect(refresh.contains('_LedgerMonthCounts.of('), isTrue);
+      expect(refresh.contains('_reads.adminAttendances('), isTrue,
+          reason: '복귀 갱신도 원장을 읽는다 — 집계 문서로 건수를 덮지 않는다');
+    });
+
+    test('OWN-3 파생(이체 완료)이 한 owner 안에서 끝난다', () {
+      final loader = _bodyOf(ov, 'Future<void> _loadYear(', 'Future<void> _loadTodayCount(');
+      // 문서가 있어도 원장을 쓸 수 있으면 확정 건수도 원장에서 온다.
+      expect(
+          loader.contains(
+              'attUnknown ? existing.confirmedCount : (ntCount + tCount)'),
+          isTrue);
+      final refresh = _bodyOf(ov, 'Future<void> _refreshSummary(', 'Future<void> _loadWorkers(');
+      expect(
+          refresh.contains(
+              'ledger.notTransferred[monthIdx] + ledger.transferred[monthIdx]'),
+          isTrue);
+    });
+
+    test('OWN-4 상한 도달은 모름이다 (fail-closed)', () {
+      expect(ov.contains('attResult!.limitReached'), isTrue);
+      expect(seam.contains("r.data['limitReached'] == true"), isTrue);
+      final refresh = _bodyOf(ov, 'Future<void> _refreshSummary(', 'Future<void> _loadWorkers(');
+      expect(refresh.contains('ledgerResult.limitReached'), isTrue);
+    });
+
+    test('OWN-5 모르는 달을 빈 달이라고 말하지 않는다', () {
+      expect(ov.contains("_attCountsUnknown ? '확인 못함' : '데이터 없음'"), isTrue);
+    });
+
+    test('OWN-6 세 번째 정의(전 기간 count)의 죽은 호출부를 없앴다', () {
+      final svc = _src('lib/services/payroll_payment_service.dart');
+      expect(svc.contains('Future<int?> getTotalNotTransferredCount'), isFalse,
+          reason: '메서드 선언이 남아 있으면 다음 호출부가 생긴다');
+      expect(svc.contains("httpsCallable('callableGetNotTransferredCount'"), isFalse);
+      // 서버 함수는 배포 범위라 남겨 두었다 — 그 사실을 주석으로 남긴다.
+      expect(svc.contains('callableGetNotTransferredCount'), isTrue);
+      expect(fns.contains('export const callableGetNotTransferredCount'), isTrue);
+    });
+
+    test('OWN-7 이 값을 읽는 곳은 표시 두 자리뿐이다 (행동 gate 아님)', () {
+      // 대시보드의 이체·취소·전체선택은 자기 목록(_allRecords)만 본다.
+      expect(dash.contains('notTransferredCount'), isFalse);
+      // 화면 밖 소비자도 없다.
+      for (final path in const [
+        'lib/screens/business_admin/business_admin_home_screen.dart',
+        'lib/screens/business_admin/payroll/payroll_worker_detail_screen.dart',
+      ]) {
+        expect(_src(path).contains('notTransferredCount'), isFalse, reason: path);
+      }
     });
   });
 }

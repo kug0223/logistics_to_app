@@ -172,6 +172,8 @@ void main() {
       //   화면은 경계를 부르고, 경계가 같은 canonical reader 로 매핑한다.
       expect(body.contains('_reads.payrollSummaries('), isTrue);
       expect(seam.contains("callableGetPayrollSummaries"), isTrue);
+      // [R7-P1-5 후속] 건수는 원장에서 다시 읽는다 — 집계 문서로 덮지 않는다.
+      expect(body.contains('_reads.adminAttendances('), isTrue);
       expect(body.contains("collection('payroll_summaries')"), isFalse,
           reason: '있을 수도 없을 수도 있는 조회는 서버가 판정해야 한다');
       // 화면에는 이 컬렉션 직접 접근이 **아예 없고**, 경계에 workers 하나만 있다.
@@ -181,13 +183,25 @@ void main() {
 
     test('§8 없음은 정상이다 — 들고 있던 값을 빈 값으로 덮지 않는다', () {
       final i = screen.indexOf('Future<void> _refreshSummary()');
-      final body = screen.substring(i, i + 2200);
-      expect(body.contains('if (hit.isEmpty) return;'), isTrue);
+      // [R7-P1-5 후속] 고정 길이 창은 본문이 길어지면 뒷부분을 놓친다 —
+      //   실제 메서드 경계로 자른다.
+      final end = screen.indexOf('Future<void> _loadWorkers()', i);
+      expect(end, greaterThan(i));
+      final body = screen.substring(i, end);
+      // [R7-P1-5 후속] 문서가 없어도 원장 건수는 반영한다 — 다만 금액·인원은
+      //   화면이 들고 있던 값을 유지한다(빈 값으로 덮지 않는다).
+      expect(body.contains('hit.isEmpty'), isTrue);
+      expect(body.contains('_liveSummary.id);'), isTrue);
+      expect(body.contains('if (fresh == null && ledger == null) return;'), isTrue);
     });
 
     test('§9 없음·권한 없음·실패를 각각 다르게 다룬다', () {
       final i = screen.indexOf('Future<void> _refreshSummary()');
-      final body = screen.substring(i, i + 2200);
+      // [R7-P1-5 후속] 고정 길이 창은 본문이 길어지면 뒷부분을 놓친다 —
+      //   실제 메서드 경계로 자른다.
+      final end = screen.indexOf('Future<void> _loadWorkers()', i);
+      expect(end, greaterThan(i));
+      final body = screen.substring(i, end);
       expect(body.contains('on FirebaseFunctionsException catch (e)'), isTrue);
       expect(body.contains("e.code == 'permission-denied'"), isTrue);
       expect(body.contains('급여 정보를 볼 권한이 없습니다'), isTrue);
@@ -196,7 +210,11 @@ void main() {
 
     test('§9 PERMISSION_DENIED 를 "집계 없음"으로 바꾸지 않았다', () {
       final i = screen.indexOf('Future<void> _refreshSummary()');
-      final body = screen.substring(i, i + 2200);
+      // [R7-P1-5 후속] 고정 길이 창은 본문이 길어지면 뒷부분을 놓친다 —
+      //   실제 메서드 경계로 자른다.
+      final end = screen.indexOf('Future<void> _loadWorkers()', i);
+      expect(end, greaterThan(i));
+      final body = screen.substring(i, end);
       // 권한 오류 분기가 조용한 return 으로 끝나지 않는다.
       final permIdx = body.indexOf("e.code == 'permission-denied'");
       final absentIdx = body.indexOf('if (hit.isEmpty) return;');

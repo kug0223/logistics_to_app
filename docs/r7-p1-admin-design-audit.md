@@ -1573,3 +1573,125 @@ radius 16 · `AppPageScaffold` · 색·타이포 체계는 그대로다. 새 색
 
 **PRODUCT 판단 대기:** `[R7-P1-5-RESIDUAL-NOTTRANSFERRED-OWNER]` — 미이체 건수의
 owner 를 출근 집계와 projection 중 하나로 정할지.
+
+---
+
+## R7-P1-5 후속 — 미이체 건수의 owner (2026-09-28)
+
+기준 `ba9305e`(직전 `ebcd16a`). branch `main`, 시작 시 tracked 변경 0, 사용자 소유
+untracked 8건 보존. 고정 ID **하나**: `[R7-P1-5-RESIDUAL-NOTTRANSFERRED-OWNER]`.
+P1-5 의 다른 판정(PAY-1 실패≠0·확정 근무 N건, PAY-2 월 응답 순서·지급 예정일,
+PAY-3 권한/문서, PAY-4 clipping)은 재조사하지 않았고 그 증거를 그대로 재사용한다.
+Staffing 보정 **DEFERRED**, O08 **PENDING**. 공유 DEV 쓰기·CF 배포·Rules·PROD·APK·
+실제 은행 이체 **없음**.
+
+### 1. 원장 → 두(세) 계산 → 실제 소비자
+
+| 경로 | 원장/문서·identity | 날짜/월 기준(KST) | 포함/제외 상태 및 중복 단위 | 계산 owner/캐시 | 사용 화면·라벨 | 행동 gate? | 실패/부분/권한 |
+|---|---|---|---|---|---|---|---|
+| **A 출근 집계 CF** `callableGetAdminAttendances(yearMonthGte/Lte)` | `attendance` 문서 · `businessId` | 저장된 `yearMonth` 필드 = `formatYearMonthISO(workDate)`(KST) — 서버 `srvWorkDateParts` 와 **같은 식** | `wageStatus=='confirmed'` 만 미이체, `transferred` 는 별도 칸, `pending/calculated` 는 미확정, `isNonPayableZeroOf`(노쇼·결근 0원) 제외 · 단위 **attendance 문서 수**(같은 사람의 여러 근무는 각각 1) | 화면이 월별 합산(캐시 없음, `_loadYear`·`_refreshSummary` 마다) | 개요 월 카드 `미이체 N` · 월 상세 `미이체`/`이체 완료`(파생) | **아니오** | 실패→모름, **10,000건 `limitReached`**(이번에 반영), 권한은 CF 가 검증 |
+| **B payroll projection** `payroll_summaries.notTransferredCount` | 같은 attendance 에서 트리거가 delta 누적 | `srvWorkDateParts(workDate).yearMonth` | `srvPayrollContribution`: confirmed→notTransferred 1, transferred→0, `srvIsNonPayableZero` 제외 · **단위 동일** | `onAttendanceWageChanged` 트랜잭션 + `_processedWageEvents` 멱등, 누락 시 복구 CF | (이전) 월 상세 **새로고침 후** 같은 자리 → **이번에 제거** | 아니오 | 트리거 지연·누락 시 낡음. 존재 여부는 CF oracle |
+| **C 전용 count callable** `callableGetNotTransferredCount` | attendance · businessId | **월 필터 없음 = 전 기간** | confirmed + `srvPayableForTransfer` · 단위 문서 수 | 서버 즉시 계산 | **소비자 0** — Dart 래퍼 `getTotalNotTransferredCount` 는 호출부가 없었다(홈 배지는 canonical summary 의 `unpaidWage` 로 옮겨간 뒤) → **래퍼 제거** | 아니오 | `srvAssertWageAuthority` |
+
+`notTransferredCount` 를 읽는 활성 consumer는 **개요 화면 두 자리뿐**이다(월 카드 줄,
+월 상세 상태 줄). 대시보드·홈·근로자 상세는 이 필드를 참조하지 않는다(OWN-7).
+`PayrollSummaryModel.isEmpty` 가 이 값을 쓰지만 그것은 월 카드 탭 가능 여부이고,
+금전 mutation gate 가 아니다.
+
+### 2. 판정 — 같은 계약, 두 계산 (A·B) / 정당한 다른 계약 (C)
+
+A 와 B 는 **모집단·기간·단위가 모두 같다**: 같은 KST 월의 attendance 문서 중
+`wageStatus=='confirmed'` 이고 노쇼·결근 0원이 아닌 것의 **개수**. 술어를 직접 대조했고
+월 기준 함수도 양쪽이 같은 규칙이다. 그러므로 **두 계산이 존재할 이유가 없다** —
+갈리는 원인은 정의가 아니라 **트리거의 지연·누락**이다.
+C 는 `월 필터 없음`이라 **다른 계약**(전 기간 합계)이고, 같은 단어로 다른 수를 보여줄
+위험만 남아 있었다 — 소비자가 0 이어서 **경로를 없애는 것이 맞다**.
+
+### 3. 가장 작은 차이 사례 (원장 → 계산 → UI, before/after)
+
+**사례 1 — 이체 취소 후 복귀** (동일 사업장·월·같은 근로자)
+
+| | 원장(A) | 집계 문서(B, 트리거 지연) | 화면 before | 화면 after |
+|---|---|---|---|---|
+| 미이체 | `confirmed` 2건 | `notTransferredCount: 1` | 개요 `미이체 2` → 상세 진입 `2건` → **지급 현황 왕복 후 `1건`** (확정 사실로) | 왕복 후에도 **`2건`** |
+
+`_refreshSummary` 가 집계 문서만 다시 읽어 건수까지 그 값으로 덮었기 때문이다.
+P1-5 에서 모름 해제 로직이 들어간 뒤로는 그 낡은 값이 `확인 못함` 도 아닌 **확정된
+사실**로 보였다. 실행 증거 **PNT-1**: 복귀 시 집계 문서와 **원장 둘 다** 다시 읽는 것을
+호출 수로 증명하고(`summaries`·`ledger` 각각 증가) 표시가 `2건` 으로 남는 것을 단언한다.
+**before 재현**: 복귀 갱신을 집계 문서 값으로 되돌리면 PNT-1 이 `1건` 을 찾아 실패한다
+(확인 후 원복).
+
+**사례 2 — 파생 `이체 완료`가 두 owner 를 섞는다**
+
+| | 원장(A) | 집계 문서(B, 낡음) | 화면 before | 화면 after |
+|---|---|---|---|---|
+| 확정 건수 | 2 (confirmed 1 + transferred 1) | `confirmedCount: 5` | `이체 완료 = 5 - 1 = 4건` | `이체 완료 = 2 - 1 = 1건` |
+
+네 상태(pending/calculated/confirmed/transferred) + 같은 사람 복수 근무 + 노쇼 0원 1건의
+fixture 로 실행했다(**PNT-2**). 원장을 쓸 수 있으면 확정 건수도 원장에서 가져와
+파생이 **한 owner 안에서 정확히** 이체완료 건수가 되게 했다 — 새 필드·새 지표 없음.
+
+**사례 3 — 상한(10,000건)**: A 는 `limitReached` 를 함께 주는데 개요는 읽지 않아
+**실제보다 작은 합계를 사실처럼** 보여줄 수 있었다(통계 서비스는 같은 신호를
+fail-closed 로 쓴다). 이제 상한 도달은 실패와 같은 **모름**이다(**PNT-3**).
+
+**사례 4 — 집계 문서도 없고 원장도 실패**한 달이 `데이터 없음`(= 근무 없음)으로
+보였다 → `확인 못함`(**PNT-4**).
+
+### 4. 행동 영향 판정 (별도)
+
+- **화면 영향:** 있었다 — 위 네 사례.
+- **잘못된 지급 판단 가능성:** **없다.** 이 값은 표시 전용이다. 이체/취소/전체선택은
+  대시보드가 자기 원장 목록(`_allRecords`)에서 만들고, 대상은 attendance id 로 서버가
+  다시 검증한다. 대시보드 소스에 `notTransferredCount` 는 **0회** 등장한다(OWN-7).
+- **저장값 문제:** **없다.** 원장(attendance)은 손상되지 않았고 트리거의 delta 도
+  멱등이다. 갈림은 **읽는 쪽의 두 계산** 때문이며, 증거 없이 심각도를 올리지 않는다.
+
+### 5. 최종 owner와 제거한 구 경로
+
+**owner = 원장(attendance)** — 미이체·미확정·이체완료·(파생의 분모인) 확정 건수.
+집계 문서는 **금액·인원의 owner** 로 남는다(트랜잭션 delta + 복구 CF, 개요가 그 값을
+그대로 표시). 원장을 못 읽으면(실패·상한) 건수는 **모름**이고 금액·인원은 문서 값을 쓴다.
+
+- 계산을 **한 곳**으로: `_LedgerMonthCounts`(공유 reading) — 로더와 복귀 갱신이 같이 쓴다.
+  화면에서 월별 판정 루프 중복 0(OWN-1).
+- 제거: `PayrollPaymentService.getTotalNotTransferredCount`(전 기간 세 번째 정의,
+  호출부 0). 서버 `callableGetNotTransferredCount` 는 **배포 범위라 남겨 두고** 사용 0을
+  기록한다 — 삭제는 CF 배포가 필요하다.
+- `?? 0` 폴백·목록 길이 대체·과거 snapshot 재사용은 쓰지 않았다.
+
+### 6. 증거와 회귀
+
+| 구분 | 내용 |
+|---|---|
+| **행동 실행·RENDER** | `payroll_overview_unknown_render_test` **10건**(POV-1~6 재사용 + PNT-1~4). 경계 주입 + production 위젯, `tester.view` 390×900 / 320×900(배율 1.3) |
+| **CODE** | `payroll_unknown_and_scope_contract_test` **23건**(기존 16 + OWN-1~7) |
+| **before/after** | PNT-1 을 수정 전 상태로 되돌려 실패 확인 후 원복 |
+| **회귀(같은 SHA·같은 환경, 이름별)** | 급여·이체·임금·지급예정일·모집단·시뮬레이션 **848 PASS** / 변경 파일을 참조하는 나머지 **251 PASS** / `active_reader` 10 PASS / `flutter analyze lib test` No issues |
+| **DEV READ** | 없음 |
+| **미검증** | 복귀 갱신의 **실기기 왕복**(테스트에서는 권한 gate 가 스스로 닫는 경로로 왕복했다) · 배율 2.0 · 대비·터치(P4) |
+
+전체 suite 총 실패 수는 이번 판정에 쓰지 않았다(범위가 다르다).
+
+### 7. 종료 판단
+
+| 항목 | 실제 결론 |
+|---|---|
+| 두 계산의 모집단·기간·단위 | **A·B 는 같은 계약**(같은 KST 월·confirmed·0원 제외·문서 수) → 두 계산이 존재할 이유 없음. C 는 **정당한 다른 계약**(전 기간)이나 소비자 0 |
+| 영향을 받는 활성 consumer·action | `payroll_overview_screen.dart` 두 자리(월 카드 줄 `_buildMonthCard`, 월 상세 상태 줄 `_buildSummaryHeader`). **action gate 없음** — 대시보드는 자기 원장 목록을 쓴다 |
+| 최종 owner 및 제거한 구 경로 | **수정** — owner = 원장, 공유 reading `_LedgerMonthCounts`, 복귀 갱신도 원장 사용. 제거: 전 기간 count 의 Dart 래퍼(서버 함수는 배포 범위로 유지, 사용 0) |
+| 가장 작은 차이 사례 | 이체 취소 후 복귀(2→1로 덮임) · 낡은 확정 건수가 파생에 섞임(이체완료 4→1) · 상한 도달 · 문서+원장 모두 실패 |
+| CODE·행동 실행·RENDER·DEV READ·DEVICE | CODE 23 · 행동/RENDER 10 · DEV READ 0 · DEVICE = 실기기 왕복·배율 2.0 |
+| P1-5 잔여 | **PRODUCT 보류 해제됨**(이 항목 종료). DEVICE 최소안은 아래. P4 대비·터치는 **미측정** 유지 |
+
+#### 최소 캡처·조작안 (이번에 실제로 바뀐 자리만, 기존 검증과 겹치지 않게)
+
+1. 지급 현황에서 **이체를 하나 취소**하고 뒤로 → 월 상세의 `미이체` 가 **늘어난 값**으로
+   남는지(집계 문서가 아직 반영되지 않았을 때도).
+2. 같은 달에 **확정 1 · 이체완료 1** 이 섞여 있을 때 `이체 완료` 건수가 1 인지
+   (5 같은 큰 수가 아닌지).
+3. 집계 문서가 없는 과거 달에서 `데이터 없음` 과 `확인 못함` 이 구분되는지.
+
+오류·상한·권한 회수는 **테스트에서 주입해 이미 확인했다** — 실기기에서 망 장애를
+만들어 달라고 요청하지 않는다. 월 응답 역전·처리 성공은 정적 캡처로 증명하지 않는다.
