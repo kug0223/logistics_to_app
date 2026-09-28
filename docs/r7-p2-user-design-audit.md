@@ -1360,3 +1360,90 @@ FCM cold-start·기기 전달은 기존 DEVICE owner.
 P24-N 발견성(VJ07/VJ14) · P2-2 A1 · VJ02 날짜 저장 · P23-N 일정 복귀 ·
 Home CTA 9개 · FCM cold-start · 실제 mutation · DEVICE · 네 역할 USER/PRODUCT.
 리뷰가 알림 중심이라는 이유로 상시 Task 나 MY CTA 를 **추가하지 않았다.**
+
+---
+
+## R7-P2-2 A1 잔여 — 지원 버튼 도달·결과 화면 (2026-09-28, 기준 `78e9d5a`)
+
+### A1-0 — 카드 0개의 원인: **격리 실행 불가**
+
+**앞선 판정을 정정한다.** 위 "A1 — 지원 결과 네 갈래" 절에서 *"`_isLoading` 은
+풀리고 `_buildContent` 가 빈 목록을 만든다"* 고 적었는데, **틀렸다.**
+로그인 사용자를 넣고 다시 재면 `LoadingWidget` 이 **1개 살아 있다** — 로딩은
+풀리지 않는다. "초기 로드 실패 로그가 없다"는 것도 성공의 증거가 아니라
+**아무 future 도 거부되지 않았다**(= 완료되지 않고 매달려 있다)는 증거였다.
+
+**다이얼로그가 카드 목록을 만드는 경로 (production 인자·reader·필터 전수)**
+
+| 단계 | 실제 소스 | 이번 harness 값 | 결과 |
+|---|---|---|---|
+| 업무 카드 목록 | **생성자 인자 `widget.workDetails`** (reader 아님) | `[wd1 상하차]` 1건 | 자료는 있다 |
+| 카드 렌더 조건 | `build` → `Expanded(child: _isLoading ? LoadingWidget : _buildContent)` | `_isLoading == true` | **미빌드** |
+| `_isLoading` 해제 | `_loadInitialData()` 의 `finally` 단 한 곳 | 도달 못 함 | **차단 지점** |
+| 호출 조건 | `_initializeData` 가 `_currentUserId == null` 이면 pop 후 return | uid `u1` 존재 | 통과 |
+| 대기 대상 | `Future.wait([_loadDateApplications, _loadMyConfirmedSchedules, _loadConflictsForDate])` | 3건 모두 미완 | **여기서 멈춘다** |
+| TO / slot / wd / KST 날짜 | `to1` / `slot1` / `wd1` / `type=flex`·`단기 모집` | — | 전제는 충족 |
+| 모집 상태·정원 | `active` · 정원 4 · 확정 0 · 대기 0 | — | FULL 아님 |
+
+**왜 세 future 가 끝나지 않는가 — 구조적 원인**
+
+- `ApplyWorkDialog` 은 `final FirestoreService _firestoreService = FirestoreService();`
+  로 서비스를 **직접 생성**한다. 주입 인자가 없다.
+- `FirestoreService` 는 **하드 싱글턴**이다
+  (`static final _instance` · `factory FirestoreService() => _instance`).
+- 내부 `final FirebaseFirestore _firestore = FirebaseFirestore.instance;` 는
+  **private final** 이라 교체 지점이 없다.
+- 이 다이얼로그가 쓰는 읽기(`getApplicationsForTO`·`getConfirmedSchedules` 등)는
+  `extension ApplicationFirestore on FirestoreService` 에 있다. Dart 의 extension
+  은 **정적 디스패치**라 하위 클래스·fake 로 **가로챌 수 없고**, fake 인스턴스에
+  실제 본문이 실행되면 `_confirmedSchedulesCache` 같은 private 필드를 찾다
+  `NoSuchMethodError` 가 난다(이전 시도의 그 오류가 바로 이것이었다).
+- `pubspec.yaml` 에 `fake_cloud_firestore`·`mockito` 계열이 **없다**.
+
+→ 세 갈래 모두 격리 환경에서 **거부도 완료도 되지 않고 대기**한다.
+
+**세 판정 중 어느 것인가 — `격리 실행 불가`.**
+자료 누락이 아니다(카드 자료는 생성자로 이미 들어갔고 TO/slot/정원 전제도
+충족했다). 실제 UI 결함도 아니다 — **이 차단 지점은 정상 production 경로에는
+해당하지 않는다.** 실기기에서는 Firestore 가 응답하거나 오류를 돌려주므로
+`finally` 가 실행되고 카드가 그려진다.
+
+**관찰로 남기는 제품 사실(수정 아님):** 이 다이얼로그의 초기 로딩에는
+**타임아웃도 오류 분기도 없다.** 조회가 응답하지 않는 동안 사용자는 스피너만
+보고 `닫기` 외에 할 수 있는 일이 없다. 확정 결함으로 올리지 않는다 —
+실기기에서 그런 무응답이 실제로 발생하는지 **관측한 바 없다.**
+
+### A1-1 — **미실행 (전제 미충족)**
+
+A1-1 은 "도달 가능할 때만" 실행하는 셀이다. 위에서 도달이 차단됐으므로
+네 결과(SUCCESS / ALREADY_APPLIED / FAILED / UNKNOWN 재확인 성공·여전히 모름)와
+중복 탭 경로는 **실행하지 않았다.** 대체 증거는 기존 `ApplyResult` 소스 계약
+뿐이고 그것만으로 행동·RENDER 를 종료하지 않는다.
+
+**production 에 아무 것도 남기지 않았다** — 주입 seam·쓰기 seam·테스트 전용
+자격 우회 모두 없다. `apply_work_dialog.dart` 는 이 단계에서 **무수정**이다.
+
+### 증거
+
+| 항목 | 값 |
+|---|---|
+| 신규 테스트 | `apply_button_reach_truth_test.dart` **2건** (ABR-1·ABR-2) |
+| ABR-1 | 로그인 정보 없음 → 다이얼로그가 스스로 닫힌다(카드 0 의 원인 **아님**) |
+| ABR-2 | 로그인 있어도 `LoadingWidget` 1 · `업무 선택`·`상하차` 0 — 껍데기(`지원하기`·사업장명·`닫기`)만 산다 |
+| 거부 카운트 | 실행 중 `❌`·`실패` 로그 **0건** — 거부가 아니라 **대기** |
+| 회귀 | 영향집합 **89 PASS / 0 FAIL** |
+| 정적 분석 | 신규 파일 info 2건 — 기존 `apply_prerequisites_shell_render_test.dart` 와 **동일 기준선** |
+| DEV READ | **없음** · DEVICE **미실행** · USER OBSERVATION **없음** |
+
+### 잔여 처리
+
+`[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` 를 **유지**한다(새 번호를 만들지
+않는다). owner P22-A 그대로. **P3 를 다시 막지 않는다.**
+
+**종료 조건 갱신:** "최소 전제를 찾는다" 가 아니라
+**`FirestoreService` 싱글턴에 주입점이 생기거나 이 다이얼로그의 읽기가 경계로
+분리되는 것**이다. ABR-2 가 깨지면 그것은 회귀가 아니라 **그 신호**이며,
+그때 A1-1(네 결과 + 중복 탭)을 실행한다.
+
+**VJ01 은 PRODUCT OPEN 을 유지한다** — 지원 결과 문구를 사용자가 어떻게 읽는지에
+대한 관찰은 여전히 **없다.**

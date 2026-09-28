@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-4 잔여(월 시트·리뷰) 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-2 A1 잔여(지원 버튼 도달) 커밋
 
 ## 1. 문서 지도
 
@@ -32,7 +32,7 @@
 | P1-6 | 계약·관리·통계 | CLOSED | CLOSED | **PENDING** |
 | P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | **CLOSED**(super-admin 5화면 CODE only · 통계 hop 제스처 NOT SEEN) | **PENDING** |
 | P2-1 | 지원자 Home·4탭 진입 | **CLOSED** | **CLOSED**(P21-R 행동은 12경로 중 4 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
-| P2-2 | 일자리·공고 상세·지원 흐름 | CLOSED | **CLOSED**(D2·N1 행동 실행 · **A1 제스처 NOT SEEN**) | **PENDING** |
+| P2-2 | 일자리·공고 상세·지원 흐름 | CLOSED | **CLOSED**(D2·N1 행동 실행 · **A1 제스처 격리 실행 불가 — 원인 확정**) | **PENDING** |
 | P2-3 | 근무가능일↔초대 의미 | CLOSED(consumer 전수) | **CLOSED**(첫 선택 전 안내·4상태·왕복) | **PENDING** · 실사용자 이해 **NOT SEEN** |
 | P2-3 후속 | 일정·출퇴근 화면군(P23-N/S/A/V/E/G) | CLOSED | **CLOSED** | **PENDING** · 저장 제스처·실제 mutation **NOT SEEN** |
 | P2-4 | MY·수입·리뷰·요청(P24-N/I/R/Q/E/G) | CLOSED | **CLOSED**(월 시트 제스처·리뷰 3상태 렌더 실행 완료) | **PENDING** · 알림→리뷰 제스처 NOT SEEN · 발견성 VJ07/VJ14 |
@@ -71,7 +71,7 @@ CODE/RENDER 종료가 제품 가치 종료가 **아니다**. 실사용자 관찰
 | `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | ~~`[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[BLOCKER-P2-POSTING-SLOT-DATE-LOCAL]` | P2-2 후속 | CODE/행동/RENDER 수용 · DEVICE 대기 |
-| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | **NOT SEEN** — 업무 카드 미렌더로 버튼 미도달(원인 기록) |
+| `[R7-P2-2-RESIDUAL-APPLY-RESULT-RENDER]` | P22-A | **NOT SEEN** — 원인 확정: `FirestoreService` 하드 싱글턴 + extension 정적 디스패치로 초기 조회가 격리에서 끝나지 않아 로딩 고착(ABR-2). **격리 실행 불가**, production 경로 결함 아님. 종료 조건 = 주입점/읽기 경계 분리 |
 | `[R7-P2-3-VERIFY-AVAILABILITY-COMPREHENSION]` | P2-3 | 발견성·이해 과제는 실제 사용자 관찰로만 닫는다 |
 | ~~`[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]`~~ | P2-2 후속 | **CLOSED** |
 | `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | FCM → 공고 상세 제스처 NOT SEEN |
