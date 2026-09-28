@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-1 최종(수입 월 KST) 커밋
+> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P2-2 커밋
 
 ## 1. 문서 지도
 
@@ -31,7 +31,8 @@
 | P1-6 | 계약·관리·통계 | CLOSED | CLOSED | **PENDING** |
 | P1-7 | 관리자 화면 간 일관성 + P1-6 잔여 | CLOSED | **CLOSED**(super-admin 5화면 CODE only · 통계 hop 제스처 NOT SEEN) | **PENDING** |
 | P2-1 | 지원자 Home·4탭 진입 | **CLOSED** | **CLOSED**(P21-R 행동은 12경로 중 4 실행 · 탭 내부 화면군 범위 밖) | **PENDING** |
-| P2 나머지 | 일자리·일정·MY 탭 내부 | 미착수 | — | — |
+| P2-2 | 일자리 탭·공고 상세 전달·지원 준비 | CLOSED | **CLOSED**(상세 내부·내 지원 렌더는 후속) | **PENDING** |
+| P2 나머지 | 일정·MY 탭 내부 | 미착수 | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 
 ## 3. 소유자별 미결 (완료 선언 금지 항목)
@@ -49,6 +50,10 @@
 | ~~`[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]`~~ | P1-3 temporal | **CLOSED** — KST 로 통일 |
 | ~~`[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]`~~ | P21-H | **CLOSED** — KST 로 통일 |
 | `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` | P2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
+| `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
+| `[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]` | P2-2 후속 | 공고 상세 내부 미관찰 |
+| `[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]` | P2-2 후속 | 내 지원 렌더 미관찰 |
+| `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | FCM → 공고 상세 제스처 NOT SEEN |
 | `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` | P2 | CODE/행동/RENDER 수용 · DEVICE 대기 |
 | `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
 | `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` | P2 | CODE/행동 수용 · DEVICE/PRODUCT 대기 |
@@ -64,7 +69,7 @@
 | `lib/screens/business_admin/` | **0** | 주석에만 이름이 남아 있다 |
 | `lib/screens/super_admin/` | **0** | P1-6 에서 6, P1-7 에서 5 전환 |
 | `lib/screens/common/settings_screen.dart` | 1 | **USER 경로용** — 관리자 역할은 `AppPageScaffold` |
-| `lib/screens/user/` | 5 | `apply_prerequisites` · `attendance_check` · `interim_settlement_request` · `my_reviews` · `subadmin_leave` → **P2**. 3축 실측: 앞 둘·`subadmin_leave` 는 순수 교체, 가운데 셋은 shell `onRefresh` 를 쓴다(`AppPageScaffold` 에 없는 인자) |
+| `lib/screens/user/` | **4** | `attendance_check` · `interim_settlement_request` · `my_reviews` · `subadmin_leave`. `apply_prerequisites` 는 **P2-2 에서 전환 완료**(3축 실측 후 순수 교체). 가운데 둘 + `attendance_check` 는 shell `onRefresh` 를 쓴다 |
 
 **죽은 화면은 없다.** `lib/screens` 아래 화면 위젯 79개 전부 외부 참조가 있다(2026-09-28 실측).
 `gradient_scaffold.dart` 는 남은 6화면이 전환되면 사용처 0이 되어 폐기 대상이 된다.
@@ -81,3 +86,4 @@
 - 자정 넘긴 근무의 퇴근 자격 술어·경계 9종(P2-1 잔여)
 - 홈↔출퇴근 화면의 KST 날짜 일치(P2-1 잔여) — 두 화면 모두 `toKstDate` 기준
 - 수입 월의 KST 기준(P2-1 최종) — `FormatHelper.isSameKstMonth` 한 벌, 서버 KST 슬라이스와 동일
+- 일자리 탭의 부분 결과≠없음·선택 날짜 전달(P2-2)

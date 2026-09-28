@@ -4,7 +4,7 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-28 (R7-P2-1 최종 · 수입 월 KST)
+> 마지막 갱신: 2026-09-28 (R7-P2-2 · 일자리·지원 흐름)
 
 ## 0. 이 장부가 지키는 불변식
 
@@ -43,6 +43,9 @@
 | 20 | P2-1 | 지원자 홈 Hero 가 `workDate == today` 로 오늘 근무를 판정해, **계약 시작일이 아닌 날 일하는 장기 근무자에게 출퇴근 CTA 가 사라졌다** | 같은 화면·출근 화면과 같은 canonical 술어 `isWorkingOnDate` | RENDER 4 + 수정 전 대조 |
 | 21 | P2-1 (후속 정정) | 홈 로드가 늦은 응답을 그대로 반영했다. **실제 도달 경로는 `unawaited` 꼬리(연장 제안·보완 요청)** — 사라진 제안이 낡은 응답으로 되살아났다. 계정 전환은 `AuthWrapper` 가 State 를 파괴하므로 production 재현 경로가 **아니다**(첫 보고 문장 정정) | seq + uid 가드를 state 반영 3곳에 | UHR-15 + seq 제거 대조 |
 | 22 | P2-1 | 수입 행·지원 준비 진행도·`SectionHeader` 액션에 flex·상한이 없어 좁은 화면·큰 배율에서 잘렸다(17·36·83·57·31px) | 금액·진행도·목적지 문구를 **줄이지 않고** 줄바꿈 | RENDER 6조합 |
+| 29 | P2-2 | 지원 준비 항목의 액션 버튼에 상한이 없어 320dp·배율 2.0 에서 **4개 항목 전부 15px 잘렸다** | 넘칠 때만 폭 40% 로 묶고 라벨 줄바꿈 — 항목명도 행동명도 지우지 않는다 | RENDER 4조합 |
+| 28 | P2-2 | 목록에서 고른 **하루가 공고 상세로 넘어가지 않았다** | 하루를 가리킬 때만 `slotDate` 전달(범위·미선택은 null). 수치는 목적지가 재조회해 만든다 | 실행 2건 |
+| 27 | P2-2 | 날짜 같은 클라이언트 조건이 첫 페이지를 다 걸러 내면 `필터 조건에 맞는 공고가 없습니다` 라고 **없음을 단언**했다. 같은 화면 머리말은 `N개 이상` 이었고, `더 보기` 버튼은 ListView 안이라 **길까지 닫혔다** | 남은 페이지가 있으면 "아직 찾지 못했어요" + 더 보기, 이어 읽기 기준을 서버 페이지 → **화면에 남은 것**으로 | 수정 전 7 FAIL → 11 PASS |
 | 26 | P2-1 최종 | 홈 수입의 '이번 달'을 **기기 로컬 연·월**로 만들었다. 원장은 서버가 KST 로 잘라 주므로 비-KST 기기에서 **라벨이 지난달을 말하고 지난달 원장을 읽고 KST 1일에 번 돈이 사라지고 상세까지 지난달로 열렸다** | 기록 쪽을 KST 로 정규화하는 `FormatHelper.isSameKstMonth` 한 벌 + 홈·상세·일정의 월 기준을 `toKstDate` 로 | 두 기기 × 경계 11 PASS · 수정 전 5 FAIL |
 | 25 | P2-1 잔여 | 출퇴근 화면이 오늘/어제를 **기기 로컬 자정**으로 만들었다. 저장 근무일은 KST 자정 instant 라, 비-KST 기기에서 **홈이 "퇴근하라"고 보낸 근무가 목록에 없고**(방향 A) **오늘 끝낸 근무가 "어제 기록" 규칙에 걸려 사라졌다**(방향 B) | 날짜 owner(P1-3)의 KST 기준으로 통일(`toKstDate`). 홈에 local 예외를 덧대지 않았다 | 같은 fixture 로 두 production 화면 비교 13건 · 수정 전 5 FAIL |
 | 24 | P2-1 잔여 | 자정을 넘겨 계속되는 근무의 **퇴근 진입점이 Home 에 없었다** — 출퇴근 화면은 그 기록을 들고 있는데 홈 Hero 는 오늘만 봤다. 응답이 없으면 `missed_checkout` 으로 자동 처리된다 | 목적지와 **같은 제외 술어**로 판정하는 독립 카드(Hero 앞, 둘 다 표시). 자격은 "어제 확정"이 아니라 **출근했고 퇴근이 남은 진행 중 기록** | 경계 9종 + 6조합 + 카드 제거 대조 |
@@ -64,6 +67,10 @@
 | P2-1 후속 | 홈 로드 **본문**의 같은 계정 순서 역전 | `_isLoadingHomeData` 가 재진입을 막아 본문은 겹치지 않는다(앱 복귀 경로로 재측정). 겹치는 것은 `unawaited` 꼬리뿐이고 그쪽은 결함 #21 로 고쳤다 |
 | P2-1 후속 | 홈의 NO_PERMISSION 상태 | 홈의 읽기가 전부 **자기 uid 스코프**+공개 데이터라 도달 불가. 억지 fixture 를 만들지 않았다 |
 | P2-1 후속 | CTA 가 다른 사람/근무를 여는가 | 12경로 중 스냅샷을 넘기는 것은 추천 카드 하나뿐, 나머지는 키·계정 스코프라 목적지가 다시 읽는다. `출근하기` 는 인자 없이 **같은 canonical 술어**로 대상을 맞춘다 |
+| P2-2 | 지원 실패·마감·자격 미충족이 성공처럼 보이는가 | `ApplyResult` 가 success/alreadyApplied/failed/**unknown** 네 갈래. UNKNOWN 은 canonical 재확인 후에도 모르면 "내 지원 목록에서 확인해주세요"로 남는다(R8-P3A.1) |
+| P2-2 | 겹치는 지원을 apply 에서 차단하는가 | 막지 않는다 — 지원=관심(정책 그대로) |
+| P2-2 | 자동취소가 generic 배지로 뭉개지는가 | 사유 코드별 문구가 있다(SCHEDULE_CONFLICT·TO_EXPIRED·TO_DELETED …) |
+| P2-2 | 공고 상세의 판정 근거 | **목적지의 재조회**다 — `_slot` 이 전달 스냅샷보다 우선한다. 카드가 넘기는 `to`/`workDetails` 는 첫 화면 seed |
 | P2-1 최종 | 상세에서 **명시 선택한 과거 월** | `initState` 에서 한 번만 읽고 "지금"으로 덮지 않는다 — 자정·재조회가 현재 월로 바꾸지 않는다(IMK-7). 이번 수정은 `_year/_month` 를 건드리지 않았다 |
 | P2-1 최종 | 월 시트 활성 규칙·서비스 캐시 key | 캐시 key 형식(`{uid}_{y}_{m}`)은 그대로 — 요청 연월을 쓴다. 경계 시각에만 다른 키를 채우므로 무효화·마이그레이션 불필요 |
 | P2-1 잔여(정정) | "지난달 꼬리는 왕복 증가 없음" | **순차 대기 단계** 기준으로만 맞다. **원격 요청은 매월 1일 1회 증가**(4→5, 병렬). 그 외의 날은 0. 실행 조건은 **KST 1일** | 계측 KDP-C1/C2/C3 |
@@ -84,6 +91,10 @@
 | ~~`[R7-P2-1-RESIDUAL-ATTENDANCE-SCREEN-LOCAL-MIDNIGHT]`~~ | P1-3 temporal | **CLOSED** — 불일치 입증 후 KST 로 통일(결함 #25) |
 | ~~`[R7-P2-1-RESIDUAL-INCOME-MONTH-LOCAL]`~~ | P21-H | **CLOSED** — 불일치 입증 후 KST 로 통일(결함 #26) |
 | `[BLOCKER-P2-HOME-INCOME-MONTH-LOCAL]` | P2 | CODE/행동/RENDER 수용 — DEVICE/PRODUCT |
+| `[BLOCKER-P2-JOBTAB-PARTIAL-AS-EMPTY]` | P2-2 | CODE/행동/RENDER 수용 — DEVICE |
+| `[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]` | P2-2 후속 | 공고 상세 내부(날짜·업무슬롯 선택, FULL/마감 배지) 미관찰 |
+| `[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]` | P2-2 후속 | 내 지원 화면 렌더·필터 미관찰(소스 계약만) |
+| `[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]` | P2-2 | 알림·FCM → 공고 상세 제스처 NOT SEEN — DEVICE |
 | `[BLOCKER-P2-HOME-DEST-DATE-MISMATCH]` | P2 | CODE/행동/RENDER 수용 — DEVICE/PRODUCT(실제 퇴근 mutation) |
 | `[BLOCKER-P2-HOME-LONGTERM-TODAY-CTA]` | P2 | CODE/행동 수용 — DEVICE/PRODUCT |
 | `[BLOCKER-P2-HOME-CROSS-UID-STALE-DATA]` | P2 | production cross-uid 재현 주장 **철회**(AuthWrapper 가 State 파괴). 같은 uid `unawaited` 꼬리 역전(UHR-15)은 별도 CODE 수정으로 재분류 |

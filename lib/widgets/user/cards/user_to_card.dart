@@ -40,6 +40,7 @@ class UserTOCard extends StatefulWidget {
     this.workDetails,
     this.slots,
     this.onFetchSlots,
+    this.selectedDate,
   });
 
   final TOModel to;
@@ -48,6 +49,11 @@ class UserTOCard extends StatefulWidget {
 
   /// true: 탐색 전용 컴팩트 카드 — 확장 없음, 카드 탭 시 상세 화면으로 이동
   final bool compact;
+
+  /// [R7-P2-2 P22-N] 목록이 고르고 있는 **하루**. 상세로 그대로 넘긴다.
+  ///   상세는 이 날짜로 슬롯을 **다시 읽는다**(`_slot` 이 전달값보다 우선) —
+  ///   넘기는 것은 "어느 날을 보고 있었는가"뿐이고 수치는 목적지가 만든다.
+  final DateTime? selectedDate;
 
   /// 화면 전체 공유 선택 상태 — value == to.id 이면 이 카드가 펼쳐짐
   /// compact=false 일 때만 사용. ValueNotifier 방식: 탭 시 해당 카드 2개만 rebuild
@@ -642,6 +648,8 @@ class _UserTOCardState extends State<UserTOCard> {
       destination: JobPostingScreen(
         to: widget.to,
         workDetails: widget.to.workDetails,
+        // [R7-P2-2 P22-N] 목록에서 보고 있던 하루를 상세까지 들고 간다.
+        slotDate: widget.selectedDate,
       ),
     );
     if (result == true && mounted) widget.onApplySuccess();
@@ -1499,7 +1507,8 @@ class _UserTOCardState extends State<UserTOCard> {
     if (!mounted) return;
     final result = await NavigationHelper.push<bool>(
       context,
-      destination: JobPostingScreen(to: widget.to, workDetails: details),
+      destination: JobPostingScreen(
+          to: widget.to, workDetails: details, slotDate: widget.selectedDate),
     );
     if (result == true && mounted) widget.onApplySuccess();
   }

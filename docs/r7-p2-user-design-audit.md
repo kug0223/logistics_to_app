@@ -587,3 +587,86 @@ DEVICE/PRODUCT **대기**.
    수입 라벨이 그 달인지, 1일 근무 금액이 들어와 있는지.
 2. 같은 단말에서 `N년 M월 ›` → 상세가 **같은 달**로 열리는지.
 3. 상세에서 과거 월을 고른 뒤 자정을 넘겨도 그 월이 유지되는지.
+
+---
+
+## R7-P2-2 — 지원자 일자리·공고 상세·지원 흐름 (2026-09-28)
+
+기준 제출 `95a67c8`. 수행 전 HEAD·tracked dirty 0·untracked 8건 확인·보존.
+공유 DEV READ ONLY — 지원/확정/급여/계약 쓰기·fixture·CF·Rules·PROD·APK 없음.
+P2-1 결과와 R1~R6 Golden Path·R5 권한 계약은 재감사하지 않았다.
+
+### 0. 실제 도달 경로 (코드로 확정)
+
+| 진입 | 목적지 | entity key | 판정 근거 |
+|---|---|---|---|
+| 하단 일자리 탭 | `UserJobTab` | — | `UserRootScreen` index 1 |
+| 홈 날짜 CTA | `UserJobTab` | `pendingJobDate` → `didChangeDependencies` 에서 **1회 소비 후 clear** → `_filter.dateRange` | 소스 + 실행(UJT-2·5) |
+| 목록 카드 탭 | `JobPostingScreen(to:, workDetails:, slotDate:)` | `to.id` + **선택한 하루** | 실행(UJT-6·7) |
+| 홈 추천 카드 | `JobPostingScreen(to:, workDetails:)` | `to.id` | P2-1 표 재사용 |
+| 알림 · **FCM** | `JobPostingScreen(toId:)` | `toId` 만 — 목적지가 재조회 | 소스(`fcm_service:541`·`notification_screen:1472`) · 제스처 **NOT SEEN** |
+| 상세 → 지원 준비 | `ApplyPrerequisitesScreen.show(isFlexType:)` | 없음(계정 스코프) | 실행(APS-1) |
+| 지원 후 | `MyApplicationsScreen` | `application.id` | 소스 |
+
+**스냅샷 vs 재조회:** 카드가 넘기는 `to`·`workDetails` 는 **첫 화면용 seed** 이고,
+상세는 `_loadData()` 로 다시 읽어 `_slot` 을 만든다 — 정원·확정 수는 `_slot` 이
+전달값보다 **우선**한다(`_slot?.… ?? widget.slot… ?? _to!.…`). 즉 **판정 근거는
+목적지의 재조회**이고, 전달값은 낡아도 수치를 만들지 않는다.
+
+### 1. 확정 결함과 수정
+
+| # | ID | 무엇이 틀렸는가 | 사용자에게 무슨 일이 | 고친 방식 | 증거 |
+|---|---|---|---|---|---|
+| 1 | P22-L | 날짜 같은 **클라이언트 조건**이 첫 페이지를 다 걸러 내면 목록이 비는데, 그때 화면은 `필터 조건에 맞는 공고가 없습니다` 라고 말했다. 같은 화면 머리말은 `N개 이상` 이라고 말하는 중이었다 | **읽지 않은 페이지가 남아 있는데 "없다"** — 게다가 `더 많은 공고 보기` 버튼은 ListView 안에 있어 빈 화면에서는 **길까지 닫혔다** | 남은 페이지가 있으면 `아직 이 조건의 공고를 찾지 못했어요` + 더 보기, 그리고 이어 읽기 기준을 **서버 페이지**에서 **화면에 남은 것**으로 | UJT-1·3(양성 대조) |
+| 2 | P22-N | 홈에서 고른 하루로 걸러 놓고 **첫 페이지에 그 날이 없으면 거기서 멈췄다** | 홈이 보낸 날짜의 공고를 영영 못 본다 | `_loadAllTOs` 의 이어 읽기 조건을 `displayList.isEmpty` 로 | UJT-2 |
+| 3 | P22-N | 카드 → 상세에서 **선택한 하루가 사라졌다** | 이미 고른 날짜를 상세에서 다시 찾아야 한다 | 목록이 **하루**를 가리킬 때만 `slotDate` 로 전달(범위·미선택은 null) | UJT-6·7 |
+| 4 | P22-G | 지원 준비 항목 행의 액션 버튼에 상한이 없었다 | 320dp·배율 2.0 에서 **4개 항목 전부 15px 잘림** | 넘칠 때만 폭 40% 로 묶고 라벨을 줄바꿈 — 항목 이름도 행동 이름도 지우지 않는다 | APS-R 4조합 |
+| 5 | P22-G | `ApplyPrerequisitesScreen` 이 Gradient shell | (디자인 일관성) | **3축 실측 후 순수 교체** — `AppPageScaffold(title:, body:)` | APS-1·2·3 |
+
+**전후 대조:** 1~3을 되돌리면 **7 FAIL**, 복원하면 **11 PASS**. UJT-3·4·5·7 은
+전후 모두 PASS — 양성 대조가 붙어 있어 공허하지 않다.
+
+### 2. NO PATCH — 근거를 남긴 판정
+
+| ID | 항목 | 근거 |
+|---|---|---|
+| P22-A | 지원 실패·마감·정원 변경·자격 미충족이 성공처럼 보이는가 | `ApplyResult` 가 success / alreadyApplied / failed / **unknown** 네 갈래이고, UNKNOWN 은 실패로 말하지 않고 `getMyApplicationsForTOFresh` 로 **canonical 재확인** 후 `reconciledAsApplied` 한다. 확인 못 하면 "내 지원 목록에서 확인해주세요"(경고)로 남는다 — 이미 R8-P3A.1 이 세운 계약 |
+| P22-A | 겹치는 지원을 apply 단계에서 막는가 | 막지 않는다 — 지원=관심. 정책 그대로(`CLAUDE.md` §6) |
+| P22-M | 자동취소가 generic 배지로 뭉개지는가 | 사유 코드별 문구가 있다(`SCHEDULE_CONFLICT` → `다른 업무가 확정되어 자동 취소되었어요`, `TO_EXPIRED`, `TO_DELETED` …). 자동취소 writer 는 기존 증거 재사용, 화면 projection 만 확인 |
+| P22-M | 남의 지원서가 열리는가 | 단건 조회에 `one.uid != uid` 소유 검증이 있다(`my_applications_screen:300`) |
+| P22-E | 목록의 늦은 응답 | `_generation` + `_fetchInProgress` 로 `_loadAllTOs`↔`_loadMoreTOs` 가 서로를 버린다. 같은 uid 의 `_loadAllTOs` 본문은 겹치지 않는다 |
+| P22-E | 조회 실패를 "공고 없음"으로 캐시하는가 | `_loadFailed` 가 먼저 갈린다(`공고를 불러오지 못했습니다` + 다시 시도) — UJT-4 로 실행 확인 |
+| P22-L | 추천 2개·homeRegion city 우선·거리 V2 | 이번에 건드리지 않았다(P2-1 판정 유지) |
+
+### 3. 남은 관찰 · owner
+
+| 항목 | 상태 | owner / 닫는 조건 |
+|---|---|---|
+| FCM·알림 → 공고 상세 **제스처** | **NOT SEEN** | DEVICE (`[R7-P2-2-RESIDUAL-POSTING-FCM-GESTURE]`) |
+| 실제 **지원 쓰기**(`callableApplyToTO`) 와 자동취소 전이 | **미실행** — 공유 DEV READ ONLY | 격리 Emulator / DEVICE |
+| 상세 화면 내부(날짜·업무슬롯 선택, FULL/마감 배지)의 렌더 | **미관찰** — 이번은 목록→상세 **전달**까지 | `[R7-P2-2-RESIDUAL-POSTING-DETAIL-RENDER]` · P2-2 후속 |
+| `MyApplicationsScreen` 렌더·필터 | **미관찰**(소스 계약만) | `[R7-P2-2-RESIDUAL-MY-APPLICATIONS-RENDER]` |
+| 계정 전환 중 목록 late 응답 | uid 가드 없음. AuthWrapper 가 State 를 파괴하므로 production 재현 미입증(P2-1 정정과 동일) | 관찰 기록 |
+| Gradient 나머지 4곳 | **전환하지 않음** — 묶지 않는다 | `[R7-P2-RESIDUAL-USER-SHELL-UNIFY]` |
+
+### 4. 증거
+
+| 구분 | 내용 |
+|---|---|
+| CODE | 진입 경로표 · 스냅샷/재조회 우선순위 · ApplyResult 네 갈래 |
+| 행동 | `user_job_tab_partial_truth_test` **11건**(홈 날짜 CTA 소비 → 조건 적용 → 이어 읽기 → 카드 탭 → 상세 인자) · `apply_prerequisites_shell_render_test` **7건**(열기·뒤로·CTA·4조합) |
+| RENDER | 320/412dp × 1.3/2.0 두 화면 |
+| 수정 전 대조 | 7 FAIL → 복원 11 PASS |
+| DEV READ | 없음 |
+| DEVICE | **미실행** |
+
+새 경계: `lib/screens/user/tabs/user_job_tab_reads.dart`(읽기 3개, production 은 null).
+지원(쓰기)은 경계에 넣지 않았다.
+
+#### 최소 실기기 확인안
+
+1. 홈에서 **며칠 뒤 날짜**를 골라 일자리 탭 진입 → 첫 화면에 결과가 없더라도
+   "없습니다"가 아니라 더 찾는 중/더 보기가 보이고, 실제로 그 날 공고가 나타나는지.
+2. 목록에서 날짜를 고른 채 카드를 눌러 상세가 **그 날짜로** 열리는지.
+3. 지원 준비 화면을 **글자 크게(2.0)** 로 열어 4개 항목의 등록 버튼이 잘리지 않는지,
+   뒤로가 호출 화면으로 돌아오는지.

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'user_job_tab_reads.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -34,7 +35,10 @@ import '../user_tab_scope.dart';
 /// Phase 1 허브 화면('무엇을 찾으시나요?') 제거.
 /// 공고 데이터 로딩·필터 로직을 담당하는 canonical 일자리 탭.
 class UserJobTab extends StatefulWidget {
-  const UserJobTab({super.key});
+  const UserJobTab({super.key, this.reads});
+
+  /// [R7-P2-2 P22-L] 목록을 만들 때의 읽기 경계. production 은 null.
+  final UserJobTabReads? reads;
 
   @override
   State<UserJobTab> createState() => _UserJobTabState();
@@ -46,6 +50,8 @@ class _UserJobTabState extends State<UserJobTab>
 
   // ── 공고 목록 상태 ────────────────────────────────────────────────
   final FirestoreService _firestoreService = FirestoreService();
+  late final UserJobTabReads _reads =
+      widget.reads ?? UserJobTabReads.of(_firestoreService);
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
@@ -174,7 +180,7 @@ class _UserJobTabState extends State<UserJobTab>
       final uid = userProvider.currentUser?.uid;
 
       final appsFuture = (uid != null && !_myApplicationsLoaded)
-          ? _firestoreService.getMyApplications(uid)
+          ? _reads.myApplications(uid)
           : Future.value(_myApplications);
 
       List<TOModel> toList;
@@ -186,19 +192,19 @@ class _UserJobTabState extends State<UserJobTab>
             userProvider.currentUser?.favoriteToIds ?? const [];
         toList = favoriteIds.isEmpty
             ? []
-            : await _firestoreService.getTOsByIds(favoriteIds);
+            : await _reads.tosByIds(favoriteIds);
         lastToId = null;
         hasMore = false;
       } else if (_filter.keyword?.isNotEmpty == true &&
           AlgoliaService.isConfigured) {
         final ids = await AlgoliaService.searchTOIds(_filter.keyword!,
             filter: _filter);
-        toList = await _firestoreService.getTOsByIds(ids);
+        toList = await _reads.tosByIds(ids);
         lastToId = null;
         hasMore = false;
       } else {
         final tosResult =
-            await _firestoreService.getPublishedTOsPaged(filter: _filter);
+            await _reads.publishedTOsPaged(filter: _filter);
         toList = tosResult['items'] as List<TOModel>;
         lastToId = tosResult['lastToId'] as String?;
         hasMore = tosResult['hasMore'] as bool;
@@ -222,7 +228,12 @@ class _UserJobTabState extends State<UserJobTab>
         _isLoading = false;
         _loadFailed = false;
       });
-      if (toList.isEmpty && hasMore) {
+      // [R7-P2-2 P22-L] 기준은 **화면에 남은 것**이다. 서버 페이지가 비지
+      //   않았어도 날짜 같은 클라이언트 조건이 전부 걸러 냈으면 화면은
+      //   비어 있고, 그때도 남은 페이지를 이어 읽어야 한다.
+      //   (예전에는 서버 페이지가 빌 때만 이어 읽어, 홈에서 날짜를 골라
+      //    들어온 사람이 첫 페이지에 그 날이 없으면 거기서 멈췄다.)
+      if (displayList.isEmpty && hasMore) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _loadMoreTOs();
         });
@@ -250,7 +261,7 @@ class _UserJobTabState extends State<UserJobTab>
     setState(() => _isLoadingMore = true);
 
     try {
-      final tosResult = await _firestoreService.getPublishedTOsPaged(
+      final tosResult = await _reads.publishedTOsPaged(
         lastToId: _lastToId,
         filter: _filter,
       );
@@ -435,6 +446,14 @@ class _UserJobTabState extends State<UserJobTab>
         _filter = newFilter;
         _displayList = _computeDisplayList(_allTOList);
       });
+      // [R7-P2-2 P22-L] 서버에 다시 묻지 않는 조건(날짜 등)이라도, 그 조건이
+      //   **이미 받아 온 페이지**를 모두 걸러 냈다면 남은 페이지를 이어 읽는다.
+      //   `_loadMoreTOs` 가 이미 같은 방식으로 꼬리를 문다(빈 결과면 계속).
+      if (_displayList.isEmpty && _hasMoreData && !_isLoadingMore && !_isLoading) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadMoreTOs();
+        });
+      }
     }
   }
 
@@ -443,7 +462,7 @@ class _UserJobTabState extends State<UserJobTab>
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
       if (uid != null) {
-        final myApps = await _firestoreService.getMyApplications(uid);
+        final myApps = await _reads.myApplications(uid);
         if (mounted) setState(() => _myApplications = myApps);
       }
     } catch (e) {
@@ -945,6 +964,15 @@ class _UserJobTabState extends State<UserJobTab>
     );
   }
 
+  /// 목록 조건이 **하루**를 가리킬 때만 그 날짜. 범위·미선택이면 null.
+  DateTime? get _singleSelectedDate {
+    final dr = _filter.dateRange;
+    if (dr == null) return null;
+    final s = FormatHelper.toKstDate(dr.start);
+    final e = FormatHelper.toKstDate(dr.end);
+    return s == e ? dr.start : null;
+  }
+
   Widget _buildList(BuildContext context) {
     if (_isLoading) return const TOListSkeleton(compact: true);
     if (_displayList.isEmpty) return _buildEmptyState();
@@ -992,6 +1020,10 @@ class _UserJobTabState extends State<UserJobTab>
               compact: true,
               myApplications: _myApplications,
               onApplySuccess: _refreshMyApplications,
+              // [R7-P2-2 P22-N] 목록에서 하루를 고른 채로 상세에 들어가면
+              //   그 날짜가 상세에서도 선택돼 있어야 한다. 범위 선택은
+              //   가리키는 하루가 없으므로 넘기지 않는다.
+              selectedDate: _singleSelectedDate,
             ),
           );
         },
@@ -1026,6 +1058,34 @@ class _UserJobTabState extends State<UserJobTab>
       );
     }
     final hasFilters = _filter.hasFilters;
+
+    // [R7-P2-2 P22-L] 아직 **읽지 않은 페이지가 남아 있으면** "없다"가 아니다.
+    //
+    //   날짜·정렬 같은 조건은 서버가 아니라 이미 받아 온 페이지 위에서
+    //   걸러진다(`_computeDisplayList`). 그래서 첫 페이지에 그 날짜가
+    //   없으면 목록이 비는데, 그때 화면은 "조건에 맞는 공고가 없습니다"라고
+    //   말하면서 **더 보기 버튼까지 감췄다**(그 버튼은 ListView 안에 있고
+    //   빈 목록에서는 ListView 자체가 그려지지 않는다). 같은 화면의 머리말은
+    //   `N개 이상` 이라고 말하는데 본문은 없다고 말하는 상태였다.
+    //   읽을 것이 남아 있는 동안에는 **찾는 중**이라고 말하고 길을 연다.
+    if (_hasMoreData) {
+      return AppEmptyState(
+        icon: Icons.manage_search_rounded,
+        title: '아직 이 조건의 공고를 찾지 못했어요',
+        subtitle: '더 불러와서 확인할 수 있어요',
+        action: _isLoadingMore
+            ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LoadingWidget(),
+              )
+            : OutlinedButton.icon(
+                onPressed: _loadMoreTOs,
+                icon: const Icon(Icons.expand_more, size: 18),
+                label: const Text('더 많은 공고 보기'),
+              ),
+      );
+    }
+
     return AppEmptyState(
       icon: hasFilters ? Icons.filter_list_off : Icons.search_off,
       title: hasFilters

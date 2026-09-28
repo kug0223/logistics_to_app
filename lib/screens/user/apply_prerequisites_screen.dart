@@ -8,7 +8,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../common/document_management_screen.dart';
 
@@ -100,7 +100,11 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GradientScaffold(
+    // [R7-P2-2 P22-G] flat shell 로 전환.
+    //   3축 실측: headerContent 0 · 헤더 TabBar 0 · shell onRefresh 0,
+    //   흰색 상수 1개는 본문 글자가 아니라 버튼 전경색이다 →
+    //   title/body 만 쓰는 **순수 교체**다. 헤더 문구·본문·뒤로는 그대로다.
+    return AppPageScaffold(
       title: '지원하기',
       body: _isLoading
           ? const LoadingWidget()
@@ -343,7 +347,12 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
           ),
         ],
       ),
-      child: Row(
+      // [R7-P2-2 P22-G] 액션 버튼에 상한이 없어 320dp·배율 2.0 에서 줄이
+      //   15px 넘쳤다(4개 항목 전부). 준비 항목 이름도 행동 이름도 지우지
+      //   않는다 — 넘칠 때만 버튼 폭을 40% 로 묶어 글자가 줄바꿈되게 한다.
+      child: LayoutBuilder(builder: (context, c) {
+      final actionMax = c.maxWidth.isFinite ? c.maxWidth * 0.4 : double.infinity;
+      return Row(
         children: [
           Container(
             width: 40,
@@ -389,7 +398,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
           ),
           if (!isReady && actionLabel != null && onAction != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            TextButton(
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: actionMax),
+              child: TextButton(
               onPressed: _isLoading ? null : onAction,
               style: TextButton.styleFrom(
                 foregroundColor: theme.primaryColor,
@@ -402,20 +413,24 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(actionLabel,
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: theme.primaryColor,
-                          fontWeight: FontWeight.bold)),
+                  Flexible(
+                    child: Text(actionLabel,
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: theme.primaryColor,
+                            fontWeight: FontWeight.bold)),
+                  ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 2)),
                   Icon(Icons.arrow_forward_ios,
                       size: ResponsiveHelper.iconSize(context, 12),
                       color: theme.primaryColor),
                 ],
               ),
+              ),
             ),
           ],
         ],
-      ),
+      );
+      }),
     );
   }
 }
