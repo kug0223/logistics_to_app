@@ -2,7 +2,7 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-28 · 기준 HEAD: R7-P3-4(shell 일관성) 커밋
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: R7-P4-1(기기 관찰표) 커밋
 
 ## 1. 문서 지도
 
@@ -40,6 +40,7 @@
 | P3-2 | 제안·권한·운영 판단의 내용 렌더(P32-H/D/X1/X2) | CLOSED | **CLOSED** — 네 셀 모두 내용 RENDER(IHK/WPD/SAU/TOL 22건). 수락 확인창만 CODE only | **PENDING** · F4/F6/F7 **VERIFY** 유지 |
 | P3-3 | 행동 직전 판단(P33-D/X1/X2) | CLOSED | **CLOSED**(ACX-1~12) — 세 셀 **PATCH**: 무안내 pop · 확인창 대상 식별자 · 한도 단위·적용 시점 | **PENDING** · 급여 안내·사용량 표시·사람 인지는 **VERIFY/USER OPEN** |
 | P3-4 | shell 일관성·기능 보존(5 호출부) | CLOSED | **CLOSED**(SHU-0~7, R×6) — 다섯 곳 전환, refresh·홈·알림·계약 바 보존 | **PENDING** · DEVICE 미실행 · F1~F3/F5 는 shell 로 닫히지 않는다 |
+| P4-1 | 실기기 조작·가독성(P41-S/A/R) | — | — | **전 셀 NOT SEEN** — 접근 가능한 Android 기기 0(adb 0, flutter 는 desktop/web). 관찰표 `docs/r7-p4-1-device-observation-sheet.md` 준비 완료 |
 | P2 나머지 | — | 지원자 화면군 여섯 묶음 결산 완료(PRODUCT 는 OPEN) | — | — |
 | P4 | 대비·터치영역 정량 계측 | 미착수 | — | **미측정** |
 

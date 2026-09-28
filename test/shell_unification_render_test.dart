@@ -301,6 +301,11 @@ void main() {
     // 원래 새로고침은 없었다 — 없던 것을 만들지 않았다.
     expect(_appBarIcon(Icons.refresh), findsNothing);
     expect(find.text('계약서 서명이 필요해요'), findsOneWidget);
+
+    // [R7-P4-1 정정] 이전 기록은 '내 리뷰의 상시 입구가 없다(알림·FCM·관리자
+    //   Settings 뿐)' 였다. 사실이 아니다 — 지원자 설정의 showUserItems
+    //   블록에 '내 평가 확인' 이 상시 있다. F2/VJ14 의 전제를 여기서 고정한다.
+    expect(find.text('내 평가 확인'), findsOneWidget);
   });
 
   testWidgets('[SHU-6] 설정(서브관리자 관리자 모드) — 없던 버튼을 더하지 않았다',
