@@ -547,7 +547,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       // [PII-DOC-R1.6.1] 보완 요청은 홈의 숫자를 만들지 않으므로 별도로
       //   가져오고, 실패해도 다른 영역을 오류 상태로 만들지 않는다.
       //   단 실패를 "할 일 없음"으로 바꾸지는 않는다 — 카드를 숨길 뿐이다.
-      unawaited(PayrollCorrectionService.loadMine().then((s) {
+      unawaited(_reads.documentCorrections().then((s) {
         if (!mounted || superseded()) return;
         setState(() {
           _correctionSurface = s;

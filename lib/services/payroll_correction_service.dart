@@ -77,6 +77,13 @@ class DocumentCorrectionTask {
 class DocumentCorrectionSurface {
   const DocumentCorrectionSurface._(this.tasks, this.loadFailed);
 
+  /// 읽기에 성공해 할 일을 들고 온 상태.
+  ///
+  /// [R7-P2 잔여 H6] 이 생성자는 원래 private 이라 화면 밖에서는 "성공" 상태를
+  /// 만들 수 없었다. 성공/없음/실패를 구별해 보려면 세 상태가 모두 표현
+  /// 가능해야 한다 — `empty`·`failed` 와 같은 급의 정상 API 로 둔다.
+  const DocumentCorrectionSurface.loaded(this.tasks) : loadFailed = false;
+
   final List<DocumentCorrectionTask> tasks;
   final bool loadFailed;
 
@@ -113,7 +120,7 @@ class PayrollCorrectionService {
           .map((e) => DocumentCorrectionTask.fromMap(
               Map<String, dynamic>.from(e)))
           .toList();
-      return DocumentCorrectionSurface._(tasks, false);
+      return DocumentCorrectionSurface.loaded(tasks);
     } catch (e) {
       debugPrint('❌ 보완 요청 조회 실패: $e');
       return DocumentCorrectionSurface.failed;

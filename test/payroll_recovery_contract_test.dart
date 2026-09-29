@@ -141,8 +141,13 @@ void main() {
   // ── TK. Worker Task ─────────────────────────────────────────────
   group('TK — Task source 는 알림이 아니다 (§11·§12)', () {
     test('11 T1 — Home 이 OPEN correction 을 읽어 Task 를 만든다', () {
-      expect(home, contains('PayrollCorrectionService.loadMine()'));
+      // [R7-P2 잔여 H6] 이 읽기는 읽기 경계를 지나게 됐다. 행동은 같다 —
+      //   닻만 옮기고, 경계 기본값이 정말 그 서비스인지 **짝으로** 확인한다.
+      expect(home, contains('_reads.documentCorrections()'));
       expect(home, contains('_buildCorrectionTaskCard'));
+      final reads = _src('lib/screens/user/user_home_reads.dart');
+      expect(reads,
+          contains('documentCorrections: PayrollCorrectionService.loadMine'));
       final svc = _src(_corrSvc);
       expect(svc, contains('callableGetMyDocumentCorrections'));
     });

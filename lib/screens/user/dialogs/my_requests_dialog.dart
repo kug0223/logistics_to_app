@@ -7,6 +7,7 @@ import '../../../models/core/id_card_access_request_model.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/interim_settlement_request_model.dart';
 import '../../../services/firestore_service.dart';
+import 'my_requests_reads.dart';
 import '../../../services/payroll_payment_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -42,10 +43,14 @@ class MyRequestsDialog extends StatefulWidget {
   final String applicantUid;
   final VoidCallback onChanged;
 
+  /// [R7-P2 잔여 I45] 인박스가 열릴 때 나가는 네 읽기의 경계. production 은 null.
+  final MyRequestsReads? reads;
+
   const MyRequestsDialog({
     super.key,
     required this.applicantUid,
     required this.onChanged,
+    this.reads,
   });
 
   /// 공용 진입 helper.
@@ -57,6 +62,7 @@ class MyRequestsDialog extends StatefulWidget {
     BuildContext context, {
     required String applicantUid,
     VoidCallback? onChanged,
+    MyRequestsReads? reads,
   }) {
     return showDialog<void>(
       context: context,
@@ -64,6 +70,7 @@ class MyRequestsDialog extends StatefulWidget {
       builder: (_) => MyRequestsDialog(
         applicantUid: applicantUid,
         onChanged: onChanged ?? () {},
+        reads: reads,
       ),
     );
   }
@@ -75,6 +82,8 @@ class MyRequestsDialog extends StatefulWidget {
 class _MyRequestsDialogState extends State<MyRequestsDialog> {
   final FirestoreService _firestoreService = FirestoreService();
   final PayrollPaymentService _payService = PayrollPaymentService();
+  late final MyRequestsReads _reads =
+      widget.reads ?? MyRequestsReads.of(_firestoreService, _payService);
 
   List<_NotificationItem> _allNotifications = [];
   bool _isLoading = true;
@@ -94,10 +103,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     try {
       // 병렬 조회
       final results = await Future.wait([
-        _firestoreService.getMyScheduleChangeRequests(widget.applicantUid),
-        _firestoreService.getPendingIdCardRequestsForUser(widget.applicantUid),
-        _firestoreService.getMyTerminationRequests(widget.applicantUid),
-        _payService.getMyInterimSettlements(),
+        _reads.scheduleChangeRequests(widget.applicantUid),
+        _reads.pendingIdCardRequests(widget.applicantUid),
+        _reads.terminationRequests(widget.applicantUid),
+        _reads.interimSettlements(),
       ]);
 
       final scheduleRequests = results[0] as List<ScheduleChangeRequestModel>;

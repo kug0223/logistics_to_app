@@ -29,6 +29,8 @@ import 'package:ALfit/screens/user/renewal_proposal_screen.dart';
 import 'package:ALfit/screens/user/user_tab_scope.dart';
 import 'package:ALfit/screens/user/dialogs/my_requests_dialog.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
+import 'package:ALfit/screens/user/dialogs/my_requests_reads.dart';
+import 'package:ALfit/services/payroll_correction_service.dart';
 
 /// [R7-P2-1 P21-H/E] **실제 지원자 홈 위젯**을 콘텐츠와 함께 그린다.
 ///
@@ -241,6 +243,8 @@ UserHomeReads _reads({
   List<IdCardAccessRequestModel> idRequests = const [],
   /// [R7-P2 잔여] n 번째 publishedTOs 응답 — 탭 직후 원장이 바뀌는 경우용.
   List<List<TOModel>>? tosByCall,
+  /// [H6] 서류 보완 surface — 기본값은 '요청 없음'(기존과 같다).
+  DocumentCorrectionSurface? corrections,
 }) {
   var appCall = 0;
   var renewalCall = 0;
@@ -280,6 +284,10 @@ UserHomeReads _reads({
     },
     businessById: (id) async => _business(),
     invalidatePublishedTOsCache: () {},
+    // [H6] 서류 보완은 홈이 `unawaited` 로 따로 띄우는 **독립 읽기**다 —
+    //   다른 여섯 읽기의 실패·지연에 종속시키지 않는다.
+    documentCorrections: () async =>
+        corrections ?? DocumentCorrectionSurface.empty,
   );
 }
 
@@ -289,6 +297,7 @@ Future<void> _pump(
   Size size = const Size(390, 2200),
   double textScale = 1.0,
   _UserProviderDouble? provider,
+  NavigatorObserver? observer,
 }) async {
   final isolationKey = UniqueKey();
   // 같은 테스트에서 두 번째 화면을 그리기 전에 앞 화면을 **내린다** —
@@ -310,6 +319,7 @@ Future<void> _pump(
             create: (_) => NotificationProvider()),
       ],
       child: MaterialApp(
+        navigatorObservers: observer == null ? const [] : [observer],
         builder: (ctx, child) => MediaQuery(
           data: MediaQuery.of(ctx)
               .copyWith(textScaler: TextScaler.linear(textScale)),
@@ -419,6 +429,32 @@ TOModel _recTo({String id = 'toRec', String title = '물류센터 상하차'}) {
     statusUpdatedAt: _day(-2),
   );
 }
+
+/// [H6] 서류 재등록 보완 요청 한 건 — 급여가 아닌 서류 축을 쓴다.
+DocumentCorrectionTask _correction({
+  String requestId = 'cr1',
+  String businessName = '강남 물류센터',
+  String documentType = 'ID_CARD',
+}) =>
+    DocumentCorrectionTask(
+      requestId: requestId,
+      businessId: _biz,
+      businessName: businessName,
+      documentType: documentType,
+      sourceDomain: 'DOCUMENT',
+    );
+/// [H6] 목적지가 격리에서 빌드되지 않을 수 있다(내 서류 화면은 Storage 버킷을
+/// 찾는다). 그때도 **무엇이 푸시됐는지**는 사실이므로 observer 로 적는다.
+class _RouteLog extends NavigatorObserver {
+  final List<String> pushed = [];
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previous) {
+    final w = route is MaterialPageRoute ? route.builder : null;
+    pushed.add(w == null ? route.runtimeType.toString() : 'page');
+    super.didPush(route, previous);
+  }
+}
+
 void main() {
   setUp(() {
     // 투어를 완료로 둔다 — 아니면 첫 프레임에 투어 화면이 덮는다.
@@ -1337,6 +1373,94 @@ void main() {
     // 스냅샷을 넘기는 유일한 경로이므로, 목록이 낡아도 **연 대상은 그 TO** 다.
     expect(pushed.to?.id, opened.id);
     expect(pushed.to?.id, isNot(other.id));
+  });
+
+
+
+  // ══════════════════════════════════════════════════════════
+  // [R7-P2 잔여 H6] 서류 보완 Home CTA
+  //
+  //   이 읽기는 다른 여섯과 다르다: `unawaited` 로 따로 띄우고, 실패를
+  //   throw 하지 않고 `loadFailed` surface 로 돌려준다. 그래서 다른 읽기의
+  //   실패·지연이 이 카드를 막지 않는다.
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('UHR-43 (#6) 진행 중인 보완 요청은 카드로 서고 내 서류로 연다',
+      (tester) async {
+    final routes = _RouteLog();
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: const [],
+        corrections:
+            DocumentCorrectionSurface.loaded([_correction()]),
+      ),
+      observer: routes,
+    );
+
+    // 무엇을 해야 하는지 · 왜 필요한지(사업장 문맥) · 행동
+    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
+    expect(find.text('강남 물류센터에서 서류 재등록을 요청했어요'), findsOneWidget);
+    expect(find.text('등록하기'), findsOneWidget);
+
+    final card = find.text('신분증을 다시 등록해주세요.');
+    await tester.ensureVisible(card);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(card);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // 목적지는 계정 스코프다 — 요청 키를 넘기지 않고 내 서류가 다시 읽는다.
+    //   그 화면은 격리에서 Storage 버킷을 못 찾아 빌드가 깨진다. 그래도
+    //   **route 가 푸시됐다는 사실**은 남으므로 그것을 센다.
+    expect(routes.pushed.length, greaterThan(1),
+        reason: '카드를 눌렀으면 새 화면이 푸시돼야 한다');
+    expect(tester.takeException().toString(), contains('no-bucket'),
+        reason: '깨진 곳은 목적지 빌드이고, 이동 자체는 일어났다');
+  });
+
+  testWidgets('UHR-44 (#6) 요청이 없으면 카드가 없다 (정상 대조)', (tester) async {
+    await _pump(tester,
+        reads: _reads(
+            applications: const [],
+            corrections: DocumentCorrectionSurface.empty));
+
+    expect(find.text('등록하기'), findsNothing);
+    expect(find.textContaining('다시 등록해주세요'), findsNothing);
+  });
+
+  testWidgets('UHR-45 (#6) 조회 실패도 카드가 없다 — 없음과 같은 말이 된다',
+      (tester) async {
+    await _pump(tester,
+        reads: _reads(
+            applications: const [],
+            corrections: DocumentCorrectionSurface.failed));
+
+    // 홈은 실패를 **숨기는** 쪽을 택했다(소스 주석 그대로).
+    expect(find.text('등록하기'), findsNothing);
+
+    // ── 관찰 기록: 없음(UHR-44)과 실패(여기)가 **화면에서 구별되지 않는다.**
+    //    다만 홈이 "보완할 서류가 없습니다" 라고 **말하지는 않는다** —
+    //    아무 말도 하지 않을 뿐이다. 거짓 단정은 아니므로 이번에 고치지 않고
+    //    사실만 남긴다(내 서류 화면이 같은 질문의 owner 다).
+    expect(find.textContaining('보완할 서류가 없'), findsNothing);
+  });
+
+  testWidgets('UHR-46 (#6) 다른 읽기가 실패해도 보완 카드는 살아 있다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applicationsError: StateError('apps down'),
+        corrections:
+            DocumentCorrectionSurface.loaded([_correction()]),
+      ),
+    );
+
+    // 지원 현황은 오류를 말하고,
+    expect(find.textContaining('불러오지 못했어요'), findsWidgets);
+    // 보완 카드는 그 실패에 종속되지 않는다.
+    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
   });
 
 }

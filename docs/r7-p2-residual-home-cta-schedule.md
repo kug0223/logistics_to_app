@@ -235,3 +235,97 @@ VJ02 가능일 저장 · FCM cold-start/전달 · 통계 막대 · Staffing DEFE
 + 추천 모두보기 · P23-N(PSN-1~3).
 **누적 미관찰:** **#6** · **인박스 내부** — 둘뿐이다.
 **그래도 전체 행동 종료를 주장하지 않는다** — DEVICE·USER 는 그대로 열려 있다.
+
+---
+
+## 4회차 — H6 · I45 · SN-M 세 셀, 2026-09-29
+
+> 실제 착수 HEAD `57bb01b` · tracked dirty 0 · untracked 8 보존.
+> **세 셀 모두 실행했다.** 이전 회차의 "남은 둘"(#6·인박스 내부)이 닫혔다.
+
+### H6 — 서류 보완 Home CTA
+
+**소스 연결:** `PayrollCorrectionService.loadMine()` 은 CF
+`callableGetMyDocumentCorrections` 를 부르고 **실패를 throw 하지 않고**
+`DocumentCorrectionSurface.failed` 로 돌려준다. 홈은 이 호출을 `unawaited` 로
+따로 띄우고 `superseded()`(계정 스코프·늦은 응답 가드)를 공유한다 —
+**다른 여섯 읽기와 직렬화되지 않는다.**
+
+| 상태 | canonical 요청·key | Home 에 보이는 말 | 탭 목적지·뒤로 | 판정 |
+|---|---|---|---|---|
+| 진행/대기 | `requestId=cr1` · `businessId` · `documentType=ID_CARD` | `신분증을 다시 등록해주세요.` + `강남 물류센터에서 서류 재등록을 요청했어요` + `등록하기` | 탭 → **route 푸시됨**(`DocumentManagementScreen`, **계정 스코프 — 요청 키를 넘기지 않는다**) | **UHR-43** |
+| 정상 없음 | `empty` | 카드 없음 | — | **UHR-44**(정상 대조) |
+| 실패 | `failed` | 카드 없음 | — | **UHR-45** |
+| 다른 읽기 실패 | 지원목록 throw + 보완 loaded | 지원현황은 오류를 말하고 **보완 카드는 산다** | — | **UHR-46** |
+
+**관찰(수정 안 함):** 홈에서 **없음과 실패가 구별되지 않는다**(둘 다 카드 없음).
+다만 홈은 `보완할 서류가 없습니다` 같은 말을 **하지 않는다** — 아무 말도 하지
+않을 뿐이다(소스 주석이 "카드를 숨길 뿐"이라고 명시). **거짓 단정이 아니므로
+이번에 고치지 않고 사실만 남긴다** — 같은 질문의 owner 는 내 서류 화면이다.
+UHR-45 가 "없습니다" 문구가 없다는 것까지 고정한다.
+
+**목적지 빌드:** `DocumentManagementScreen` 은 격리에서 Storage 버킷을 못 찾아
+빌드가 깨진다. 그래서 **NavigatorObserver 로 route 푸시를 센다** — 이동 자체는
+일어났고, 깨진 곳은 목적지 빌드라는 것을 단정으로 남겼다.
+
+### I45 — 내 요청 인박스 안의 두 사건
+
+**네 canonical 읽기(경계 신설 `MyRequestsReads`):**
+
+| # | 실제 메서드 | key | 실패 의미 |
+|---|---|---|---|
+| 1 | `getMyScheduleChangeRequests` | 지원자 uid | `Future.wait` 가 전체를 던진다 |
+| 2 | `getPendingIdCardRequestsForUser` | 대상 uid(요청 id·사업장은 문서가 들고 있다) | 동일 |
+| 3 | `getMyTerminationRequests` | uid → **Application**(요청 key = applicationId) | 동일 |
+| 4 | `getMyInterimSettlements()` | 계정 스코프 CF | 동일 |
+
+**MRI-0** 이 네 짝과 "경계에 mutation 없음"을 고정한다.
+
+| 표본 | 결과 |
+|---|---|
+| 신분증만 | **MRI-1** — `신분증 열람 요청` + 사업장 `강남 물류센터` + 요청자 + 사유. **해지 카드 없음** |
+| 해지만 | **MRI-2** — `계약해지 요청` + `성수 창고` + `개인 사정`. **신분증으로 합쳐지지 않음** |
+| 둘 다 | **MRI-3** — 두 카드가 각자 자기 사업장을 들고 **구별된다**(같은 uid·다른 사업장/날짜) |
+| 한 읽기 실패 | **MRI-4** — 두 요청 모두 없음/완료로 **바꾸지 않는다**. `요청이 없습니다` 류 문구 0 |
+| 정말 빔 | **MRI-5**(정상 대조) |
+
+**승인·거절·동의는 한 번도 누르지 않았다.** 인박스 안의 최종 상태 변경을
+주입으로 꾸미지 않았다. 홈 두 카드의 **진입**은 UHR-38 을 재사용했다.
+
+### SN-M — 다른 달 일정 카드의 복귀
+
+**달 선택 UI 는 있다** — 캘린더 머리줄의 `Icons.chevron_left/right` 가
+`onPageChanged` 를 태우고 `_focusedDay` 와 월별 근태 조회를 바꾼다
+(`_monthGeneration++` 도 함께). **dialog 라는 이유로 N/A 가 아니다.**
+
+| 표본 | 결과 |
+|---|---|
+| 같은 사업장·업무, 다른 달 두 key | **PSN-4** — 다음 달로 명시 이동하면 머리줄이 그 달을 말한다 |
+| 그 달 카드 → 상세 → 닫기 | **PSN-5** — 상세가 그 달의 그 근무(`성수 창고`)를 말하고, **닫은 뒤에도 명시 선택한 달이 현재 달로 덮이지 않는다** |
+
+월말·KST 정규화는 P2-1/P2-3 수용 증거를 재사용했다.
+탭 내부 pop 은 **Flutter 격리 행동으로만** 판정했다 — 기기 시스템 뒤로는 P4 다.
+
+### 4회차 판정표
+
+| 셀 | CODE | 실제 격리 탭·닫기 | RENDER | DEV READ | DEVICE | USER | NOT SEEN/owner |
+|---|---|---|---|---|---|---|---|
+| **H6** | 종료 | **종료**(UHR-43 탭 → route 푸시) | **종료**(UHR-43~46) | 없음 | 대기 | 없음 | 없음/실패 구별 **VERIFY**(내 서류 owner) · 최종 제출·승인 미실행 |
+| **I45** | 종료 | **종료**(열기·닫기) | **종료**(MRI-0~5) | 없음 | 대기 | 없음 | **승인·거절·동의 writer**(각 owner) |
+| **SN-M** | 종료 | **종료**(달 이동·카드·닫기) | **종료**(PSN-4·5) | 없음 | 대기 | 없음 | 앱 복귀(백그라운드) 경로 미실행 |
+
+### 4회차 증거
+
+| 항목 | 값 |
+|---|---|
+| 기준 → 종료 HEAD | `57bb01b` → 이 커밋 |
+| production 변경 | `user_home_reads.dart`(7번째 읽기) · `user_home_screen.dart`(그 호출만 경계로) · **신규** `my_requests_reads.dart` · `my_requests_dialog.dart`(네 읽기 경계 + `reads` 인자) · `payroll_correction_service.dart`(`DocumentCorrectionSurface.loaded` 공개 — 세 상태를 표현 가능하게) |
+| 새 원격 요청·쓰기 | **없음** — 기본값이 같은 메서드·같은 uid·같은 캐시 계약을 그대로 부른다 |
+| 신규 테스트 | UHR-43~46(4) · MRI-0~5(6) · PSN-4·5(2) = **12건** |
+| 갱신 테스트 | `payroll_recovery_contract` T1 을 seam 닻 + **실제 메서드 짝**으로 재고정 · 홈 reads 를 직접 만드는 두 테스트에 새 읽기 기본값 추가 |
+| 회귀 | 영향집합 **345 PASS / 0 FAIL** — 기준선 같은 이름 실패 **없음** |
+| 정적 분석 | `flutter analyze lib test` **No issues** |
+| 공유 DEV | **쓰기 0** |
+
+**동작하는 것을 테스트 수로 제품 가치 완료라고 말하지 않는다** —
+DEVICE·USER 는 그대로 열려 있다.

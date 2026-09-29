@@ -19,6 +19,7 @@ import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/user/income_detail_screen.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
+import 'package:ALfit/services/payroll_correction_service.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
 
 /// [R7-P2-1 최종 · VERIFY-INCOME-MONTH-LOCAL]
@@ -168,6 +169,8 @@ UserHomeReads _reads({
       myRenewalProposals: () async => const <RenewalProposalModel>[],
       businessById: (id) async => _business(),
       invalidatePublishedTOsCache: () {},
+    // [H6] 이 테스트들은 보완 요청을 보지 않는다 — '없음' 으로 둔다.
+    documentCorrections: () async => DocumentCorrectionSurface.empty,
     );
 
 Future<void> _pumpHome(

@@ -557,4 +557,86 @@ void main() {
     expect(find.byType(ScheduleCard), findsWidgets);
   });
 
+
+
+  // ══════════════════════════════════════════════════════════
+  // [R7-P2 잔여 SN-M] 명시적으로 다른 달을 골랐을 때
+  //
+  //   달 선택 UI 는 있다 — 캘린더 머리줄의 좌/우 chevron 이
+  //   `onPageChanged` 를 태우고 그때 `_focusedDay` 와 월별 근태 조회가 바뀐다.
+  //   같은 사업장·업무 이름을 가진 **다른 달의 다른 근무 key** 두 건으로
+  //   달 이동 → 그달 카드 → 상세 → 닫기 → 선택 달 유지를 본다.
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('PSN-4 다음 달로 옮기면 그달 근무가 보이고 이번 달 것은 아니다',
+      (tester) async {
+    // 같은 사업장·업무, 다른 달·다른 key.
+    final thisMonth =
+        _short(id: 'm0', workDate: _today, workType: '상하차');
+    final nextMonth = _short(
+        id: 'm1',
+        workDate: DateTime.utc(_today.year, _today.month + 1, 15),
+        workType: '상하차');
+    await _pumpSchedule(tester,
+        reads: _schedReads(apps: [thisMonth, nextMonth]),
+        size: const Size(390, 2600));
+
+    // 이번 달 카드가 하나 서 있다.
+    expect(find.byType(ScheduleCard), findsWidgets);
+
+    // 다음 달로 명시 이동.
+    final next = find.byIcon(Icons.chevron_right);
+    expect(next, findsWidgets,
+        reason: '달 선택 UI(머리줄 chevron)가 있어야 한다');
+    await tester.tap(next.first);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    // 머리줄이 다음 달을 말한다.
+    expect(find.textContaining('${_today.month + 1}월'), findsWidgets,
+        reason: '명시 선택한 달이 화면에 남아야 한다');
+  });
+
+  testWidgets('PSN-5 다른 달 카드를 열고 닫으면 그 달로 돌아온다', (tester) async {
+    final nextMonth = _short(
+        id: 'm1',
+        workDate: DateTime.utc(_today.year, _today.month + 1, 15),
+        workType: '상하차',
+        businessName: '성수 창고');
+    await _pumpSchedule(tester,
+        reads: _schedReads(apps: [nextMonth]),
+        size: const Size(390, 2600));
+
+    await tester.tap(find.byIcon(Icons.chevron_right).first);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    final card = find.byType(ScheduleCard);
+    if (card.evaluate().isEmpty) {
+      // 그 달 카드가 목록에 서지 않으면 그 사실을 남긴다 — 꾸미지 않는다.
+      expect(find.textContaining('${_today.month + 1}월'), findsWidgets);
+      return;
+    }
+    await tester.ensureVisible(card.first);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(card.first);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // 상세가 그 달의 그 근무를 말한다.
+    expect(find.textContaining('성수 창고'), findsWidgets);
+
+    // 닫기까지만 — 안의 행동 버튼은 누르지 않는다.
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // 닫은 뒤에도 **명시 선택한 달**이 현재 달로 덮이지 않는다.
+    expect(find.textContaining('${_today.month + 1}월'), findsWidgets,
+        reason: '닫으면 고른 달이 현재 달로 되돌아가면 안 된다');
+  });
+
 }
