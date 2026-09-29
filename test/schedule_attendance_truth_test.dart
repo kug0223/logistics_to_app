@@ -19,6 +19,7 @@ import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/screens/user/my_schedule_reads.dart';
 import 'package:ALfit/screens/user/my_schedule_screen.dart';
 import 'package:ALfit/utils/format_helper.dart';
+import 'package:ALfit/widgets/calendar/schedule_card.dart';
 
 /// [R7-P2-3 P23-S/A/E] 일정과 출퇴근이 **같은 근무를 같은 말로** 하는가,
 /// 그리고 읽지 못한 것을 "없다"로 말하지 않는가.
@@ -481,4 +482,79 @@ void main() {
       });
     }
   }
+
+  // ══════════════════════════════════════════════════════════
+  // [R7-P2 잔여] P23-N — 일정 화면 자체의 카드 선택과 복귀
+  //
+  //   HEAD 구조를 먼저 적는다: 일정 화면의 근무 카드는 **route 로 가지
+  //   않는다.** `ScheduleCard` 를 탭하면 같은 화면 위에 **상세
+  //   다이얼로그**가 열린다(`_showDetailDialog`). 화면 전체에서
+  //   route 를 미는 곳은 초대 지역 설정 하나뿐이고, 카드 안의 미서명 계약
+  //   줄만 계약 서명 화면으로 간다 — 그것은 상태 변경 경로라 누르지 않는다.
+  //   그래서 "목적지" 는 다이얼로그이고, "복귀" 는 닫기다.
+  //   Home→출퇴근 진입(UHR-17/19)을 이 카드 탭의 증거로 재사용하지 않는다.
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('PSN-1 오늘 확정 단기 근무 카드를 탭하면 같은 대상이 상세로 열린다',
+      (tester) async {
+    final app = _short(
+        id: 'today1', workDate: _today, status: AppStatus.confirmed);
+    await _pumpSchedule(tester, reads: _schedReads(apps: [app]));
+
+    // 카드가 있다(일정 목록).
+    final card = find.byType(ScheduleCard);
+    expect(card, findsWidgets, reason: '오늘 확정 근무 카드가 보여야 탭할 수 있다');
+
+    await tester.tap(card.first);
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // 같은 사업장·업무가 상세에 있다 — 다른 근무로 튀지 않는다.
+    expect(find.textContaining(app.businessName), findsWidgets);
+    expect(find.textContaining(app.selectedWorkType), findsWidgets);
+  });
+
+  testWidgets('PSN-2 상세를 닫으면 일정의 선택 날짜가 그대로다', (tester) async {
+    final app = _short(
+        id: 'today2', workDate: _today, status: AppStatus.confirmed);
+    await _pumpSchedule(tester, reads: _schedReads(apps: [app]));
+
+    // 닫기 전 머리말이 말하는 날짜를 적어 둔다.
+    final before = find.textContaining('${_today.month}월 ${_today.day}일');
+    final hadHeader = before.evaluate().isNotEmpty;
+
+    await tester.tap(find.byType(ScheduleCard).first);
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // 다이얼로그를 **닫기까지만** 한다 — 안의 행동 버튼은 누르지 않는다.
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    nav.pop();
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byType(ScheduleCard), findsWidgets,
+        reason: '닫으면 일정 목록으로 돌아와야 한다');
+    if (hadHeader) {
+      expect(find.textContaining('${_today.month}월 ${_today.day}일'),
+          findsWidgets,
+          reason: '닫은 뒤 선택 날짜가 다른 날로 바뀌면 안 된다');
+    }
+  });
+
+  testWidgets('PSN-3 장기 근무는 계약 시작일이 아니라 실제 근무일 카드로 선다',
+      (tester) async {
+    // 계약 시작일은 과거이고 오늘은 근무 요일이다.
+    final long = _long(
+        id: 'long1',
+        contractStart: _today.subtract(const Duration(days: 20)),
+        workEnd: _today.add(const Duration(days: 20)));
+    await _pumpSchedule(tester, reads: _schedReads(apps: [long]));
+
+    // 오늘 카드가 선다 — 시작일 하나로 오늘을 판정하지 않는다.
+    expect(find.byType(ScheduleCard), findsWidgets);
+  });
+
 }

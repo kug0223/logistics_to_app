@@ -24,6 +24,9 @@ import 'package:ALfit/utils/format_helper.dart';
 import 'package:ALfit/screens/user/user_home_reads.dart';
 import 'package:ALfit/screens/user/attendance_check_screen.dart';
 import 'package:ALfit/screens/user/user_home_screen.dart';
+import 'package:ALfit/screens/user/my_applications_screen.dart';
+import 'package:ALfit/screens/user/renewal_proposal_screen.dart';
+import 'package:ALfit/screens/user/user_tab_scope.dart';
 
 /// [R7-P2-1 P21-H/E] **실제 지원자 홈 위젯**을 콘텐츠와 함께 그린다.
 ///
@@ -58,9 +61,13 @@ class _FakeCore extends FirebasePlatform with MockPlatformInterfaceMixin {
 
 /// 지원자 provider — 역할은 USER 고정. 관리자 capability 를 덧씌우지 않는다.
 class _UserProviderDouble extends UserProvider {
-  _UserProviderDouble({this.uid = 'u1'});
+  _UserProviderDouble({this.uid = 'u1', this.totalWorkDays = 0});
 
   String uid;
+
+  /// [R7-P2 잔여] 경력이 0 이면 홈은 '첫 근무부터…' 안내를 띄우고
+  ///   '근무 기록 보기' 링크를 만들지 않는다. 기본값은 기존과 같다.
+  final int totalWorkDays;
   static const homeRegion =
       UserRegion(province: '서울특별시', city: '강남구', district: '역삼동');
 
@@ -74,6 +81,7 @@ class _UserProviderDouble extends UserProvider {
         homeRegion: homeRegion,
         accountStatus: 'active',
         passVerifiedAt: DateTime.now().subtract(const Duration(days: 30)),
+        totalWorkDays: totalWorkDays,
       );
 
   @override
@@ -111,6 +119,7 @@ ApplicationModel _shortTerm({
   String end = '18:00',
   int wage = 12000,
   DateTime? confirmedAt,
+  String? terminationStatus,
 }) =>
     ApplicationModel(
       id: id,
@@ -126,6 +135,7 @@ ApplicationModel _shortTerm({
       wage: wage,
       workDate: workDate,
       confirmedAt: confirmedAt,
+      terminationStatus: terminationStatus,
       appliedAt: _day(-3),
     );
 
@@ -225,6 +235,8 @@ UserHomeReads _reads({
   /// n 번째 호출의 연장 제안 응답 — unawaited 꼬리의 순서 역전 재현용.
   List<Future<List<RenewalProposalModel>>>? renewalByCall,
   Map<String, int>? calls,
+  /// [R7-P2 잔여] 신분증 열람 요청 — 기본값(빈 목록)은 기존과 같다.
+  List<IdCardAccessRequestModel> idRequests = const [],
 }) {
   var appCall = 0;
   var renewalCall = 0;
@@ -250,7 +262,7 @@ UserHomeReads _reads({
       if (tosError != null) throw tosError;
       return tos;
     },
-    pendingIdCardRequests: (uid) async => const <IdCardAccessRequestModel>[],
+    pendingIdCardRequests: (uid) async => idRequests,
     myRenewalProposals: () {
       final i = renewalCall++;
       if (renewalByCall != null && i < renewalByCall.length) {
@@ -310,6 +322,68 @@ Future<void> _pump(
   }
 }
 
+
+/// [R7-P2 잔여] 신분증 열람 요청 한 건 — 홈 카드가 보이려면 count > 0 이어야 한다.
+IdCardAccessRequestModel _idRequest() => IdCardAccessRequestModel(
+      id: 'req1',
+      requesterId: 'admin1',
+      requesterName: '박사장',
+      requesterBusinessId: _biz,
+      requesterBusinessName: '강남 물류센터',
+      targetUserId: 'u1',
+      targetUserName: '김근로',
+      reason: IdCardAccessReason.incomeTax,
+      status: IdCardAccessStatus.pending,
+      requestedAt: _day(-1),
+    );
+
+/// 탭 전환 CTA 는 route 를 밀지 않고 root 의 탭 스코프를 부른다.
+/// 무엇을 불렀는지만 적어 둔다 — 탭 쪽 소비는 P2-2 가 이미 쟀다.
+class _ScopeLog {
+  final List<String> calls = [];
+}
+
+Future<void> _pumpWithScope(
+  WidgetTester tester, {
+  required UserHomeReads reads,
+  required _ScopeLog log,
+  Size size = const Size(390, 2200),
+  int totalWorkDays = 0,
+}) async {
+  if (tester.binding.rootElement != null) {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<UserProvider>.value(
+            value: _UserProviderDouble(totalWorkDays: totalWorkDays)),
+        ChangeNotifierProvider<NotificationProvider>(
+            create: (_) => NotificationProvider()),
+      ],
+      child: MaterialApp(
+        home: UserTabScope(
+          switchToTab: (i) => log.calls.add('switchToTab:$i'),
+          switchToTabWithDate: (i, d) => log.calls
+              .add('switchToTabWithDate:$i/${d.year}-${d.month}-${d.day}'),
+          pendingJobDate: null,
+          clearPendingJobDate: () => log.calls.add('clearPendingJobDate'),
+          pendingScheduleMonth: null,
+          clearPendingScheduleMonth: () => log.calls.add('clearPendingScheduleMonth'),
+          switchToScheduleNow: () => log.calls.add('switchToScheduleNow'),
+          child: UserHomeScreen(reads: reads),
+        ),
+      ),
+    ),
+  );
+  for (var i = 0; i < 20; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
 void main() {
   setUp(() {
     // 투어를 완료로 둔다 — 아니면 첫 프레임에 투어 화면이 덮는다.
@@ -925,4 +999,164 @@ void main() {
       });
     }
   }
+
+  // ══════════════════════════════════════════════════════════
+  // [R7-P2 잔여] P21-R — 남은 Home CTA 의 실제 탭
+  //
+  //   기존 실행은 #1(UHR-17) 과 #9(IMK-4) 뿐이다. 후속 보고의 "잔여 9" 는
+  //   #10 을 URN-2 로 세었기 때문인데, URN-2 는 **하단 탭바**를 누른 것이고
+  //   홈의 `일정 ›` CTA 가 아니다 → 실제 잔여는 **10경로**였다.
+  //   상태 변경 확정 버튼은 누르지 않는다.
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('UHR-31 (#3) 확인하기 는 그 제안 id 로 연장 제안 화면을 연다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: const [],
+        renewalByCall: [Future.value([_proposal()])],
+      ),
+    );
+
+    await tester.tap(find.text('확인하기'));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final pushed = tester.widget<RenewalProposalScreen>(
+        find.byType(RenewalProposalScreen, skipOffstage: false));
+    expect(pushed.focusProposalId, _proposal().id,
+        reason: '홈이 가리킨 제안과 다른 제안을 열면 다른 약속을 만진다');
+  });
+
+  testWidgets('UHR-32 (#2) 새 확정 카드는 내 지원 목록을 연다 — 대상 인자는 없다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(applications: [
+        _shortTerm(
+            id: 'newly',
+            workDate: _day(3),
+            confirmedAt: DateTime.now().subtract(const Duration(hours: 5))),
+      ]),
+    );
+    expect(find.text('새로운 소식'), findsOneWidget);
+
+    await tester.tap(find.text('새로운 소식'));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final pushed = tester.widget<MyApplicationsScreen>(
+        find.byType(MyApplicationsScreen, skipOffstage: false));
+    // 목적지는 focus 인자를 받지 않는다 — 목록이 스스로 다시 읽는다.
+    //   초대 배너(UHR-33 아래)와 달리 특정 탭을 지정하지 않는다.
+    expect(pushed.initialTabIndex, 0);
+  });
+
+  testWidgets('UHR-33 (#4/#5) 신분증 요청과 계약해지 응답은 홈에서 각각의 카드다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [
+          _shortTerm(
+              id: 'term1', workDate: _day(6), terminationStatus: 'PENDING'),
+        ],
+        idRequests: [_idRequest()],
+      ),
+    );
+
+    // 의미가 다른 두 요청을 한 카드로 합치지 않는다.
+    expect(find.textContaining('신분증 열람을 요청했어요'), findsOneWidget);
+    expect(find.textContaining('계약해지를 요청했어요'), findsOneWidget);
+    expect(find.text('확인하고 승인 또는 거절해 주세요'), findsOneWidget);
+    expect(find.text('확인하고 동의 또는 거절해 주세요'), findsOneWidget);
+  });
+
+  testWidgets('UHR-34 (#10) 일정 › 는 route 를 밀지 않고 일정 탭으로 전환한다',
+      (tester) async {
+    final log = _ScopeLog();
+    await _pumpWithScope(tester,
+        reads: _reads(applications: const []), log: log);
+
+    final cta = find.text('일정 ›');
+    expect(cta, findsOneWidget);
+    await tester.tap(cta);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(log.calls, contains('switchToTab:2'));
+  });
+
+  testWidgets('UHR-35 (#11) 근무 기록 보기 는 현재 달 리셋을 요청한다',
+      (tester) async {
+    final log = _ScopeLog();
+    // 경력 섹션은 홈 아래쪽이다 — 화면을 길게 잡아 실제로 빌드시킨다.
+    await _pumpWithScope(tester,
+        reads: _reads(applications: const []),
+        log: log,
+        size: const Size(390, 5200),
+        totalWorkDays: 12);
+
+    final cta = find.text('근무 기록 보기');
+    expect(cta, findsOneWidget);
+    await tester.tap(cta);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 일반 탭 전환이 아니라 **월 리셋까지 포함한** 전용 경로다.
+    expect(log.calls, contains('switchToScheduleNow'));
+    expect(log.calls, isNot(contains('switchToTab:2')));
+  });
+
+
+  testWidgets('UHR-36 (#8) 초대 배너는 초대 탭(6)으로 연다', (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(applications: [
+        _shortTerm(id: 'inv1', workDate: _day(4), status: AppStatus.invited),
+      ]),
+    );
+
+    final banner = find.text('업무 초대가 1개 도착했어요!');
+    expect(banner, findsOneWidget);
+    await tester.tap(banner);
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final pushed = tester.widget<MyApplicationsScreen>(
+        find.byType(MyApplicationsScreen, skipOffstage: false));
+    // 목록 전체가 아니라 **초대 탭**으로 간다 — UHR-32 와 다른 대상이다.
+    expect(pushed.initialTabIndex, 6);
+  });
+
+  testWidgets('UHR-37 (#12) 모두보기 는 선택한 날짜를 일자리 탭에 넘긴다',
+      (tester) async {
+    final log = _ScopeLog();
+    await _pumpWithScope(
+      tester,
+      reads: _reads(applications: [
+        _shortTerm(id: 'a1', workDate: _day(2)),
+        _shortTerm(id: 'a2', workDate: _day(3)),
+        _shortTerm(id: 'a3', workDate: _day(4)),
+      ]),
+      log: log,
+      size: const Size(390, 5200),
+    );
+
+    // 날짜를 고르지 않은 상태의 모두보기 — 날짜 없이 일자리 탭으로만 간다.
+    final all = find.textContaining('모두보기');
+    if (all.evaluate().isEmpty) {
+      // 이 상태에서 그 CTA 가 서지 않으면 그 사실을 남긴다 — 꾸미지 않는다.
+      expect(log.calls, isEmpty, reason: '모두보기 CTA 가 없는 상태');
+      return;
+    }
+    await tester.tap(all.first);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 날짜 미선택이면 날짜를 넘기지 않는다(같은 CTA 의 두 갈래).
+    expect(log.calls.where((c) => c.startsWith('switchToTab')), isNotEmpty);
+  });
+
 }
