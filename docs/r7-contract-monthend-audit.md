@@ -660,3 +660,200 @@ APK 생성·빌드·설치 **0** · 실기기 조작 **0**.
 
 읽은 배포 메타에 환경변수 시크릿이 포함돼 있어 **추출 즉시 파일을 삭제**했고
 어떤 값도 기록하지 않았다.
+
+---
+
+# [DEV 제한 배포] callableConfirmApplication v2 (2026-09-29)
+
+- 기준 HEAD `641af75` (착수 시 tracked dirty 0, 사용자 untracked 8건 보존)
+- 대상: **DEV `alfit-89567`** / `asia-northeast3` / `callableConfirmApplication`
+- 결과: **배포 성공. 244개 중 1개만 갱신.**
+- **실제 확정 전이는 실행하지 못했다** — DEV 운영 데이터가 비어 있다(아래 §3).
+
+## 1. 배포 전 게이트
+
+### 1-1. 대상 고정 (READ)
+
+| 항목 | 값 |
+|---|---|
+| project alias | `default`=`alfit-89567`, `dev`=`alfit-89567`, `prod`=`alfit-prod`(**사용자 확인: PROD 프로젝트 없음**) |
+| region | `asia-northeast3` |
+| export / entryPoint | `callableConfirmApplication` |
+| platform / runtime | `gcfv2` / `nodejs22`, codebase `default` |
+| trigger | callable (`onCall`, `enforceAppCheck: true`) |
+| **배포 전 소스 업로드** | **2026-09-21T14:03:02.411Z** (gen `1789999382411420`) |
+| 배포 전 hash | `db2cabc5f5ab07f8454a…` |
+| state | ACTIVE |
+| 전체 244개 중 최신 업로드 | 2026-09-27T15:56:41.805Z |
+
+### 1-2. 기간 모듈을 소비하는 배포 대상 export 추적
+
+`functions/src/contract_period.ts` 는 **내부 모듈**이고 export 함수가 아니다.
+소스에서 이를 import 하는 파일은 `functions/src/index.ts` 하나뿐이고,
+심볼 사용처는 **3곳 전부** `callableConfirmApplication` 본문 안이다.
+
+| 사용처 | 줄 | 함수 경계 |
+|---|---|---|
+| `contractPeriodEndMs(...)` | 28856 | `callableConfirmApplication` = 28446 ~ 29201 |
+| `CONTRACT_PERIOD_RULE_VERSION` (원장 기록) | 28972 | 동일 |
+| `CONTRACT_PERIOD_RULE_VERSION` (응답) | 29190 | 동일 |
+
+다음 export 는 29202(`callableBatchAdjustAttendanceTime`)다.
+→ **다른 export 를 함께 배포해야 할 증거 없음. 범위 확대 없음.**
+
+**배포본(9/21) 대비 이 함수 본문의 실제 변경**을 추출해 비교했다
+(배포 시각에 HEAD 였던 커밋 `34cd855`, 9/21 21:42 KST 기준).
+본문 703줄 → 756줄, 주석 제외 변경 덩어리 3개가 **전부 기간 규칙 변경**이다 —
+v1 인라인 식 제거, `contractPeriodEndMs` 호출, `periodRuleApplied`/`periodRevision`,
+`workEndDateRuleVersion`·`workEndDatePresentedAtApply`·`workEndDateRevisedAt` 기록,
+응답 `periodRevision`(+`applicantName`). **그 밖의 누적 변경은 없다.**
+
+이 함수가 쓰는 모듈 레벨 헬퍼 7개 중 6개 동일,
+`srvKstDayStartMs` 는 **배포본에 없던 신규**다(9/27 "하루 경계 식이 두 군데
+있었다" 리팩터). 이번 배포로 함께 반영된다.
+
+### 1-3. 테스트·정적 검사 (이번 실행 수치)
+
+| 검사 | 결과 |
+|---|---|
+| 기간 벡터·전환·렌더 + 영향 10파일 | **469 PASS / 0 FAIL** |
+| `flutter analyze lib test` | No issues found |
+| `functions` `tsc --noEmit` | exit 0 |
+| `eslint src/contract_period.ts` | exit 0 |
+
+전체 스위트는 이번 변경(코드 무변경, 배포만)에 재실행 위험이 없어 돌리지
+않았다. **이전 14,520 수치를 이번 실행 결과로 쓰지 않는다.**
+
+### 1-4. 빌드 산출물 검증
+
+`npm run build`(프로젝트 표준, `tsc`) 로 `functions/lib` 재생성.
+
+| 항목 | 결과 |
+|---|---|
+| 빌드 | exit 0 |
+| **신규 생성** | `lib/contract_period.js` (5,648B), `lib/contract_period.js.map` |
+| 갱신 | `lib/index.js` 2,299,015B → **2,302,161B**, `.map` 동반 |
+| 산출물의 v2 참조 | `contractPeriodEndMs` **1건** — 컴파일된 호출부 `lib/index.js:25258` |
+| 산출물의 v1 식 잔존 | `setMonth(d.getMonth()+1)` **0** · `setFullYear(d.getFullYear()+1)` **0** · `setDate(d.getDate()+15)` **0** |
+| 컴파일된 모듈 | `CONTRACT_PERIOD_RULE_VERSION = "v2-kst-civil-160"`, 160③ 분기(`start.day > lastDay`) 존재 |
+| tracked diff | **0** — `functions/lib/**/*.js` 는 `functions/.gitignore` 대상 |
+
+→ 배포 중지 조건(빌드 실패 / 산출물 v1 / 다른 export 변경) **해당 없음.**
+
+### 1-5. 구버전 앱 잔존 표시
+
+이 배포는 **CF 만** v2 로 만든다. DEV 에 앱 v1 이 남아 있을 수 있고,
+그 조합(앱v1+CFv2)은 제출된 기기-KST 6표본 중 **4/6 일치**다.
+남는 2건(월말 기산)과 **동쪽 시간대 구버전 기산일 문제는 이 배포로 닫히지
+않는다.** 새 날짜 계약 테스트는 앱 v2 또는 명시한 서버 호출 입력으로 해야
+하며, **앱 v1 표본을 양쪽 일치 증거로 쓰지 않는다.**
+
+## 2. 제한 배포 실행
+
+### 2-1. 1차 시도 — 실패 (업로드 이전 단계)
+
+```
+firebase deploy --only functions:callableConfirmApplication --project alfit-89567
+→ Error: User code failed to load. Cannot determine backend specification.
+  Timeout after 10000.
+```
+
+CLI 가 배포 대상을 알아내려고 `lib/index.js` 를 자식 프로세스로 로드하는
+**소스 분석 단계**에서 기본 10초를 넘겼다(2.3MB 번들·244개 export).
+**업로드 이전**이므로 아무것도 반영되지 않았다.
+
+즉시 상태를 READ 로 확인 — **244개 함수 전부 불변**, 대상 함수도 9/21
+revision 그대로. 되돌리거나 다른 명령으로 갈아타지 않았다.
+
+### 2-2. 2차 시도 — 성공
+
+저장소에 기록된 우회값(`FUNCTIONS_DISCOVERY_TIMEOUT`)을 올려 **같은 명령**을
+재실행했다. 명령의 대상·범위는 1차와 동일하다.
+
+```
+FUNCTIONS_DISCOVERY_TIMEOUT=120 \
+firebase deploy --only functions:callableConfirmApplication --project alfit-89567
+→ + functions[callableConfirmApplication(asia-northeast3)] Successful update operation.
+→ + Deploy complete!
+```
+
+패키징 1.75MB 업로드. **다른 함수에 대한 create/update/delete 로그 없음.**
+
+### 2-3. 배포 전후 비교
+
+| 항목 | 전 | 후 |
+|---|---|---|
+| 소스 업로드 | 2026-09-21T14:03:02.411Z | **2026-09-29T07:02:34.158Z** |
+| source generation | 1789999382411420 | **1790665354157590** |
+| hash | `db2cabc5f5ab07f8454a…` | **`634a307b3147644ce27b…`** |
+| state | ACTIVE | ACTIVE |
+| region / platform / runtime | asia-northeast3 / gcfv2 / nodejs22 | 동일 |
+| runService | `callableconfirmapplication` | 동일 |
+
+**244개 전수 비교 결과 변경 1건** — `callableConfirmApplication` 뿐이다.
+나머지 **243개는 gen·hash·state 모두 불변**(전체 최신 업로드가 대상 함수의
+새 시각으로 바뀐 것 외 변화 없음). 함수 삭제·신규 생성 0.
+Rules·Hosting·Storage 설정 배포 **0**.
+
+## 3. 새 DEV 데이터로 실제 확정 — **실행 불가 (대상 없음)**
+
+배포 직후 DEV 를 READ 했다. **운영 데이터가 비어 있다.**
+
+| 컬렉션 | 이번 세션 앞부분 | 배포 후 |
+|---|---|---|
+| `tos` | 96 | **0** |
+| `applications` | 134 | **0** |
+| `employment_contracts` | 17 | **0** |
+| 루트 컬렉션 | — | `app_settings`(2) · `badges`(19) · `settings`(2) **3개만** |
+
+이 0 은 **사용자가 테스터 데이터를 정리한 결과**다. 이번 세션에서 나는
+Firestore 쓰기를 **한 번도 하지 않았고**, 배포도 데이터를 건드리지 않는다.
+
+따라서 각 표본의 판정은 다음과 같다. **어느 것도 PASS 가 아니다.**
+
+| 표본 | 판정 | 이유 |
+|---|---|---|
+| 일반 날짜·기간 신규 지원서 | **NOT SEEN** | 테스트 계정·사업장·TO·지원서가 아직 없다. 자격을 우회하거나 지원서를 만들어 내지 않았다 |
+| 도달 가능한 미래 월말 신규 지원서 | **NOT SEEN** | 위와 동일. 격리 증거(`contract_period_vectors.json` 벡터 20건 + 파리티 36셀)로만 남는다 |
+| 구 PENDING 정정 분기 | **N/A (대상 없음)** | 정리로 preset·PENDING 건이 0이다. **PASS 아님** |
+| 기존 서명 계약 불변 | **N/A (대상 없음)** | `employment_contracts` 0. 비교할 명명된 계약이 없다. **"배포가 안 바꿨다"고 말할 근거도 아니다** — 비교 대상 자체가 없다 |
+| 실제 서명 / PDF 생성 DEV 전이 | **NOT SEEN** | 위 선행 데이터가 없다. 격리 RENDER 10건과 구별해 둔다 |
+
+**다음에 필요한 것:** 사용자가 새 테스트 계정·사업장·preset 기간 TO·지원서를
+만들어 식별자를 알려 주면, 그 건으로만 실제 `callableConfirmApplication` 을
+실행해 `지원 제시 KST 종료일 → 응답 → 원장 workEndDate` 를 잇는다.
+
+## 4. 증거 등급
+
+| 열 | 상태 |
+|---|---|
+| **CODE / 빌드 산출물** | **실행** — 모듈 소비 export 추적, 본문 diff, 헬퍼 7개 대조, 표준 빌드 재생성 후 v2 참조·v1 부재 확인 |
+| **DEV DEPLOY** | **실행** — 단일 함수 배포 성공, gen/hash 갱신, 243개 불변 전수 확인 |
+| **DEV 실제 확정** | **NOT SEEN / N/A** — 운영 데이터 0. §3 표 참조 |
+| **RENDER (격리)** | 기존 수용 — 관리자 토스트·계약서 제2조·PDF 생성 경로 10셀 |
+| **RENDER (DEV)** | **NOT SEEN** |
+| **DEVICE** | **NOT SEEN** — 앱 빌드·설치·실기기는 사용자 작업 |
+| **USER / PRODUCT** | **OPEN** — 지원자 기간 정정 고지는 **구현 부재**(별도 정책 과제). 안 1/안 2 미결 |
+
+**배포 성공은 기간 계산의 실제 전이 완료가 아니다.**
+월말 실제 전이·구 PENDING 정정·지원자 고지 중 어느 것도 이번에 닫히지 않았다.
+
+PROD 기존 사용자 전환은 **프로젝트 자체가 없어 적용 대상 없음**이다.
+출시 시 구버전 앱 × CFv2 혼합 문제는 **별도 출시 정책**으로 남긴다.
+
+## 5. 운영 기록 (다음 배포자를 위해)
+
+- 이 저장소의 함수 배포는 **`FUNCTIONS_DISCOVERY_TIMEOUT` 상향이 사실상 필수**다.
+  기본 10초로는 `lib/index.js`(2.3MB, 244 export) 로드가 끝나지 않아
+  `Cannot determine backend specification` 으로 **업로드 전에** 멈춘다.
+  이번에는 120 으로 통과했다.
+- `firebase functions:list --json` 출력에는 **환경변수 시크릿이 그대로 들어온다.**
+  이번에도 필요한 메타(`id/region/state/hash/generation`)만 뽑고 시크릿 필드는
+  읽지도 저장하지도 않았다. 보고서·로그에 어떤 값도 남기지 않았다.
+
+## 6. 금지 항목 준수
+
+전체 Functions 배포 **0** · 함수 삭제 **0** · Rules·Hosting·Storage 배포 **0** ·
+Firestore 쓰기 **0**(READ 전용) · 대량 데이터 삭제 **0** ·
+APK 생성·빌드·설치 **0** · 실기기 조작 **0** · 다른 도메인 전이 **0**.
+`--project alfit-89567` 를 생략하지 않았다.
