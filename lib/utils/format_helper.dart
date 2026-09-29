@@ -183,6 +183,18 @@ class FormatHelper {
     return (start, start.add(const Duration(days: 1)));
   }
 
+  /// [CONTRACT-PERIOD-RULE] KST 달력일 키 → 그 날의 **KST 자정 instant**.
+  ///
+  /// 저장소의 DATE_ONLY 관례가 그것이다(`slot.date`·`workDate`). 위
+  /// [kstDayRange] 가 쓰는 `- _kst` 와 같은 식이고, 이름만 준 것이다 —
+  /// 두 군데에 같은 식을 적지 않는다. 서버 `srvKstDayStartMs` 의 결과와
+  /// 같은 값이다.
+  ///
+  /// 입력은 [toKstDate] / [kstDayKeyOfCivil] 가 만든 `DateTime.utc(y, m, d)`
+  /// 키다. 다른 instant 를 줘도 그 날의 KST 자정으로 정규화된다.
+  static DateTime kstMidnightOfKstDay(DateTime kstDayKey) =>
+      toKstDate(kstDayKey).subtract(_kst);
+
   /// [R1.2.1] KST 기준 그 달 전체 구간 — `kstDayRange`와 같은 계약의 월 단위.
   ///
   /// 반환: `[그 달 1일 KST 00:00, 다음 달 1일 KST 00:00)`.

@@ -571,7 +571,15 @@ extension ApplicationFirestore on FirestoreService {
         if (workTypeBackgroundColor != null) 'workTypeBackgroundColor': workTypeBackgroundColor,
         if (workEndDate != null) 'workEndDateMs': workEndDate.millisecondsSinceEpoch,
         if (workDays != null) 'workDays': workDays,
-        if (desiredStartDate != null) 'desiredStartDateMs': desiredStartDate.millisecondsSinceEpoch,
+        // [CONTRACT-PERIOD-RULE] 희망 시작일은 **달력에서 고른 날짜**다.
+        //   `DateTime(y, m, d)` 의 millis 를 그대로 보내면 기기 자정이므로,
+        //   UTC+13 기기에서는 서버가 KST 로 **전날**로 읽는다(그 값이 계약
+        //   기간 계산의 기산일이다). 성분을 KST 달력일로 읽어 그 날의
+        //   KST 자정 instant 로 보낸다 — `slot.date`·`workDate` 와 같은 꼴.
+        if (desiredStartDate != null)
+          'desiredStartDateMs': FormatHelper.kstMidnightOfKstDay(
+                  FormatHelper.kstDayKeyOfCivil(desiredStartDate))
+              .millisecondsSinceEpoch,
         'idCardConsentGiven': true, // [ID-CONSENT] 신분증 열람 사전동의 — legacy 호환 유지
         // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 — V3 신규
         // 신분증 + 급여계좌 + 통장사본을 권한 있는 관리자가 확인할 수 있음에 동의
@@ -1798,6 +1806,27 @@ extension ApplicationFirestore on FirestoreService {
     if (capacityWarning != null) {
       ToastHelper.showSuccess(
         '[${capacityWarning['workType']}] 모집인원 ${capacityWarning['required']}명이 모두 찼습니다.');
+    }
+
+    // [CONTRACT-PERIOD-RULE] 지원 때 제시된 종료일과 확정 종료일이 다르면
+    //   **조용히 넘기지 않는다.** 규칙을 고치기 전에 만들어진 PENDING
+    //   지원서가 여기로 온다 — 그 지원자는 예전 식으로 계산된 날짜를 보고
+    //   지원했다. 관리자가 확정하는 자리에서 그 차이를 말해 준다.
+    //   서버는 같은 사실을 지원서에 `workEndDatePresentedAtApply` /
+    //   `workEndDateRevisedAt` 로 남긴다.
+    final periodRevision =
+        (data['periodRevision'] as Map?)?.cast<String, dynamic>();
+    if (periodRevision != null) {
+      final presented = periodRevision['presentedMs'] as int?;
+      final applied = periodRevision['appliedMs'] as int?;
+      if (presented != null && applied != null) {
+        final from = FormatHelper.formatDateISO(
+            DateTime.fromMillisecondsSinceEpoch(presented));
+        final to = FormatHelper.formatDateISO(
+            DateTime.fromMillisecondsSinceEpoch(applied));
+        ToastHelper.showWarning('계약 종료일이 $from → $to 로 정정되었습니다. '
+            '지원자에게 안내가 필요할 수 있습니다.');
+      }
     }
 
     final appInfo = (data['appInfo'] as Map?)?.cast<String, dynamic>() ?? {};

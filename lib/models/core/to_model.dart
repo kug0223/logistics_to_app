@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/firestore_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/contract_period.dart';
 import 'work_detail_data.dart';
 
 /// 공고(TO) 모델 — slots 구조 기반
@@ -560,61 +561,30 @@ class TOModel {
     }
   }
 
-  /// 월말 clamp 후 N달 더하기 헬퍼 — Dart month overflow 방지
-  /// 예: 1/31 + 1달 → 2/28 (clamp), 8/31 + 1달 → 9/30 (clamp)
-  static DateTime _addMonths(DateTime start, int months) {
-    final rawMonth = start.month + months;
-    final targetYear = start.year + (rawMonth - 1) ~/ 12;
-    final targetMonth = ((rawMonth - 1) % 12) + 1;
-    final lastDayOfTarget = DateTime(targetYear, targetMonth + 1, 0).day;
-    final targetDay = start.day.clamp(1, lastDayOfTarget);
-    return DateTime(targetYear, targetMonth, targetDay);
-  }
-
-  /// 주어진 시작일에서 계약 종료일 계산 (preset 타입 전용)
+  /// 주어진 시작일에서 계약 종료일(= **마지막 유효일**) 계산.
   ///
-  /// 규칙 (inclusive 계약기간):
-  ///   15일:    start + 14일 (시작일 포함 15일)
-  ///   월 단위: (start + N달) - 1일
-  ///   연 단위: (start + 12달) - 1일
+  /// 규칙은 이 파일에 없다 — `lib/utils/contract_period.dart` 하나다
+  /// (`kContractPeriodRuleVersion`). 서버 `functions/src/contract_period.ts`
+  /// 가 같은 규칙을 쓰고, 두 구현은 공유 벡터
+  /// `test/fixtures/contract_period_vectors.json` 으로 묶여 있다.
   ///
-  /// 예: 8/17 + 1개월 → 9/17 - 1일 = 9/16
-  ///     8/17 + 1년   → 2027/8/17 - 1일 = 2027/8/16
-  ///     1/31 + 1개월 → 2/28(clamp) - 1일 = 2/27
+  /// [startDate] 는 **달력에서 고른 날짜**로 본다 — 성분을 그대로 KST
+  /// 달력일로 읽는다(`kstDayKeyOfCivil`). 기기 시간대와 무관하다.
+  /// 반환값은 그 KST 달력일의 **KST 자정 instant** 로,
+  /// 저장소의 DATE_ONLY 관례(`slot.date`·`workDate`)와 같은 꼴이다.
   ///
-  /// [OPEN-CONTRACT-MONTHEND] **이 값은 계약 만료일로 저장되지 않는다.**
-  ///
-  ///   여기서 나온 날짜가 가는 곳은 두 군데다 — 지원 화면의 기간 카드
-  ///   표시, 그리고 `application.workEndDate` 의 **최초(PENDING)** 저장값.
-  ///   확정 시점에 `callableConfirmApplication` 이 TO 의
-  ///   `contractPeriodType` 으로 **다시 계산해 덮어쓴다**([M2-FIX] —
-  ///   "클라이언트 조작값 무시, 항상 서버 TO 기준 계산").
-  ///
-  ///   그 서버 식은 `d.setMonth(d.getMonth() + N)` 이고 **`- 1일` 도 월말
-  ///   clamp 도 없다.** 그래서 같은 입력에 다른 답이 나온다:
-  ///     1/1  + 1개월 → 여기 1/31, 서버 2/1   (1일 차)
-  ///     1/31 + 1개월 → 여기 2/27, 서버 3/3   (4일 차)
-  ///   계약서 제2조·만료 알림·좌석/근무 판정은 모두 **서버 값**을 쓴다.
-  ///
-  ///   어느 쪽으로 맞출지는 법률·제품 결정이라 이 함수를 고치지 않았다.
-  ///   전수 대조는 `test/contract_period_parity_contract_test.dart`,
-  ///   판정·영향은 `docs/r7-contract-monthend-audit.md`.
+  /// [CONTRACT-PERIOD-RULE v1→v2] 예전 식은 `(start + N달, 월말 clamp)
+  /// - 1일` 이었다. 월중 기산에서는 민법 160② 와 같았지만 **해당일이 없는
+  /// 달에서 clamp 후 또 하루를 빼서** 하루 짧았다(1/31 + 1개월 → 2/27).
+  /// 그리고 기기 로컬 성분으로 계산해 UTC+13 기기에서 하루 밀렸다.
+  /// 서버는 아예 다른 식이어서 확정 시 3/3 으로 덮어썼다.
+  /// 자세한 경위는 `docs/r7-contract-monthend-audit.md`.
   DateTime computeContractEndDate(DateTime startDate) {
-    switch (contractPeriodType) {
-      case '15days':
-        // 시작일 포함 15일 = start + 14일
-        return startDate.add(const Duration(days: 14));
-      case '1month':
-        return _addMonths(startDate, 1).subtract(const Duration(days: 1));
-      case '3months':
-        return _addMonths(startDate, 3).subtract(const Duration(days: 1));
-      case '6months':
-        return _addMonths(startDate, 6).subtract(const Duration(days: 1));
-      case '1year':
-        return _addMonths(startDate, 12).subtract(const Duration(days: 1));
-      default:
-        return rangeEnd ?? startDate;
-    }
+    final startKstDay = FormatHelper.kstDayKeyOfCivil(startDate);
+    final end = contractPeriodEndInstant(startKstDay, contractPeriodType);
+    if (end != null) return end;
+    // `custom` 이거나 알 수 없는 유형 — 고정 종료일이 있으면 그것이다.
+    return rangeEnd ?? startDate;
   }
 
   String get contractPeriodDisplay {

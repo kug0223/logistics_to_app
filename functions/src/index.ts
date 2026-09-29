@@ -12,6 +12,12 @@ import * as admin from "firebase-admin";
 import type * as NodemailerNs from "nodemailer";
 import * as crypto from "crypto";
 import * as https from "https";
+// [CONTRACT-PERIOD-RULE] 계약 기간 종료일 규칙 — Dart 쪽과 공유 벡터로 묶인
+//   하나의 규칙이다. 여기에 식을 다시 적지 않는다.
+import {
+  contractPeriodEndMs,
+  CONTRACT_PERIOD_RULE_VERSION,
+} from "./contract_period";
 
 initializeApp();
 const db = getFirestore();
@@ -28824,19 +28830,45 @@ export const callableConfirmApplication = onCall(
 
     let computedWorkEndDate: admin.firestore.Timestamp | undefined;
     let computedWorkDays: string[] | undefined;
+    // [CONTRACT-PERIOD-RULE] 종료일을 규칙으로 계산했는가 — provenance.
+    let periodRuleApplied = false;
+    // 지원 때 제시된 종료일과 달라졌다면 그 사실(조용히 넘기지 않는다).
+    let periodRevision:
+      {presentedMs: number; appliedMs: number; periodType: string} | undefined;
 
     // [M2-FIX] !appDataPre.workEndDate 조건 제거 — 클라이언트 조작값 무시, 항상 서버 TO 기준 계산
+    //
+    // [CONTRACT-PERIOD-RULE] 여기에 있던 식(`d.setMonth(d.getMonth() + N)`)을
+    //   걷어냈다. 그 식에는 `- 1일` 도 월말 clamp 도 없어서 모든 기간 유형에서
+    //   하루 이상 길었고(15일 계약이 16일, 1년이 366일), 게다가 instant 의
+    //   **UTC 성분**으로 계산해 KST 자정 기산일이 전날로 읽혔다. 그래서
+    //   지원자가 확정 전에 본 날짜와 계약서 날짜가 달랐다.
+    //   규칙은 `./contract_period` 하나이고 Dart 쪽과 공유 벡터로 묶여 있다.
+    //
+    //   **서버 재검증은 그대로 유지한다** — 클라이언트가 보낸 종료일을
+    //   신뢰하지 않고 TO 의 `contractPeriodType` 으로 다시 계산한다.
+    //   다만 결과가 지원 때 제시된 값과 다르면 **조용히 덮어쓰지 않고**
+    //   그 사실을 기록·반환한다(아래 `periodRevision`).
     if (isLongTermApp && toData) {
       const startTs = (appDataPre.desiredStartDate ?? appDataPre.workDate) as admin.firestore.Timestamp;
       const periodType = toData.contractPeriodType as string | undefined;
       if (periodType && periodType !== "custom") {
-        const d = new Date(startTs.toDate().getTime());
-        if (periodType === "15days") d.setDate(d.getDate() + 15);
-        else if (periodType === "1month") d.setMonth(d.getMonth() + 1);
-        else if (periodType === "3months") d.setMonth(d.getMonth() + 3);
-        else if (periodType === "6months") d.setMonth(d.getMonth() + 6);
-        else if (periodType === "1year") d.setFullYear(d.getFullYear() + 1);
-        computedWorkEndDate = admin.firestore.Timestamp.fromDate(d);
+        const endMs = contractPeriodEndMs(startTs.toMillis(), periodType);
+        if (endMs !== null) {
+          computedWorkEndDate = admin.firestore.Timestamp.fromMillis(endMs);
+          periodRuleApplied = true;
+          const presented = appDataPre.workEndDate as
+            admin.firestore.Timestamp | undefined;
+          // KST 달력일이 다를 때만 "달라졌다"고 말한다 — 같은 날의 다른
+          // 시각(기기 자정 vs KST 자정)을 변경으로 부르지 않는다.
+          if (presented && srvKstDayStartMs(presented.toMillis()) !== endMs) {
+            periodRevision = {
+              presentedMs: presented.toMillis(),
+              appliedMs: endMs,
+              periodType,
+            };
+          }
+        }
       } else if (toData.rangeEnd) {
         computedWorkEndDate = toData.rangeEnd as admin.firestore.Timestamp;
       }
@@ -28933,6 +28965,18 @@ export const callableConfirmApplication = onCall(
     if (message) batchUpdate.confirmMessage = message;
     if (computedWorkEndDate) batchUpdate.workEndDate = computedWorkEndDate;
     if (computedWorkDays) batchUpdate.workDays = computedWorkDays;
+    // [CONTRACT-PERIOD-RULE] 이 종료일이 어느 규칙으로 나왔는지 남긴다.
+    //   규칙이 또 바뀌는 날, 어느 계약이 어느 규칙으로 만들어졌는지
+    //   문서 자체가 말해야 한다.
+    if (periodRuleApplied) {
+      batchUpdate.workEndDateRuleVersion = CONTRACT_PERIOD_RULE_VERSION;
+    }
+    if (periodRevision) {
+      // 지원 때 화면에 제시된 값을 지우지 않고 함께 보관한다.
+      batchUpdate.workEndDatePresentedAtApply =
+        admin.firestore.Timestamp.fromMillis(periodRevision.presentedMs);
+      batchUpdate.workEndDateRevisedAt = admin.firestore.Timestamp.now();
+    }
     batch2.update(appRef, batchUpdate);
 
     // [Phase 8.1E.2B] TO/slot counter writes moved to W3 transaction (atomic drift prevention)
@@ -29135,6 +29179,17 @@ export const callableConfirmApplication = onCall(
         workEndDateMs: computedWorkEndDate ? computedWorkEndDate.toMillis() : null,
         workDays: computedWorkDays ?? null,
       },
+      // [CONTRACT-PERIOD-RULE] 지원 때 제시된 종료일과 달라졌으면 호출자가
+      //   그 자리에서 알 수 있어야 한다. 조용히 덮어쓰지 않는다.
+      //   (수정 전에 만들어진 PENDING 지원서가 여기로 온다.)
+      periodRevision: periodRevision
+        ? {
+          presentedMs: periodRevision.presentedMs,
+          appliedMs: periodRevision.appliedMs,
+          periodType: periodRevision.periodType,
+          ruleVersion: CONTRACT_PERIOD_RULE_VERSION,
+        }
+        : null,
     };
   }
 );

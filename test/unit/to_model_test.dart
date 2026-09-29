@@ -8,6 +8,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/to_model.dart';
+import 'package:ALfit/utils/format_helper.dart';
 
 /// 최소 필드로 TOModel 생성
 TOModel _make({
@@ -175,106 +176,98 @@ void main() {
   });
 
   // ══════════════════════════════════════════════════════
-  // computeContractEndDate (월말 오버플로우 안전 계산)
+  // computeContractEndDate — 규칙 v2 (KST 달력일 · 민법 160②③)
   // ══════════════════════════════════════════════════════
+  //
+  // [CONTRACT-PERIOD-RULE] 이 그룹을 두 번 옮겼다.
+  //   ① 예전 기대값은 당시 구현식(`month + N + 1`)을 옮겨 적어
+  //      N개월이 사실상 N+1개월이었다 → 달력 의미로 정정(R7-FS-1).
+  //   ② 그 다음 감사에서 **이 함수의 값이 저장되지 않는다**는 것이
+  //      드러났다. 확정 서버가 다른 식으로 덮어썼다.
+  //      이번에 두 식을 하나로 모았다 — 규칙은
+  //      `lib/utils/contract_period.dart` 이고 서버와 공유 벡터로 묶인다.
+  //
+  //   그래서 여기서는 **이 모델이 그 규칙을 지난다**는 것만 본다.
+  //   규칙 자체의 전수 대조는
+  //   `test/contract_period_parity_contract_test.dart` 가 한다.
+  //
+  //   반환값은 그 KST 달력일의 **KST 자정 instant** 다(저장소의 DATE_ONLY
+  //   관례). 그래서 기대값도 로컬 `DateTime` 이 아니라 KST 달력일로 읽는다 —
+  //   섞으면 KST 가 아닌 기기에서 하루 밀린다.
   group('TOModel.computeContractEndDate', () {
-    test('15days: 2026-01-01 → 2026-01-15', () {
-      final m = _make(type: TOType.contract, contractPeriodType: '15days');
-      final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2026, 1, 15)));
+    String endOf(String periodType, DateTime start) =>
+        FormatHelper.formatDateISO(_make(
+                type: TOType.contract, contractPeriodType: periodType)
+            .computeContractEndDate(start));
+
+    test('15days: 2026-01-01 → 2026-01-15 (시작일 포함 15일)', () {
+      expect(endOf('15days', DateTime(2026, 1, 1)), '2026-01-15');
     });
 
-    // [R7-FS-1 C] 이 그룹의 기대값을 옮겼다.
-    //
-    //   예전 기대값은 `DateTime(y, startMonth + N + 1, 1) - 1일` 이라는
-    //   **당시 구현의 식**을 그대로 옮겨 적은 것이었다. 지운 주석에 그
-    //   과정이 남아 있었다 — "1월1일에서 1개월이면 1월31일이어야 함" 이라고
-    //   쓰고도 구현을 따라 2월 28일을 기대했다. 그래서 N개월이 사실상
-    //   N+1개월이었다.
-    //
-    //   현재 구현은 `(start + N개월) - 1일` 이고 소스에 규칙으로 적혀 있다.
-    //   테스트 **이름**은 처음부터 이쪽(1월 말일)을 말하고 있었다.
-    //   달력 의미와 이름이 일치하는 쪽으로 기대값을 맞춘다.
-    test('1month: 2026-01-01 → 2026-01-31 (1월 말일)', () {
-      final m = _make(type: TOType.contract, contractPeriodType: '1month');
-      final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      // 시작일 포함 1개월 = 1/1 ~ 1/31
-      expect(result, equals(DateTime(2026, 1, 31)));
+    test('1month: 2026-01-01 → 2026-01-31 (해당일 2/1 의 전일)', () {
+      expect(endOf('1month', DateTime(2026, 1, 1)), '2026-01-31');
     });
 
-    test('1month: 2026-01-31 (월말 시작) → 2026-02-27 (clamp 후 -1일)', () {
-      // 구현이 규칙으로 적어 둔 값: 1/31 + 1개월 → 2/28(clamp) - 1일 = 2/27.
-      //
-      // [OPEN-CONTRACT-MONTHEND] **앞 회차 설명을 정정한다.** 그때
-      //   "구현이 명시한 현재 규칙" 이라고 적었는데, 이 함수의 값은
-      //   계약 만료일로 **저장되지 않는다.** 확정 시
-      //   `callableConfirmApplication` 이 자기 식으로 다시 계산해
-      //   `workEndDate` 를 덮어쓴다([M2-FIX]). 그 서버 식에는 `- 1일` 도
-      //   월말 clamp 도 없어서 같은 입력에 **2026-03-03** 이 나온다.
-      //   계약서 제2조·만료 알림·좌석 판정은 모두 그 값을 쓴다.
-      //
-      //   즉 이 함수가 만드는 것은 **지원 화면 표시값과 PENDING 저장값**
-      //   이고, 열린 질문은 "2/27 vs 2/28" 이 아니라 **두 식의 불일치**다.
-      //   전수 대조와 판정은 `test/contract_period_parity_contract_test.dart`
-      //   와 `docs/r7-contract-monthend-audit.md` 에 있다.
-      //   여기서는 이 함수의 값만 고정한다(식은 고치지 않았다).
-      final m = _make(type: TOType.contract, contractPeriodType: '1month');
-      final result = m.computeContractEndDate(DateTime(2026, 1, 31));
-      expect(result, equals(DateTime(2026, 2, 27)));
+    test('1month: 2026-01-31 (월말 시작) → 2026-02-28 (민법 160③ 말일)', () {
+      // [CONTRACT-PERIOD-RULE] 기대값을 2/27 에서 2/28 로 옮겼다.
+      //   2월에 31일이 없다 — 민법 제160조 ③ 은 그 경우 **그 월의 말일**로
+      //   기간이 만료한다고 정한다. 예전 식은 말일로 clamp 한 뒤 또 하루를
+      //   빼서 2/27 이었다(하루 짧았다). 서버는 반대로 3/3 이었다.
+      expect(endOf('1month', DateTime(2026, 1, 31)), '2026-02-28');
     });
 
-    test('3months: 2026-01-01 → 2026-03-31 (3월 말일)', () {
-      // 시작일 포함 3개월 = 1/1 ~ 3/31
-      final m = _make(type: TOType.contract, contractPeriodType: '3months');
-      final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2026, 3, 31)));
+    test('1month: 2028-01-31 (윤년) → 2028-02-29', () {
+      expect(endOf('1month', DateTime(2028, 1, 31)), '2028-02-29');
+    });
+
+    test('3months: 2026-01-01 → 2026-03-31', () {
+      expect(endOf('3months', DateTime(2026, 1, 1)), '2026-03-31');
     });
 
     test('6months: 2026-01-01 → 2026-06-30', () {
-      // 시작일 포함 6개월 = 1/1 ~ 6/30
-      final m = _make(type: TOType.contract, contractPeriodType: '6months');
-      final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2026, 6, 30)));
+      expect(endOf('6months', DateTime(2026, 1, 1)), '2026-06-30');
     });
 
     test('1year: 2026-01-01 → 2026-12-31 (같은 해 말일)', () {
-      // 시작일 포함 1년 = 2026-01-01 ~ 2026-12-31
-      final m = _make(type: TOType.contract, contractPeriodType: '1year');
-      final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2026, 12, 31)));
+      expect(endOf('1year', DateTime(2026, 1, 1)), '2026-12-31');
     });
 
     test('1year: 2026-07-01 → 2027-06-30', () {
-      // 시작일 포함 1년 = 2026-07-01 ~ 2027-06-30
-      final m = _make(type: TOType.contract, contractPeriodType: '1year');
-      final result = m.computeContractEndDate(DateTime(2026, 7, 1));
-      expect(result, equals(DateTime(2027, 6, 30)));
+      expect(endOf('1year', DateTime(2026, 7, 1)), '2027-06-30');
     });
 
-    // [R7-FS-1 C] 위 기대값들의 **뜻**을 한 번 더 못 박는다.
-    //   "N개월" 은 시작일 포함 N개월이고, 그래서 같은 날짜 하루 전에서
-    //   끝난다. 누가 다시 N+1개월로 밀면 이 셀이 걸린다.
-    test('N개월은 시작일 포함이다 — 같은 날짜 하루 전에 끝난다', () {
+    // 해당일이 **있는** 달에서는 그 전일이다 — 규칙의 정상 경로.
+    //   누가 다시 N+1개월로 밀면 이 셀이 걸린다.
+    test('해당일이 있으면 그 전일이다 (N개월은 시작일 포함)', () {
       const cases = {
         '1month': 1,
         '3months': 3,
         '6months': 6,
         '1year': 12,
       };
-      final start = DateTime(2026, 5, 15); // 월말 clamp 가 없는 날
+      final start = DateTime(2026, 5, 15); // 어느 달에도 15일은 있다
       cases.forEach((type, months) {
-        final m = _make(type: TOType.contract, contractPeriodType: type);
-        final expected = DateTime(
-                start.year + ((start.month + months - 1) ~/ 12),
-                ((start.month + months - 1) % 12) + 1,
-                start.day)
-            .subtract(const Duration(days: 1));
-        expect(m.computeContractEndDate(start), equals(expected),
+        final anniversary = DateTime.utc(
+            start.year + ((start.month + months - 1) ~/ 12),
+            ((start.month + months - 1) % 12) + 1,
+            start.day);
+        final expected = FormatHelper.formatDateISO(
+            anniversary.subtract(const Duration(days: 1)));
+        expect(endOf(type, start), expected,
             reason: '$type 은 $months 개월이다');
       });
     });
-  });
 
+    test('custom·미지정은 rangeEnd 가 정한다 — 날짜를 지어내지 않는다', () {
+      final fixed = DateTime(2026, 9, 30);
+      final m = _make(
+          type: TOType.contract, contractPeriodType: 'custom',
+          rangeEnd: fixed);
+      expect(FormatHelper.formatDateISO(
+              m.computeContractEndDate(DateTime(2026, 1, 1))),
+          '2026-09-30');
+    });
+  });
   // ══════════════════════════════════════════════════════
   // contractPeriodLabel
   // ══════════════════════════════════════════════════════

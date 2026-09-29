@@ -1,0 +1,29 @@
+{
+  "ruleVersion": "v2-kst-civil-160",
+  "note": "계약 기간 마지막 유효일(inclusive) 공유 검증 벡터. Dart(lib/utils/contract_period.dart)와 TypeScript(functions/src/contract_period.ts)가 이 표 하나로 묶인다. 한쪽만 바뀌면 대조가 깨진다. 날짜는 모두 KST 달력일.",
+  "basis": "초일산입(민법 157 단서) + 월·연 단위는 민법 160②③(해당일의 전일, 해당일 없으면 그 월의 말일)",
+  "vectors": [
+    { "start": "2026-01-01", "periodType": "15days",  "end": "2026-01-15", "why": "시작일 포함 15일" },
+    { "start": "2026-01-01", "periodType": "1month",  "end": "2026-01-31", "why": "160② 해당일 2/1 의 전일" },
+    { "start": "2026-01-01", "periodType": "3months", "end": "2026-03-31", "why": "160② 해당일 4/1 의 전일" },
+    { "start": "2026-01-01", "periodType": "6months", "end": "2026-06-30", "why": "160② 해당일 7/1 의 전일" },
+    { "start": "2026-01-01", "periodType": "1year",   "end": "2026-12-31", "why": "160② 해당일 2027-01-01 의 전일" },
+
+    { "start": "2026-01-31", "periodType": "1month",  "end": "2026-02-28", "why": "160③ 평년 2월에 31일 없음 → 말일" },
+    { "start": "2028-01-31", "periodType": "1month",  "end": "2028-02-29", "why": "160③ 윤년 2월 말일" },
+    { "start": "2026-01-30", "periodType": "1month",  "end": "2026-02-28", "why": "160③ 2월에 30일 없음 → 말일" },
+    { "start": "2026-01-29", "periodType": "1month",  "end": "2026-02-28", "why": "160③ 평년 2월에 29일 없음 → 말일" },
+    { "start": "2028-01-29", "periodType": "1month",  "end": "2028-02-28", "why": "160② 윤년은 해당일 2/29 존재 → 그 전일" },
+    { "start": "2026-03-31", "periodType": "1month",  "end": "2026-04-30", "why": "160③ 4월에 31일 없음 → 말일" },
+    { "start": "2026-08-31", "periodType": "6months", "end": "2027-02-28", "why": "160③ 원 기산일 31 보존 후 2월 말일" },
+    { "start": "2028-02-29", "periodType": "1year",   "end": "2029-02-28", "why": "160③ 2029 2월에 29일 없음 → 말일" },
+
+    { "start": "2026-05-15", "periodType": "1month",  "end": "2026-06-14", "why": "월중 기산 — 160② 정상 경로" },
+    { "start": "2026-05-15", "periodType": "15days",  "end": "2026-05-29", "why": "월중 일 단위" },
+    { "start": "2026-12-31", "periodType": "1month",  "end": "2027-01-30", "why": "연 경계 — 해당일 1/31 존재 → 그 전일" },
+    { "start": "2026-12-31", "periodType": "3months", "end": "2027-03-30", "why": "연 경계 + 해당일 3/31 존재" },
+    { "start": "2026-10-31", "periodType": "3months", "end": "2027-01-30", "why": "해당일 1/31 존재 → 그 전일" },
+    { "start": "2026-11-30", "periodType": "3months", "end": "2027-02-28", "why": "160③ 2월에 30일 없음 → 말일" },
+    { "start": "2026-02-28", "periodType": "1year",   "end": "2027-02-27", "why": "해당일 2027-02-28 존재 → 그 전일" }
+  ]
+}
