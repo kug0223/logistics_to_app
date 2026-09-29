@@ -29188,6 +29188,10 @@ export const callableConfirmApplication = onCall(
           appliedMs: periodRevision.appliedMs,
           periodType: periodRevision.periodType,
           ruleVersion: CONTRACT_PERIOD_RULE_VERSION,
+          // [R7-전환 CPT-A] 일괄 확정에서 이 고지가 여러 번 뜬다.
+          //   날짜만 있으면 어느 건인지 귀속되지 않는다.
+          applicantName:
+            (appDataPre.applicantName as string | undefined) ?? null,
         }
         : null,
     };

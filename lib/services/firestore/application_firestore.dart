@@ -1820,12 +1820,14 @@ extension ApplicationFirestore on FirestoreService {
       final presented = periodRevision['presentedMs'] as int?;
       final applied = periodRevision['appliedMs'] as int?;
       if (presented != null && applied != null) {
-        final from = FormatHelper.formatDateISO(
-            DateTime.fromMillisecondsSinceEpoch(presented));
-        final to = FormatHelper.formatDateISO(
-            DateTime.fromMillisecondsSinceEpoch(applied));
-        ToastHelper.showWarning('계약 종료일이 $from → $to 로 정정되었습니다. '
-            '지원자에게 안내가 필요할 수 있습니다.');
+        // [R7-전환 CPT-A] 문구에 **누구의 지원서인지**를 넣는다.
+        //   일괄 확정에서는 이 토스트가 여러 번 뜨는데, 날짜만 있으면
+        //   어느 건이 정정됐는지 관리자가 귀속시킬 수 없었다.
+        showPeriodRevisionNotice(
+          presented: DateTime.fromMillisecondsSinceEpoch(presented),
+          applied: DateTime.fromMillisecondsSinceEpoch(applied),
+          applicantName: periodRevision['applicantName'] as String?,
+        );
       }
     }
 

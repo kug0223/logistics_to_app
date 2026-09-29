@@ -14,6 +14,9 @@ import '../models/ui/day_staffing_row.dart';
 import '../models/core/business_model.dart';
 import '../models/core/work_type_model.dart';
 import '../utils/toast_helper.dart';
+// [CONTRACT-PERIOD-RULE] 기간 정정 고지 문구 — 화면에서 렌더해 볼 수 있도록
+//   서비스 밖에 둔다.
+import '../utils/period_revision_notice.dart';
 import '../utils/global_loading_controller.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';

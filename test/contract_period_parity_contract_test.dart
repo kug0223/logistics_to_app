@@ -279,8 +279,16 @@ void main() {
     test('CPP-P2 클라이언트가 그 응답을 사람이 읽는 문구로 띄운다', () {
       final svc = _src('lib/services/firestore/application_firestore.dart');
       expect(svc.contains("data['periodRevision']"), isTrue);
-      expect(svc.contains('계약 종료일이 \$from → \$to 로 정정되었습니다.'), isTrue);
-      expect(svc.contains('지원자에게 안내가 필요할 수 있습니다.'), isTrue);
+      // [R7-전환 CPT-A] 문구가 서비스 밖으로 나갔다 — 화면에서 렌더해 보려면
+      //   문자열이 서비스 안에 묻혀 있으면 안 된다. 그리고 **누구의
+      //   지원서인지**가 들어갔다(일괄 확정에서 귀속이 안 됐다).
+      expect(svc.contains('showPeriodRevisionNotice('), isTrue);
+      expect(svc.contains("applicantName: periodRevision['applicantName']"),
+          isTrue);
+      final notice = _src('lib/utils/period_revision_notice.dart');
+      expect(notice.contains('로 정정되었습니다.'), isTrue);
+      expect(notice.contains('지원자에게 안내가 필요할 수 있습니다.'), isTrue);
+      // 실제 렌더는 `contract_period_transition_render_test.dart` 가 한다.
     });
 
     test('CPP-P3 예전 식으로 만들어진 PENDING 값은 실제로 달라진다', () {
