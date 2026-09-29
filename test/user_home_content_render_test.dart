@@ -27,6 +27,8 @@ import 'package:ALfit/screens/user/user_home_screen.dart';
 import 'package:ALfit/screens/user/my_applications_screen.dart';
 import 'package:ALfit/screens/user/renewal_proposal_screen.dart';
 import 'package:ALfit/screens/user/user_tab_scope.dart';
+import 'package:ALfit/screens/user/dialogs/my_requests_dialog.dart';
+import 'package:ALfit/screens/common/job_posting_screen.dart';
 
 /// [R7-P2-1 P21-H/E] **실제 지원자 홈 위젯**을 콘텐츠와 함께 그린다.
 ///
@@ -383,6 +385,34 @@ Future<void> _pumpWithScope(
   for (var i = 0; i < 20; i++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
+}
+
+/// [R7-P2 잔여] 추천 카드용 TO — 내 city 이고 60일 안에 슬롯 날짜가 있어야
+///   추천 목록에 들어간다(`_getRecommendedTos`).
+TOModel _recTo({String id = 'toRec', String title = '물류센터 상하차'}) {
+  final d = _day(4);
+  final key = '${d.year}-${d.month.toString().padLeft(2, "0")}-${d.day.toString().padLeft(2, "0")}';
+  return TOModel(
+    id: id,
+    businessId: _biz,
+    businessName: '강남 물류센터',
+    businessCity: _UserProviderDouble.homeRegion.city,
+    type: 'flex',
+    title: title,
+    creatorUID: 'admin1',
+    status: TOStatus.active,
+    deadlineType: 'NONE',
+    hoursBeforeStart: 0,
+    workDetails: const [],
+    slotDateKeys: [key],
+    totalRequired: 4,
+    totalConfirmed: 0,
+    totalPending: 0,
+    isPublished: true,
+    publishMode: 'immediate',
+    createdAt: _day(-2),
+    statusUpdatedAt: _day(-2),
+  );
 }
 void main() {
   setUp(() {
@@ -1131,32 +1161,106 @@ void main() {
     expect(pushed.initialTabIndex, 6);
   });
 
-  testWidgets('UHR-37 (#12) 모두보기 는 선택한 날짜를 일자리 탭에 넘긴다',
-      (tester) async {
+  // [정정] 아래는 **추천 섹션의 `N개 모두보기 ›`** 이고, 표 A 의 #12 가 아니다.
+  //   #12 의 문구는 날짜 칩 아래 서는 `N월 N일 일자리 N개 보기` 다.
+  testWidgets('UHR-37 추천 섹션 모두보기는 일자리 탭으로 간다', (tester) async {
     final log = _ScopeLog();
     await _pumpWithScope(
       tester,
-      reads: _reads(applications: [
-        _shortTerm(id: 'a1', workDate: _day(2)),
-        _shortTerm(id: 'a2', workDate: _day(3)),
-        _shortTerm(id: 'a3', workDate: _day(4)),
-      ]),
+      reads: _reads(
+        applications: const [],
+        tos: [
+          _recTo(id: 'r1', title: '추천1'),
+          _recTo(id: 'r2', title: '추천2'),
+          _recTo(id: 'r3', title: '추천3'),
+        ],
+      ),
       log: log,
       size: const Size(390, 5200),
     );
 
-    // 날짜를 고르지 않은 상태의 모두보기 — 날짜 없이 일자리 탭으로만 간다.
+    // 3건 이상일 때만 서는 CTA 다.
     final all = find.textContaining('모두보기');
-    if (all.evaluate().isEmpty) {
-      // 이 상태에서 그 CTA 가 서지 않으면 그 사실을 남긴다 — 꾸미지 않는다.
-      expect(log.calls, isEmpty, reason: '모두보기 CTA 가 없는 상태');
-      return;
-    }
+    expect(all, findsWidgets);
     await tester.tap(all.first);
     await tester.pump(const Duration(milliseconds: 300));
 
-    // 날짜 미선택이면 날짜를 넘기지 않는다(같은 CTA 의 두 갈래).
-    expect(log.calls.where((c) => c.startsWith('switchToTab')), isNotEmpty);
+    // 날짜를 고르지 않았으므로 날짜를 넘기지 않는다.
+    expect(log.calls, contains('switchToTab:1'));
+    expect(
+        log.calls.where((c) => c.startsWith("switchToTabWithDate")), isEmpty);
+
+    // ── 표 A #12(`N월 N일 일자리 N개 보기` → switchToTabWithDate)는 NOT SEEN.
+    //    그 CTA 는 날짜 칩이 선택돼야 서고, 칩은 날짜 숫자 Text 로만 식별되며
+    //    그 날의 공고/확정 유무로 탭이 막혀 있다. 격리에서 칩 선택을 재현하지
+    //    못했고 억지로 맞추지 않았다. 소스 계약은 홈 한 곳에 있다:
+    //      _selectedDateChip != null
+    //        ? switchToTabWithDate(1, 그 날짜) : switchToTab(1)
+  });
+
+
+  testWidgets('UHR-38 (#4/#5) 두 카드는 같은 요청 인박스를 열고, 닫으면 홈으로 온다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: [
+          _shortTerm(
+              id: 'term2', workDate: _day(6), terminationStatus: 'PENDING'),
+        ],
+        idRequests: [_idRequest()],
+      ),
+    );
+
+    // 신분증 카드 → 인박스
+    await tester.tap(find.textContaining('신분증 열람을 요청했어요'));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(MyRequestsDialog), findsOneWidget);
+
+    // 닫기까지만 — 승인·거절·동의 버튼은 누르지 않는다.
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(MyRequestsDialog), findsNothing);
+    expect(find.textContaining('계약해지를 요청했어요'), findsOneWidget,
+        reason: '닫으면 홈의 두 카드가 그대로 있어야 한다');
+
+    // 해지 카드 → **같은** 인박스
+    await tester.tap(find.textContaining('계약해지를 요청했어요'));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(MyRequestsDialog), findsOneWidget);
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // ── 인박스 **안의** 카드 내용은 여기서 보지 않는다.
+    //    `MyRequestsDialog` 는 읽기 경계가 없고 싱글턴 4읽기를 Future.wait 한다
+    //    (스케줄 변경·신분증·해지·중간정산). 가짜 시계에서 그 future 는 끝나지
+    //    않으므로 인박스 내부는 **NOT SEEN** 으로 남긴다.
+  });
+
+
+  testWidgets('UHR-40 (#7) 추천 카드는 그 TO 를 스냅샷으로 연다', (tester) async {
+    final to = _recTo();
+    await _pump(tester, reads: _reads(applications: const [], tos: [to]));
+
+    final card = find.text(to.title);
+    expect(card, findsWidgets, reason: '추천 카드가 보여야 탭할 수 있다');
+    await tester.tap(card.first);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final pushed = tester.widget<JobPostingScreen>(
+        find.byType(JobPostingScreen, skipOffstage: false));
+    // 12경로 중 **이 하나만** 모델 스냅샷을 넘긴다.
+    expect(pushed.to?.id, to.id);
   });
 
 }
