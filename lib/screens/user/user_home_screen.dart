@@ -319,6 +319,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   DocumentCorrectionSurface _correctionSurface =
       DocumentCorrectionSurface.empty;
   bool _correctionsLoaded = false;
+  /// [H6-E] 재시도 중 — 같은 탭을 두 번 눌러 원격 호출을 겹치지 않게 한다.
+  bool _isReloadingCorrections = false;
 
   /// [RENEWAL-PROPOSAL-COMMITMENT] 지금 응답할 수 있는 연장 제안.
   ///
@@ -2621,11 +2623,104 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     );
   }
 
+  /// [R7-P2-1 후속 H6-E] 서류 보완 **확인 실패** 표면.
+  ///
+  ///   있는지 없는지 모른다고만 말한다 — pending Task 를 지어내지 않는다.
+  ///   다른 여섯 읽기와 확정 근무·수입 카드는 건드리지 않는다(홈 전체를
+  ///   오류 페이지로 바꾸지 않는다).
+  Widget _buildCorrectionFailureCard(BuildContext context, double s) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 * s, 0, 16 * s, 12 * s),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+        decoration: BoxDecoration(
+          color: AppColors.grey100,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.divider),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.cloud_off_rounded,
+                color: AppColors.textHint, size: 22 * s),
+            SizedBox(width: 12 * s),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('서류 요청을 확인하지 못했어요',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      )),
+                  SizedBox(height: 2 * s),
+                  Text('요청이 없다는 뜻은 아닙니다.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      )),
+                ],
+              ),
+            ),
+            SizedBox(width: 8 * s),
+            // 이 읽기 하나만 다시 부른다 — 홈 전체를 다시 읽지 않는다.
+            GestureDetector(
+              onTap: _isReloadingCorrections ? null : _reloadCorrections,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: 8 * s, vertical: 6 * s),
+                child: Text(
+                  _isReloadingCorrections ? '확인 중' : '다시 시도',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.infoDark,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 재시도 — **탭으로만** 다시 읽는다. polling·listener 를 만들지 않는다.
+  Future<void> _reloadCorrections() async {
+    if (_isReloadingCorrections) return;
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    setState(() => _isReloadingCorrections = true);
+    try {
+      final s = await _reads.documentCorrections();
+      if (!mounted) return;
+      // 계정이 바뀐 뒤 늦게 온 응답을 새 화면에 얹지 않는다.
+      if (context.read<UserProvider>().currentUser?.uid != uid) return;
+      setState(() {
+        _correctionSurface = s;
+        _correctionsLoaded = true;
+      });
+    } finally {
+      if (mounted) setState(() => _isReloadingCorrections = false);
+    }
+  }
+
   Widget _buildCorrectionTaskCard(BuildContext context, double s) {
     if (!_correctionsLoaded) return const SizedBox.shrink();
-    // 조회 실패는 "할 일 없음"이 아니다 — 다만 없는 할 일을 지어내지도
-    //   않는다. 카드를 숨기고 다음 조회를 기다린다.
-    if (_correctionSurface.loadFailed) return const SizedBox.shrink();
+    // [R7-P2-1 후속 H6-E] 조회 실패는 "할 일 없음"이 아니다.
+    //
+    //   전에는 카드를 숨기고 다음 조회를 기다렸다. 거짓말은 아니었지만
+    //   **아무 말도 하지 않았다** — 요청이 있는지 모르는 상태와 없는 상태가
+    //   화면에서 같아진다. 그리고 이 요청을 다시 보여주는 다른 화면이 없다:
+    //   내 서류 화면은 보완 요청을 읽지 않는다(grep 0건). 즉 실패하면
+    //   사용자는 어디서도 단서를 못 받고 다시 시도할 방법도 없었다.
+    //
+    //   그래서 **없는 할 일을 지어내지 않으면서** 확인에 실패했다고 말하고
+    //   다시 시도를 준다. 문구·아이콘은 홈의 기존 실패 어휘를 쓴다.
+    if (_correctionSurface.loadFailed) {
+      return _buildCorrectionFailureCard(context, s);
+    }
     final task = _correctionSurface.primary;
     if (task == null) return const SizedBox.shrink();
 

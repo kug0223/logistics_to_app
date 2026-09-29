@@ -141,7 +141,7 @@ untracked 8건(`scripts/r7-*.js`) 보존. 공유 DEV READ ONLY, CF·Rules·PROD�
 | 3 | 연장 제안 PENDING | **`first.id`** | `계약 연장 제안` · `확인하기` | `RenewalProposalScreen(focusProposalId:)` | **키 전달됨** | pop 후 `_loadHomeData()` | CODE + UHR-16 |
 | 4 | 신분증 열람 요청 PENDING | `uid` | `신분증 열람 요청` | `MyRequestsDialog.show(applicantUid:)` | 같은 uid 의 요청 인박스 | 닫은 뒤 `_reloadPendingIdRequests()` | CODE |
 | 5 | 계약해지 요청 PENDING | `uid` | `계약해지 응답` | 같은 `MyRequestsDialog` | 같은 인박스가 **신분증·해지 두 종류를 각각의 카드로** 렌더 — 홈의 두 카드를 합치지 말라는 주석과 모순 아님 | 위와 같음 | CODE(dialog 98~141행) |
-| 6 | 급여 보완 요청 | `uid` | 서류 보완 카드 | `DocumentManagementScreen()` | 내 문서 | pop | CODE |
+| 6 | 서류 보완 요청 | **없음(계정 스코프)** — CF 응답에 `applicationId` 가 없고 카드도 요청 키를 넘기지 않는다 | 서류 보완 카드 / **확인 실패 카드** | `DocumentManagementScreen()` (**인자 0개**) | 목적지가 provider·세무만 다시 읽는다 — **보완 요청은 읽지 않는다**. 대상 서류는 계정당 1개(신분증·통장사본)라 사업장이 달라도 고칠 파일은 같다 | pop | **실행** UHR-43·45·47~54 + DDT-1~5 |
 | 7 | 추천 공고 | **`to`(모델 전체)** | 추천 카드 | `JobPostingScreen(to:, workDetails:)` | **스냅샷 전달** — 목록이 낡아도 연 대상은 그 TO | 결과 true 면 `_loadHomeData()` | CODE |
 | 8 | 초대 INVITED N건 | 탭 index 6 | 초대 배너 | `MyApplicationsScreen(initialTabIndex: 6)` | 초대 탭 | pop 후 `_loadHomeData()` | CODE |
 | 9 | 수입(월) | `year`·`month` | `N년 N월 ›` | `IncomeDetailScreen(initialYear:, initialMonth:)` | **키 전달됨** | pop | CODE |
@@ -226,8 +226,8 @@ canonical dispatcher 에 넘어가고, 근로자 목적지(`attendance_check`·`
 |---|---|---|---|---|---|---|
 | P21-N | 종료 | 종료(URN-1~3) | 종료 | 없음 | 대기 | 실기기 FCM cold-start |
 | P21-H | 종료 | 종료 | 종료(6조합) | 없음 | 대기 | — |
-| P21-R | 종료(표 A) | **12/12 실행** — #1~#12 (UHR-31~46, 스냅샷 늦은 응답 포함) | 종료 | 없음 | 대기 | 보완 없음/실패 구별 **VERIFY** |
-| P21-E | 종료 | 종료(UHR-10·12·14·15) | 종료 | 없음 | 대기 | NO_PERMISSION(도달 불가) |
+| P21-R | 종료(표 A) | **12/12 실행** — #1~#12 (UHR-31~46, 스냅샷 늦은 응답 포함) | 종료 + **#6 목적지 본문 실측**(DDT-1~4) | 없음 | 대기 | #6 요청 문맥이 목적지에 없음(강조·나머지 건수) |
+| P21-E | 종료 | 종료(UHR-10·12·14·15) + **보완 읽기 uid 가드**(UHR-53·54, 대조 포함) | 종료 | 없음 | 대기 | NO_PERMISSION(도달 불가) |
 | P21-G | 종료(실측표) | N/A(전환 안 함) | N/A | 없음 | 대기 | — |
 
 **BLOCKER 기록**
@@ -1504,3 +1504,67 @@ UHR-16 도 렌더였다. 실제 잔여는 **10경로**였다.
 스냅샷 늦은 응답 위험 경로도 함께) · #12 날짜 동반 갈래 · 인박스 내부 탭.
 
 상세: `docs/r7-p2-residual-home-cta-schedule.md`. **production 수정 0.**
+
+---
+
+## [R7-P2-1 후속] 서류 보완 — 확인 실패의 표면과 목적지 대상 (2026-09-29)
+
+### H6-E — 실패를 "할 일 없음"과 가른다 (PATCH)
+
+4회차에서 "없음과 실패가 홈에서 구별되지 않는다"를 관찰하고, 거짓 문구는
+없으므로 owner(내 서류 화면)에 넘겼다. **그 전제가 틀렸다.**
+`document_management_screen.dart` 는 보완 요청을 **아예 읽지 않는다**
+(`PayrollCorrection|DocumentCorrection|loadMine|보완` grep 0건). 상시 진입
+경로는 두 곳(`user_my_tab.dart:85`, `settings_screen.dart:994`) 있지만, 그
+화면에 가도 요청 얘기는 없다. 즉 조회가 실패하면 사용자는 **어디서도 단서를
+받지 못하고 다시 시도할 방법도 없었다** → NO PATCH 조건 미충족 → 고쳤다.
+
+홈의 기존 실패 어휘(`cloud_off_rounded` + "다시 시도")를 그대로 써서
+`_buildCorrectionFailureCard` 를 세웠다: **"서류 요청을 확인하지 못했어요 /
+요청이 없다는 뜻은 아닙니다."** 없는 할 일을 지어내지 않고 모른다고만 말한다.
+`_reloadCorrections()` 는 **그 읽기 하나만** 다시 부른다 — polling·listener
+없음, 재진입 락(`_isReloadingCorrections`)으로 중복 원격 호출 없음.
+
+| 전이 | 결과 | 증거 |
+|---|---|---|
+| 정상 없음 | 아무것도 서지 않음 (문구 없음) | UHR-48 |
+| 이 읽기만 실패 | 확인 실패 카드 + 다시 시도, **다른 섹션 정상** | UHR-45(갱신) · UHR-47 |
+| 실패 → 재시도 → 진행 요청 | 배너 사라지고 할 일 카드. `corr` 호출 **2**, `apps` 호출 **불변** | UHR-49 |
+| 실패 → 재시도 → 정상 없음 | 조용해지고 **허위 pending Task 없음** | UHR-50 |
+| 진행 중 두 번 탭 | "확인 중" 표시, 호출 **2 유지** | UHR-51 |
+| 재시도 중 계정 전환 | 늦은 응답이 새 화면에 **얹히지 않음** | UHR-53 |
+| 첫 조회가 늦게 실패 + 계정 전환 | 얹히지 않음 — **같은 조건에서 계정 유지 시에는 뜬다**(대조) | UHR-54 |
+| 320dp × 2.0 | 두 문구·버튼 모두 폭 안, 예외 없음 | UHR-52 |
+
+**수정 전 반례는 UHR-45 가 들고 있었다** — "실패도 카드가 없다"가 원래 기대값
+이었고, 이번에 정상 기대값으로 **갱신**했다(삭제 아님). 모델의
+`DocumentCorrectionSurface.loaded` 공개 생성자는 4회차에서 이미 열었다.
+
+### H6-D — 목적지 본문·대상 일치 (실측, 수정 1건)
+
+4회차에는 목적지가 격리에서 `[firebase_storage/no-bucket]` 으로 깨져 **route
+푸시만** 셌다. 원인은 정확히 하나였다: `DocumentManagementScreen` 이
+`StorageService()` 를 **State 필드로** 만들고 그 안에서
+`FirebaseStorage.instance` 를 잡는다. **fake `FirebaseOptions` 에
+`storageBucket` 한 칸을 채우니 본문이 그대로 렌더됐다** — 하네스 설정 문제이지
+제품 결함이 아니었다. 새 하네스: `test/document_destination_target_test.dart`.
+
+| 축 | 실측 |
+|---|---|
+| route 인자 | **0개**. CF 응답에도 `applicationId` 가 없다(요청 문서에는 있으나 매핑에서 제외) |
+| 목적지 읽기 | `_loadUserDocuments`(provider) + `_loadTaxIdentity`. **보완 요청 미조회** |
+| 본문 | `신원 확인 → 신분증`, `급여정보 준비 → 급여 계좌` 두 축 + 각 등록 버튼 (DDT-1) |
+| 두 사업장 동시 가능? | **가능.** CF 는 `workerUid + status=OPEN` 만 걸고 `businessId` 로 좁히지 않는다(limit 20). `primary` 는 지급(PAYROLL) 우선, 나머지는 "외 N건" (DDT-5) |
+| A→B 기본값 위험 | **구조적으로 없다.** 목적지는 계정 스코프 한 화면이고 두 서류는 계정당 1개다. 사업장이 달라도 고칠 파일이 같다 |
+| 이미 올린 상태 | 배지 **`제출 완료`**(승인 아님 — 정책과 일치), **`다시 등록하기`·`계좌 변경하기`** 상설 제공 (DDT-3) |
+
+**남은 결손은 행동이 아니라 문맥이다.** 목적지의 "왜 필요한가"는 요청과
+무관한 상설 문장이고, 어느 사업장이 무엇을 왜 요청했는지·"외 N건"의 나머지가
+무엇인지는 홈 카드에만 있다. owner 는 그 화면이며 이번 diff 범위가 아니다.
+
+**수정 1건(측정으로 발견):** 320dp·글자 2.0 에서 `_flatPrimaryButton` 의 Row 가
+0.3px·30px 넘쳤다(`신분증 등록하기` 등). 라벨을 `Flexible` + ellipsis 로 감쌌다.
+DDT-4 가 수정 전 실패 → 수정 후 통과로 그 차이를 잡는다.
+
+영향집합 **328 PASS / 0 FAIL**, `flutter analyze lib test` No issues.
+서버 쓰기·업로드·승인 **0**. **DEVICE·USER OBSERVATION 은 OPEN.**

@@ -1799,9 +1799,16 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               Icon(icon, size: 18),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             ],
-            Text(text,
-                style: ResponsiveHelper.bodyStyle(context,
-                    color: Colors.white, fontWeight: FontWeight.w600)),
+            // [R7-P2-1 후속 H6-D] 320dp·글자 2.0 에서 '신분증 등록하기' 가
+            //   Row 를 0.3px~30px 넘겼다(측정). 아이콘과 함께 놓이는 라벨은
+            //   남는 폭 안에서 줄어들게 한다 — 버튼이 잘려 나가지 않는다.
+            Flexible(
+              child: Text(text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: ResponsiveHelper.bodyStyle(context,
+                      color: Colors.white, fontWeight: FontWeight.w600)),
+            ),
           ],
         ),
       ),

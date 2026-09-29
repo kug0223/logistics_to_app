@@ -245,10 +245,13 @@ UserHomeReads _reads({
   List<List<TOModel>>? tosByCall,
   /// [H6] 서류 보완 surface — 기본값은 '요청 없음'(기존과 같다).
   DocumentCorrectionSurface? corrections,
+  /// [H6-E] n 번째 보완 응답 — 실패 → 재시도 전이를 재현한다.
+  List<DocumentCorrectionSurface>? correctionsByCall,
 }) {
   var appCall = 0;
   var renewalCall = 0;
   var tosCall = 0;
+  var corrCall = 0;
   return UserHomeReads(
     myApplications: (uid) {
       if (calls != null) calls['apps'] = (calls['apps'] ?? 0) + 1;
@@ -286,8 +289,14 @@ UserHomeReads _reads({
     invalidatePublishedTOsCache: () {},
     // [H6] 서류 보완은 홈이 `unawaited` 로 따로 띄우는 **독립 읽기**다 —
     //   다른 여섯 읽기의 실패·지연에 종속시키지 않는다.
-    documentCorrections: () async =>
-        corrections ?? DocumentCorrectionSurface.empty,
+    documentCorrections: () async {
+      if (calls != null) calls['corr'] = (calls['corr'] ?? 0) + 1;
+      final i = corrCall++;
+      if (correctionsByCall != null && i < correctionsByCall.length) {
+        return correctionsByCall[i];
+      }
+      return corrections ?? DocumentCorrectionSurface.empty;
+    },
   );
 }
 
@@ -1411,8 +1420,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     // 목적지는 계정 스코프다 — 요청 키를 넘기지 않고 내 서류가 다시 읽는다.
-    //   그 화면은 격리에서 Storage 버킷을 못 찾아 빌드가 깨진다. 그래도
+    //   그 화면은 **이 하네스에서만** Storage 버킷을 못 찾아 빌드가 깨진다
+    //   (아래 fake `FirebaseOptions` 에 `storageBucket` 이 없다). 그래도
     //   **route 가 푸시됐다는 사실**은 남으므로 그것을 센다.
+    //   목적지 본문·대상 일치는 버킷을 채운 별도 하네스에서 실제로 렌더해
+    //   확인했다 — `test/document_destination_target_test.dart` (H6-D).
     expect(routes.pushed.length, greaterThan(1),
         reason: '카드를 눌렀으면 새 화면이 푸시돼야 한다');
     expect(tester.takeException().toString(), contains('no-bucket'),
@@ -1429,20 +1441,21 @@ void main() {
     expect(find.textContaining('다시 등록해주세요'), findsNothing);
   });
 
-  testWidgets('UHR-45 (#6) 조회 실패도 카드가 없다 — 없음과 같은 말이 된다',
+  testWidgets('UHR-45 (#6→H6-E) 조회 실패는 실패라고 말한다 — 없음과 다르다',
       (tester) async {
     await _pump(tester,
         reads: _reads(
             applications: const [],
             corrections: DocumentCorrectionSurface.failed));
 
-    // 홈은 실패를 **숨기는** 쪽을 택했다(소스 주석 그대로).
-    expect(find.text('등록하기'), findsNothing);
+    // ── [R7-P2-1 후속 H6-E] 갱신. 이전 기대값은 "실패도 카드가 없다" 였다.
+    //    그때 남긴 관찰: 없음(UHR-44)과 실패가 화면에서 **구별되지 않는다.**
+    //    owner 로 지목했던 내 서류 화면이 이 읽기를 **아예 하지 않아서**
+    //    (grep 0건) 사용자는 어디서도 단서를 못 받았다 → 고쳤다.
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
 
-    // ── 관찰 기록: 없음(UHR-44)과 실패(여기)가 **화면에서 구별되지 않는다.**
-    //    다만 홈이 "보완할 서류가 없습니다" 라고 **말하지는 않는다** —
-    //    아무 말도 하지 않을 뿐이다. 거짓 단정은 아니므로 이번에 고치지 않고
-    //    사실만 남긴다(내 서류 화면이 같은 질문의 owner 다).
+    // 여전히 없는 할 일을 지어내지 않는다.
+    expect(find.text('등록하기'), findsNothing);
     expect(find.textContaining('보완할 서류가 없'), findsNothing);
   });
 
@@ -1463,4 +1476,259 @@ void main() {
     expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
   });
 
+
+
+  // ══════════════════════════════════════════════════════════
+  // [R7-P2-1 후속 H6-E] 확인 실패 · 정상 없음 · 재시도
+  //   UHR-45 가 수정 전 반례(실패 시 아무것도 서지 않음)를 대체했다.
+  // ══════════════════════════════════════════════════════════
+
+  testWidgets('UHR-47 (H6-E) 이 읽기만 실패해도 다른 섹션은 정상이다',
+      (tester) async {
+    await _pump(tester,
+        reads: _reads(
+            applications: [_shortTerm(id: 'ok1', workDate: _day(2))],
+            corrections: DocumentCorrectionSurface.failed));
+
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
+    expect(find.text('요청이 없다는 뜻은 아닙니다.'), findsOneWidget);
+    expect(find.text('다시 시도'), findsWidgets);
+
+    // 홈 전체를 오류 페이지로 바꾸지 않는다 — 지원 현황은 멀쩡하다.
+    expect(find.textContaining('지원 현황을 불러오지 못했어요'), findsNothing);
+  });
+
+  testWidgets('UHR-48 (H6-E) 정상 없음에는 그 문구가 없다 (양성 대조)',
+      (tester) async {
+    await _pump(tester,
+        reads: _reads(
+            applications: const [],
+            corrections: DocumentCorrectionSurface.empty));
+
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
+    expect(find.text('다시 시도'), findsNothing);
+    expect(find.text('등록하기'), findsNothing);
+  });
+
+  testWidgets('UHR-49 (H6-E) 실패 → 다시 시도 → 진행 요청. 그 읽기만 다시 부른다',
+      (tester) async {
+    final calls = <String, int>{};
+    await _pump(
+      tester,
+      reads: _reads(
+        applications: const [],
+        calls: calls,
+        correctionsByCall: [
+          DocumentCorrectionSurface.failed,
+          DocumentCorrectionSurface.loaded([_correction()]),
+        ],
+      ),
+    );
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
+    expect(calls['corr'], 1);
+    final appsBefore = calls['apps'];
+
+    final retry = find.text('다시 시도');
+    await tester.ensureVisible(retry.first);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(retry.first);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
+    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
+
+    // 재시도는 **이 읽기 하나**만 다시 부른다 — 홈 전체 재조회가 아니다.
+    expect(calls['corr'], 2);
+    expect(calls['apps'], appsBefore);
+  });
+
+  testWidgets('UHR-50 (H6-E) 실패 → 다시 시도 → 정상 없음이면 조용해진다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads(applications: const [], correctionsByCall: [
+        DocumentCorrectionSurface.failed,
+        DocumentCorrectionSurface.empty,
+      ]),
+    );
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
+
+    final retry = find.text('다시 시도');
+    await tester.ensureVisible(retry.first);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(retry.first);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // 실패 배너가 남지 않고, 없는 할 일도 지어내지 않는다.
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
+    expect(find.text('등록하기'), findsNothing);
+  });
+
+  testWidgets('UHR-51 (H6-E) 재시도를 두 번 눌러도 원격 호출이 겹치지 않는다',
+      (tester) async {
+    final calls = <String, int>{};
+    final gate = Completer<DocumentCorrectionSurface>();
+    var corr = 0;
+    final reads = UserHomeReads(
+      myApplications: (uid) async => const <ApplicationModel>[],
+      myMonthlyAttendances: (
+              {required String userId,
+              required int year,
+              required int month}) async =>
+          const <AttendanceModel>[],
+      publishedTOs: () async => const <TOModel>[],
+      pendingIdCardRequests: (uid) async =>
+          const <IdCardAccessRequestModel>[],
+      myRenewalProposals: () async => const <RenewalProposalModel>[],
+      businessById: (id) async => _business(),
+      invalidatePublishedTOsCache: () {},
+      documentCorrections: () {
+        calls['corr'] = (calls['corr'] ?? 0) + 1;
+        if (corr++ == 0) {
+          return Future<DocumentCorrectionSurface>.value(
+              DocumentCorrectionSurface.failed);
+        }
+        return gate.future; // 두 번째 호출을 매달아 둔다
+      },
+    );
+    await _pump(tester, reads: reads);
+    expect(calls['corr'], 1);
+
+    final retry = find.text('다시 시도');
+    await tester.ensureVisible(retry.first);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(retry.first);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 진행 중임을 말하고, 두 번째 탭은 새 호출을 만들지 않는다.
+    expect(find.text('확인 중'), findsOneWidget);
+    await tester.tap(find.text('확인 중'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(calls['corr'], 2);
+
+    gate.complete(DocumentCorrectionSurface.loaded([_correction()]));
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('신분증을 다시 등록해주세요.'), findsOneWidget);
+    expect(calls['corr'], 2);
+  });
+
+  testWidgets('UHR-52 (H6-E) 320dp × 2.0 — 오류 문구와 재시도가 잘리지 않는다',
+      (tester) async {
+    await _pump(tester,
+        reads: _reads(
+            applications: const [],
+            corrections: DocumentCorrectionSurface.failed),
+        size: const Size(320, 3200),
+        textScale: 2.0);
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
+    expect(find.text('다시 시도'), findsWidgets);
+
+    // 두 문구와 버튼이 모두 실제로 그려졌는지 — 폭 안에 들어왔는지 본다.
+    for (final f in ['서류 요청을 확인하지 못했어요', '요청이 없다는 뜻은 아닙니다.', '다시 시도']) {
+      final box = tester.getRect(find.text(f).first);
+      expect(box.width, lessThanOrEqualTo(320),
+          reason: '"$f" 가 320dp 밖으로 나갔다');
+    }
+  });
+
+
+
+  testWidgets('UHR-53 (H6-E) 재시도 중 계정이 바뀌면 늦은 응답을 얹지 않는다',
+      (tester) async {
+    final gate = Completer<DocumentCorrectionSurface>();
+    var corr = 0;
+    final provider = _UserProviderDouble(uid: 'u1');
+    await _pump(
+      tester,
+      provider: provider,
+      reads: _correctionOnlyReads(() {
+        if (corr++ == 0) {
+          return Future<DocumentCorrectionSurface>.value(
+              DocumentCorrectionSurface.failed);
+        }
+        return gate.future;
+      }),
+    );
+
+    final retry = find.text('다시 시도');
+    await tester.ensureVisible(retry.first);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(retry.first);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 응답이 오기 전에 계정이 바뀐다.
+    provider.switchAccount('u2');
+    await tester.pump(const Duration(milliseconds: 100));
+    gate.complete(DocumentCorrectionSurface.loaded([_correction()]));
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // u1 의 응답이 u2 의 화면에 할 일로 서지 않는다.
+    expect(find.text('신분증을 다시 등록해주세요.'), findsNothing);
+    expect(find.text('등록하기'), findsNothing);
+  });
+
+  testWidgets('UHR-54 (H6-E) 첫 조회가 늦게 실패해도 계정이 바뀌면 얹히지 않는다',
+      (tester) async {
+    final gate = Completer<DocumentCorrectionSurface>();
+    final provider = _UserProviderDouble(uid: 'u1');
+    await _pump(tester,
+        provider: provider, reads: _correctionOnlyReads(() => gate.future));
+
+    // 아직 아무 말도 하지 않는다 — 모르는 동안은 침묵이 맞다.
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
+
+    provider.switchAccount('u2');
+    await tester.pump(const Duration(milliseconds: 100));
+    gate.complete(DocumentCorrectionSurface.failed);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // u1 의 실패를 u2 의 화면에 옮겨 적지 않는다.
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsNothing);
+
+    // ── 대조: 계정이 그대로면 **같은 늦은 실패가 화면에 선다.**
+    //    위 findsNothing 이 "늦은 응답은 원래 안 보인다" 때문이 아니라
+    //    uid 가드 때문임을 가른다.
+    final gate2 = Completer<DocumentCorrectionSurface>();
+    await _pump(tester,
+        provider: _UserProviderDouble(uid: 'u1'),
+        reads: _correctionOnlyReads(() => gate2.future));
+    gate2.complete(DocumentCorrectionSurface.failed);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('서류 요청을 확인하지 못했어요'), findsOneWidget);
+  });
+
 }
+
+/// [H6-E] 보완 읽기 하나만 제어하고 나머지 여섯은 조용히 비운다 —
+///   pending·늦은 응답 시나리오에서 다른 읽기의 타이밍이 섞이지 않게 한다.
+UserHomeReads _correctionOnlyReads(
+        Future<DocumentCorrectionSurface> Function() corrections) =>
+    UserHomeReads(
+      myApplications: (uid) async => const <ApplicationModel>[],
+      myMonthlyAttendances: (
+              {required String userId,
+              required int year,
+              required int month}) async =>
+          const <AttendanceModel>[],
+      publishedTOs: () async => const <TOModel>[],
+      pendingIdCardRequests: (uid) async =>
+          const <IdCardAccessRequestModel>[],
+      myRenewalProposals: () async => const <RenewalProposalModel>[],
+      businessById: (id) async => _business(),
+      invalidatePublishedTOsCache: () {},
+      documentCorrections: corrections,
+    );
