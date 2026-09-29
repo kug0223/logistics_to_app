@@ -2047,7 +2047,20 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               lockedHint: r.workTypesUnknown
                   ? '상태를 확인하지 못했어요'
                   : '사업장 등록 후 가능',
-              pendingHint: r.workTypesUnknown ? '상태를 확인하지 못했어요' : null,
+              // [P4.4-CP7-01] 승인 전에는 업무를 등록해도 이 칸이 완료로
+              //   바뀌지 않는다. `workTypesReady` 는 **승인된** 사업장만 담은
+              //   readinessMap 에서 나오기 때문이다(`_loadPostingReadiness` 가
+              //   `approvedBizs` 만 조회한다). 그래서 신규 관리자는 업무를
+              //   등록하고 돌아와도 같은 줄이 미완료로 남아 있는 것을 보고,
+              //   자기가 뭘 잘못했는지 몰라 같은 화면을 다시 연다.
+              //   막힌 이유는 업무가 아니라 **승인**이라는 사실을 말해 준다.
+              //   (아직 등록하지 않은 경우에도 참이다 — 완료 표시가 승인
+              //    이후에 붙는다는 말이지, 이미 했다는 말이 아니다.)
+              pendingHint: r.workTypesUnknown
+                  ? '상태를 확인하지 못했어요'
+                  : (r.hasAnyBusiness && !r.businessReady
+                      ? '사업장 승인 후 반영돼요'
+                      : null),
               onTap: wtTarget == null
                   ? null
                   : () => _safeNavigate(() async {

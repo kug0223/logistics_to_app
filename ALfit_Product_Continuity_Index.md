@@ -2,6 +2,60 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.4 CP0/1/7** (first-run golden path)
+
+## 0-AAA. IN PROGRESS — R7-P4.4 first-run golden path
+
+기준 `849a54a`. **기기 단계는 사용자와 함께 진행 중** — 아래는 기기가 필요 없는
+checkpoint 만 먼저 닫은 것이다(§24·§33).
+
+**DEV 현재 위치(실측):** BUSINESS_ADMIN **1건**(`managedBusinessIds=0` ·
+`seal=N` · `license=N` · `businessNumber=null`) · `businesses` **0건** ·
+`tos` **0건** · `Storage businesses/*` **0개**. → 사용자는 **CHECKPOINT 0/1 지점**.
+
+| CP | 범위 | CODE | DEV | DEVICE |
+|---|---|---|---|---|
+| 0 회원가입 | role·초기값 | **READ 완료** | 실측 1건 | 기존 계정 |
+| 1 Home 준비 | 4칸 ↔ CreateTO | **READ 완료** | — | NOT SEEN |
+| 2 사업장 | P4.3A/B 재사용 | CLOSED(직전) | 0건 | **대기** |
+| 3 승인 | 상태 매핑 | READ 완료 | 표본 0 | 대기 |
+| 4~6 업무·템플릿·인감 | — | 미착수 | — | 대기 |
+| 7 readiness parity | Home↔CreateTO↔서버 | **CLOSED** | — | NOT SEEN |
+| 8~9 첫 공고·투영 | — | 미착수 | — | 대기 |
+
+### CHECKPOINT 7 — parity 표 (§11)
+
+| 준비 항목 | Home predicate | CreateTO predicate | same truth |
+|---|---|---|---|
+| 사업장 | `any(r.isApproved && r.hasLicense)` | `_businessApproved && _hasLicense` | **✔** |
+| 업무 | `hasReadyBusiness(map)` (같은 사업장에서 승인·등록증·업무) | `_workTypesReady` (선택 사업장) | **✔** |
+| 계약서 템플릿 | `ContractTemplateModel.selectableForNewContract` | **같은 함수** | **✔** |
+| 인감/서명 | `isSubAdmin \|\| sealBase64.isNotEmpty` | `_hasSeal` (SubAdmin 면제) | **✔** |
+
+**§11-1 승인 포함: 예.** `businessReady` 가 `isApproved` 를 요구하므로
+"업무·템플릿·인감 다 있는데 승인 대기" 상태가 READY 로 보이지 않는다.
+
+**서버 gate(`assertBusinessPostingReady`)는 3조건**(승인·등록증·활성업무) —
+템플릿·인감은 없다. 클라이언트가 **더 엄격**한 방향이라 "가능하다고 해 놓고
+서버가 거절" 하는 오류는 없다. 반대 방향 gap 은 아래 잔여로 기록.
+
+### 발견 (CP7) — `[P4.4-CP7-01]` CORRECTION · 수정함
+
+`_loadPostingReadiness` 는 **승인된 사업장만** 조회한다(`approvedBizs`).
+그래서 **미승인 사업장에 업무를 등록해도 '업무 등록' 칸이 완료로 바뀌지 않는다.**
+그런데 그 이유를 어디서도 말하지 않아(`pendingHint: null`), 신규 관리자는
+업무를 등록하고 돌아와도 같은 줄이 미완료인 것을 보고 같은 화면을 다시 연다.
+→ `'사업장 승인 후 반영돼요'`. **완료로 올려서 해결하지 않았다** — 그러면
+공고를 낼 수 없는 상태가 "준비 완료" 가 된다.
+
+### 발견 (CP0) — 기록만, 수정 안 함
+
+회원가입이 `signUp(...)` 에 **`businessNumber` 를 넘기지 않는다**(화면에 필드 없음).
+DEV 실측 `businessNumber=null` 과 일치. 그 결과
+`callableCheckBusinessNumberDuplicate` 는 `users.businessNumber` 로 조회하므로
+**신규 계정에서는 항상 빈 결과** — 중복 체크가 사실상 동작하지 않는다.
+→ `[OPEN-BUSINESS-REGISTRATION-VERIFICATION-INTEGRITY]` 에 병합.
+
 > 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.3B** (사업장 서류 precheck · 첨부 수명)
 
 ## 0-AA. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.3B
