@@ -581,6 +581,24 @@ class TOModel {
   /// 예: 8/17 + 1개월 → 9/17 - 1일 = 9/16
   ///     8/17 + 1년   → 2027/8/17 - 1일 = 2027/8/16
   ///     1/31 + 1개월 → 2/28(clamp) - 1일 = 2/27
+  ///
+  /// [OPEN-CONTRACT-MONTHEND] **이 값은 계약 만료일로 저장되지 않는다.**
+  ///
+  ///   여기서 나온 날짜가 가는 곳은 두 군데다 — 지원 화면의 기간 카드
+  ///   표시, 그리고 `application.workEndDate` 의 **최초(PENDING)** 저장값.
+  ///   확정 시점에 `callableConfirmApplication` 이 TO 의
+  ///   `contractPeriodType` 으로 **다시 계산해 덮어쓴다**([M2-FIX] —
+  ///   "클라이언트 조작값 무시, 항상 서버 TO 기준 계산").
+  ///
+  ///   그 서버 식은 `d.setMonth(d.getMonth() + N)` 이고 **`- 1일` 도 월말
+  ///   clamp 도 없다.** 그래서 같은 입력에 다른 답이 나온다:
+  ///     1/1  + 1개월 → 여기 1/31, 서버 2/1   (1일 차)
+  ///     1/31 + 1개월 → 여기 2/27, 서버 3/3   (4일 차)
+  ///   계약서 제2조·만료 알림·좌석/근무 판정은 모두 **서버 값**을 쓴다.
+  ///
+  ///   어느 쪽으로 맞출지는 법률·제품 결정이라 이 함수를 고치지 않았다.
+  ///   전수 대조는 `test/contract_period_parity_contract_test.dart`,
+  ///   판정·영향은 `docs/r7-contract-monthend-audit.md`.
   DateTime computeContractEndDate(DateTime startDate) {
     switch (contractPeriodType) {
       case '15days':

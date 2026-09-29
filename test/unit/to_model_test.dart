@@ -205,11 +205,19 @@ void main() {
     test('1month: 2026-01-31 (월말 시작) → 2026-02-27 (clamp 후 -1일)', () {
       // 구현이 규칙으로 적어 둔 값: 1/31 + 1개월 → 2/28(clamp) - 1일 = 2/27.
       //
-      // [OPEN-CONTRACT-MONTHEND] 이 한 표본만은 **제품 질문**이 남는다.
-      //   민법 160조 ③(최종 월에 해당일이 없으면 그 월의 말일로 만료)을
-      //   따르면 만료일은 2/28 이다. 지금은 2/27 이다. 법률 정책을 이
-      //   자리에서 새로 정하지 않는다 — 구현이 명시한 현재 규칙을
-      //   고정하고 차이를 기록으로 남긴다(owner: 계약 도메인).
+      // [OPEN-CONTRACT-MONTHEND] **앞 회차 설명을 정정한다.** 그때
+      //   "구현이 명시한 현재 규칙" 이라고 적었는데, 이 함수의 값은
+      //   계약 만료일로 **저장되지 않는다.** 확정 시
+      //   `callableConfirmApplication` 이 자기 식으로 다시 계산해
+      //   `workEndDate` 를 덮어쓴다([M2-FIX]). 그 서버 식에는 `- 1일` 도
+      //   월말 clamp 도 없어서 같은 입력에 **2026-03-03** 이 나온다.
+      //   계약서 제2조·만료 알림·좌석 판정은 모두 그 값을 쓴다.
+      //
+      //   즉 이 함수가 만드는 것은 **지원 화면 표시값과 PENDING 저장값**
+      //   이고, 열린 질문은 "2/27 vs 2/28" 이 아니라 **두 식의 불일치**다.
+      //   전수 대조와 판정은 `test/contract_period_parity_contract_test.dart`
+      //   와 `docs/r7-contract-monthend-audit.md` 에 있다.
+      //   여기서는 이 함수의 값만 고정한다(식은 고치지 않았다).
       final m = _make(type: TOType.contract, contractPeriodType: '1month');
       final result = m.computeContractEndDate(DateTime(2026, 1, 31));
       expect(result, equals(DateTime(2026, 2, 27)));
