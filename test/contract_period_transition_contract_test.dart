@@ -105,20 +105,32 @@ void main() {
       expect(cf.contains('d.setMonth(d.getMonth() + 1)'), isFalse);
     });
 
-    test('CPX-A2 마지막 빌드 산출물은 v1 이다 — 아직 배포되지 않았다', () {
-      // `firebase deploy` 가 올리는 것은 이 산출물이다. v2 소스가 들어오기
-      // 전에 만들어졌고, 새 모듈은 컴파일된 적조차 없다.
+    test('CPX-A2 빌드 산출물이 v2 다 — 배포된 것이 이것이다', () {
+      // [R7-P4.2 갱신] 이 셀은 배포 **전에** 쓰였고 그때는 맞았다 —
+      //   "산출물은 아직 v1 이고 새 모듈은 컴파일된 적도 없다".
+      //   그 뒤 표준 빌드로 lib 을 새로 만들고 `callableConfirmApplication`
+      //   하나를 DEV 에 배포했다(소스 업로드 2026-09-29T07:02Z).
+      //   그래서 기대를 **현재 사실로 옮긴다** — 셀을 지우지 않는다.
+      //   지키는 성질은 그대로다: `firebase deploy` 가 올리는 것은 소스가
+      //   아니라 **이 산출물**이므로, 산출물에서 규칙을 확인한다.
       final lib = File('functions/lib/index.js');
       if (!lib.existsSync()) {
         markTestSkipped('functions/lib 미빌드 — 배포 산출물 없음');
         return;
       }
       final js = lib.readAsStringSync();
-      expect(js.contains('setMonth(d.getMonth() + 1)'), isTrue,
-          reason: '산출물에 v1 식이 들어 있다');
-      expect(js.contains('contractPeriodEndMs'), isFalse);
-      expect(File('functions/lib/contract_period.js').existsSync(), isFalse,
-          reason: 'v2 모듈은 컴파일된 적이 없다');
+      expect(js.contains('contractPeriodEndMs'), isTrue,
+          reason: '컴파일된 확정 핸들러가 규칙 모듈을 부른다');
+      for (final gone in const [
+        'setMonth(d.getMonth() + 1)',
+        'setFullYear(d.getFullYear() + 1)',
+        'setDate(d.getDate() + 15)',
+      ]) {
+        expect(js.contains(gone), isFalse, reason: '산출물에 v1 식 잔존: $gone');
+      }
+      final mod = File('functions/lib/contract_period.js');
+      expect(mod.existsSync(), isTrue, reason: 'v2 모듈이 컴파일돼 있다');
+      expect(mod.readAsStringSync().contains('v2-kst-civil-160'), isTrue);
     });
 
     test('CPX-A3 클라이언트는 규칙 버전을 선언해 보내지 않는다', () {

@@ -184,6 +184,14 @@ class WorkforceController extends ChangeNotifier {
   }
 
   // 사업장 이름 캐시 — items가 0건이어도 마지막 성공 로드의 이름 유지 (scope chip용)
+  /// [P4.2-SETUP-03] 마지막 조회에서 볼 수 있는 사업장이 0개였는가.
+  ///
+  ///   `_scopeOf` 가 내린 판정을 그대로 보관한다. 화면이 "공고가 0개" 와
+  ///   "아직 공고를 만들 수 있는 상태가 아님" 을 가르는 데 쓴다 —
+  ///   같은 0건이라도 다음 행동이 다르다.
+  bool _scopeEmpty = false;
+  bool get scopeEmpty => _scopeEmpty;
+
   List<String> _knownBusinessNames = [];
 
   /// 마지막 성공 로드에서 확보한 사업장 이름 목록.
@@ -477,8 +485,14 @@ class WorkforceController extends ChangeNotifier {
 
       if (businessIds != null && businessIds.isEmpty) {
         _items = [];
+        // [P4.2-SETUP-03] 볼 수 있는 사업장이 **하나도 없다.**
+        //   이미 `_scopeOf` 가 내린 판정을 그대로 들고 갈 뿐이다 —
+        //   새 파생 상태를 만들어 canonical 을 복제하지 않는다.
+        //   화면은 이걸로 "공고 0개" 와 "아직 공고를 만들 수 없음" 을 가른다.
+        _scopeEmpty = true;
         // early return 하지 않고 finally + 후처리(_preload 등)가 실행되도록 통과
       } else {
+        _scopeEmpty = false;
       // [POSTING-V2-02A.1] 한도 조회 제거 — 탭 표시 외에 소비자가 없었다
       _items = await _loadWithScopeRecovery(
         userProvider: userProvider,

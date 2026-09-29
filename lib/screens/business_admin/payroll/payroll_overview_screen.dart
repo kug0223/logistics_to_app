@@ -16,6 +16,7 @@ import '../../../utils/toast_helper.dart';
 import 'payroll_worker_detail_screen.dart';
 import 'payroll_payment_dashboard_screen.dart';
 import '../../../screens/common/notification_screen.dart';
+import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../widgets/common/app_page_scaffold.dart';
 import '../../../widgets/common/notification_badge.dart';
@@ -43,7 +44,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   int _selectedYear = DateTime.now().year;
   String? _businessId;
   bool _isLoading = true;
-  bool _noData = false; // Tab 루트에서 picker 취소 / 사업장 없음 시 empty state
+  /// Tab 루트에서 **사업장 선택을 취소**했을 때. 고를 사업장은 있다.
+  bool _noData = false;
+
+  /// [P4.2-SETUP-01] 사업장이 **하나도 없다** — 급여 관리 이전 단계다.
+  ///
+  ///   `_noData` 와 합쳐 두면 "사업장을 선택해주세요" 가 신규 관리자에게
+  ///   뜨고, 고를 것이 없으니 [선택하기] 가 같은 화면으로 되돌아온다.
+  ///   SETUP_REQUIRED 와 "선택 안 함" 은 다음 행동이 다르므로 나눠 둔다.
+  bool _noBusiness = false;
   bool _accessDenied = false; // [5C.1A-SCREEN-01] canManageWage=false SubAdmin
   // [CROSS-DOMAIN-R5.1F.5] 권한을 확인하지 못한 상태 — 거부와 다른 말이다.
   bool _accessUnverified = false;
@@ -142,8 +151,11 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       );
       if (!mounted) return;
       if (businesses.isEmpty) {
-        // Tab 루트일 때 pop 불가 → noData empty state. Push 컨텍스트에서도 empty state가 더 명확함.
-        if (mounted) setState(() { _isLoading = false; _noData = true; });
+        // [P4.2-SETUP-01] 사업장이 0개다 — **아직 급여 관리가 시작되지 않은
+        //   상태**이지 "선택을 안 한 상태"가 아니다. 예전에는 둘 다
+        //   `_noData` 하나로 묶여 '사업장을 선택해주세요 → [선택하기]' 가
+        //   떴는데, 고를 사업장이 없으므로 눌러도 같은 화면으로 돌아왔다.
+        if (mounted) setState(() { _isLoading = false; _noBusiness = true; });
         return;
       }
       // C-08: N사업장 지원 — BusinessPickerHelper로 선택 (1개면 자동 선택)
@@ -315,18 +327,19 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     // [DESIGN-PATCH-1] GradientScaffold → AppPageScaffold — 관리자 Shell 정규화
-    // refresh / home / notification — PayrollPaymentDashboardScreen canonical order
+    // refresh / notification
+    //
+    // [P4.2-NAV-01] 홈 버튼을 뺐다. 이 화면은 **root tab** 이고, shell 안에서
+    //   `NavigationHelper.goHome` 은 `switchToTab(homeTab)` 뿐이다 —
+    //   바로 아래 하단 탭의 '홈' 과 같은 동작이다. push 로 열린 하위 화면
+    //   (예: 월별 급여현황)에는 돌아갈 길이 필요하므로 그대로 둔다.
+    //   그 화면의 순서를 복사해 오면서 root 에는 맞지 않는 action 이 따라왔다.
     return AppPageScaffold(
       title: '급여 관리',
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh_rounded),
           onPressed: () => _loadYear(_selectedYear),
-          color: AppColors.textSecondary,
-        ),
-        IconButton(
-          icon: const Icon(Icons.home_outlined),
-          onPressed: () => NavigationHelper.goHome(context),
           color: AppColors.textSecondary,
         ),
         NotificationBadge(
@@ -366,6 +379,21 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 icon: Icons.lock_outline,
                 title: '접근 권한이 없습니다',
                 subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
+              ),
+            )
+          else if (_noBusiness)
+            // [P4.2-SETUP-01] SETUP_REQUIRED — 사업장이 없어서 급여 관리가
+            //   아직 시작되지 않았다. "선택해주세요" 가 아니다(고를 것이 없다).
+            Expanded(
+              child: AppEmptyState(
+                icon: Icons.storefront_outlined,
+                title: '아직 급여를 관리할 사업장이 없어요',
+                subtitle: '사업장을 등록하면 근무·급여 관리를 시작할 수 있어요.',
+                action: TextButton(
+                  onPressed: () => AdminTabSwitcher.instance
+                      .switchToTab(AdminTabSwitcher.homeTab),
+                  child: const Text('준비 계속하기'),
+                ),
               ),
             )
           else if (_noData)

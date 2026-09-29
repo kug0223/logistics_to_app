@@ -31,8 +31,10 @@ import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../widgets/calendar/app_calendar.dart';
+import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../dialogs/attendance_status_dialog.dart';
 import '../dialogs/day_applicants_dialog.dart';
@@ -173,6 +175,16 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   List<AttendanceModel> _attendances = [];
   bool _isLoadingData = false;
   String? _loadError;
+
+  /// [P4.2-SETUP-02] 관리 중인 사업장이 **하나도 없다.**
+  ///
+  ///   조회 실패(`_loadError`)도, 오늘 확정자가 0명인 것도 아니다 —
+  ///   근무 관리 자체가 아직 시작되지 않은 상태다. 이 둘을 합치면
+  ///   신규 관리자에게 `확정 0 / 출근 0 / 미출근 0 / 노쇼 0` 대시보드와
+  ///   "오늘 확정된 인력이 없습니다" 가 뜬다 — 운영이 돌아가는데 아무도
+  ///   오지 않은 것처럼 읽힌다. NOT_APPLICABLE 을 SUCCESS_ZERO 로 말하지 않는다.
+  bool _noBusiness = false;
+
   // [P2-WF-02] request generation counter — 최신 요청만 state 반영 (AdminStats 동일 패턴)
   // 날짜 A 로드 중 날짜 B 선택 시 늦은 A 응답이 B 화면을 덮는 race 방지
   int _loadDayDataRequestId = 0;
@@ -386,10 +398,13 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       if (!mounted || requestId != _markerRequestId) return;
       if (businesses.isEmpty) {
         // 여기 도달했으면 조회는 성공했고 사업장이 정말 0개다.
+        // [P4.2-SETUP-02] 달력 마커 쪽에서도 같은 사실을 세운다 —
+        //   두 로더 중 무엇이 먼저 끝나든 화면이 같은 말을 하게 한다.
         setState(() {
           _workDates = const <DateTime>{};
           _markerFailed = false;
           _markerRangeAnchor = anchor;
+          _noBusiness = true;
         });
         return;
       }
@@ -406,6 +421,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         _workDates = sets.expand((s) => s).toSet();
         _markerFailed = false;
         _markerRangeAnchor = anchor;
+        // [P4.2-SETUP-02] 사업장이 있다 — SETUP 표면을 내린다.
+        _noBusiness = false;
       });
     } catch (e) {
       debugPrint('❌ 근무 날짜 marker 조회 실패: $e');
@@ -452,12 +469,15 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       if (!mounted || requestId != _loadDayDataRequestId) return;
       if (businesses.isEmpty) {
         // 여기 도달했으면 조회는 성공했고 사업장이 정말 0개다.
+        // [P4.2-SETUP-02] 그 사실을 그대로 들고 간다 — 빈 목록으로만 두면
+        //   화면이 이것을 "오늘 확정자 0명"으로 그린다.
         setState(() {
           _applications = [];
           _attendances = [];
           _sortedGroups = [];
           _isLoadingData = false;
           _loadError = null;
+          _noBusiness = true;
         });
         return;
       }
@@ -467,6 +487,10 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       //   이 화면은 _loadError 를 갖고 있는데, 서비스가 실패를 빈 목록으로
       //   바꿔 버려서 그 상태가 발동한 적이 없었다. 조회 실패와 "근무자 없음"은
       //   같은 화면이 되면 안 된다.
+      // [P4.2-SETUP-02] 사업장이 생겼다 — SETUP 표면을 반드시 내린다.
+      //   여기서 풀지 않으면 첫 사업장 등록 후에도 운영 화면이 돌아오지 않는다.
+      if (_noBusiness) _noBusiness = false;
+
       final appFutures = businesses.map((b) =>
           _firestoreService.getConfirmedWorkersByDateAndBusinessOrThrow(
             date: dayKey,
@@ -748,6 +772,14 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
     }
 
     final bottom = MediaQuery.paddingOf(context).bottom;
+
+    // [P4.2-SETUP-02] 사업장이 0개면 **운영 화면을 그리지 않는다.**
+    //   날짜 스트립·확정/출근/미출근/노쇼 칩은 "운영이 돌아가는 중"을 전제한
+    //   표면이다. 그 위에 0을 얹으면 아무도 오지 않은 날처럼 읽힌다.
+    //   여기서 말해야 할 것은 수치가 아니라 **아직 시작되지 않았다**는 사실이다.
+    if (_noBusiness) {
+      return _buildNoBusinessState();
+    }
 
     return CustomScrollView(
       controller: _scrollController,
@@ -1532,6 +1564,25 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   }
 
   // ── Empty / Error States ───────────────────────────────────────
+
+  /// [P4.2-SETUP-02] 사업장이 0개 — SETUP_REQUIRED.
+  ///
+  ///   "오늘 확정된 인력이 없습니다" 와 다른 말을 한다. 그쪽은 운영 중인
+  ///   사업장에 오늘 아무도 확정되지 않았다는 뜻이고, 이쪽은 관리할 사업장
+  ///   자체가 아직 없다는 뜻이다. 다음 행동도 다르다 — 공고를 열 게 아니라
+  ///   준비를 이어가야 한다.
+  Widget _buildNoBusinessState() {
+    return AppEmptyState(
+      icon: Icons.storefront_outlined,
+      title: '아직 근무를 관리할 사업장이 없어요',
+      subtitle: '사업장을 등록하면 확정 인력과 출퇴근을 여기서 관리해요.',
+      action: TextButton(
+        onPressed: () =>
+            AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
+        child: const Text('준비 계속하기'),
+      ),
+    );
+  }
 
   /// [5B.2A] filter-aware empty state.
   /// filter == all  → 전체 데이터 없음 (날짜 기준 메시지)

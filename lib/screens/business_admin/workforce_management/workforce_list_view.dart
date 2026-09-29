@@ -15,6 +15,7 @@ import '../../../controllers/workforce_controller.dart';
 import '../../../providers/user_provider.dart';
 
 // Utils
+import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/format_helper.dart';
 
 // Utils
@@ -39,6 +40,10 @@ import '../../../widgets/common/app_empty_state.dart';
 /// 조회 실패(ERROR)는 이 집합에 넣지 않는다 — 01B에서 별도 renderer로 분리됐고
 /// 그 계약은 그대로다.
 enum _PostingEmptyKind {
+  /// [P4.2-SETUP-03] 볼 수 있는 사업장이 0개 — 공고를 만들 수 있는 단계가
+  /// 아직 아니다. `root` 와 같은 0건이지만 다음 행동이 다르다.
+  setupRequired,
+
   /// 공고 자체가 0개 (DRAFT/SCHEDULED 포함해서 0)
   root,
 
@@ -689,7 +694,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       if (controller.isLoading && !controller.lastSuccessfulWasEmpty) {
         return const LoadingWidget(message: '공고 목록을 불러오는 중...');
       }
-      return _buildEmptyState(_PostingEmptyKind.root);
+      // [P4.2-SETUP-03] 볼 수 있는 사업장이 0개면 "공고가 없다"가 아니라
+      //   **아직 공고를 만들 수 있는 상태가 아니다.** 예전 문구는
+      //   "상단 + 버튼에서 새 공고를 등록할 수 있습니다" 라고 말했는데,
+      //   그 버튼을 누르면 사업장·업무·템플릿·인감이 없어 준비 화면에서 막힌다.
+      return _buildEmptyState(controller.scopeEmpty
+          ? _PostingEmptyKind.setupRequired
+          : _PostingEmptyKind.root);
     }
 
     // [POSTING-V2-03P.1] 여기부터는 보여줄 데이터가 있다 — refresh 중이어도
@@ -789,6 +800,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   /// 같은 사실을 세 곳이 따로 계산하게 된다.
   Widget _buildEmptyState(_PostingEmptyKind kind) {
     final (String title, String subtitle) copy = switch (kind) {
+      // [P4.2-SETUP-03] 사업장이 없다 — 상단 + 를 권하지 않는다. 눌러도
+      //   준비 화면에서 막힌다. 여기서는 준비를 이어가라고 말한다.
+      _PostingEmptyKind.setupRequired => (
+          '아직 공고를 등록할 수 없어요',
+          '사업장 등록부터 마치면 공고를 만들 수 있어요',
+        ),
       // 헤더 '+ 공고 등록'이 같은 화면에 이미 있다 — 본문에 중복 CTA를 두지 않는다.
       _PostingEmptyKind.root => (
           '등록된 공고가 없습니다',
@@ -817,14 +834,21 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       subtitle: copy.$2,
       // 유일하게 body action을 갖는 상태. 여기서 '공고 등록'을 권하면
       // 필터만 풀면 보이는 기존 공고를 놓치고 중복 공고를 만들게 된다.
-      action: kind == _PostingEmptyKind.filtered
-          ? TextButton.icon(
-              onPressed: _clearFilters,
-              icon: Icon(Icons.filter_alt_off_outlined,
-                  size: ResponsiveHelper.iconSize(context, 16)),
-              label: const Text('필터 초기화'),
-            )
-          : null,
+      action: switch (kind) {
+        _PostingEmptyKind.filtered => TextButton.icon(
+            onPressed: _clearFilters,
+            icon: Icon(Icons.filter_alt_off_outlined,
+                size: ResponsiveHelper.iconSize(context, 16)),
+            label: const Text('필터 초기화'),
+          ),
+        // [P4.2-SETUP-03] 준비는 Home 체크리스트가 owner 다 — 거기로 보낸다.
+        _PostingEmptyKind.setupRequired => TextButton(
+            onPressed: () => AdminTabSwitcher.instance
+                .switchToTab(AdminTabSwitcher.homeTab),
+            child: const Text('준비 계속하기'),
+          ),
+        _ => null,
+      },
     );
   }
 

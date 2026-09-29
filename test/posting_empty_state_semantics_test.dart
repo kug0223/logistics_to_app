@@ -153,14 +153,25 @@ void main() {
     });
 
     test('02-c ROOT_EMPTY에는 필터 초기화 action이 없다', () {
+      // [R7-P4.2] 기대를 **모양에서 규칙으로** 옮겼다.
+      //   예전에는 `action: kind == filtered ? TextButton.icon(` 이라는
+      //   삼항 한 줄을 통째로 고정했다. 그 뒤 empty 종류가 하나 늘었고
+      //   (`setupRequired` — 사업장이 0개라 공고를 만들 수 없는 상태),
+      //   그 상태에는 **다른** action 이 필요하다(준비 계속하기).
+      //   지키려던 것은 "filtered 의 필터 초기화가 다른 상태로 새지 않는다"
+      //   이므로 그것을 직접 잰다.
       final body = _flat(_codeOf(
           _bodyOf(_src(_listPath), 'Widget _buildEmptyState(')));
+      // 필터 초기화는 filtered 에만 붙는다.
       expect(
-          body.contains('action: kind == _PostingEmptyKind.filtered ? '
-              'TextButton.icon('),
+          body.contains('_PostingEmptyKind.filtered => TextButton.icon('),
           true,
-          reason: 'action이 filtered 상태에만 붙어 있어야 한다');
-      expect(body.contains(': null, );'), true);
+          reason: '필터 초기화는 filtered 의 action 이다');
+      // root·tab 은 action 이 없다 — 나머지를 null 로 떨어뜨린다.
+      expect(body.contains('_ => null,'), true,
+          reason: 'ROOT_EMPTY·TAB_EMPTY 에는 body action 이 없다');
+      // 필터 초기화가 다른 kind 에 복제되지 않았다.
+      expect('_clearFilters'.allMatches(body).length, 1);
     });
   });
 
@@ -196,9 +207,30 @@ void main() {
       expect(body.contains('CreateTOScreen'), false);
     });
 
-    test('03-d §33 body action은 최대 1개다', () {
+    test('03-d §33 body action은 **상태당** 최대 1개다', () {
+      // [R7-P4.2] 예전에는 메서드 전체의 TextButton 개수를 1로 고정했다.
+      //   그건 "empty 종류가 하나뿐일 때"만 규칙과 같은 말이었다.
+      //   종류가 늘어도 지켜야 하는 것은 **한 상태가 그릴 때 action 이
+      //   하나를 넘지 않는다** 이므로, kind 별로 센다.
       final body = _codeOf(_bodyOf(_src(_listPath), 'Widget _buildEmptyState('));
-      expect('TextButton'.allMatches(body).length, 1);
+      final actionBlock = body.substring(body.indexOf('action: switch (kind)'));
+      for (final kind in const ['filtered', 'setupRequired']) {
+        final i = actionBlock.indexOf('_PostingEmptyKind.$kind =>');
+        expect(i, greaterThan(-1), reason: '$kind 의 action 분기');
+        // 다음 `=>` 분기 전까지가 그 상태의 action 이다.
+        final rest = actionBlock.substring(i + 1);
+        final nextArm = rest.indexOf('_PostingEmptyKind.');
+        final endIdx = rest.indexOf('_ => null,');
+        final stop = nextArm >= 0 && (endIdx < 0 || nextArm < endIdx)
+            ? nextArm
+            : (endIdx < 0 ? rest.length : endIdx);
+        final arm = rest.substring(0, stop);
+        expect('TextButton'.allMatches(arm).length, 1,
+            reason: '$kind 는 action 이 하나다');
+      }
+      // 나머지 상태는 action 이 없다.
+      expect(actionBlock.contains('_ => null,'), true);
+      // 어떤 상태도 강조 버튼을 쓰지 않는다.
       expect(body.contains('ElevatedButton'), false);
     });
   });
