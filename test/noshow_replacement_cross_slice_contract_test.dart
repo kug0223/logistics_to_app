@@ -238,14 +238,19 @@ void main() {
     final apply = _flat(_codeOf(_callableOf(raw, 'callableApplyToTO')));
 
     test('과거는 날짜 단위로 막는다', () {
+      // [R7-FS-1 E2] 앵커를 옮겼다. 하루 경계 helper 가 `kstDayStartOf` 에서
+      //   **`srvKstDayStartMs` 하나로 통합**됐다(같은 식이 두 군데 있어서
+      //   한쪽만 고쳐지던 자리다). 지키는 성질은 그대로다 — 과거 차단은
+      //   시각이 아니라 **KST 날짜 단위**로 한다.
       expect(apply.contains(
-          'if (kstDayStartOf(slotWorkDateTs.toMillis()) < kstDayStartOf(Date.now()))'), true);
+          'if (srvKstDayStartMs(slotWorkDateTs.toMillis()) < '
+          'srvKstDayStartMs(Date.now()))'), true);
       expect(apply.contains('slotWorkDateTs.toDate() < new Date()'), false,
           reason: '시각 비교는 오늘을 통째로 과거로 만든다');
     });
 
     test('오늘은 마감시각이 판단한다', () {
-      final d = apply.indexOf('kstDayStartOf(slotWorkDateTs.toMillis())');
+      final d = apply.indexOf('srvKstDayStartMs(slotWorkDateTs.toMillis())');
       final w = apply.indexOf('해당 업무의 지원 마감 시간이 지났습니다');
       expect(d > 0 && w > d, true, reason: '날짜 게이트를 지나야 마감 검사에 닿는다');
       expect(apply.contains('if (wdDeadlineTs && wdDeadlineTs.toDate() < new Date())'), true);

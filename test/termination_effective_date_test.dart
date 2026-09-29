@@ -28,7 +28,11 @@ const _cfPath = 'functions/src/index.ts';
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
-  return f.readAsStringSync();
+  // [R7-FS-1 E1] 여러 줄을 이어 붙여 대조하는 앵커가 있어서, 내용이 같아도
+  //   작업트리가 CRLF 로 체크아웃되면 앵커의 \n 이 \r\n 과 어긋나 실패한다.
+  //   읽는 자리에서 정규화한다 — 제품 수정이 아니라 **대조 방식**의 문제다
+  //   (renewal_decision_surface_test.dart 의 선례와 같은 처리).
+  return f.readAsStringSync().replaceAll('\r\n', '\n');
 }
 
 /// 주석 줄을 지운 본문. 앵커는 주석이 아니라 **코드**여야 한다.

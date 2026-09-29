@@ -44,6 +44,17 @@ bool _wouldAward(
     case BadgeConditionType.monthlyPerfect:
       mainMet = workDays >= badge.conditionValue;
       break;
+    // [R7-FS-1 A] enum 이 다섯 값 늘었는데(같은 사업장 재고용·사업장 수·
+    //   야간·새벽·주말) 이 하네스가 따라가지 않아 **컴파일이 깨져 있었다.**
+    //   이 파일은 근무일수 기반 자격만 재현한다 — 새 축은 재현할 입력이
+    //   없으므로 "판정하지 않는다"로 두고, 가짜 통과를 만들지 않는다.
+    case BadgeConditionType.sameBusinessRehire:
+    case BadgeConditionType.uniqueBusinesses:
+    case BadgeConditionType.nightShiftCount:
+    case BadgeConditionType.earlyBirdCount:
+    case BadgeConditionType.weekendCount:
+      mainMet = false;
+      break;
   }
   if (!mainMet) return false;
   if (badge.minWorkDaysRequired != null && workDays < badge.minWorkDaysRequired!) return false;
@@ -462,13 +473,21 @@ void main() {
       ]));
     });
 
-    test('SA-06-02: BadgeConditionType 4종 존재', () {
-      expect(BadgeConditionType.values.length, 4);
+    test('SA-06-02: BadgeConditionType 9종 존재', () {
+      // [R7-FS-1 A] 4종이었던 시절의 기대다. 특별 배지가 **업종(workType)**
+      //   대신 **행동 축**(야간·새벽·재고용·사업장 수·주말)으로 바뀌면서
+      //   조건 유형이 다섯 늘었다. 총수와 구성을 함께 고정한다.
+      expect(BadgeConditionType.values.length, 9);
       expect(BadgeConditionType.values, containsAll([
         BadgeConditionType.minScore,
         BadgeConditionType.workDays,
         BadgeConditionType.consecutive,
         BadgeConditionType.monthlyPerfect,
+        BadgeConditionType.sameBusinessRehire,
+        BadgeConditionType.uniqueBusinesses,
+        BadgeConditionType.nightShiftCount,
+        BadgeConditionType.earlyBirdCount,
+        BadgeConditionType.weekendCount,
       ]));
     });
 
@@ -522,12 +541,24 @@ void main() {
       expect(gold.maxNoShowAllowed, 0);
     });
 
-    test('SA-06-11: defaultBadges() — specialty 배지 workType 있음', () {
+    test('SA-06-11: defaultBadges() — specialty 배지는 행동 축을 쓴다', () {
+      // [R7-FS-1 A] 예전 기대는 "specialty 배지는 workType 이 있다" 였다.
+      //   설계가 업종 배지에서 행동 배지로 바뀌어 workType 은 더 이상
+      //   쓰이지 않는다. 대신 각 배지가 **어떤 행동 축**을 세는지 본다.
       final specialty = BadgeModel.defaultBadges()
           .where((b) => b.type == BadgeType.specialty)
           .toList();
       expect(specialty, isNotEmpty);
-      expect(specialty.every((b) => b.workType != null), isTrue);
+      const behaviourAxes = {
+        BadgeConditionType.sameBusinessRehire,
+        BadgeConditionType.uniqueBusinesses,
+        BadgeConditionType.nightShiftCount,
+        BadgeConditionType.earlyBirdCount,
+        BadgeConditionType.weekendCount,
+      };
+      expect(specialty.every((b) => behaviourAxes.contains(b.conditionType)),
+          isTrue,
+          reason: '특별 배지는 근무 행동으로 판정한다');
     });
 
     test('SA-06-12: defaultBadges() — 모든 배지 isActive=true', () {
@@ -544,12 +575,24 @@ void main() {
       expect(orders, sorted);
     });
 
-    test('SA-06-14: specialty 배지 workType 코드 — PICK/LOAD/INSPECT', () {
-      final workTypes = BadgeModel.defaultBadges()
+    test('SA-06-14: specialty 배지의 다섯 행동 축이 모두 쓰인다', () {
+      // [R7-FS-1 A] 예전 기대는 업종 코드 PICK/LOAD/INSPECT 였다.
+      //   그 축은 제품에서 사라졌다(workType 은 null 이다). 대신
+      //   조건 유형이 다섯 늘었는데 **기본 배지가 그 다섯을 실제로
+      //   쓰는지**를 본다 — 쓰이지 않는 조건이 생기면 걸린다.
+      final specialty = BadgeModel.defaultBadges()
           .where((b) => b.type == BadgeType.specialty)
-          .map((b) => b.workType)
           .toList();
-      expect(workTypes, containsAll(['PICK', 'LOAD', 'INSPECT']));
+      expect(specialty.every((b) => b.workType == null), isTrue);
+      expect(
+          specialty.map((b) => b.conditionType).toSet(),
+          containsAll([
+            BadgeConditionType.sameBusinessRehire,
+            BadgeConditionType.uniqueBusinesses,
+            BadgeConditionType.nightShiftCount,
+            BadgeConditionType.earlyBirdCount,
+            BadgeConditionType.weekendCount,
+          ]));
     });
   });
 

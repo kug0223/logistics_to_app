@@ -344,11 +344,15 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('07. 고정근무자 집계', () {
     test('07-a 정상 집계에서 만료·미결정을 뺀다', () {
-      expect(
-        fixedWorker.contains(
-            'w.application.resignStatus == null && !isExpiredUndecided(w)'),
-        true,
-      );
+      // [R7-FS-1 E2] 앵커를 옮겼다. 술어가 **한 조건 늘었다** — `!isEnded(w)`
+      //   가 붙었다(끝난 근무자가 `정상 1` 로 잡히던 자리). 보장은 약해지지
+      //   않았고 강해졌다. 그래서 세 조건을 각각 확인한다.
+      expect(fixedWorker.contains('w.application.resignStatus == null &&'),
+          true, reason: '퇴사 진행 중은 정상이 아니다');
+      expect(fixedWorker.contains('!isExpiredUndecided(w) &&'), true,
+          reason: '만료·미결정은 정상이 아니다');
+      expect(fixedWorker.contains('!isEnded(w))'), true,
+          reason: '이미 끝난 근무자도 정상이 아니다');
     });
 
     test('07-b 만료·미결정을 따로 센다', () {

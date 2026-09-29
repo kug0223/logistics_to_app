@@ -105,8 +105,25 @@ void main() {
     final s = _load(_contract);
 
     test('진입 guard는 그대로 대상 사업장 기준이다', () {
-      expect(s.contains('final allowed = await _canAccessTargetBusiness();'), true);
-      expect(s.contains('return perms?.canManageContract == true;'), true);
+      // [R7-FS-1 E2] 앵커를 옮겼다. 이 셀이 지키는 것은 "진입 판정이
+      //   current-selected-A 가 아니라 **대상 사업장 B** 의
+      //   `canManageContract` 를 본다" 이고, 그 성질은 그대로다.
+      //   바뀐 것은 판정의 모양이다 — R7-P3-3 에서 거부·미확인·비소속을
+      //   가르느라 bool 하나였던 것이 `_EntryAccess` 3상태가 됐다.
+      //   (그 전에는 셋을 한 덩어리로 말없이 pop 했다.)
+      expect(s.contains('final access = await _resolveTargetAccess();'), true,
+          reason: '진입 판정은 대상 사업장 기준 한 곳에서 나온다');
+      expect(s.contains('Future<_EntryAccess> _resolveTargetAccess() async'),
+          true);
+      // 그 판정이 읽는 권한은 여전히 대상 사업장의 canManageContract 다.
+      expect(
+          s.contains('await MemberService()'
+              '.getMemberPermissions(widget.businessId, uid);'),
+          true,
+          reason: '조회 대상은 widget.businessId(B) 다');
+      expect(s.contains('return perms.canManageContract '), true);
+      // 모름을 거부로 바꾸지 않는다 — 3상태로 가른 이유다.
+      expect(s.contains('_EntryAccess.unknown'), true);
     });
 
     test('진입 후 변화를 listener로 받는다', () {

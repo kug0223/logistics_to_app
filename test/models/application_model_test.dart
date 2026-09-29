@@ -766,9 +766,30 @@ void main() {
       expect(app.isScheduledOnDate(fri0110), true);
       expect(app.isScheduledOnDate(sat0111), false);
     });
-    test('D-21 장기 CONTRACT_PENDING + isTerminationApproved → false', () {
-      final app = _long(status: 'CONTRACT_PENDING', resignStatus: 'APPROVED');
-      expect(app.isScheduledOnDate(mon0106), false);
+    test('D-21 장기 CONTRACT_PENDING + 퇴사 승인 — 효력일이 정한다', () {
+      // [R7-FS-1 D] 승인만으로 일정이 사라지지 않는다(APPROVED ≠ EFFECTIVE).
+      //   퇴사 승인 뒤에도 마지막 근무일까지는 일정이 있어야 한다 —
+      //   없애면 그 날의 출근·급여가 화면에서 사라진다.
+      final decided =
+          _long(status: 'CONTRACT_PENDING', resignStatus: 'APPROVED');
+      expect(decided.isExitDecided, true);
+      expect(decided.isScheduledOnDate(mon0106), true,
+          reason: '효력 전에는 일정이 남는다');
+      // 효력일이 지나거나 취소로 끝나면 사라진다.
+      expect(
+          _long(
+                  status: 'CONTRACT_PENDING',
+                  resignStatus: 'APPROVED',
+                  actualResignDate: DateTime(2025, 1, 3))
+              .isScheduledOnDate(mon0106),
+          false,
+          reason: '효력일 다음날부터는 일정이 아니다');
+      // 취소로 끝나면 CONFIRMED 분기를 벗어나 **지원일에만** 남는다
+      //   (미확정 장기와 같은 표시 규칙이다).
+      final canceled = _long(status: 'CANCELED', resignStatus: 'APPROVED');
+      expect(canceled.isScheduledOnDate(fri0110), false);
+      expect(canceled.isScheduledOnDate(mon0106), true,
+          reason: '지원일 카드는 남는다 — 캘린더의 이력이다');
     });
 
     // ── D-4. 장기 CONFIRMED + 정상 범위 ─────────────────────────────────────
@@ -793,14 +814,26 @@ void main() {
     });
 
     // ── D-5. 장기 CONFIRMED + 퇴사 완료 → false ──────────────────────────────
-    test('D-40 resignStatus=APPROVED → false (전체 기간)', () {
+    test('D-40 resignStatus=APPROVED — 효력일까지는 일정이 남는다', () {
+      // [R7-FS-1 D] 예전 기대는 "승인되면 전체 기간 false" 였다.
+      //   그러면 D-기간(승인 후 마지막 근무일까지)이 통째로 사라진다.
       final app = _long(resignStatus: 'APPROVED');
-      expect(app.isScheduledOnDate(mon0106), false);
-      expect(app.isScheduledOnDate(fri0131), false);
+      expect(app.isScheduledOnDate(mon0106), true);
+      expect(app.isScheduledOnDate(fri0131), true);
+      // 효력일을 주면 그 다음부터 빠진다.
+      final effective =
+          _long(resignStatus: 'APPROVED', actualResignDate: fri0110);
+      expect(effective.isScheduledOnDate(mon0106), true);
+      expect(effective.isScheduledOnDate(fri0131), false);
     });
-    test('D-41 resignStatus=AUTO_APPROVED → false', () {
+    test('D-41 resignStatus=AUTO_APPROVED — 같은 규칙이다', () {
       final app = _long(resignStatus: 'AUTO_APPROVED');
-      expect(app.isScheduledOnDate(mon0106), false);
+      expect(app.isScheduledOnDate(mon0106), true);
+      expect(
+          _long(resignStatus: 'AUTO_APPROVED', actualResignDate: fri0110)
+              .isScheduledOnDate(fri0131),
+          false,
+          reason: '효력일 뒤는 일정이 아니다');
     });
     test('D-42 terminationStatus=APPROVED → false', () {
       final app = _long(terminationStatus: 'APPROVED');
@@ -885,9 +918,19 @@ void main() {
     });
 
     // ── D-11. 다양한 확정 완료 상태 조합 ─────────────────────────────────────
-    test('D-100 resignStatus=APPROVED + terminationStatus=PENDING → false (resignStatus 우선)', () {
+    test('D-100 resignStatus=APPROVED + terminationStatus=PENDING', () {
+      // [R7-FS-1 D] 결정은 내려졌지만 효력 전이므로 일정은 남는다.
       final app = _long(resignStatus: 'APPROVED', terminationStatus: 'PENDING');
-      expect(app.isScheduledOnDate(mon0106), false);
+      expect(app.isExitDecided, true);
+      expect(app.isScheduledOnDate(mon0106), true);
+      // 일정에서 빠지는 것은 **효력일**이 한다 — 승인 상태가 아니다.
+      expect(
+          _long(
+                  resignStatus: 'APPROVED',
+                  terminationStatus: 'PENDING',
+                  actualResignDate: fri0110)
+              .isScheduledOnDate(fri0131),
+          false);
     });
     test('D-101 resignStatus=REJECTED + terminationStatus=APPROVED → false', () {
       final app = _long(resignStatus: 'REJECTED', terminationStatus: 'APPROVED');
@@ -1096,11 +1139,31 @@ void main() {
     test('H-01 둘 다 null → false', () {
       expect(_base().isTerminationApproved, false);
     });
-    test('H-02 resignStatus=APPROVED → true', () {
-      expect(_base(resignStatus: 'APPROVED').isTerminationApproved, true);
+    // [R7-FS-1 D] 퇴사 축의 기준이 갈라졌다 — [DEFERRED-RESIGN].
+    //   `isTerminationApproved` 는 이제 퇴사 쪽에 `status == CANCELED` 를
+    //   함께 요구한다. "승인됐지만 아직 고용 중"인 D-기간을 종료로 세면
+    //   그 기간의 근무·급여가 화면에서 사라지기 때문이다.
+    //   "승인이 내려졌는가" 는 `isExitDecided` 가 답한다.
+    //   아래 셀들은 **두 질문을 각각** 묻도록 옮겼다(기대를 지우지 않았다).
+    test('H-02 resignStatus=APPROVED — 결정은 내려졌고 종료는 아직이다', () {
+      final app = _base(resignStatus: 'APPROVED'); // status=CONFIRMED
+      expect(app.isExitDecided, true, reason: '승인은 내려졌다');
+      expect(app.isTerminationApproved, false,
+          reason: 'CANCELED 가 아니면 아직 고용 중이다');
+      // 취소까지 갔을 때 비로소 종료다.
+      expect(
+          _base(resignStatus: 'APPROVED', status: 'CANCELED')
+              .isTerminationApproved,
+          true);
     });
-    test('H-03 resignStatus=AUTO_APPROVED → true', () {
-      expect(_base(resignStatus: 'AUTO_APPROVED').isTerminationApproved, true);
+    test('H-03 resignStatus=AUTO_APPROVED — 같은 규칙이다', () {
+      final app = _base(resignStatus: 'AUTO_APPROVED');
+      expect(app.isExitDecided, true);
+      expect(app.isTerminationApproved, false);
+      expect(
+          _base(resignStatus: 'AUTO_APPROVED', status: 'CANCELED')
+              .isTerminationApproved,
+          true);
     });
     test('H-04 terminationStatus=APPROVED → true', () {
       expect(_base(terminationStatus: 'APPROVED').isTerminationApproved, true);
@@ -1120,8 +1183,17 @@ void main() {
     test('H-09 terminationStatus=REJECTED → false', () {
       expect(_base(terminationStatus: 'REJECTED').isTerminationApproved, false);
     });
-    test('H-10 resignStatus=APPROVED + terminationStatus=PENDING → true (resign 기준)', () {
-      expect(_base(resignStatus: 'APPROVED', terminationStatus: 'PENDING').isTerminationApproved, true);
+    test('H-10 resignStatus=APPROVED + terminationStatus=PENDING (resign 기준)', () {
+      final app = _base(resignStatus: 'APPROVED', terminationStatus: 'PENDING');
+      expect(app.isExitDecided, true, reason: 'resign 쪽 승인으로 결정됐다');
+      expect(app.isTerminationApproved, false, reason: 'CANCELED 전이다');
+      expect(
+          _base(
+                  resignStatus: 'APPROVED',
+                  terminationStatus: 'PENDING',
+                  status: 'CANCELED')
+              .isTerminationApproved,
+          true);
     });
     test('H-11 resignStatus=PENDING + terminationStatus=APPROVED → true (termination 기준)', () {
       expect(_base(resignStatus: 'PENDING', terminationStatus: 'APPROVED').isTerminationApproved, true);
@@ -1132,8 +1204,18 @@ void main() {
     test('H-13 둘 다 PENDING → false', () {
       expect(_base(resignStatus: 'PENDING', terminationStatus: 'PENDING').isTerminationApproved, false);
     });
-    test('H-14 resignStatus=AUTO_APPROVED + terminationStatus=REJECTED → true', () {
-      expect(_base(resignStatus: 'AUTO_APPROVED', terminationStatus: 'REJECTED').isTerminationApproved, true);
+    test('H-14 resignStatus=AUTO_APPROVED + terminationStatus=REJECTED', () {
+      final app =
+          _base(resignStatus: 'AUTO_APPROVED', terminationStatus: 'REJECTED');
+      expect(app.isExitDecided, true);
+      expect(app.isTerminationApproved, false);
+      expect(
+          _base(
+                  resignStatus: 'AUTO_APPROVED',
+                  terminationStatus: 'REJECTED',
+                  status: 'CANCELED')
+              .isTerminationApproved,
+          true);
     });
     test('H-15 알 수 없는 값 → false', () {
       expect(_base(resignStatus: 'SOMETHING_ELSE').isTerminationApproved, false);
@@ -1279,9 +1361,14 @@ void main() {
     });
 
     // ── L-2. 퇴사/해지 완료 후 isScheduledOnDate false + isWorkingOnDate 관계 ─
-    test('L-10 resignStatus=APPROVED → isScheduledOnDate false (범위 내 날짜)', () {
-      final app = _long(resignStatus: 'APPROVED');
-      // isWorkingOnDate는 resignStatus 체크 없음 → 여전히 true
+    test('L-10 계약해지 승인 → isScheduledOnDate false (범위 내 날짜)', () {
+      // [R7-FS-1 D] 예전에는 `resignStatus: APPROVED` 하나로 이 차이를
+      //   만들었다. 그 축은 이제 `status == CANCELED` 를 함께 요구하고,
+      //   CANCELED 는 CONFIRMED 분기를 벗어나 버려 이 대조를 만들지 못한다.
+      //   **즉시 일정을 지우는 축은 계약해지(terminationStatus) 쪽이다.**
+      //   두 술어가 다르다는 성질 자체는 그대로 확인된다.
+      final app = _long(terminationStatus: 'APPROVED');
+      // isWorkingOnDate는 종료 판정 없음 → 여전히 true
       expect(app.isWorkingOnDate(mon0106), true);
       // isScheduledOnDate는 isTerminationApproved 체크 → false
       expect(app.isScheduledOnDate(mon0106), false);
@@ -1375,11 +1462,17 @@ void main() {
       final copy = original.copyWith(workDays: ['월']);
       expect(copy.isLongTermApplication, true);
     });
-    test('L-72 copyWith resignStatus 변경 → isTerminationApproved 변화', () {
+    test('L-72 copyWith resignStatus 변경 → 결정·종료가 각각 움직인다', () {
+      // [R7-FS-1 D] copyWith 가 필드를 옮긴다는 것이 이 셀의 요지다.
+      //   그 필드가 바꾸는 판정이 둘로 갈렸으니 둘 다 본다.
       final original = _base();
+      expect(original.isExitDecided, false);
       expect(original.isTerminationApproved, false);
-      final copy = original.copyWith(resignStatus: 'APPROVED');
-      expect(copy.isTerminationApproved, true);
+      final decided = original.copyWith(resignStatus: 'APPROVED');
+      expect(decided.isExitDecided, true);
+      expect(decided.isTerminationApproved, false, reason: 'CANCELED 전이다');
+      final ended = decided.copyWith(status: 'CANCELED');
+      expect(ended.isTerminationApproved, true);
     });
     test('L-73 copyWith leaveDates 변경', () {
       final original = _base(leaveDates: []);

@@ -233,12 +233,13 @@ void main() {
   group('W-D. 주간 범위 필터', () {
     test('D-01: WeekHelper.weekStart(월요일) → 같은 월요일', () {
       final ws = WeekHelper.weekStart(monday);
-      expect(ws, DateTime(2026, 6, 8));
+      // [R7-FS-1 B] KST 달력일 비교 키다(`toKstDate` → DateTime.utc).
+      expect(ws, DateTime.utc(2026, 6, 8));
     });
 
     test('D-02: WeekHelper.weekEnd(월요일) → 같은 주 일요일', () {
       final we = WeekHelper.weekEnd(monday);
-      expect(we, DateTime(2026, 6, 14));
+      expect(we, DateTime.utc(2026, 6, 14));
     });
 
     test('D-03: 이번 주 기록만 포함 (다음 주 제외)', () {
@@ -273,8 +274,8 @@ void main() {
       final ws = WeekHelper.weekStart(friday);
       final we = WeekHelper.weekEnd(friday);
       // 금요일이 포함된 주: 2026-06-08(월) ~ 2026-06-14(일)
-      expect(ws, DateTime(2026, 6, 8));
-      expect(we, DateTime(2026, 6, 14));
+      expect(ws, DateTime.utc(2026, 6, 8));
+      expect(we, DateTime.utc(2026, 6, 14));
     });
 
     test('D-06: 슬롯 날짜 기준 주 계산 (미래 슬롯)', () {

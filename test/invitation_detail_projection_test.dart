@@ -510,8 +510,14 @@ void main() {
   group('수락 payload는 한 벌이다', () {
     test('상세 화면도 My Applications와 같은 계약을 쓴다', () {
       final s = _load(_screen);
-      expect(s.contains('if (!meetsApplyPrerequisites(user, isFlexType: isFlex)) {'),
-          true);
+      // [R7-FS-1 E2] 앵커를 옮겼다. 게이트는 그대로 같은 함수인데 인자가
+      //   하나 늘었다 — `taxStatus:` 를 넘긴다(세무 문턱이 뒤에 붙었다).
+      //   지키는 것은 "수락도 직접 지원과 **같은** 사전조건을 지난다" 이다.
+      expect(
+          s.contains('if (!meetsApplyPrerequisites(user, '
+              'isFlexType: isFlex, taxStatus: acceptTax)) {'),
+          true,
+          reason: '수락 경로도 같은 사전조건 함수를 지난다');
       expect(
           s.contains("'documentAccessConsentGiven': true, "
               "'documentAccessConsentVersion': DocumentAccessConsent.version,"),

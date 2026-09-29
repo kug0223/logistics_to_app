@@ -184,59 +184,86 @@ void main() {
       expect(result, equals(DateTime(2026, 1, 15)));
     });
 
+    // [R7-FS-1 C] 이 그룹의 기대값을 옮겼다.
+    //
+    //   예전 기대값은 `DateTime(y, startMonth + N + 1, 1) - 1일` 이라는
+    //   **당시 구현의 식**을 그대로 옮겨 적은 것이었다. 지운 주석에 그
+    //   과정이 남아 있었다 — "1월1일에서 1개월이면 1월31일이어야 함" 이라고
+    //   쓰고도 구현을 따라 2월 28일을 기대했다. 그래서 N개월이 사실상
+    //   N+1개월이었다.
+    //
+    //   현재 구현은 `(start + N개월) - 1일` 이고 소스에 규칙으로 적혀 있다.
+    //   테스트 **이름**은 처음부터 이쪽(1월 말일)을 말하고 있었다.
+    //   달력 의미와 이름이 일치하는 쪽으로 기대값을 맞춘다.
     test('1month: 2026-01-01 → 2026-01-31 (1월 말일)', () {
-      // DateTime(2026, 3, 1) - 1day = 2026-02-28? 아니면 1월 말일?
-      // contractPeriodType='1month': DateTime(y, month+2, 1) - 1 = DateTime(2026, 3, 1) - 1 = 2026-02-28
-      // 잠깐, 이건 '1월부터 1개월'이니 2월 말일 = 28일이 되어야 할 것 같지만...
-      // 실제 코드: DateTime(startDate.year, startDate.month + 2, 1).subtract(1day)
-      // startDate = 2026-01-01 → DateTime(2026, 3, 1) - 1 = 2026-02-28
-      // 즉 "1개월 계약" = 시작일이 1월 1일이면 끝이 2월 28일
-      // 이건 의도: 1개월 뒤 달의 말일 = 다음달 말일
-      // 실제로 맞나? 1월1일에서 1개월이면 1월31일이어야 함
-      // 코드 주석: 패턴: DateTime(y, startMonth + N + 1, 1) - 1day = N개월 뒤 달의 말일
-      // N=1: DateTime(y, month+2, 1) - 1 = month+1 달의 말일
-      // startDate.month=1 → DateTime(2026, 3, 1) - 1 = 2026-02-28
-      // 즉 "1개월"은 다음 달(2월)의 말일로 해석하는 설계
       final m = _make(type: TOType.contract, contractPeriodType: '1month');
       final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      // 코드 설계에 따라: DateTime(2026, 3, 1) - 1 = 2026-02-28
-      expect(result, equals(DateTime(2026, 2, 28)));
+      // 시작일 포함 1개월 = 1/1 ~ 1/31
+      expect(result, equals(DateTime(2026, 1, 31)));
     });
 
-    test('1month: 2026-01-31 (월말 시작) → 2026-02-28 (오버플로우 없음)', () {
-      // DateTime(2026, 1+2, 1) - 1 = DateTime(2026, 3, 1) - 1 = 2026-02-28
-      // Dart의 DateTime은 month=3, day=1에서 1일 빼면 2월 말일로 자동 처리
+    test('1month: 2026-01-31 (월말 시작) → 2026-02-27 (clamp 후 -1일)', () {
+      // 구현이 규칙으로 적어 둔 값: 1/31 + 1개월 → 2/28(clamp) - 1일 = 2/27.
+      //
+      // [OPEN-CONTRACT-MONTHEND] 이 한 표본만은 **제품 질문**이 남는다.
+      //   민법 160조 ③(최종 월에 해당일이 없으면 그 월의 말일로 만료)을
+      //   따르면 만료일은 2/28 이다. 지금은 2/27 이다. 법률 정책을 이
+      //   자리에서 새로 정하지 않는다 — 구현이 명시한 현재 규칙을
+      //   고정하고 차이를 기록으로 남긴다(owner: 계약 도메인).
       final m = _make(type: TOType.contract, contractPeriodType: '1month');
       final result = m.computeContractEndDate(DateTime(2026, 1, 31));
-      expect(result, equals(DateTime(2026, 2, 28)));
+      expect(result, equals(DateTime(2026, 2, 27)));
     });
 
-    test('3months: 2026-01-01 → 2026-04-30 (4월 말일)', () {
-      // DateTime(2026, 1+4, 1) - 1 = DateTime(2026, 5, 1) - 1 = 2026-04-30
+    test('3months: 2026-01-01 → 2026-03-31 (3월 말일)', () {
+      // 시작일 포함 3개월 = 1/1 ~ 3/31
       final m = _make(type: TOType.contract, contractPeriodType: '3months');
       final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2026, 4, 30)));
+      expect(result, equals(DateTime(2026, 3, 31)));
     });
 
-    test('6months: 2026-01-01 → 2026-07-31', () {
-      // DateTime(2026, 1+7, 1) - 1 = DateTime(2026, 8, 1) - 1 = 2026-07-31
+    test('6months: 2026-01-01 → 2026-06-30', () {
+      // 시작일 포함 6개월 = 1/1 ~ 6/30
       final m = _make(type: TOType.contract, contractPeriodType: '6months');
       final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2026, 7, 31)));
+      expect(result, equals(DateTime(2026, 6, 30)));
     });
 
-    test('1year: 2026-01-01 → 2027-01-31 (다음해 1월 말일)', () {
-      // DateTime(2026+1, 1+1, 1) - 1 = DateTime(2027, 2, 1) - 1 = 2027-01-31
+    test('1year: 2026-01-01 → 2026-12-31 (같은 해 말일)', () {
+      // 시작일 포함 1년 = 2026-01-01 ~ 2026-12-31
       final m = _make(type: TOType.contract, contractPeriodType: '1year');
       final result = m.computeContractEndDate(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2027, 1, 31)));
+      expect(result, equals(DateTime(2026, 12, 31)));
     });
 
-    test('1year: 2026-07-01 → 2027-07-31', () {
-      // DateTime(2026+1, 7+1, 1) - 1 = DateTime(2027, 8, 1) - 1 = 2027-07-31
+    test('1year: 2026-07-01 → 2027-06-30', () {
+      // 시작일 포함 1년 = 2026-07-01 ~ 2027-06-30
       final m = _make(type: TOType.contract, contractPeriodType: '1year');
       final result = m.computeContractEndDate(DateTime(2026, 7, 1));
-      expect(result, equals(DateTime(2027, 7, 31)));
+      expect(result, equals(DateTime(2027, 6, 30)));
+    });
+
+    // [R7-FS-1 C] 위 기대값들의 **뜻**을 한 번 더 못 박는다.
+    //   "N개월" 은 시작일 포함 N개월이고, 그래서 같은 날짜 하루 전에서
+    //   끝난다. 누가 다시 N+1개월로 밀면 이 셀이 걸린다.
+    test('N개월은 시작일 포함이다 — 같은 날짜 하루 전에 끝난다', () {
+      const cases = {
+        '1month': 1,
+        '3months': 3,
+        '6months': 6,
+        '1year': 12,
+      };
+      final start = DateTime(2026, 5, 15); // 월말 clamp 가 없는 날
+      cases.forEach((type, months) {
+        final m = _make(type: TOType.contract, contractPeriodType: type);
+        final expected = DateTime(
+                start.year + ((start.month + months - 1) ~/ 12),
+                ((start.month + months - 1) % 12) + 1,
+                start.day)
+            .subtract(const Duration(days: 1));
+        expect(m.computeContractEndDate(start), equals(expected),
+            reason: '$type 은 $months 개월이다');
+      });
     });
   });
 

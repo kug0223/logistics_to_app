@@ -223,14 +223,26 @@ void main() {
 
     test('03-f 공통 mapper를 새로 추출하지 않았다 (§6)', () {
       // 프로젝트에 shared Functions error mapper가 없다 — 이번 Phase 범위보다 크다
+      //
+      // [R7-FS-1 E3] 이 울타리를 옮겼다. 원래는 `lib/utils` 어디에도
+      //   `FirebaseFunctionsException` 이 없어야 한다고 적었는데, 뒤의
+      //   단계가 **좁은 목적의 판정 함수 하나**를 그곳에 놓았다
+      //   (`applicant_load_outcome.dart` — 권한 거부와 조회 실패를 code 로
+      //   가르는 순수 함수, 소비자 1곳). 그것은 이 울타리가 막으려던
+      //   "일반 error mapper framework" 가 아니다. 그래서 파일 이름을
+      //   허용 목록에 적고, **그 밖에 새로 생기면 여전히 걸리게** 둔다.
       expect(Directory('lib/utils').existsSync(), true);
-      final utils = Directory('lib/utils')
+      const allowed = {'applicant_load_outcome.dart'};
+      final offenders = Directory('lib/utils')
           .listSync()
           .whereType<File>()
-          .map((f) => f.readAsStringSync())
-          .join('\n');
-      expect(utils.contains('FirebaseFunctionsException'), false,
-          reason: 'shared error framework를 만들지 않는다');
+          .where((f) =>
+              f.readAsStringSync().contains('FirebaseFunctionsException'))
+          .map((f) => f.uri.pathSegments.last)
+          .where((n) => !allowed.contains(n))
+          .toList();
+      expect(offenders, isEmpty,
+          reason: 'shared error framework를 만들지 않는다: $offenders');
       // private 메서드를 외부에서 억지로 쓰지도 않았다
       expect(_codeOf(_src(_dialogsPath)).contains('_cfErrorMessage(e,'), true);
     });

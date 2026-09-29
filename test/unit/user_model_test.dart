@@ -17,7 +17,6 @@ UserModel _make({
   String accountStatus = 'active',
   DateTime? birthDate,
   DateTime? restrictedUntil,
-  int? storedTrustScore,
 }) {
   return UserModel(
     uid: 'uid-001',
@@ -32,7 +31,6 @@ UserModel _make({
     accountStatus: accountStatus,
     birthDate: birthDate,
     restrictedUntil: restrictedUntil,
-    storedTrustScore: storedTrustScore,
   );
 }
 
@@ -209,69 +207,40 @@ void main() {
   });
 
   // ══════════════════════════════════════════════════════
-  // trustGrade / trustGradeEmoji
+  // 제재(restrictedUntil / isRestricted)
   // ══════════════════════════════════════════════════════
-  group('UserModel: trustGrade', () {
-    test('100점 → 최우수', () {
-      expect(_make(storedTrustScore: 100).trustGrade, equals('최우수'));
+  //
+  // [R7-FS-1 A] 여기에 `trustGrade` 10셀 + `trustGradeEmoji` 5셀이 있었다.
+  //   신뢰도 **점수/등급** 체계가 제품에서 폐기됐다([5A.2A] — 모델의
+  //   `storedTrustScore` 필드와 세 getter, `lib/utils/trust_score_helper.dart`
+  //   가 함께 사라졌다). 그래서 이 파일은 **컴파일조차 되지 않고 있었다.**
+  //
+  //   등급을 되살리지 않는다. 대신 그 자리를 이어받은 canonical 축을
+  //   여기서 잰다: 누적 노쇼가 만드는 **제재**(`restrictedUntil` /
+  //   `isRestricted`). 폐기가 유지되는지는
+  //   `test/utils/trust_score_helper_test.dart` 가 지킨다.
+  group('UserModel: isRestricted', () {
+    test('restrictedUntil 없음 → 제재 아님', () {
+      expect(_make().isRestricted, isFalse);
     });
 
-    test('90점 → 최우수 (경계값 포함)', () {
-      expect(_make(storedTrustScore: 90).trustGrade, equals('최우수'));
+    test('미래 시각 → 제재 중', () {
+      final m = _make(
+          restrictedUntil: DateTime.now().add(const Duration(days: 1)));
+      expect(m.isRestricted, isTrue);
     });
 
-    test('89점 → 우수', () {
-      expect(_make(storedTrustScore: 89).trustGrade, equals('우수'));
+    test('지난 시각 → 제재 만료 (자동으로 풀린다)', () {
+      final m = _make(
+          restrictedUntil: DateTime.now().subtract(const Duration(days: 1)));
+      expect(m.isRestricted, isFalse,
+          reason: '만료를 지우는 writer 없이도 화면에서 풀려야 한다');
     });
 
-    test('70점 → 우수 (경계값 포함)', () {
-      expect(_make(storedTrustScore: 70).trustGrade, equals('우수'));
-    });
-
-    test('69점 → 보통', () {
-      expect(_make(storedTrustScore: 69).trustGrade, equals('보통'));
-    });
-
-    test('50점 → 보통 (경계값 포함)', () {
-      expect(_make(storedTrustScore: 50).trustGrade, equals('보통'));
-    });
-
-    test('49점 → 주의', () {
-      expect(_make(storedTrustScore: 49).trustGrade, equals('주의'));
-    });
-
-    test('30점 → 주의 (경계값 포함)', () {
-      expect(_make(storedTrustScore: 30).trustGrade, equals('주의'));
-    });
-
-    test('29점 → 경고', () {
-      expect(_make(storedTrustScore: 29).trustGrade, equals('경고'));
-    });
-
-    test('0점 → 경고', () {
-      expect(_make(storedTrustScore: 0).trustGrade, equals('경고'));
-    });
-  });
-
-  group('UserModel: trustGradeEmoji', () {
-    test('90+ → 🌟', () {
-      expect(_make(storedTrustScore: 90).trustGradeEmoji, equals('🌟'));
-    });
-
-    test('70~89 → ✅', () {
-      expect(_make(storedTrustScore: 70).trustGradeEmoji, equals('✅'));
-    });
-
-    test('50~69 → 😐', () {
-      expect(_make(storedTrustScore: 50).trustGradeEmoji, equals('😐'));
-    });
-
-    test('30~49 → ⚠️', () {
-      expect(_make(storedTrustScore: 30).trustGradeEmoji, equals('⚠️'));
-    });
-
-    test('0~29 → 🚨', () {
-      expect(_make(storedTrustScore: 0).trustGradeEmoji, equals('🚨'));
+    test('영구 제재 표식(year 9999) → 제재 중', () {
+      // 관리자 화면이 9999 를 "영구" 로 읽는다. 경계가 흔들리면
+      // 영구 제재가 조용히 풀린다.
+      expect(_make(restrictedUntil: DateTime(9999)).isRestricted, isTrue);
     });
   });
 }

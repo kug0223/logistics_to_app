@@ -111,9 +111,17 @@ void main() {
   // ══════════════════════════════════════════════════════════════
 
   group('SEAT-T 시간 축', () {
-    test('SEAT-T1 트리거는 status 변경에만 반응한다', () {
-      // 이 사실이 스케줄러가 필요한 이유다.
-      expect(cf, contains('if (beforeStatus === afterStatus) return;'));
+    test('SEAT-T1 트리거는 문서 변화에만 반응한다', () {
+      // 이 사실이 스케줄러가 필요한 이유다 — 날짜가 지나는 것만으로는
+      // 아무 문서도 바뀌지 않으니 트리거가 깨어나지 않는다.
+      //
+      // [R7-FS-1 E2] 앵커를 옮겼다. 조건이 **넓어졌다**: status 말고
+      //   좌석 표식(seatMark)이 바뀌어도 깨운다. "반납도 재계산을
+      //   깨운다" 는 뒤의 수정이다. 성질(문서가 안 바뀌면 안 깨어난다)은
+      //   그대로이므로 그것을 확인한다.
+      expect(cf,
+          contains('if (beforeStatus === afterStatus && !seatMarkChanged) '
+              'return;'));
     });
 
     test('SEAT-T2 D+1 좌석 재조정이 자정 작업에 있다', () {

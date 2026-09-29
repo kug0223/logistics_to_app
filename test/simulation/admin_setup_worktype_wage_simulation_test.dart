@@ -13,9 +13,8 @@
 //   SCENARIO-WT-07: payScheduleType 유효성 (same_day / next_day / weekly / monthly)
 //   SCENARIO-WT-08: WageDetailModel effectiveNetWage getter
 //   SCENARIO-WT-09: TrustSettings 유효성 검증
-//   SCENARIO-WT-10: 신뢰도 등급 분류 (최우수/우수/보통/주의/경고)
 //   SCENARIO-WT-11: 기본값 복원 (TrustSettingsModel.defaults())
-//   SCENARIO-WT-12: TrustScoreHelper 기본 동작 + getNoshowPenalty
+//   SCENARIO-WT-12: 노쇼 감점 규칙 (TrustSettings.getNoshowPenalty)
 //
 // 실행: flutter test test/simulation/admin_setup_worktype_wage_simulation_test.dart
 
@@ -24,7 +23,6 @@ import 'package:ALfit/models/core/business_work_type_model.dart';
 import 'package:ALfit/models/core/wage_detail_model.dart';
 import 'package:ALfit/models/core/insurance_rate_model.dart';
 import 'package:ALfit/models/settings/trust_settings_model.dart';
-import 'package:ALfit/utils/trust_score_helper.dart';
 
 // ════════════════════════════════════════════════════════════════
 // 인라인 검증 헬퍼 (UI/서비스 레이어의 순수 Dart 로직 재현)
@@ -83,14 +81,10 @@ bool _validateTrustSettings({
   return true;
 }
 
-/// 신뢰도 등급 반환
-String _trustGrade(int score) {
-  if (score >= 90) return '최우수';
-  if (score >= 70) return '우수';
-  if (score >= 50) return '보통';
-  if (score >= 30) return '주의';
-  return '경고';
-}
+// [R7-FS-1 A] `_trustGrade` 가 여기 있었다. 제품 함수가 아니라 **이 파일이
+//   직접 적어 둔 등급 표**였고, SCENARIO-WT-10 은 그 표를 자기 자신에게
+//   되물었다(제품을 한 줄도 지나지 않는다). 점수/등급 체계가 폐기된 지금은
+//   지킬 계약도 없으므로 표와 그 그룹을 함께 걷어낸다.
 
 /// 시급제 임금 계산 (순수 Dart)
 ///
@@ -214,24 +208,10 @@ WageDetailModel _wage({
   );
 }
 
-/// TrustScoreHelper.calculateFromData 단순 래퍼
-int _score({
-  int days = 0,
-  double avg = 0.0,
-  int rc = 0,
-  double rr = 0.0,
-  int ns = 0,
-  int late = 0,
-}) {
-  return TrustScoreHelper.calculateFromData(
-    totalWorkDays: days,
-    averageRating: avg,
-    reviewCount: rc,
-    rehireRate: rr,
-    noShowCount: ns,
-    lateCount: late,
-  );
-}
+// [R7-FS-1 A] `TrustScoreHelper.calculateFromData` 래퍼가 여기 있었다.
+//   그 helper 와 신뢰도 **점수/등급** 체계는 제품에서 폐기됐다([5A.2A]).
+//   래퍼를 남겨 두면 이 파일이 컴파일되지 않는다(실제로 그랬다).
+//   폐기 자체는 `test/utils/trust_score_helper_test.dart` 가 지킨다.
 
 // ════════════════════════════════════════════════════════════════
 // main
@@ -834,18 +814,9 @@ void main() {
   // ════════════════════════════════════════════════════════════════
   // SCENARIO-WT-10: 신뢰도 등급 분류
   // ════════════════════════════════════════════════════════════════
-  group('SCENARIO-WT-10. 신뢰도 등급 분류', () {
-    test('WT-10-01: score=100 → 최우수', () => expect(_trustGrade(100), '최우수'));
-    test('WT-10-02: score=90 → 최우수 (경계값 하한)', () => expect(_trustGrade(90), '최우수'));
-    test('WT-10-03: score=89 → 우수', () => expect(_trustGrade(89), '우수'));
-    test('WT-10-04: score=70 → 우수 (경계값 하한)', () => expect(_trustGrade(70), '우수'));
-    test('WT-10-05: score=69 → 보통', () => expect(_trustGrade(69), '보통'));
-    test('WT-10-06: score=50 → 보통 (경계값 하한)', () => expect(_trustGrade(50), '보통'));
-    test('WT-10-07: score=49 → 주의', () => expect(_trustGrade(49), '주의'));
-    test('WT-10-08: score=30 → 주의 (경계값 하한)', () => expect(_trustGrade(30), '주의'));
-    test('WT-10-09: score=29 → 경고', () => expect(_trustGrade(29), '경고'));
-    test('WT-10-10: score=0 → 경고 (clamp 하한)', () => expect(_trustGrade(0), '경고'));
-  });
+  // [R7-FS-1 A] SCENARIO-WT-10(신뢰도 등급 10셀)을 걷어냈다 — 위 `_trustGrade`
+  //   주석 참조. 대신 이 파일이 실제로 지켜야 할 것을 남긴다: 관리자가
+  //   설정하는 신뢰도 **규칙**(TrustSettings)은 살아 있다(WT-11/WT-12).
 
   // ════════════════════════════════════════════════════════════════
   // SCENARIO-WT-11: 기본값 복원 (TrustSettingsModel.defaults())
@@ -937,21 +908,10 @@ void main() {
   // ════════════════════════════════════════════════════════════════
   // SCENARIO-WT-12: TrustScoreHelper 기본 동작 + getNoshowPenalty
   // ════════════════════════════════════════════════════════════════
-  group('SCENARIO-WT-12. TrustScoreHelper 기본 동작', () {
-    test('WT-12-01: 이력 없음 → 기준점 60', () {
-      expect(_score(), 60);
-    });
-
-    test('WT-12-02: 점수 범위 0~100 — 극단 상한 clamp', () {
-      final s = _score(days: 300, avg: 5.0, rc: 100, rr: 1.0);
-      expect(s, inInclusiveRange(0, 100));
-    });
-
-    test('WT-12-03: 점수 범위 0~100 — 극단 하한 clamp', () {
-      final s = _score(ns: 100, late: 50);
-      expect(s, inInclusiveRange(0, 100));
-    });
-
+  group('SCENARIO-WT-12. 노쇼 감점 규칙(TrustSettings)', () {
+    // [R7-FS-1 A] WT-12-01~03 은 폐기된 점수 공식을 재었다 — 걷어냈다.
+    //   남은 셀들은 관리자가 설정하는 **노쇼 감점 규칙**을 재는데,
+    //   `TrustSettingsModel.getNoshowPenalty` 는 지금도 제품에 있다.
     test('WT-12-04: getNoshowPenalty(1) == -5', () {
       expect(TrustSettingsModel.defaults().getNoshowPenalty(1), -5);
     });
@@ -968,15 +928,18 @@ void main() {
       expect(TrustSettingsModel.defaults().getNoshowPenalty(99), -10);
     });
 
-    test('WT-12-08: 신뢰도 점수 + 등급 통합 — 우수 근무자 → 최우수', () {
-      // 60일 근무, 평점4.8, 리뷰8, 재고용1.0
-      final s = _score(days: 60, avg: 4.8, rc: 8, rr: 1.0);
-      expect(_trustGrade(s), '최우수');
-    });
+    // [R7-FS-1 A] WT-12-08·09(점수→등급 통합)도 폐기된 축이라 걷어냈다.
 
-    test('WT-12-09: 신뢰도 점수 + 등급 통합 — 노쇼 다수 근무자 → 경고', () {
-      final s = _score(ns: 5, late: 10);
-      expect(_trustGrade(s), anyOf('경고', '주의'));
+    test('WT-12-09: 감점은 누진하되 3회 이상에서 멈춘다', () {
+      // 걷어낸 자리에 실제 규칙의 성질을 남긴다 — 값 네 개를 따로 쓴
+      // 위 셀들이 우연히 맞은 게 아니라는 것을 형태로 고정한다.
+      final d = TrustSettingsModel.defaults();
+      expect(d.getNoshowPenalty(1), greaterThan(d.getNoshowPenalty(2)));
+      expect(d.getNoshowPenalty(2), greaterThan(d.getNoshowPenalty(3)));
+      expect(d.getNoshowPenalty(3), d.getNoshowPenalty(10));
+      for (var n = 1; n <= 10; n++) {
+        expect(d.getNoshowPenalty(n), lessThan(0), reason: '감점이다');
+      }
     });
 
     test('WT-12-10: TrustSettingsModel 유효성 + defaults() 통합 확인', () {

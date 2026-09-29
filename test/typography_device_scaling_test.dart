@@ -252,14 +252,29 @@ void main() {
     });
 
     test('TYPO-42 FittedBox/AutoSizeText 우회를 추가하지 않았다', () {
-      var fitted = 0;
+      // [R7-FS-1 E3] 총수 6 을 **자리 목록**으로 바꿨다.
+      //   감사 시점 이후 `AppTabLabel` 이 FittedBox 를 하나 더 썼다
+      //   (탭 라벨이 큰 배율에서 잘리던 자리를 고친 것으로, 이 울타리가
+      //   막으려던 "글자를 줄여 문제를 덮는 우회" 가 아니라 그 반대다).
+      //   총수만 재면 정당한 수정도 걸리고 어디서 늘었는지도 모른다.
+      //   자리별로 세면 **새 파일에 생기는 우회**는 그대로 걸린다.
+      const allowed = <String, int>{
+        'lib/widgets/common/app_tab_label.dart': 3,
+        'lib/screens/business_admin/payroll/'
+            'payroll_payment_dashboard_screen.dart': 2,
+        'lib/widgets/common/badge_display_widget.dart': 1,
+        'lib/widgets/dialogs/worker_detail_dialog.dart': 1,
+      };
+      final found = <String, int>{};
       for (final e in Directory('lib').listSync(recursive: true)) {
         if (e is! File || !e.path.endsWith('.dart')) continue;
         final t = e.readAsStringSync();
-        fitted += 'FittedBox'.allMatches(t).length;
+        final n = 'FittedBox'.allMatches(t).length;
+        if (n > 0) found[e.path.replaceAll(r'\', '/')] = n;
         expect(t.contains('AutoSizeText'), false, reason: '${e.path}');
       }
-      expect(fitted, 6, reason: 'FittedBox 사용처가 늘었다 (감사 시점 6건)');
+      expect(found, allowed,
+          reason: 'FittedBox 사용처가 바뀌었다 — 어디서 늘었는지 확인한다');
     });
 
     test('TYPO-43 기기 모델 분기를 추가하지 않았다', () {

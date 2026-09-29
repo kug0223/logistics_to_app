@@ -3,6 +3,17 @@
 //
 // 월요일 시작, 일요일 종료 기준 주 계산 검증.
 // WeeklyHolidayEligibility는 순수 값 객체 — 생성자 직접 사용.
+//
+// [R7-FS-1 B] 기대값을 `DateTime` 에서 `DateTime.utc` 로 옮겼다.
+//
+//   `weekStart/weekEnd` 는 `FormatHelper.toKstDate` 를 지난다. 그 함수는
+//   일부러 `DateTime.utc(y, m, d)` 를 돌려준다 — **기기 시간대와 무관한
+//   KST 달력일 비교 키**이고, "실제 KST 자정 instant" 가 아니다(원본 주석).
+//   그래서 로컬 `DateTime(2026, 6, 1)` 과는 같지 않다.
+//
+//   이 키를 로컬로 되돌리면 비-KST 기기에서 주 경계가 하루 밀린다 —
+//   그것을 막으려고 넣은 성질이므로 **제품이 아니라 기대값을 옮겼다.**
+//   키라는 성질 자체는 아래 `weekStart 는 KST 달력일 비교 키다` 가 지킨다.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/utils/week_helper.dart';
@@ -15,46 +26,59 @@ void main() {
     // 2026-06-01 = 월요일 (weekday=1)
     test('월요일 → 자기 자신', () {
       final result = WeekHelper.weekStart(DateTime(2026, 6, 1));
-      expect(result, equals(DateTime(2026, 6, 1)));
+      expect(result, equals(DateTime.utc(2026, 6, 1)));
     });
 
     // 2026-06-05 = 금요일 (weekday=5)
     test('금요일 → 해당 주 월요일', () {
       final result = WeekHelper.weekStart(DateTime(2026, 6, 5));
-      expect(result, equals(DateTime(2026, 6, 1)));
+      expect(result, equals(DateTime.utc(2026, 6, 1)));
     });
 
     // 2026-06-07 = 일요일 (weekday=7)
     test('일요일 → 해당 주 월요일', () {
       final result = WeekHelper.weekStart(DateTime(2026, 6, 7));
-      expect(result, equals(DateTime(2026, 6, 1)));
+      expect(result, equals(DateTime.utc(2026, 6, 1)));
     });
 
     // 2026-06-08 = 월요일 (다음 주 시작)
     test('다음 주 월요일 → 다음 주 월요일', () {
       final result = WeekHelper.weekStart(DateTime(2026, 6, 8));
-      expect(result, equals(DateTime(2026, 6, 8)));
+      expect(result, equals(DateTime.utc(2026, 6, 8)));
     });
 
     // 월 경계: 2026-03-01 = 일요일, 월요일은 2026-02-23
     test('월 경계 넘김 → 이전 달 월요일 반환', () {
       // 2026-03-01 = 일요일(weekday=7) → weekStart = 2026-03-01 - 6일 = 2026-02-23(월)
       final result = WeekHelper.weekStart(DateTime(2026, 3, 1));
-      expect(result, equals(DateTime(2026, 2, 23)));
+      expect(result, equals(DateTime.utc(2026, 2, 23)));
     });
 
     // 연 경계: 2026-01-01 = 목요일 (weekday=4), weekStart = 2025-12-29(월)
     test('연 경계 넘김 → 전년도 12월 월요일', () {
       final result = WeekHelper.weekStart(DateTime(2026, 1, 1));
-      expect(result, equals(DateTime(2025, 12, 29)));
+      expect(result, equals(DateTime.utc(2025, 12, 29)));
     });
 
     test('시간 정보는 0시 기준으로 반환', () {
       final result = WeekHelper.weekStart(DateTime(2026, 6, 3, 14, 30));
       // 2026-06-03 = 수요일 → 월요일 = 2026-06-01 00:00
-      expect(result, equals(DateTime(2026, 6, 1)));
+      expect(result, equals(DateTime.utc(2026, 6, 1)));
       expect(result.hour,   equals(0));
       expect(result.minute, equals(0));
+    });
+
+    // [R7-FS-1 B] 위 기대값이 `.utc` 인 **이유**를 여기서 지킨다.
+    //   누가 다시 로컬 DateTime 으로 되돌리면 이 셀이 먼저 걸린다.
+    test('weekStart 는 기기 시간대와 무관한 KST 달력일 비교 키다', () {
+      final result = WeekHelper.weekStart(DateTime(2026, 6, 3, 14, 30));
+      expect(result.isUtc, isTrue,
+          reason: 'KST 달력일 키다 — 로컬 자정 instant 가 아니다');
+
+      // 같은 KST 순간을 서로 다른 오프셋으로 표현해도 같은 키가 나온다.
+      final kstNoon = DateTime.utc(2026, 6, 3, 3); // = KST 12:00
+      expect(WeekHelper.weekStart(kstNoon), equals(result));
+      expect(WeekHelper.weekStart(kstNoon.toLocal()), equals(result));
     });
   });
 
@@ -66,23 +90,23 @@ void main() {
     test('월요일 입력 → 해당 주 일요일', () {
       final result = WeekHelper.weekEnd(DateTime(2026, 6, 1));
       // 2026-06-01 (월) + 6 = 2026-06-07 (일)
-      expect(result, equals(DateTime(2026, 6, 7)));
+      expect(result, equals(DateTime.utc(2026, 6, 7)));
     });
 
     test('금요일 입력 → 해당 주 일요일', () {
       final result = WeekHelper.weekEnd(DateTime(2026, 6, 5));
-      expect(result, equals(DateTime(2026, 6, 7)));
+      expect(result, equals(DateTime.utc(2026, 6, 7)));
     });
 
     test('일요일 입력 → 자기 자신(일요일)', () {
       final result = WeekHelper.weekEnd(DateTime(2026, 6, 7));
-      expect(result, equals(DateTime(2026, 6, 7)));
+      expect(result, equals(DateTime.utc(2026, 6, 7)));
     });
 
     test('월 경계 넘김 → 다음 달 일요일', () {
       // 2026-05-25 = 월요일 → weekEnd = 2026-05-31(일)
       final result = WeekHelper.weekEnd(DateTime(2026, 5, 25));
-      expect(result, equals(DateTime(2026, 5, 31)));
+      expect(result, equals(DateTime.utc(2026, 5, 31)));
     });
 
     test('연 경계: weekEnd ≥ weekStart', () {

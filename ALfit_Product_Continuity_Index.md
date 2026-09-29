@@ -42,6 +42,7 @@
 | P3-4 | shell 일관성·기능 보존(5 호출부) | CLOSED | **CLOSED**(SHU-0~7, R×6) — 다섯 곳 전환, refresh·홈·알림·계약 바 보존 | **PENDING** · DEVICE 미실행 · F1~F3/F5 는 shell 로 닫히지 않는다 |
 | P2 잔여 | Home CTA 12경로 · 일정 카드(P21-R/P23-N) | CLOSED | **CLOSED(격리)** — 12/12 실행(UHR-31~46) + 인박스 내부(MRI-0~5) + 일정 카드·다른 달(PSN-1~5) | **PENDING** · 승인·동의 writer·앱 복귀 경로 각 owner |
 | P2-1 후속 | 서류 보완 확인 실패 · 목적지 대상(H6-E/H6-D) | CLOSED | **CLOSED(격리)** — 실패 표면·재시도·uid 가드 8건(UHR-45 갱신 · 47~54) + 목적지 본문 실측 5건(DDT-1~5) | **PENDING** · 목적지에 요청 문맥(사업장·사유·"외 N건") 없음 — 내 서류 화면 owner |
+| FS (품질 기준선) | 전체 스위트 기존 49 실패 결산 | **TEST gate CLOSED** — 14451 PASS / 2 SKIP / **0 FAIL · 0 load error**, analyze No issues. 원인 6개 전부 오래된 테스트·하네스, **production 변경 0** | N/A(코드 수정 없음) | `[OPEN-CONTRACT-MONTHEND]` 월말 시작 1개월 만료일(민법 160③ 2/28 vs 구현 2/27) — 계약 도메인 owner. **DEVICE·USER 는 종전대로 PENDING** — TEST green ≠ 출시 승인. 상세: `docs/r7-full-suite-baseline-closure.md` |
 | P4-1 | 실기기 조작·가독성(P41-S/A/R) | — | — | **전 셀 NOT SEEN** — 접근 가능한 Android 기기 0(adb 0, flutter 는 desktop/web). 관찰표 `docs/r7-p4-1-device-observation-sheet.md` 준비 완료 |
 | P1-2 후속 | 확정 명단 행 잘림(DEVICE.1H.1) | CLOSED | **CLOSED**(ARO-1~7) — `day_applicants_dialog` 다섯 자리 접기. 수정 전 대기 행 버튼 1개 소실 → 복구 | **NOT SEEN** · P4-1 관찰표 A-1 로 실기기 재검증 |
 | P2 나머지 | — | 지원자 화면군 여섯 묶음 결산 완료(PRODUCT 는 OPEN) | — | — |
