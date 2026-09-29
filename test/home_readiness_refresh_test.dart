@@ -147,12 +147,35 @@ void main() {
       expect(after.completedCount, before.completedCount + 1);
     });
 
-    test('HRR-31 헤더 설정 복귀가 readiness를 갱신한다', () {
+    test('HRR-31 관리 화면에서 돌아오면 readiness를 갱신한다', () {
+      // [R7-P4.2C] 갱신. 규칙은 그대로다 — **관리 화면에서 돌아오면 준비
+      //   상태를 다시 읽는다.** 바뀐 것은 그 갱신의 owner 다.
+      //
+      //   예전에는 헤더 버튼이 `SettingsScreen` 을 push 하고 복귀 `await`
+      //   뒤에 불렀다. 그런데 그 화면은 하단 '관리' 탭의 root 와 같은
+      //   위젯이고, **탭으로 들어간 경우에는 아무도 갱신하지 않았다** —
+      //   owner 가 화면이 아니라 한쪽 입구에 붙어 있었다.
+      //   owner 를 Home 재활성화로 옮겨서 두 입구가 같아졌다.
       final src = _source(_homePath);
-      final i = src.indexOf('builder: (_) => const SettingsScreen()));');
-      expect(i, greaterThan(-1), reason: '헤더 설정 이동 지점을 찾지 못함');
-      final after = src.substring(i, i + 400);
-      expect(after.contains('_reloadReadiness()'), true);
+      final i = src.indexOf('void _onHomeReactivated(int fromTab) {');
+      expect(i, greaterThan(-1), reason: '재활성화 핸들러를 찾지 못함');
+      final body =
+          src.substring(i, src.indexOf('bool _isReloadingReadiness', i));
+      expect(body.contains('AdminTabSwitcher.settingsTab'), true,
+          reason: '관리 탭에서 온 경우에 한정한다');
+      expect(body.contains('_reloadReadinessGuarded()'), true);
+      // 등록·해제가 짝을 이룬다 — 없으면 이 경로가 한 번도 안 돈다.
+      expect(src.contains('registerHomeReactivation(_onHomeReactivated)'), true);
+      expect(
+          src.contains('unregisterHomeReactivation(_onHomeReactivated)'), true);
+    });
+
+    test('HRR-31b 헤더 버튼은 관리 탭으로 가고 root를 다시 쌓지 않는다', () {
+      final src = _source(_homePath);
+      expect(src.contains('switchToTab(AdminTabSwitcher.settingsTab)'), true);
+      // 같은 top-level root 를 push 하던 자리는 사라졌다.
+      expect(src.contains('builder: (_) => const SettingsScreen()));'), false,
+          reason: '제목은 관리인데 하단 탭은 홈이던 상태로 돌아가면 안 된다');
     });
 
     test('HRR-32 인감 저장이 UserProvider를 갱신한다', () {

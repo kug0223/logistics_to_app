@@ -121,10 +121,18 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
       return true;
     }
     // [R8-P1A] 여기서 처음 방문 처리한다 — 이 탭의 loader는 지금부터 돈다.
+    final from = _currentIndex;
     setState(() {
       _visitedTabs.add(index);
       _currentIndex = index;
     });
+    // [P4.2C-READY-01] Home이 다시 앞으로 나왔다.
+    //   IndexedStack은 Home을 계속 살려 두므로 Home 스스로는 이 순간을 알 수
+    //   없다. push/pop이었다면 `await`가 알려 줬을 자리다. 어디서 왔는지를
+    //   같이 넘겨서, 받는 쪽이 필요한 전이에서만 반응하게 한다.
+    if (index == AdminTabSwitcher.homeTab) {
+      AdminTabSwitcher.instance.notifyHomeReactivated(from);
+    }
     return true;
   }
 

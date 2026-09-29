@@ -128,9 +128,17 @@ void main() {
       expect(header.contains('NotificationBadge('), true);
       expect(header.contains('Icons.notifications_outlined'), true);
       expect(header.contains('NotificationScreen()'), true);
-      expect(header.contains('SettingsScreen()'), true);
-      expect(header.contains('_reloadReadiness()'), true,
-          reason: '설정 복귀 시 readiness 재계산 [P2-01]');
+      // [R7-P4.2C] 갱신. "설정 action 이 헤더에 남아 있다"는 규칙은 그대로다.
+      //   바뀐 것은 가는 **방법**이다 — `SettingsScreen()` 은 하단 '관리'
+      //   탭의 root 와 같은 위젯이라, push 하면 제목은 '관리' 인데 선택된
+      //   탭은 '홈' 이 됐다. 이제 그 탭으로 전환한다.
+      //   [P2-01] 의 readiness 재계산은 `_onHomeReactivated` 로 옮겼고
+      //   `home_readiness_refresh_test` HRR-31 이 그쪽을 고정한다.
+      expect(header.contains('switchToTab(AdminTabSwitcher.settingsTab)'), true,
+          reason: '설정 진입점은 남아 있다');
+      expect(header.contains('Icons.settings_outlined'), true);
+      expect(header.contains('SettingsScreen()'), false,
+          reason: '같은 top-level root 를 한 번 더 쌓지 않는다');
     });
 
     test('02-d SubAdmin 전용 요소 무회귀', () {

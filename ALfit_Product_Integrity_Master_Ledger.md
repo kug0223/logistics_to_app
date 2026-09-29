@@ -4,9 +4,9 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-29 (**R7-P4.2B** · 관리자 root 시각 시스템 · RENDER 46셀 · DEVICE NOT SEEN)
+> 마지막 갱신: 2026-09-29 (**R7-P4.2C** · Home 설정 진입점 · readiness owner 이전)
 >
-> **현재 스냅샷:** 전체 스위트 14,617 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
+> **현재 스냅샷:** 전체 스위트 14,645 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
 > 직전 회차와 그 앞의 결정은 아래 절에 그대로 누적돼 있다 — 지우지 않았다.
 
 ## 0. 이 장부가 지키는 불변식
@@ -24,6 +24,8 @@
 
 | # | 단계 | 무엇이 틀렸는가 | 고친 방식 | 증거 |
 |---|---|---|---|---|
+| 59 | R7-P4.2C | Home 준비 상태 갱신의 owner 가 **화면이 아니라 한쪽 입구**에 붙어 있었다. 헤더 버튼으로 관리 화면에 들어갔다 나오면 `_reloadReadiness()` 가 돌았지만, **같은 화면에 하단 '관리' 탭으로 들어간 경우엔 아무도 갱신하지 않았다** — 인감을 등록하고 홈으로 와도 체크리스트가 예전 그대로였다 | owner 를 입구 → **Home 재활성화**로 옮겼다(`_onHomeReactivated`). 두 입구가 같아진다. 관리 탭에서 온 전이만 본다 — 공고·근무의 변경은 `dataRevision` 이 이미 나른다. 시간 쿨다운 없음(막 저장하고 돌아온 순간을 건너뛸 수 있다), 대신 in-flight 가드. `notifyDataChanged` 17 호출부 중 관리 탭이 **0곳**이라 기존 버스 재사용(R3)은 불가였고, 4+ 화면에 mutation 신호를 다는 R2 는 blast radius 로 기각 | 계약 6셀(READY-01) + 스위처 실물 8셀 + Shell 배선 3셀 |
+| 58 | R7-P4.2C | Home 헤더의 사람 아이콘이 `const SettingsScreen()` 을 **push** 했다. 하단 '관리' 탭의 root 도 같은 위젯·같은 파라미터라, 누르면 제목은 `관리` 인데 하단에서 빛나는 탭은 `홈` 이었다 — 같은 목적지를 두고 shell 이 내 위치를 다르게 말했다 | 목적지를 바꾸지 않고(같은 화면이다) **가는 방법**만 바꿨다 — `switchToTab(settingsTab)`. 아이콘도 목적지를 따라 `settings_outlined` 로(이 제품에서 `person_outline` 은 지원자 MY 탭의 '프로필 관리'다). **버튼을 숨기거나 지우지 않았다** — 진입점을 잃는 것은 고친 것이 아니다 | 계약 4셀(DEST-01) · 역할 4셀 |
 | 57 | R7-P4.2B | 근무 탭 첫 진입에서 `getMyBusinessOrThrow` 가 **두 번** 나갔다. `initState` 의 postFrame 이 `_loadDayData` 와 `_loadMarkerRange` 를 같은 프레임에 깨우는데, 캐시는 `await` 가 끝난 뒤에야 채워져 두 번째 호출이 빈 캐시를 본다. 첫 그림을 막는 조회라 그대로 지연이 된다 | 같은 scope 의 in-flight future 에 합류(`_inFlightBusinesses`). 캐시 경로가 여전히 먼저고, 기록·rethrow·stale 정책은 `_fetchBusinesses` 한 곳 그대로. 늦게 끝난 옛 요청이 새 요청을 지우지 않도록 `identical` 가드 | 계약 5셀(RS-04) + 기존 R8-P7.5 캐시 계약 22 PASS |
 | 56 | R7-P4.2B | 관리 탭에서 **가장 진한 면**(primary 100%)이 탭도 안 되는 이름표였다 — `InkWell`·`onTap` 0. 실제로 누를 수 있는 메뉴 행은 전부 흰 바탕·회색 아이콘. 만질 수 없는 것이 행동보다 강했다 | 관리자 경로만 tonal(primary 6% + 16% 테두리)로 내렸다. 구성·문구·지원자 경로는 그대로. **비운 자리에 KPI·Quick Menu·illustration 을 넣지 않았다** | 360dp 3안 실측(VR-03: A=103 / B·C=88 @×1.0) · 계약 4셀(RS-03) |
 | 55 | R7-P4.2B | 알림 벨이 다섯 root 중 **홈·급여 둘에만** 있었다. 알림은 이 탭의 데이터가 아니라 전역 수신함이라, 어디서 열든 같은 화면이 나온다 — 그런 진입점이 둘에만 있으면 규칙을 배울 수 없다 | canonical owner 를 홈 하나로. 다섯 전부에 붙이는 쪽은 거부했다(탭 고유 action 이 묻힌다). push 하위 화면(월별 급여현황)은 root 가 아니므로 유지 | 계약 3셀(RS-02) + 홈 잔존 대조 |
@@ -219,7 +221,10 @@
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 내부 필드명(표시 단위는 정상) |
 | ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |
-| `[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]` | P4.2B | **발견했으나 이번에 고치지 않았다.** 홈 헤더의 프로필 버튼이 `SettingsScreen` 을 **홈 탭 navigator 에 push** 한다 — 그 화면은 하단 `관리` 탭의 내용 그대로다. 결과: 제목은 `관리` 인데 하단에서 빛나는 탭은 `홈`. 급여 root 홈버튼과 같은 종류의 중복이다. 다만 이 버튼은 복귀 시 `await … then _reloadReadiness()` 로 **준비 상태 재계산을 책임지고 있어**, 탭 전환으로 바꾸면 그 갱신 경로를 함께 설계해야 한다(`home_readiness_refresh_test` 소유). 종료 조건: 갱신 경로 결정 후 수정 |
+| ~~`[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]`~~ | P4.2C | **CLOSED** — 결함 #58·#59. destination truth 와 readiness owner 를 함께 옮겼다. 남은 잔여는 아래 두 줄 |
+| `[R7-P4.2C-RENDER-SHELL-UNPUMPABLE]` | P4.2C | "제목 · 선택 탭 · 목적지"를 **한 화면에서** 보는 렌더는 못 했다. `BusinessAdminShell` 은 `UserProvider`·`FCMService` 때문에 Firebase 없이 pump 되지 않는다. `AdminTabSwitcher` 는 실물로 8셀 돌렸고, Shell 의 index→notify 배선은 소스 계약이다. 종료: Shell 용 Firebase 하네스(별도 결정) 또는 DEVICE |
+| `[R7-P4.2C-VERIFY-BACK-AT-MANAGE-ROOT]` | P4.2C | 관리 탭 root 에서 시스템 back 이 **앱을 종료**한다. 이번에 만든 규칙이 아니라 다섯 root 공통의 기존 Shell 계약이지만, 이 버튼 경로에서는 **이전과 달라진 동작**이다(예전엔 push 라 Home 으로 돌아왔다). 다섯 탭 전체의 back 정책을 바꿀지는 별도 제품 결정 |
+| ~~`[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]` (원문)~~ | P4.2B | **발견했으나 그때는 고치지 않았다.** 홈 헤더의 프로필 버튼이 `SettingsScreen` 을 **홈 탭 navigator 에 push** 한다 — 그 화면은 하단 `관리` 탭의 내용 그대로다. 결과: 제목은 `관리` 인데 하단에서 빛나는 탭은 `홈`. 급여 root 홈버튼과 같은 종류의 중복이다. 다만 이 버튼은 복귀 시 `await … then _reloadReadiness()` 로 **준비 상태 재계산을 책임지고 있어**, 탭 전환으로 바꾸면 그 갱신 경로를 함께 설계해야 한다(`home_readiness_refresh_test` 소유). 종료 조건: 갱신 경로 결정 후 수정 |
 | `[R7-P4.2B-VERIFY-ADMIN-IDENTITY]` | P4.2B | tonal 로 내린 관리 탭 이름표가 **실사용 관리자에게** 역할 인지를 충분히 주는지는 렌더로 알 수 없다. 종료: 실기기/실사용자 관찰 |
 | `[R7-P4.2B-DEVICE]` | P4.2B | cold FMP · warm revisit · flicker · 실제 프레임 시간 전부 **NOT SEEN**(실기기 0). code-level 중복 조회만 확인·수정했다 |
 | 대비·터치영역 수치 | P4 | 정량 계측 |

@@ -211,6 +211,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     //   Home 자신이 낸 mutation은 origin으로 걸러 중복 full refresh를 막는다.
     _lastSeenMutationRevision = WorkforceController.dataRevision.value;
     WorkforceController.dataRevision.addListener(_onAdminMutation);
+    // [P4.2C-READY-01] 관리 탭에서 돌아왔을 때 준비 상태를 다시 읽는다.
+    AdminTabSwitcher.instance.registerHomeReactivation(_onHomeReactivated);
     AttendanceListPdf.preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // [PH1C] 사업장 전환 감지 초기화 — 최초 렌더 전 기준값 확정
@@ -260,9 +262,43 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     FCMService().removeAdminRefreshListener(_onFcmRefresh);
     WorkforceController.dataRevision.removeListener(_onAdminMutation);
+    AdminTabSwitcher.instance.unregisterHomeReactivation(_onHomeReactivated);
     // [PH1C] 사업장 전환 감지 리스너 해제 (postFrameCallback 실행 전 dispose 방어)
     _cachedUp?.removeListener(_onBusinessSwitchCheck);
     super.dispose();
+  }
+
+  /// [P4.2C-READY-01] 다른 탭에 있다가 Home이 다시 앞으로 나왔다.
+  ///
+  ///   예전에는 헤더 버튼이 `SettingsScreen` 을 push 하고 **복귀할 때**
+  ///   `_reloadReadiness()` 를 불렀다. 그 화면은 하단 '관리' 탭의 root 와
+  ///   같은 위젯인데, **탭으로 들어간 경우에는 아무도 갱신하지 않았다** —
+  ///   갱신 owner 가 화면이 아니라 한쪽 입구에 붙어 있었던 것이다.
+  ///   owner 를 입구에서 **Home 재활성화**로 옮기면 두 입구가 같아진다.
+  ///
+  ///   관리 탭에서 온 경우만 본다. 공고·근무 탭의 변경은 이미
+  ///   `WorkforceController.dataRevision` 이 나르고 `_onAdminMutation` 이
+  ///   받는다. 모든 탭 전환마다 Home을 다시 읽지 않는다.
+  ///
+  ///   시간 쿨다운은 두지 않았다. "방금 읽었으니 건너뛴다"는 관리 탭에서
+  ///   막 인감을 저장하고 돌아온 바로 그 순간을 건너뛸 수 있다 — 이 수정이
+  ///   고치려는 상태다. 대신 진행 중인 재조회가 있으면 겹쳐 돌리지 않는다.
+  void _onHomeReactivated(int fromTab) {
+    if (!mounted) return;
+    if (fromTab != AdminTabSwitcher.settingsTab) return;
+    if (_isReloadingReadiness) return;
+    unawaited(_reloadReadinessGuarded());
+  }
+
+  bool _isReloadingReadiness = false;
+
+  Future<void> _reloadReadinessGuarded() async {
+    _isReloadingReadiness = true;
+    try {
+      await _reloadReadiness();
+    } finally {
+      _isReloadingReadiness = false;
+    }
   }
 
   @override
@@ -1181,16 +1217,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                   })),
             ),
             SizedBox(width: 6 * s),
-            _headerBtn(context, s, Icons.person_outline,
-                onTap: () => _safeNavigate(() async {
-                  await Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                  // [P2-01] 사업장/사용자 canonical 상태가 바뀌었으면
-                  //   _firstPosting도 같은 복귀 안에서 다시 계산한다.
-                  //   _reloadReadiness()가 _loadApprovedBusinessStatus()를
-                  //   먼저 await하므로 중복 호출이 아니고 순서도 보장된다.
-                  if (mounted) unawaited(_reloadReadiness());
-                })),
+            // [P4.2C-NAV-01] 이 버튼은 `const SettingsScreen()` 을 열었다.
+            //   하단 '관리' 탭의 root 도 **같은 위젯, 같은 파라미터**다.
+            //   그래서 누르면 제목은 '관리' 인데 하단에서 빛나는 탭은 '홈'
+            //   이었다 — 같은 목적지인데 내가 어느 영역에 있는지를 shell 이
+            //   다르게 말한 것이다.
+            //
+            //   목적지를 바꾸지 않고(같은 화면이다) **가는 방법만** 바꾼다.
+            //   push 대신 그 탭으로 전환하면 제목과 하단 탭이 같은 말을 한다.
+            //
+            //   아이콘도 목적지를 따라간다. person_outline 은 이 제품에서
+            //   '프로필 관리'(지원자 MY 탭 → ProfileEditScreen)를 뜻하는데
+            //   여기서는 프로필이 아니라 관리 영역 전체로 갔다.
+            //
+            //   [P2-01] 의 readiness 재계산은 사라지지 않았다 — 복귀 시점에
+            //   묶여 있던 것을 `_onHomeReactivated` 로 옮겼다. 그래야 하단
+            //   '관리' 탭으로 들어간 경우까지 같이 갱신된다(예전에는 이 버튼
+            //   으로 들어간 경우에만 갱신됐다).
+            _headerBtn(context, s, Icons.settings_outlined,
+                onTap: () => AdminTabSwitcher.instance
+                    .switchToTab(AdminTabSwitcher.settingsTab)),
           ]),
           SizedBox(height: 10 * s),
           // [HOME-V2-08D.1] 이름 + 배지 + [PH1] 사업장/권한 컨텍스트

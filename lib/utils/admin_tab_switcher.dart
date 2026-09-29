@@ -50,6 +50,17 @@ class AdminTabSwitcher {
   //   같은 slot을 쓰지 않는다.
   void Function(String toId)? _jobsTargetFn;
 
+  // [P4.2C-READY-01] Home 탭이 **다시 앞으로 나왔을 때** 알려 주는 자리.
+  //
+  //   Shell은 IndexedStack이라 Home은 한 번 만들어진 뒤 계속 살아 있다.
+  //   그래서 "다시 보이게 됐다"에 해당하는 lifecycle 콜백이 없다 —
+  //   Navigator push/pop이었다면 `await`가 그 역할을 했을 자리다.
+  //
+  //   이 콜백은 **어느 탭에서 왔는지**를 같이 준다. 받는 쪽이 "관리 탭에서
+  //   왔을 때만" 처럼 좁게 판단할 수 있어야, 모든 탭 전환이 Home 전체
+  //   reload가 되는 일을 막을 수 있다.
+  void Function(int fromTab)? _homeReactivatedFn;
+
   /// Shell이 활성화되어 탭 전환 가능한 상태인지 여부
   bool get isRegistered => _switchFn != null;
 
@@ -88,6 +99,19 @@ class AdminTabSwitcher {
   void unregisterJobsTargetHandler(void Function(String toId) fn) {
     if (identical(_jobsTargetFn, fn)) _jobsTargetFn = null;
   }
+
+  /// [BusinessAdminHomeScreen 전용] Home이 다시 앞으로 나왔을 때 받을 핸들러.
+  void registerHomeReactivation(void Function(int fromTab) fn) =>
+      _homeReactivatedFn = fn;
+
+  /// [BusinessAdminHomeScreen 전용] 자기가 등록한 핸들러일 때만 해제한다.
+  void unregisterHomeReactivation(void Function(int fromTab) fn) {
+    if (identical(_homeReactivatedFn, fn)) _homeReactivatedFn = null;
+  }
+
+  /// [Shell 전용] 다른 탭에 있다가 Home으로 전환됐을 때 호출한다.
+  /// 같은 탭 재탭(popUntil)은 재활성화가 아니므로 Shell이 걸러서 부른다.
+  void notifyHomeReactivated(int fromTab) => _homeReactivatedFn?.call(fromTab);
 
   /// 알림 → Jobs 탭으로 전환하며 특정 공고를 1회성으로 reveal한다.
   ///

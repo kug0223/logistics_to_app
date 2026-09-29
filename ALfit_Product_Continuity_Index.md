@@ -2,18 +2,54 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.2B** (관리자 root 시각 시스템)
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.2C** (Home 설정 진입점 · readiness owner)
 
-## 0. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.2B
+## 0. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.2C
 
 > 아래 절들은 누적 기록이다. **지금 어디 있는지**는 이 절만 읽으면 된다.
 
-**기준 → 종료:** `6b77dc6` → `7a5e804`(P4.2-1) → **P4.2B**
+**기준 → 종료:** `6b77dc6` → `7a5e804`(P4.2-1) → `3a7fde8`(P4.2B) → **P4.2C**
 
 | 회차 | 범위 | CODE | RENDER | DEV | DEVICE | PRODUCT |
 |---|---|---|---|---|---|---|
 | R7-P4.2-1 | Home 온보딩 네비 · 세 탭 SETUP_REQUIRED · 급여 root 홈버튼 | CLOSED | 소스 계약만 | NOT SEEN | NOT SEEN | — |
 | R7-P4.2B | root 이름 일치 · 알림 owner · identity 강도 · 하단바 · cold path | CLOSED | **CLOSED**(46셀, 320/360/411 × 1.0/1.3/2.0) | NOT SEEN | **NOT SEEN** | 관리 탭 정체성 OPEN |
+| R7-P4.2C | Home 설정 진입점 · readiness refresh owner | **CLOSED** | **PARTIAL** — `AdminTabSwitcher` 실물 8셀. Shell 은 Firebase 없이 pump 불가 → 배선은 소스 계약 | NOT SEEN | **NOT SEEN** | — |
+
+### R7-P4.2C 결정
+
+**§1 product intent — `A. 관리 탭으로 이동` (확정)**
+헤더 버튼은 `const SettingsScreen()` 을 push 했다. Shell 탭 4 의 root 도
+`const SettingsScreen()` — **파라미터 0, 완전히 같은 위젯**. tooltip·semantic label 은
+**없었다**(admin `_headerBtn` 은 label 인자를 받지 않는다). 기존 테스트 이름도
+`02-c 알림 · 설정 action` 이었다. B(프로필)·C(별도 설정)·D(역할 전환) 아님 —
+`person_outline` 은 이 제품에서 지원자 MY 탭의 '프로필 관리'(`ProfileEditScreen`)를 뜻한다.
+
+| ID | 판정 | 근거 |
+|---|---|---|
+| `[P4.2C-NAV-01]` | **Model B — switchToTab(settingsTab)** | 같은 목적지에 두 개의 top-level 진실이 있었다. 목적지는 그대로, 가는 방법만 바꿨다. 아이콘도 `settings_outlined` 로 목적지를 따라간다. 버튼은 **지우지 않았다** |
+| `[P4.2C-READY-01]` | **R1 — Home 재활성화** (R2 기각) | R3 불가: `notifyDataChanged` 17 호출부 중 **관리 탭 0곳** — 기존 버스가 Manage mutation 을 나르지 않는다. R2(4+ 화면에 mutation 신호 추가)는 blast radius 로 기각 |
+
+**드러난 더 큰 사실:** 그 `_reloadReadiness()` 는 원래부터 **반쪽**이었다.
+같은 화면에 하단 '관리' 탭으로 들어간 경우엔 아무도 갱신하지 않았다 —
+owner 가 화면이 아니라 **한쪽 입구**에 붙어 있었다. 이번 수정으로 두 입구가 같아졌다.
+
+**read 증감 (정적)**
+
+| 전이 | 전 | 후 |
+|---|---|---|
+| 헤더 버튼 → 관리 → 홈 | 2 loader | 2 loader (동일) |
+| 하단 관리 탭 → 홈 | **0** (stale) | 2 loader |
+| 공고·근무·급여 → 홈 | 0 | **0** (`fromTab` 가드) |
+| 관리 탭 진입 시 Home preload | 없음 | 없음 |
+
+**back semantics 변화(사용자에게 보임):** 예전엔 push 라 back 이 Home 으로 돌아왔다.
+이제 관리 탭 root 이므로 다른 네 root 와 **같은 규칙** — 탭 내 route 가 없으면
+`SystemNavigator.pop()`. 이 규칙은 이번에 만든 것이 아니라 Shell 의 기존 계약이다.
+
+**역할 영향:** BUSINESS_ADMIN · USER(SubAdmin 관리자 모드) 둘뿐.
+SUPER_ADMIN 은 `AdminHomeScreen`(다른 화면), 지원자 Home 에는 이 버튼이 없다.
+역할 전환 진입점(헤더 토글 · 관리 화면 '지원자 모드로 전환') 둘 다 무변경.
 
 **P4.2B 에서 확정한 것**
 
