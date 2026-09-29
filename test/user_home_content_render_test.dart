@@ -239,9 +239,12 @@ UserHomeReads _reads({
   Map<String, int>? calls,
   /// [R7-P2 잔여] 신분증 열람 요청 — 기본값(빈 목록)은 기존과 같다.
   List<IdCardAccessRequestModel> idRequests = const [],
+  /// [R7-P2 잔여] n 번째 publishedTOs 응답 — 탭 직후 원장이 바뀌는 경우용.
+  List<List<TOModel>>? tosByCall,
 }) {
   var appCall = 0;
   var renewalCall = 0;
+  var tosCall = 0;
   return UserHomeReads(
     myApplications: (uid) {
       if (calls != null) calls['apps'] = (calls['apps'] ?? 0) + 1;
@@ -262,6 +265,8 @@ UserHomeReads _reads({
     },
     publishedTOs: () async {
       if (tosError != null) throw tosError;
+      final i = tosCall++;
+      if (tosByCall != null && i < tosByCall.length) return tosByCall[i];
       return tos;
     },
     pendingIdCardRequests: (uid) async => idRequests,
@@ -1261,6 +1266,77 @@ void main() {
         find.byType(JobPostingScreen, skipOffstage: false));
     // 12경로 중 **이 하나만** 모델 스냅샷을 넘긴다.
     expect(pushed.to?.id, to.id);
+  });
+
+
+
+  testWidgets('UHR-41 (#12) 날짜 칩을 고르면 그 날짜 CTA 가 서고, 날짜를 함께 넘긴다',
+      (tester) async {
+    final log = _ScopeLog();
+    final pick = _day(3);
+    await _pumpWithScope(
+      tester,
+      // 그 날 확정 근무가 있으면 칩이 눌린다(`_confirmedDateSet`).
+      reads: _reads(applications: [_shortTerm(id: 'c1', workDate: pick)]),
+      log: log,
+      size: const Size(390, 5200),
+    );
+
+    // 날짜 CTA 는 칩을 고르기 전에는 없다.
+    final dateCta = find.textContaining('${pick.month}월 ${pick.day}일 일자리');
+    expect(dateCta, findsNothing);
+
+    // 같은 숫자 Text 가 여러 개일 수 있다 — CTA 가 설 때까지 후보를 눌러 본다.
+    final candidates = find.text('${pick.day}');
+    expect(candidates, findsWidgets,
+        reason: '날짜 띠에 그 날 칩이 있어야 한다');
+    for (var k = 0; k < candidates.evaluate().length; k++) {
+      await tester.tap(candidates.at(k), warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 400));
+      if (dateCta.evaluate().isNotEmpty) break;
+    }
+    // 섹션 제목도 같은 날짜를 말할 수 있다 — 여러 개일 수 있다.
+    expect(dateCta, findsWidgets,
+        reason: '칩을 고르면 그 날짜의 일자리 보기 CTA 가 서야 한다');
+
+    // 섹션 제목이 아니라 **버튼**을 누른다 — 조상으로 좁힌다.
+    final button = find.ancestor(of: dateCta, matching: find.byType(ElevatedButton));
+    expect(button, findsOneWidget, reason: '날짜 CTA 는 버튼이다');
+    await tester.ensureVisible(button);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(button);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 같은 CTA 가 **고른 날짜를 함께** 넘긴다(UHR-37 의 다른 갈래).
+    expect(
+        log.calls,
+        contains(
+            'switchToTabWithDate:1/${pick.year}-${pick.month}-${pick.day}'));
+  });
+
+  testWidgets('UHR-42 (#7) 탭 뒤 홈 목록이 바뀌어도 열린 대상은 그 TO 다',
+      (tester) async {
+    final opened = _recTo(id: 'toOpen', title: '열린공고');
+    final other = _recTo(id: 'toOther', title: '나중공고');
+    await _pump(
+      tester,
+      // 첫 조회는 열 대상을, 두 번째 조회는 **다른 목록**을 준다.
+      reads: _reads(applications: const [], tosByCall: [
+        [opened],
+        [other],
+      ]),
+    );
+
+    await tester.tap(find.text(opened.title).first);
+    for (var i = 0; i < 14; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final pushed = tester.widget<JobPostingScreen>(
+        find.byType(JobPostingScreen, skipOffstage: false));
+    // 스냅샷을 넘기는 유일한 경로이므로, 목록이 낡아도 **연 대상은 그 TO** 다.
+    expect(pushed.to?.id, opened.id);
+    expect(pushed.to?.id, isNot(other.id));
   });
 
 }
