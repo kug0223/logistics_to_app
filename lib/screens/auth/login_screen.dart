@@ -1060,8 +1060,11 @@ class _PasswordResetSheetState extends State<_PasswordResetSheet> {
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     elevation: 0,
+                    // [BTN-FG-01] 자식 Text 에 주면 subtitleStyle 의 기본색
+                    //   (AppColors.textPrimary)이 foregroundColor 를 이긴다.
+                    textStyle: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.w600),
                   ),
-                  child: Text('로그인하러 가기', style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.w600)),
+                  child: const Text('로그인하러 가기'),
                 ),
                 const SizedBox(height: 8),
 

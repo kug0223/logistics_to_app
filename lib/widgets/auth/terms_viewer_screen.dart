@@ -244,13 +244,23 @@ class _TermsViewerScreenState extends State<TermsViewerScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-              ),
-              child: Text(
-                _reachedBottom ? '동의하고 닫기' : '내용을 끝까지 확인해주세요',
-                style: ResponsiveHelper.bodyStyle(
+                // [BTN-FG-01] 글자 스타일을 **버튼 style 로** 준다.
+                //   자식 `Text(style: ...)` 에 주면 그 색이 DefaultTextStyle 을
+                //   이겨서 위 `foregroundColor`/`disabledForegroundColor` 가
+                //   무시된다. `ResponsiveHelper.bodyStyle` 은 색을 안 넘기면
+                //   `AppColors.grey700` 을 넣으므로, 파란 버튼 위에 회색
+                //   글자가 찍히고 있었다.
+                //   `ButtonStyle.textStyle` 의 색은 Flutter 가
+                //   `textStyle.copyWith(color: resolvedForegroundColor)` 로
+                //   덮으므로(button_style_button.dart), 활성=흰색 ·
+                //   비활성=grey400 이 그대로 따라온다.
+                textStyle: ResponsiveHelper.bodyStyle(
                   context,
                   fontWeight: FontWeight.w600,
                 ),
+              ),
+              child: Text(
+                _reachedBottom ? '동의하고 닫기' : '내용을 끝까지 확인해주세요',
               ),
             ),
           ),
