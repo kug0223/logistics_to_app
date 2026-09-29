@@ -65,10 +65,16 @@ void main() {
       expect(src.contains('사업장을 선택해주세요'), isTrue,
           reason: '선택 취소 쪽 문구는 유지');
       // 사업장 0 상태의 action 은 '선택하기'가 아니다 — 고를 것이 없다.
+      // 이 분기가 끝나는 곳까지만 본다 — 고정 길이 창은 주석이 늘면 밀린다.
       final i = src.indexOf('아직 급여를 관리할 사업장이 없어요');
-      final block = src.substring(i, i + 400);
+      final next = src.indexOf('else if (_noData)', i);
+      expect(next, greaterThan(i));
+      final block = src.substring(i, next);
       expect(block.contains('선택하기'), isFalse);
-      expect(block.contains('준비 계속하기'), isTrue);
+      // [R7-P4.2B CTA-01] 갱신. '준비 계속하기'는 어디로 가는지 말하지 않아
+      //   목적지(홈)와 라벨이 어긋났다. 규칙은 그대로다 — **준비의 owner 로
+      //   보낸다**. 그 owner 를 라벨이 가리키게 바꿨을 뿐이다.
+      expect(block.contains('준비 단계 보기'), isTrue);
       expect(block.contains('switchToTab'), isTrue,
           reason: '준비의 owner 인 Home 으로 보낸다');
     });
@@ -164,7 +170,8 @@ void main() {
       expect(i, greaterThan(-1));
       final block = view.substring(i, i + 300);
       expect(block.contains('switchToTab'), isTrue);
-      expect(block.contains('준비 계속하기'), isTrue);
+      // [R7-P4.2B CTA-01] 갱신 — 세 탭이 같은 라벨을 쓴다.
+      expect(block.contains('준비 단계 보기'), isTrue);
     });
   });
 
@@ -183,7 +190,20 @@ void main() {
           reason: 'root tab 에서 goHome 은 하단 홈 탭과 같은 동작이다');
       expect(block.contains('Icons.refresh_rounded'), isTrue,
           reason: '새로고침은 이 화면 고유 action 이라 남는다');
-      expect(block.contains('NotificationBadge'), isTrue);
+      // [R7-P4.2B NAV-03] 갱신. P4.2-1 때는 "벨은 그대로 둔다"가 사실이었다.
+      //   이번에 다섯 root 를 나란히 놓고 보니 벨이 홈과 급여 **둘에만**
+      //   있었다. 알림은 이 화면의 데이터가 아니라 전역 수신함이므로
+      //   canonical owner 를 홈 하나로 정했다. 기대값을 그 사실로 바꾼다.
+      expect(block.contains('NotificationBadge'), isFalse,
+          reason: 'root 알림 진입점은 홈 하나다');
+    });
+
+    test('NAV-01c 홈에는 알림이 남아 있다', () {
+      // 위에서 뺀 것이 "알림을 없앴다"가 되지 않도록 반대편을 같이 고정한다.
+      final home = _src(
+          'lib/screens/business_admin/business_admin_home_screen.dart');
+      expect(home.contains('NotificationBadge('), isTrue);
+      expect(home.contains('Icons.notifications_outlined'), isTrue);
     });
 
     test('NAV-01b push 로 열리는 하위 화면은 홈 버튼을 유지한다', () {

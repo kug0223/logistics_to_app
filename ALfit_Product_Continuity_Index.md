@@ -2,7 +2,33 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-29 · 기준 HEAD: R7-P2 잔여 4회차(H6·I45·SN-M) 커밋
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.2B** (관리자 root 시각 시스템)
+
+## 0. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.2B
+
+> 아래 절들은 누적 기록이다. **지금 어디 있는지**는 이 절만 읽으면 된다.
+
+**기준 → 종료:** `6b77dc6` → `7a5e804`(P4.2-1) → **P4.2B**
+
+| 회차 | 범위 | CODE | RENDER | DEV | DEVICE | PRODUCT |
+|---|---|---|---|---|---|---|
+| R7-P4.2-1 | Home 온보딩 네비 · 세 탭 SETUP_REQUIRED · 급여 root 홈버튼 | CLOSED | 소스 계약만 | NOT SEEN | NOT SEEN | — |
+| R7-P4.2B | root 이름 일치 · 알림 owner · identity 강도 · 하단바 · cold path | CLOSED | **CLOSED**(46셀, 320/360/411 × 1.0/1.3/2.0) | NOT SEEN | **NOT SEEN** | 관리 탭 정체성 OPEN |
+
+**P4.2B 에서 확정한 것**
+
+| ID | 판정 | 근거 |
+|---|---|---|
+| `[P4.2B-CTA-01]` | **KEEP HOME ROUTE** + 라벨 교체 | 사업장 등록 후에도 **운영팀 검토 대기**가 남는다(`business_form_screen` 성공 토스트). 그 사실을 설명하는 화면은 홈뿐이다. 원 탭으로 되돌리면 "방금 등록했는데 또 없다고 한다"가 된다. 라벨만 목적지를 가리키게: `준비 계속하기` → `준비 단계 보기` |
+| `[P4.2B-NAV-02]` | CORRECTION | 하단 탭 `근무` ↔ 화면 제목 `인력`. 다섯 중 이 하나만 어긋났다 |
+| `[P4.2B-NAV-03]` | CORRECTION | 알림 벨이 홈·급여 **둘에만** 있었다. 전역 수신함이므로 owner 를 홈 하나로. 다섯 전부에 붙이는 쪽은 거부(탭 고유 action 이 묻힌다) |
+| `[P4.2B-ID-01]` | MODIFY → **C(light tonal)**, 관리자 경로만 | 관리 탭에서 가장 진한 면(primary 100%)이 **탭도 안 되는 이름표**였고, 누를 수 있는 메뉴는 전부 흰 행이었다. B(흰 면)는 메뉴 행과 구별이 사라져 기각 |
+| `[P4.2B-PERF-01]` | CORRECTION | 근무 탭 cold entry 에서 `getMyBusinessOrThrow` 가 **2회** 나갔다(두 로더가 같은 프레임, 캐시는 await 뒤에 채워짐) |
+| 하단 NavigationBar | **NO PATCH** | 선택 탭이 색·굵기·filled/outlined **3채널**로 구별된다(VR-02s). 320dp×2.0 에서도 5라벨 전부 표시, 넘침 0 |
+| 세 SETUP 표면 레이아웃 | **NO PATCH** | 27/27 조합에서 넘침 0 |
+
+**P4.2B 가 재확인하지 않은 것(P4.2-1 수용분):** Home 4단계 destination · `_reloadReadiness()` ·
+`FirstPostingReadiness ↔ CreateTO` parity · NO_BUSINESS state contract · 급여 root 홈버튼 제거.
 
 ## 1. 문서 지도
 

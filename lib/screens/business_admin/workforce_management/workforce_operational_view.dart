@@ -643,6 +643,49 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         _cachedBusinessesScope == scope ? _cachedBusinesses : null;
     if (cached != null && !_businessesStale) return cached;
 
+    // [P4.2B-PERF-01] 진행 중인 같은 조회에 올라탄다.
+    //
+    //   캐시는 await 가 **끝난 뒤에야** 채워진다. 그런데 initState 의
+    //   postFrame 콜백이 `_loadDayData` 와 `_loadMarkerRange` 를 같은
+    //   프레임에서 둘 다 깨우고, 둘 다 여기로 들어온다. 두 번째가 도착할 때
+    //   첫 번째는 아직 네트워크에 있으므로 캐시는 비어 있고, 그래서 이 탭을
+    //   처음 열 때마다 `getMyBusinessOrThrow` 가 **두 번** 나갔다.
+    //   첫 화면을 막는 조회라 그대로 첫 그림 지연이 된다.
+    //
+    //   같은 scope 의 in-flight future 를 들고 있다가 돌려주면 한 번으로
+    //   줄어든다. 결과·오류·캐시 정책은 아래 그대로다 — 두 호출자가 같은
+    //   성공을 보고, 실패도 같이 본다.
+    final inFlight =
+        _inFlightScope == scope ? _inFlightBusinesses : null;
+    if (inFlight != null) return inFlight;
+
+    final future = _fetchBusinesses(scope, cached);
+    _inFlightScope = scope;
+    _inFlightBusinesses = future;
+    try {
+      return await future;
+    } finally {
+      // 같은 scope 의 내 요청일 때만 치운다 — 늦게 끝난 옛 요청이 새 요청을
+      // 지우지 않게.
+      if (identical(_inFlightBusinesses, future)) {
+        _inFlightBusinesses = null;
+        _inFlightScope = null;
+      }
+    }
+  }
+
+  /// [P4.2B-PERF-01] 같은 scope 로 이미 나가 있는 조회. 두 로더가 같은
+  /// 프레임에서 깨어날 때 하나로 접는다.
+  Future<List<BusinessModel>>? _inFlightBusinesses;
+  String? _inFlightScope;
+
+  Future<List<BusinessModel>> _fetchBusinesses(
+      String scope, List<BusinessModel>? cached) async {
+    final up = context.read<UserProvider>();
+    final uid = up.currentUser?.uid;
+    if (uid == null) return const [];
+    final effectiveBizId = up.effectiveBusinessId;
+
     List<BusinessModel> result;
     try {
       if (up.isSubAdmin && effectiveBizId != null) {
@@ -1579,7 +1622,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       action: TextButton(
         onPressed: () =>
             AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
-        child: const Text('준비 계속하기'),
+        // [P4.2B-CTA-01] 목적지(홈 = 준비 단계 목록)를 라벨이 가리킨다.
+        child: const Text('준비 단계 보기'),
       ),
     );
   }

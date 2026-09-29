@@ -127,8 +127,13 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // [P4.2B-NAV-02] 하단 탭은 '근무'인데 이 화면 제목만 '인력'이었다.
+              //   탭을 눌러 도착한 곳의 이름이 탭 이름과 다르면, 관리자는
+              //   자기가 어디에 있는지 화면으로 확인할 수 없다. 다섯 root 중
+              //   이 하나만 그랬다(홈·공고·급여·관리는 일치).
+              //   canonical 이름은 사용자가 먼저 읽는 **탭 라벨**이다.
               Text(
-                '인력',
+                '근무',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w800,

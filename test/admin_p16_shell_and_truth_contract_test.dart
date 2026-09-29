@@ -74,8 +74,24 @@ void main() {
     });
 
     test('M-2 프로필 블록을 지우지 않고 대비를 유지한 카드로 내렸다', () {
-      expect(s.contains('child: _buildHeaderProfile(context, userProvider),'), isTrue);
-      expect(s.contains('color: theme.primaryColor,'), isTrue);
+      // [R7-P4.2B ID-01] 갱신. P1-6 은 "지원자 경로도 관리자와 같은 brand
+      //   색 카드로 통일했다"를 고정했고, 그때는 그게 사실이었다.
+      //   P4.2B 에서 두 경로의 **내용이 다르다**는 것을 확인했다:
+      //     관리자  이름·@아이디·역할뿐 — 탭도 안 되는 순수 이름표
+      //     지원자  근무·평점·지각·노쇼까지 담은 정보 면
+      //   관리 탭에서는 그 이름표가 화면에서 가장 진한 면이었고, 정작 누를 수
+      //   있는 메뉴 행은 전부 흰 바탕이었다. 관리자 경로만 tonal 로 내린다.
+      //   블록 자체·구성·문구는 그대로다 — 지우지 않았다는 원래 규칙은 유지.
+      expect(
+          s.contains(
+              'child: _buildHeaderProfile(context, userProvider,\n'
+              '                      tonal: useAdminShell),'),
+          isTrue,
+          reason: '블록은 그대로 있고 면 처리만 역할별로 갈린다');
+      expect(s.contains('theme.primaryColor.withValues(alpha: 0.06)'), isTrue,
+          reason: '관리자: tonal 면');
+      expect(s.contains(': theme.primaryColor,'), isTrue,
+          reason: '지원자: 기존 brand 면 유지');
       expect(s.contains('BorderRadius.circular(16)'), isTrue,
           reason: 'D0 관리자 카드 radius');
     });

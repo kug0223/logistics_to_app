@@ -4,7 +4,10 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-29 (R7-MONTHEND · DEV 단일 함수 배포 실행 · 실제 확정은 데이터 정리로 NOT SEEN)
+> 마지막 갱신: 2026-09-29 (**R7-P4.2B** · 관리자 root 시각 시스템 · RENDER 46셀 · DEVICE NOT SEEN)
+>
+> **현재 스냅샷:** 전체 스위트 14,617 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
+> 직전 회차와 그 앞의 결정은 아래 절에 그대로 누적돼 있다 — 지우지 않았다.
 
 ## 0. 이 장부가 지키는 불변식
 
@@ -21,6 +24,11 @@
 
 | # | 단계 | 무엇이 틀렸는가 | 고친 방식 | 증거 |
 |---|---|---|---|---|
+| 57 | R7-P4.2B | 근무 탭 첫 진입에서 `getMyBusinessOrThrow` 가 **두 번** 나갔다. `initState` 의 postFrame 이 `_loadDayData` 와 `_loadMarkerRange` 를 같은 프레임에 깨우는데, 캐시는 `await` 가 끝난 뒤에야 채워져 두 번째 호출이 빈 캐시를 본다. 첫 그림을 막는 조회라 그대로 지연이 된다 | 같은 scope 의 in-flight future 에 합류(`_inFlightBusinesses`). 캐시 경로가 여전히 먼저고, 기록·rethrow·stale 정책은 `_fetchBusinesses` 한 곳 그대로. 늦게 끝난 옛 요청이 새 요청을 지우지 않도록 `identical` 가드 | 계약 5셀(RS-04) + 기존 R8-P7.5 캐시 계약 22 PASS |
+| 56 | R7-P4.2B | 관리 탭에서 **가장 진한 면**(primary 100%)이 탭도 안 되는 이름표였다 — `InkWell`·`onTap` 0. 실제로 누를 수 있는 메뉴 행은 전부 흰 바탕·회색 아이콘. 만질 수 없는 것이 행동보다 강했다 | 관리자 경로만 tonal(primary 6% + 16% 테두리)로 내렸다. 구성·문구·지원자 경로는 그대로. **비운 자리에 KPI·Quick Menu·illustration 을 넣지 않았다** | 360dp 3안 실측(VR-03: A=103 / B·C=88 @×1.0) · 계약 4셀(RS-03) |
+| 55 | R7-P4.2B | 알림 벨이 다섯 root 중 **홈·급여 둘에만** 있었다. 알림은 이 탭의 데이터가 아니라 전역 수신함이라, 어디서 열든 같은 화면이 나온다 — 그런 진입점이 둘에만 있으면 규칙을 배울 수 없다 | canonical owner 를 홈 하나로. 다섯 전부에 붙이는 쪽은 거부했다(탭 고유 action 이 묻힌다). push 하위 화면(월별 급여현황)은 root 가 아니므로 유지 | 계약 3셀(RS-02) + 홈 잔존 대조 |
+| 54 | R7-P4.2B | 하단 탭은 `근무` 인데 도착한 화면 제목은 `인력` 이었다. 다섯 중 이 하나만 어긋나, 관리자가 자기 위치를 화면으로 확인할 수 없었다 | canonical 이름은 사용자가 먼저 읽는 **탭 라벨**이다 → 제목을 `근무` 로 | 계약 3셀(RS-01) |
+| 53 | R7-P4.2B | 세 SETUP 표면의 CTA `준비 계속하기` 가 **어디로 가는지 말하지 않았다** | 목적지(홈 = 준비 단계 목록)를 라벨이 가리키게 `준비 단계 보기` 로. 목적지 자체는 유지 — 사업장 등록 직후에도 **운영팀 검토 대기**가 남고 그것을 설명하는 화면은 홈뿐이다 | 렌더 27조합 넘침 0 · 계약 2셀 갱신 |
 | 1 | P1-3 | 당일명단 4개 진입이 달력일/기기 자정을 섞어 `workDateMs`·문서 id 가 흔들렸다 | `kstDayKeyOfCivil` 도입, 37곳 치환, 저장은 KST 자정 instant | CODE 10 · RENDER 7 |
 | 2 | P1-3 | 근무 건수를 `명` 으로 불렀다(한 사람이 같은 날 두 근무 가능) | 화면의 모든 수치를 `건` 으로 | CODE 6 |
 | 3 | P1-3 | 합쳐진 구 문서 그룹에서 한 사람의 두 관계가 구별되지 않았다 | 혼합 그룹에만 `업무명 · 예정 시간` 행 문맥 | RENDER 3 |
@@ -79,6 +87,11 @@
 
 | 단계 | 항목 | 근거 |
 |---|---|---|
+| R7-P4.2B | 하단 NavigationBar 를 M3 `NavigationBar`(pill active indicator)로 교체 | **거부.** 선택 탭이 이미 색·굵기·filled/outlined **3채널**로 구별된다(VR-02s 실측). 채택하려면 관리자·지원자 두 shell 이 공유하는 컴포넌트를 갈아야 하고 높이·ripple·theming 이 함께 바뀐다. 지시서가 root 탭 구조 변경과 과도한 pill 을 금한 범위이기도 하다. **M3 의 filled/outlined 아이콘 쌍과 1~2어 라벨은 이미 따르고 있다** |
+| R7-P4.2B | 하단 바 배경을 tonal 로(N2) | **거부.** 320dp×2.0 까지 넘침 0, 5라벨 전부 표시. 흰 바 + `elevation:0` 의 경계 문제는 본문 배경이 `grey50`/`background` 라 실제로 생기지 않는다. "밋밋하다"만으로 바꾸지 않는다 |
+| R7-P4.2B | 세 SETUP 표면의 레이아웃 | **NO PATCH.** 320/360/411 × 1.0/1.3/2.0 **27/27 넘침 0**, 최악(320×2.0)에서도 제목·부제·CTA 전부 잔존 |
+| R7-P4.2B | root app bar 의 divider 3종(없음 / `grey100` 1px / `grey200` 1px)과 left inset 2종(20×s / 16) | **BACKLOG.** 의미에 영향이 없고(§12 기준) 홈·공고·근무는 AppBar 가 아니라 본문 헤더라 통일하려면 세 화면의 스크롤 구조를 바꿔야 한다 |
+| R7-P4.2B | 관리 identity 블록을 탭 가능하게 만들기 | **거부.** 이번 범위는 강도 조정이다. 새 진입점(프로필 편집·역할 전환·사업장 전환)을 만들지 않는다 — `RS-03a` 가 `InkWell`/`onTap` 0 을 계속 고정한다 |
 | P1-5 | 이체/취소가 실제 송금으로 오인되는 문구 | 두 다이얼로그가 "실제 은행 이체를 완료한 건만" · "실제 은행 이체는 취소되지 않습니다" 를 명시 |
 | P1-5 | 연체·당일 판정 | 저장값과 화면이 같은 `toKstDate` 정규화를 쓴다 |
 | P1-6 | 통계 단위·모집단·실패 | `확인 불가`/`조회 실패`, `limitReached` fail-closed, 드릴다운에 사업장·필터·연·월 동반, 근무일 = 고유 날짜 |
@@ -206,5 +219,8 @@
 | `[R7-P1-6-RESIDUAL-DAYS-FIELD-NAMING]` | P16-S | 내부 필드명(표시 단위는 정상) |
 | ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |
+| `[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]` | P4.2B | **발견했으나 이번에 고치지 않았다.** 홈 헤더의 프로필 버튼이 `SettingsScreen` 을 **홈 탭 navigator 에 push** 한다 — 그 화면은 하단 `관리` 탭의 내용 그대로다. 결과: 제목은 `관리` 인데 하단에서 빛나는 탭은 `홈`. 급여 root 홈버튼과 같은 종류의 중복이다. 다만 이 버튼은 복귀 시 `await … then _reloadReadiness()` 로 **준비 상태 재계산을 책임지고 있어**, 탭 전환으로 바꾸면 그 갱신 경로를 함께 설계해야 한다(`home_readiness_refresh_test` 소유). 종료 조건: 갱신 경로 결정 후 수정 |
+| `[R7-P4.2B-VERIFY-ADMIN-IDENTITY]` | P4.2B | tonal 로 내린 관리 탭 이름표가 **실사용 관리자에게** 역할 인지를 충분히 주는지는 렌더로 알 수 없다. 종료: 실기기/실사용자 관찰 |
+| `[R7-P4.2B-DEVICE]` | P4.2B | cold FMP · warm revisit · flicker · 실제 프레임 시간 전부 **NOT SEEN**(실기기 0). code-level 중복 조회만 확인·수정했다 |
 | 대비·터치영역 수치 | P4 | 정량 계측 |
 | 각 단계 DEVICE | 각 owner | 실기기 확인 |

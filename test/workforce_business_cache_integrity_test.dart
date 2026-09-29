@@ -336,8 +336,14 @@ void main() {
   group('[R8P7.5] 화면 — 실패가 캐시·빈 상태로 붕괴하지 않는다', () {
     test('GMB-V1 캐시는 성공했을 때만 기록된다 (§5 §24)', () {
       final code = _codeOf(_read(view));
+      // [R7-P4.2B PERF-01] 갱신. 규칙은 그대로다 — **성공했을 때만 캐시하고,
+      //   첫 실패는 올려 보낸다**. 바뀐 것은 그 코드가 사는 함수 이름뿐이다.
+      //   `_ensureBusinesses` 가 같은 scope 의 진행 중 조회를 하나로 접는
+      //   얇은 입구가 되면서, 실제 조회·catch·캐시 기록은 `_fetchBusinesses`
+      //   로 옮겨갔다. 검사 창을 그 함수로 옮기고, 입구 쪽에는 캐시를 건드리는
+      //   코드가 **없다**는 것을 아래에서 따로 고정한다.
       final body =
-          _bodyOf(code, 'Future<List<BusinessModel>> _ensureBusinesses(');
+          _bodyOf(code, 'Future<List<BusinessModel>> _fetchBusinesses(');
       final flat = _flat(body);
       expect(flat.contains('rethrow;'), isTrue,
           reason: '첫 로드 실패는 올려 보내야 한다');
@@ -350,6 +356,20 @@ void main() {
       expect(catchBody.contains('rethrow;'), isTrue);
       // 캐시 기록은 try 를 빠져나온 뒤 한 곳에서만 일어난다.
       expect('_cachedBusinesses ='.allMatches(body).length, 1);
+    });
+
+    test('GMB-V1b 합류 입구는 캐시를 건드리지 않는다 (§5 §24)', () {
+      // [R7-P4.2B PERF-01] in-flight 합류가 캐시 규칙을 우회하는 두 번째
+      //   기록 지점이 되면 안 된다. 입구는 읽기만 한다.
+      final code = _codeOf(_read(view));
+      final body =
+          _bodyOf(code, 'Future<List<BusinessModel>> _ensureBusinesses(');
+      expect(body.contains('_cachedBusinesses ='), isFalse,
+          reason: '캐시 기록 지점은 _fetchBusinesses 한 곳이다');
+      expect(body.contains('_businessesStale = false'), isFalse);
+      // 그리고 실패를 삼키지 않는다 — 합류한 두 호출자가 같은 오류를 본다.
+      expect(body.contains('} catch ('), isFalse,
+          reason: '입구에 catch 가 생기면 rethrow 계약이 여기서 끊긴다');
     });
 
     test('GMB-V2 _reload 는 캐시를 지우지 않고 stale 로 표시한다 (§9)', () {

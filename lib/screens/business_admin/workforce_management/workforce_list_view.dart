@@ -845,7 +845,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         _PostingEmptyKind.setupRequired => TextButton(
             onPressed: () => AdminTabSwitcher.instance
                 .switchToTab(AdminTabSwitcher.homeTab),
-            child: const Text('준비 계속하기'),
+            // [P4.2B-CTA-01] 목적지(홈 = 준비 단계 목록)를 라벨이 가리킨다.
+            child: const Text('준비 단계 보기'),
           ),
         _ => null,
       },

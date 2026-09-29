@@ -334,6 +334,17 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     //   바로 아래 하단 탭의 '홈' 과 같은 동작이다. push 로 열린 하위 화면
     //   (예: 월별 급여현황)에는 돌아갈 길이 필요하므로 그대로 둔다.
     //   그 화면의 순서를 복사해 오면서 root 에는 맞지 않는 action 이 따라왔다.
+    // [P4.2B-NAV-03] 알림 벨도 뺐다. 다섯 root 중 알림이 있던 곳은 홈과 이
+    //   화면 둘뿐이었고, 공고·근무·관리에는 없었다. 알림은 특정 탭의 데이터가
+    //   아니라 **전역 수신함**이라, 어떤 탭에서 열든 같은 화면이 나온다.
+    //   그런 진입점이 다섯 중 둘에만 있으면 관리자는 규칙을 배울 수 없다.
+    //   해결은 두 방향인데, 다섯 탭 전부에 벨을 붙이는 쪽은 택하지 않는다 —
+    //   모든 root 의 우상단을 같은 버튼으로 채우면 각 탭 고유 action(이 화면의
+    //   새로고침, 공고의 필터·등록)이 묻힌다.
+    //   그래서 **canonical owner 를 홈 하나로** 둔다. 홈 헤더의 벨은 배지까지
+    //   그대로 남아 있고, 하단 탭에서 한 번에 닿는다.
+    //   push 로 열리는 하위 화면(월별 급여현황)은 root 가 아니므로 건드리지
+    //   않는다 — 거기서는 하단 탭이 가려지지 않아도 돌아갈 길이 필요하다.
     return AppPageScaffold(
       title: '급여 관리',
       actions: [
@@ -341,16 +352,6 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           icon: const Icon(Icons.refresh_rounded),
           onPressed: () => _loadYear(_selectedYear),
           color: AppColors.textSecondary,
-        ),
-        NotificationBadge(
-          child: IconButton(
-            icon: const Icon(Icons.notifications_outlined),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const NotificationScreen()),
-            ),
-            color: AppColors.textSecondary,
-          ),
         ),
       ],
       body: Column(
@@ -390,9 +391,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 title: '아직 급여를 관리할 사업장이 없어요',
                 subtitle: '사업장을 등록하면 근무·급여 관리를 시작할 수 있어요.',
                 action: TextButton(
+                  // [P4.2B-CTA-01] '준비 계속하기'는 어디로 가는지 말하지
+                  //   않았다. 목적지는 홈이고, 사업장이 0개인 홈은 곧 준비
+                  //   단계 목록이다. 라벨이 그 화면을 그대로 가리키게 한다.
+                  //   '사업장 등록'으로 쓰지 않는 이유: 이 버튼은 등록 폼이
+                  //   아니라 홈으로 가고, 등록 직후에도 운영팀 검토 대기가
+                  //   남는다 — 그 사실을 설명하는 곳이 홈이다.
                   onPressed: () => AdminTabSwitcher.instance
                       .switchToTab(AdminTabSwitcher.homeTab),
-                  child: const Text('준비 계속하기'),
+                  child: const Text('준비 단계 보기'),
                 ),
               ),
             )

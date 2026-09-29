@@ -757,12 +757,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ResponsiveHelper.spacing(context, 16),
                   0,
                 ),
+                // [P4.2B-ID-01] 관리자 경로만 tonal 로 내렸다.
+                //
+                //   이 블록에는 InkWell 도 onTap 도 없다 — 프로필 편집도,
+                //   역할 전환도, 사업장 전환도 아니다. 순수한 이름표다.
+                //   그런데 관리 탭에서 가장 진한 면(primary 100%)을 그것이
+                //   차지하고, 실제로 누를 수 있는 모든 메뉴 행은 흰 바탕에
+                //   회색 아이콘이었다. **만질 수 없는 것이 가장 강했다.**
+                //
+                //   [R7-P4.2B VR-03] 세 안을 360dp 에서 직접 그려 재 봤다.
+                //     x1.0  A=103  B/C=88 / x1.3  A=118  B/C=123
+                //   높이는 근거가 아니다(큰 글꼴에서 역전). 근거는 면적의
+                //   강도다. B(흰 면)는 아래 메뉴 행과 구별이 사라져 이름표가
+                //   또 하나의 누를 수 있는 행처럼 읽혔다. C 는 brand 를
+                //   유지하면서 강도만 내린다.
+                //
+                //   지원자 경로는 그대로 둔다 — 그쪽 블록은 이름표가 아니라
+                //   근무·평점·지각·노쇼를 담은 정보 면이라 성격이 다르다.
                 child: Container(
                   decoration: BoxDecoration(
-                    color: theme.primaryColor,
+                    color: useAdminShell
+                        ? theme.primaryColor.withValues(alpha: 0.06)
+                        : theme.primaryColor,
                     borderRadius: BorderRadius.circular(16),
+                    border: useAdminShell
+                        ? Border.all(
+                            color: theme.primaryColor.withValues(alpha: 0.16))
+                        : null,
                   ),
-                  child: _buildHeaderProfile(context, userProvider),
+                  child: _buildHeaderProfile(context, userProvider,
+                      tonal: useAdminShell),
                 ),
               ),
               Expanded(child: listBody),
@@ -775,15 +799,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// ✨ 세련된 프로필 카드
   /// 파란 헤더 — 가로 compact 프로필 (공간 최소화)
-  Widget _buildSettingsAvatar(BuildContext context, UserModel? user) {
-    final size = ResponsiveHelper.spacing(context, 52);
+  Widget _buildSettingsAvatar(BuildContext context, UserModel? user,
+      {bool tonal = false}) {
+    // [P4.2B-ID-01] tonal 면 위에서는 흰 아이콘이 보이지 않는다.
+    //   아바타 크기도 함께 내린다 — 이름표가 첫 화면을 덜 차지한다.
+    final fg = tonal ? Theme.of(context).primaryColor : Colors.white;
+    final size = ResponsiveHelper.spacing(context, tonal ? 44 : 52);
     final photoUrl = user?.profileImageUrl;
     final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.2),
+        color: tonal
+            ? Theme.of(context).primaryColor.withValues(alpha: 0.10)
+            : Colors.white.withValues(alpha: 0.2),
         shape: BoxShape.circle,
       ),
       child: ClipOval(
@@ -793,34 +823,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fit: BoxFit.cover,
                 placeholder: (_, __) => Icon(
                   Icons.person,
-                  size: ResponsiveHelper.iconSize(context, 30),
-                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, tonal ? 24 : 30),
+                  color: fg,
                 ),
                 errorWidget: (_, __, ___) => Icon(
                   Icons.person,
-                  size: ResponsiveHelper.iconSize(context, 30),
-                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, tonal ? 24 : 30),
+                  color: fg,
                 ),
               )
             : Icon(
                 Icons.person,
-                size: ResponsiveHelper.iconSize(context, 30),
-                color: Colors.white,
+                size: ResponsiveHelper.iconSize(context, tonal ? 24 : 30),
+                color: fg,
               ),
       ),
     );
   }
 
-  Widget _buildHeaderProfile(BuildContext context, UserProvider userProvider) {
+  Widget _buildHeaderProfile(BuildContext context, UserProvider userProvider,
+      {bool tonal = false}) {
     final user = userProvider.currentUser;
     final isUser = user?.role == UserRole.USER;
+    // [P4.2B-ID-01] tonal 면에서는 흰 글자가 전부 사라진다. 색만 바꾸고
+    //   구성(아바타 · 이름 · @아이디 · 역할 배지)과 문구는 그대로 둔다.
+    final theme = Theme.of(context);
+    final nameColor = tonal ? AppColors.textPrimary : Colors.white;
+    final subColor =
+        tonal ? AppColors.grey500 : Colors.white.withValues(alpha: 0.8);
+    final badgeFg = tonal ? theme.primaryColor : Colors.white;
+    final badgeBg = tonal
+        ? theme.primaryColor.withValues(alpha: 0.10)
+        : Colors.white.withValues(alpha: 0.2);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 16),
-        ResponsiveHelper.spacing(context, 4),
-        ResponsiveHelper.spacing(context, 16),
-        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, tonal ? 14 : 16),
+        ResponsiveHelper.spacing(context, tonal ? 14 : 4),
+        ResponsiveHelper.spacing(context, tonal ? 14 : 16),
+        ResponsiveHelper.spacing(context, tonal ? 14 : 16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -829,8 +870,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Row(
             children: [
               // 작은 아바타
-              _buildSettingsAvatar(context, user),
-              SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+              _buildSettingsAvatar(context, user, tonal: tonal),
+              SizedBox(width: ResponsiveHelper.spacing(context, tonal ? 12 : 14)),
               // 이름 + 아이디 + 역할
               Expanded(
                 child: Column(
@@ -839,15 +880,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Text(
                       user?.name ?? '사용자',
                       style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.white,
+                        color: nameColor,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       '@${user?.username ?? 'username'}',
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: Colors.white.withValues(alpha: 0.8)),
+                      style:
+                          ResponsiveHelper.tinyStyle(context, color: subColor),
                     ),
                     const SizedBox(height: 6),
                     // 역할 배지 (작게)
@@ -857,10 +898,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         vertical: ResponsiveHelper.spacing(context, 3),
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
+                        color: badgeBg,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.3)),
+                        border: tonal
+                            ? null
+                            : Border.all(
+                                color: Colors.white.withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -872,14 +915,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ? Icons.admin_panel_settings
                                     : Icons.person,
                             size: ResponsiveHelper.iconSize(context, 12),
-                            color: Colors.white,
+                            color: badgeFg,
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                           Text(
                             CommonWidgets.getRoleName(
                                 user?.roleString ?? 'USER'),
                             style: ResponsiveHelper.tinyStyle(context,
-                                color: Colors.white,
+                                color: badgeFg,
                                 fontWeight: FontWeight.w600),
                           ),
                         ],
