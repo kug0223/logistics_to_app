@@ -2,7 +2,43 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.3A** (사업장 주소 → 좌표)
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.3B** (사업장 서류 precheck · 첨부 수명)
+
+## 0-AA. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.3B
+
+기준 `af8fed3`. 실기기 발견 2건 + 직전 수정의 **첫 정상 증거**.
+
+**DEVICE 성과:** 주소 선택 → `사업장 위치 확인됨` **관찰됨**.
+→ `[R7-P4.3A-BUSINESS-ADDRESS-LOCATION-VERIFY]` 의 기기 원인 후보 3개 중
+①(키 없는 빌드)·③(네트워크) **기각**, 경로 정상 확인. 이 축은 다시 열지 않는다.
+
+| ID | 등급 | 내용 |
+|---|---|---|
+| `[R7-P4.3B-BUSINESS-SAVE-TEMP-FILE]` | **BLOCKER** | `ImageHelper.compressImage` 가 **세 경로**(200KB 이하 · 압축 null · 예외)에서 **image_picker 소유 cache 파일**(`cache/scaled_*`)을 그대로 반환. 폼은 그 File 을 3단계 마법사 내내 들고 다니다 맨 마지막에야 연다 → `PathNotFoundException errno=2`. **Golden Path 전면 차단** |
+| `[R7-P4.3B-BUSINESS-DOC-PRECHECK]` | **BLOCKER** | 완료 조건이 `File != null` 하나 → **풍경 사진도 통과**. `FILE_SELECTED` 를 `DOCUMENT_READY` 로 썼다 |
+| `[R7-P4.3B-RAW-EXCEPTION-UX]` | CORRECTION | `저장에 실패했습니다: PathNotFoundException … errno = 2` 를 그대로 노출 |
+| (추가 발견) | CORRECTION | `_uploadImage` 가 `finally` 에서 **성공·실패 무관하게** 첨부를 삭제 → 네트워크 실패 후 "다시 저장" 이 영구 불가 |
+
+**§16 partial write — 없음(실측).** DEV: `businesses` 0건 · `managedBusinessIds` 0 ·
+`Storage businesses/*` **0개**. `_uploadImage` 가 `readAsBytes()` 에서 먼저 던져
+네트워크 write 이전에 끝났다. 사업장 문서 + 소유 관계는 **WriteBatch** 로 원자적.
+
+**§5 재사용:** 새 OCR SDK 를 추가하지 않았다. `google_mlkit_text_recognition` 과
+`OcrVerificationHelper.verifyBusinessLicense`(번호·대표자 추출)가 **이미 있었고
+폼에 연결돼 있지 않았다.** 거기에 **문서 판별**(`looksLikeBusinessLicense`)만 더했다 —
+영수증에도 사업자등록번호가 찍히므로 번호 일치만으로는 서류를 구별할 수 없다.
+
+**§10 상태:** `checking` / `passed` / `not_document` / `unreadable` /
+`number_unread` / `number_mismatch`. **precheck ≠ 공식 검증** — 문구에
+`인증`·`진위`·`검증 완료` 를 쓰지 않는다. `official verification` 은 미구현으로 잔여.
+
+| 등급 | 상태 |
+|---|---|
+| CODE | **CLOSED** — 29셀 |
+| RENDER | **NOT SEEN** — 폼은 Firebase·Provider 없이 pump 불가. OCR 원문→판정은 순수 로직 13셀 |
+| DEV | **N/A** — businesses 0건 (부분 write 부재는 실측) |
+| DEVICE | **부분** — 위치 확인됨 관찰. 서류 precheck·저장 성공은 재빌드 후 **NOT SEEN** |
+| PRODUCT | **OPEN** — 공식 사업상태 검증 범위 |
 
 ## 0-A. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.3A
 

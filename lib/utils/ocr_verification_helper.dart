@@ -631,6 +631,128 @@ class OcrVerificationHelper {
   // ──────────────────────────────────────────────────────────────────────────
 
   /// 🏢 사업자등록증 검증
+  // ────────────────────────────────────────────────────────────────────
+  // [R7-P4.3B DOC-03] 사업자등록증 precheck
+  //
+  //   실기기에서 확인된 것: 사업장 등록에서 **아무 이미지나** 골라도
+  //   그대로 다음 단계로 넘어갔다. 완료 조건이 `File != null` 이었기
+  //   때문이다 — 무엇이 찍힌 이미지인지는 아무도 보지 않았다.
+  //
+  //   아래는 **공식 진위 확인이 아니다.** 국세청 조회도, 정부 인증도
+  //   아니다. 목적은 셋뿐이다:
+  //     ① 명백히 사업자등록증이 아닌 이미지를 거른다
+  //     ② 읽을 수 없는 이미지는 재촬영을 유도한다
+  //     ③ 읽힌 사업자등록번호를 사용자가 입력한 번호와 대조한다
+  //   그래서 결과 이름에도 '인증·검증 완료' 라는 말을 쓰지 않는다.
+
+  /// 사업자등록증 precheck 결과. 각각 **사용자가 할 일이 다르다.**
+  static const String checkPassed = 'passed';
+
+  /// 서류로는 보이는데 글자를 거의 읽지 못했다 → 다시 촬영.
+  static const String checkUnreadable = 'unreadable';
+
+  /// 사업자등록증으로 보기 어려운 이미지다 → 다른 서류를 등록.
+  static const String checkNotDocument = 'not_document';
+
+  /// 서류는 맞는데 번호가 입력값과 다르다 → 입력이나 서류를 확인.
+  static const String checkNumberMismatch = 'number_mismatch';
+
+  /// 서류는 맞는데 번호를 못 읽었다 → 다시 촬영.
+  static const String checkNumberUnread = 'number_unread';
+
+  /// [R7-P4.3B] 이 이미지가 사업자등록증으로 보이는가.
+  ///
+  ///   **문자 수로 판단하지 않는다.** 영수증·명함·배송라벨도 사업자등록
+  ///   번호를 찍는 경우가 많아서, 번호가 있다는 사실만으로는 서류를
+  ///   구별할 수 없다. 증서에만 나오는 항목을 본다.
+  ///
+  ///   - 제목(`사업자등록증`) 하나면 충분하다.
+  ///   - 발급 주체(`세무서장`/`국세청`)도 증서에만 있다.
+  ///   - 둘 다 못 읽었으면, 증서 고유 항목(`업태`·`종목`·`개업연월일`)이
+  ///     둘 이상이면서 기본 항목(`상호`·`대표자`·`등록번호`·`소재지`)도
+  ///     둘 이상일 때만 서류로 본다. 영수증은 보통 업태·종목·개업연월일을
+  ///     함께 적지 않는다.
+  static bool looksLikeBusinessLicense(String rawText) {
+    final t = rawText.replaceAll(RegExp(r'\s+'), '');
+    if (t.contains('사업자등록증')) return true;
+    if (t.contains('세무서장') || t.contains('국세청')) return true;
+
+    int count(List<String> tokens) =>
+        tokens.where((k) => t.contains(k)).length;
+
+    final certFields = count(const ['업태', '종목', '개업연월일', '개업일']);
+    final basicFields =
+        count(const ['상호', '법인명', '대표자', '등록번호', '소재지', '사업장']);
+    return certFields >= 2 && basicFields >= 2;
+  }
+
+  /// [R7-P4.3B] OCR 원문 → precheck 상태. ML Kit 호출 없음(테스트 가능).
+  static String businessLicenseCheckFromText(
+    String rawText,
+    String? expectedBusinessNumber,
+  ) {
+    final looksLike = looksLikeBusinessLicense(rawText);
+    if (!looksLike) {
+      // 글자 자체를 거의 못 읽은 것과 "다른 문서"를 구별한다.
+      //   길이는 **통과 근거로 쓰지 않는다** — 둘 다 실패이고, 두 실패
+      //   메시지를 가르는 데만 쓴다(재촬영이냐, 다른 서류냐).
+      //
+      //   기준을 10자로 둔 이유: 간판 하나 찍힌 풍경 사진도 스무 자쯤은
+      //   읽힌다. 그건 "못 읽은" 것이 아니라 **사업자등록증이 아닌** 것이라
+      //   다시 찍으라고 하면 안 된다. 열 자도 안 나온 경우만 재촬영이다.
+      final dense = rawText.replaceAll(RegExp(r'\s+'), '');
+      return dense.length < 10 ? checkUnreadable : checkNotDocument;
+    }
+
+    final extracted = _extractBusinessNumber(rawText);
+    if (extracted == null) return checkNumberUnread;
+
+    final expected = (expectedBusinessNumber ?? '').replaceAll(RegExp(r'\D'), '');
+    if (expected.isEmpty) {
+      // 비교할 입력이 없다 — 서류로는 보이므로 막지 않는다.
+      return checkPassed;
+    }
+    return extracted.replaceAll(RegExp(r'\D'), '') == expected
+        ? checkPassed
+        : checkNumberMismatch;
+  }
+
+  /// [R7-P4.3B] 이미지 파일 → precheck 상태.
+  ///
+  /// 반환: `{'status': ..., 'extractedNumber': ...}`.
+  /// OCR 원문은 돌려주지 않는다 — 사업정보가 로그·state 에 남지 않게.
+  static Future<Map<String, dynamic>> precheckBusinessLicense(
+    String imagePath,
+    String? expectedBusinessNumber,
+  ) async {
+    TextRecognizer? textRecognizer;
+    try {
+      final inputImage = InputImage.fromFilePath(imagePath);
+      textRecognizer = TextRecognizer(script: TextRecognitionScript.korean);
+      final recognized = await textRecognizer.processImage(inputImage);
+      final rawText = recognized.text;
+      if (kDebugMode) {
+        debugPrint('📄 [사업자등록증 precheck] 텍스트 길이: ${rawText.length}');
+      }
+      final status =
+          businessLicenseCheckFromText(rawText, expectedBusinessNumber);
+      return {
+        'status': status,
+        // 뒷자리는 남기지 않는다 — 불일치 안내에만 쓰는 앞 3자리.
+        'numberPrefix': _extractBusinessNumber(rawText)
+            ?.replaceAll(RegExp(r'\D'), '')
+            .padRight(3)
+            .substring(0, 3),
+      };
+    } catch (e) {
+      // OCR 자체가 실패했다. **통과로 바꾸지 않는다.**
+      debugPrint('❌ [사업자등록증 precheck] 실패: $e');
+      return {'status': checkUnreadable, 'numberPrefix': null};
+    } finally {
+      textRecognizer?.close();
+    }
+  }
+
   static Future<Map<String, dynamic>> verifyBusinessLicense(
     String imagePath,
     String? expectedBusinessNumber,

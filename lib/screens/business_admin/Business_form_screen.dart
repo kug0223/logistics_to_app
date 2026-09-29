@@ -32,6 +32,7 @@ import '../../widgets/inputs/daum_address_search.dart';
 // Screen
 import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/ocr_verification_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/app_select_field.dart';
@@ -833,6 +834,60 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     // isApproved=true 상태에서 서버(Firestore Rules)가 businessLicenseImageUrl 변경을 거부함.
     final isApprovedBiz = _isEditMode && (widget.business?.isApproved == true);
 
+    // [P4.3B-DOC-03] 선택한 이미지가 사업자등록증으로 보이는지 결과를
+    //   그림 바로 아래에 붙인다. 이전에는 아무 이미지나 미리보기만 뜨고
+    //   그대로 다음 단계로 넘어갔다.
+    final check = _licenseCheckCopy();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildLicenseBox(context, theme,
+            hasNewLocal: hasNewLocal,
+            hasExistingUrl: hasExistingUrl,
+            hasImage: hasImage,
+            isApprovedBiz: isApprovedBiz),
+        if (check != null)
+          Padding(
+            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_isCheckingLicense)
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      valueColor: AlwaysStoppedAnimation(check.color),
+                    ),
+                  )
+                else
+                  Icon(check.icon, size: 16, color: check.color),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                // 문장이 두 줄이 될 수 있다 — 좁은 화면에서 넘치지 않게.
+                Expanded(
+                  child: Text(
+                    check.text,
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: check.color),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLicenseBox(
+    BuildContext context,
+    ThemeData theme, {
+    required bool hasNewLocal,
+    required bool hasExistingUrl,
+    required bool hasImage,
+    required bool isApprovedBiz,
+  }) {
     return Stack(
       children: [
         GestureDetector(
@@ -841,13 +896,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               : () async {
             final image = await ImageHelper.pickAndCompressImage(
               context,
-              type: ImageType.general,
+              // [P4.3B-DOC-03] 이건 서류다 — 글자가 읽혀야 한다.
+              type: ImageType.document,
               useBottomSheet: true,
             );
             if (!mounted || image == null) return;
             final prev = _businessLicenseImage;
             setState(() => _businessLicenseImage = image);
             prev?.delete().ignore(); // 교체 전 임시 파일 정리
+            // [P4.3B-DOC-03] 새 이미지를 고른 순간 이전 확인 결과는 무효다.
+            await _precheckLicense(image);
           },
           child: Container(
             width: double.infinity,
@@ -2083,6 +2141,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       ToastHelper.showError('사업자등록증 이미지를 업로드해주세요');
       return false;
     }
+    // [P4.3B-DOC-03] "파일이 있다" 를 "사업자등록증 준비 완료" 로 쓰지 않는다.
+    //
+    //   예전에는 이 검증이 `File != null` 하나였고, 풍경 사진을 골라도
+    //   그대로 통과했다. 새로 고른 이미지는 **확인을 통과해야** 넘어간다.
+    //   기존에 제출된 서류(`_businessLicenseImageUrl` 만 있는 수정 모드)는
+    //   여기서 다시 검사하지 않는다 — 이미 올라간 파일은 손에 없다.
+    if (_businessLicenseImage != null) {
+      if (_isCheckingLicense) {
+        ToastHelper.showError('사업자등록증을 확인하는 중이에요\n잠시만 기다려주세요');
+        return false;
+      }
+      if (!_licenseCheckPassed) {
+        // 왜 안 되는지는 그림 아래 안내가 이미 말하고 있다 — 여기서는
+        // 같은 말을 반복하지 않고 그 자리를 가리킨다.
+        ToastHelper.showError('사업자등록증을 확인하지 못했어요\n아래 안내를 확인해 주세요');
+        setState(() => _autoValidate = true);
+        return false;
+      }
+    }
     // [P4.3A-LOC-03] 좌표 없이 다음 단계로 보내지 않는다.
     //
     //   예전에는 세 단계 어디에서도 좌표를 보지 않았고, 저장 payload 는
@@ -2345,6 +2422,134 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     }
   }
 
+  // ── [P4.3B-DOC-03] 사업자등록증 precheck ──────────────────────────
+  //
+  //   예전에는 "파일이 있다" 가 곧 "사업자등록증 준비 완료" 였다. 풍경
+  //   사진을 골라도 다음 단계로 넘어갔다.
+  //
+  //   여기서 하는 것은 **공식 진위 확인이 아니다.** 국세청 조회가 아니고,
+  //   통과했다고 사업자가 인증된 것도 아니다. 그래서 문구에 '인증'·'검증
+  //   완료' 를 쓰지 않는다. 하는 일은 셋뿐이다 — 명백히 다른 이미지를
+  //   거르고, 못 읽은 이미지는 재촬영을 유도하고, 읽힌 번호를 입력과
+  //   대조한다.
+
+  /// 지금 확인 결과가 **어느 파일의 것**인지. 재선택하면 즉시 무효가 된다.
+  String? _precheckedLicensePath;
+
+  /// 늦게 끝난 옛 OCR 이 새 이미지의 상태를 덮지 않도록.
+  int _licenseCheckId = 0;
+
+  bool _isCheckingLicense = false;
+  String? _licenseCheckStatus;
+  String? _licenseNumberPrefix;
+
+  /// 지금 들고 있는 파일이 확인을 통과했는가.
+  /// 파일이 바뀌면 경로가 달라져 자동으로 false 가 된다.
+  bool get _licenseCheckPassed =>
+      _licenseCheckStatus == OcrVerificationHelper.checkPassed &&
+      _precheckedLicensePath != null &&
+      _precheckedLicensePath == _businessLicenseImage?.path;
+
+  Future<void> _precheckLicense(File image) async {
+    final checkId = ++_licenseCheckId;
+    setState(() {
+      _isCheckingLicense = true;
+      _licenseCheckStatus = null;
+      _licenseNumberPrefix = null;
+      _precheckedLicensePath = null;
+    });
+
+    final result = await OcrVerificationHelper.precheckBusinessLicense(
+      image.path,
+      _businessNumberController.text,
+    );
+
+    // 내가 마지막 요청이 아니면 아무것도 쓰지 않는다 — 사용자가 A 를 고른
+    // 뒤 곧바로 B 를 골랐다면 화면의 파일은 B 인데 이 결과는 A 의 것이다.
+    if (!mounted || checkId != _licenseCheckId) return;
+
+    setState(() {
+      _isCheckingLicense = false;
+      _licenseCheckStatus = result['status'] as String?;
+      _licenseNumberPrefix = result['numberPrefix'] as String?;
+      // [P4.3B §15] 확인한 파일과 나중에 업로드할 파일이 **같아야** 한다.
+      //   경로를 함께 적어 두고, 저장 직전에 다시 맞춰 본다.
+      _precheckedLicensePath = image.path;
+    });
+  }
+
+  /// 상태별 안내. 사용자가 **무엇을 고쳐야 하는지**를 말한다.
+  ({String text, IconData icon, Color color})? _licenseCheckCopy() {
+    if (_isCheckingLicense) {
+      return (
+        text: '사업자등록증을 확인하고 있어요',
+        icon: Icons.document_scanner_outlined,
+        color: AppColors.textSecondary,
+      );
+    }
+    if (_businessLicenseImage == null) return null;
+    return switch (_licenseCheckStatus) {
+      // '인증되었습니다' 라고 하지 않는다 — 공식 진위 확인이 아니다.
+      OcrVerificationHelper.checkPassed => (
+          text: '사업자등록증 정보를 확인했어요',
+          icon: Icons.task_alt,
+          color: AppColors.success,
+        ),
+      OcrVerificationHelper.checkNotDocument => (
+          text: '사업자등록증으로 확인하기 어려운 이미지예요\n사업자등록증 전체가 보이도록 다시 등록해 주세요',
+          icon: Icons.image_not_supported_outlined,
+          color: AppColors.error,
+        ),
+      OcrVerificationHelper.checkUnreadable ||
+      OcrVerificationHelper.checkNumberUnread =>
+        (
+          text: '사업자등록증 정보를 읽지 못했어요\n글자가 선명하게 보이도록 다시 촬영해 주세요',
+          icon: Icons.visibility_off_outlined,
+          color: AppColors.warning,
+        ),
+      OcrVerificationHelper.checkNumberMismatch => (
+          text: _licenseNumberPrefix == null
+              ? '입력한 사업자등록번호와 서류의 번호가 달라요\n입력 정보 또는 서류를 확인해 주세요'
+              : '입력한 사업자등록번호와 서류의 번호가 달라요\n'
+                  '서류에는 ${_licenseNumberPrefix!.trim()}… 로 적혀 있어요',
+          icon: Icons.rule,
+          color: AppColors.error,
+        ),
+      _ => null,
+    };
+  }
+
+  // ── [P4.3B-SAVE-02] 첨부 수명 ─────────────────────────────────────
+  //
+  //   첨부는 선택 시점과 저장 시점 사이에 **단계 두 개**를 건너온다.
+  //   그 사이에 파일이 사라져 있을 수 있다는 것을 실기기가 증명했다.
+  //   ImageHelper 가 앱 소유 사본을 주도록 고쳤지만(TEMP-01), 그래도 저장
+  //   직전에 한 번 더 본다 — 디스크 정리·외부 삭제는 여전히 가능하다.
+
+  /// 읽을 수 없는 첨부가 있으면 그 이름을 돌려준다. 없으면 null.
+  Future<String?> _firstMissingAttachment() async {
+    final targets = <(String, File?)>[
+      ('사업자등록증', _businessLicenseImage),
+      ('대표 이미지', _mainImage),
+      for (final f in _additionalImages) ('추가 이미지', f),
+      for (final f in _transportImages) ('교통편 이미지', f),
+    ];
+    for (final (label, file) in targets) {
+      if (file == null) continue;
+      if (!await file.exists()) {
+        debugPrint('❌ [저장] 첨부 소실: $label / ${file.path}');
+        return label;
+      }
+    }
+    return null;
+  }
+
+  /// 첨부를 다시 고를 수 있는 단계로 되돌린다.
+  /// 사업자등록증·대표 이미지 모두 2단계(정보·서류)에 있다.
+  void _focusAttachmentSection() {
+    if (_currentStep != 1) setState(() => _currentStep = 1);
+  }
+
   Future<void> _saveBusiness() async {
     if (_isLoading || !mounted) return;
     setState(() => _isLoading = true);
@@ -2380,6 +2585,34 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       final uploadBizId = _isEditMode
           ? widget.business!.id
           : FirebaseFirestore.instance.collection('businesses').doc().id;
+
+      // [P4.3B-SAVE-02] 업로드를 **시작하기 전에** 첨부가 아직 읽히는지 본다.
+      //
+      //   실기기에서 여기가 터졌다 —
+      //     PathNotFoundException: .../cache/scaled_....webp (errno = 2)
+      //   첨부 하나가 사라진 상태로 업로드를 시작하면, 먼저 끝난 다른
+      //   이미지는 Storage 에 올라가 있는데 `Future.wait` 가 예외로 끊겨
+      //   그 URL 들을 아무도 받지 못한다. 사용자에게는 "저장 실패" 인데
+      //   Storage 에는 주인 없는 객체가 남는 상태다.
+      //   그래서 **하나라도 읽히지 않으면 아무것도 올리지 않는다.**
+      // [P4.3B §15] 확인한 파일과 올릴 파일이 같은지 마지막으로 맞춘다.
+      //   OCR 은 A 를 보고 통과했는데 B 가 업로드되면 안 된다.
+      if (_businessLicenseImage != null && !_licenseCheckPassed) {
+        if (mounted) {
+          ToastHelper.showError('사업자등록증을 다시 확인해 주세요');
+          _focusAttachmentSection();
+        }
+        return;
+      }
+
+      final missing = await _firstMissingAttachment();
+      if (missing != null) {
+        if (mounted) {
+          ToastHelper.showError('첨부한 $missing 파일을 불러올 수 없습니다\n다시 선택해 주세요');
+          _focusAttachmentSection();
+        }
+        return;
+      }
 
       // CLAUDE.md 삭제 순서 규칙:
       // Storage 삭제는 Firestore 업데이트 성공 후에만 수행한다.
@@ -2588,7 +2821,21 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           debugPrint('⚠️ 저장 실패 후 Storage 정리 실패 (orphan 가능): $cleanupErr');
         }
       }
-      if (mounted) ToastHelper.showError('저장에 실패했습니다: $e');
+      // [P4.3B-RAW-EXCEPTION-UX] 예외 문자열을 그대로 보여주지 않는다.
+      //   실기기에서 사용자가 본 것은 이것이었다:
+      //     저장에 실패했습니다: PathNotFoundException: Cannot open file,
+      //     path='/data/user/0/com.alfit.app/cache/scaled_....webp'
+      //     (OS Error: No such file or directory, errno = 2)
+      //   이건 제품 메시지가 아니다. 기술 진단은 위 debugPrint 에 남기고,
+      //   사용자에게는 **무엇을 하면 되는지**를 말한다.
+      if (mounted) {
+        if (e is PathNotFoundException || e is FileSystemException) {
+          ToastHelper.showError('첨부한 파일을 불러올 수 없습니다\n이미지를 다시 선택해 주세요');
+          _focusAttachmentSection();
+        } else {
+          ToastHelper.showError('저장하지 못했습니다\n잠시 후 다시 시도해주세요');
+        }
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -2600,22 +2847,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // [REG-2 SEC] type == 'license' 시 fileType: 'businessLicense' 전달
   //   → CF가 license/ 서브경로 + 토큰 없이 저장 (Storage rules allow get: if false)
   Future<String?> _uploadImage(File imageFile, String bizId, String type) async {
-    try {
-      final bytes = await imageFile.readAsBytes();
-      return await _storageService.uploadBusinessImage(
-        bytes,
-        bizId,
-        fileType: type == 'license' ? 'businessLicense' : null,
-      );
-    } finally {
-      // TMP-01: pickAndCompressImage()가 반환한 임시 파일(compressed_xxx.jpg)은
-      // 업로드 성공/실패 무관하게 정리.
+    final url = await _storageService.uploadBusinessImage(
+      await imageFile.readAsBytes(),
+      bizId,
+      fileType: type == 'license' ? 'businessLicense' : null,
+    );
+    // [P4.3B-SAVE-02] 예전에는 `finally` 에서 **성공·실패 무관하게** 지웠다.
+    //   그래서 업로드가 네트워크로 실패하면 파일이 사라지고, 사용자가
+    //   "다시 저장" 을 눌러도 이제는 첨부가 없어 영영 못 올린다 —
+    //   한 번 실패하면 이미지를 다시 고르는 것 말고는 길이 없었다.
+    //   올라간 것이 확인됐을 때만 치운다. 실패해 남은 파일은 화면을 닫을 때
+    //   (`dispose`)와 staging 청소가 정리한다.
+    if (url != null) {
       try {
         if (await imageFile.exists()) await imageFile.delete();
       } catch (_) {
         debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
       }
     }
+    return url;
   }
 }
 

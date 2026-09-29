@@ -4,9 +4,9 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-29 (**R7-P4.3A** · 사업장 주소 → 좌표 · 실기기 발견 · BLOCKER 1)
+> 마지막 갱신: 2026-09-29 (**R7-P4.3B** · 사업장 서류 precheck · 첨부 수명 · BLOCKER 2)
 >
-> **현재 스냅샷:** 전체 스위트 14,670 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
+> **현재 스냅샷:** 전체 스위트 14,699 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
 > 직전 회차와 그 앞의 결정은 아래 절에 그대로 누적돼 있다 — 지우지 않았다.
 
 ## 0. 이 장부가 지키는 불변식
@@ -24,6 +24,10 @@
 
 | # | 단계 | 무엇이 틀렸는가 | 고친 방식 | 증거 |
 |---|---|---|---|---|
+| 66 | R7-P4.3B **BLOCKER** | 첨부 이미지가 **남의 소유**였다. `ImageHelper.compressImage` 가 세 경로(200KB 이하 · 압축 null · 예외)에서 image_picker 의 cache 파일(`cache/scaled_*`)을 그대로 돌려줬고, 등록 폼은 그 File 을 3단계 마법사 내내 들고 다니다 **맨 마지막 저장 시점에야** 열었다. OS 가 그 사이 cache 를 비우면 `PathNotFoundException errno=2` 로 사업장 등록이 통째로 막힌다 — 실기기에서 실제로 막혔다 | 반환 File 은 항상 **앱 소유 사본**이다. `getTemporaryDirectory()` 로도 부족하다 — Android 에서 그것은 같은 cache 디렉터리다. 앱 support 아래 전용 폴더를 쓰고, 자동으로 비워지지 않으므로 하루 지난 것은 다음 선택 때 치운다. 복사까지 실패하면 `null` 이다 — 사라질 경로를 주느니 "선택 안 됨" 이 낫다 | TEMP-01 4셀 · 전 호출자(프로필·신분증·통장·업무·사업장) 동시 수혜 |
+| 65 | R7-P4.3B **BLOCKER** | 사업자등록증 완료 조건이 `File != null` 하나였다 — **무엇이 찍힌 이미지인지 아무도 보지 않았다.** 풍경 사진을 골라도 다음 단계로 넘어갔다. `FILE_SELECTED` 를 `DOCUMENT_READY` 로 쓴 것이다 | 새 OCR SDK 를 넣지 않았다 — `google_mlkit_text_recognition` 과 `OcrVerificationHelper` 가 이미 있었고 **폼에 연결만 안 돼 있었다**. 거기에 **문서 판별**을 더했다: 영수증에도 사업자등록번호가 찍히므로 번호 일치만으로는 서류를 구별할 수 없다 → 증서에만 나오는 항목(제목·세무서장/국세청, 또는 업태·종목·개업연월일 + 기본 항목)을 본다. **글자 수로 통과시키지 않는다.** 확인한 파일과 업로드할 파일이 같아야 하고(경로 대조), 재선택하면 이전 통과가 즉시 무효다. `인증·진위·검증 완료` 라는 말을 쓰지 않는다 — 공식 진위 확인이 아니다 | 반례 fixture 4종(풍경·스크린샷·**영수증**·판독 불가) · 판정 13셀 · 폼 연결 6셀 |
+| 64 | R7-P4.3B | 사용자가 본 저장 실패 메시지가 `저장에 실패했습니다: PathNotFoundException: Cannot open file, path='/data/user/0/…/cache/scaled_….webp' (OS Error: No such file or directory, errno = 2)` 였다. 제품 메시지가 아니다 | 업로드를 **시작하기 전에** 모든 첨부가 읽히는지 본다 — 하나라도 없으면 아무것도 올리지 않는다(먼저 끝난 업로드가 고아로 남는 것을 막는다). 사용자에게는 무엇을 하면 되는지 말하고 첨부를 고칠 수 있는 단계로 되돌린다. 기술 진단은 로그에 남긴다 | SAVE-01 7셀 |
+| 63 | R7-P4.3B | `_uploadImage` 가 `finally` 에서 **성공·실패 무관하게** 첨부를 삭제했다. 네트워크로 한 번 실패하면 파일이 사라져, "다시 저장" 을 눌러도 올릴 것이 없다 — 이미지를 처음부터 다시 고르는 것 말고는 길이 없었다 | 올라간 것이 확인됐을 때만 치운다. 실패해 남은 파일은 화면을 닫을 때와 staging 청소가 정리한다 | SAVE-01f |
 | 62 | R7-P4.3A **BLOCKER** | 사업장 등록 세 단계 검증 어디도 좌표를 보지 않았고, 저장 payload 는 `'latitude': _latitude` 를 **null 인 채로** 보냈다. 화면에 `GPS 위치 미확인` 이 떠 있어도 사업장은 그대로 만들어진다 — 그리고 그 대가는 관리자가 아니라 **근로자**가 근무 당일 치른다(`attendance_check_screen` 이 "사업장의 GPS 위치가 등록되어 있지 않습니다" 로 출근을 막는다). 관리자는 자기가 무엇을 잘못했는지 그때까지 모른다 | 단계 게이트 + writer 쪽 마지막 방어 두 겹. **0,0 으로 채우지 않는다** — 그건 실제로 존재하는 바다 한가운데 좌표라 반경 판정을 조용히 *틀리게* 만든다. 좌표는 주소와 **짝이 맞아야** 한다(`_resolvedAddress` 문자열 대조) — 주소만 고치고 옛 좌표로 저장하면 주소와 좌표가 다른 곳을 가리킨다 | 계약 5셀(SAVE-01) · consumer fail-closed 2셀 |
 | 61 | R7-P4.3A | `GeocodingService` 가 **여섯 가지 실패를 전부 `null` 하나로** 돌려줬다(키 미설정·401·HTTP 오류·타임아웃·검색 0건·좌표 필드 없음). 이유를 적는 `debugPrint` 는 전부 `kDebugMode` 안이라 **릴리스 기기에서는 아무 흔적도 남지 않았다.** 화면 문구도 `GPS 위치 미확인 — 탭하여 주소 재검색` 하나뿐이라, 빌드에 키가 없어 영원히 안 되는 상황에서도 주소 재검색만 반복하게 했다 | `GeocodeStatus` 5종으로 원인을 살려 올린다. 실패 로그는 릴리스에서도 남긴다(키 값은 절대 안 남긴다). 문구·행동을 `business_location_status.dart` 순수 함수로 분리 — 일시적 실패만 **재시도**, 막다른 실패는 **직접 입력** 탈출구. `GPS` 라는 말을 뺐다: 이 값은 주소로 찾은 **사업장 위치**이지 관리자 기기 위치가 아니다 | 순수 함수 11셀 · 서비스 5셀 |
 | 60 | R7-P4.3A | 좌표 조회를 주소 검색 다이얼로그의 콜백 **안에서** `await` 하고 그게 끝나야 닫았다. 주소를 고른 사용자는 우편번호 WebView 를 보며 최대 10초(타임아웃) 동안 아무 표시 없는 정지 화면을 봤고, 실패해도 조용히 좌표만 빈 채 닫혔다 | 주소 선택과 좌표 확인을 분리했다 — 다이얼로그는 주소만 주고 즉시 닫고, 폼이 자기 화면에서 `조회 중` 을 보여 주며 받는다. 옮기면서 생긴 경쟁(A 조회 중 B 선택)은 request-id 로 막고, 조회 시작 시 이전 좌표를 먼저 버린다(중간에 저장하면 주소와 좌표가 어긋난다) | 경쟁 4셀 · 흐름 3셀 |
@@ -225,7 +229,9 @@
 | ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |
 | ~~`[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]`~~ | P4.2C | **CLOSED** — 결함 #58·#59. destination truth 와 readiness owner 를 함께 옮겼다. 남은 잔여는 아래 두 줄 |
-| `[R7-P4.3A-BUSINESS-ADDRESS-LOCATION-VERIFY]` | P4.3A | **기기 원인 미확정.** 확인된 것: DEV 키로 Kakao `address.json` 을 직접 불러 보니 도로명·지번·상세주소 포함 전부 `200/docs=1/좌표 반환` 이고 없는 주소만 `docs=0` — **키·엔드포인트·주소 포맷은 정상**이다. 그런데도 기기에서 실패했다면 남은 후보는 셋이다. ① 설치된 AAB 가 `--dart-define` 없이 만든 산출물이라 `KAKAO_REST_API_KEY` 가 비어 있다(그 빌드는 `ENCRYPT_KEY` 도 비어 있다) ② 기기에서 우편번호 WebView 가 떠서 수기 입력 경로로 빠졌고 좌표 칸을 비웠다 ③ 기기 네트워크가 `dapi.kakao.com` 에 닿지 못한다. **이번 수정으로 셋이 화면에서 서로 다른 문장이 되고 ①은 릴리스 로그도 남긴다** → 다음 기기 실행이 답을 준다. 종료: 재빌드·재설치 후 1회 관찰 |
+| `[OPEN-BUSINESS-REGISTRATION-VERIFICATION-INTEGRITY]` | P4.3B | **여전히 열려 있다 — 자동으로 닫지 않는다.** P4.3B 가 채운 것은 *document precheck* 뿐이다(명백히 다른 이미지 차단 · 재촬영 유도 · 입력 번호 대조). 채우지 못한 것: ① **공식 사업상태 검증 부재** — 국세청 조회 연동이 없다. ② **사업자등록번호 checksum 미검증** — 클라이언트는 `length != 10` 만 본다. 서버에는 중복 체크 CF(`callableCheckBusinessNumberDuplicate`)만 있고, **사업장 생성 자체가 클라이언트 direct Firestore write** 라 서버 권위 검증을 걸 자리가 없다. checksum 을 server-authoritative 로 두려면 사업장 생성용 CF 가 먼저 필요하다 — 이번 범위 밖 |
+| `[R7-P4.3B-VERIFY-DUPLICATE-ON-LATE-FAILURE]` | P4.3B | 신규 등록은 저장할 때마다 새 `uploadBizId` 를 만든다. 사업장 문서 + 소유 관계는 WriteBatch 라 원자적이고, batch 실패 시에는 아무것도 남지 않으므로 재시도가 중복을 만들지 않는다. 다만 **batch 성공 직후 화면이 unmount 되어 pop 이 못 돈 경우**, 사용자가 다시 저장하면 다른 id 로 중복 사업장이 생길 수 있다. 실측 표본 없음(DEV businesses 0건) |
+| `[R7-P4.3A-BUSINESS-ADDRESS-LOCATION-VERIFY]` | P4.3A | **DEVICE 에서 해결 확인(2026-09-29).** 실기기에서 주소 선택 후 `사업장 위치 확인됨` 관찰 — 후보 ①(키 없는 빌드)·③(기기 네트워크) 기각. 아래는 그때의 미확정 기록이며 보존한다. ~~**기기 원인 미확정.**~~ 확인된 것: DEV 키로 Kakao `address.json` 을 직접 불러 보니 도로명·지번·상세주소 포함 전부 `200/docs=1/좌표 반환` 이고 없는 주소만 `docs=0` — **키·엔드포인트·주소 포맷은 정상**이다. 그런데도 기기에서 실패했다면 남은 후보는 셋이다. ① 설치된 AAB 가 `--dart-define` 없이 만든 산출물이라 `KAKAO_REST_API_KEY` 가 비어 있다(그 빌드는 `ENCRYPT_KEY` 도 비어 있다) ② 기기에서 우편번호 WebView 가 떠서 수기 입력 경로로 빠졌고 좌표 칸을 비웠다 ③ 기기 네트워크가 `dapi.kakao.com` 에 닿지 못한다. **이번 수정으로 셋이 화면에서 서로 다른 문장이 되고 ①은 릴리스 로그도 남긴다** → 다음 기기 실행이 답을 준다. 종료: 재빌드·재설치 후 1회 관찰 |
 | `[R7-P4.3A-LEGACY-COORDLESS-BUSINESS]` | P4.3A | 이미 좌표 없이 저장된 PROD 사업장이 있는지 **모른다**(DEV 는 0건이라 표본 없음). 있다면 그 사업장 근로자는 지금도 GPS 출근이 막혀 있고, 관리자가 수정 화면에 들어오면 이제 저장 전에 위치를 채우게 된다. PROD 조회는 하지 않았다 |
 | `[R7-P4.2C-RENDER-SHELL-UNPUMPABLE]` | P4.2C | "제목 · 선택 탭 · 목적지"를 **한 화면에서** 보는 렌더는 못 했다. `BusinessAdminShell` 은 `UserProvider`·`FCMService` 때문에 Firebase 없이 pump 되지 않는다. `AdminTabSwitcher` 는 실물로 8셀 돌렸고, Shell 의 index→notify 배선은 소스 계약이다. 종료: Shell 용 Firebase 하네스(별도 결정) 또는 DEVICE |
 | `[R7-P4.2C-VERIFY-BACK-AT-MANAGE-ROOT]` | P4.2C | 관리 탭 root 에서 시스템 back 이 **앱을 종료**한다. 이번에 만든 규칙이 아니라 다섯 root 공통의 기존 Shell 계약이지만, 이 버튼 경로에서는 **이전과 달라진 동작**이다(예전엔 push 라 Home 으로 돌아왔다). 다섯 탭 전체의 back 정책을 바꿀지는 별도 제품 결정 |

@@ -1,5 +1,6 @@
 // lib/utils/image_helper.dart
 
+import 'dart:async' show unawaited;
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -429,10 +430,11 @@ class ImageHelper {
       final fileSize = await file.length() ~/ 1024;
       debugPrint('📷 원본 이미지 크기: ${fileSize}KB');
       
-      // minSize 이하면 압축 안함
+      // minSize 이하면 압축 안함 — 하지만 **원본을 그대로 돌려주지는 않는다**.
+      // [R7-P4.3B TEMP-01] 아래 `_stage` 주석 참조.
       if (fileSize <= config.minSize) {
         debugPrint('✅ 압축 불필요 (${config.minSize}KB 이하)');
-        return file;
+        return _stage(file);
       }
 
       // 압축 실행
@@ -446,14 +448,14 @@ class ImageHelper {
       );
 
       if (compressedBytes == null) {
-        debugPrint('❌ 압축 실패, 원본 반환');
-        return file;
+        debugPrint('❌ 압축 실패, 원본을 앱 소유로 복사');
+        return _stage(file);
       }
 
-      // 임시 파일로 저장 — 반환된 File은 호출자가 업로드 후 delete() 책임
-      final tempDir = await getTemporaryDirectory();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final compressedFile = File('${tempDir.path}/compressed_$timestamp.jpg');
+      // 앱이 소유하는 staging 파일 — 반환된 File은 호출자가 업로드 후 delete() 책임
+      final stagingDir = await _stagingDir();
+      final timestamp = DateTime.now().microsecondsSinceEpoch;
+      final compressedFile = File('${stagingDir.path}/compressed_$timestamp.jpg');
       await compressedFile.writeAsBytes(compressedBytes);
 
       final compressedSize = compressedBytes.length ~/ 1024;
@@ -463,7 +465,79 @@ class ImageHelper {
       return compressedFile;
     } catch (e) {
       debugPrint('❌ 이미지 압축 오류: $e');
-      return file; // 실패 시 원본 반환
+      // 실패해도 picker 소유 경로를 넘기지 않는다. 복사까지 실패하면 그때는
+      // null 이다 — 호출자가 "선택되지 않음" 으로 다루는 편이, 저장 시점에
+      // 사라질 경로를 들고 다니는 것보다 낫다.
+      return _stage(file);
+    }
+  }
+
+  // ==================== staging (앱 소유 사본) ====================
+  //
+  // [R7-P4.3B TEMP-01] 왜 필요한가 — 실기기에서 사업장 저장이 이걸로 죽었다:
+  //
+  //   PathNotFoundException: Cannot open file,
+  //   path='/data/user/0/com.alfit.app/cache/scaled_....webp' (errno = 2)
+  //
+  //   `image_picker` 는 maxWidth/imageQuality 가 주어지면 리사이즈 결과를
+  //   **자기 cache 디렉터리**에 `scaled_*` 이름으로 만든다. 그 디렉터리는
+  //   OS 와 플러그인이 언제든 비울 수 있고, 수명을 아무도 약속하지 않는다.
+  //
+  //   그런데 `compressImage` 는 세 경로에서 그 파일을 **그대로 돌려줬다** —
+  //   ① 200KB 이하라 압축이 불필요할 때 ② 압축이 null 을 줄 때 ③ 예외.
+  //   사업장 등록 폼은 그 File 을 3단계 마법사 내내 들고 다니다가 **맨
+  //   마지막 저장 시점에야** 연다. 그 사이에 파일이 사라지면 끝이다.
+  //
+  //   그래서 반환하는 File 은 항상 **앱이 소유한 사본**이어야 한다.
+  //   `getTemporaryDirectory()` 로도 부족하다 — Android 에서 그것은 같은
+  //   cache 디렉터리다. 앱 support 디렉터리 아래 전용 폴더를 쓴다.
+  //
+  //   대신 자동으로 비워지지 않으므로 정리는 우리 몫이다. 호출자가 업로드
+  //   후 `delete()` 하는 기존 계약은 그대로고, 중간에 앱이 죽어 남은 것은
+  //   다음 선택 때 오래된 것부터 지운다.
+
+  static const String _stagingFolder = 'image_staging';
+
+  /// 하루 지난 staging 파일은 주인 없는 것으로 본다.
+  static const Duration _stagingTtl = Duration(days: 1);
+
+  static Future<Directory> _stagingDir() async {
+    final base = await getApplicationSupportDirectory();
+    final dir = Directory('${base.path}/$_stagingFolder');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    unawaited(_sweepStaging(dir));
+    return dir;
+  }
+
+  /// 앱이 죽어 호출자의 delete() 가 못 돈 경우를 대비한 청소.
+  /// 실패해도 조용히 넘어간다 — 청소가 이미지 선택을 막으면 안 된다.
+  static Future<void> _sweepStaging(Directory dir) async {
+    try {
+      final cutoff = DateTime.now().subtract(_stagingTtl);
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final stat = await entity.stat();
+        if (stat.modified.isBefore(cutoff)) await entity.delete();
+      }
+    } catch (e) {
+      debugPrint('⚠️ staging 정리 실패(무시): $e');
+    }
+  }
+
+  /// picker/외부 소유 파일을 앱 소유 사본으로 옮긴다.
+  static Future<File?> _stage(File source) async {
+    try {
+      final dir = await _stagingDir();
+      final ext = source.path.contains('.')
+          ? source.path.substring(source.path.lastIndexOf('.'))
+          : '.jpg';
+      final staged =
+          File('${dir.path}/staged_${DateTime.now().microsecondsSinceEpoch}$ext');
+      await source.copy(staged.path);
+      return staged;
+    } catch (e) {
+      debugPrint('❌ staging 복사 실패: $e');
+      return null;
     }
   }
 
