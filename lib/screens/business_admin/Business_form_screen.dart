@@ -16,6 +16,8 @@ import '../../providers/user_provider.dart';
 // Helper
 import '../../utils/image_helper.dart';
 // Services
+import '../../services/geocoding_service.dart';
+import '../../utils/business_location_status.dart';
 import '../../services/storage_service.dart';
 
 // Utils
@@ -180,6 +182,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     }
     _latitude = business.latitude;
     _longitude = business.longitude;
+    // [P4.3A-LOC-01] 이미 저장된 좌표는 저장된 주소의 것이다. 그 사실을
+    //   같이 들고 와야 수정 화면이 멀쩡한 사업장을 "위치 미확인" 으로 말하지
+    //   않는다. 주소를 고치면 문자열이 달라져 자동으로 낡은 좌표가 된다.
+    if (business.latitude != null && business.longitude != null) {
+      _resolvedAddress = business.address.trim();
+    }
     _city = business.city;
     _district = business.district;
 
@@ -666,38 +674,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             },
           ),
 
-          // GPS 상태 칩
-          if (_addressController.text.isNotEmpty)
-            Padding(
-              padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
-              child: GestureDetector(
-                onTap: _latitude == null ? _searchAddress : null,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _latitude != null ? Icons.gps_fixed : Icons.gps_not_fixed,
-                      size: 14,
-                      color: _latitude != null ? AppColors.success : AppColors.warning,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      _latitude != null
-                          ? 'GPS 위치 확인됨'
-                          : 'GPS 위치 미확인 — 탭하여 주소 재검색',
-                      style: ResponsiveHelper.tinyStyle(
-                        context,
-                        color: _latitude != null ? AppColors.success : AppColors.warning,
-                      ),
-                    ),
-                    if (_latitude == null) ...[
-                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Icon(Icons.refresh, size: 12, color: AppColors.warning),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+          // [P4.3A-LOC-01] 사업장 위치 상태 — 원인마다 다른 말을 한다.
+          //   'GPS' 라고 부르지 않는다. 이 값은 주소로 찾은 **사업장 위치**
+          //   이지 관리자 기기의 현재 위치가 아니다.
+          if (_addressController.text.isNotEmpty) _buildLocationChip(context),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -2103,6 +2083,28 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       ToastHelper.showError('사업자등록증 이미지를 업로드해주세요');
       return false;
     }
+    // [P4.3A-LOC-03] 좌표 없이 다음 단계로 보내지 않는다.
+    //
+    //   예전에는 세 단계 어디에서도 좌표를 보지 않았고, 저장 payload 는
+    //   `'latitude': _latitude` 를 **null 인 채로** 보냈다. 그래서 화면에
+    //   'GPS 위치 미확인' 이 떠 있어도 사업장은 그대로 만들어졌다.
+    //   그 대가는 관리자가 아니라 **근로자**가 치렀다 — 근무 당일 출근을
+    //   찍으려는 순간 "사업장의 GPS 위치가 등록되어 있지 않습니다" 로 막힌다
+    //   (`attendance_check_screen`). 그때는 이미 늦다.
+    //
+    //   기기 위치를 요구하는 것이 아니다. 이 폼은 관리자 기기의 GPS 를 한
+    //   번도 읽지 않는다 — 본사에서 다른 지점을 등록해도 된다. 여기서 막는
+    //   것은 **주소로 찾은 사업장 위치**가 비어 있는 경우뿐이다.
+    if (_isResolvingLocation) {
+      ToastHelper.showError('주소의 위치를 확인하는 중이에요\n잠시만 기다려주세요');
+      return false;
+    }
+    if (!_hasUsableLocation) {
+      ToastHelper.showError(
+          '사업장 위치를 확인해야 등록할 수 있어요\n위치가 없으면 근로자가 이곳에서 출퇴근을 찍을 수 없습니다');
+      setState(() => _autoValidate = true);
+      return false;
+    }
     return true;
   }
 
@@ -2163,8 +2165,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       if (result != null && mounted) {
         setState(() {
           _addressController.text = result.fullAddress;
-          _latitude = result.latitude;
-          _longitude = result.longitude;
           _city = result.sigungu?.isNotEmpty == true
               ? result.sigungu
               : FormatHelper.parseAddressCity(result.fullAddress);
@@ -2172,12 +2172,148 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ? result.bname
               : FormatHelper.parseAddressDistrict(result.fullAddress);
         });
-        if (kDebugMode) debugPrint('📍 [주소검색] 위도: ${result.latitude} / 경도: ${result.longitude}');
+        // [P4.3A-LOC-01] 좌표는 여기서부터 이 화면이 책임진다.
+        await _resolveCoordinates(result.fullAddress);
       }
     } catch (e) {
       debugPrint('⚠️ 주소 검색 실패, 수기 입력 모드: $e');
       if (mounted) _showManualAddressDialog();
     }
+  }
+
+  // ── [P4.3A-LOC-01] 주소 → 좌표 ────────────────────────────────────
+  //
+  //   왜 이 상태가 필요한가:
+  //     예전에는 좌표가 `null` 이냐 아니냐 둘뿐이었고, 화면은 그것을
+  //     'GPS 위치 미확인' 한 문장으로 말했다. 그 하나에 **여섯 가지**가
+  //     섞여 있었다 — 아직 주소를 안 골랐다 / 조회 중이다 / 그 주소에
+  //     등록된 좌표가 없다 / 네트워크가 안 됐다 / 빌드에 키가 없다 /
+  //     키가 거부됐다. 다음 행동이 전부 다른데 문장이 같으니, 관리자는
+  //     되지도 않을 주소 재검색만 반복하게 된다.
+  //
+  //     'GPS' 라는 말도 틀렸다. 이 값은 **주소로 찾은 사업장 위치**이지
+  //     관리자 기기의 현재 위치가 아니다. 이 폼은 기기 위치를 한 번도
+  //     읽지 않는다 — 본사에서 다른 지점을 등록해도 된다.
+
+  /// 지금 좌표가 어느 주소의 것인지. 주소를 손으로 고치면 좌표가 그 주소의
+  /// 것이 아니게 되므로, 문자열을 맞춰 보고 낡은 좌표를 쓰지 않는다.
+  String? _resolvedAddress;
+
+  /// [P4.3A-LOC-02] 늦게 끝난 옛 요청이 새 주소의 좌표를 덮지 않도록.
+  int _geocodeRequestId = 0;
+
+  bool _isResolvingLocation = false;
+  GeocodeStatus? _locationFailure;
+
+  /// 저장해도 되는 상태인가 — 주소와 좌표가 **같은 주소의 것**이어야 한다.
+  bool get _hasUsableLocation =>
+      _latitude != null &&
+      _longitude != null &&
+      _resolvedAddress != null &&
+      _resolvedAddress == _addressController.text.trim();
+
+  Future<void> _resolveCoordinates(String address) async {
+    final requestId = ++_geocodeRequestId;
+    setState(() {
+      _isResolvingLocation = true;
+      _locationFailure = null;
+      // 조회 중에는 이전 주소의 좌표를 들고 있지 않는다 — 그 사이에 저장하면
+      // 주소와 좌표가 서로 다른 곳을 가리킨다.
+      _latitude = null;
+      _longitude = null;
+      _resolvedAddress = null;
+    });
+
+    final result = await GeocodingService.resolveAddress(address);
+
+    // 내가 마지막 요청이 아니면 아무것도 쓰지 않는다. 사용자가 A 를 고른 뒤
+    // 곧바로 B 를 골랐다면 화면의 주소는 B 인데 이 결과는 A 의 것이다.
+    if (!mounted || requestId != _geocodeRequestId) return;
+
+    setState(() {
+      _isResolvingLocation = false;
+      if (result.isResolved) {
+        _latitude = result.latitude;
+        _longitude = result.longitude;
+        _resolvedAddress = address;
+        _locationFailure = null;
+      } else {
+        _locationFailure = result.status;
+      }
+    });
+  }
+
+  /// 상태 칩에 쓸 문구. 원인마다 다음 행동이 다르므로 문장도 다르다.
+  /// 문구·행동은 `business_location_status.dart` 가 정한다(그쪽이 테스트
+  /// 대상이다). 여기서는 그 결과에 아이콘·색만 붙인다.
+  ({String text, IconData icon, Color color, LocationAction action})
+      _locationChip() {
+    final copy = businessLocationCopy(
+      resolving: _isResolvingLocation,
+      resolved: _hasUsableLocation,
+      failure: _locationFailure,
+    );
+
+    final (IconData icon, Color color) = switch (copy.action) {
+      _ when _isResolvingLocation =>
+        (Icons.location_searching, AppColors.textSecondary),
+      _ when _hasUsableLocation => (Icons.place, AppColors.success),
+      LocationAction.retry => (Icons.cloud_off_outlined, AppColors.warning),
+      LocationAction.manual when _locationFailure == GeocodeStatus.notFound =>
+        (Icons.wrong_location_outlined, AppColors.warning),
+      LocationAction.manual => (Icons.error_outline, AppColors.error),
+      LocationAction.none =>
+        (Icons.location_on_outlined, AppColors.textSecondary),
+    };
+
+    return (text: copy.text, icon: icon, color: color, action: copy.action);
+  }
+
+  Widget _buildLocationChip(BuildContext context) {
+    final chip = _locationChip();
+    final address = _addressController.text.trim();
+    // 재시도는 "같은 주소로 다시 조회" 다 — 주소 검색창을 다시 열지 않는다.
+    final onTap = switch (chip.action) {
+      LocationAction.retry when address.isNotEmpty =>
+        () => _resolveCoordinates(address),
+      LocationAction.manual => _showManualAddressDialog,
+      _ => null,
+    };
+
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Row(
+          children: [
+            if (_isResolvingLocation)
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.6,
+                  valueColor: AlwaysStoppedAnimation(chip.color),
+                ),
+              )
+            else
+              Icon(chip.icon, size: 14, color: chip.color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            // [CLAUDE.md 모바일 UI] 문장이 길어졌다 — 좁은 화면에서 넘치지
+            //   않게 남은 폭 안에서 줄바꿈시킨다.
+            Expanded(
+              child: Text(
+                chip.text,
+                style: ResponsiveHelper.tinyStyle(context, color: chip.color),
+              ),
+            ),
+            if (onTap != null) ...[
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Icon(Icons.refresh, size: 12, color: chip.color),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _showManualAddressDialog() async {
@@ -2189,11 +2325,23 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       builder: (ctx) => const _ManualAddressDialog(),
     );
     if (mounted && result != null && result.address.isNotEmpty) {
-      setState(() {
-        _addressController.text = result.address;
-        _latitude = result.lat;
-        _longitude = result.lng;
-      });
+      setState(() => _addressController.text = result.address);
+      // [P4.3A-LOC-01] 수기 입력에서 좌표를 직접 적었으면 그것을 쓴다 —
+      //   지도 검색이 못 찾는 주소를 위한 탈출구다. 적지 않았으면 여기서도
+      //   주소로 좌표를 찾는다. 예전에는 좌표 칸을 비워 두면 그대로 좌표
+      //   없는 사업장이 만들어졌다.
+      if (result.lat != null && result.lng != null) {
+        setState(() {
+          _geocodeRequestId++; // 진행 중이던 조회 결과를 무효화한다
+          _isResolvingLocation = false;
+          _locationFailure = null;
+          _latitude = result.lat;
+          _longitude = result.lng;
+          _resolvedAddress = result.address;
+        });
+      } else {
+        await _resolveCoordinates(result.address);
+      }
     }
   }
 
@@ -2213,6 +2361,18 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       }
 
       final ownerId = user.uid;
+
+      // [P4.3A-LOC-03] writer 쪽 마지막 방어.
+      //   단계 게이트(`_validateStep2`) 하나에만 기대지 않는다 — 단계 순서가
+      //   바뀌거나 다른 경로가 생기면 좌표 없는 사업장이 다시 만들어질 수
+      //   있고, 그 비용은 근무 당일 출근을 못 찍는 근로자가 치른다.
+      //   0,0 같은 기본값으로 채우지 않는다 — 그건 실제로 존재하는 바다 한
+      //   가운데 좌표이고, 반경 판정을 조용히 통과시키는 것이 아니라 조용히
+      //   틀리게 만든다.
+      if (_latitude == null || _longitude == null) {
+        ToastHelper.showError('사업장 위치를 확인해야 등록할 수 있어요');
+        return;
+      }
 
       if (kDebugMode) debugPrint('📍 [저장] 위도: $_latitude / 경도: $_longitude');
 

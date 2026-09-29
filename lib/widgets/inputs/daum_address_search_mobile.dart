@@ -10,9 +10,6 @@ import 'dart:convert';
 // Models
 import 'daum_address_search.dart';
 
-// Services
-import '../../services/geocoding_service.dart';
-
 // Utils
 import '../../utils/responsive_helper.dart';
 
@@ -41,25 +38,20 @@ class DaumAddressSearchImpl {
         showCloseButton: true,
         content: SizedBox(
           height: ResponsiveHelper.dialogHeight(context),
+          // [R7-P4.3A] 좌표 조회를 여기서 하지 않는다.
+          //
+          //   예전에는 주소를 고른 **직후** 이 콜백 안에서 Kakao 좌표 조회를
+          //   `await` 하고, 그게 끝나야 다이얼로그를 닫았다. 그래서 주소를
+          //   고른 사용자는 우편번호 WebView 를 보면서 최대 10초(타임아웃)
+          //   동안 아무 표시 없이 멈춘 화면을 봤다. 실패해도 조용히 좌표만
+          //   비어 있는 채로 닫혔다.
+          //
+          //   주소 선택과 좌표 확인은 **다른 일**이다. 여기서는 주소만 주고
+          //   바로 닫는다. 좌표는 폼이 자기 화면에서 상태를 보여 주며 받는다
+          //   (`_resolveCoordinates`). 재시도도 거기서 한다.
           child: _DaumPostcodeWebView(
-            onAddressSelected: (selectedResult) async {
-              // ⭐ GPS 좌표 자동 획득
-              final coords = await GeocodingService.getCoordinatesFromAddress(
-                selectedResult.fullAddress,
-              );
-
-              // GPS 좌표 추가
-              result = AddressResult(
-                fullAddress: selectedResult.fullAddress,
-                roadAddress: selectedResult.roadAddress,
-                jibunAddress: selectedResult.jibunAddress,
-                zonecode: selectedResult.zonecode,
-                latitude: coords?['latitude'],
-                longitude: coords?['longitude'],
-                sigungu: selectedResult.sigungu,
-                bname: selectedResult.bname,
-              );
-
+            onAddressSelected: (selectedResult) {
+              result = selectedResult;
               if (context.mounted) Navigator.pop(context, result);
             },
           ),

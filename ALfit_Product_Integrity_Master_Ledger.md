@@ -4,9 +4,9 @@
 > 각 줄은 단계(ID) · 무엇이 틀렸는가 · 무엇으로 고쳤는가 · 증거 종류를 담는다.
 > 세부 근거는 `docs/r7-p1-admin-design-audit.md`, 연속성·소유는
 > `ALfit_Product_Continuity_Index.md`.
-> 마지막 갱신: 2026-09-29 (**R7-P4.2C** · Home 설정 진입점 · readiness owner 이전)
+> 마지막 갱신: 2026-09-29 (**R7-P4.3A** · 사업장 주소 → 좌표 · 실기기 발견 · BLOCKER 1)
 >
-> **현재 스냅샷:** 전체 스위트 14,645 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
+> **현재 스냅샷:** 전체 스위트 14,670 PASS / 2 SKIP / 0 FAIL · `flutter analyze lib test` No issues.
 > 직전 회차와 그 앞의 결정은 아래 절에 그대로 누적돼 있다 — 지우지 않았다.
 
 ## 0. 이 장부가 지키는 불변식
@@ -24,6 +24,9 @@
 
 | # | 단계 | 무엇이 틀렸는가 | 고친 방식 | 증거 |
 |---|---|---|---|---|
+| 62 | R7-P4.3A **BLOCKER** | 사업장 등록 세 단계 검증 어디도 좌표를 보지 않았고, 저장 payload 는 `'latitude': _latitude` 를 **null 인 채로** 보냈다. 화면에 `GPS 위치 미확인` 이 떠 있어도 사업장은 그대로 만들어진다 — 그리고 그 대가는 관리자가 아니라 **근로자**가 근무 당일 치른다(`attendance_check_screen` 이 "사업장의 GPS 위치가 등록되어 있지 않습니다" 로 출근을 막는다). 관리자는 자기가 무엇을 잘못했는지 그때까지 모른다 | 단계 게이트 + writer 쪽 마지막 방어 두 겹. **0,0 으로 채우지 않는다** — 그건 실제로 존재하는 바다 한가운데 좌표라 반경 판정을 조용히 *틀리게* 만든다. 좌표는 주소와 **짝이 맞아야** 한다(`_resolvedAddress` 문자열 대조) — 주소만 고치고 옛 좌표로 저장하면 주소와 좌표가 다른 곳을 가리킨다 | 계약 5셀(SAVE-01) · consumer fail-closed 2셀 |
+| 61 | R7-P4.3A | `GeocodingService` 가 **여섯 가지 실패를 전부 `null` 하나로** 돌려줬다(키 미설정·401·HTTP 오류·타임아웃·검색 0건·좌표 필드 없음). 이유를 적는 `debugPrint` 는 전부 `kDebugMode` 안이라 **릴리스 기기에서는 아무 흔적도 남지 않았다.** 화면 문구도 `GPS 위치 미확인 — 탭하여 주소 재검색` 하나뿐이라, 빌드에 키가 없어 영원히 안 되는 상황에서도 주소 재검색만 반복하게 했다 | `GeocodeStatus` 5종으로 원인을 살려 올린다. 실패 로그는 릴리스에서도 남긴다(키 값은 절대 안 남긴다). 문구·행동을 `business_location_status.dart` 순수 함수로 분리 — 일시적 실패만 **재시도**, 막다른 실패는 **직접 입력** 탈출구. `GPS` 라는 말을 뺐다: 이 값은 주소로 찾은 **사업장 위치**이지 관리자 기기 위치가 아니다 | 순수 함수 11셀 · 서비스 5셀 |
+| 60 | R7-P4.3A | 좌표 조회를 주소 검색 다이얼로그의 콜백 **안에서** `await` 하고 그게 끝나야 닫았다. 주소를 고른 사용자는 우편번호 WebView 를 보며 최대 10초(타임아웃) 동안 아무 표시 없는 정지 화면을 봤고, 실패해도 조용히 좌표만 빈 채 닫혔다 | 주소 선택과 좌표 확인을 분리했다 — 다이얼로그는 주소만 주고 즉시 닫고, 폼이 자기 화면에서 `조회 중` 을 보여 주며 받는다. 옮기면서 생긴 경쟁(A 조회 중 B 선택)은 request-id 로 막고, 조회 시작 시 이전 좌표를 먼저 버린다(중간에 저장하면 주소와 좌표가 어긋난다) | 경쟁 4셀 · 흐름 3셀 |
 | 59 | R7-P4.2C | Home 준비 상태 갱신의 owner 가 **화면이 아니라 한쪽 입구**에 붙어 있었다. 헤더 버튼으로 관리 화면에 들어갔다 나오면 `_reloadReadiness()` 가 돌았지만, **같은 화면에 하단 '관리' 탭으로 들어간 경우엔 아무도 갱신하지 않았다** — 인감을 등록하고 홈으로 와도 체크리스트가 예전 그대로였다 | owner 를 입구 → **Home 재활성화**로 옮겼다(`_onHomeReactivated`). 두 입구가 같아진다. 관리 탭에서 온 전이만 본다 — 공고·근무의 변경은 `dataRevision` 이 이미 나른다. 시간 쿨다운 없음(막 저장하고 돌아온 순간을 건너뛸 수 있다), 대신 in-flight 가드. `notifyDataChanged` 17 호출부 중 관리 탭이 **0곳**이라 기존 버스 재사용(R3)은 불가였고, 4+ 화면에 mutation 신호를 다는 R2 는 blast radius 로 기각 | 계약 6셀(READY-01) + 스위처 실물 8셀 + Shell 배선 3셀 |
 | 58 | R7-P4.2C | Home 헤더의 사람 아이콘이 `const SettingsScreen()` 을 **push** 했다. 하단 '관리' 탭의 root 도 같은 위젯·같은 파라미터라, 누르면 제목은 `관리` 인데 하단에서 빛나는 탭은 `홈` 이었다 — 같은 목적지를 두고 shell 이 내 위치를 다르게 말했다 | 목적지를 바꾸지 않고(같은 화면이다) **가는 방법**만 바꿨다 — `switchToTab(settingsTab)`. 아이콘도 목적지를 따라 `settings_outlined` 로(이 제품에서 `person_outline` 은 지원자 MY 탭의 '프로필 관리'다). **버튼을 숨기거나 지우지 않았다** — 진입점을 잃는 것은 고친 것이 아니다 | 계약 4셀(DEST-01) · 역할 4셀 |
 | 57 | R7-P4.2B | 근무 탭 첫 진입에서 `getMyBusinessOrThrow` 가 **두 번** 나갔다. `initState` 의 postFrame 이 `_loadDayData` 와 `_loadMarkerRange` 를 같은 프레임에 깨우는데, 캐시는 `await` 가 끝난 뒤에야 채워져 두 번째 호출이 빈 캐시를 본다. 첫 그림을 막는 조회라 그대로 지연이 된다 | 같은 scope 의 in-flight future 에 합류(`_inFlightBusinesses`). 캐시 경로가 여전히 먼저고, 기록·rethrow·stale 정책은 `_fetchBusinesses` 한 곳 그대로. 늦게 끝난 옛 요청이 새 요청을 지우지 않도록 `identical` 가드 | 계약 5셀(RS-04) + 기존 R8-P7.5 캐시 계약 22 PASS |
@@ -222,6 +225,8 @@
 | ~~`[R7-P1-7-RESIDUAL-STATS-CONTENT-RENDER]`~~ | P17-S | **CLOSED** — 원인은 서비스의 `Future.timeout(15s)`(production dispose 결함 아님). reader 주입으로 7건 렌더 |
 | `[R7-P1-7-RESIDUAL-STATS-HOP-GESTURE]` | P17-X | 월 막대 탭이 fl_chart 터치 콜백이라 위젯 테스트로 누를 수 없다 → DEVICE |
 | ~~`[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]`~~ | P4.2C | **CLOSED** — 결함 #58·#59. destination truth 와 readiness owner 를 함께 옮겼다. 남은 잔여는 아래 두 줄 |
+| `[R7-P4.3A-BUSINESS-ADDRESS-LOCATION-VERIFY]` | P4.3A | **기기 원인 미확정.** 확인된 것: DEV 키로 Kakao `address.json` 을 직접 불러 보니 도로명·지번·상세주소 포함 전부 `200/docs=1/좌표 반환` 이고 없는 주소만 `docs=0` — **키·엔드포인트·주소 포맷은 정상**이다. 그런데도 기기에서 실패했다면 남은 후보는 셋이다. ① 설치된 AAB 가 `--dart-define` 없이 만든 산출물이라 `KAKAO_REST_API_KEY` 가 비어 있다(그 빌드는 `ENCRYPT_KEY` 도 비어 있다) ② 기기에서 우편번호 WebView 가 떠서 수기 입력 경로로 빠졌고 좌표 칸을 비웠다 ③ 기기 네트워크가 `dapi.kakao.com` 에 닿지 못한다. **이번 수정으로 셋이 화면에서 서로 다른 문장이 되고 ①은 릴리스 로그도 남긴다** → 다음 기기 실행이 답을 준다. 종료: 재빌드·재설치 후 1회 관찰 |
+| `[R7-P4.3A-LEGACY-COORDLESS-BUSINESS]` | P4.3A | 이미 좌표 없이 저장된 PROD 사업장이 있는지 **모른다**(DEV 는 0건이라 표본 없음). 있다면 그 사업장 근로자는 지금도 GPS 출근이 막혀 있고, 관리자가 수정 화면에 들어오면 이제 저장 전에 위치를 채우게 된다. PROD 조회는 하지 않았다 |
 | `[R7-P4.2C-RENDER-SHELL-UNPUMPABLE]` | P4.2C | "제목 · 선택 탭 · 목적지"를 **한 화면에서** 보는 렌더는 못 했다. `BusinessAdminShell` 은 `UserProvider`·`FCMService` 때문에 Firebase 없이 pump 되지 않는다. `AdminTabSwitcher` 는 실물로 8셀 돌렸고, Shell 의 index→notify 배선은 소스 계약이다. 종료: Shell 용 Firebase 하네스(별도 결정) 또는 DEVICE |
 | `[R7-P4.2C-VERIFY-BACK-AT-MANAGE-ROOT]` | P4.2C | 관리 탭 root 에서 시스템 back 이 **앱을 종료**한다. 이번에 만든 규칙이 아니라 다섯 root 공통의 기존 Shell 계약이지만, 이 버튼 경로에서는 **이전과 달라진 동작**이다(예전엔 push 라 Home 으로 돌아왔다). 다섯 탭 전체의 back 정책을 바꿀지는 별도 제품 결정 |
 | ~~`[R7-P4.2B-CORRECTION-HOME-PROFILE-DUP]` (원문)~~ | P4.2B | **발견했으나 그때는 고치지 않았다.** 홈 헤더의 프로필 버튼이 `SettingsScreen` 을 **홈 탭 navigator 에 push** 한다 — 그 화면은 하단 `관리` 탭의 내용 그대로다. 결과: 제목은 `관리` 인데 하단에서 빛나는 탭은 `홈`. 급여 root 홈버튼과 같은 종류의 중복이다. 다만 이 버튼은 복귀 시 `await … then _reloadReadiness()` 로 **준비 상태 재계산을 책임지고 있어**, 탭 전환으로 바꾸면 그 갱신 경로를 함께 설계해야 한다(`home_readiness_refresh_test` 소유). 종료 조건: 갱신 경로 결정 후 수정 |

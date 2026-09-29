@@ -2,7 +2,42 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.2C** (Home 설정 진입점 · readiness owner)
+> 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.3A** (사업장 주소 → 좌표)
+
+## 0-A. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.3A
+
+**`[R7-P4.3A-BUSINESS-ADDRESS-LOCATION-VERIFY]`** — 실기기 발견.
+기준 `db5313b`. BUSINESS_ADMIN 신규 사업장 등록에서 주소를 골라도
+`GPS 위치 미확인` 이 계속 남았다.
+
+**predicate:** `_latitude == null` **하나뿐**이었다. 기기 GPS·권한과 무관하다 —
+이 폼은 기기 위치를 한 번도 읽지 않는다(등록에 현장 임장 불요, §4 정상).
+
+**chain:** Daum 우편번호 WebView(좌표 없음) → `fullAddress` →
+`GeocodingService` (Kakao Local `address.json`) → `_latitude/_longitude` →
+`businesses/{id}.latitude/longitude` → `attendance_check_screen` 반경 판정.
+writer·consumer **같은 키**(`latitude`/`longitude`) — schema mismatch 없음.
+
+| 판정 | 내용 |
+|---|---|
+| **BLOCKER** `[P4.3A-LOC-03]` | 세 단계 검증 어디도 좌표를 보지 않았고 payload 는 `'latitude': _latitude` 를 **null 인 채로** 보냈다 → **§6 Case C**. 좌표 없는 사업장이 만들어질 수 있고, 대가는 근무 당일 출근이 막히는 **근로자**가 치른다 |
+| **CORRECTION** `[P4.3A-LOC-01]` | `GeocodingService` 가 **여섯 실패를 전부 `null`** 로 뭉갰고 이유 로그는 전부 `kDebugMode` 뒤 → 릴리스 기기에서 완전 침묵. 화면 문구도 하나뿐이라 되지 않을 재검색만 반복하게 했다 |
+| **CORRECTION** `[P4.3A-LOC-02]` | 좌표 조회를 주소 다이얼로그 콜백 안에서 `await` 하고 그 뒤에 닫았다 — 최대 10초 무표시 정지. 폼으로 옮기며 request-id 경쟁 가드 추가 |
+| **NO PATCH** | consumer 는 **fail-closed** 다 — 0,0 폴백·null 허용 없음(`attendance_check_screen:446` → `return null`). 기기 GPS 요구 없음 |
+
+**외부 확인(읽기):** DEV 키로 Kakao `address.json` 직접 호출 —
+도로명·지번·상세주소 포함 전부 `200 / docs=1 / 좌표 반환`, 없는 주소만 `docs=0`.
+**키·엔드포인트·주소 포맷은 정상.** 남은 기기측 후보 3개는 아래 잔여 참조.
+
+**DEV 실측:** `businesses` **0건** → 저장 단계 **N/A(대상 없음)**, PASS 아님.
+
+| 등급 | 상태 |
+|---|---|
+| CODE | **CLOSED** — 25셀 |
+| RENDER | **NOT SEEN** — `BusinessFormScreen` 은 Firebase·Provider 없이 pump 불가. 문구·행동 로직은 순수 함수로 분리해 11셀로 검증 |
+| DEV | **N/A** — businesses 0건 |
+| DEVICE | **NOT SEEN** — 재빌드·재설치 필요 |
+| PRODUCT | **OPEN** — 기기 원인 확정 대기 |
 
 ## 0. CURRENT SNAPSHOT — 2026-09-29 / R7-P4.2C
 
