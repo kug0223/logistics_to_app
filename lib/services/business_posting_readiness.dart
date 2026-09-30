@@ -394,24 +394,235 @@ enum BusinessApprovalRecheck {
   bool get isRetryable => this == temporaryCheckFailed;
 }
 
-/// [R7-P4.4E.2] 첫 공고 준비 상태를 **화면 사이에서 한 벌로** 쓰기 위한 보관소.
+// ═══════════════════════════════════════════════════════════════════
+// [R7-P4.4E.2A] 첫 공고 준비 상태 — canonical resolver + scoped projection
+// ═══════════════════════════════════════════════════════════════════
+
+/// 한 번의 판정이 만들어 내는 것 전부.
 ///
-///   Home 이 setup/readiness owner 다(P4.2C 확정). 공고 root 가 같은 질문에
-///   자기 술어를 새로 만들면 두 화면이 같은 사업장을 두고 다른 말을 한다 —
-///   실제로 그랬다: Home 은 "3단계 남았어요", 공고 root 는 "등록된 공고가
-///   없습니다 + 새 공고 등록" 이었다. 사용자는 할 수 없는 행동으로 안내됐다.
+///   Home 은 사업장별 결핍(`readinessMap`)으로 CTA 대상을 고르고,
+///   공고 root·CreateTO 는 합산 결과(`readiness`)만 본다.
+///   둘이 다른 코드로 계산되면 같은 사업장을 두고 다른 말을 하게 된다.
+class FirstPostingReadinessResult {
+  const FirstPostingReadinessResult({
+    required this.readiness,
+    required this.readinessMap,
+  });
+
+  final FirstPostingReadiness readiness;
+  final Map<String, BusinessPostingReadiness> readinessMap;
+}
+
+/// 준비 상태를 **누가 물어보든 같은 방법으로** 계산한다.
 ///
-///   그래서 계산은 Home 한 곳에만 두고, 결과만 여기로 흘린다.
-///   `null` 은 **아직 모른다**는 뜻이다 — 준비 미완료가 아니다(§25).
-///   모르는 동안 setup 화면을 그리면, 준비가 끝난 관리자에게 거짓을 말한다.
-class FirstPostingReadinessBroadcast {
-  FirstPostingReadinessBroadcast._();
+///   예전에는 이 판정이 Home 위젯의 State 안에만 있었다. 그래서 Home 을 한
+///   번도 그리지 않고 공고 탭으로 바로 들어가면 아무도 답을 갖고 있지 않았다.
+///   계산을 화면 밖으로 꺼낸다 — UX 소유(무엇을 어떻게 보여줄지)는 여전히
+///   Home 이지만, **사실**은 화면의 생명주기에 매이지 않는다.
+class FirstPostingReadinessResolver {
+  FirstPostingReadinessResolver._();
 
-  static final ValueNotifier<FirstPostingReadiness?> current =
-      ValueNotifier<FirstPostingReadiness?>(null);
+  static Future<FirstPostingReadinessResult> resolve({
+    required List<BusinessModel> businesses,
+    required Future<Map<String, BusinessPostingReadiness>> Function(
+            List<BusinessModel>)
+        postingReadiness,
+    required Future<List<dynamic>> Function(String businessId) contractTemplates,
+    required bool Function(List<dynamic>) selectableForNewContract,
+    required bool callerHasSeal,
+  }) async {
+    final approved = businesses.where((b) => b.isApproved).toList();
+    final readinessMap = approved.isEmpty
+        ? <String, BusinessPostingReadiness>{}
+        : await postingReadiness(approved);
 
-  static void publish(FirstPostingReadiness value) => current.value = value;
+    // [P4.4B-TPL-01] 템플릿은 **사업장별**이다 — 합산하지 않는다.
+    //   공고를 낼 수 있는 사업장이 있으면 그 사업장의 템플릿을 본다(CreateTO
+    //   가 실제로 쓰는 사실과 같게). 아직 없으면 진행도 표시로만 쓴다.
+    var hasTemplate = false;
+    if (businesses.isNotEmpty) {
+      try {
+        final lists = await Future.wait(
+          businesses.map((b) => contractTemplates(b.id)),
+        );
+        bool selectable(int i) => selectableForNewContract(lists[i]);
 
-  /// 로그아웃·계정 전환처럼 이전 사업장의 판정을 이어 쓰면 안 되는 경계.
-  static void clear() => current.value = null;
+        final postable = <int>[];
+        for (var i = 0; i < businesses.length; i++) {
+          if (readinessMap[businesses[i].id]?.isReady == true) postable.add(i);
+        }
+        hasTemplate = postable.isNotEmpty
+            ? postable.any(selectable)
+            : List.generate(lists.length, (i) => i).any(selectable);
+      } catch (e) {
+        // 조회 실패를 "준비됨"으로 올리지 않는다 — 서버가 최종 gate 다.
+        debugPrint('⚠️ [readiness] 계약서 템플릿 조회 실패: $e');
+      }
+    }
+
+    // [P4.4C-SEAL-02] `actor seal` 과 `employer seal readiness` 는 다르다.
+    //   사업장이 아직 없거나 전부 미승인이면 읽을 owner 가 없으므로, 그때만
+    //   호출자를 예비 owner 로 보고 자기 날인으로 진행도를 표시한다.
+    final sealReady = readinessMap.isEmpty
+        ? callerHasSeal
+        : readinessMap.values.any((r) => r.hasEmployerSeal);
+
+    return FirstPostingReadinessResult(
+      readinessMap: readinessMap,
+      readiness: FirstPostingReadiness(
+        hasAnyBusiness: businesses.isNotEmpty,
+        // 사업장 task 는 승인 + 등록증까지만 — 업무는 다음 task 가 맡는다.
+        businessReady:
+            readinessMap.values.any((r) => r.isApproved && r.hasLicense),
+        // [POSTING-V2-02C.1] 업무 task 는 business identity 를 유지한다.
+        workTypesReady: BusinessPostingReadiness.hasReadyBusiness(readinessMap),
+        // [R8-P7.4] "업무가 없어서" 와 "못 읽어서" 를 구분한다.
+        workTypesUnknown: readinessMap.values.any((r) => r.workTypesUnknown) &&
+            !readinessMap.values.any((r) => r.isMissingWorkTypes),
+        contractTemplateReady: hasTemplate,
+        sealReady: sealReady,
+      ),
+    );
+  }
+}
+
+/// 판정 결과가 지금 어떤 상태인가.
+///
+///   `null` 하나에 여러 뜻을 섞지 않는다 — "아직 안 셌다" 와 "세다가 실패했다"
+///   와 "준비가 덜 됐다" 는 사용자에게 보여야 할 것이 전부 다르다.
+enum FirstPostingReadinessStatus {
+  /// 아무도 아직 묻지 않았다.
+  idle,
+
+  /// 지금 세고 있다.
+  loading,
+
+  /// 셌다. `value` 가 있다.
+  resolved,
+
+  /// 세려다 실패했다. 준비 미완료가 **아니다**.
+  failed,
+}
+
+/// 어느 계정·어느 사업장 집합에 대한 판정인지까지 들고 있는 한 장면.
+class FirstPostingReadinessSnapshot {
+  const FirstPostingReadinessSnapshot({
+    required this.status,
+    this.value,
+    this.uid,
+    this.scopeKey,
+  });
+
+  const FirstPostingReadinessSnapshot.idle()
+      : status = FirstPostingReadinessStatus.idle,
+        value = null,
+        uid = null,
+        scopeKey = null;
+
+  final FirstPostingReadinessStatus status;
+  final FirstPostingReadiness? value;
+
+  /// 이 판정을 만든 계정. 다른 계정이 보면 그 값은 **남의 것**이다.
+  final String? uid;
+
+  /// 이 판정이 덮는 사업장 집합. 전환되면 다시 세야 한다.
+  final String? scopeKey;
+
+  bool get isResolved => status == FirstPostingReadinessStatus.resolved;
+
+  /// 지금 이 사용자에게 이 값을 보여도 되는가.
+  bool matches(String? currentUid, String? currentScopeKey) =>
+      uid != null && uid == currentUid && scopeKey == currentScopeKey;
+}
+
+/// 화면들이 **같은 진실**을 보도록 최신 판정을 들고 있는 자리.
+///
+///   Home 은 계속 setup UX 의 owner 다 — 전체 체크리스트와 각 단계로 가는
+///   길은 Home 에만 있다. 다만 **값** 은 Home 위젯이 살아 있는지와 무관하게
+///   존재해야 한다. 예전에는 Home 이 그리지 않으면 아무도 답을 몰랐고,
+///   공고 탭은 그 모름을 "정상 · 공고 0건" 으로 그렸다.
+class FirstPostingReadinessStore {
+  FirstPostingReadinessStore._();
+
+  static final ValueNotifier<FirstPostingReadinessSnapshot> current =
+      ValueNotifier<FirstPostingReadinessSnapshot>(
+          const FirstPostingReadinessSnapshot.idle());
+
+  static Future<void>? _inFlight;
+
+  /// 여러 사업장을 한 문자열로 — 집합이 바뀌면 판정도 바뀐다.
+  static String scopeKeyOf(Iterable<String> businessIds) {
+    final ids = businessIds.toList()..sort();
+    return ids.join(',');
+  }
+
+  static void publish(
+    FirstPostingReadiness value, {
+    required String? uid,
+    required String scopeKey,
+  }) {
+    current.value = FirstPostingReadinessSnapshot(
+      status: FirstPostingReadinessStatus.resolved,
+      value: value,
+      uid: uid,
+      scopeKey: scopeKey,
+    );
+  }
+
+  static void markFailed({required String? uid, required String scopeKey}) {
+    current.value = FirstPostingReadinessSnapshot(
+      status: FirstPostingReadinessStatus.failed,
+      uid: uid,
+      scopeKey: scopeKey,
+    );
+  }
+
+  /// 로그아웃·계정 전환·사업장 전환처럼 이전 판정을 이어 쓰면 안 되는 경계.
+  static void reset() {
+    _inFlight = null;
+    current.value = const FirstPostingReadinessSnapshot.idle();
+  }
+
+  /// 이 사용자·이 사업장 집합에 대한 값이 없으면 채운다.
+  ///
+  ///   Home 을 한 번도 그리지 않았어도 공고 탭이 스스로 물어볼 수 있다.
+  ///   이미 같은 scope 의 값이 있으면 다시 세지 않는다. 동시에 여러 화면이
+  ///   물어도 한 번만 센다.
+  static Future<void> ensureLoaded({
+    required String? uid,
+    required String scopeKey,
+    required Future<FirstPostingReadiness> Function() resolve,
+    /// 이미 아는 값이 있어도 다시 센다. 앱 복귀처럼 그 사이 다른 기기·다른
+    /// 관리자가 템플릿이나 날인을 바꿨을 수 있는 순간에만 쓴다.
+    bool force = false,
+  }) {
+    final snap = current.value;
+    if (!force && snap.isResolved && snap.matches(uid, scopeKey)) {
+      return Future<void>.value();
+    }
+    if (_inFlight != null && snap.matches(uid, scopeKey)) return _inFlight!;
+
+    current.value = FirstPostingReadinessSnapshot(
+      status: FirstPostingReadinessStatus.loading,
+      uid: uid,
+      scopeKey: scopeKey,
+      // 세는 동안에도 이전 값을 들고 있으면 깜빡이지 않는다 — 단 scope 가
+      // 같을 때만이다. 다른 계정의 값을 이어 보여주지 않는다.
+      value: snap.matches(uid, scopeKey) ? snap.value : null,
+    );
+
+    final future = () async {
+      try {
+        final value = await resolve();
+        publish(value, uid: uid, scopeKey: scopeKey);
+      } catch (e) {
+        debugPrint('❌ [readiness] 준비 상태 조회 실패: $e');
+        markFailed(uid: uid, scopeKey: scopeKey);
+      } finally {
+        _inFlight = null;
+      }
+    }();
+    _inFlight = future;
+    return future;
+  }
 }

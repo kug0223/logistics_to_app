@@ -41,8 +41,8 @@ FirstPostingReadiness _readiness({
 }
 
 void main() {
-  setUp(FirstPostingReadinessBroadcast.clear);
-  tearDown(FirstPostingReadinessBroadcast.clear);
+  setUp(FirstPostingReadinessStore.reset);
+  tearDown(FirstPostingReadinessStore.reset);
 
   group('[R7-P4.4E.2] Home ↔ 공고 root parity', () {
     test('SETUP-ROOT-01 Home 1/4 면 공고 root 는 SETUP_REQUIRED 다', () {
@@ -51,7 +51,7 @@ void main() {
       expect(r.allReady, isFalse);
 
       final src = _jobsRoot();
-      expect(src.contains('final setupRequired = readiness != null && !readiness.allReady;'),
+      expect(src.contains('final setupRequired = r != null && !r.allReady;'),
           isTrue, reason: '공고 root 가 Home 과 같은 값을 본다');
       expect(src.contains('_JobsSetupRequiredView('), isTrue);
     });
@@ -86,8 +86,9 @@ void main() {
 
     test('SETUP-ROOT-05 모르면(null) 화면을 바꾸지 않는다', () {
       // §25 — UNKNOWN 은 SETUP_REQUIRED 가 아니다.
-      expect(FirstPostingReadinessBroadcast.current.value, isNull);
-      expect(_jobsRoot().contains('readiness != null &&'), isTrue,
+      expect(FirstPostingReadinessStore.current.value.status,
+          FirstPostingReadinessStatus.idle);
+      expect(_jobsRoot().contains('final unknown = !snap.isResolved;'), isTrue,
           reason: 'null 을 미완료로 읽으면 준비된 관리자에게 거짓을 말한다');
     });
 
@@ -102,7 +103,7 @@ void main() {
               'Widget _buildHeader(BuildContext context, double s, bool setupRequired)'),
           isTrue,
           reason: '호출하는 빌더의 context 를 받아야 select 가 성립한다');
-      expect(src.contains('_buildHeader(ctx, s, setupRequired)'), isTrue,
+      expect(src.contains('_buildHeader(ctx, s, setupRequired || unknown)'), isTrue,
           reason: 'State 의 context 를 넘기면 같은 assert 로 다시 죽는다');
     });
 
@@ -215,7 +216,7 @@ void main() {
 
     test('READINESS-TASKS-04 남은 개수는 Home 이 센 값을 쓴다', () {
       final src = _createTO();
-      expect(src.contains('FirstPostingReadinessBroadcast.current.value'), isTrue);
+      expect(src.contains('FirstPostingReadinessStore.current.value'), isTrue);
       expect(src.contains('FirstPostingReadiness.totalTasks - r.completedCount'),
           isTrue, reason: '여기서 다시 세면 두 화면이 다른 숫자를 말한다');
     });
@@ -237,7 +238,7 @@ void main() {
 
     test('REFRESH-01 Home 이 계산할 때마다 결과를 흘린다', () {
       final src = _home();
-      final publish = src.indexOf('FirstPostingReadinessBroadcast.publish');
+      final publish = src.indexOf('FirstPostingReadinessStore.publish');
       final build = src.indexOf('_firstPosting = FirstPostingReadiness(');
       expect(publish, greaterThan(build),
           reason: '계산 직후에 흘려야 공고 root 가 낡은 값을 들고 있지 않다');
@@ -250,10 +251,136 @@ void main() {
     });
 
     test('REFRESH-03 계정 경계에서 이전 판정을 이어 쓰지 않는다', () {
-      FirstPostingReadinessBroadcast.publish(_readiness());
-      expect(FirstPostingReadinessBroadcast.current.value, isNotNull);
-      FirstPostingReadinessBroadcast.clear();
-      expect(FirstPostingReadinessBroadcast.current.value, isNull);
+      FirstPostingReadinessStore.publish(_readiness(), uid: 'u1', scopeKey: 'b1');
+      expect(FirstPostingReadinessStore.current.value.isResolved, isTrue);
+      FirstPostingReadinessStore.reset();
+      expect(FirstPostingReadinessStore.current.value.status,
+          FirstPostingReadinessStatus.idle);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // [R7-P4.4E.2A] 준비 판정은 Home 위젯의 것이 아니다
+  // ═══════════════════════════════════════════════════════════
+  group('[R7-P4.4E.2A] broadcast authority', () {
+    test('BROADCAST-01 공고 root 가 스스로 묻는다 (Home 미렌더)', () {
+      final src = _jobsRoot();
+      expect(src.contains('unawaited(_ensureReadiness());'), isTrue,
+          reason: 'cold start 로 공고 탭에 바로 들어와도 답을 얻어야 한다');
+      expect(src.contains('FirstPostingReadinessStore.ensureLoaded('), isTrue);
+    });
+
+    test('BROADCAST-02 판정 코드는 한 벌이다', () {
+      // 공고 root 는 **입력만** 모은다 — 술어를 다시 쓰지 않는다.
+      final src = _jobsRoot();
+      expect(src.contains('FirstPostingReadinessResolver.resolve('), isTrue);
+      expect(src.contains('= FirstPostingReadiness('), isFalse,
+          reason: '§11 — Home 과 Posting 에서 각각 재계산하지 않는다');
+      expect(_home().contains('FirstPostingReadinessResolver.resolve('), isTrue,
+          reason: 'Home 도 같은 resolver 를 쓴다');
+    });
+
+    test('BROADCAST-03 같은 scope 면 다시 세지 않는다', () async {
+      FirstPostingReadinessStore.publish(
+          _readiness(workTypes: true, template: true, seal: true),
+          uid: 'u1', scopeKey: 'b1');
+      var calls = 0;
+      await FirstPostingReadinessStore.ensureLoaded(
+        uid: 'u1',
+        scopeKey: 'b1',
+        resolve: () async {
+          calls++;
+          return _readiness();
+        },
+      );
+      expect(calls, 0, reason: '이미 아는 것을 다시 묻지 않는다');
+      expect(FirstPostingReadinessStore.current.value.value!.allReady, isTrue);
+    });
+
+    test('BROADCAST-04 계정이 바뀌면 이전 판정을 쓰지 않는다', () async {
+      FirstPostingReadinessStore.publish(
+          _readiness(workTypes: true, template: true, seal: true),
+          uid: 'adminA', scopeKey: 'bizA');
+      expect(FirstPostingReadinessStore.current.value.matches('adminB', 'bizB'),
+          isFalse, reason: '남의 사업장 판정으로 내 버튼이 정해지면 안 된다');
+
+      var calls = 0;
+      await FirstPostingReadinessStore.ensureLoaded(
+        uid: 'adminB',
+        scopeKey: 'bizB',
+        resolve: () async {
+          calls++;
+          return _readiness();
+        },
+      );
+      expect(calls, 1, reason: '다른 계정이면 다시 센다');
+      final snap = FirstPostingReadinessStore.current.value;
+      expect(snap.uid, 'adminB');
+      expect(snap.value!.allReady, isFalse);
+    });
+
+    test('BROADCAST-04b 로그아웃이 실제로 판정을 버린다', () {
+      final provider =
+          File('lib/providers/user_provider.dart').readAsStringSync();
+      final signOut = provider.indexOf('Future<void> signOut()');
+      expect(signOut, greaterThan(-1));
+      expect(
+          provider
+              .substring(signOut, signOut + 1200)
+              .contains('FirstPostingReadinessStore.reset()'),
+          isTrue,
+          reason: 'reset 을 아무도 부르지 않으면 stale 이 다음 사용자에게 남는다');
+    });
+
+    test('BROADCAST-05 사업장 집합이 바뀌면 다시 센다', () async {
+      expect(FirstPostingReadinessStore.scopeKeyOf(['b2', 'b1']),
+          FirstPostingReadinessStore.scopeKeyOf(['b1', 'b2']),
+          reason: '순서는 같은 집합이다');
+      expect(FirstPostingReadinessStore.scopeKeyOf(['b1']),
+          isNot(FirstPostingReadinessStore.scopeKeyOf(['b1', 'b2'])));
+
+      FirstPostingReadinessStore.publish(
+          _readiness(workTypes: true, template: true, seal: true),
+          uid: 'u1', scopeKey: FirstPostingReadinessStore.scopeKeyOf(['b1']));
+      var calls = 0;
+      await FirstPostingReadinessStore.ensureLoaded(
+        uid: 'u1',
+        scopeKey: FirstPostingReadinessStore.scopeKeyOf(['b1', 'b2']),
+        resolve: () async {
+          calls++;
+          return _readiness();
+        },
+      );
+      expect(calls, 1);
+    });
+
+    test('BROADCAST-06 모름은 준비 완료처럼 보이지 않는다', () {
+      final src = _jobsRoot();
+      // 헤더의 + 는 setup 뿐 아니라 unknown 에서도 사라진다.
+      expect(src.contains('_buildHeader(ctx, s, setupRequired || unknown)'),
+          isTrue);
+      // 본문도 운영 목록이 아니다.
+      expect(src.contains('? _JobsReadinessUnknownView('), isTrue);
+      expect(src.contains('final unknown = !snap.isResolved;'), isTrue);
+    });
+
+    test('BROADCAST-06b 세는 중과 못 셌다를 구분한다', () {
+      final src = _jobsRoot();
+      final view = src.substring(src.indexOf('class _JobsReadinessUnknownView'));
+      expect(view.contains('FirstPostingReadinessStatus.failed'), isTrue);
+      expect(view.contains('CircularProgressIndicator'), isTrue,
+          reason: '세는 중을 오류로 말하지 않는다');
+      expect(view.contains('공고 준비 상태를 확인하지 못했어요'), isTrue);
+      expect(view.contains('등록된 공고가 없습니다'), isFalse,
+          reason: '모름을 0건으로 말하지 않는다');
+    });
+
+    test('BROADCAST-07 실패는 준비 미완료가 아니다', () {
+      FirstPostingReadinessStore.markFailed(uid: 'u1', scopeKey: 'b1');
+      final snap = FirstPostingReadinessStore.current.value;
+      expect(snap.status, FirstPostingReadinessStatus.failed);
+      expect(snap.isResolved, isFalse);
+      expect(snap.value, isNull, reason: '실패를 값으로 꾸미지 않는다');
     });
   });
 }

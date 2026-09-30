@@ -458,92 +458,47 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   //   이전에는 여기서 early return 해 _readinessLoaded가 false로 남았고,
   //   그 결과 준비 카드가 아예 렌더되지 않았다.
   Future<void> _loadPostingReadiness() async {
-    final approvedBizs = _businesses.where((b) => b.isApproved).toList();
-    final readinessMap = approvedBizs.isEmpty
-        ? <String, BusinessPostingReadiness>{}
-        : await _reads.postingReadiness(approvedBizs);
-
-    // [P4.4B-TPL-01] 계약서 템플릿은 **사업장별**이다 — 합산하지 않는다.
+    // [R7-P4.4E.2A] 판정은 **화면 밖**에서 한다.
     //
-    //   템플릿은 `businesses/{id}/contract_templates` 서브컬렉션이고, 계약
-    //   발송 다이얼로그도 그 사업장 것만 고른다. 예전에는 여기서 전 사업장을
-    //   합산해 하나라도 있으면 완료로 봤다. 그러면 A 에만 템플릿이 있는데
-    //   B 로 공고를 낼 수 있게 되고, 지원자가 확정된 **뒤에** 고를 템플릿이
-    //   0개인 dead-end 를 만난다.
-    //
-    //   판정 기준:
-    //     · 공고를 낼 수 있는 사업장(isReady)이 있으면 → **그 사업장**의 템플릿
-    //       (CreateTO 가 실제로 쓰는 것과 같은 사실)
-    //     · 아직 없으면(승인 전 등) → 아무 사업장이라도 템플릿이 있으면 완료
-    //       로 표시한다. 이 단계에서 이 칸은 진행도 표시이고, 실제 차단은
-    //       CreateTO 가 선택 사업장 기준으로 한다.
-    var hasTemplate = false;
-    if (_businesses.isNotEmpty) {
-      try {
-        final lists = await Future.wait(
-          _businesses.map((b) => _reads.contractTemplates(b.id)),
-        );
-        bool selectable(int i) => ContractTemplateModel
-            .selectableForNewContract(lists[i])
-            .isNotEmpty;
+    //   예전에는 이 계산이 Home State 안에만 있었다. 그래서 Home 을 한 번도
+    //   그리지 않고 공고 탭으로 바로 들어가면 아무도 답을 갖고 있지 않았고,
+    //   공고 탭은 그 모름을 '정상 · 공고 0건' 으로 그렸다.
+    //   Home 은 여전히 setup UX 의 owner 다 — 전체 체크리스트와 각 단계로
+    //   가는 길은 여기에만 있다. 바뀐 것은 **사실을 누가 계산하는가** 뿐이다.
+    final up = context.read<UserProvider>();
+    final uid = up.currentUser?.uid;
+    final scopeKey =
+        FirstPostingReadinessStore.scopeKeyOf(_businesses.map((b) => b.id));
 
-        final postable = <int>[];
-        for (var i = 0; i < _businesses.length; i++) {
-          if (readinessMap[_businesses[i].id]?.isReady == true) postable.add(i);
-        }
-        hasTemplate = postable.isNotEmpty
-            ? postable.any(selectable)
-            : List.generate(lists.length, (i) => i).any(selectable);
-      } catch (e) {
-        // 조회 실패 시 "준비됨"으로 올리지 않는다 — CreateTO가 최종 gate다.
-        debugPrint('⚠️ [readiness] 계약서 템플릿 조회 실패: $e');
-      }
+    late final FirstPostingReadinessResult result;
+    try {
+      result = await FirstPostingReadinessResolver.resolve(
+        businesses: _businesses,
+        postingReadiness: _reads.postingReadiness,
+        contractTemplates: _reads.contractTemplates,
+        selectableForNewContract: (list) =>
+            ContractTemplateModel.selectableForNewContract(
+                    list.cast<ContractTemplateModel>())
+                .isNotEmpty,
+        callerHasSeal: up.currentUser?.sealBase64?.isNotEmpty ?? false,
+      );
+    } catch (e) {
+      debugPrint('❌ [readiness] 준비 상태 계산 실패: ');
+      FirstPostingReadinessStore.markFailed(uid: uid, scopeKey: scopeKey);
+      return;
     }
 
     if (!mounted) return;
-    // [P4.4C-SEAL-02] `actor seal` 과 `employer seal readiness` 는 다르다.
-    //
-    //   예전에는 SubAdmin 이면 이 칸을 **무조건 완료**로 봤다. SubAdmin 에게
-    //   개인 날인을 요구하지 않는 것은 맞지만(POSTING-V2-02C.1), 그렇다고
-    //   **고용주 날인이 없는 사업장까지 준비 완료**가 되는 것은 다른 문제다.
-    //   그 상태로 공고가 열리면 지원자를 확정한 뒤 계약을 만들 수 없다 —
-    //   확정 = 약속인데 그 약속을 지킬 수 없는 상태다.
-    //
-    //   그래서 호출자 자신의 날인이 아니라 **그 사업장 owner 의 날인**을
-    //   본다(계약 writer 가 실제로 쓰는 것과 같은 값).
-    //   사업장이 아직 없거나 전부 미승인이면 읽을 owner 가 없으므로, 그때는
-    //   호출자를 **예비 owner** 로 보고 자기 날인으로 진행도를 표시한다.
-    final up = context.read<UserProvider>();
-    final sealReady = readinessMap.isEmpty
-        ? (up.currentUser?.sealBase64?.isNotEmpty ?? false)
-        : readinessMap.values.any((r) => r.hasEmployerSeal);
-
     setState(() {
-      _readinessMap = readinessMap;
-      _firstPosting = FirstPostingReadiness(
-        hasAnyBusiness: _businesses.isNotEmpty,
-        // 사업장 task는 승인 + 등록증까지만 본다 — 업무는 다음 task가 맡는다.
-        businessReady:
-            readinessMap.values.any((r) => r.isApproved && r.hasLicense),
-        // [POSTING-V2-02C.1] 업무 task는 business identity를 유지한다.
-        //   any(hasActiveWorkTypes)로 보면 A(등록증만)와 B(업무만)를 합쳐
-        //   어느 사업장으로도 공고를 낼 수 없는데 준비 완료로 판정된다.
-        workTypesReady: BusinessPostingReadiness.hasReadyBusiness(readinessMap),
-        // [R8-P7.4] 준비된 사업장이 하나도 없을 때, 그것이 "업무가 없어서"인지
-        //   "업무를 못 읽어서"인지 구분한다. 후자면 등록하라고 말하지 않는다.
-        workTypesUnknown:
-            readinessMap.values.any((r) => r.workTypesUnknown) &&
-                !readinessMap.values.any((r) => r.isMissingWorkTypes),
-        contractTemplateReady: hasTemplate,
-        sealReady: sealReady,
-      );
+      _readinessMap = result.readinessMap;
+      _firstPosting = result.readiness;
       _readinessLoaded = true;
     });
 
-    // [R7-P4.4E.2] 공고 root 가 같은 질문에 자기 술어를 새로 만들지 않도록
-    //   여기서 계산한 결과를 그대로 흘린다. Home 이 owner 라는 P4.2C 결론을
-    //   바꾸지 않는다 — 계산은 여전히 이 한 곳에서만 한다.
-    FirstPostingReadinessBroadcast.publish(_firstPosting!);
+    // 공고 root·CreateTO 가 같은 값을 본다. 누구의·어느 사업장 집합에 대한
+    // 판정인지까지 함께 남긴다 — 계정이 바뀌면 남의 값을 이어 쓰지 않는다.
+    FirstPostingReadinessStore.publish(result.readiness,
+        uid: uid, scopeKey: scopeKey);
   }
 
   // ── [POSTING-V2-02C.1] readiness CTA 대상 사업장 ────────────────

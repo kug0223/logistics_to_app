@@ -1585,7 +1585,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   ///   여기서 다시 세면 두 화면이 다른 숫자를 말한다(실제로 4 vs 5 였다).
   ///   Home 이 아직 계산하지 않았으면 숫자를 지어내지 않는다.
   String _pendingSetupSentence() {
-    final r = FirstPostingReadinessBroadcast.current.value;
+    final snap = FirstPostingReadinessStore.current.value;
+    final r = snap.isResolved ? snap.value : null;
     if (r == null || r.allReady) {
       return '준비 상태를 확인한 뒤 공고를 등록할 수 있습니다.';
     }

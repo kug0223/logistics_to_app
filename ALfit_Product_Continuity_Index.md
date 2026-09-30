@@ -2,7 +2,88 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.2** (setup parity)
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.2A** (readiness authority)
+
+## 0-AAAAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.2A
+
+기준 `5011408`. **CODE CLOSED · CF 변경 0 · DEVICE RETRY PENDING.**
+
+### §3 핵심 질문의 답 — **NO**
+
+"Home 을 한 번도 그리지 않고 공고 탭으로 바로 들어가도 Posting 이 스스로
+readiness 를 얻을 수 있는가?" → **얻을 수 없었다.**
+
+`FirstPostingReadinessBroadcast` 의 producer 는 **Home 하나**였다
+(`business_admin_home_screen:546` 의 publish). 공고 root·CreateTO 는 소비자였고,
+`clear()` 는 **아무도 부르지 않았다**. 즉 Home 위젯 생명주기에 의존하는
+전달값이지 앱 전역 projection 이 아니었다. **구조 결함**이다.
+
+동시에 §6 위반도 있었다 — `null`(모름)일 때 정상 운영 UI(목록 + `+`)를
+그렸다. UNKNOWN 을 READY 처럼 보여준 것이다.
+
+### 고친 구조 (§10)
+
+```
+FirstPostingReadinessResolver   ← 판정 한 벌 (화면 밖)
+        ↓
+FirstPostingReadinessStore      ← uid · scopeKey 가 붙은 projection
+        ↓
+Home (setup UX owner) · 공고 root · CreateTO
+```
+
+- **Home 은 계속 setup UX 의 owner** 다. 전체 체크리스트와 각 단계로 가는 길은 Home 에만 있다. 바뀐 것은 **사실을 누가 계산하는가** 뿐이다.
+- 공고 root 가 `_ensureReadiness()` 로 **스스로 묻는다**. 입력(어느 사업장·호출자 날인)만 모으고 술어는 resolver 를 쓴다 — §11 의 재계산 복제 없음.
+- 같은 scope 면 다시 세지 않고, 동시에 여러 화면이 물어도 한 번만 센다.
+
+### 상태 의미 분리 (§5·§6)
+
+`null` 하나에 섞여 있던 뜻을 나눴다.
+
+| status | 뜻 | 공고 root |
+|---|---|---|
+| `idle` | 아무도 아직 묻지 않았다 | 로딩 |
+| `loading` | 세고 있다 | 로딩(이전 값 유지 — 깜빡이지 않음) |
+| `resolved` + `!allReady` | 준비 미완료 | setup surface, `+` 없음 |
+| `resolved` + `allReady` | 준비 완료 | 정상 목록/empty, `+` 있음 |
+| `failed` | 세다가 실패 | "확인하지 못했어요" + 다시 확인, `+` 없음 |
+
+**실패는 준비 미완료가 아니다.** 모름도 0건이 아니다.
+
+### scope (§8·§9)
+
+판정에 **누구의·어느 사업장 집합** 인지를 함께 남긴다(`uid` + `scopeKey`).
+`matches()` 가 아니면 값을 쓰지 않고 다시 센다.
+
+**§9 BLOCKER 였다** — `reset()` 을 부르는 곳이 코드 전체에 **0곳**이었다.
+`UserProvider.signOut()` 에 연결했다. 남의 사업장 판정으로 내 `+` 버튼이
+정해지면 안 된다.
+
+### lifecycle 판정 (§4)
+
+| 경우 | 결과 |
+|---|---|
+| A. cold start → 공고 직행 | **안전** — `_ensureReadiness()` 가 스스로 묻는다 |
+| B. 복원 시 공고 탭 선택 | **안전** — 동일 + 앱 복귀 시 `force: true` 재조회 |
+| C. Home 미방문 | **안전** — A 와 같다 |
+| D. 사업장 A→B 전환 | **안전** — `scopeKey` 불일치 → 재계산 |
+| E. logout → 다른 관리자 login | **안전** — `signOut` 에서 `reset()` |
+| F. 선행 완료 후 Home 없이 복귀 | **부분** — Home 이 owner 라 그 경로로 돌아오면 갱신된다. 앱 복귀 시에도 강제 재조회. 포그라운드에서 Home 을 거치지 않고 바뀌는 경로는 남는다 |
+
+### 갱신한 오래된 테스트 12건 (삭제·skip 0)
+
+전부 **판정 코드가 Home 파일 안에 있다**고 고정하던 것이다. 로직은 한 글자도
+바뀌지 않았고 위치만 옮겼다. `home` 소스를 볼 때 resolver 를 함께 보도록
+했고, 지역 변수명은 도메인 이름(`readinessMap`)으로 통일해 기존 needle 을
+살렸다. `_reads.postingReadiness(` → tear-off 로 넘기는 모양이 된 것만
+needle 을 고쳤다(조회 지점 1개라는 계약은 그대로).
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · **CF 변경 0**
+- **RENDER**: 신규 **29/29**(SETUP-ROOT-01~07 · LICENSE-PARITY · READINESS-TASKS · NAV/REFRESH · **BROADCAST-01~07**)
+- **DEVICE**: **RETRY PENDING**
+
+
 
 ## 0-AAAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.2
 

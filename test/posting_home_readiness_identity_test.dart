@@ -387,8 +387,12 @@ void main() {
       //   그래서 면제 대신 **그 사업장 owner 의 날인**을 본다 — 계약 writer 가
       //   실제로 쓰는 것과 같은 값이다. SubAdmin 은 여전히 자기 날인을
       //   요구받지 않는다(owner 것을 보므로).
+      // [R7-P4.4E.2A] 판정은 resolver 로 옮겼다 — Home 은 위임한다.
+      //   규칙이 어느 파일에 있느냐가 아니라 **무엇을 보느냐**가 계약이다.
       final body = _flat(_region(_codeOf(_homePath),
-          'Future<void> _loadPostingReadiness() async {', 'BusinessModel? _firstBusinessWhere('));
+              'Future<void> _loadPostingReadiness() async {',
+              'BusinessModel? _firstBusinessWhere(')) +
+          _flat(_codeOf('lib/services/business_posting_readiness.dart'));
       expect(body.contains("up.currentUser?.isSubAdmin == true ||"), false,
           reason: '무조건 면제로 돌아가면 고용주 날인 없는 공고가 다시 열린다');
       expect(body.contains('readinessMap.values.any((r) => r.hasEmployerSeal)'),
@@ -474,8 +478,10 @@ void main() {
           'BusinessModel? _firstBusinessWhere(');
       // [R7-P1-4] 원시 조회는 admin_home_reads.dart 경계로 옮겼다.
       //   화면 쪽 호출 지점도, 경계의 실제 owner 매핑도 각각 한 번뿐이어야 한다.
-      expect('_reads.postingReadiness('.allMatches(body).length, 1);
-      expect('_reads.contractTemplates('.allMatches(body).length, 1);
+      // [R7-P4.4E.2A] 이제 부르지 않고 **함수를 넘긴다**(resolver 가 부른다).
+      //   조회 지점이 각각 하나뿐이라는 계약은 그대로다.
+      expect('_reads.postingReadiness'.allMatches(body).length, 1);
+      expect('_reads.contractTemplates'.allMatches(body).length, 1);
       final seam = _codeOf('lib/screens/business_admin/admin_home_reads.dart');
       expect('BusinessPostingReadiness.forBusinesses('.allMatches(seam).length, 1);
       expect('templateSvc.getTemplates'.allMatches(seam).length, 1);

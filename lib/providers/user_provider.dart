@@ -6,6 +6,7 @@ import '../models/core/user_model.dart';
 import '../models/core/user_region.dart';
 import '../models/core/business_member_model.dart';
 import '../models/core/employment_contract_model.dart';
+import '../services/business_posting_readiness.dart';
 import '../services/auth_service.dart';
 import '../services/member_service.dart';
 import '../services/contract_service.dart';
@@ -1441,6 +1442,11 @@ class UserProvider with ChangeNotifier {
     try {
       // [NEW-03] Ghost session 방지: 진행 중인 _loadUserData가 있으면 즉시 무효화
       _loadGeneration++;
+      // [R7-P4.4E.2A] 첫 공고 준비 판정은 **그 계정의 것**이다.
+      //   버리지 않으면 다음에 로그인한 관리자가 이전 사람의 사업장 기준
+      //   판정을 잠시 보게 된다. 그 값으로 '공고 등록' 버튼이 뜨거나
+      //   사라지면, 남의 사업장 상태로 내 행동이 정해지는 셈이다.
+      FirstPostingReadinessStore.reset();
       // 알림 Provider 정리
       _notificationProvider?.clearUser();
 

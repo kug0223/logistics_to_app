@@ -1,3 +1,4 @@
+import 'dart:async';
 // lib/screens/business_admin/jobs_root_screen.dart
 //
 // 공고 Root — 5-tab Bottom Nav의 "공고" 탭 (PHASE 4B)
@@ -32,11 +33,14 @@ import 'package:provider/provider.dart';
 import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
+import '../../models/core/contract_template_model.dart';
 import '../../services/business_posting_readiness.dart';
+import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/admin_business_scope_label.dart';
 import '../../utils/admin_tab_switcher.dart';
 import '../../utils/navigation_helper.dart';
+import 'admin_home_reads.dart';
 import 'to_management/create_to_screen.dart';
 import 'workforce_management/workforce_list_view.dart';
 
@@ -90,6 +94,11 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.load(context);
+      // [R7-P4.4E.2A] Home 을 한 번도 그리지 않았어도 스스로 묻는다.
+      //   예전에는 이 값을 Home 위젯만 채웠다. 앱을 껐다 켜고 공고 탭으로
+      //   바로 들어오면 아무도 답을 갖고 있지 않았고, 그 모름이 '정상 ·
+      //   공고 0건' 으로 보였다. 같은 scope 값이 이미 있으면 다시 세지 않는다.
+      unawaited(_ensureReadiness());
     });
 
     // [POSTING-V2-03A.1] 알림 → Jobs 탭 target 수신.
@@ -161,6 +170,10 @@ class _JobsRootScreenState extends State<JobsRootScreen>
       }
       _lastResumedAt = now;
       if (!mounted) return;
+      // [R7-P4.4E.2A] 복귀하면 준비 상태도 다시 묻는다 — 그 사이 다른 기기나
+      //   다른 관리자가 템플릿·날인을 바꿨을 수 있다. 이미 아는 값은 그대로
+      //   두고 갱신하므로 화면이 깜빡이지 않는다.
+      unawaited(_ensureReadiness(force: true));
       // [POSTING-V2-03B.1] 복귀 시 접근 상태를 먼저 맞춘다.
       //   다른 관리자·다른 기기가 바꾼 배정과 비선택 사업장 권한은
       //   realtime listener가 없어 이 지점에서만 따라잡을 수 있다.
@@ -177,6 +190,47 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     }
   }
 
+
+  /// [R7-P4.4E.2A] 이 계정·이 사업장 집합의 준비 상태를 확보한다.
+  ///
+  ///   판정 자체는 `FirstPostingReadinessResolver` 한 곳에서만 한다 —
+  ///   여기서 다시 세지 않는다. 이 메서드가 하는 일은 **입력을 모아 주는 것**
+  ///   뿐이다(어느 사업장을 볼 것인가 · 호출자 날인이 있는가).
+  Future<void> _ensureReadiness({bool force = false}) async {
+    final up = context.read<UserProvider>();
+    final uid = up.currentUser?.uid;
+    if (uid == null) {
+      FirstPostingReadinessStore.reset();
+      return;
+    }
+
+    final ids = up.currentUser?.isSubAdmin == true
+        ? [if (up.effectiveBusinessId != null) up.effectiveBusinessId!]
+        : (up.currentUser?.managedBusinessIds ?? const <String>[]);
+    final scopeKey = FirstPostingReadinessStore.scopeKeyOf(ids);
+    final reads = AdminHomeReads.of(FirestoreService());
+
+    await FirstPostingReadinessStore.ensureLoaded(
+      uid: uid,
+      scopeKey: scopeKey,
+      force: force,
+      resolve: () async {
+        final businesses = await reads.businessesByIds(ids);
+        final result = await FirstPostingReadinessResolver.resolve(
+          businesses: businesses,
+          postingReadiness: reads.postingReadiness,
+          contractTemplates: reads.contractTemplates,
+          selectableForNewContract: (list) =>
+              ContractTemplateModel.selectableForNewContract(
+                      list.cast<ContractTemplateModel>())
+                  .isNotEmpty,
+          callerHasSeal: up.currentUser?.sealBase64?.isNotEmpty ?? false,
+        );
+        return result.readiness;
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
@@ -186,30 +240,30 @@ class _JobsRootScreenState extends State<JobsRootScreen>
         bottom: false,
         child: ChangeNotifierProvider.value(
           value: _controller,
-          child: ValueListenableBuilder<FirstPostingReadiness?>(
-            valueListenable: FirstPostingReadinessBroadcast.current,
-            builder: (ctx, readiness, _) {
-              final setupRequired = readiness != null && !readiness.allReady;
+          child: ValueListenableBuilder<FirstPostingReadinessSnapshot>(
+            valueListenable: FirstPostingReadinessStore.current,
+            builder: (ctx, snap, _) {
+              // [R7-P4.4E.2A] 모름을 준비 완료처럼 그리지 않는다.
+              //
+              //   모른다(idle/loading/failed)와 준비가 덜 됐다(setup)와
+              //   준비됐는데 공고가 0건이다는 **사용자가 할 일이 전부 다르다.**
+              //   예전에는 셋을 모두 '등록된 공고가 없습니다 + 새 공고 등록'
+              //   으로 그렸다 — 아직 아무것도 모르는 채 행동을 권한 것이다.
+              final r = snap.isResolved ? snap.value : null;
+              final setupRequired = r != null && !r.allReady;
+              final unknown = !snap.isResolved;
               return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // 헤더: 제목 + 필터 + 공고등록 + scope chip
               // Consumer<WorkforceController>가 내부에서 context를 해석 — provider scope 안
-              _buildHeader(ctx, s, setupRequired),
-              // [R7-P4.4E.2] 준비가 끝나지 않았으면 운영 목록을 그리지 않는다.
-              //
-              //   예전에는 사업장이 생기는 순간 바로 "진행중 0 / 등록된 공고가
-              //   없습니다 / + 새 공고 등록" 으로 들어갔다. 그런데 Home 은 같은
-              //   시점에 "공고 등록까지 3단계 남았어요" 라고 말하고 있었고,
-              //   실제로 + 를 눌러도 서버 gate 에서 막힌다. 사용자를 할 수 없는
-              //   행동으로 안내한 것이다.
-              //
-              //   `null` 은 **아직 모른다**는 뜻이라 지금 화면을 바꾸지 않는다 —
-              //   모르는 동안 setup 을 그리면 준비가 끝난 관리자에게 거짓이 된다.
+              _buildHeader(ctx, s, setupRequired || unknown),
               Expanded(
-                child: setupRequired
-                    ? _JobsSetupRequiredView(readiness: readiness, scale: s)
-                    : WorkforceListView(targetToId: _targetToId),
+                child: unknown
+                    ? _JobsReadinessUnknownView(snapshot: snap, scale: s)
+                    : (setupRequired
+                        ? _JobsSetupRequiredView(readiness: r, scale: s)
+                        : WorkforceListView(targetToId: _targetToId)),
               ),
                 ],
               );
@@ -553,6 +607,70 @@ class _JobsSetupRequiredView extends StatelessWidget {
               ),
               child: const Text('준비 단계 보기',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// [R7-P4.4E.2A §6] 아직 모르거나, 세다가 실패했을 때.
+///
+///   모름을 "정상 · 공고 0건" 으로 그리면 사용자는 있지도 않은 사실을 믿고
+///   행동한다. 준비 미완료로 그려도 마찬가지다 — 준비가 끝난 관리자에게
+///   거짓이 된다. 그래서 **세는 중**과 **못 셌다**를 따로 말한다.
+class _JobsReadinessUnknownView extends StatelessWidget {
+  const _JobsReadinessUnknownView(
+      {required this.snapshot, required this.scale});
+
+  final FirstPostingReadinessSnapshot snapshot;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = snapshot.status == FirstPostingReadinessStatus.failed;
+    final s = scale;
+
+    if (!failed) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 24 * s),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_rounded, size: 34 * s, color: AppColors.grey400),
+            SizedBox(height: 14 * s),
+            Text(
+              '공고 준비 상태를 확인하지 못했어요',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            SizedBox(height: 8 * s),
+            Text(
+              '연결을 확인한 뒤 다시 시도해 주세요.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13, height: 1.5, color: AppColors.textSecondary),
+            ),
+            SizedBox(height: 18 * s),
+            OutlinedButton.icon(
+              onPressed: () {
+                // 실패한 판정을 버리고 처음부터 다시 묻는다.
+                FirstPostingReadinessStore.reset();
+                final state =
+                    context.findAncestorStateOfType<_JobsRootScreenState>();
+                unawaited(state?._ensureReadiness() ?? Future<void>.value());
+              },
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('다시 확인'),
             ),
           ],
         ),

@@ -24,6 +24,13 @@ String _src(String p) {
 }
 
 const _home = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P4.4E.2A] Home 의 준비 판정은 **화면 밖**으로 옮겨졌다.
+//   Home 을 한 번도 그리지 않고 공고 탭으로 바로 들어가면 아무도 답을
+//   갖고 있지 않았기 때문이다. Home 은 여전히 setup UX 의 owner 이고,
+//   판정은 그 resolver 에 **위임**한다. 그래서 '홈의 판정' 을 볼 때는
+//   두 파일을 같이 본다 — 규칙이 어느 파일에 있느냐가 아니라 **무엇을
+//   보느냐**가 계약이다.
+const _readinessResolver = 'lib/services/business_posting_readiness.dart';
 const _createTo = 'lib/screens/business_admin/to_management/create_to_screen.dart';
 const _server = 'functions/src/index.ts';
 
@@ -43,7 +50,7 @@ void main() {
     late final String home;
     late final String create;
     setUpAll(() {
-      home = _src(_home);
+      home = _src(_home) + _src(_readinessResolver);
       create = _src(_createTo);
     });
 
@@ -176,12 +183,12 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('CP7-03 승인 대기 중 체크리스트', () {
     late final String home;
-    setUpAll(() => home = _src(_home));
+    setUpAll(() => home = _src(_home) + _src(_readinessResolver));
 
     test('CP7-03a readiness 는 승인된 사업장만 조회한다 (전제)', () {
       expect(
           home.contains(
-              'final approvedBizs = _businesses.where((b) => b.isApproved)'),
+              'final approved = businesses.where((b) => b.isApproved)'),
           isTrue,
           reason: '이 사실 때문에 승인 전에는 업무 칸이 완료로 바뀌지 않는다');
     });
@@ -219,7 +226,7 @@ void main() {
       }
       // 템플릿은 승인 사업장이 아니라 전체 사업장에서 계산한다.
       expect(
-          home.contains('_businesses.map((b) => _reads.contractTemplates(b.id))'),
+          home.contains('businesses.map((b) => contractTemplates(b.id))'),
           isTrue);
     });
 

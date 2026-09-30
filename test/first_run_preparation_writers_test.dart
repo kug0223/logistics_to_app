@@ -22,6 +22,13 @@ String _src(String p) {
 }
 
 const _home = 'lib/screens/business_admin/business_admin_home_screen.dart';
+// [R7-P4.4E.2A] Home 의 준비 판정은 **화면 밖**으로 옮겨졌다.
+//   Home 을 한 번도 그리지 않고 공고 탭으로 바로 들어가면 아무도 답을
+//   갖고 있지 않았기 때문이다. Home 은 여전히 setup UX 의 owner 이고,
+//   판정은 그 resolver 에 **위임**한다. 그래서 '홈의 판정' 을 볼 때는
+//   두 파일을 같이 본다 — 규칙이 어느 파일에 있느냐가 아니라 **무엇을
+//   보느냐**가 계약이다.
+const _readinessResolver = 'lib/services/business_posting_readiness.dart';
 const _createTo =
     'lib/screens/business_admin/to_management/create_to_screen.dart';
 const _tplService = 'lib/services/contract_template_service.dart';
@@ -72,15 +79,15 @@ void main() {
     });
 
     test('CP5-01e Home 도 사업장 단위로 본다', () {
-      final s = _src(_home);
+      final s = _src(_home) + _src(_readinessResolver);
       // 무조건 합산(expand)으로 돌아가지 않는다.
       expect(s.contains('lists.expand((l) => l),'), isFalse);
-      expect(s.contains('readinessMap[_businesses[i].id]?.isReady == true'),
+      expect(s.contains('readinessMap[businesses[i].id]?.isReady == true'),
           isTrue, reason: '공고 낼 수 있는 사업장이 있으면 그 사업장 기준');
     });
 
     test('CP5-01f 조회 실패를 "준비됨" 으로 올리지 않는다', () {
-      final s = _src(_home);
+      final s = _src(_home) + _src(_readinessResolver);
       expect(s.contains('var hasTemplate = false;'), isTrue);
       final i = s.indexOf('var hasTemplate = false;');
       final block = s.substring(i, i + 1400);
@@ -189,7 +196,8 @@ void main() {
     test('CP6-01a authority 는 users/{uid}.sealBase64 하나다', () {
       // Home readiness 와 계약 생성이 **같은 필드**를 읽는지 본다.
       // 서로 다른 authority 면(예: users vs businesses.sealUrl) BLOCKER 다.
-      expect(_src(_home).contains('up.currentUser?.sealBase64'), isTrue);
+      expect((_src(_home) + _src(_readinessResolver))
+          .contains('currentUser?.sealBase64'), isTrue);
       final c = _src(_contractDialog);
       expect(c.contains(".collection('users').doc(sealUid).get()"), isTrue);
       expect(c.contains("sealDoc.data()?['sealBase64']"), isTrue);
