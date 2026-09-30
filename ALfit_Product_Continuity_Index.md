@@ -2,7 +2,75 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.2A** (readiness authority)
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.3** (setup mutation ↔ manage parity)
+
+## 0-AAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.3
+
+기준 `5011408`(작업은 `78736da` 위에서). **CODE CLOSED · CF 변경 0 · DEVICE RETRY PENDING.**
+
+### 결론 먼저 — 데이터는 갈리지 않았다. **화면이 값을 복사해 들고 있었다.**
+
+세 항목 중 **인감만** 실제로 어긋났고, 원인은 business drift 가 아니라
+**stale copy** 였다.
+
+| 설정 | writer | Home reader | Manage reader | 판정 |
+|---|---|---|---|---|
+| 업무 | `businesses/{id}/workTypes` | `getBusinessWorkTypes(biz.id)` | **같은 메서드**, push 마다 재조회 | **PARITY OK** |
+| 템플릿 | `businesses/{id}/contract_templates` | `templateSvc.getTemplates(biz.id)` | **같은 메서드**, push 마다 재조회 | **PARITY OK** |
+| 인감 | `users/{uid}.sealBase64` (CF) | owner 날인(resolver) | **initState 1회 복사본** | **BLOCKER (DEVICE REPRODUCED)** |
+
+### 인감 — 무엇이 일어났나
+
+관리 탭 root(`SettingsScreen`)는 IndexedStack 안에서 **계속 살아 있고**,
+`_loadBusinessSeal()` 은 `initState` post-frame 에서 **한 번만** 돈다.
+재활성 훅도 lifecycle observer 도 없다.
+
+Home 준비 카드의 인감 CTA 는 `SettingsScreen(initialTarget: seal)` 을
+**새로 push** 한다 — 다른 인스턴스다. 거기서 저장하면 그 인스턴스와
+`UserProvider` 는 갱신되지만, 관리 탭이 들고 있던 복사본은 그대로다.
+그래서 Home 은 완료, 관리 탭은 '미등록' 이었다.
+
+**바로 옆 서명 카드는 처음부터 `user.signatureBase64` 를 build 때 읽고
+있었다.** 같은 파일 안에서 인감만 다른 규칙이었다. 인감을 서명에 맞췄다
+(`user?.sealBase64`), 복사본 필드는 제거했다. 저장·삭제 경로가 이미
+`refreshUserData()` 를 부르므로 새 listener·polling 은 **0개**(§20).
+
+### §5 businessId map (단일 사업장 기준 — 전부 동일)
+
+| 자리 | resolver |
+|---|---|
+| Home readiness target | `_workTypeCtaBusiness` / `_templateCtaBusiness` |
+| Home CTA | 위 target 의 `.id` |
+| Manage 진입 | `BusinessPickerHelper.pick` — **1개면 묻지 않고 그 하나** |
+| writer / reader | 전달받은 `businessId` 그대로 |
+
+**§6 관찰(미수정)**: 두 resolver 는 서로 다른 규칙이다(readiness 우선순위 vs
+승인 사업장 picker). 사업장이 하나라 지금은 같은 값이지만 다사업장에서는
+갈릴 수 있다. 새 resolver 를 만들지 않았다 — canonical business selection
+owner 를 정하는 것은 별도 결정이다.
+
+### §12·§13 navigation — **Model A 유지 (변경 없음)**
+
+Home 에서 업무 유형 관리로 들어가면 하단 탭이 '홈' 으로 남는다. 이것을
+바꾸지 않는다:
+
+- P4.2C-NAV-01 이 정한 규칙은 "목적지가 **다른 탭의 root** 면 push 대신 탭 전환" 이었다. 업무 관리·템플릿 목록은 탭 root 가 **아니다** — 관리 탭에서도 한 번 더 들어가는 하위 화면이다.
+- Model B(관리 탭 전환 후 push)로 바꾸면 Home 복귀 시 readiness 재계산 계약(§21)을 잃고, 뒤로 가기가 사용자가 시작한 곳(홈)이 아니라 관리로 떨어진다.
+- §14 대로 **데이터 parity 를 먼저** 맞췄고, 그러고 나면 남는 것은 shell identity 취향 문제다. 제품 결정이 필요하면 따로 연다.
+
+### §11 반대 방향 (Manage → Home)
+
+관리에서 등록하고 홈으로 돌아오면 `_onHomeReactivated` → `_reloadReadiness()`
+→ resolver → `FirstPostingReadinessStore.publish` 로 갱신된다(P4.2C 계약 유지).
+인감은 이제 provider 파생이라 양방향 모두 즉시 반영된다.
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · **CF 변경 0**
+- **RENDER**: 신규 **13/13**(SETUP-PARITY-01~08)
+- **DEVICE**: **RETRY PENDING** — §J 13단계 재현으로만 닫힌다
+
+
 
 ## 0-AAAAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.2A
 

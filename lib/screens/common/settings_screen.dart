@@ -98,7 +98,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isNotifPrefsLoading = false;
   bool _isNotifExpanded = false;
   String _appVersion = '';
-  String? _businessSealBase64;
   String _sealType = 'stamp';
   String? _resolvedBusinessId;
   bool _isSealLoading = true;
@@ -154,7 +153,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // 날인 + 사업장 ID 즉시 표시 (비동기 쿼리 전, 블로킹 없음)
     if (!mounted) return;
     setState(() {
-      _businessSealBase64 = user.sealBase64;
       _sealType = user.sealType;
       _resolvedBusinessId = context.read<UserProvider>().effectiveBusinessId;
       // BUSINESS_ADMIN: null → 아래 CF 조회 분기로 진입 / SUB_ADMIN: effectiveBusinessId(선택 사업장)
@@ -2180,14 +2178,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
 
-    final hasSeal =
-        _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
-    final isStamp = _sealType == 'stamp';
+    // [R7-P4.4E.3] 값을 **복사해 들고 있지 않는다.**
+    //
+    //   예전에는 `_loadBusinessSeal()` 이 initState 에서 한 번 읽어 둔
+    //   `_businessSealBase64` 를 그렸다. 관리 탭 root 는 IndexedStack 안에서
+    //   계속 살아 있고 재진입 시 다시 읽는 곳이 없다. 그래서 Home 의 준비
+    //   카드에서 인감을 등록하면(그쪽은 **다른 인스턴스**다) Home 은 완료로
+    //   바뀌는데 관리 탭은 계속 '미등록' 이었다 — 같은 값을 두고 두 화면이
+    //   다른 말을 한 것이다.
+    //
+    //   바로 옆 서명 카드는 처음부터 `user.signatureBase64` 를 build 때
+    //   읽고 있었다. 인감도 같은 규칙으로 맞춘다. 저장 경로가 이미
+    //   `refreshUserData()` 를 부르므로 provider 가 알리면 여기까지 닿는다.
+    final sealBase64 = user?.sealBase64;
+    final hasSeal = sealBase64 != null && sealBase64.isNotEmpty;
+    final isStamp = (user?.sealType ?? _sealType) == 'stamp';
 
     // [PERF-FIX] base64 변경 시에만 재디코딩 — build마다 decode 방지
-    if (hasSeal && _businessSealBase64 != _cachedSealBase64) {
-      _cachedSealBase64 = _businessSealBase64;
-      _cachedSealBytes = base64Decode(_businessSealBase64!);
+    if (hasSeal && sealBase64 != _cachedSealBase64) {
+      _cachedSealBase64 = sealBase64;
+      _cachedSealBytes = base64Decode(sealBase64);
     } else if (!hasSeal) {
       _cachedSealBase64 = null;
       _cachedSealBytes = null;
@@ -2366,7 +2376,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await userProvider.refreshUserData();
       if (!mounted) return;
       setState(() {
-        _businessSealBase64 = b64;
         _sealType = 'stamp';
       });
       ToastHelper.showSuccess('도장이 등록되었습니다');
@@ -2413,7 +2422,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await userProvider.refreshUserData();
       if (!mounted) return;
       setState(() {
-        _businessSealBase64 = b64;
         _sealType = 'signature';
       });
       ToastHelper.showSuccess('서명이 등록되었습니다');
@@ -2441,10 +2449,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _callSaveSeal(null, 'stamp');
       await userProvider.refreshUserData();
       if (!mounted) return;
-      setState(() {
-        _businessSealBase64 = null;
-        _sealType = 'stamp';
-      });
+      // 화면 값은 provider 에서 다시 읽는다 — 여기서 따로 들고 있지 않는다.
+      setState(() => _sealType = 'stamp');
       ToastHelper.showSuccess('날인이 삭제되었습니다');
     } catch (e) {
       // [P4.4B-SEAL-01] 삭제 실패를 조용히 넘기면 화면은 지워진 것처럼 보이고
