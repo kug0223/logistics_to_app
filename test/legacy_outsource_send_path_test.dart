@@ -155,8 +155,21 @@ void main() {
       //   바뀐 것은 그 목록의 **범위**다: 전 사업장 합산 변수(`allTemplates`)가
       //   사라지고 선택 사업장의 것(`sel.templates` / `selectedTemplates`)을
       //   쓴다. 이 셀이 변수 이름에 묶여 있었으므로 규칙으로 옮긴다.
-      expect(src.contains('.isNotEmpty;\n        _hasLicense'), false,
-          reason: '목록 비어있음 단독 판정으로 돌아가면 legacy 만 있어도 통과한다');
+      //   [R7-P4.4C] 다시 갱신. 앞서 쓴 needle(`.isNotEmpty;` + 다음 줄
+      //   indentation)은 코드 **모양**에 묶여 있어서, 줄바꿈이 바뀌자 규칙과
+      //   무관하게 깨졌다. 규칙을 직접 검사한다 —
+      //   `_contractTemplatesReady` 에 들어가는 값은 `false` 이거나
+      //   `selectableForNewContract` 를 거친 것뿐이어야 한다.
+      final assigns = RegExp(r'_contractTemplatesReady = ([^;]*);', dotAll: true)
+          .allMatches(src)
+          .map((m) => m.group(1)!.replaceAll(RegExp(r'\s+'), ' ').trim())
+          .toList();
+      expect(assigns, isNotEmpty);
+      for (final a in assigns) {
+        final ok = a == 'false' || a.contains('selectableForNewContract');
+        expect(ok, isTrue,
+            reason: '목록 비어있음 단독 판정이면 legacy outsource 만 있어도 통과한다: $a');
+      }
       expect(src.contains('selectableForNewContract(sel.templates)'), true);
       expect(src.contains('selectableForNewContract(selectedTemplates)'), true);
     });

@@ -212,6 +212,11 @@ Map<String, BusinessPostingReadiness> _ready(List<BusinessModel> bizs) => {
           hasCanonicalLicense: true,
           hasOwnerLegacyLicense: false,
           hasActiveWorkTypes: true,
+          // [R7-P4.4C] 고용주 날인 축이 생겼다. 이 fixture 의 뜻은 "준비를
+          //   다 채운 사업장" 이므로 새 축도 채워야 한다 — 비워 두면 홈이
+          //   준비 카드를 띄우고 할 일 섹션이 숨어(의도된 동작) 이 파일의
+          //   운영 홈 셀들이 전부 깨진다.
+          hasEmployerSeal: true,
         ),
     };
 

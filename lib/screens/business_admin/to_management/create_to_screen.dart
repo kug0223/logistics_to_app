@@ -26,6 +26,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/admin_tab_switcher.dart';
 import '../../../utils/navigation_helper.dart';
+import '../../../utils/posting_readiness_reason.dart';
 import '../../../utils/dialog_helper.dart';
 
 // Theme
@@ -291,10 +292,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           .toList();
 
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
-      // 인감/서명: UserModel.sealBase64 기준 (SubAdmin 면제 — 계약서 날인은 사업주 계정)
-      final bool hasSeal = userProvider.isSubAdmin
-          ? true
-          : (userProvider.currentUser?.sealBase64?.isNotEmpty ?? false);
+      // [P4.4C-SEAL-02] 날인은 **선택 사업장 owner** 것을 본다 — 아래 checks 에서
+      //   사업장별로 읽는다. 예전에는 SubAdmin 이면 무조건 true 였고, 그 밖에는
+      //   호출자 자신의 날인을 봤다. 둘 다 계약 writer 가 쓰는 값과 다르다.
+      //
+      //   아래 두 분기(사업장 없음 · 전부 미승인)에는 읽을 owner 가 없다.
+      //   그때는 호출자를 **예비 owner** 로 보고 자기 날인으로 진행도만
+      //   표시한다 — Home 과 같은 규칙이다.
+      final bool prospectiveOwnerSeal =
+          userProvider.currentUser?.sealBase64?.isNotEmpty ?? false;
 
       if (!mounted) return;
 
@@ -315,7 +321,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             _workTypesReady = false;
             _contractTemplatesReady = false;
             _hasLicense = false;
-            _hasSeal = hasSeal;
+            _hasSeal = prospectiveOwnerSeal;
             _businessReadinessList = [];
             _selectedBusiness = initBizFromAll;
             _myBusinesses = [];
@@ -334,7 +340,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           _workTypesReady = false;
           _contractTemplatesReady = false;
           _hasLicense = false;
-          _hasSeal = hasSeal;
+          _hasSeal = prospectiveOwnerSeal;
           _businessReadinessList = [];
           // [APPROVAL-RECOVERY] 승인 상태를 다시 확인할 대상 보관
           _unapprovedBusinesses =
@@ -366,6 +372,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             } catch (_) {}
           }
 
+          // [P4.4C-SEAL-02] 고용주 날인 — 이 사업장 owner 의 것.
+          bool employerSeal = false;
+          if (biz.ownerId.isNotEmpty) {
+            try {
+              final ownerSnap = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(biz.ownerId)
+                  .get();
+              employerSeal =
+                  (ownerSnap.data()?['sealBase64'] as String?)?.isNotEmpty ==
+                      true;
+            } catch (_) {
+              // 못 읽었으면 준비됨으로 올리지 않는다 — 서버가 최종 gate 다.
+            }
+          }
+
           final res = await Future.wait([
             _firestoreService.getBusinessWorkTypes(biz.id),
             _contractTemplateService.getTemplates(biz.id),
@@ -375,6 +397,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             workTypes: res[0] as List<BusinessWorkTypeModel>,
             templates: res[1] as List<ContractTemplateModel>,
             licenseReady: licenseReady,
+            employerSeal: employerSeal,
           );
         }),
       );
@@ -416,7 +439,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _contractTemplatesReady = ContractTemplateModel
             .selectableForNewContract(sel.templates).isNotEmpty;
         _hasLicense = sel.licenseReady;
-        _hasSeal = hasSeal;
+        _hasSeal = sel.employerSeal;
         // workTypes 미충족 시 결핍 정보 보존 (readiness 안내용)
         _businessReadinessList = selWorkTypesReady
             ? []
@@ -508,7 +531,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       final bool hasLicense = await BusinessPostingReadiness
           .hasLicenseForBusiness(_selectedBusiness!);
       if (!mounted) return;
-      final up = Provider.of<UserProvider>(context, listen: false);
+      // [P4.4C-SEAL-02] 고용주 날인 — 선택 사업장 owner 의 것.
+      bool employerSeal = false;
+      final selOwnerId = _selectedBusiness!.ownerId;
+      if (selOwnerId.isNotEmpty) {
+        try {
+          final ownerSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(selOwnerId)
+              .get();
+          employerSeal =
+              (ownerSnap.data()?['sealBase64'] as String?)?.isNotEmpty == true;
+        } catch (_) {
+          // 못 읽었으면 준비됨으로 올리지 않는다 — 서버가 최종 gate 다.
+        }
+      }
+      if (!mounted) return;
       setState(() {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
@@ -519,9 +557,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _contractTemplatesReady = ContractTemplateModel
             .selectableForNewContract(selectedTemplates).isNotEmpty;
         _hasLicense = hasLicense;
-        _hasSeal = up.isSubAdmin
-            ? true
-            : (up.currentUser?.sealBase64?.isNotEmpty ?? false);
+        // [P4.4C-SEAL-02] 사업장 전환 경로도 **그 사업장 owner** 날인을 본다.
+        _hasSeal = employerSeal;
         if (_allPrerequisitesMet) {
           _formUnlocked = true;
           _businessReadinessList = [];
@@ -1398,10 +1435,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           final parts = msg.split(':');
           final limitStr = parts.length >= 2 ? parts.last.trim() : '4';
           ToastHelper.showError('진행중인 공고가 최대 $limitStr개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
-        } else if (e is FirebaseFunctionsException && e.code == 'failed-precondition') {
-          // [5D.1A] 사업장 readiness 서버 gate — 서버 메시지 직접 표시
-          final serverMsg = e.message ?? '공고 등록 조건을 확인해 주세요.';
-          ToastHelper.showError(serverMsg);
+        } else if (PostingNotReady.parse(e) case final notReady?) {
+          // [P4.4C-ERR-01] 서버가 어느 축에서 막았는지 코드로 내려준다.
+          //   예전에는 `e.message` 를 그대로 띄웠다 — 이제 접두어가 붙어
+          //   있으므로 그대로 쓰면 `POSTING_NOT_READY:...` 가 샌다.
+          //   문구 소유를 클라이언트가 갖고, 해당 준비 단계를 알 수 있게 한다.
+          ToastHelper.showError(notReady.message);
+        } else if (e is FirebaseFunctionsException &&
+            e.code == 'failed-precondition') {
+          // 우리가 아는 코드가 아니다 — 준비 단계를 단정하지 않는다.
+          ToastHelper.showError('공고 등록 조건을 확인해 주세요');
         } else {
           ToastHelper.showError('공고 등록에 실패했습니다');
         }

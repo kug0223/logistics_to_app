@@ -2860,7 +2860,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (articles == null || !mounted) return;
 
       // 2. 인감 확인 — SubAdmin은 사업주(ownerId) 문서에서 날인 조회
-      final sealUid = up.isSubAdmin ? business.ownerId : (up.currentUser?.uid ?? '');
+      // [P4.4C-SIGNER-01] 계약의 날인은 **이 사업장의 사업주(owner)** 것이다.
+      //   누가 버튼을 눌렀는지가 아니라 근로계약의 사용자(고용주) identity 가
+      //   정한다. 예전에는 SubAdmin 일 때만 owner 를 썼고, 그 밖에는 호출자의
+      //   날인을 썼다 — owner 가 아닌 co-admin 이 발송하면 그 사람 개인 날인이
+      //   고용주 날인 자리에 찍힌다.
+      final sealUid = business.ownerId;
       if (sealUid.isNotEmpty) {
         final sealDoc = await FirebaseFirestore.instance.collection('users').doc(sealUid).get();
         if (!mounted) return;
@@ -3274,7 +3279,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     // 2. 인감 확인 — SubAdmin은 사업주(ownerId) 문서에서 날인 조회
     final up = context.read<UserProvider>();
-    final sealUid = up.isSubAdmin ? business.ownerId : (up.currentUser?.uid ?? '');
+    // [P4.4C-SIGNER-01] 계약 날인은 이 사업장의 사업주(owner) 것이다.
+    final sealUid = business.ownerId;
     String sealBase64 = '';
     String sealType = 'stamp';
     if (sealUid.isNotEmpty) {

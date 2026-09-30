@@ -71,12 +71,19 @@ void main() {
       expect(home.contains('selectableForNewContract(lists[i])'), isTrue);
     });
 
-    test('CP7-01c 인감 — 양쪽 다 SubAdmin 을 면제한다', () {
-      // 한쪽만 검사하면 SubAdmin 에게 끝나지 않는 준비 항목이 남는다.
-      expect(
-          home.contains("up.currentUser?.isSubAdmin == true ||"),
+    test('CP7-01c 인감 — 양쪽 다 그 사업장 owner 날인을 본다', () {
+      // [R7-P4.4C SEAL-02] 갱신. 이 셀은 "양쪽 다 SubAdmin 을 면제한다" 를
+      //   고정했다 — P4.4 시점에는 두 화면이 **같은 규칙**을 쓰는지가 관심
+      //   이었고 그 답은 맞았다. P4.4C 에서 그 규칙 자체가 틀렸다는 반례를
+      //   찾았다: SubAdmin 면제는 개인 날인을 요구하지 않는다는 뜻이어야
+      //   하는데, 구현은 **고용주 날인 존재 여부 자체를 무시**했다.
+      //   그 상태로 공고가 열리면 확정 뒤 계약을 만들 수 없다.
+      //   parity 요구는 그대로다 — 양쪽이 이제 같은 canonical(owner 날인)을 쓴다.
+      expect(home.contains("up.currentUser?.isSubAdmin == true ||"), isFalse);
+      expect(home.contains('readinessMap.values.any((r) => r.hasEmployerSeal)'),
           isTrue);
-      expect(create.contains('SubAdmin 면제'), isTrue);
+      expect(create.contains('_hasSeal = sel.employerSeal;'), isTrue);
+      expect(create.contains('_hasSeal = up.isSubAdmin'), isFalse);
     });
 
     test('CP7-01d 업무 — 사업장 identity 를 유지한다', () {

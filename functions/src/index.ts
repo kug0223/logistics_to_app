@@ -5810,6 +5810,34 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     const groupToRefs = groupDocs.map((d) => db.collection("tos").doc(d.id));
     let groupPublishedIds: string[] = [];
 
+    // [P4.4C] 예약 공개도 **근로자에게 보이게 만드는 transition** 이다.
+    //
+    //   `callableCreateTO`(scheduled)는 만들 때 readiness 를 통과했지만, 그
+    //   사이에 계약서 템플릿이나 사업주 날인이 지워질 수 있다. 그때 이
+    //   scheduler 가 그대로 공개하면 **확정 이후 계약을 만들 수 없는 공고**가
+    //   근로자에게 열린다 — 확정된 약속을 지킬 수 없는 상태다.
+    //   `callablePublishTO` 가 이미 "draft 생성 후 사업장 상태 변경 가능" 이라고
+    //   같은 이유로 재검증하는데, 예약 경로만 빠져 있었다.
+    //
+    //   단 여기서는 **throw 하지 않는다.** 이 그룹은 여러 사업장·여러 TO 를
+    //   한 transaction 으로 묶으므로, 한 사업장이 준비되지 않았다고 그룹
+    //   전체를 되돌리면 멀쩡한 공고까지 공개되지 않는다. 준비되지 않은
+    //   사업장의 TO 만 **SCHEDULED 그대로 남긴다**(다음 tick 에 다시 본다).
+    //   자동 마감·자동 취소는 하지 않는다 — 그건 별도 정책이다.
+    const notReadyBizIds = new Set<string>();
+    for (const bizId of groupBizIds) {
+      try {
+        const bizSnapPre = await db.collection("businesses").doc(bizId).get();
+        await assertBusinessPostingReady(bizId, bizSnapPre.data());
+      } catch (e) {
+        notReadyBizIds.add(bizId);
+        console.warn(
+          `[processScheduledPublish] 준비 미충족 — 예약 공개 보류 biz=${bizId}:`,
+          e instanceof HttpsError ? e.message : String(e)
+        );
+      }
+    }
+
     try {
       await db.runTransaction(async (tx) => {
         // ── ALL READS FIRST ─────────────────────────────────────────────────
@@ -5863,6 +5891,8 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
           if (freshData.status !== "SCHEDULED") continue;
           if (freshData.publishMode !== "scheduled") continue;
           if (freshData.closedBy != null) continue;
+          // [P4.4C] 준비 미충족 사업장의 TO 는 SCHEDULED 로 남긴다.
+          if (notReadyBizIds.has(freshData.businessId as string)) continue;
           const freshPublishAt = freshData.publishAt as admin.firestore.Timestamp | undefined;
           if (!freshPublishAt || freshPublishAt.toMillis() > now.toMillis()) continue;
 
@@ -22578,7 +22608,10 @@ async function assertBusinessPostingReady(
 ): Promise<void> {
   // D. 사업장 승인
   if (!bizData?.isApproved) {
-    throw new HttpsError("failed-precondition", "사업장이 승인된 후 공고를 등록할 수 있습니다.");
+    throw new HttpsError(
+      "failed-precondition",
+      "POSTING_NOT_READY:BUSINESS_NOT_APPROVED 사업장이 승인된 후 공고를 등록할 수 있습니다."
+    );
   }
 
   // E. 사업자등록증 — [LICENSE-GATE] Storage provenance 검증 (truthy check 제거)
@@ -22586,7 +22619,10 @@ async function assertBusinessPostingReady(
   // [OWNER-LEGACY] 레거시 owner 경로도 truthy check 대신 Storage exists() 검증.
   const validLicense = await hasValidBusinessLicense(bizId, bizData);
   if (!validLicense) {
-    throw new HttpsError("failed-precondition", "사업자등록증을 먼저 등록해 주세요.");
+    throw new HttpsError(
+      "failed-precondition",
+      "POSTING_NOT_READY:BUSINESS_LICENSE_NOT_READY 사업자등록증을 먼저 등록해 주세요."
+    );
   }
 
   // F. 업무 유형 ≥ 1 (workTypes 서브컬렉션, isActive == true)
@@ -22597,7 +22633,59 @@ async function assertBusinessPostingReady(
     .limit(1)
     .get();
   if (wtSnap.empty) {
-    throw new HttpsError("failed-precondition", "사업장 업무를 먼저 등록해 주세요.");
+    throw new HttpsError(
+      "failed-precondition",
+      "POSTING_NOT_READY:NO_ACTIVE_WORK_TYPE 사업장 업무를 먼저 등록해 주세요."
+    );
+  }
+
+  // G. [P4.4C] 계약서 템플릿 — **이 사업장**에 신규 계약에 쓸 수 있는 것이 있는가.
+  //
+  //   확정된 제품 정책: 지원 = 관심 / 확정 = 약속. 확정 이후에 관리자에게
+  //   계약 준비를 다시 요구하고 근로자를 계약 대기로 세워 두지 않는다.
+  //   그래서 공고가 **근로자에게 보이기 전에** 계약을 만들 수 있어야 한다.
+  //
+  //   `templateType` 화이트리스트는 Flutter `isSupportedForNewUse` 와 같은
+  //   값이다(daily/period). legacy `outsource` 는 조회·편집만 되고 신규
+  //   계약 선택 후보가 아니므로 여기서도 후보에 넣지 않는다 — 그것만 가진
+  //   사업장을 통과시키면 계약 단계에서 고를 것이 0개다.
+  //
+  //   **사업장 단위**로 본다. P4.4B 에서 클라이언트가 전 사업장 합산이라
+  //   A 의 템플릿으로 B 공고를 낼 수 있던 것을 고쳤다 — 서버도 같은 사실을
+  //   써야 stale/변조 클라이언트가 그 경로를 되살리지 못한다.
+  const tplSnap = await db
+    .collection("businesses").doc(bizId)
+    .collection("contract_templates")
+    .where("templateType", "in", ["daily", "period"])
+    .limit(1)
+    .get();
+  if (tplSnap.empty) {
+    throw new HttpsError(
+      "failed-precondition",
+      "POSTING_NOT_READY:NO_CONTRACT_TEMPLATE 계약서 템플릿을 먼저 등록해 주세요."
+    );
+  }
+
+  // H. [P4.4C] 사용자(고용주) 날인 — **caller 가 아니라 이 사업장의 owner** 것.
+  //
+  //   `actor seal` 과 `employer seal readiness` 는 다른 문제다.
+  //   SubAdmin 에게 개인 날인을 요구하지 않는 것은 맞지만(first-run setup
+  //   목적과 충돌한다), 고용주 날인이 없는 공고까지 허용하는 것은 다르다.
+  //   그래서 호출자가 누구든 `businesses/{id}.ownerId` 의 날인을 본다.
+  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
+  if (!ownerId) {
+    throw new HttpsError(
+      "failed-precondition",
+      "POSTING_NOT_READY:NO_EMPLOYER_SEAL 사업장 사업주 정보를 확인할 수 없습니다."
+    );
+  }
+  const ownerSnap = await db.collection("users").doc(ownerId).get();
+  const ownerSeal = ownerSnap.data()?.sealBase64;
+  if (typeof ownerSeal !== "string" || ownerSeal.length === 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      "POSTING_NOT_READY:NO_EMPLOYER_SEAL 사업주 인감 또는 서명을 먼저 등록해 주세요."
+    );
   }
 }
 

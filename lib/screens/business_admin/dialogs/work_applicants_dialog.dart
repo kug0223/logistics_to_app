@@ -203,13 +203,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<({String sealBase64, String sealType})> _resolveEmployerSeal(
     BusinessModel business,
   ) async {
-    final up = context.read<UserProvider>();
-    final String sealUid;
-    if (up.isSubAdmin) {
-      sealUid = business.ownerId;
-    } else {
-      sealUid = up.currentUser?.uid ?? '';
-    }
+    // [P4.4C-SIGNER-01] 계약의 날인은 **이 사업장의 사업주(owner)** 것이다.
+    //   누가 발송 버튼을 눌렀는지가 아니라 근로계약의 사용자(고용주) 법적
+    //   identity 가 정한다. 예전에는 SubAdmin 일 때만 owner 를 썼고 그 밖에는
+    //   호출자 자신의 날인을 썼다 — owner 가 아닌 co-admin(`adminIds`)이
+    //   발송하면 그 사람 개인 날인이 고용주 날인 자리에 찍힌다.
+    //
+    //   레퍼런스 대조: 모두싸인은 도장/사인을 **조직 소유물**로 두고 멤버에게
+    //   이용 권한을 공유한다 — 담당자가 보내도 서명 주체는 회사/대표다.
+    //   ALfit 에는 조직 entity 가 없으므로 그 자리를 `business.ownerId` 가
+    //   맡는다(새 컬렉션을 만들지 않는다).
+    final sealUid = business.ownerId;
     if (sealUid.isEmpty) return (sealBase64: '', sealType: 'stamp');
     final doc = await FirebaseFirestore.instance.collection('users').doc(sealUid).get();
     final data = doc.data();

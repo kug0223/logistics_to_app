@@ -2,6 +2,71 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4C** (server authority + canonical signer)
+
+## 0-AAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4C
+
+기준 `9073ac8`. **CODE + tests. CF DEV 배포는 사용자 승인 대기.**
+
+### B. Posting state machine (실제 schema)
+
+| writer | before | after | worker-visible | readiness gate |
+|---|---|---|---|---|
+| `callableCreateTO` immediate | — | `ACTIVE` / `isPublished:true` | **✔** | ✔ |
+| `callableCreateTO` draft | — | `DRAFT` / false | ✗ | ✔ (네 모드 공통) |
+| `callableCreateTO` scheduled·deferred | — | `SCHEDULED` / false | ✗ | ✔ |
+| `callablePublishTO` | SCHEDULED | `ACTIVE` / true | **✔** | ✔ (공개 시점 재검증) |
+| `callableUpdateTO` reopen | CLOSED | `ACTIVE` / true | **✔** | ✔ (`wantsReopen` 분기 안에만) |
+| `callableUpdateTO` 일반 수정 | — | — | ✗ | 없음 (의도) |
+| **`processScheduledPublish`** | SCHEDULED | `ACTIVE` / true | **✔** | **없었음 → 추가** |
+
+지원자 노출 술어: `isPublished && !isClosed && !isSoftDeleted`.
+
+### C. canonical readiness parity (§14)
+
+| prerequisite | Home | CreateTO | server | same business? |
+|---|---|---|---|---|
+| 승인 | `r.isApproved` | `_businessApproved` | `bizData.isApproved` | ✔ |
+| 등록증 | `r.hasLicense` | `sel.licenseReady` | `hasValidBusinessLicense(bizId,…)` | ✔ |
+| 업무 | `hasReadyBusiness(map)` | `sel.workTypes` | `businesses/{id}/workTypes isActive` | ✔ |
+| 템플릿 | 사업장별 | `sel.templates` | `businesses/{id}/contract_templates` `templateType in [daily,period]` | ✔ |
+| **고용주 날인** | `any(r.hasEmployerSeal)` | `sel.employerSeal` | `users/{bizData.ownerId}.sealBase64` | ✔ |
+
+SubAdmin: **면제 아님.** 개인 날인은 요구하지 않지만 **owner 날인은 있어야 한다**.
+
+### D. Signer ownership
+
+| case | caller | 계약 날인 (수정 후) |
+|---|---|---|
+| A owner 직접 | ownerId | owner ✔ (변화 없음) |
+| B SubAdmin | 배정 SubAdmin | owner ✔ (변화 없음) |
+| **C co-admin** (`adminIds`, owner 아님) | co-admin | ~~co-admin 개인 날인~~ → **owner** |
+
+Case C 는 `adminIds` 에 BUSINESS_ADMIN 을 넣는 **사용자 경로가 없다**(모든 writer 가
+`arrayUnion([ownerId])`) — SUPER_ADMIN 개입으로만 도달. 잠재 결함이었고 이제 닫혔다.
+계약 서명 화면(`contract_sign_screen`)은 **원래부터** owner 기준이었다 — 발송 경로가
+그 canonical 을 따라간 것이다.
+
+### E. Reference review (§7)
+
+| 레퍼런스 | 관찰한 원리 | 판정 |
+|---|---|---|
+| **모두싸인** 도장/사인 공유 | 도장·사인은 **조직 소유물**이고 멤버에게 **이용 권한을 공유**한다. 담당자 계정으로 발송해도 서명 주체는 회사/대표 | **채택** — ALfit 에 조직 entity 가 없으므로 그 자리를 `business.ownerId` 가 맡는다 |
+| **모두싸인** 대표 명의 + 법인 명의 | 둘을 **각각 서명자로** 설정 | **거부(현 범위)** — ALfit 근로계약은 사업주 날인 1개 구조. 분리는 별도 제품 결정 |
+| **모두싸인** 멀티 워크스페이스 | **법인**·브랜드·목적별로 흐름 분리 | **수정하여 채택(부분)** — 같은 결론은 "법적 사업자별 seal scope" 인데 ALfit 은 그것을 표현할 entity 가 없다 → 잔여 |
+| **DocuSign** delegation | 대신 서명하면 **본인 서명이 찍힌다**(남의 서명을 쓰지 않음) | **거부** — 개인 서명자 모델이다. 한국 근로계약의 사용자(고용주) 날인은 개인이 아니라 사업주 identity |
+
+### 수정
+
+| ID | 등급 | 내용 |
+|---|---|---|
+| `[P4.4C-GATE-01]` | **BLOCKER** | 서버 gate 가 3축만 봤다 → 템플릿·고용주 날인 추가(사업장 단위) |
+| `[P4.4C-GATE-02]` | **BLOCKER** | **예약 공개 scheduler 가 gate 를 안 불렀다** — 만든 뒤 템플릿·날인이 지워지면 "확정해도 계약 못 만드는 공고" 가 열린다. 준비 미충족 사업장의 TO 만 SCHEDULED 로 남긴다(그룹 transaction 은 깨지 않는다) |
+| `[P4.4C-SIGNER-01]` | **BLOCKER(잠재)** | 발송 3경로가 `isSubAdmin ? owner : caller` → **항상 owner** |
+| `[P4.4C-SEAL-02]` | **BLOCKER** | Home·CreateTO 가 **호출자 자신의** 날인을 보고 SubAdmin 은 무조건 면제 → 사업장별 **owner 날인** |
+| `[P4.4C-ERR-01]` | CORRECTION | `POSTING_NOT_READY:<REASON>` 5종 + `PostingNotReady` 매퍼. 서버 문장을 그대로 띄우던 두 화면 교체 |
+| §17 날인 교체 | **NO PATCH** | 이미 안전 — 계약은 `employerSignatureUrl`(서명 시점 Storage URL)을 들고 렌더가 **URL 우선**, base64 는 미서명 미리보기 폴백 |
+
 > 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4B** (CP7 authority + CP4~6 writer)
 
 ## 0-AAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4B

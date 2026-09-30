@@ -34,6 +34,17 @@ class BusinessPostingReadiness {
   /// 동안 만들지 않는다.
   final bool workTypesUnknown;
 
+  /// [P4.4C] 이 사업장의 **고용주 날인**(`businesses/{id}.ownerId` 의
+  /// `users/{ownerId}.sealBase64`)이 있는가.
+  ///
+  /// 호출자 자신의 날인이 아니다 — 계약 writer 가 실제로 쓰는 것과 같은 값이다.
+  final bool hasEmployerSeal;
+
+  /// 사업주 문서를 **읽지 못했다.** [hasEmployerSeal] 은 false 지만 그것이
+  /// "날인이 없다" 는 뜻은 아니다. [isReady] 는 false 로 두되(서버가 최종
+  /// gate), "인감을 등록하세요" 라고 **단정하는 안내**는 만들지 않는다.
+  final bool employerSealUnknown;
+
   const BusinessPostingReadiness({
     required this.bizId,
     required this.isApproved,
@@ -41,13 +52,24 @@ class BusinessPostingReadiness {
     required this.hasOwnerLegacyLicense,
     required this.hasActiveWorkTypes,
     this.workTypesUnknown = false,
+    this.hasEmployerSeal = false,
+    this.employerSealUnknown = false,
   });
 
   /// canonical OR owner legacy
   bool get hasLicense => hasCanonicalLicense || hasOwnerLegacyLicense;
 
-  /// 공고 등록 가능 여부 (서버와 동일 로직)
+  /// **사업장 축** 준비 — 승인 · 등록증 · 활성 업무.
+  ///
+  /// [P4.4C] 이것은 서버 gate 전체가 아니다. 서버는 여기에 **계약서 템플릿**과
+  /// **고용주 날인**을 더 요구한다(`assertBusinessPostingReady`).
+  /// 일부러 나눠 둔다 — Home 체크리스트가 항목별로 무엇이 빠졌는지 말해야
+  /// 하는데, 다섯 축을 하나로 접으면 날인이 없을 때 '업무 등록' 칸이
+  /// 미완료로 보인다(잘못된 귀인). 전체 gate 는 서버가 최종 판정한다.
   bool get isReady => isApproved && hasLicense && hasActiveWorkTypes;
+
+  /// 고용주 날인이 없다고 **말할 수 있는가**. 못 읽었으면 말하지 않는다.
+  bool get isMissingEmployerSeal => !employerSealUnknown && !hasEmployerSeal;
 
   /// 업무가 없다고 **말할 수 있는가**. 못 읽었으면 말하지 않는다.
   bool get isMissingWorkTypes => !workTypesUnknown && !hasActiveWorkTypes;
@@ -100,18 +122,38 @@ class BusinessPostingReadiness {
     final hasCanonicalLicense =
         biz.businessLicenseImageUrl?.isNotEmpty == true;
 
-    // owner legacy — business.ownerId 기준, 호출자 uid 아님
+    // [P4.4C] owner 문서를 한 번 읽어 **등록증 legacy 폴백**과
+    //   **고용주 날인**을 같이 본다.
+    //
+    //   날인을 여기서 보는 이유: `actor seal` 과 `employer seal readiness` 는
+    //   다른 문제다. 예전에는 화면들이 **호출자 자신의** `sealBase64` 를 보고
+    //   SubAdmin 이면 그냥 면제했다. 그러면 owner 날인이 없는 사업장도
+    //   SubAdmin 경로로 준비 완료가 되고, 확정 이후 계약 단계에서 막힌다.
+    //   계약 writer 가 실제로 쓰는 것은 `business.ownerId` 의 날인이므로
+    //   readiness 도 같은 것을 봐야 한다.
     bool hasOwnerLegacyLicense = false;
-    if (!hasCanonicalLicense) {
-      final ownerId = biz.ownerId;
-      if (ownerId.isNotEmpty) {
-        try {
-          final ownerSnap = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(ownerId)
-              .get();
-          hasOwnerLegacyLicense = _ownerHasLicense(ownerSnap.data());
-        } catch (_) {}
+    bool hasEmployerSeal = false;
+    bool employerSealUnknown = false;
+    final ownerId = biz.ownerId;
+    if (ownerId.isEmpty) {
+      // owner 를 모르면 "날인 없음" 이 아니라 **모른다** 다.
+      employerSealUnknown = true;
+    } else {
+      try {
+        final ownerSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerId)
+            .get();
+        final ownerData = ownerSnap.data();
+        if (!hasCanonicalLicense) {
+          hasOwnerLegacyLicense = _ownerHasLicense(ownerData);
+        }
+        hasEmployerSeal =
+            (ownerData?['sealBase64'] as String?)?.isNotEmpty == true;
+      } catch (e) {
+        debugPrint('⚠️ [readiness] 사업주 문서 조회 실패 [${biz.id}]: $e');
+        // 읽기 실패를 "날인 없음" 으로 접지 않는다 — 서버가 최종 gate 다.
+        employerSealUnknown = true;
       }
     }
 
@@ -135,6 +177,8 @@ class BusinessPostingReadiness {
       hasOwnerLegacyLicense: hasOwnerLegacyLicense,
       hasActiveWorkTypes: hasActiveWorkTypes,
       workTypesUnknown: workTypesUnknown,
+      hasEmployerSeal: hasEmployerSeal,
+      employerSealUnknown: employerSealUnknown,
     );
   }
 

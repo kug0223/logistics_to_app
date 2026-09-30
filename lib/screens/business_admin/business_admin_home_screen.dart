@@ -501,12 +501,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     if (!mounted) return;
-    // [POSTING-V2-02C.1] SubAdmin은 사업장 인감을 소유하지 않는다.
-    //   CreateTO는 이미 면제하는데 Home만 검사해, SubAdmin에게는 끝나지 않는
-    //   준비 항목이 남아 있었다. 계약을 CreateTO 쪽으로 맞춘다.
+    // [P4.4C-SEAL-02] `actor seal` 과 `employer seal readiness` 는 다르다.
+    //
+    //   예전에는 SubAdmin 이면 이 칸을 **무조건 완료**로 봤다. SubAdmin 에게
+    //   개인 날인을 요구하지 않는 것은 맞지만(POSTING-V2-02C.1), 그렇다고
+    //   **고용주 날인이 없는 사업장까지 준비 완료**가 되는 것은 다른 문제다.
+    //   그 상태로 공고가 열리면 지원자를 확정한 뒤 계약을 만들 수 없다 —
+    //   확정 = 약속인데 그 약속을 지킬 수 없는 상태다.
+    //
+    //   그래서 호출자 자신의 날인이 아니라 **그 사업장 owner 의 날인**을
+    //   본다(계약 writer 가 실제로 쓰는 것과 같은 값).
+    //   사업장이 아직 없거나 전부 미승인이면 읽을 owner 가 없으므로, 그때는
+    //   호출자를 **예비 owner** 로 보고 자기 날인으로 진행도를 표시한다.
     final up = context.read<UserProvider>();
-    final sealReady = up.currentUser?.isSubAdmin == true ||
-        (up.currentUser?.sealBase64?.isNotEmpty ?? false);
+    final sealReady = readinessMap.isEmpty
+        ? (up.currentUser?.sealBase64?.isNotEmpty ?? false)
+        : readinessMap.values.any((r) => r.hasEmployerSeal);
 
     setState(() {
       _readinessMap = readinessMap;

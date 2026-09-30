@@ -58,6 +58,9 @@ BusinessPostingReadiness _br(
   bool approved = true,
   bool license = true,
   bool workTypes = true,
+  // [R7-P4.4C] 고용주 날인 축. 기본 false — 이 파일의 기존 셀들은 사업장
+  //   축(승인·등록증·업무)만 검증하므로 기본값을 바꾸지 않는다.
+  bool employerSeal = false,
 }) =>
     BusinessPostingReadiness(
       bizId: id,
@@ -65,6 +68,7 @@ BusinessPostingReadiness _br(
       hasCanonicalLicense: license,
       hasOwnerLegacyLicense: false,
       hasActiveWorkTypes: workTypes,
+      hasEmployerSeal: employerSeal,
     );
 
 Map<String, BusinessPostingReadiness> _map(
@@ -370,31 +374,64 @@ void main() {
 
   // ── §40 SubAdmin 인감 ───────────────────────────────────────────
   group('READINESS-05 SubAdmin 인감 면제가 CreateTO와 정렬됐다', () {
-    test('05-a Home이 SubAdmin을 면제한다', () {
+    test('05-a Home은 고용주 날인을 본다 — SubAdmin 무조건 면제가 아니다', () {
+      // [R7-P4.4C SEAL-02] 갱신. 이 셀은 "Home 이 SubAdmin 을 면제한다" 를
+      //   고정했고, 그 Phase 의 목표(SubAdmin 에게 끝나지 않는 준비 항목이
+      //   남던 문제)로는 맞았다. 그러나 반례가 나왔다:
+      //
+      //     `actor seal` 과 `employer seal readiness` 는 다른 문제다.
+      //     SubAdmin 에게 **개인 날인**을 요구하지 않는 것은 맞지만,
+      //     그렇다고 **고용주 날인이 없는 사업장**까지 준비 완료가 되면
+      //     지원자를 확정한 뒤 계약을 만들 수 없다(확정 = 약속 위반).
+      //
+      //   그래서 면제 대신 **그 사업장 owner 의 날인**을 본다 — 계약 writer 가
+      //   실제로 쓰는 것과 같은 값이다. SubAdmin 은 여전히 자기 날인을
+      //   요구받지 않는다(owner 것을 보므로).
       final body = _flat(_region(_codeOf(_homePath),
           'Future<void> _loadPostingReadiness() async {', 'BusinessModel? _firstBusinessWhere('));
-      expect(
-          body.contains("final sealReady = up.currentUser?.isSubAdmin == true || "
-              "(up.currentUser?.sealBase64?.isNotEmpty ?? false);"),
+      expect(body.contains("up.currentUser?.isSubAdmin == true ||"), false,
+          reason: '무조건 면제로 돌아가면 고용주 날인 없는 공고가 다시 열린다');
+      expect(body.contains('readinessMap.values.any((r) => r.hasEmployerSeal)'),
           true);
+      // 사업장이 아직 없으면 읽을 owner 가 없다 — 호출자를 예비 owner 로 본다.
+      expect(body.contains('readinessMap.isEmpty'), true);
     });
 
-    test('05-b CreateTO의 면제 계약은 그대로다', () {
+    test('05-b CreateTO도 선택 사업장 owner 날인을 본다', () {
+      // [R7-P4.4C] 갱신 — 같은 이유로 CreateTO 의 면제도 사라졌다.
       final c = _codeOf(_createToPath);
-      expect(c.contains('isSubAdmin'), true);
       expect(c.contains('_hasSeal'), true);
+      expect(c.contains('_hasSeal = sel.employerSeal;'), true);
+      expect(c.contains('_hasSeal = up.isSubAdmin'), false);
     });
 
-    test('05-c 인감 없는 SubAdmin + ready business → 전체 READY', () {
-      final m = _map([_br('A')]);
+    test('05-c 개인 날인 없는 SubAdmin + 사업주 날인 있는 사업장 → 전체 READY', () {
+      // [R7-P4.4C] 갱신. 결론은 같다(SubAdmin 이 자기 날인 없이도 READY),
+      //   근거가 바뀌었다 — "면제" 가 아니라 **그 사업장 owner 의 날인이
+      //   있기 때문**이다. `hasEmployerSeal: true` 가 그 사실이다.
+      final m = _map([_br('A', employerSeal: true)]);
       final r = FirstPostingReadiness(
         hasAnyBusiness: true,
         businessReady: true,
         workTypesReady: BusinessPostingReadiness.hasReadyBusiness(m),
         contractTemplateReady: true,
-        sealReady: true, // SubAdmin 면제 결과
+        sealReady: m.values.any((x) => x.hasEmployerSeal),
       );
       expect(r.allReady, true);
+    });
+
+    test('05-c2 사업주 날인이 없으면 SubAdmin 이어도 READY 가 아니다', () {
+      // 이것이 P4.4C 에서 막은 상태다. 예전에는 면제로 통과했다.
+      final m = _map([_br('A')]); // employerSeal 기본 false
+      final r = FirstPostingReadiness(
+        hasAnyBusiness: true,
+        businessReady: true,
+        workTypesReady: BusinessPostingReadiness.hasReadyBusiness(m),
+        contractTemplateReady: true,
+        sealReady: m.values.any((x) => x.hasEmployerSeal),
+      );
+      expect(r.allReady, false);
+      expect(r.isDone(FirstPostingTask.seal), false);
     });
 
     test('05-d 같은 조건의 BUSINESS_ADMIN은 인감 미완료', () {

@@ -16,6 +16,7 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
+import '../../../utils/posting_readiness_reason.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 
@@ -445,9 +446,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         try {
           await _firestoreService.publishTO(widget.to.id);
         } on FirebaseFunctionsException catch (e) {
-          // [5D.2A] failed-precondition → 서버 메시지 그대로 노출 (readiness 실패 등)
-          if (e.code == 'failed-precondition' && (e.message?.isNotEmpty ?? false)) {
-            if (mounted) ToastHelper.showError(e.message!);
+          // [P4.4C-ERR-01] readiness 거부는 코드로 판별한다 — 서버 메시지를
+          //   그대로 띄우면 `POSTING_NOT_READY:` 접두어가 샌다.
+          if (PostingNotReady.parse(e) case final notReady?) {
+            if (mounted) ToastHelper.showError(notReady.message);
+          } else if (e.code == 'failed-precondition') {
+            if (mounted) ToastHelper.showError('공개 조건을 확인해 주세요');
           } else if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
             final parts = e.toString().split(':');
             final limitStr = parts.length >= 2 ? parts.last : '4';
