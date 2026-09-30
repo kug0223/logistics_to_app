@@ -351,13 +351,20 @@ void main() {
 
     test('07-a 정원 재검증이 트랜잭션 안에 있다', () {
       expect(accept.contains('await db.runTransaction(async (tx)'), isTrue);
-      // [CROSS-DOMAIN-R5.2] 트랜잭션 앞부분에 서류 readiness 재검증이 들어와
-      //   창이 좁아졌다. 보는 성질은 그대로 — 창 크기만 맞춘다.
-      // [PII-DOC-R1.5] 트랜잭션 앞부분에 신분 readiness 재검증이 더 들어와
-      //   창이 한 번 더 좁아졌다. 보는 성질은 그대로 — 창 크기만 맞춘다.
-      final tx = _after(accept, 'await db.runTransaction(async (tx)', 14000);
-      expect(tx.contains('getWorkDetailCount'), isTrue);
-      expect(tx.contains('업무 정원이 초과되었습니다'), isTrue);
+      // [R7-P4.4C.2A] 고정 길이 창을 버린다.
+      //   이 셀은 트랜잭션 시작 뒤 **14000자** 안에서 정원 검사를 찾았다.
+      //   그 앞에 재검증이 하나씩 들어올 때마다 창이 밀려 깨졌고, 주석이
+      //   두 번(`CROSS-DOMAIN-R5.2`, `PII-DOC-R1.5`) 창 크기를 늘렸다고
+      //   적고 있다. 이번에 계약 능력 재검증이 더 들어와 세 번째로 밀렸다.
+      //   보는 성질은 처음부터 하나다 — **정원 검사가 트랜잭션 안에 있다.**
+      //   위치를 순서로 확인하고 길이에 의존하지 않는다.
+      final txStart = accept.indexOf('await db.runTransaction(async (tx)');
+      expect(txStart, greaterThan(-1));
+      final count = accept.indexOf('getWorkDetailCount', txStart);
+      final over = accept.indexOf('업무 정원이 초과되었습니다', txStart);
+      expect(count, greaterThan(txStart),
+          reason: '정원 조회가 트랜잭션 밖이면 읽은 뒤 바뀔 수 있다');
+      expect(over, greaterThan(txStart));
     });
 
     test('07-b 수락은 canonical wdId counter를 움직인다', () {

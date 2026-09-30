@@ -237,8 +237,11 @@ void main() {
     });
 
     test('ACTIVE-03 계약 dead-end 를 만드는 두 축을 본다', () {
-      final i = s.indexOf('async function assertBusinessCanAcceptApplications(');
-      final end = s.indexOf('/** [P4.4C.1] `db` 와 `transaction`', i);
+      // [R7-P4.4C.2A] 축 판정이 `evaluateContractCapability` 로 옮겨졌고
+      //   apply gate 는 그것을 호출하는 얇은 wrapper 가 됐다. 판정 본문을 본다.
+      final i = s.indexOf('async function evaluateContractCapability(');
+      expect(i, greaterThan(-1));
+      final end = s.indexOf('async function evaluatePostingReadinessFirestore(', i);
       expect(end, greaterThan(i));
       final body = s.substring(i, end);
       expect(body.contains('contract_templates'), isTrue);

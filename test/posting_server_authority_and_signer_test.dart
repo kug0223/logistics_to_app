@@ -44,14 +44,21 @@ String _gateBody() {
   return s.substring(i, end);
 }
 
-/// Firestore 네 축 evaluator 본문.
+/// [R7-P4.4C.2A] Firestore 축 evaluator 본문.
+///
+///   P4.4C.2A 에서 축이 두 함수로 갈렸다 — 승인·템플릿·날인은
+///   `evaluateContractCapability`(계약을 만들 수 있는가), 활성 업무는
+///   `evaluatePostingReadinessFirestore`(공고를 새로 낼 수 있는가).
+///   둘 다 합쳐 본다 — 이 파일이 검증하는 것은 "gate 가 다섯 축을 본다" 다.
 String _evalBody() {
   final s = _fns();
-  final i = s.indexOf('async function evaluatePostingReadinessFirestore(');
-  expect(i, greaterThan(-1));
-  final end = s.indexOf('interface PostingReadinessReader', i);
-  expect(end, greaterThan(i));
-  return s.substring(i, end);
+  final ci = s.indexOf('async function evaluateContractCapability(');
+  expect(ci, greaterThan(-1));
+  final pi = s.indexOf('async function evaluatePostingReadinessFirestore(');
+  expect(pi, greaterThan(ci));
+  final end = s.indexOf('interface PostingReadinessReader', pi);
+  expect(end, greaterThan(pi));
+  return s.substring(ci, end);
 }
 
 /// 이유 코드 → 문장 map 본문.
@@ -116,6 +123,8 @@ void main() {
 
     test('AUTH-01e ownerId 를 모르면 통과시키지 않는다', () {
       expect(ev.contains('if (!ownerId) return "NO_EMPLOYER_SEAL";'), isTrue);
+      // 승인 축도 계약 능력 쪽으로 옮겨졌다.
+      expect(ev.contains('BUSINESS_NOT_APPROVED'), isTrue);
     });
 
     test('AUTH-01f 다섯 축 모두 domain reason 을 실어 보낸다', () {

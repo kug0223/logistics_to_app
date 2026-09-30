@@ -33,6 +33,7 @@ import '../../../models/ui/day_staffing_row.dart';
 import '../../../models/ui/invite_capacity_state.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/posting_readiness_reason.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/week_helper.dart';
 import '../../../widgets/app_select_field.dart';
@@ -3548,7 +3549,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ToastHelper.showSuccess('확정되었습니다. 계약서를 작성해 주세요.');  // [4J.0C] CONTRACT_PENDING 결과 — WorkApplicants parity
       await _load();
     } on FirebaseFunctionsException catch (e) {
-      if (mounted) ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
+      // [P4.4C.2A] 계약 준비가 깨져 확정이 막힌 경우는 이유를 준비 단계로
+      //   잇는다. 서버 메시지를 그대로 띄우면 `POSTING_NOT_READY:` 접두어가
+      //   샌다. 지원은 취소되지 않았다는 사실도 같이 말한다.
+      if (mounted) {
+        if (PostingNotReady.parse(e) case final blocked?) {
+          final canSetUp = !context.read<UserProvider>().isSubAdmin;
+          ToastHelper.showError(
+              blocked.confirmBlockedNotice(canSetUp: canSetUp));
+        } else {
+          ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
+        }
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
     } finally {

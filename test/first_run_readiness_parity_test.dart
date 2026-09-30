@@ -143,7 +143,8 @@ void main() {
       final gate =
           s.substring(gi, s.indexOf('function postingNotReadyMessage(', gi));
       expect(gate.contains('hasValidBusinessLicense(bizId, bizData)'), isTrue);
-      final ei = s.indexOf('async function evaluatePostingReadinessFirestore(');
+      // [R7-P4.4C.2A] 축이 두 함수로 갈렸다 — 두 본문을 합쳐 본다.
+      final ei = s.indexOf('async function evaluateContractCapability(');
       final ev =
           s.substring(ei, s.indexOf('interface PostingReadinessReader', ei));
       expect(ev.contains('if (!bizData?.isApproved)'), isTrue);

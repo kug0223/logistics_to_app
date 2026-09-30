@@ -22649,20 +22649,37 @@ async function hasValidBusinessLicense(
  * @param {PostingReadinessReader} reader db 또는 transaction 기반 reader
  * @return {Promise<string | null>} 막힌 이유 코드, 통과면 null
  */
-async function evaluatePostingReadinessFirestore(
+/**
+ * [P4.4C.2A] 이 사업장이 **계약을 끝까지 만들 수 있는 상태**인가.
+ *
+ * 계약 writer 의 실제 의존성만 본다 — 추측으로 다섯 축을 복사하지 않았다.
+ *   · 승인/비활성 — 비활성 사업장이 새 약속을 받으면 안 된다.
+ *   · 계약서 템플릿 — 없으면 `ContractTemplateSelectorDialog` 후보가 0개다.
+ *   · 사업주 날인  — 없으면 계약 발송 경로가 "날인 미등록" 으로 막힌다.
+ *
+ * **제외한 축과 이유:**
+ *   · 활성 업무 — 계약 snapshot 의 `workDetail` 은 **TO 문서**에서 온다
+ *     (`to.workDetails`). 사업장 workType 을 비활성해도 이미 만들어진
+ *     공고의 계약은 만들 수 있다. 공고를 **새로** 내는 것과는 다른 문제다.
+ *   · 사업자등록증 — 계약 생성 의존성이 아니고, Storage 객체를 지우는
+ *     writer 가 제품에 없다(P4.4C.2 WRITER-03).
+ *
+ * reader 주입: 평소에는 `db`, 확정 transaction 에서는 `tx` — 그러면 이
+ * 문서들이 read-set 에 들어가 commit 사이에 바뀌면 재시도된다.
+ *
+ * @param {string} bizId 대상 사업장 id
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서 데이터
+ * @param {PostingReadinessReader} reader db 또는 transaction 기반 reader
+ * @return {Promise<string | null>} 막힌 이유 코드, 통과면 null
+ */
+async function evaluateContractCapability(
   bizId: string,
   bizData: FirebaseFirestore.DocumentData | undefined,
   reader: PostingReadinessReader,
 ): Promise<string | null> {
-  if (!bizData?.isApproved) return "BUSINESS_NOT_APPROVED";
-
-  const wtSnap = await reader.getQuery(
-    db.collection("businesses").doc(bizId)
-      .collection("workTypes")
-      .where("isActive", "==", true)
-      .limit(1)
-  );
-  if (wtSnap.empty) return "NO_ACTIVE_WORK_TYPE";
+  if (!bizData?.isApproved || bizData?.deactivatedAt) {
+    return "BUSINESS_NOT_APPROVED";
+  }
 
   // 신규 계약에 쓸 수 있는 분류만 후보다 — Flutter `isSupportedForNewUse` 와
   // 같은 화이트리스트(daily/period). legacy outsource 만 가진 사업장을
@@ -22686,6 +22703,38 @@ async function evaluatePostingReadinessFirestore(
   return null;
 }
 
+/**
+ * [P4.4C.1] 공고를 **새로 낼 수 있는** 상태인가 — Firestore 축만.
+ *
+ * 계약 능력([evaluateContractCapability])에 **활성 업무**를 더한 것이다.
+ * 새 공고는 고를 업무가 있어야 만들어지지만, 이미 만들어진 공고의 계약은
+ * 그렇지 않다(위 함수 주석 참조). 두 질문을 한 함수로 합치지 않는다.
+ *
+ * 사업자등록증은 여기 없다 — Storage 객체 존재까지 보므로 Firestore
+ * read-set 에 넣을 수 없다. 호출자가 transaction 밖에서 본다.
+ *
+ * @param {string} bizId 대상 사업장 id
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서 데이터
+ * @param {PostingReadinessReader} reader db 또는 transaction 기반 reader
+ * @return {Promise<string | null>} 막힌 이유 코드, 통과면 null
+ */
+async function evaluatePostingReadinessFirestore(
+  bizId: string,
+  bizData: FirebaseFirestore.DocumentData | undefined,
+  reader: PostingReadinessReader,
+): Promise<string | null> {
+  if (!bizData?.isApproved) return "BUSINESS_NOT_APPROVED";
+
+  const wtSnap = await reader.getQuery(
+    db.collection("businesses").doc(bizId)
+      .collection("workTypes")
+      .where("isActive", "==", true)
+      .limit(1)
+  );
+  if (wtSnap.empty) return "NO_ACTIVE_WORK_TYPE";
+
+  return evaluateContractCapability(bizId, bizData, reader);
+}
 /**
  * [P4.4C.2] 이 사업장이 **새 지원을 받아도 되는 상태**인가.
  *
@@ -22719,29 +22768,18 @@ async function assertBusinessCanAcceptApplications(
   bizId: string,
   bizData: FirebaseFirestore.DocumentData | undefined,
 ): Promise<void> {
-  const notAccepting = "지금은 지원을 받지 않는 공고예요.\n잠시 후 다시 확인해주세요.";
-  if (!bizData?.isApproved || bizData?.deactivatedAt) {
-    throw new HttpsError("failed-precondition", notAccepting);
-  }
-  const tplSnap = await db
-    .collection("businesses").doc(bizId)
-    .collection("contract_templates")
-    .where("templateType", "in", ["daily", "period"])
-    .limit(1)
-    .get();
-  if (tplSnap.empty) {
+  const reason = await evaluateContractCapability(
+    bizId, bizData, dbReadinessReader
+  );
+  if (reason) {
+    // 근로자에게 고용주 설정 내부를 알려주지 않는다.
     console.warn(
-      "[apply] 계약서 템플릿 없음 — 신규 지원 차단 biz=" + bizId
+      "[apply] 신규 지원 차단 biz=" + bizId + " reason=" + reason
     );
-    throw new HttpsError("failed-precondition", notAccepting);
-  }
-  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
-  if (!ownerId) throw new HttpsError("failed-precondition", notAccepting);
-  const ownerSnap = await db.collection("users").doc(ownerId).get();
-  const ownerSeal = ownerSnap.data()?.sealBase64;
-  if (typeof ownerSeal !== "string" || ownerSeal.length === 0) {
-    console.warn("[apply] 사업주 날인 없음 — 신규 지원 차단 biz=" + bizId);
-    throw new HttpsError("failed-precondition", notAccepting);
+    throw new HttpsError(
+      "failed-precondition",
+      "지금은 지원을 받지 않는 공고예요.\n잠시 후 다시 확인해주세요."
+    );
   }
 }
 /** [P4.4C.1] `db` 와 `transaction` 을 같은 모양으로 쓰기 위한 reader. */
@@ -28863,6 +28901,30 @@ export const callableConfirmApplication = onCall(
       if (status === "CANCELED") throw new HttpsError("failed-precondition", "취소된 지원서는 확정할 수 없습니다.");
       if (status === "AUTO_CANCELED") throw new HttpsError("failed-precondition", "자동 취소된 지원서는 확정할 수 없습니다.");
       if (status === "REJECTED") throw new HttpsError("failed-precondition", "거절된 지원서는 확정할 수 없습니다.");
+
+
+      // [P4.4C.2A] 새 약속을 만들기 전에 **계약을 끝까지 만들 수 있는지** 본다.
+      //
+      //   확정 = 약속이다. 계약서 템플릿이나 사업주 날인이 없는 상태에서
+      //   약속을 만들면, 근로자는 확정 통보를 받은 뒤 계약 단계에서 막힌다 —
+      //   확정 이후에 계약 준비를 다시 요구하지 않는다는 정책 위반이다.
+      //
+      //   **transaction 안에서** 본다. 확인과 commit 사이에 템플릿·날인이
+      //   지워지면 read-set 때문에 transaction 이 재시도된다.
+      //   이미 CONFIRMED/CONTRACT_PENDING 인 약속은 건드리지 않는다 —
+      //   readiness 상실로 기존 약속을 취소하거나 풀지 않는다.
+      const cfmBizRef = db.collection("businesses").doc(businessId);
+      const cfmBizSnap = await tx.get(cfmBizRef);
+      const cfmBlocked = await evaluateContractCapability(
+        businessId, cfmBizSnap.data(), txReadinessReader(tx)
+      );
+      if (cfmBlocked) {
+        throw new HttpsError(
+          "failed-precondition",
+          "POSTING_NOT_READY:" + cfmBlocked +
+            " 사업장 계약 준비가 완료되지 않아 확정할 수 없습니다."
+        );
+      }
 
       // R2. 직렬화 lock 문서 읽기 (같은 uid에 대한 동시 확정 트랜잭션 serialization)
       //     이 문서를 트랜잭션 읽기 집합에 포함하면 동일 uid 두 트랜잭션이 contention 발생
@@ -37801,6 +37863,29 @@ export const callableAcceptTOInvitation = onCall(
       if (freshStatus === "CONFIRMED") return;
       if (freshStatus !== "INVITED") throw new HttpsError("failed-precondition", "수락 가능한 상태가 아닙니다.");
 
+      // [P4.4C.2A] 초대 수락도 **새 약속**을 만든다(INVITED → CONFIRMED).
+      //   확정 경로와 같은 계약 능력 검사를 지난다 — 초대라는 이유로
+      //   우회로를 만들지 않는다. 근로자가 수락 버튼을 누르는 순간이므로
+      //   문구는 근로자 쪽이다(고용주 설정 내부를 알려주지 않는다).
+      const invBizId = freshData.businessId as string | undefined;
+      if (!invBizId) {
+        throw new HttpsError("not-found", "사업장 정보를 찾을 수 없습니다.");
+      }
+      const invBizSnap =
+        await tx.get(db.collection("businesses").doc(invBizId));
+      const invBlocked = await evaluateContractCapability(
+        invBizId, invBizSnap.data(), txReadinessReader(tx)
+      );
+      if (invBlocked) {
+        console.warn(
+          "[acceptInvitation] 수락 차단 biz=" + invBizId +
+            " reason=" + invBlocked
+        );
+        throw new HttpsError(
+          "failed-precondition",
+          "지금은 수락할 수 없는 초대예요.\n잠시 후 다시 확인해주세요."
+        );
+      }
       // [R1.1-PATCH-1] 수락 시점 fresh 근로자 자격 검증 — accountStatus + restrictedUntil
       // invite 발송 후 상태 변경이 있을 수 있으므로 transaction 내부에서 fresh read
       const freshUserSnap = await tx.get(db.collection("users").doc(callerUid));

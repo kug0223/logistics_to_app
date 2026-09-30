@@ -60,8 +60,10 @@ void main() {
     });
 
     test('SCHED-01b evaluator 는 Firestore 축 네 개를 본다', () {
+      // [R7-P4.4C.2A] 축이 두 함수로 갈렸다(계약 능력 + 활성 업무).
+      //   `evaluatePostingReadinessFirestore` 가 앞을 호출하므로 합쳐 본다.
       final s = _fns();
-      final i = s.indexOf('async function evaluatePostingReadinessFirestore(');
+      final i = s.indexOf('async function evaluateContractCapability(');
       expect(i, greaterThan(-1));
       final end = s.indexOf('\ninterface PostingReadinessReader', i);
       expect(end, greaterThan(i));

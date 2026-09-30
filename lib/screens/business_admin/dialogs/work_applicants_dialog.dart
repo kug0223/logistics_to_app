@@ -17,6 +17,7 @@ import '../../../services/firestore_service.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/loading_state_mixin.dart';
+import '../../../utils/posting_readiness_reason.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -3020,7 +3021,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      if (mounted) ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
+      // [P4.4C.2A] 계약 준비가 깨져 확정이 막힌 경우는 이유를 준비 단계로
+      //   잇는다. 여기는 원래 모든 실패를 한 문장으로 뭉갰다 — 관리자가
+      //   무엇을 고쳐야 하는지 알 수 없었다.
+      if (mounted) {
+        if (PostingNotReady.parse(e) case final blocked?) {
+          final canSetUp = !context.read<UserProvider>().isSubAdmin;
+          ToastHelper.showError(
+              blocked.confirmBlockedNotice(canSetUp: canSetUp));
+        } else {
+          ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
+        }
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }

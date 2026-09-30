@@ -265,7 +265,10 @@ void main() {
     expect(gate.contains('hasValidBusinessLicense'), isTrue);
     expect(gate.contains('evaluatePostingReadinessFirestore('), isTrue);
     // 나머지 네 축은 evaluator 쪽.
-    final ei = s.indexOf('async function evaluatePostingReadinessFirestore(');
+    // [R7-P4.4C.2A] 축이 두 함수로 갈렸다 — 승인·템플릿·날인은
+    //   evaluateContractCapability, 활성 업무는 evaluatePostingReadinessFirestore.
+    //   후자가 전자를 호출하므로 두 본문을 합쳐 본다.
+    final ei = s.indexOf('async function evaluateContractCapability(');
     expect(ei, greaterThan(-1));
     final ev = s.substring(ei, s.indexOf('interface PostingReadinessReader', ei));
     expect(ev.contains('isApproved'), isTrue);
