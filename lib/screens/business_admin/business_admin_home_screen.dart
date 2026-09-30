@@ -2123,7 +2123,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               //   그 체크리스트를 Home 으로 일원화하면서 문구까지 사라지면,
               //   "왜 지금 이걸 만들어야 하는가" 를 말해 주던 자리가 없어진다.
               //   소유자가 바뀐 것이지 안내가 필요 없어진 것이 아니다.
-              pendingHint: '한 번 만들면 이후 계약에도 계속 사용할 수 있어요',
+              purpose: '한 번 만들면 이후 계약에도 계속 사용할 수 있어요',
               onTap: tplTarget == null
                   ? null
                   : () => _safeNavigate(() async {
@@ -2182,6 +2182,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     required String label,
     String? lockedHint,
     String? pendingHint,
+    /// 라벨 아래 줄에 붙는 목적 설명 (완료되면 숨긴다)
+    String? purpose,
     VoidCallback? onTap,
   }) {
     final done = r.isDone(task);
@@ -2207,15 +2209,41 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             ),
             SizedBox(width: 9 * s),
             Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                  color: done
-                      ? AppColors.textSecondary
-                      : (actionable ? AppColors.textPrimary : AppColors.grey400),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: done
+                          ? AppColors.textSecondary
+                          : (actionable
+                              ? AppColors.textPrimary
+                              : AppColors.grey400),
+                    ),
+                  ),
+                  // [R7-P4.4E.2] 목적 설명은 **라벨 아래 줄**이다.
+                  //   오른쪽 힌트 슬롯은 '사업장 등록 후 가능' 같은 짧은 상태
+                  //   문구용이라 폭을 나눠 갖는다. 거기에 문장을 넣었더니
+                  //   라벨이 '계약 / 서 템 / 플릿' 으로 쪼개졌다.
+                  //   끝난 항목에는 보여주지 않는다 — 이미 한 일의 이유는 소음이다.
+                  if (purpose != null && !done) ...[
+                    SizedBox(height: 2 * s),
+                    Text(
+                      purpose,
+                      // 힌트 슬롯과 같은 12px — 이 화면의 하한이다.
+                      // 새 typography scale 을 만들지 않는다.
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: AppColors.grey400,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             if (hint != null)

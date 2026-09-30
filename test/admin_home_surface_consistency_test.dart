@@ -197,7 +197,11 @@ void main() {
       expect('fontSize: 13'.allMatches(home).length, 9);
       // [R7-P1-4 후속] 17 → 18: 부족 행의 범위 보조 줄(grey 12) 한 개가 늘었다.
       //   위계 규칙은 그대로다 — 18 금지 · 11 금지 · 15 는 다섯 자리.
-      expect('fontSize: 12'.allMatches(home).length, 18);
+      // [R7-P4.4E.2] 18 → 19: 계약서 템플릿 준비 행에 목적 설명 줄이 붙었다.
+      //   오른쪽 힌트 슬롯(폭을 나눠 갖는 자리)에 문장을 넣었더니 라벨이
+      //   '계약 / 서 템 / 플릿' 으로 쪼개져, 라벨 아래 줄로 내렸다.
+      //   새 크기를 만들지 않고 힌트와 같은 12px 를 쓴다.
+      expect('fontSize: 12'.allMatches(home).length, 19);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 

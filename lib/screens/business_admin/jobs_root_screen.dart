@@ -195,7 +195,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
             children: [
               // 헤더: 제목 + 필터 + 공고등록 + scope chip
               // Consumer<WorkforceController>가 내부에서 context를 해석 — provider scope 안
-              _buildHeader(s, setupRequired),
+              _buildHeader(ctx, s, setupRequired),
               // [R7-P4.4E.2] 준비가 끝나지 않았으면 운영 목록을 그리지 않는다.
               //
               //   예전에는 사업장이 생기는 순간 바로 "진행중 0 / 등록된 공고가
@@ -223,7 +223,12 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   // ─────────────────────────────────────────────────────────────
   // 헤더 — white base, Home 디자인 언어 통일
   // ─────────────────────────────────────────────────────────────
-  Widget _buildHeader(double s, bool setupRequired) {
+  /// [R7-P4.4E.2] **빌더의 context 를 받는다.**
+  ///   이 헤더는 ValueListenableBuilder 콜백 안에서 만들어진다. State 의
+  ///   context 로 select 를 하면 그 element 는 지금 build 중이 아니라서
+  ///   provider 가 assert 로 막는다(실기기에서 공고 탭이 빨간 화면이 됐다).
+  ///   구독 자체는 그대로 유지한다 — 권한이 회수되면 버튼이 사라져야 한다.
+  Widget _buildHeader(BuildContext context, double s, bool setupRequired) {
     return Container(
       color: Colors.white,
       padding: EdgeInsets.fromLTRB(20 * s, 12 * s, 12 * s, 10 * s),

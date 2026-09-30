@@ -91,6 +91,21 @@ void main() {
           reason: 'null 을 미완료로 읽으면 준비된 관리자에게 거짓을 말한다');
     });
 
+    test('SETUP-ROOT-07 헤더는 빌더의 context 로 구독한다', () {
+      // 실기기에서 공고 탭이 빨간 화면이 됐다:
+      //   'Tried to use context.select outside of the build method of a widget.'
+      // 헤더를 ValueListenableBuilder 콜백 안에서 만들면서, 그 안의 select 가
+      // State 의 context(그 순간 build 중이 아니다)를 쓰고 있었다.
+      final src = _jobsRoot();
+      expect(
+          src.contains(
+              'Widget _buildHeader(BuildContext context, double s, bool setupRequired)'),
+          isTrue,
+          reason: '호출하는 빌더의 context 를 받아야 select 가 성립한다');
+      expect(src.contains('_buildHeader(ctx, s, setupRequired)'), isTrue,
+          reason: 'State 의 context 를 넘기면 같은 assert 로 다시 죽는다');
+    });
+
     test('SETUP-ROOT-06 공고 탭 자체는 유지한다', () {
       final shell = File('lib/screens/business_admin/business_admin_shell.dart')
           .readAsStringSync();
@@ -184,6 +199,18 @@ void main() {
           .join('\n');
       expect(screen.contains('사업자등록증'), isFalse,
           reason: '§24 — 서버 기술 축을 사용자 task 로 다시 세우지 않는다');
+    });
+
+    test('READINESS-TASKS-05 목적 설명은 라벨 아래 줄이다', () {
+      // 실기기에서 라벨이 '계약 / 서 템 / 플릿' 으로 쪼개졌다 —
+      // 오른쪽 힌트 슬롯은 폭을 나눠 갖는 자리라 문장이 들어가면 라벨이 눌린다.
+      final src = _home();
+      expect(src.contains("purpose: '한 번 만들면 이후 계약에도 계속 사용할 수 있어요'"),
+          isTrue, reason: '안내는 남는다 — 자리만 옮겼다');
+      expect(src.contains("pendingHint: '한 번 만들면"), isFalse,
+          reason: '긴 문장을 짧은 상태 슬롯에 넣지 않는다');
+      expect(src.contains('if (purpose != null && !done)'), isTrue,
+          reason: '이미 끝난 항목에 이유를 다시 말하지 않는다');
     });
 
     test('READINESS-TASKS-04 남은 개수는 Home 이 센 값을 쓴다', () {
