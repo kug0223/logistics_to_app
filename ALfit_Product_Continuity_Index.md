@@ -2,7 +2,93 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4D** (첫 공고 writer → projection)
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E** (DEV 제한 배포 완료 / first-run runtime 대기)
+
+## 0-AAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E
+
+기준 `edb22fc`. **E1 = DEV DEPLOY VERIFIED · E2 = FIRST-RUN RUNTIME PENDING USER FLOW.**
+
+### 배포된 exports (9개, 명시 target 만)
+
+commit range 를 배포 대상으로 쓰지 않았다. 마지막 배포 기록 이후 코드 커밋
+(`e0c620c` → `edb22fc`)의 **변경 라인 404줄**을 감싸는 top-level 심볼을 찾고,
+helper 면 호출자를 따라 올라가 export 집합을 계산했다.
+
+| export | 배포 근거 |
+|---|---|
+| `callableCreateTO` | `assertBusinessPostingReady` + `delete finalData.dates` |
+| `callablePublishTO` | `assertBusinessPostingReady` |
+| `callableUpdateTO` | `assertBusinessPostingReady` (reopen `txReopenUpdates` 포함) |
+| `masterScheduler` | `processScheduledPublish` — 판정이 TX read-set 으로 |
+| `callableApplyToTO` | `assertBusinessCanAcceptApplications` |
+| `callableConfirmApplication` | `evaluateContractCapability` + `txReadinessReader` |
+| `callableAcceptTOInvitation` | 동일 |
+| `callableCreateFlexSlots` | `dates: arrayUnion(...uniqueDates)` |
+| `callableDeleteSlots` | `dates: remainingDateKeys` |
+
+**오탐 2건 제거** — `hasValidBusinessLicense` 경유로 올라온
+`callableManageBusiness`·`onBusinessCreated` 는 변경 라인이 그 함수 본문
+(22552~22642)에 **없음**을 확인해 제외했다. 원인은 심볼 끝을 "다음 선언
+직전" 으로 잡아 함수 사이 주석 블록을 창에 넣은 것 — 중괄호 균형으로
+고쳤다. 후보 11 → **9개**.
+
+### §7 slot-date mutation writer 전수
+
+코드 전체에서 slot 문서 생성·삭제 writer 는 **2개뿐**이다 —
+`batch.set(slotRef, slotData)`(13906, createFlexSlots),
+`txDel.delete(slotsRefForDelete.doc(slotId))`(26221, deleteSlots).
+Dart 쪽 `collection('slots')` 접근 18곳은 **전부 `batch.update`** 로
+생성·삭제 writer 가 0건이다. 새 writer 없음 → STOP 불필요.
+
+### 배포 증거
+
+| 축 | 결과 |
+|---|---|
+| HEAD | `edb22fce00f4a61cfc0bd837b086d7d0dd5b7b1b` == 지시 기준 |
+| 작업 트리 | `functions/`·`lib/`·`test/` 추적 변경 **0건**. `.dart_tool/package_graph.json`·`android/local.properties`(빌드 산출물)만 수정 상태 — 배포 artifact 에 들어가지 않으므로 임의 정리하지 않았다 |
+| 재빌드 | 기존 `lib/index.js` 는 **9/29 16:02** stale 이었다 → 제거 후 `npm run build` 재생성. 배포 predeploy 가 다시 빌드(15:35:56) |
+| tsc | 통과 |
+| eslint | `src/index.ts` **4973**(기준선 동일). 전체 4977 의 차이 4건은 기존 seed/benchmark 스크립트 |
+| gate 테스트 | 7파일 **148/148** 통과 |
+| 전체 스위트 | `edb22fc` 이후 코드 변경 0 → 기존 CODE 근거 재사용(14841 PASS / 2 SKIP / 0 FAIL, analyze clean) |
+| 배포 명령 | `FUNCTIONS_DISCOVERY_TIMEOUT=120 npx firebase deploy --only functions:<9개> --project alfit-89567` |
+| 배포 결과 | `updating` 9줄 · `Successful update operation` 9줄 · exit 0 |
+| 금지 대상 | `deleting/creating function` 0 · firestore/storage/hosting/database/remoteconfig 줄 **0** |
+| 함수 상태 | 244개 전부 `ACTIVE`, 집합 동일, runtime/platform 변동 0 |
+
+### 배포 검증의 한계 (기록)
+
+`firebase functions:list` 는 **updateTime·buildId·sourceGen 을 주지 않고**
+이 환경에 gcloud 가 없다. 그래서 "어느 함수의 갱신시각이 바뀌었나" 축은
+**NOT SEEN** 이다. null==null 을 "그대로" 로 읽으면 근거 없는 PASS 가 되므로
+inventory 스크립트가 그 경우 UNKNOWN 을 출력하게 고쳤다. §19 non-target
+immutability 는 **배포 로그(9줄 updating, 0 creating/deleting) + 집합·상태
+동일** 로만 뒷받침된다.
+
+### DEV 데이터 preflight (`count()` 집계)
+
+`tos = 0` · `businesses = 0` · `applications = 0` · `users = 8`.
+→ `[R7-P4.4D-LEGACY-DATES-BACKFILL]` = **N/A**. migration 만들지 않았다.
+데이터 mutation·seed·cleanup **0**.
+
+### E2 상태
+
+first-run 실제 데이터가 없어 §23~§32 를 시작할 수 없다 →
+**RUNTIME PENDING USER FLOW.** fixture 로 대체하지 않았다.
+사용자가 앱에서 신규가입 → 사업장 → 승인 → 업무 → 템플릿 → 인감 → 첫 공고를
+진행한 뒤 이어간다.
+
+### 최종 상태표
+
+| 항목 | CODE | DEV DEPLOY | RUNTIME | DEVICE | PRODUCT |
+|---|---|---|---|---|---|
+| CP7 server authority | CLOSED | **VERIFIED** | NOT SEEN | NOT SEEN | PENDING |
+| CP8 writer | CLOSED | **VERIFIED** | NOT SEEN | NOT SEEN | PENDING |
+| CP9 projection | CLOSED | **VERIFIED**(reader 는 클라이언트) | NOT SEEN | NOT SEEN | PENDING |
+| FLEX dates projection | CLOSED | **VERIFIED** | NOT SEEN | NOT SEEN | PENDING |
+| first-run onboarding→posting | PARTIAL | **VERIFIED**(서버 축) | NOT SEEN | NOT SEEN | PENDING |
+
+**next owner**: E2 — first-run writer runtime 증거 회수(사용자 실제 흐름 이후)
 
 ## 0-AAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4D
 

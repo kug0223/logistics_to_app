@@ -218,6 +218,8 @@
 
 | 항목 | 소유 | 종료 조건 |
 |---|---|---|
+| `[R7-P4.4E-FIRST-RUN-RUNTIME]` | P4.4E-E2 | **RUNTIME PENDING USER FLOW.** E1(DEV 제한 배포 9 exports) 종료. `tos/businesses/applications = 0` 이라 first-run writer runtime 증거를 회수할 대상이 없다. fixture 로 대체하지 않는다. 사용자가 신규가입 → 사업장 → 승인 → 업무 → 템플릿 → 인감 → 첫 공고를 진행한 뒤 §23~§32 |
+| `[R7-P4.4E-DEPLOY-METADATA-UNSEEN]` | P4.4E | `firebase functions:list` 가 **updateTime·buildId·sourceGen 미제공** + 환경에 gcloud 없음 → "어느 함수의 갱신시각이 바뀌었나" 축 **NOT SEEN**. non-target immutability 는 배포 로그(updating 9줄 / creating·deleting 0줄) + 함수 집합·상태 동일로만 뒷받침된다. gcloud 또는 REST 접근이 생기면 닫힌다 |
 | `[R7-P4.4D-DATE-TRUTH-DEV-UNSEEN]` | P4.4D | **DEV 표본 0건** — `tos`/`businesses`/`applications` 가 기록된 "데이터 정리" 이후 비어 있다(`users` 는 읽히므로 연결은 정상). `dates` 가 실제 문서에 채워지는지는 **배포 후 새 공고 1건**으로만 확인된다. DEV 0 을 PROD 0 으로 읽지 않는다 |
 | `[R7-P4.4D-LEGACY-DATES-BACKFILL]` | 사용자 | 배포 전에 만들어진 슬롯 공고는 `dates` 가 비어 있다 → 판정 불가(**노출**, fail-open). 슬롯 추가·삭제가 한 번 일어나면 그때 채워진다. 일괄 보정은 **실행하지 않았다**(실데이터 mutation) |
 | Staffing 11TO/21업무 보정 | 사용자 | 결정(현재 DEFERRED) |
