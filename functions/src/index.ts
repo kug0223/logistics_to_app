@@ -13060,6 +13060,11 @@ export const callableCreateTO = onCall(
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
     finalData.totalConfirmed = 0;
     finalData.totalPending = 0;
+    // [R7-P4.4D §10] 슬롯 날짜 목록도 슬롯 컬렉션에서 파생되는 값이다.
+    //   클라이언트가 실어 보내면 `slotDatesLookComplete`(totalSlots <= 길이)가
+    //   흔들려 지원자 목록의 노출 판정이 바뀐다. 씨앗을 서버가 지운다 —
+    //   값을 채우는 주체는 슬롯을 만드는 callableCreateFlexSlots 하나다.
+    delete finalData.dates;
     // [SYSTEM-INTEGRATION-R1/R1.1] FLEX의 슬롯 파생 집계는 서버 전용이다.
     //
     //   클라이언트가 두 값을 모두 계산해 보낸다 (to_firestore.dart):
@@ -13913,9 +13918,22 @@ export const callableCreateFlexSlots = onCall(
     // [SYSTEM-INTEGRATION-R1.1] 새로 만든 슬롯만큼만 더한다 — 건너뛴 날짜는
     //   totalNewSlots/totalNewRequired에 들어가지 않으므로 재호출이 집계를
     //   움직이지 않는다.
+    // [R7-P4.4D §10] 날짜 목록을 같은 커밋에 싣는다.
+    //
+    //   지원자 목록은 `dates`로 "이 공고는 지난 날짜뿐인가"를 판정한다
+    //   (TOModel.slotDatesLookComplete / isVisibleToWorkerFlex). 그런데 이
+    //   필드를 쓰는 writer가 코드 어디에도 없었다 — 클라이언트가 CF에 날짜를
+    //   넘기기만 하고 문서에는 남기지 않았다. 그래서 판정이 항상 "모른다"로
+    //   떨어져, 지난 날짜만 남은 공고도 계속 목록에 떠 있었다.
+    //
+    //   날짜가 슬롯의 자연 키이므로(위 skip 로직과 같은 전제) 요청된 날짜
+    //   전체를 union 한다. 건너뛴 기존 날짜도 이미 슬롯이 있으니 집합에
+    //   들어가야 맞다. 이러면 `dates`의 크기가 `totalSlots`와 같아져
+    //   `slotDatesLookComplete`가 의미를 갖는다.
     batch.update(toRef, {
       totalSlots: admin.firestore.FieldValue.increment(totalNewSlots),
       totalRequired: admin.firestore.FieldValue.increment(totalNewRequired),
+      dates: admin.firestore.FieldValue.arrayUnion(...uniqueDates),
     });
     await batch.commit();
     if (skippedExisting > 0) {
@@ -26136,9 +26154,22 @@ export const callableDeleteSlots = onCall(
       deletedSlotCount =
         allSlotSnap.docs.filter((d) => uniqueSlotIdSet.has(d.id)).length;
 
+      // [R7-P4.4D §10] 날짜 목록도 같은 근거로 맞춘다 — 남은 슬롯 문서다.
+      //   카운터만 줄이고 `dates`를 두면 지운 날짜가 목록에 남아, 지원자
+      //   화면이 없는 날짜를 보고 공고를 계속 띄운다. 남은 문서에서 다시
+      //   센다(추가 읽기 없음 — 위 allSlotSnap 재사용).
+      const remainingDateKeys = Array.from(new Set(
+        allSlotSnap.docs
+          .filter((d) => !uniqueSlotIdSet.has(d.id))
+          .map((d) => d.get("date") as admin.firestore.Timestamp | undefined)
+          .filter((t): t is admin.firestore.Timestamp => !!t)
+          .map((t) => srvWorkDateParts(t).date)
+      )).sort();
+
       const toUpdate: Record<string, unknown> = {
         // [POSTING-V2-03L.1] increment가 아니라 방금 센 값으로 맞춘다(§12).
         totalSlots: remainingSlotCount,
+        dates: remainingDateKeys,
       };
       if (removedRequired > 0)
         toUpdate.totalRequired = admin.firestore.FieldValue.increment(-removedRequired);

@@ -2,9 +2,65 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4C.1** (예약 공개 원자성 + blocked visibility)
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4D** (첫 공고 writer → projection)
 
-## 0-AAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4C.1
+## 0-AAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4D
+
+기준 `1a19bbf`. **CODE CLOSED / CF DEV DEPLOY PENDING.**
+
+### 이번에 찾은 것 — 읽기만 하는 필드
+
+지원자 목록은 `tos.dates` 로 "이 공고는 지난 날짜뿐인가" 를 판정한다
+(`TOModel.slotDateKeys` → `slotDatesLookComplete` → `isVisibleToWorkerFlex`).
+그런데 **그 필드를 쓰는 writer 가 코드 어디에도 없었다.** 클라이언트는
+`dates` 를 CF 호출 payload 로만 넘기고(`to_firestore.dart` `_callCreateFlexSlots`)
+문서에는 남기지 않았고, CF 도 쓰지 않았다.
+
+결과: `slotDatesLookComplete` 가 **항상 false** 여서 판정이 늘 "모른다" 로
+떨어졌다. 세 소비자(`isVisibleToWorkerFlex`, `user_job_tab:401`,
+`user_home_screen:3967`)가 전부 fail-open 분기만 타고 있었고, **지난 날짜만
+남은 슬롯 공고가 계속 일자리 목록에 떠 있었다.** 근로자는 눌러 들어가서야
+고를 날짜가 없다는 것을 알게 된다.
+
+동시에, 그 분기를 검증한다고 믿었던 기존 테스트 두 벌
+(`worker_flex_exposure_contract_test`, `flex_date_reachability_contract_test`)은
+`slotDateKeys` 를 **생성자에 직접 주입**해 통과하고 있었다 — writer 가 만들 수
+없는 형상이다(§40 위반). 초록이 제품 동작을 증명하지 못한 자리다.
+
+### 고친 방식 — 날짜는 슬롯에서 파생된다
+
+슬롯 1건 = 날짜 1건이다(`for (const dateStr of uniqueDates)` + `totalNewSlots++`),
+그래서 `totalSlots` 가 곧 날짜 수다. 소유권을 그 writer 에게 준다:
+
+| 지점 | 변경 |
+|---|---|
+| TO 생성 | `delete finalData.dates` — 클라이언트 씨앗 제거(`totalSlots`/`totalRequired` 0 강제와 같은 구간) |
+| 슬롯 생성 커밋 | `dates: arrayUnion(...uniqueDates)` — `totalSlots` increment 와 **같은 커밋** |
+| 슬롯 삭제 TX | `dates: remainingDateKeys` — 이미 읽은 `allSlotSnap` 에서 재계산(추가 읽기 0), `totalSlots: remainingSlotCount` 와 같은 근거 |
+
+drift 방향을 전수 확인했다: `dates` 가 뒤처지면 `totalSlots > 길이` → 판정
+불가 → **노출**(fail-open). `dates` 가 앞서면 남은 미래 날짜가 매칭 → **노출**.
+숨는 경우는 "날짜가 완비되고 전부 과거" 하나뿐이다 — 의도한 동작이다.
+
+### 상태 delta
+
+| ID | 이전 | 지금 |
+|---|---|---|
+| `[R7-P4.4D-DATE-TRUTH-NO-WRITER]` | (미발견) | **CLOSED(CODE)** — writer 3지점 + 계약 테스트 21건 |
+| `[R7-P4.4D-EXPOSURE-FIXTURE-BYPASS]` | (미발견) | **CLOSED(CODE)** — 공유 canonical factory 로 writer→reader 계약화 |
+| `[R7-P4.4D-WDID-CANONICAL]` | PREVIOUSLY VERIFIED | **유지** — `wdId: generateWdId()` 단독 writer, reader 는 `canonicalId` 정규화 1지점 |
+| `[R7-P4.4D-TOTALSLOTS-DOUBLE-COUNT]` | 이전 단계에서 수정 | **유지** — 생성 시 0 강제(이중 전송 2배 문제) |
+| `[R7-P4.4D-SOFT-DELETE-EXPOSURE]` | 의심 | **DRIFT 없음** — soft delete 가 `isPublished:false` 를 함께 써서 노출 쿼리가 이미 제외 |
+
+### 증거 등급
+
+- **CODE**: writer 3지점 + tsc 통과 + eslint 4973(기준선 동일, 새 문제 0)
+- **RENDER**: 신규 21건 + 전체 스위트 **14841 통과 / 실패 0 / skip 2**, analyze `No issues found`
+- **DEV**: **NOT SEEN** — `tos`/`businesses`/`applications` 표본 **0건**(기록된 "데이터 정리" 이후). DEV 0 을 PROD 0 으로 읽지 않는다. `users` 는 읽혀 연결 자체는 정상.
+- **DEVICE**: NOT SEEN (실기기 없음)
+- **CF DEV 배포**: **PENDING** — 승인 없이 실행하지 않았다
+
+## 0-AAAAAA. SNAPSHOT — 2026-09-30 / R7-P4.4C.1
 
 기준 `333ad2b`. **CODE CLOSED / CF DEV DEPLOY PENDING.**
 
