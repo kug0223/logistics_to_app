@@ -2,7 +2,83 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E** (DEV 제한 배포 완료 / first-run runtime 대기)
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.1A** (신규 등록 차단 해제)
+
+## 0-AAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.1A
+
+기준 `3748c62`. **CODE CLOSED · CF 변경 0(배포 불필요) · DEVICE RETRY PENDING.**
+
+### 찾은 것 — 신규 사업장 등록이 구조적으로 불가능했다
+
+실기기 로그가 직접 말했다:
+`[firebase_functions/not-found] 사업장을 찾을 수 없습니다.`
+
+`callableUploadBusinessImage` 는 `assertBizAdmin` 으로 **사업장 문서 존재**를
+요구한다(`if (!bizSnap.exists) throw not-found`). 그런데 신규 등록은 그 문서를
+**업로드 뒤에** 만들었다(`uploadBizId = .doc().id` → 업로드 → `batch.set`).
+등록증이 신규 필수라 업로드는 반드시 실행됐다 → **항상 실패**.
+
+`af1a6f5`(2026-07-17, "businesses/ 직접 업로드 CF 이전") 부터다. 그 전에는
+클라이언트가 Storage 에 직접 썼기에 사업장 없이도 올라갔다. 보안 수정 자체는
+옳았고, **신규 생성이라는 한 경우를 빠뜨린 것**이다. P4.4E 배포와 무관하다.
+
+### 기각한 안 — §6 negative control
+
+내가 먼저 제안했던 "역할 + `managedBusinessIds < 5` 만 보고 pre-create 허용"은
+**기각한다.** 그 조건에는 호출자를 특정 id 에 묶는 것이 없고, 사업장이 끝내
+만들어지지 않으면 quota 는 영원히 0 이다 → 임의 id A·B·C… **무제한 업로드**가
+전부 통과한다. Business quota 를 Storage abuse quota 로 재사용할 수 없다(§7).
+
+### 채택 — 기존 primitive 재사용 (새 entity 0, 새 업로드 표면 0)
+
+§4 가 요구한 "이미 있는 구조"가 실제로 있었다. 서류 관리 화면은 **사업장 없이**
+등록증을 처리한다: `users/{uid}/businessLicense_*` 직접 업로드(Storage rules 가
+본인 경로·5MB·이미지 MIME 로 이미 제한) → `callableRegisterBusinessLicense` 가
+소유권·존재 확인 후 `businessLicenseImagePath` 를 **서버가** 기록.
+`checkBusinessLicense` 의 owner 분기가 이미 인정하는 값이다.
+
+신규 등록 순서를 그 위에 맞췄다:
+
+| 순서 | 내용 | 사업장 필요? |
+|---|---|---|
+| ① 등록증 | `users/{uid}/businessLicense_*` → `callableRegisterBusinessLicense` | 아니오 |
+| ② 사업장 생성 | `batch.set(businesses) + users.managedBusinessIds` | — |
+| ③ 표시용 이미지 | 기존 `callableUploadBusinessImage` → `businesses/{id}.update` | 예(이미 있음) |
+
+①이 ②보다 먼저인 것이 중요하다 — `onBusinessCreated` 의 자동승인이 등록증을
+본다. 나중이면 놓친다.
+
+**`callableUploadBusinessImage`·`assertBizAdmin`(83개 호출처)은 건드리지 않았다(§3).**
+수정 모드는 무변경.
+
+### 부분 상태 정책
+
+③ 실패는 등록을 되돌리지 않는다. 대표·추가·교통 사진은 **선택 항목**이고
+등록의 본체(사업장 + 등록증)는 이미 성립했다. 되돌리면 사용자가 처음부터
+다시 입력해야 한다 — 잃는 것이 크다. 대신 "사업장은 등록됐지만 사진을 올리지
+못했습니다" 로 **따로** 말한다.
+
+### §12 — 원인이 세 번 삼켜지던 자리
+
+`StorageService → null` / 폼 `throw '이미지 업로드에 실패…'` / 최종 catch
+`'저장하지 못했습니다'`. 이제 **할 일이 다른 것만** 구분한다: 재선택 /
+재시도 / 권한 / 네트워크 / 마무리 미완. 내부 코드·경로는 여전히 노출하지 않는다.
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · Functions `tsc` 통과 · eslint **4973**(기준선 동일, **CF 변경 0**)
+- **RENDER**: 신규 **18/18**(PRECREATE-01~10 + R8-P5.1 회귀 3) · 전체 스위트 **14859 통과 / 실패 0 / skip 2**
+- **DEV DEPLOY**: **불필요** — `functions/` 변경 0건
+- **DEVICE**: **RETRY PENDING** — 실기기 재시도로만 닫힌다
+
+### 남긴 것
+
+`[R7-P4.4E.1A-STAGING-ORPHAN-TTL]` — ①에서 업로드는 됐는데 CF 등록이 실패하면
+즉시 지운다. 다만 그 사이 앱이 강제 종료되면 `users/{uid}/` 에 객체가 남는다.
+새로 생긴 위험은 아니다(서류 관리 화면이 같은 성질을 이미 갖는다) — 서버 TTL
+정리는 별도 owner.
+
+
 
 ## 0-AAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E
 

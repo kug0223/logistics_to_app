@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 
@@ -2624,24 +2625,60 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       List<String> additionalUrls = List.from(_additionalImageUrls);
       List<String> transportUrls = List.from(_transportImageUrls);
 
+      // [R7-P4.4E.1A] 신규 등록은 이 시점에 `businesses/` 로 아무것도 올리지 않는다.
+      //
+      //   `callableUploadBusinessImage` 는 `assertBizAdmin` 으로 **사업장 문서가
+      //   이미 있을 것**을 요구한다(`if (!bizSnap.exists) throw not-found`).
+      //   그런데 신규 등록은 문서를 업로드 **뒤에** 만들었다. 그래서 실기기에서
+      //   항상 이렇게 끝났다:
+      //     [firebase_functions/not-found] 사업장을 찾을 수 없습니다.
+      //   등록증이 신규 필수라 업로드는 반드시 실행됐고, 결과적으로
+      //   **신규 사업장 등록이 구조적으로 불가능**했다(af1a6f5 이후).
+      //
+      //   순서를 바꾼다. 새 권한 구멍을 내지 않는 방향으로:
+      //     ① 등록증 → `users/{uid}/businessLicense_*` (사업장이 필요 없는
+      //        호출자 소유 경로. 서류 관리 화면이 이미 쓰는 그 경로다)
+      //        → `callableRegisterBusinessLicense` 가 소유권·존재를 확인하고
+      //          `businessLicenseImagePath` 를 **서버가** 기록한다.
+      //          `checkBusinessLicense` 의 owner 분기가 이미 인정하는 값이라
+      //          readiness 계약은 그대로다.
+      //     ② 사업장 문서 생성 — 이때 등록증은 이미 확정돼 있으므로
+      //        `onBusinessCreated` 의 자동승인 license 판정도 통과한다.
+      //     ③ 표시용 이미지(대표·추가·교통)는 사업장이 생긴 뒤에 올린다.
+      //
+      //   `callableUploadBusinessImage` 와 `assertBizAdmin`(83개 호출처)은
+      //   건드리지 않는다. 업로드 표면도 하나도 늘지 않는다.
+      final bool deferBusinessUploads = !_isEditMode;
+
+      if (deferBusinessUploads && _businessLicenseImage != null) {
+        // 사업장 문서에는 등록증 URL 을 넣지 않는다 — owner 경로가 진실이다.
+        businessLicenseImageUrl = null;
+        await _registerOwnerBusinessLicense(ownerId, _businessLicenseImage!);
+      }
+
       // 업로드 인덱스 추적
       int uploadIdx = 0;
       int? mainUploadIdx;
       int? licenseUploadIdx;
       final uploadFutures = <Future<String?>>[];
 
-      if (_mainImage != null) {
+      if (_mainImage != null && !deferBusinessUploads) {
         mainUploadIdx = uploadIdx++;
         uploadFutures.add(_uploadImage(_mainImage!, uploadBizId, 'main'));
       }
-      if (_businessLicenseImage != null) {
+      if (_businessLicenseImage != null && !deferBusinessUploads) {
         licenseUploadIdx = uploadIdx++;
         uploadFutures.add(_uploadImage(_businessLicenseImage!, uploadBizId, 'license'));
       }
       final additionalUploadStart = uploadIdx;
-      uploadFutures.addAll(_additionalImages.map((img) => _uploadImage(img, uploadBizId, 'additional')));
-      final transportUploadStart = additionalUploadStart + _additionalImages.length;
-      uploadFutures.addAll(_transportImages.map((img) => _uploadImage(img, uploadBizId, 'transport')));
+      if (!deferBusinessUploads) {
+        uploadFutures.addAll(_additionalImages.map((img) => _uploadImage(img, uploadBizId, 'additional')));
+      }
+      final transportUploadStart = additionalUploadStart +
+          (deferBusinessUploads ? 0 : _additionalImages.length);
+      if (!deferBusinessUploads) {
+        uploadFutures.addAll(_transportImages.map((img) => _uploadImage(img, uploadBizId, 'transport')));
+      }
 
       if (uploadFutures.isNotEmpty) {
         final results = await Future.wait(uploadFutures);
@@ -2800,10 +2837,24 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           },
         );
         await batch.commit();
+
+        // [R7-P4.4E.1A ③] 사업장이 생겼으니 이제 표시용 이미지를 올린다.
+        //
+        //   여기서 실패해도 등록을 되돌리지 않는다. 등록의 본체(사업장 +
+        //   등록증)는 이미 성립했고, 대표·추가·교통 사진은 **선택 항목**이며
+        //   사업장 정보 수정에서 언제든 다시 올릴 수 있다. 되돌리면 사용자가
+        //   처음부터 다시 입력해야 하는데, 잃는 것이 얻는 것보다 크다.
+        final finalized = await _uploadDeferredImages(uploadBizId);
+
         await userProvider.refreshCurrentUser();
         if (!mounted) return;
 
-        ToastHelper.showSuccess('사업장 등록 완료\n운영팀 검토 후 서비스가 활성화됩니다');
+        if (!finalized) {
+          ToastHelper.showError(
+              const _SaveFailure(_SaveFailureKind.finalizeIncomplete).message);
+        } else {
+          ToastHelper.showSuccess('사업장 등록 완료\n운영팀 검토 후 서비스가 활성화됩니다');
+        }
       }
 
       if (mounted) {
@@ -2828,10 +2879,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       //     (OS Error: No such file or directory, errno = 2)
       //   이건 제품 메시지가 아니다. 기술 진단은 위 debugPrint 에 남기고,
       //   사용자에게는 **무엇을 하면 되는지**를 말한다.
+      //
+      // [R7-P4.4E.1A §12] 원인이 다르면 **할 일도 다르다.** 파일을 다시 골라야
+      //   하는 것과, 잠시 후 재시도하면 되는 것과, 권한이 없어 재시도가 소용없는
+      //   것을 같은 문장으로 말하면 사용자는 무엇을 해야 할지 알 수 없다.
+      //   내부 코드·경로는 여전히 노출하지 않는다 — 위 debugPrint 의 몫이다.
       if (mounted) {
         if (e is PathNotFoundException || e is FileSystemException) {
           ToastHelper.showError('첨부한 파일을 불러올 수 없습니다\n이미지를 다시 선택해 주세요');
           _focusAttachmentSection();
+        } else if (e is _SaveFailure) {
+          ToastHelper.showError(e.message);
+          if (e.kind == _SaveFailureKind.uploadFailed ||
+              e.kind == _SaveFailureKind.uploadNotAuthorized) {
+            _focusAttachmentSection();
+          }
+        } else if (e is FirebaseException && e.code == 'permission-denied') {
+          ToastHelper.showError('저장 권한이 없습니다\n입력한 사업자등록번호를 확인해 주세요');
+        } else if (e is FirebaseException && e.code == 'unavailable') {
+          ToastHelper.showError('네트워크에 연결할 수 없습니다\n연결을 확인 후 다시 시도해 주세요');
         } else {
           ToastHelper.showError('저장하지 못했습니다\n잠시 후 다시 시도해주세요');
         }
@@ -2846,6 +2912,114 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // [SEC-BIZ-UPLOAD] CF 경유 업로드 — callableUploadBusinessImage → assertBizAdmin 검증 후 저장
   // [REG-2 SEC] type == 'license' 시 fileType: 'businessLicense' 전달
   //   → CF가 license/ 서브경로 + 토큰 없이 저장 (Storage rules allow get: if false)
+  /// [R7-P4.4E.1A ③] 사업장 생성 **후** 표시용 이미지를 올리고 문서에 붙인다.
+  ///
+  ///   이제 사업장 문서가 있으므로 `callableUploadBusinessImage` 의
+  ///   `assertBizAdmin` 이 정상 통과한다 — CF 계약을 바꾸지 않은 이유다.
+  ///   하나라도 못 올리면 올라간 것만 문서에 반영하고 false 를 돌려준다.
+  ///   부분 성공을 지우지 않는다: 사용자가 고른 사진을 이유 없이 버리는 셈이다.
+  Future<bool> _uploadDeferredImages(String bizId) async {
+    if (_mainImage == null &&
+        _additionalImages.isEmpty &&
+        _transportImages.isEmpty) {
+      return true;
+    }
+
+    String? mainUrl;
+    final additional = <String>[];
+    final transport = <String>[];
+    var allOk = true;
+
+    Future<void> put(File f, String type, void Function(String) sink) async {
+      try {
+        final url = await _uploadImage(f, bizId, type);
+        if (url == null) {
+          allOk = false;
+        } else {
+          sink(url);
+        }
+      } catch (e) {
+        debugPrint('❌ 등록 후 이미지 업로드 실패($type): $e');
+        allOk = false;
+      }
+    }
+
+    if (_mainImage != null) await put(_mainImage!, 'main', (u) => mainUrl = u);
+    for (final img in _additionalImages) {
+      await put(img, 'additional', additional.add);
+    }
+    for (final img in _transportImages) {
+      await put(img, 'transport', transport.add);
+    }
+
+    final updates = <String, dynamic>{
+      if (mainUrl != null) 'mainImageUrl': mainUrl,
+      if (additional.isNotEmpty) 'imageUrls': additional,
+      if (transport.isNotEmpty) 'transportImageUrls': transport,
+    };
+    if (updates.isEmpty) return allOk;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(bizId)
+          .update(updates);
+    } catch (e) {
+      debugPrint('❌ 등록 후 이미지 URL 반영 실패: $e');
+      return false;
+    }
+    return allOk;
+  }
+
+  /// [R7-P4.4E.1A] 신규 등록용 사업자등록증 확정 — 사업장 문서가 없어도 된다.
+  ///
+  ///   서류 관리 화면이 쓰는 경로·순서를 그대로 쓴다. 새 경로도, 새 callable 도
+  ///   만들지 않는다. 소유권은 경로(`users/{uid}/`)가 증명하고, 그것을
+  ///   `businessLicenseImagePath` 로 **서버가** 기록한다 — 클라이언트는 그 필드를
+  ///   쓸 수 없다(R8-P5.1). 그래서 임의 업로드로 readiness 를 열 수 없다.
+  Future<void> _registerOwnerBusinessLicense(String ownerId, File image) async {
+    final path =
+        'users/$ownerId/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+    bool uploaded = false;
+    try {
+      uploaded = await _storageService.uploadImageNoUrl(image.path, path);
+    } on PathNotFoundException {
+      rethrow; // 첨부가 사라진 경우 — 재선택 안내로 간다.
+    } on FileSystemException {
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ 등록증 업로드 실패: $e');
+      throw const _SaveFailure(_SaveFailureKind.uploadFailed);
+    }
+    if (!uploaded) throw const _SaveFailure(_SaveFailureKind.uploadFailed);
+
+    try {
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRegisterBusinessLicense')
+          .call({'storagePath': path});
+    } catch (e) {
+      // CF 가 거부했다 → 방금 올린 객체는 주인이 없다. 즉시 지운다.
+      debugPrint('❌ 등록증 등록(CF) 실패: $e');
+      try {
+        await _storageService.deleteImage(path);
+      } catch (cleanupErr) {
+        debugPrint('⚠️ 등록증 정리 실패 (orphan 가능): $cleanupErr');
+      }
+      if (e is FirebaseFunctionsException && e.code == 'permission-denied') {
+        throw const _SaveFailure(_SaveFailureKind.uploadNotAuthorized);
+      }
+      throw const _SaveFailure(_SaveFailureKind.uploadFailed);
+    }
+
+    // 업로드가 확인된 뒤에만 임시 파일을 치운다 — 실패 시 재시도할 수 있게.
+    try {
+      if (await image.exists()) await image.delete();
+    } catch (_) {
+      debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
+    }
+  }
+
   Future<String?> _uploadImage(File imageFile, String bizId, String type) async {
     final url = await _storageService.uploadBusinessImage(
       await imageFile.readAsBytes(),
@@ -2873,6 +3047,43 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 // FC-BIZ-01 OWNERSHIP FIX: _ManualAddressDialog
 // controller 3개를 Dialog State가 직접 소유하고 dispose().
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// [R7-P4.4E.1A §12] 저장 실패의 **종류**. 원인이 세 번 삼켜지던 자리를 막는다.
+///
+///   예전에는 StorageService 가 null 을 돌려주고, 폼이 일반 Exception 을 던지고,
+///   마지막 catch 가 그것마저 "저장하지 못했습니다" 로 덮었다. 그래서 화면에도
+///   서버 로그에도 원인이 남지 않았고, 사용자는 무엇을 하면 되는지 알 수 없었다.
+///   여기서는 **무엇을 하면 되는지가 다른 것**만 구분한다.
+enum _SaveFailureKind {
+  /// 권한이 없어 거부됐다 — 다시 시도해도 같다.
+  uploadNotAuthorized,
+
+  /// 올리지 못했다 — 잠시 후 재시도로 풀릴 수 있다.
+  uploadFailed,
+
+  /// 사업장은 만들어졌는데 이미지 등 마무리가 남았다.
+  finalizeIncomplete,
+}
+
+class _SaveFailure implements Exception {
+  const _SaveFailure(this.kind);
+  final _SaveFailureKind kind;
+
+  /// 사용자에게 보여줄 문구. 내부 코드·경로는 절대 넣지 않는다.
+  String get message {
+    switch (kind) {
+      case _SaveFailureKind.uploadNotAuthorized:
+        return '첨부 파일을 업로드할 권한이 없습니다\n로그인 상태를 확인해 주세요';
+      case _SaveFailureKind.uploadFailed:
+        return '첨부 파일을 업로드하지 못했습니다\n잠시 후 다시 시도해 주세요';
+      case _SaveFailureKind.finalizeIncomplete:
+        return '사업장은 등록됐지만 사진을 올리지 못했습니다\n사업장 정보에서 다시 추가해 주세요';
+    }
+  }
+
+  @override
+  String toString() => '_SaveFailure(${kind.name})';
+}
 
 class _ManualAddressResult {
   final String address;
