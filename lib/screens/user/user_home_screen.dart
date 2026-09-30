@@ -146,7 +146,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       ..sort((a, b) => b.workDate.compareTo(a.workDate));
     _cachedRecentApplications = sorted.take(3).toList();
 
-    final now = DateTime.now();
+    final now = _now();
     final today = FormatHelper.toKstDate(now);
     final endDate = today.add(const Duration(days: 6));
     final dates = <DateTime>{};
@@ -351,7 +351,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   void initState() {
     super.initState();
     // Hero 7일 스트립: 오늘부터 시작 (과거 없음)
-    final now = DateTime.now();
+    final now = _now();
     _stripStart = FormatHelper.toKstDate(now);
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
@@ -380,6 +380,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   }
 
   void _autoRefresh() {
+    // [R7-P4.4B] 여기만 실제 시계다 — 30초 쿨다운은 **경과 시간** 측정이라
+    //   주입 시계를 쓰면 테스트에서 시간이 흐르지 않아 영원히 막힌다.
     final now = DateTime.now();
     if (_lastAutoRefreshAt != null &&
         now.difference(_lastAutoRefreshAt!) < const Duration(seconds: 30)) { return; }
@@ -567,7 +569,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       //   숨기고 다음 조회를 기다린다. 없는 할 일을 지어내지도 않는다.
       unawaited(_reads.myRenewalProposals().then((list) {
         if (!mounted || superseded()) return;
-        final now = DateTime.now();
+        final now = _now();
         setState(() {
           _renewalProposals =
               list.where((p) => p.isActionableAt(now)).toList();
@@ -1301,7 +1303,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     double progressValue = 0.0;
     if (hasTime) {
       try {
-        final now = DateTime.now();
+        final now = _now();
         final today0 = DateTime(now.year, now.month, now.day);
         final sParts = app.startTime.split(':');
         final eParts = app.endTime.split(':');
@@ -1567,7 +1569,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // 현재 7일 범위 밖의 날짜를 선택할 수 있게 한다.
   // 선택 시: _stripStart = 선택일, _selectedDateChip = 선택일, 캐시 재계산
   Future<void> _showDatePickerSheet(BuildContext context, double s) async {
-    final now = DateTime.now();
+    final now = _now();
     final today = FormatHelper.toKstDate(now);
     DateTime focusedDay = _selectedDateChip ?? _stripStart;
 
@@ -2420,7 +2422,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── 이번 주 일정 — 7일 dot 뷰 + 범례 ─────────────────────────────
   Widget _buildThisWeekSchedule(BuildContext context, double s, ThemeData theme) {
-    final now = DateTime.now();
+    final now = _now();
     final today = FormatHelper.toKstDate(now);
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
     final weekDays = List.generate(7, (i) => weekStart.add(Duration(days: i)));

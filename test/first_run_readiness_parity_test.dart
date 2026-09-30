@@ -60,14 +60,15 @@ void main() {
       // "템플릿이 있다" 가 아니라 "신규 계약에 **고를 수 있는** 템플릿이
       // 있다" 여야 한다. 두 화면이 다른 술어를 쓰면 CreateTO 에서 고를
       // 것이 0개인 dead-end 가 생긴다.
-      const fn = 'ContractTemplateModel\n            .selectableForNewContract';
-      expect(home.contains('ContractTemplateModel.selectableForNewContract('),
-          isTrue);
-      expect(
-          create.contains('ContractTemplateModel') &&
-              create.contains('selectableForNewContract'),
-          isTrue,
-          reason: fn);
+      // [R7-P4.4B] 줄바꿈에 걸리지 않게 두 토큰으로 본다 — 어느 쪽이 줄을
+      //   어떻게 접든 **같은 함수를 쓴다**는 사실만 고정한다.
+      for (final s in [home, create]) {
+        expect(s.contains('ContractTemplateModel'), isTrue);
+        expect(s.contains('selectableForNewContract('), isTrue);
+      }
+      // [R7-P4.4B TPL-01] 그리고 양쪽 다 **사업장별**로 넘긴다.
+      expect(create.contains('selectableForNewContract(sel.templates)'), isTrue);
+      expect(home.contains('selectableForNewContract(lists[i])'), isTrue);
     });
 
     test('CP7-01c 인감 — 양쪽 다 SubAdmin 을 면제한다', () {

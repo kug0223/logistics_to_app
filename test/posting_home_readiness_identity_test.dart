@@ -469,11 +469,19 @@ void main() {
           true);
     });
 
-    test('10-b 계약서 템플릿 aggregate semantics 무변경 (§23)', () {
+    test('10-b 계약서 템플릿 판정 함수 무변경 — 범위는 사업장별로 좁혔다 (§23)', () {
+      // [R7-P4.4B TPL-01] 갱신. 이 셀은 "aggregate(전 사업장 합산) semantics
+      //   를 건드리지 않았다" 를 고정했고, 그 Phase 에서는 범위 밖이라 맞았다.
+      //   P4.4B 에서 그 aggregate 가 실제로 틀렸다는 반례를 찾았다 —
+      //   템플릿은 사업장 서브컬렉션이고 계약 발송도 그 사업장 것만 고르므로,
+      //   A 의 템플릿으로 B 공고를 열면 확정 뒤 dead-end 가 된다.
+      //   **판정 함수는 그대로**(selectableForNewContract), 범위만 바뀌었다.
       final code = _codeOf(_homePath);
       expect(code.contains('selectableForNewContract('), true);
-      expect(_codeOf(_createToPath).contains('selectableForNewContract(allTemplates)'),
-          true);
+      final c = _codeOf(_createToPath);
+      expect(c.contains('selectableForNewContract('), true);
+      expect(c.contains('selectableForNewContract(allTemplates)'), false,
+          reason: '합산으로 돌아가면 그 dead-end 가 다시 열린다');
     });
 
     test('10-c CreateTO 무변경 (§27)', () {

@@ -46,6 +46,21 @@ class _FakeCore extends FirebasePlatform with MockPlatformInterfaceMixin {
   List<FirebaseAppPlatform> get apps => [_FakeApp()];
 }
 
+// [R7-P4.4B] 시한부 fixture 정정.
+//
+//   이 파일은 근무일을 `DateTime(2026, 9, 29)` 로 못박고 있었다. 그 날이
+//   지나자 카드가 '마감 · 운영 종료 · 근무일 미정' 으로 렌더되면서
+//   PCR-2·PCR-3 이 깨졌다 — production 결함이 아니라 **날짜가 지난 것**이다.
+//   검증하려는 것은 "집계가 카드에 반영되는가" 이고 특정 날짜가 아니므로,
+//   오늘 기준 미래로 잡아 다시 썩지 않게 한다.
+DateTime _day(int plusDays) {
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day).add(Duration(days: plusDays));
+}
+
+String _slotId(DateTime d) =>
+    '${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
+
 TOModel _to(String id, {int totalConfirmed = 0, int totalRequired = 1}) => TOModel(
       id: id,
       businessId: 'biz1',
@@ -60,8 +75,8 @@ TOModel _to(String id, {int totalConfirmed = 0, int totalRequired = 1}) => TOMod
       totalPending: 0,
       isPublished: true,
       publishMode: 'immediate',
-      createdAt: DateTime(2026, 9, 1),
-      statusUpdatedAt: DateTime(2026, 9, 1),
+      createdAt: _day(-30),
+      statusUpdatedAt: _day(-30),
     );
 
 WorkDetailData _wd(String wdId) => WorkDetailData(
@@ -146,10 +161,12 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    final d929 = DateTime(2026, 9, 29);
-    final d930 = DateTime(2026, 9, 30);
-    final s929 = _slot('0929', d929, confirmed: 1);
-    final s930 = _slot('0930', d930, confirmed: 0);
+    final d929 = _day(1);
+    final d930 = _day(2);
+    final id929 = _slotId(d929);
+    final id930 = _slotId(d930);
+    final s929 = _slot(id929, d929, confirmed: 1);
+    final s930 = _slot(id930, d930, confirmed: 0);
     final group = TOGroupItem(singleTO: _to('to1', totalRequired: 2))
       ..setGroupTOs([s929, s930])
       ..setSlotDates([d929, d930]);
@@ -158,7 +175,7 @@ void main() {
     final controller = WorkforceController(
       loadWorkDetailStats: (to, {slotId, slotWorkDetails}) async {
         loaded.add(slotId ?? '(group)');
-        return _stats(slotId!, confirmed: slotId == '0929' ? 1 : 0);
+        return _stats(slotId!, confirmed: slotId == id929 ? 1 : 0);
       },
     );
     addTearDown(controller.dispose);
@@ -194,7 +211,7 @@ void main() {
     expect(headerText(tester), contains('충원 1'));
     expect(headerText(tester), contains('필요 2'));
 
-    expect(loaded, ['0929', '0930'], reason: '이미 읽은 것을 다시 읽지 않는다');
+    expect(loaded, [id929, id930], reason: '이미 읽은 것을 다시 읽지 않는다');
   });
 
   testWidgets('PCR-2 같은 인스턴스에 새 집계가 오면 카드가 그 값을 말한다',
@@ -203,8 +220,8 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    final d = DateTime(2026, 9, 29);
-    final s = _slot('0929', d, confirmed: 1);
+    final d = _day(1);
+    final s = _slot(_slotId(d), d, confirmed: 1);
     final group = TOGroupItem(singleTO: _to('to1', totalRequired: 1))
       ..setGroupTOs([s])
       ..setSlotDates([d]);
@@ -231,8 +248,8 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    final d = DateTime(2026, 9, 29);
-    final s = _slot('0929', d, confirmed: 1);
+    final d = _day(1);
+    final s = _slot(_slotId(d), d, confirmed: 1);
     final group = TOGroupItem(singleTO: _to('to1', totalRequired: 1))
       ..setGroupTOs([s])
       ..setSlotDates([d]);

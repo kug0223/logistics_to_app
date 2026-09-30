@@ -2371,8 +2371,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
       ToastHelper.showSuccess('도장이 등록되었습니다');
     } catch (e) {
-      if (mounted) ToastHelper.showError('도장 등록에 실패했습니다');
+      // [P4.4B-SEAL-01] 예전에는 원인을 하나로 뭉개고 로그도 남기지 않았다.
+      //   권한 거부·네트워크·서버 거절이 같은 문장이라, 관리자는 다시 눌러야
+      //   하는지 다른 이미지를 골라야 하는지 알 수 없었다.
+      debugPrint('❌ 도장 등록 실패: $e');
+      if (mounted) ToastHelper.showError(_sealErrorMessage(e));
     }
+  }
+
+  /// [P4.4B-SEAL-01] 인감/서명 저장 실패 — 원인별로 다음 행동이 다르다.
+  String _sealErrorMessage(Object e) {
+    if (e is FirebaseFunctionsException) {
+      return switch (e.code) {
+        'unauthenticated' => '로그인이 만료됐어요\n다시 로그인한 뒤 등록해주세요',
+        'permission-denied' => '이 계정에는 날인을 등록할 권한이 없어요',
+        // 서버가 크기·형식을 거절한 경우 — 다시 눌러도 같다.
+        'invalid-argument' => '이미지를 등록할 수 없어요\n더 작고 선명한 이미지로 다시 시도해주세요',
+        'unavailable' || 'deadline-exceeded' =>
+          '네트워크가 불안정해요\n잠시 후 다시 시도해주세요',
+        _ => '등록하지 못했어요\n잠시 후 다시 시도해주세요',
+      };
+    }
+    return '등록하지 못했어요\n잠시 후 다시 시도해주세요';
   }
 
   Future<void> _registerBusinessSignature(
@@ -2398,7 +2418,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
       ToastHelper.showSuccess('서명이 등록되었습니다');
     } catch (e) {
-      if (mounted) ToastHelper.showError('서명 등록에 실패했습니다');
+      // [P4.4B-SEAL-01] 사업주 서명도 도장과 같은 저장 경로(callableSaveSeal)다.
+      debugPrint('❌ 사업주 서명 등록 실패: $e');
+      if (mounted) ToastHelper.showError(_sealErrorMessage(e));
     }
   }
 
@@ -2425,7 +2447,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
       ToastHelper.showSuccess('날인이 삭제되었습니다');
     } catch (e) {
-      if (mounted) ToastHelper.showError('날인 삭제에 실패했습니다');
+      // [P4.4B-SEAL-01] 삭제 실패를 조용히 넘기면 화면은 지워진 것처럼 보이고
+      //   서버에는 남는다 — 다음 계약에 옛 날인이 찍힌다.
+      debugPrint('❌ 날인 삭제 실패: $e');
+      if (mounted) ToastHelper.showError(_sealErrorMessage(e));
     }
   }
 }

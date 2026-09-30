@@ -381,8 +381,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       if (!mounted) return;
 
-      // 계약서 템플릿은 사업장 무관 전역 체크 — 모든 사업장 합산
-      final allTemplates = checks.expand((c) => c.templates).toList();
+      // [P4.4B-TPL-01] 템플릿은 **사업장별**이다 — 합산하지 않는다.
+      //   `checks` 가 이미 사업장별 목록을 들고 있으므로, 아래에서 선택된
+      //   사업장(`sel`)의 것만 본다.
 
       // [HOTFIX HOME.POSTING.ENTRY.1-R1] 사업장 선택 우선순위:
       //   1. widget.initialBusinessId가 approved 목록에 존재 → 반드시 해당 사업장 선택
@@ -413,7 +414,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         //   계약 단계에서 고를 템플릿이 0개인 dead-end가 생긴다.
         //   SelectorDialog 후보와 동일 기준(selectableForNewContract)을 쓴다.
         _contractTemplatesReady = ContractTemplateModel
-            .selectableForNewContract(allTemplates).isNotEmpty;
+            .selectableForNewContract(sel.templates).isNotEmpty;
         _hasLicense = sel.licenseReady;
         _hasSeal = hasSeal;
         // workTypes 미충족 시 결핍 정보 보존 (readiness 안내용)
@@ -487,20 +488,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
     setState(() => _isLoading = true);
     try {
-      // 업무유형: 선택된 사업장 기준 / 계약서: 전역 (모든 사업장 합산)
-      final bizList =
-          _myBusinesses.isNotEmpty ? _myBusinesses : [_selectedBusiness!];
-      final allResults = await Future.wait([
+      // [P4.4B-TPL-01] 업무유형·계약서 **둘 다 선택된 사업장 기준**이다.
+      //
+      //   예전에는 계약서만 전 사업장 합산이었다. 그런데 템플릿은
+      //   `businesses/{id}/contract_templates` **서브컬렉션**이고, 계약 발송
+      //   다이얼로그도 `businessId` 로 그 사업장 것만 고른다. 그래서 A 에만
+      //   템플릿이 있고 B 로 공고를 내면, 준비 완료로 열린 공고에 지원자가
+      //   확정된 **뒤에** 고를 템플릿이 0개인 dead-end 를 만난다.
+      //   바로 위 주석이 경고하던 상황인데, legacy 분류 축만 막혀 있고
+      //   사업장 축은 열려 있었다.
+      final results = await Future.wait([
         _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id),
-        ...bizList
-            .map((b) => _contractTemplateService.getTemplates(b.id)),
+        _contractTemplateService.getTemplates(_selectedBusiness!.id),
       ]);
       if (!mounted) return;
-      final workTypes = allResults[0] as List<BusinessWorkTypeModel>;
-      final allTemplates = allResults
-          .skip(1)
-          .expand((r) => r as List<ContractTemplateModel>)
-          .toList();
+      final workTypes = results[0] as List<BusinessWorkTypeModel>;
+      final selectedTemplates = results[1] as List<ContractTemplateModel>;
       // [5D.2A] license: 선택된 사업장의 canonical OR ownerId legacy — 호출자 uid 아님
       final bool hasLicense = await BusinessPostingReadiness
           .hasLicenseForBusiness(_selectedBusiness!);
@@ -514,7 +517,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         //   계약 단계에서 고를 템플릿이 0개인 dead-end가 생긴다.
         //   SelectorDialog 후보와 동일 기준(selectableForNewContract)을 쓴다.
         _contractTemplatesReady = ContractTemplateModel
-            .selectableForNewContract(allTemplates).isNotEmpty;
+            .selectableForNewContract(selectedTemplates).isNotEmpty;
         _hasLicense = hasLicense;
         _hasSeal = up.isSubAdmin
             ? true

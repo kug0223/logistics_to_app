@@ -149,10 +149,16 @@ void main() {
     test('LOS-35 CreateTO가 isNotEmpty 단독 판정을 쓰지 않는다', () {
       final src = _source(
           'lib/screens/business_admin/to_management/create_to_screen.dart');
-      expect(src.contains('_contractTemplatesReady = allTemplates.isNotEmpty'),
-          false,
-          reason: 'legacy 템플릿만 있어도 준비 완료로 판정되던 코드가 남아 있음');
-      expect(src.contains('selectableForNewContract(allTemplates)'), true);
+      // [R7-P4.4B] 갱신. 규칙은 그대로다 — **목록이 비어 있지 않다** 만으로
+      //   판정하지 않고 `selectableForNewContract` 를 거친다(legacy outsource
+      //   만 있는 사업장을 준비 완료로 보지 않는다).
+      //   바뀐 것은 그 목록의 **범위**다: 전 사업장 합산 변수(`allTemplates`)가
+      //   사라지고 선택 사업장의 것(`sel.templates` / `selectedTemplates`)을
+      //   쓴다. 이 셀이 변수 이름에 묶여 있었으므로 규칙으로 옮긴다.
+      expect(src.contains('.isNotEmpty;\n        _hasLicense'), false,
+          reason: '목록 비어있음 단독 판정으로 돌아가면 legacy 만 있어도 통과한다');
+      expect(src.contains('selectableForNewContract(sel.templates)'), true);
+      expect(src.contains('selectableForNewContract(selectedTemplates)'), true);
     });
   });
 

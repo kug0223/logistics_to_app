@@ -2,6 +2,75 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4B** (CP7 authority + CP4~6 writer)
+
+## 0-AAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4B
+
+기준 `834348d`. **CODE/contract 감사만** — 실기기 미실행, DEVICE 승격 없음.
+
+### A. CP7 authoritative policy — **A 로 확정**
+
+템플릿·인감은 **공고 prerequisite** 다. 근거: 없으면 지원자가 **확정된 뒤에**
+계약 dead-end 가 되고, 그 비용은 근로자가 치른다. 계약 발송 경로가 두 조건을
+이미 강제한다(`ContractTemplateSelectorDialog` → 인감 확인 → `설정으로 이동`).
+
+| prerequisite | Home | CreateTO client | server writer | 최종 정책 |
+|---|---|---|---|---|
+| 승인 | ✔ | ✔ | ✔ | 필수 |
+| 등록증 | ✔ | ✔(선택 사업장) | ✔ | 필수 |
+| 업무 | ✔(identity 보존) | ✔(선택 사업장) | ✔ | 필수 |
+| 템플릿 | ✔ **사업장별로 수정** | ✔ **사업장별로 수정** | **없음** | 필수 — 서버 확장 잔여 |
+| 인감/서명 | ✔ | ✔(SubAdmin 면제) | **없음** | 필수 — 서버 확장 잔여 |
+
+서버 확장은 `callableCreateTO`·`callablePublishTO` 두 곳이고 `callableUpdateTO` 는
+**제외**해야 한다(legacy TO 수정까지 막힌다). CF 배포가 사용자 승인 사항이라
+이번에 코드를 바꾸지 않고 `[R7-P4.4B-RESIDUAL-SERVER-POSTING-PARITY]` 로 남겼다.
+현재 서버가 보는 것은 `CP7-01` 셀이 사실로 고정한다.
+
+### B. CP4 업무 — `[P4.4B-WT-01]` CORRECTION 수정
+
+writer `businesses/{id}/workTypes.add()` · `isActive:true` · `displayOrder=기존 수` ·
+`createdAt` serverTimestamp. **사업장 binding 은 구조적으로 보장**(서브컬렉션).
+읽기 실패는 `rethrow`(ERROR≠ZERO 유지).
+
+**같은 이름 활성 업무 중복이 막혀 있지 않았다.** 새 정책이 아니라 이미 시스템이
+깐 전제다 — 서버 `assertWorkTypesInBusiness` 가 **이름으로** 대조하고
+공고·지원 snapshot 도 이름을 저장하므로 같은 이름 문서 둘은 downstream 에서
+구별할 수 없다. → 등록 차단 + 중복은 "실패" 가 아니라 고칠 수 있는 입력 문제로 안내.
+
+### C. CP5 템플릿 — `[P4.4B-TPL-01]` **BLOCKER 수정**
+
+템플릿은 `businesses/{id}/contract_templates` **서브컬렉션**이고 계약 발송도
+`businessId` 로 그 사업장 것만 고른다. 그런데 readiness 판정만 **전 사업장 합산**
+이었다(Home·CreateTO 둘 다). → A 에만 템플릿이 있는데 **B 로 공고를 낼 수 있고,
+지원자가 확정된 뒤에** 고를 템플릿이 0개인 dead-end 를 만난다.
+같은 파일 주석이 바로 그 상황을 경고했는데, legacy 분류 축만 막고 **사업장 축은
+열려 있었다.** → 양쪽 다 사업장별 판정.
+
+`selectableForNewContract` = `templateType ∈ {daily, period}` — **active/deleted/
+version 축은 이 모델에 없다.** 템플릿 수정은 기존 계약을 소급 변경하지 않는다
+(계약이 `articles` 를 **복사해 동결**, `templateId` 참조 아님) → NO PATCH.
+
+### D. CP6 인감/서명 — `[P4.4B-SEAL-01]` CORRECTION 수정
+
+**authority 는 `users/{uid}.sealBase64` 하나다.** Home readiness 와 계약 생성이
+같은 필드를 읽는다(§14 의심 해소 — `businesses.sealUrl` 같은 분리 없음).
+`business_model.dart` 에 "`sealBase64` 는 `users/{uid}` 문서에만 저장한다" 는
+분리 완료 결정이 남아 있다. **사업자 계정 단위**이고 사업장 단위가 아니다.
+
+**P4.3B 의 cache-path 구조가 아니다** — 도장은 picker 를 쓰지만 **즉시
+`readAsBytes()`** 로 읽어 base64 로 넘기고, 서명은 캔버스 → bytes 다.
+파일 경로를 화면 사이로 들고 다니지 않는다 → **staging 불필요, NO PATCH.**
+
+고친 것: 저장·삭제 실패가 원인 구별 없이 한 문장이었고 **로그도 남지 않았다.**
+→ `FirebaseFunctionsException.code` 별 안내 + 세 경로 모두 로그.
+
+### 잔여
+
+- `[P4.4-BUSINESS-IDENTITY-AUTHORITY]` — **사용자 결정 반영됨**(전역 unique 금지)
+- `[R7-P4.4B-RESIDUAL-SERVER-POSTING-PARITY]` — 서버 gate 확장(배포 승인 필요)
+- CP8/9 첫 공고 writer·projection — **미착수**
+
 > 마지막 갱신: 2026-09-29 · 기준 HEAD: **R7-P4.4 CP0/1/7** (first-run golden path)
 
 ## 0-AAA. IN PROGRESS — R7-P4.4 first-run golden path

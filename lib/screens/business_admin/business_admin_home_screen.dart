@@ -463,17 +463,37 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ? <String, BusinessPostingReadiness>{}
         : await _reads.postingReadiness(approvedBizs);
 
-    // [FP-01] 계약서 템플릿은 관리자 보유분 전체 합산 — CreateTO와 동일 semantics.
-    //   (템플릿 소유 모델은 이번에 바꾸지 않는다)
+    // [P4.4B-TPL-01] 계약서 템플릿은 **사업장별**이다 — 합산하지 않는다.
+    //
+    //   템플릿은 `businesses/{id}/contract_templates` 서브컬렉션이고, 계약
+    //   발송 다이얼로그도 그 사업장 것만 고른다. 예전에는 여기서 전 사업장을
+    //   합산해 하나라도 있으면 완료로 봤다. 그러면 A 에만 템플릿이 있는데
+    //   B 로 공고를 낼 수 있게 되고, 지원자가 확정된 **뒤에** 고를 템플릿이
+    //   0개인 dead-end 를 만난다.
+    //
+    //   판정 기준:
+    //     · 공고를 낼 수 있는 사업장(isReady)이 있으면 → **그 사업장**의 템플릿
+    //       (CreateTO 가 실제로 쓰는 것과 같은 사실)
+    //     · 아직 없으면(승인 전 등) → 아무 사업장이라도 템플릿이 있으면 완료
+    //       로 표시한다. 이 단계에서 이 칸은 진행도 표시이고, 실제 차단은
+    //       CreateTO 가 선택 사업장 기준으로 한다.
     var hasTemplate = false;
     if (_businesses.isNotEmpty) {
       try {
         final lists = await Future.wait(
           _businesses.map((b) => _reads.contractTemplates(b.id)),
         );
-        hasTemplate = ContractTemplateModel.selectableForNewContract(
-          lists.expand((l) => l),
-        ).isNotEmpty;
+        bool selectable(int i) => ContractTemplateModel
+            .selectableForNewContract(lists[i])
+            .isNotEmpty;
+
+        final postable = <int>[];
+        for (var i = 0; i < _businesses.length; i++) {
+          if (readinessMap[_businesses[i].id]?.isReady == true) postable.add(i);
+        }
+        hasTemplate = postable.isNotEmpty
+            ? postable.any(selectable)
+            : List.generate(lists.length, (i) => i).any(selectable);
       } catch (e) {
         // 조회 실패 시 "준비됨"으로 올리지 않는다 — CreateTO가 최종 gate다.
         debugPrint('⚠️ [readiness] 계약서 템플릿 조회 실패: $e');

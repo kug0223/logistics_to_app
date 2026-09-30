@@ -117,10 +117,26 @@ void main() {
       // outsource-only는 미완료여야 한다 — 판정 함수가 이를 보장한다(5.11 테스트).
     });
 
-    test('FPR-11 템플릿 소유 모델을 바꾸지 않았다 (전 사업장 합산)', () {
+    test('FPR-11 템플릿 판정은 선택 사업장 기준이다', () {
+      // [R7-P4.4B TPL-01] 갱신. 이 셀은 원래 "전 사업장 합산" 이라는 **모양**을
+      //   고정하고 있었고, 그때는 "소유 모델을 건드리지 않았다" 는 뜻이었다.
+      //   P4.4B 에서 그 모양이 실제로 틀렸다는 반례를 찾았다:
+      //
+      //     템플릿은 `businesses/{id}/contract_templates` 서브컬렉션이고
+      //     계약 발송도 `businessId` 로 그 사업장 것만 고른다. 그런데 판정만
+      //     합산이라, A 에만 템플릿이 있고 B 로 공고를 내면 **지원자가 확정된
+      //     뒤에** 고를 템플릿이 0개인 dead-end 를 만난다.
+      //
+      //   소유 모델(서브컬렉션)은 여전히 바꾸지 않았다 — 바꾼 것은 **판정
+      //   범위**다. 기대값을 그 사실로 옮긴다.
       final createTo = _source(
           'lib/screens/business_admin/to_management/create_to_screen.dart');
-      expect(createTo.contains('selectableForNewContract(allTemplates)'), true);
+      expect(createTo.contains('selectableForNewContract(allTemplates)'), false,
+          reason: '합산으로 돌아가면 그 dead-end 가 다시 열린다');
+      expect(createTo.contains('selectableForNewContract(sel.templates)'), true);
+      // 소유 모델 자체는 그대로 사업장 서브컬렉션이다.
+      final svc = _source('lib/services/contract_template_service.dart');
+      expect(svc.contains(".collection('contract_templates')"), true);
     });
   });
 

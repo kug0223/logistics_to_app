@@ -306,6 +306,21 @@ extension BusinessFirestore on FirestoreService {
       final existingTypes = await getBusinessWorkTypes(businessId);
       final order = displayOrder ?? existingTypes.length;
 
+      // [P4.4B-WT-01] 같은 사업장에 같은 이름의 활성 업무를 두 개 만들지 않는다.
+      //
+      //   새 정책이 아니라, 이미 시스템이 깔고 있는 전제를 지키는 것이다 —
+      //   서버 `assertWorkTypesInBusiness` 는 제출된 업무를 **이름으로**
+      //   대조하고(`validNames.has(name)`), 공고·지원 snapshot 도 업무를
+      //   이름으로 저장한다. 그래서 같은 이름 문서가 둘이면 downstream 에서
+      //   어느 쪽인지 구별할 방법이 없다(임금·아이콘이 달라도 마찬가지다).
+      //
+      //   비활성 업무는 보지 않는다 — 서버 대조도 active 만 본다.
+      final normalized = name.trim();
+      if (existingTypes
+          .any((w) => w.name.trim() == normalized)) {
+        throw StateError('같은 이름의 업무가 이미 있습니다: $normalized');
+      }
+
       final workType = BusinessWorkTypeModel(
         id: '',
         businessId: businessId,
@@ -332,7 +347,12 @@ extension BusinessFirestore on FirestoreService {
       return docRef.id;
     } catch (e) {
       debugPrint('❌ [FirestoreService] 업무 유형 추가 실패: $e');
-      ToastHelper.showError('업무 유형 추가에 실패했습니다');
+      // [P4.4B-WT-01] 중복 이름은 "실패" 가 아니라 **고칠 수 있는 입력 문제**다.
+      //   같은 문장으로 뭉개면 관리자는 네트워크 탓인 줄 알고 같은 이름으로
+      //   계속 다시 누른다.
+      ToastHelper.showError(e is StateError
+          ? '같은 이름의 업무가 이미 있습니다\n다른 이름으로 등록해주세요'
+          : '업무 유형 추가에 실패했습니다');
       return null;
     }
   }
