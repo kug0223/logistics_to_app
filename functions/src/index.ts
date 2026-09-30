@@ -22686,6 +22686,64 @@ async function evaluatePostingReadinessFirestore(
   return null;
 }
 
+/**
+ * [P4.4C.2] 이 사업장이 **새 지원을 받아도 되는 상태**인가.
+ *
+ * 확정된 정책: 지원 = 관심 / 확정 = 약속. 확정 이후에 관리자에게 계약
+ * 준비를 다시 요구하고 근로자를 계약 대기로 세워 두지 않는다.
+ *
+ * 그런데 공고를 만들 때만 readiness 를 봤다. 만든 뒤 계약서 템플릿이나
+ * 사업주 날인이 지워지면 공고는 그대로 모집을 계속하고, 지원자는 확정까지
+ * 받은 다음 계약 단계에서 막혔다 — 정책이 금지한 바로 그 상태다.
+ *
+ * 그래서 **새 관심을 받는 지점**에서 막는다. 이미 확정된 약속·계약·근태·
+ * 급여는 건드리지 않고, 공고를 자동으로 내리지도 않는다(자동 side effect
+ * 를 만들지 않는다 — 복구 후 누가 다시 켜는지가 또 다른 정책이 된다).
+ *
+ * 보는 축이 생성 gate 와 다른 이유:
+ *   · 승인/비활성 — 이미 읽은 사업장 문서로 공짜.
+ *   · 템플릿·사업주 날인 — 없으면 **확정 후 계약을 만들 수 없다.** 막아야 한다.
+ *   · 활성 업무 — 공고가 자기 workDetails 를 이미 들고 있으므로 지금 지원을
+ *     막을 이유가 아니다.
+ *   · 사업자등록증 — Storage 객체를 지우는 writer 가 제품에 없다(client rules
+ *     `delete: if false`, CF 삭제 경로도 license 를 대상에 넣지 않는다).
+ *     지원 경로마다 Storage 를 부르지 않는다.
+ *
+ * 근로자에게는 고용주 설정 내부를 알려주지 않는다.
+ *
+ * @param {string} bizId 대상 사업장 id
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서 데이터
+ * @return {Promise<void>} 받을 수 없으면 throw
+ */
+async function assertBusinessCanAcceptApplications(
+  bizId: string,
+  bizData: FirebaseFirestore.DocumentData | undefined,
+): Promise<void> {
+  const notAccepting = "지금은 지원을 받지 않는 공고예요.\n잠시 후 다시 확인해주세요.";
+  if (!bizData?.isApproved || bizData?.deactivatedAt) {
+    throw new HttpsError("failed-precondition", notAccepting);
+  }
+  const tplSnap = await db
+    .collection("businesses").doc(bizId)
+    .collection("contract_templates")
+    .where("templateType", "in", ["daily", "period"])
+    .limit(1)
+    .get();
+  if (tplSnap.empty) {
+    console.warn(
+      "[apply] 계약서 템플릿 없음 — 신규 지원 차단 biz=" + bizId
+    );
+    throw new HttpsError("failed-precondition", notAccepting);
+  }
+  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
+  if (!ownerId) throw new HttpsError("failed-precondition", notAccepting);
+  const ownerSnap = await db.collection("users").doc(ownerId).get();
+  const ownerSeal = ownerSnap.data()?.sealBase64;
+  if (typeof ownerSeal !== "string" || ownerSeal.length === 0) {
+    console.warn("[apply] 사업주 날인 없음 — 신규 지원 차단 biz=" + bizId);
+    throw new HttpsError("failed-precondition", notAccepting);
+  }
+}
 /** [P4.4C.1] `db` 와 `transaction` 을 같은 모양으로 쓰기 위한 reader. */
 interface PostingReadinessReader {
   getDoc(
@@ -35167,6 +35225,24 @@ export const callableApplyToTO = onCall(
     if (!toData["isPublished"]) {
       throw new HttpsError("permission-denied", "아직 공개되지 않은 공고입니다.");
     }
+
+    // [P4.4C.2] 이 사업장이 지금 **새 지원을 받아도 되는 상태**인가.
+    //
+    //   공고를 만들 때만 readiness 를 봤다. 만든 뒤 계약서 템플릿이나
+    //   사업주 날인이 지워지면 공고는 그대로 모집을 계속했고, 지원자는
+    //   확정(=약속)까지 받은 다음 계약 단계에서 막혔다 — 확정 이후에
+    //   계약 준비를 다시 요구하지 않는다는 정책이 금지한 상태다.
+    //
+    //   TO 상태 검사를 모두 통과한 뒤에 본다 — 어차피 거부될 지원에
+    //   조회를 쓰지 않기 위해서다.
+    const applyBizSnap =
+      await db.collection("businesses").doc(businessId).get();
+    if (!applyBizSnap.exists) {
+      throw new HttpsError("not-found", "사업장 정보를 찾을 수 없습니다.");
+    }
+    await assertBusinessCanAcceptApplications(
+      businessId, applyBizSnap.data()
+    );
     // [SYSTEM-INTEGRATION-R2.2] FULL은 **모집 단위**의 상태다.
     //
     //   FLEX 공고는 날짜마다 슬롯이 따로 있고 자리도 날짜마다 따로 센다.
