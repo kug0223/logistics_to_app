@@ -32,6 +32,7 @@ import 'package:provider/provider.dart';
 import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
+import '../../services/business_posting_readiness.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/admin_business_scope_label.dart';
 import '../../utils/admin_tab_switcher.dart';
@@ -185,15 +186,34 @@ class _JobsRootScreenState extends State<JobsRootScreen>
         bottom: false,
         child: ChangeNotifierProvider.value(
           value: _controller,
-          child: Column(
+          child: ValueListenableBuilder<FirstPostingReadiness?>(
+            valueListenable: FirstPostingReadinessBroadcast.current,
+            builder: (ctx, readiness, _) {
+              final setupRequired = readiness != null && !readiness.allReady;
+              return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // 헤더: 제목 + 필터 + 공고등록 + scope chip
               // Consumer<WorkforceController>가 내부에서 context를 해석 — provider scope 안
-              _buildHeader(s),
-              // 공고 목록 (진행중/마감됨 탭 포함)
-              Expanded(child: WorkforceListView(targetToId: _targetToId)),
-            ],
+              _buildHeader(s, setupRequired),
+              // [R7-P4.4E.2] 준비가 끝나지 않았으면 운영 목록을 그리지 않는다.
+              //
+              //   예전에는 사업장이 생기는 순간 바로 "진행중 0 / 등록된 공고가
+              //   없습니다 / + 새 공고 등록" 으로 들어갔다. 그런데 Home 은 같은
+              //   시점에 "공고 등록까지 3단계 남았어요" 라고 말하고 있었고,
+              //   실제로 + 를 눌러도 서버 gate 에서 막힌다. 사용자를 할 수 없는
+              //   행동으로 안내한 것이다.
+              //
+              //   `null` 은 **아직 모른다**는 뜻이라 지금 화면을 바꾸지 않는다 —
+              //   모르는 동안 setup 을 그리면 준비가 끝난 관리자에게 거짓이 된다.
+              Expanded(
+                child: setupRequired
+                    ? _JobsSetupRequiredView(readiness: readiness, scale: s)
+                    : WorkforceListView(targetToId: _targetToId),
+              ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -203,7 +223,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   // ─────────────────────────────────────────────────────────────
   // 헤더 — white base, Home 디자인 언어 통일
   // ─────────────────────────────────────────────────────────────
-  Widget _buildHeader(double s) {
+  Widget _buildHeader(double s, bool setupRequired) {
     return Container(
       color: Colors.white,
       padding: EdgeInsets.fromLTRB(20 * s, 12 * s, 12 * s, 10 * s),
@@ -242,9 +262,14 @@ class _JobsRootScreenState extends State<JobsRootScreen>
               // [CROSS-DOMAIN-R5.1F.5] bool이 아니라 4상태를 구독한다 —
               //   허용 값은 그대로인데 전송 상태만 나빠진 전이(verified→error)도
               //   선택값을 바꾸므로 여기까지 닿는다. allowed만 통과시킨다.
+              // [R7-P4.4E.2 §11] 준비가 끝나지 않았으면 이 버튼을 **없앤다.**
+              //   disabled 로 두면 왜 안 되는지 말하지 못하고, 같은 화면에 이미
+              //   '준비 단계 보기' 가 있으므로 두 번째 recovery 를 겹치지 않는다.
+              //   readiness 를 아직 모르면(null) 지금 동작을 바꾸지 않는다.
               if (context.select<UserProvider, PermissionCheck>(
-                      (p) => p.checkCurrentBusiness((x) => x.canManageTo)) ==
-                  PermissionCheck.allowed)
+                          (p) => p.checkCurrentBusiness((x) => x.canManageTo)) ==
+                          PermissionCheck.allowed &&
+                  !setupRequired)
                 _JobsCreateButton(
                   scale: s,
                   onTap: () {
@@ -446,6 +471,85 @@ class _JobsCreateButton extends StatelessWidget {
               size: 20 * scale,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// [R7-P4.4E.2 §7] 공고 root 의 준비 미완료 surface.
+///
+///   Home 이 setup owner 다(P4.2C). 그래서 여기서는 **같은 목록을 다시
+///   나열하지 않는다** — 무엇이 남았는지 짧게 말하고 Home 으로 보낸다.
+///   Home 과 별도의 task owner 가 되면 두 곳이 서로 다른 개수를 말하게 된다.
+class _JobsSetupRequiredView extends StatelessWidget {
+  const _JobsSetupRequiredView({required this.readiness, required this.scale});
+
+  final FirstPostingReadiness? readiness;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = readiness;
+    final remaining =
+        r == null ? 0 : FirstPostingReadiness.totalTasks - r.completedCount;
+    final s = scale;
+
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 24 * s),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56 * s,
+              height: 56 * s,
+              decoration: BoxDecoration(
+                color: AppColors.info.withValues(alpha: 0.10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.checklist_rounded,
+                  size: 28 * s, color: AppColors.info),
+            ),
+            SizedBox(height: 16 * s),
+            Text(
+              '아직 공고를 등록할 준비가 끝나지 않았어요',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+                letterSpacing: -0.3,
+              ),
+            ),
+            SizedBox(height: 8 * s),
+            Text(
+              remaining > 0
+                  ? '$remaining가지 준비가 남아 있습니다.\n준비를 마치면 공고를 등록할 수 있어요.'
+                  : '준비 상태를 확인해 주세요.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            SizedBox(height: 20 * s),
+            // 목적지는 Home — readiness 카드가 첫 화면 상단에 있으므로
+            // 별도 deep-link 대상을 새로 만들지 않는다(§17).
+            FilledButton(
+              onPressed: () =>
+                  AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.info,
+                padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 12 * s),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('준비 단계 보기',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
+          ],
         ),
       ),
     );

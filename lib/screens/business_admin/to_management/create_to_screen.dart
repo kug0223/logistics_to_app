@@ -40,23 +40,8 @@ import 'widgets/to_widgets.dart';
 import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../common/settings_screen.dart';
-import '../contract_template_list_screen.dart';
-import '../work_type_management_screen.dart';
-import '../Business_form_screen.dart';
 import '../../common/notification_screen.dart';
 import '../../../widgets/common/notification_badge.dart';
-
-/// 사업장별 사전조건 충족 여부 — [5D.2A] licenseReady 추가
-class _BizReadiness {
-  final BusinessModel business;
-  final bool workTypesReady;
-  final bool licenseReady;
-  const _BizReadiness({
-    required this.business,
-    required this.workTypesReady,
-    required this.licenseReady,
-  });
-}
 
 class AdminCreateTOScreen extends StatefulWidget {
   /// [HOTFIX HOME.POSTING.ENTRY.1-R1] caller context 상속용 optional 파라미터.
@@ -113,14 +98,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final _contractTemplateService = ContractTemplateService();
 
   // 사전조건 상태 — 3가지 모두 충족돼야 공고 등록 가능
-  bool _hasAnyBusiness = false;
   bool _businessApproved = false;
   bool _workTypesReady = false;
   bool _contractTemplatesReady = false;
   bool _formUnlocked = false;        // 한번 true가 되면 항상 폼 표시 (일방향 래치)
   bool _hasLicense = false;           // 사업자등록증 등록 여부
   bool _hasSeal = false;              // 인감/서명 등록 여부 (SubAdmin 면제)
-  List<_BizReadiness> _businessReadinessList = []; // 멀티 사업장 결핍 정보
 
   /// [APPROVAL-RECOVERY] 미승인 상태인 내 사업장.
   /// 자동 승인은 생성 시 1회만 실행되므로, 그때 Storage 확인이 실패하면
@@ -130,10 +113,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _isRecheckingApproval = false;
 
   /// [FP-03] 계약서 템플릿을 저장할 사업장.
-  /// 템플릿 작성은 사업장 승인과 무관하므로 미승인 사업장도 대상이 된다.
-  /// 저장 위치는 필요하므로 사업장이 하나도 없으면 null.
-  String? get _templateTargetBusinessId =>
-      _selectedBusiness?.id ?? _unapprovedBusinesses.firstOrNull?.id;
   bool get _allPrerequisitesMet =>
       _businessApproved && _workTypesReady && _contractTemplatesReady &&
       _hasLicense && _hasSeal;
@@ -316,13 +295,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             .firstOrNull;
         if (initBizFromAll != null && !initBizFromAll.isApproved) {
           setState(() {
-            _hasAnyBusiness = true;
             _businessApproved = false;
             _workTypesReady = false;
             _contractTemplatesReady = false;
             _hasLicense = false;
             _hasSeal = prospectiveOwnerSeal;
-            _businessReadinessList = [];
             _selectedBusiness = initBizFromAll;
             _myBusinesses = [];
             // [APPROVAL-RECOVERY] 이 사업장만 재확인 대상
@@ -335,13 +312,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       if (approvedBusinesses.isEmpty) {
         setState(() {
-          _hasAnyBusiness = allBusinesses.isNotEmpty;
           _businessApproved = false;
           _workTypesReady = false;
           _contractTemplatesReady = false;
           _hasLicense = false;
           _hasSeal = prospectiveOwnerSeal;
-          _businessReadinessList = [];
           // [APPROVAL-RECOVERY] 승인 상태를 다시 확인할 대상 보관
           _unapprovedBusinesses =
               allBusinesses.where((b) => !b.isApproved).toList();
@@ -357,20 +332,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       //   - 계약서 템플릿: 전역 합산
       final checks = await Future.wait(
         approvedBusinesses.map((biz) async {
-          // License: canonical 먼저, 없으면 ownerId 기준 legacy
-          bool licenseReady = biz.businessLicenseImageUrl?.isNotEmpty == true;
-          if (!licenseReady && biz.ownerId.isNotEmpty) {
-            try {
-              final ownerSnap = await FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(biz.ownerId)
-                  .get();
-              licenseReady =
-                  (ownerSnap.data()?['businessLicenseImageUrl'] as String?)
-                          ?.isNotEmpty ==
-                      true;
-            } catch (_) {}
-          }
+          // [R7-P4.4E.2 BLOCKER] 여기서 license 를 **다시 판정하고 있었다.**
+          //
+          //   이 인라인 술어는 owner 문서에서 `businessLicenseImageUrl`(레거시
+          //   URL)만 봤다. 그런데 서버가 기록하는 canonical 은
+          //   `businessLicenseImagePath` 이고, `callableRegisterBusinessLicense`
+          //   는 등록 시 레거시 URL 을 **지운다**. 그래서 신규 등록 사업장은
+          //   Home 과 서버가 모두 READY 라고 하는데 이 화면만 "사업자등록증
+          //   미등록" 이라고 말했다 — 같은 사업장, 같은 등록증, 다른 진실.
+          //
+          //   같은 파일 안에서도 다른 자리(`hasLicenseForBusiness`)는 이미
+          //   공용 resolver 를 쓰고 있었다. 술어를 한 벌로 합친다.
+          final bool licenseReady =
+              await BusinessPostingReadiness.hasLicenseForBusiness(biz);
 
           // [P4.4C-SEAL-02] 고용주 날인 — 이 사업장 owner 의 것.
           bool employerSeal = false;
@@ -429,7 +403,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _myBusinesses = approvedBusinesses;
         _selectedBusiness = sel.business;
         _businessWorkTypes = sel.workTypes;
-        _hasAnyBusiness = true;
         _businessApproved = true;
         _workTypesReady = selWorkTypesReady;
         // [5.11] 신규 계약에 실제로 쓸 수 있는 템플릿 기준으로 판정한다.
@@ -441,15 +414,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _hasLicense = sel.licenseReady;
         _hasSeal = sel.employerSeal;
         // workTypes 미충족 시 결핍 정보 보존 (readiness 안내용)
-        _businessReadinessList = selWorkTypesReady
-            ? []
-            : checks
-                .map((c) => _BizReadiness(
-                      business: c.business,
-                      workTypesReady: c.workTypes.isNotEmpty,
-                      licenseReady: c.licenseReady,
-                    ))
-                .toList();
         if (_allPrerequisitesMet) _formUnlocked = true;
         _isLoading = false;
       });
@@ -561,7 +525,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _hasSeal = employerSeal;
         if (_allPrerequisitesMet) {
           _formUnlocked = true;
-          _businessReadinessList = [];
         }
         _isLoading = false;
       });
@@ -1617,15 +1580,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 공고 등록 사전조건 체크 화면 — 3가지를 한 번에 보여줌
   // [SCAFFOLD_MIGRATION] Scaffold → AppPageScaffold (prerequisite state)
+  /// [R7-P4.4E.2 §15] 남은 개수는 **Home 이 센 것**을 그대로 쓴다.
+  ///
+  ///   여기서 다시 세면 두 화면이 다른 숫자를 말한다(실제로 4 vs 5 였다).
+  ///   Home 이 아직 계산하지 않았으면 숫자를 지어내지 않는다.
+  String _pendingSetupSentence() {
+    final r = FirstPostingReadinessBroadcast.current.value;
+    if (r == null || r.allReady) {
+      return '준비 상태를 확인한 뒤 공고를 등록할 수 있습니다.';
+    }
+    final remaining = FirstPostingReadiness.totalTasks - r.completedCount;
+    return '아직 $remaining가지 준비가 남아 있습니다.\n준비를 마치면 공고를 등록할 수 있어요.';
+  }
+
   Widget _buildPrerequisiteScreen() {
     final theme = Theme.of(context);
-    final isSubAdmin =
-        context.read<UserProvider>().isSubAdmin;
-    // [AUTHZ.2] canManageContract — OWNER는 항상 true, SUB_ADMIN은 권한 확인
-    final canManageContract =
-        context.read<UserProvider>().checkCurrentBusiness((p) => p.canManageContract) ==
-            PermissionCheck.allowed;
-    final cardCount = isSubAdmin ? 4 : 5;
     return AppPageScaffold(
       title: '공고 등록',
       actions: [_buildNotificationAction()],
@@ -1634,192 +1603,73 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 안내 헤더
+            // [R7-P4.4E.2 §15] 준비 항목을 여기서 **다시 나열하지 않는다.**
+            //
+            //   예전에는 이 화면이 큰 카드 5개로 Home 과 똑같은 체크리스트를
+            //   한 번 더 소유했다. 그래서 같은 사업장을 두고 Home 은 "4가지 중
+            //   1개 완료", 이 화면은 "5가지" 라고 말했고, 서버의 기술 축
+            //   (사업자등록증)이 사용자 task 로 한 번 더 노출됐다.
+            //
+            //   Home 이 setup owner 다(P4.2C). 여기는 **gate + 돌아갈 길**만
+            //   맡는다. 무엇이 남았는지는 Home 한 곳에서만 센다.
             Container(
               width: double.infinity,
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 18)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withValues(alpha: 0.08),
+                color: theme.primaryColor.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: theme.primaryColor.withValues(alpha: 0.2)),
+                border:
+                    Border.all(color: theme.primaryColor.withValues(alpha: 0.18)),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.checklist_rounded,
-                      color: theme.primaryColor,
-                      size: ResponsiveHelper.iconSize(context, 28)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('공고 등록 전 준비사항',
+                  Row(
+                    children: [
+                      Icon(Icons.checklist_rounded,
+                          color: theme.primaryColor,
+                          size: ResponsiveHelper.iconSize(context, 24)),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                      Expanded(
+                        child: Text('공고 등록 준비가 필요해요',
                             style: ResponsiveHelper.subtitleStyle(context)
                                 .copyWith(fontWeight: FontWeight.bold)),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        Text('아래 $cardCount가지를 모두 완료해야 공고를 등록할 수 있습니다.',
-                            style: ResponsiveHelper.smallStyle(context,
-                                color: AppColors.grey600)),
-                      ],
-                    ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  Text(
+                    _pendingSetupSentence(),
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey600),
                   ),
                 ],
               ),
             ),
 
-            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-            // 멀티 사업장 결핍 현황 (어느 사업장도 미충족인 경우)
-            if (_businessReadinessList.length > 1) ...[
-              _buildBusinessDeficitCard(),
-              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-            ],
-
-            // ① 사업장 등록 & 승인
-            // [PH-READINESS-A] SUB_ADMIN은 사업장 자체를 등록할 수 없으므로 CTA 제거
-            _buildPrerequisiteCard(
-              index: 1,
-              title: '사업장 등록 & 승인',
-              isReady: _businessApproved,
-              readyDescription: '승인된 사업장이 있습니다',
-              notReadyDescription: isSubAdmin
-                  ? (_hasAnyBusiness
-                      ? '사업장이 아직 승인되지 않았습니다.\n사업장 관리자에게 문의해주세요.'
-                      : '관리 중인 사업장이 없습니다.\n사업장 관리자에게 문의해주세요.')
-                  : (_hasAnyBusiness
-                      ? '사업장이 아직 승인되지 않았습니다.\n관리자 승인을 기다려주세요.'
-                      : '사업장이 등록되어 있지 않습니다.'),
-              actionLabel: isSubAdmin ? null : (_hasAnyBusiness ? null : '사업장 등록하기'),
-              onAction: isSubAdmin
-                  ? null
-                  : (_hasAnyBusiness
-                      ? null
-                      : () async {
-                          await NavigationHelper.push<void>(context,
-                              destination: const BusinessFormScreen());
-                          if (!mounted) return;
-                          await _loadMyBusinesses();
-                        }),
-            ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-            // ② 업무목록
-            _buildPrerequisiteCard(
-              index: 2,
-              title: '업무 등록',
-              isReady: _workTypesReady,
-              readyDescription: '업무가 등록되어 있습니다',
-              notReadyDescription: _businessApproved
-                  ? '등록된 업무가 없습니다.'
-                  : '사업장 승인 후 확인 가능합니다.',
-              actionLabel: _businessApproved ? '업무 관리' : null,
-              onAction: _businessApproved
-                  ? () async {
-                      await NavigationHelper.push<void>(context,
-                          destination: WorkTypeManagementScreen(
-                            businessId: _selectedBusiness!.id,
-                            businessName: _selectedBusiness!.name,
-                          ));
-                      if (!mounted) return;
-                      await _reCheckPrerequisites();
-                    }
-                  : null,
-            ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-            // ③ 계약서 템플릿
-            // [AUTHZ.2] SUB_ADMIN canManageContract=false → CTA 제거, 관리자 요청 안내
-            _buildPrerequisiteCard(
-              index: 3,
-              title: '근로계약서 템플릿',
-              isReady: _contractTemplatesReady,
-              // [F-03] 사업자등록증·인감과 나란히 놓여 "제출 서류"처럼 읽히던
-              //   항목이다. 실제로는 앞으로 이 사업장의 계약에 반복해서 쓸
-              //   양식을 미리 한 번 만들어 두는 단계이므로 그 성격과
-              //   재사용 가치를 문구에 담는다. 법령·필수 조항·자동 완성 같은
-              //   표현은 쓰지 않는다 — ALfit은 계약 내용을 대신 확정하지 않는다.
-              readyDescription: '계약서 템플릿이 등록되어 있습니다.\n'
-                  '계약서를 보낼 때 불러와 사용할 수 있어요.',
-              notReadyDescription: !canManageContract
-                  ? '근로계약에 사용할 기본 양식이 필요합니다.\n사업장 관리자에게 준비를 요청해주세요.'
-                  : (_businessApproved
-                      ? '근로계약에 사용할 기본 양식을 만들어 주세요.\n'
-                          '한 번 저장하면 이후 계약에도 계속 사용할 수 있어요.'
-                      : '사업장 승인 후 확인 가능합니다.'),
-              // [FP-03] 사업장 승인 종속 제거 — 계약서 템플릿은 승인과 무관하다.
-              //   Rules도 contract_templates write에 isAdminOf만 요구한다.
-              //   저장 위치가 필요하므로 사업장 존재(미승인 포함)만 조건으로 둔다.
-              actionLabel:
-                  canManageContract && _templateTargetBusinessId != null
-                      ? '템플릿 만들기'
-                      : null,
-              onAction: canManageContract && _templateTargetBusinessId != null
-                  ? () async {
-                      await NavigationHelper.push<void>(
-                        context,
-                        destination: ContractTemplateListScreen(
-                            businessId: _templateTargetBusinessId!),
-                      );
-                      if (!mounted) return;
-                      await _reCheckPrerequisites();
-                    }
-                  : null,
-            ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-            // ④ 사업자등록증
-            // [5D.2] CTA → BusinessFormScreen (canonical: businesses/{bizId}.businessLicenseImageUrl)
-            // [PH-READINESS-A] SUB_ADMIN은 BusinessFormScreen 수정 권한 없음 → CTA 제거, owner 안내 문구
-            _buildPrerequisiteCard(
-              index: 4,
-              title: '사업자등록증',
-              isReady: _hasLicense,
-              readyDescription: '사업자등록증이 등록되어 있습니다',
-              notReadyDescription: isSubAdmin
-                  ? '사업자등록증 등록이 필요합니다.\n사업장 관리자에게 준비 완료를 요청해주세요.'
-                  : '사업자등록증 이미지를 등록해주세요.\n사업장 정보에서 업로드할 수 있습니다.',
-              actionLabel: isSubAdmin
-                  ? null
-                  : (_businessApproved && _selectedBusiness != null
-                      ? '사업장 정보로 이동'
-                      : '설정으로 이동'),
-              onAction: isSubAdmin
-                  ? null
-                  : () async {
-                      await NavigationHelper.push<void>(
-                        context,
-                        destination: _businessApproved && _selectedBusiness != null
-                            ? BusinessFormScreen(business: _selectedBusiness)
-                            : const SettingsScreen(),
-                      );
-                      if (!mounted) return;
-                      await _reCheckPrerequisites();
-                    },
-            ),
-
-            // ⑤ 인감/서명 (SubAdmin 면제 — 비표시)
-            if (!isSubAdmin) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              _buildPrerequisiteCard(
-                index: 5,
-                title: '인감/서명 등록',
-                isReady: _hasSeal,
-                readyDescription: '인감 또는 서명이 등록되어 있습니다',
-                notReadyDescription: '계약서 날인을 위한 인감 또는 서명을 등록해주세요.\n설정 → 내 정보에서 등록할 수 있습니다.',
-                actionLabel: '설정으로 이동',
-                onAction: () async {
-                  await NavigationHelper.push<void>(
-                    context,
-                    destination: const SettingsScreen(),
-                  );
-                  if (!mounted) return;
-                  await _reCheckPrerequisites();
+            // 복구 목적지는 Home 하나다 — 새 navigation 대상을 만들지 않는다.
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).maybePop();
+                  AdminTabSwitcher.instance
+                      .switchToTab(AdminTabSwitcher.homeTab);
                 },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('준비 단계 보기',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
               ),
-            ],
+            ),
 
             SizedBox(height: ResponsiveHelper.spacing(context, 32)),
 
@@ -1872,195 +1722,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildBusinessDeficitCard() {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.store_outlined,
-                  color: AppColors.warning,
-                  size: ResponsiveHelper.iconSize(context, 20)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text('사업장별 준비 현황',
-                  style: ResponsiveHelper.subtitleStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold)),
-            ],
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          ..._businessReadinessList.map((r) => Padding(
-                padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(r.business.name,
-                          style: ResponsiveHelper.bodyStyle(context)
-                              .copyWith(fontWeight: FontWeight.w600),
-                          overflow: TextOverflow.ellipsis),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    _readinessChip(r.licenseReady, '사업자등록증'),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    _readinessChip(r.workTypesReady, '업무'),
-                  ],
-                ),
-              )),
-          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          Text('준비된 사업장이 없습니다. 아래 항목을 완료 후 "다시 확인"을 눌러주세요.',
-              style: ResponsiveHelper.smallStyle(context,
-                  color: AppColors.grey600)),
-        ],
-      ),
-    );
-  }
-
-  Widget _readinessChip(bool ready, String label) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 6),
-        vertical: ResponsiveHelper.spacing(context, 2),
-      ),
-      decoration: BoxDecoration(
-        color: ready
-            ? AppColors.success.withValues(alpha: 0.12)
-            : AppColors.error.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            ready ? Icons.check : Icons.close,
-            size: ResponsiveHelper.iconSize(context, 12),
-            color: ready ? AppColors.success : AppColors.error,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-          Text(label,
-              style: ResponsiveHelper.smallStyle(context,
-                  color: ready ? AppColors.successDark : AppColors.errorDark)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPrerequisiteCard({
-    required int index,
-    required String title,
-    required bool isReady,
-    required String readyDescription,
-    required String notReadyDescription,
-    String? actionLabel,
-    VoidCallback? onAction,
-  }) {
-    final theme = Theme.of(context);
-    final color = isReady ? AppColors.success : AppColors.error;
-
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isReady
-              ? AppColors.success.withValues(alpha: 0.3)
-              : AppColors.grey300,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.grey500.withValues(alpha: 0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // 상태 아이콘
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Icon(
-                isReady ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: color,
-                size: ResponsiveHelper.iconSize(context, 22),
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-
-          // 텍스트
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text('$index.',
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey500)),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Flexible(
-                      child: Text(title,
-                          style: ResponsiveHelper.bodyStyle(context)
-                              .copyWith(fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  isReady ? readyDescription : notReadyDescription,
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: isReady ? AppColors.successDark : AppColors.grey600),
-                ),
-              ],
-            ),
-          ),
-
-          // 이동 버튼 (미완료 항목만)
-          if (!isReady && actionLabel != null && onAction != null) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            TextButton(
-              onPressed: onAction,
-              style: TextButton.styleFrom(
-                foregroundColor: theme.primaryColor,
-                padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 10),
-                    vertical: ResponsiveHelper.spacing(context, 6)),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(actionLabel,
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: theme.primaryColor,
-                          fontWeight: FontWeight.bold)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 2)),
-                  Icon(Icons.arrow_forward_ios,
-                      size: ResponsiveHelper.iconSize(context, 12),
-                      color: theme.primaryColor),
-                ],
-              ),
-            ),
-          ],
-        ],
       ),
     );
   }

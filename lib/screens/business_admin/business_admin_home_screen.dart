@@ -539,6 +539,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       );
       _readinessLoaded = true;
     });
+
+    // [R7-P4.4E.2] 공고 root 가 같은 질문에 자기 술어를 새로 만들지 않도록
+    //   여기서 계산한 결과를 그대로 흘린다. Home 이 owner 라는 P4.2C 결론을
+    //   바꾸지 않는다 — 계산은 여전히 이 한 곳에서만 한다.
+    FirstPostingReadinessBroadcast.publish(_firstPosting!);
   }
 
   // ── [POSTING-V2-02C.1] readiness CTA 대상 사업장 ────────────────
@@ -2114,6 +2119,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               icon: Icons.description_outlined,
               label: '계약서 템플릿',
               lockedHint: '사업장 등록 후 가능',
+              // [R7-P4.4E.2] 이 안내는 원래 CreateTO 사전조건 카드에 있었다.
+              //   그 체크리스트를 Home 으로 일원화하면서 문구까지 사라지면,
+              //   "왜 지금 이걸 만들어야 하는가" 를 말해 주던 자리가 없어진다.
+              //   소유자가 바뀐 것이지 안내가 필요 없어진 것이 아니다.
+              pendingHint: '한 번 만들면 이후 계약에도 계속 사용할 수 있어요',
               onTap: tplTarget == null
                   ? null
                   : () => _safeNavigate(() async {

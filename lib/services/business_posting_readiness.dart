@@ -393,3 +393,25 @@ enum BusinessApprovalRecheck {
   /// 재시도로 해결될 수 있는 상태인가.
   bool get isRetryable => this == temporaryCheckFailed;
 }
+
+/// [R7-P4.4E.2] 첫 공고 준비 상태를 **화면 사이에서 한 벌로** 쓰기 위한 보관소.
+///
+///   Home 이 setup/readiness owner 다(P4.2C 확정). 공고 root 가 같은 질문에
+///   자기 술어를 새로 만들면 두 화면이 같은 사업장을 두고 다른 말을 한다 —
+///   실제로 그랬다: Home 은 "3단계 남았어요", 공고 root 는 "등록된 공고가
+///   없습니다 + 새 공고 등록" 이었다. 사용자는 할 수 없는 행동으로 안내됐다.
+///
+///   그래서 계산은 Home 한 곳에만 두고, 결과만 여기로 흘린다.
+///   `null` 은 **아직 모른다**는 뜻이다 — 준비 미완료가 아니다(§25).
+///   모르는 동안 setup 화면을 그리면, 준비가 끝난 관리자에게 거짓을 말한다.
+class FirstPostingReadinessBroadcast {
+  FirstPostingReadinessBroadcast._();
+
+  static final ValueNotifier<FirstPostingReadiness?> current =
+      ValueNotifier<FirstPostingReadiness?>(null);
+
+  static void publish(FirstPostingReadiness value) => current.value = value;
+
+  /// 로그아웃·계정 전환처럼 이전 사업장의 판정을 이어 쓰면 안 되는 경계.
+  static void clear() => current.value = null;
+}

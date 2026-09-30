@@ -68,7 +68,7 @@ void main() {
       expect(
           s.contains('if (context.select<UserProvider, PermissionCheck>( '
               '(p) => p.checkCurrentBusiness((x) => x.canManageTo)) == '
-              'PermissionCheck.allowed)'),
+              'PermissionCheck.allowed'),
           true);
     });
 

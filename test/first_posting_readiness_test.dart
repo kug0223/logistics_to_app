@@ -172,7 +172,15 @@ void main() {
           'lib/screens/business_admin/to_management/create_to_screen.dart');
       expect(src.contains('canManageContract && _businessApproved'), false,
           reason: '계약서 템플릿 CTA가 여전히 사업장 승인을 요구함');
-      expect(src.contains('_templateTargetBusinessId'), true);
+      // [R7-P4.4E.2] 템플릿 CTA 의 **소유자가 Home 으로 옮겨졌다.**
+      //   CreateTO 의 사전조건 카드를 Home 으로 합치면서 `_templateTargetBusinessId`
+      //   도 함께 사라졌다. 지켜야 할 계약은 파일이 아니라 성질이다 —
+      //   "승인 전에도 템플릿을 만들러 갈 수 있다".
+      final home = _source(
+          'lib/screens/business_admin/business_admin_home_screen.dart');
+      expect(home.contains('_templateCtaBusiness'), true);
+      expect(home.contains('_firstBusinessWhere((r) => r == null)'), true,
+          reason: '마지막 폴백이 미승인 사업장까지 닿아야 승인 종속이 아니다');
       expect(createTo.length, greaterThan(0));
     });
 
@@ -298,7 +306,9 @@ void main() {
               '_businessApproved && _workTypesReady && _contractTemplatesReady &&'),
           true);
       expect(createTo.contains('_hasLicense && _hasSeal'), true);
-      expect(createTo.contains('cardCount = isSubAdmin ? 4 : 5'), true);
+      // [R7-P4.4E.2] 카드 체크리스트는 Home 으로 일원화했다 — CreateTO 가
+      //   같은 목록을 한 번 더 소유하면 두 화면이 다른 개수를 말한다(4 vs 5).
+      //   여기서 지킬 것은 **gate 판정**이지 카드 수가 아니다.
       expect(createTo.contains('if (!_formUnlocked)'), true);
     });
 

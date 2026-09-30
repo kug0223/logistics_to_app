@@ -271,10 +271,16 @@ void main() {
           c.contains(
               '_businessApproved && _workTypesReady && _contractTemplatesReady &&'),
           true);
-      expect(c.contains('cardCount = isSubAdmin ? 4 : 5'), true);
+      // [R7-P4.4E.2] 카드 체크리스트는 Home 으로 일원화했다 — CreateTO 가
+      //   같은 목록을 한 번 더 소유하면 두 화면이 다른 개수를 말한다(4 vs 5).
+      //   여기서 지킬 것은 **gate 판정**이지 카드 수가 아니다.
       expect(c.contains('if (!_formUnlocked)'), true);
-      // R-ADMIN-01은 backlog 유지 — workType CTA는 여전히 승인 의존
-      expect(c.contains('onAction: _businessApproved'), true);
+      // [R7-P4.4E.2] R-ADMIN-01(workType CTA 승인 의존)은 CreateTO 의 사전조건
+      //   카드에 있던 성질이다. 그 카드가 Home 으로 합쳐졌으므로 여기서
+      //   확인할 대상이 아니다 — Home 의 준비 행이 `isActionable` 로
+      //   선행 조건을 판단한다. backlog 자체는 그대로 남는다.
+      expect(c.contains('onAction: _businessApproved'), false,
+          reason: 'CreateTO 는 더 이상 task CTA 를 소유하지 않는다');
     });
 
     test('HRR-53 승인 복구·FP-02 무변경', () {

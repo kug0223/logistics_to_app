@@ -341,14 +341,20 @@ void main() {
 
   // ── §28 readiness IA 미변경 ─────────────────────────────────────
   group('BAR-7x 이번 Phase 범위 밖 불변식', () {
-    test('BAR-70 CreateTO 5개 gate 구조 유지', () {
+    test('BAR-70 CreateTO 5축 gate 유지 — UI 카드가 아니라 판정이다', () {
       final createTo = _source(
           'lib/screens/business_admin/to_management/create_to_screen.dart');
       expect(
           createTo.contains(
               '_businessApproved && _workTypesReady && _contractTemplatesReady &&'),
-          true);
-      expect(createTo.contains('cardCount = isSubAdmin ? 4 : 5'), true);
+          true,
+          reason: '서버 5축 gate 판정은 그대로다');
+      // [R7-P4.4E.2] 예전에는 `cardCount = isSubAdmin ? 4 : 5` 도 함께 고정했다.
+      //   그건 **화면 카드 수**였고, Home 이 세는 사용자 task 4개와 달라
+      //   같은 사업장을 두고 두 화면이 다른 숫자를 말했다. 카드 체크리스트는
+      //   Home 으로 일원화했으므로 여기서는 판정만 지킨다.
+      expect(createTo.contains('_buildPrerequisiteCard'), false,
+          reason: 'CreateTO 는 별도 task owner 가 아니다');
     });
 
     test('BAR-71 홈이 승인 복구를 자동 호출하지 않는다', () {

@@ -201,7 +201,7 @@ void main() {
       expect(
           s.contains('if (context.select<UserProvider, PermissionCheck>( '
               '(p) => p.checkCurrentBusiness((x) => x.canManageTo)) == '
-              'PermissionCheck.allowed)'),
+              'PermissionCheck.allowed'),
           true,
           reason: 'bool을 구독하면 값이 true→true라 다시 그리지 않는다');
       expect(s.contains('p.can((x) => x.canManageTo)'), false);

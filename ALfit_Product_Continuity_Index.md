@@ -2,7 +2,85 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.1A** (신규 등록 차단 해제)
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.2** (setup parity)
+
+## 0-AAAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.2
+
+기준 `a841c40`. **CODE CLOSED · CF 변경 0 · DEVICE RETRY PENDING.**
+
+### 한 사업장, 세 가지 다른 말
+
+실기기에서 같은 사업장을 두고 세 화면이 서로 다른 말을 했다.
+
+| 화면 | 말한 것 | 실제 |
+|---|---|---|
+| Home | "공고 등록까지 3단계 남았어요" (1/4) | 맞음 |
+| 공고 root | "등록된 공고가 없습니다" + `+ 새 공고 등록` | **할 수 없는 행동으로 안내** |
+| CreateTO | 카드 5개 · **사업자등록증 미등록** | **틀림 — 서버는 READY** |
+
+### BLOCKER — 같은 등록증을 두고 다른 진실 (§33)
+
+`create_to_screen` 이 license 를 **인라인으로 다시 판정**하고 있었다. 그 술어는
+owner 문서의 `businessLicenseImageUrl`(레거시 URL)만 봤는데, 서버가 기록하는
+canonical 은 `businessLicenseImagePath` 이고 `callableRegisterBusinessLicense`
+는 등록 시 레거시 URL 을 **지운다**(R8-P5.1). 그래서 신규 등록 사업장은
+Home·서버가 READY 인데 이 화면만 NOT_READY 였다.
+
+같은 파일 안 다른 자리는 이미 공용 resolver(`hasLicenseForBusiness`,
+path 우선 → URL 폴백, 서버와 같은 순서)를 쓰고 있었다 — **술어를 한 벌로
+합쳤다.** E.1A 가 등록증을 owner 경로로 옮기면서 이 중복이 드러난 것이다.
+
+### CORRECTION — 공고 root 가 setup 을 몰랐다 (§34)
+
+`JobsRootScreen` 에는 readiness 분기가 **하나도 없었다.** 사업장이 생기는
+순간 정상 운영 empty state 로 들어갔고 `+` 는 권한만 봤다.
+
+§6 대로 **새 술어를 만들지 않았다.** Home 이 계산한 `FirstPostingReadiness`
+를 `FirstPostingReadinessBroadcast` 로 흘려 공고 root 가 같은 값을 본다.
+계산은 여전히 Home 한 곳에서만 한다.
+
+- `!allReady` → setup surface + `+` **제거**(§11: disabled 는 이유를 말하지 못하고, 같은 화면에 이미 recovery CTA 가 있다)
+- `null`(아직 모름) → **화면을 바꾸지 않는다**(§25 — UNKNOWN ≠ SETUP_REQUIRED)
+- 탭 자체는 유지(§8)
+
+### §15 — CreateTO 가 두 번째 task owner 였다
+
+큰 카드 5개 + 긴 설명을 **compact blocker** 로 바꿨다(186줄 → 67줄).
+남은 개수는 Home 이 센 값을 그대로 쓴다 — 여기서 다시 세면 4 vs 5 가 된다.
+`사업자등록증` 을 사용자 task 로 다시 세우지 않는다(§24).
+**§16 은 이미 구현돼 있었다** — `_allPrerequisitesMet` 이면 자동 unlock(452줄).
+
+안내 문구의 **소유자 이동**도 같이 처리했다: 제거한 카드에만 있던
+"한 번 만들면 이후 계약에도 계속 사용할 수 있어요" 를 Home 의 템플릿 행으로
+옮겼다. 소유자가 바뀐 것이지 안내가 필요 없어진 것이 아니다.
+
+### §19~§22 Workforce / Payroll — **POLICY UNVERIFIED (PATCH 없음)**
+
+두 root 모두 이미 UNKNOWN 과 ZERO 를 구분한다(`_attCountsUnknown ? '확인 못함' : '데이터 없음'`).
+setup gate 를 붙이려면 "운영 이력이 있었는가" 라는 새 술어가 필요한데,
+§21 의 반례(운영 중 사업장 + 템플릿 삭제 → posting NOT_READY 지만 기존 약속은
+살아 있어야 한다)가 `FirstPostingReadiness` 를 그 입력으로 쓸 수 없음을 보인다.
+§22 대로 근거가 불충분하므로 **POLICY UNVERIFIED 로 남기고 patch 하지 않았다.**
+
+### 갱신한 오래된 테스트 8건 (삭제·skip 0)
+
+제거한 구조를 고정하던 불변식들이다. 성질은 살리고 자리만 옮겼다.
+
+| 테스트 | 무엇이 깨졌나 | 어떻게 갱신했나 |
+|---|---|---|
+| BAR-70 · FPR-50 · HRR-52 | `cardCount = isSubAdmin ? 4 : 5` | gate 판정은 유지, 카드 수 대신 "CreateTO 는 task owner 가 아니다" |
+| FUG-20 · FUG-22 | 제거한 카드의 안내 문구 | 소유자를 Home 으로 이동(문구도 실제로 옮김) |
+| FPR-24 | `_templateTargetBusinessId` | Home 의 `_templateCtaBusiness` 가 미승인까지 폴백 = 승인 종속 아님 |
+| HRR-52 | `onAction: _businessApproved` | CreateTO 는 더 이상 task CTA 를 소유하지 않는다 |
+| permission ×2 | `PermissionCheck.allowed)` 의 **닫는 괄호** | 조건이 하나 더 붙어도 "select 로 구독한다" 성질을 본다 |
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · **CF 변경 0**
+- **RENDER**: 신규 **18/18**(SETUP-ROOT-01~06 · LICENSE-PARITY-01~04 · READINESS-TASKS-01~04 · NAV/REFRESH)
+- **DEVICE**: **RETRY PENDING**
+
+
 
 ## 0-AAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.1A
 

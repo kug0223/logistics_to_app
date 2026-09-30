@@ -185,9 +185,14 @@ void main() {
   // 두 화면 모두 FirebaseFirestore.instance를 즉시 보유하는 서비스를 필드로
   // 들고 있어 widget test가 불가능하다. test 전용 public API를 새로 열지
   // 않고 소스 문자열로 검증한다.
-  group('F-03 공고 사전조건이 템플릿의 목적을 설명한다', () {
+  // [R7-P4.4E.2] 이 안내의 **소유자가 Home 으로 옮겨졌다.**
+  //   CreateTO 가 Home 과 똑같은 체크리스트를 한 번 더 소유하면서, 같은
+  //   사업장을 두고 두 화면이 다른 개수를 말했다(4 vs 5). 체크리스트를 Home
+  //   하나로 합치면서 템플릿의 목적을 설명하던 문구도 같이 옮겼다.
+  //   지켜야 할 계약은 그대로다 — 만들기 전에 **왜** 만드는지 말해 준다.
+  group('F-03 준비 단계가 템플릿의 목적을 설명한다', () {
     late final String src = _copyOf(
-        'lib/screens/business_admin/to_management/create_to_screen.dart');
+        'lib/screens/business_admin/business_admin_home_screen.dart');
 
     test('FUG-20 재사용 의미가 드러난다', () {
       expect(src.contains('이후 계약에도 계속 사용할 수 있어요'), true);
@@ -198,7 +203,20 @@ void main() {
     });
 
     test('FUG-22 CTA가 목적지가 아니라 행동을 가리킨다', () {
-      expect(src.contains("'템플릿 만들기'"), true);
+      // [R7-P4.4E.2] 예전에는 CreateTO 사전조건 카드의 버튼 문구였다.
+      //   그 카드가 Home 으로 합쳐지면서, 행동을 가리키는 CTA 는 실제로
+      //   템플릿을 만드는 화면이 갖는다. 지켜야 할 것은 문구가 있는 **파일**이
+      //   아니라 사용자가 명사가 아닌 **행동**을 본다는 것이다.
+      final list =
+          _copyOf('lib/screens/business_admin/contract_template_list_screen.dart');
+      expect(list.contains("'새 템플릿 만들기'"), true);
+      // Home 의 준비 행은 그 화면으로 실제로 데려간다.
+      // (`_copyOf` 는 문자열 리터럴만 뽑으므로 식별자는 원문에서 본다)
+      expect(
+          _source('lib/screens/business_admin/business_admin_home_screen.dart')
+              .contains('ContractTemplateListScreen('),
+          true,
+          reason: '설명만 하고 갈 곳이 없으면 안내가 아니다');
     });
 
     test('FUG-23 법적 보증 표현을 추가하지 않았다', () {
