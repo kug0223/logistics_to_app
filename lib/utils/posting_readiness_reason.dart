@@ -56,6 +56,35 @@ class PostingNotReady {
           '사업주 인감 또는 서명을 먼저 등록해주세요\n확정된 근로자와 바로 계약할 수 있어야 해요',
       };
 
+  /// [R7-P4.4C.1] 예약 공개가 막혔을 때 **운영자에게** 보여줄 문장.
+  ///
+  ///   `message` 와 다른 이유: 저 문장은 "지금 등록하세요" 로 **행동을 지시**
+  ///   한다. 그런데 예약 공개를 막은 준비의 책임은 `business.ownerId` 쪽이고,
+  ///   SubAdmin 은 사업주 날인이나 사업장 승인을 스스로 해결할 수 없다.
+  ///   그 사람에게 "인감을 등록하세요" 라고 하면 할 수 없는 일을 시키는 것이다.
+  ///
+  ///   [canSetUp] 이 false 면(= 호출자가 setup owner 가 아니면) 무엇이
+  ///   모자란지는 알려 주되 해결은 사업장 관리자에게 넘긴다.
+  ///
+  ///   재시도는 자동이다 — scheduler 가 매 실행마다
+  ///   `publishMode == scheduled && !isPublished && publishAt <= now` 를
+  ///   다시 조회하므로, 준비가 끝나면 다음 처리에서 공개된다.
+  String blockedNotice({required bool canSetUp}) {
+    final what = switch (reason) {
+      PostingNotReadyReason.businessNotApproved => '사업장 승인',
+      PostingNotReadyReason.businessLicenseNotReady => '사업자등록증',
+      PostingNotReadyReason.noActiveWorkType => '업무 등록',
+      PostingNotReadyReason.noContractTemplate => '계약서 템플릿',
+      PostingNotReadyReason.noEmployerSeal => '사업주 인감 또는 서명',
+    };
+    if (!canSetUp) {
+      return '$what 준비가 끝나지 않아 예약 공개되지 않았어요\n'
+          '사업장 관리자에게 확인해 주세요';
+    }
+    return '$what 준비가 끝나지 않아 예약 공개되지 않았어요\n'
+        '준비를 완료하면 다음 예약 처리에서 다시 공개됩니다';
+  }
+
   /// 서버 오류에서 이유를 뽑는다. 우리가 아는 형태가 아니면 null —
   /// **모르는 것을 특정 준비 단계로 단정하지 않는다.**
   static PostingNotReady? parse(Object error) {
@@ -63,7 +92,13 @@ class PostingNotReady {
     if (!text.contains('POSTING_NOT_READY:')) return null;
     final after = text.split('POSTING_NOT_READY:').last;
     // 코드 뒤에 공백 + 문장이 붙어 온다.
-    final code = after.split(RegExp(r'[\s"\)]')).first.trim();
+    return fromCode(after.split(RegExp(r'[\s"\)]')).first.trim());
+  }
+
+  /// [R7-P4.4C.1] 저장된 이유 코드(`tos.publishBlockedReason`)에서 만든다.
+  /// 서버가 적은 값이지만 **모르는 코드를 특정 단계로 단정하지 않는다.**
+  static PostingNotReady? fromCode(String? code) {
+    if (code == null || code.isEmpty) return null;
     return switch (code) {
       'BUSINESS_NOT_APPROVED' =>
         const PostingNotReady(PostingNotReadyReason.businessNotApproved),

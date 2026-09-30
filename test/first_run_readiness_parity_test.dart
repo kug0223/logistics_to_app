@@ -134,11 +134,22 @@ void main() {
   // CP7-02. 서버가 최종 gate — 클라이언트가 더 관대하지 않다
   // ══════════════════════════════════════════════════════════════
   group('CP7-02 서버 gate', () {
-    test('CP7-02a 서버는 승인·등록증·활성업무 셋을 본다', () {
-      final s = _serverSrc();
-      expect(s.contains('if (!bizData?.isApproved)'), isTrue);
-      expect(s.contains('hasValidBusinessLicense(bizId, bizData)'), isTrue);
-      expect(s.contains('.where("isActive", "==", true)'), isTrue);
+    test('CP7-02a 서버가 다섯 축을 본다', () {
+      // [R7-P4.4C/C.1] 갱신. P4.4 시점에는 셋이었고 그것이 사실이었다.
+      //   P4.4C 가 템플릿·고용주 날인을 더했고, P4.4C.1 이 네 축을
+      //   transaction 안에서도 쓸 수 있는 evaluator 로 옮겼다.
+      final s = File(_server).readAsStringSync();
+      final gi = s.indexOf('async function assertBusinessPostingReady(');
+      final gate =
+          s.substring(gi, s.indexOf('function postingNotReadyMessage(', gi));
+      expect(gate.contains('hasValidBusinessLicense(bizId, bizData)'), isTrue);
+      final ei = s.indexOf('async function evaluatePostingReadinessFirestore(');
+      final ev =
+          s.substring(ei, s.indexOf('interface PostingReadinessReader', ei));
+      expect(ev.contains('if (!bizData?.isApproved)'), isTrue);
+      expect(ev.contains('.where("isActive", "==", true)'), isTrue);
+      expect(ev.contains('contract_templates'), isTrue);
+      expect(ev.contains('sealBase64'), isTrue);
     });
 
     test('CP7-02b 클라이언트가 서버보다 관대하지 않다', () {

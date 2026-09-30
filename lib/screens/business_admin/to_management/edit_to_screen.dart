@@ -17,6 +17,8 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/posting_readiness_reason.dart';
+import 'package:provider/provider.dart';
+import '../../../providers/user_provider.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 
@@ -1222,6 +1224,46 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
   }
 
+  /// [P4.4C.1] 예약 공개 실패 안내.
+  ///
+  ///   §8 책임 owner: 고용주 날인·사업장 승인 같은 준비의 owner 는
+  ///   `business.ownerId` 다. SubAdmin 은 그것을 스스로 해결할 수 없으므로
+  ///   그 사람에게 "인감을 등록하세요" 라고 말하지 않는다 — 무엇이 모자란지만
+  ///   알려 주고 해결은 사업장 관리자에게 넘긴다.
+  List<Widget> _buildPublishBlockedNotice(BuildContext context) {
+    final blocked =
+        PostingNotReady.fromCode(widget.to.publishBlockedReason);
+    if (blocked == null) return const [];
+    // setup owner 인가 — SubAdmin 은 아니다.
+    final canSetUp = !context.read<UserProvider>().isSubAdmin;
+    return [
+      Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.warning.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.schedule_outlined,
+                size: 18, color: AppColors.warningDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: Text(
+                blocked.blockedNotice(canSetUp: canSetUp),
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.warningDark),
+              ),
+            ),
+          ],
+        ),
+      ),
+      SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final appBarTitle = widget.isBatchMode
@@ -1288,6 +1330,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             // CreateTO body(bottom:108)와 동등한 clearance 적용.
             padding: ResponsiveHelper.listPadding(context).copyWith(bottom: 108),
             children: [
+              // [P4.4C.1] 예약 공개가 막혔으면 그 사실을 여기서 말한다.
+              //   서버가 `tos.publishBlockedReason` 에 적어 두고, 공개에
+              //   성공하면 지운다. 이 자리가 관리자가 그 공고를 실제로
+              //   고치러 오는 화면이다.
+              ..._buildPublishBlockedNotice(context),
               if (widget.isBatchMode) ...[
                 _buildBatchInfoBanner(context),
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),

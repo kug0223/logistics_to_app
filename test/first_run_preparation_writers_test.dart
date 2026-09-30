@@ -251,20 +251,26 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   // CP7-01. 서버 authority — 아직 세 조건뿐이라는 사실을 고정
   // ══════════════════════════════════════════════════════════════
-  test('CP7-01 서버 gate 는 승인·등록증·활성업무 셋이다', () {
-    // 정책은 A(템플릿·인감도 공고 prerequisite)로 확정했지만, 서버 확장은
-    // 배포 승인과 PROD legacy 영향 확인이 필요해 이번에 하지 않았다.
-    // **지금 서버가 무엇을 보는지**를 사실로 남겨 둔다 — 나중에 이 셀이
-    // 깨지면 서버 정책이 바뀐 것이고, 그때 잔여를 닫는다.
+  test('CP7-01 서버 gate 가 다섯 축을 본다 — 잔여가 닫혔다', () {
+    // [R7-P4.4C/C.1] 갱신. 이 셀은 P4.4B 시점의 사실("서버는 아직 셋만
+    //   본다")을 기록했고, 마지막 두 줄에 "있으면 잔여가 닫힌 것이다" 라고
+    //   적어 뒀다. P4.4C 가 템플릿·고용주 날인을 더했고 P4.4C.1 이 그 판정을
+    //   transaction 안에서도 쓸 수 있는 evaluator 로 옮겼다.
+    //   기대값을 새 사실로 옮긴다 — 셀을 지우지 않는다.
     final s = File('functions/src/index.ts').readAsStringSync();
-    final i = s.indexOf('async function assertBusinessPostingReady(');
-    expect(i, greaterThan(-1));
-    final body = s.substring(i, i + 1400);
-    expect(body.contains('isApproved'), isTrue);
-    expect(body.contains('hasValidBusinessLicense'), isTrue);
-    expect(body.contains('collection("workTypes")'), isTrue);
-    // 아직 없다 — 있으면 잔여가 닫힌 것이다.
-    expect(body.contains('contract_templates'), isFalse);
-    expect(body.contains('sealBase64'), isFalse);
+    // 등록증(Storage 호출)만 gate 본문에 남았다.
+    final gi = s.indexOf('async function assertBusinessPostingReady(');
+    expect(gi, greaterThan(-1));
+    final gate = s.substring(gi, s.indexOf('function postingNotReadyMessage(', gi));
+    expect(gate.contains('hasValidBusinessLicense'), isTrue);
+    expect(gate.contains('evaluatePostingReadinessFirestore('), isTrue);
+    // 나머지 네 축은 evaluator 쪽.
+    final ei = s.indexOf('async function evaluatePostingReadinessFirestore(');
+    expect(ei, greaterThan(-1));
+    final ev = s.substring(ei, s.indexOf('interface PostingReadinessReader', ei));
+    expect(ev.contains('isApproved'), isTrue);
+    expect(ev.contains('collection("workTypes")'), isTrue);
+    expect(ev.contains('contract_templates'), isTrue);
+    expect(ev.contains('sealBase64'), isTrue);
   });
 }

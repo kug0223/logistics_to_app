@@ -32,14 +32,34 @@ String _src(String p) {
 
 String _fns() => File('functions/src/index.ts').readAsStringSync();
 
-/// `assertBusinessPostingReady` 본문만 자른다.
+/// [R7-P4.4C.1] gate 판정은 **두 조각**으로 나뉘었다 — 등록증(Storage 호출)은
+/// `assertBusinessPostingReady` 에, 나머지 네 축은 transaction 안에서도 쓸 수
+/// 있는 `evaluatePostingReadinessFirestore` 에. 그래서 검사 창도 둘이다.
 String _gateBody() {
   final s = _fns();
   final i = s.indexOf('async function assertBusinessPostingReady(');
   expect(i, greaterThan(-1));
-  final end = s.indexOf('async function assertWorkTypesInBusiness(', i);
+  final end = s.indexOf('function postingNotReadyMessage(', i);
   expect(end, greaterThan(i));
   return s.substring(i, end);
+}
+
+/// Firestore 네 축 evaluator 본문.
+String _evalBody() {
+  final s = _fns();
+  final i = s.indexOf('async function evaluatePostingReadinessFirestore(');
+  expect(i, greaterThan(-1));
+  final end = s.indexOf('interface PostingReadinessReader', i);
+  expect(end, greaterThan(i));
+  return s.substring(i, end);
+}
+
+/// 이유 코드 → 문장 map 본문.
+String _msgBody() {
+  final s = _fns();
+  final i = s.indexOf('function postingNotReadyMessage(');
+  expect(i, greaterThan(-1));
+  return s.substring(i, i + 900);
 }
 
 const _createTo =
@@ -53,53 +73,67 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('AUTH-01 server gate 5축', () {
     late final String body;
-    setUpAll(() => body = _gateBody());
+    late final String ev;
+    setUpAll(() { body = _gateBody(); ev = _evalBody(); });
 
-    test('AUTH-01a 승인·등록증·업무 (기존 3축 유지)', () {
-      expect(body.contains('if (!bizData?.isApproved)'), isTrue);
-      expect(body.contains('hasValidBusinessLicense(bizId, bizData)'), isTrue);
-      expect(body.contains('.collection("workTypes")'), isTrue);
-      expect(body.contains('.where("isActive", "==", true)'), isTrue);
+    test('AUTH-01a 다섯 축이 두 조각으로 나뉘어 있다', () {
+      // [R7-P4.4C.1] 갱신. 등록증만 `assertBusinessPostingReady` 에 남고
+      //   나머지 네 축은 `evaluatePostingReadinessFirestore` 로 옮겼다 —
+      //   그래야 scheduler transaction 의 read-set 에 넣을 수 있다.
+      //   규칙(다섯 축 전부 강제)은 그대로다.
+      expect(body.contains('hasValidBusinessLicense(bizId, bizData)'), isTrue,
+          reason: '등록증은 Storage 호출이라 transaction 밖');
+      expect(body.contains('evaluatePostingReadinessFirestore('), isTrue);
+      expect(body.contains('dbReadinessReader'), isTrue);
+      // 네 축은 evaluator 쪽에 있다.
+      expect(ev.contains("if (!bizData?.isApproved)"), isTrue);
+      expect(ev.contains('.collection("workTypes")'), isTrue);
+      expect(ev.contains('.where("isActive", "==", true)'), isTrue);
     });
 
     test('AUTH-01b 계약서 템플릿 — 이 사업장의 서브컬렉션을 본다', () {
-      expect(body.contains('.collection("contract_templates")'), isTrue);
+      expect(ev.contains('.collection("contract_templates")'), isTrue);
       // 사업장 단위여야 한다 — 전역 조회면 A 의 템플릿으로 B 가 통과한다.
-      expect(body.contains('.collection("businesses").doc(bizId)'), isTrue);
+      expect(ev.contains('.collection("businesses").doc(bizId)'), isTrue);
     });
 
     test('AUTH-01c 템플릿 후보는 Flutter 와 같은 화이트리스트다', () {
       // `isSupportedForNewUse` = daily | period. legacy outsource 만 가진
       // 사업장을 통과시키면 계약 단계에서 고를 것이 0개다.
-      expect(body.contains('.where("templateType", "in", ["daily", "period"])'),
+      expect(
+          ev.contains('.where("templateType", "in", ["daily", "period"])'),
           isTrue);
     });
 
     test('AUTH-01d 고용주 날인 — caller 가 아니라 owner 것을 본다', () {
-      expect(body.contains('bizData?.ownerId'), isTrue);
-      expect(body.contains('.collection("users").doc(ownerId)'), isTrue);
-      expect(body.contains('sealBase64'), isTrue);
+      expect(ev.contains('bizData?.ownerId'), isTrue);
+      expect(ev.contains('.collection("users").doc(ownerId)'), isTrue);
+      expect(ev.contains('sealBase64'), isTrue);
       // caller 의 날인을 보지 않는다.
-      expect(body.contains('request.auth'), isFalse);
-      expect(body.contains('callerUid'), isFalse);
+      expect(ev.contains('request.auth'), isFalse);
+      expect(ev.contains('callerUid'), isFalse);
     });
 
     test('AUTH-01e ownerId 를 모르면 통과시키지 않는다', () {
-      expect(body.contains('if (!ownerId) {'), isTrue);
-      final i = body.indexOf('if (!ownerId) {');
-      expect(body.substring(i, i + 260).contains('NO_EMPLOYER_SEAL'), isTrue);
+      expect(ev.contains('if (!ownerId) return "NO_EMPLOYER_SEAL";'), isTrue);
     });
 
     test('AUTH-01f 다섯 축 모두 domain reason 을 실어 보낸다', () {
+      // 코드는 evaluator 가 돌려주고, 문장은 map 이 붙인다.
+      final msg = _msgBody();
       for (final code in const [
         'BUSINESS_NOT_APPROVED',
-        'BUSINESS_LICENSE_NOT_READY',
         'NO_ACTIVE_WORK_TYPE',
         'NO_CONTRACT_TEMPLATE',
         'NO_EMPLOYER_SEAL',
       ]) {
-        expect(body.contains('POSTING_NOT_READY:$code'), isTrue, reason: code);
+        expect(ev.contains(code), isTrue, reason: code);
+        expect(msg.contains(code), isTrue, reason: '$code 문장');
       }
+      // 등록증은 gate 쪽에서 직접 던진다.
+      expect(body.contains('POSTING_NOT_READY:BUSINESS_LICENSE_NOT_READY'),
+          isTrue);
+      expect(msg.contains('BUSINESS_LICENSE_NOT_READY'), isTrue);
     });
   });
 
@@ -139,28 +173,21 @@ void main() {
           reason: 'gate 가 reopen 분기 안에 있어야 한다');
     });
 
-    test('AUTH-02d 예약 공개 scheduler — 이번에 막은 구멍', () {
-      final i = s.indexOf('const notReadyBizIds = new Set<string>();');
-      expect(i, greaterThan(-1),
-          reason: 'scheduler 가 gate 를 부르지 않으면 공개 직전 상태를 아무도 안 본다');
-      // 내가 추가한 블록만 본다 — transaction 시작(`try {`) 전까지.
-      final end = s.indexOf('await db.runTransaction(', i);
-      expect(end, greaterThan(i));
+    test('AUTH-02d 예약 공개 scheduler 도 readiness 를 지난다', () {
+      // [R7-P4.4C.1] 갱신. P4.4C 는 transaction **밖에서** 확인했고 이 셀이
+      //   그 모양을 고정했다. 그러면 확인과 commit 사이에 창이 남아
+      //   TOCTOU 가 된다 — P4.4C.1 이 판정을 transaction **안으로** 옮겼다.
+      //   read-set·per-business fail closed·blocked 기록의 세부는
+      //   `scheduled_publish_atomicity_test` 가 본다. 여기서는 "예약 경로도
+      //   gate 를 지난다" 는 사실만 고정한다.
+      final i = s.indexOf('async function processScheduledPublish(');
+      expect(i, greaterThan(-1));
+      final end = s.indexOf('\nasync function ', i + 10);
       final body = s.substring(i, end);
-      expect(body.contains('await assertBusinessPostingReady(bizId'), isTrue);
-      // 그룹 전체를 되돌리지 않는다 — 준비된 공고는 공개돼야 한다.
-      expect(body.contains('notReadyBizIds.add(bizId);'), isTrue);
-      expect(body.contains('throw'), isFalse,
-          reason: '한 사업장 때문에 그룹 transaction 을 깨면 멀쩡한 공고까지 막힌다');
-      // 그리고 transaction **밖에서** 읽는다 — TX 안의 read-before-write
-      // 규칙을 깨지 않기 위해서다.
-      expect(body.contains("db.collection(\"businesses\").doc(bizId).get()"),
-          isTrue);
-      // 그리고 실제로 건너뛴다.
-      expect(
-          s.contains('if (notReadyBizIds.has(freshData.businessId as string)) '
-              'continue;'),
-          isTrue);
+      expect(body.contains('evaluatePostingReadinessFirestore('), isTrue);
+      expect(body.contains('txReadinessReader(tx)'), isTrue);
+      expect(body.contains('hasValidBusinessLicense('), isTrue,
+          reason: 'Storage 축은 transaction 밖에서라도 반드시 본다');
     });
   });
 

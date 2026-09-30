@@ -5734,33 +5734,27 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
   // [CAPACITY-STAGE3B] bizId → ownerUid 수집 Map (TX grouping용 — scope pre-group)
   const bizOwnerMap = new Map<string, string>();
 
-  const readinessEntries = await Promise.all(
-    uniqueBizIds.map(async (bizId): Promise<[string, boolean]> => {
+  // [P4.4C.1] 여기서는 **ownerId 만** 모은다.
+  //
+  //   예전에는 이 자리에서 손으로 쓴 부분 readiness 를 판정했다 —
+  //   승인 + 등록증(필드 truthy 만, Storage provenance 없음) + 활성 업무.
+  //   canonical gate(`assertBusinessPostingReady`)와 **다른 판정 코드**였고,
+  //   계약서 템플릿과 고용주 날인이 빠져 있었다. 판정을 두 벌 두면 한쪽이
+  //   조용히 뒤처진다.
+  //
+  //   readiness 는 transaction 안에서 canonical evaluator 하나로 본다.
+  //   ownerId 는 scope 그룹핑에 필요하므로 그것만 미리 읽는다.
+  await Promise.all(
+    uniqueBizIds.map(async (bizId): Promise<void> => {
       try {
         const bizSnap = await db.collection("businesses").doc(bizId).get();
-        const bizData = bizSnap.data();
-        if (!bizSnap.exists || !bizData?.isApproved) return [bizId, false];
-        const hasCanonicalLicense = !!(bizData?.businessLicenseImageUrl as string | undefined);
-        let licenseReady = hasCanonicalLicense;
-        const ownerId = bizData?.ownerId as string | undefined;
+        const ownerId = bizSnap.data()?.ownerId as string | undefined;
         if (ownerId) bizOwnerMap.set(bizId, ownerId);
-        if (!licenseReady) {
-          if (ownerId) {
-            const ownerSnap = await db.collection("users").doc(ownerId).get();
-            licenseReady = !!(ownerSnap.data()?.businessLicenseImageUrl as string | undefined);
-          }
-        }
-        if (!licenseReady) return [bizId, false];
-        const wtSnap = await db.collection("businesses").doc(bizId)
-          .collection("workTypes").where("isActive", "==", true).limit(1).get();
-        return [bizId, !wtSnap.empty];
       } catch (e) {
-        console.error(`    ⚠️ [5D.1A] bizId=${bizId} readiness check error:`, e);
-        return [bizId, false];
+        console.error("    ⚠️ bizId=" + bizId + " owner 조회 실패:", e);
       }
     }),
   );
-  const bizReadinessMap = new Map<string, boolean>(readinessEntries);
 
   // ── [CAPACITY-STAGE3B] per-scope-group TX ───────────────────────────────────
   // eligible 후보를 scopeKey(오너) 단위로 그룹화 — 각 그룹을 단일 TX로 처리
@@ -5777,10 +5771,8 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
       console.warn(`    ⚠️ ${doc.id} businessId 없음 — 건너뜀`);
       continue;
     }
-    if (bizReadinessMap.get(bizId) === false) {
-      console.log(`    ⏭ ${doc.id} business readiness 미충족 — 공개 건너뜀`);
-      continue;
-    }
+    // [P4.4C.1] readiness 는 transaction 안에서 본다 — 여기서 미리
+    //   거르지 않는다(판정 시점과 commit 시점이 갈라지지 않게).
     const ownerId = bizOwnerMap.get(bizId);
     if (!ownerId) {
       console.warn(`    ⚠️ [CAPACITY-STAGE3B] ${doc.id} ownerId 없음 — 건너뜀`);
@@ -5810,34 +5802,36 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     const groupToRefs = groupDocs.map((d) => db.collection("tos").doc(d.id));
     let groupPublishedIds: string[] = [];
 
-    // [P4.4C] 예약 공개도 **근로자에게 보이게 만드는 transition** 이다.
+    // [P4.4C.1] 예약 공개 readiness 는 **transaction 안에서** 본다.
     //
-    //   `callableCreateTO`(scheduled)는 만들 때 readiness 를 통과했지만, 그
-    //   사이에 계약서 템플릿이나 사업주 날인이 지워질 수 있다. 그때 이
-    //   scheduler 가 그대로 공개하면 **확정 이후 계약을 만들 수 없는 공고**가
-    //   근로자에게 열린다 — 확정된 약속을 지킬 수 없는 상태다.
-    //   `callablePublishTO` 가 이미 "draft 생성 후 사업장 상태 변경 가능" 이라고
-    //   같은 이유로 재검증하는데, 예약 경로만 빠져 있었다.
+    //   P4.4C 에서는 transaction **밖에서** 한 번 확인했다. 그러면 확인과
+    //   commit 사이에 창이 남는다 — 템플릿이나 사업주 날인이 그 사이에
+    //   지워져도 그대로 ACTIVE 가 된다(TOCTOU). 근로자에게는 "확정해도
+    //   계약을 만들 수 없는 공고" 가 열린다.
     //
-    //   단 여기서는 **throw 하지 않는다.** 이 그룹은 여러 사업장·여러 TO 를
-    //   한 transaction 으로 묶으므로, 한 사업장이 준비되지 않았다고 그룹
-    //   전체를 되돌리면 멀쩡한 공고까지 공개되지 않는다. 준비되지 않은
-    //   사업장의 TO 만 **SCHEDULED 그대로 남긴다**(다음 tick 에 다시 본다).
-    //   자동 마감·자동 취소는 하지 않는다 — 그건 별도 정책이다.
-    const notReadyBizIds = new Set<string>();
+    //   그래서 prerequisite 문서를 같은 transaction 의 **read-set** 에
+    //   넣는다. 그 문서가 commit 사이에 바뀌면 Firestore 가 transaction 을
+    //   재시도하므로 stale 상태로 공개되지 않는다.
+    //
+    //   사업자등록증만 예외다 — 그 판정은 Storage 객체 존재까지 보므로
+    //   Firestore read-set 에 넣을 수 없다. 그 축은 아래에서 transaction
+    //   밖에서 본다(필드 값은 read-set 에 들어간다).
+    const licenseBlockedBizIds = new Set<string>();
     for (const bizId of groupBizIds) {
       try {
         const bizSnapPre = await db.collection("businesses").doc(bizId).get();
-        await assertBusinessPostingReady(bizId, bizSnapPre.data());
+        if (!(await hasValidBusinessLicense(bizId, bizSnapPre.data()))) {
+          licenseBlockedBizIds.add(bizId);
+        }
       } catch (e) {
-        notReadyBizIds.add(bizId);
+        // 못 읽었으면 공개하지 않는다 — fail closed.
+        licenseBlockedBizIds.add(bizId);
         console.warn(
-          `[processScheduledPublish] 준비 미충족 — 예약 공개 보류 biz=${bizId}:`,
-          e instanceof HttpsError ? e.message : String(e)
+          "[processScheduledPublish] 등록증 확인 실패 biz=" + bizId + ":",
+          String(e)
         );
       }
     }
-
     try {
       await db.runTransaction(async (tx) => {
         // ── ALL READS FIRST ─────────────────────────────────────────────────
@@ -5861,6 +5855,21 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
           }
         }
 
+        // [P4.4C.1] readiness — **이 read 들이 read-set 에 들어간다.**
+        //   업무·계약서 템플릿·사업주 날인 문서가 commit 전에 바뀌면
+        //   transaction 이 재시도되고, 그때 이 판정이 다시 돈다.
+        const blockedReasonByBiz = new Map<string, string>();
+        for (let bi = 0; bi < groupBizIds.length; bi++) {
+          const bizId = groupBizIds[bi];
+          if (licenseBlockedBizIds.has(bizId)) {
+            blockedReasonByBiz.set(bizId, "BUSINESS_LICENSE_NOT_READY");
+            continue;
+          }
+          const reason = await evaluatePostingReadinessFirestore(
+            bizId, freshBizSnaps[bi].data(), txReadinessReader(tx)
+          );
+          if (reason) blockedReasonByBiz.set(bizId, reason);
+        }
         // owner capacity context (첫 번째 bizId 기준 — 동일 오너 검증 완료)
         const {scopeKey, activePostingCapacity} =
           await resolvePostingCapacityContextTx(tx, groupBizIds[0]);
@@ -5891,8 +5900,21 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
           if (freshData.status !== "SCHEDULED") continue;
           if (freshData.publishMode !== "scheduled") continue;
           if (freshData.closedBy != null) continue;
-          // [P4.4C] 준비 미충족 사업장의 TO 는 SCHEDULED 로 남긴다.
-          if (notReadyBizIds.has(freshData.businessId as string)) continue;
+          // [P4.4C.1] 준비 미충족 사업장의 TO 는 SCHEDULED 로 남긴다.
+          //   그리고 **왜** 막혔는지를 같은 transaction 에서 적는다 —
+          //   판정과 기록이 갈라지면 화면이 낡은 이유를 말한다.
+          //   자동 마감·자동 취소는 하지 않는다(별도 정책).
+          const blockedReason =
+            blockedReasonByBiz.get(freshData.businessId as string);
+          if (blockedReason) {
+            if (freshData.publishBlockedReason !== blockedReason) {
+              tx.update(freshSnap.ref, {
+                publishBlockedReason: blockedReason,
+                publishBlockedAt: now,
+              });
+            }
+            continue;
+          }
           const freshPublishAt = freshData.publishAt as admin.firestore.Timestamp | undefined;
           if (!freshPublishAt || freshPublishAt.toMillis() > now.toMillis()) continue;
 
@@ -5902,6 +5924,10 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
             status: "ACTIVE",
             statusUpdatedAt: now,
             postingCapacityScopeKey: scopeKey,
+            // [P4.4C.1] 공개됐으니 막힘 흔적을 지운다 — 남겨 두면 화면이
+            //   이미 해결된 이유를 계속 말한다.
+            publishBlockedReason: admin.firestore.FieldValue.delete(),
+            publishBlockedAt: admin.firestore.FieldValue.delete(),
           });
           groupPublishedIds.push(freshSnap.id);
           remaining--;
@@ -22602,91 +22628,142 @@ async function hasValidBusinessLicense(
 // 조건: D(isApproved) + E(license canonical/owner-legacy) + F(workTypes ≥ 1)
 // SUPER_ADMIN은 호출자가 면제하므로 이 함수는 항상 전체 조건을 강제한다.
 // [5D.1A]
+/**
+ * [P4.4C.1] Firestore 로만 판정하는 readiness 축 — **transaction 안에서도
+ * 쓸 수 있다.**
+ *
+ * 왜 나눴나: 공고를 근로자에게 보이게 만드는 commit 과 prerequisite 상태
+ * 사이에 stale window 가 있으면, readiness 를 통과한 뒤 템플릿·날인이
+ * 지워져도 그대로 공개된다(TOCTOU). 그 창을 없애려면 prerequisite 문서를
+ * **같은 transaction 의 read-set** 에 넣어야 한다.
+ *
+ * 그래서 reader 를 주입받는다 — 평소에는 `db`, scheduler transaction 에서는
+ * `tx`. 같은 판정 코드를 두 벌로 복제하지 않는다(예전 scheduler 가 자기
+ * 버전을 갖고 있었고, 그 버전에는 템플릿·날인이 빠져 있었다).
+ *
+ * 사업자등록증은 **여기 없다.** 그 판정은 Storage 객체 존재까지 보므로
+ * Firestore read-set 에 넣을 수 없다 — 호출자가 transaction 밖에서 본다.
+ *
+ * @param {string} bizId 대상 사업장 id
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서 데이터
+ * @param {PostingReadinessReader} reader db 또는 transaction 기반 reader
+ * @return {Promise<string | null>} 막힌 이유 코드, 통과면 null
+ */
+async function evaluatePostingReadinessFirestore(
+  bizId: string,
+  bizData: FirebaseFirestore.DocumentData | undefined,
+  reader: PostingReadinessReader,
+): Promise<string | null> {
+  if (!bizData?.isApproved) return "BUSINESS_NOT_APPROVED";
+
+  const wtSnap = await reader.getQuery(
+    db.collection("businesses").doc(bizId)
+      .collection("workTypes")
+      .where("isActive", "==", true)
+      .limit(1)
+  );
+  if (wtSnap.empty) return "NO_ACTIVE_WORK_TYPE";
+
+  // 신규 계약에 쓸 수 있는 분류만 후보다 — Flutter `isSupportedForNewUse` 와
+  // 같은 화이트리스트(daily/period). legacy outsource 만 가진 사업장을
+  // 통과시키면 계약 단계에서 고를 것이 0개다.
+  const tplSnap = await reader.getQuery(
+    db.collection("businesses").doc(bizId)
+      .collection("contract_templates")
+      .where("templateType", "in", ["daily", "period"])
+      .limit(1)
+  );
+  if (tplSnap.empty) return "NO_CONTRACT_TEMPLATE";
+
+  // 고용주 날인 — caller 가 아니라 이 사업장 owner 것.
+  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
+  if (!ownerId) return "NO_EMPLOYER_SEAL";
+  const ownerSnap = await reader.getDoc(db.collection("users").doc(ownerId));
+  const ownerSeal = ownerSnap.data()?.sealBase64;
+  if (typeof ownerSeal !== "string" || ownerSeal.length === 0) {
+    return "NO_EMPLOYER_SEAL";
+  }
+  return null;
+}
+
+/** [P4.4C.1] `db` 와 `transaction` 을 같은 모양으로 쓰기 위한 reader. */
+interface PostingReadinessReader {
+  getDoc(
+    ref: FirebaseFirestore.DocumentReference
+  ): Promise<FirebaseFirestore.DocumentSnapshot>;
+  getQuery(
+    q: FirebaseFirestore.Query
+  ): Promise<FirebaseFirestore.QuerySnapshot>;
+}
+
+/** transaction 바깥에서 쓰는 reader — 평범한 조회. */
+const dbReadinessReader: PostingReadinessReader = {
+  getDoc: (ref) => ref.get(),
+  getQuery: (q) => q.get(),
+};
+
+/**
+ * transaction 안에서 쓰는 reader — 읽은 문서가 **read-set 에 들어간다.**
+ * 그래서 commit 사이에 그 문서가 바뀌면 transaction 이 재시도된다.
+ * @param {FirebaseFirestore.Transaction} tx 대상 transaction
+ * @return {PostingReadinessReader} transaction 기반 reader
+ */
+function txReadinessReader(
+  tx: FirebaseFirestore.Transaction
+): PostingReadinessReader {
+  return {
+    getDoc: (ref) => tx.get(ref),
+    getQuery: (q) => tx.get(q),
+  };
+}
+
 async function assertBusinessPostingReady(
   bizId: string,
   bizData: FirebaseFirestore.DocumentData | undefined,
 ): Promise<void> {
-  // D. 사업장 승인
-  if (!bizData?.isApproved) {
-    throw new HttpsError(
-      "failed-precondition",
-      "POSTING_NOT_READY:BUSINESS_NOT_APPROVED 사업장이 승인된 후 공고를 등록할 수 있습니다."
-    );
-  }
-
-  // E. 사업자등록증 — [LICENSE-GATE] Storage provenance 검증 (truthy check 제거)
-  // URL parse → businessId-scoped prefix → bucket.exists() 순서. fail-closed.
-  // [OWNER-LEGACY] 레거시 owner 경로도 truthy check 대신 Storage exists() 검증.
+  // E. 사업자등록증 — [LICENSE-GATE] Storage provenance 검증.
+  //   [P4.4C.1] 이 축만 여기 남는다. Storage 객체 존재까지 보는 판정이라
+  //   Firestore transaction read-set 에 넣을 수 없다 — scheduler 도
+  //   transaction **밖에서** 이 축을 본다. 나머지 네 축은 아래 evaluator 가
+  //   보고, 그쪽은 transaction 안에서도 쓸 수 있다.
   const validLicense = await hasValidBusinessLicense(bizId, bizData);
   if (!validLicense) {
     throw new HttpsError(
       "failed-precondition",
-      "POSTING_NOT_READY:BUSINESS_LICENSE_NOT_READY 사업자등록증을 먼저 등록해 주세요."
+      "POSTING_NOT_READY:BUSINESS_LICENSE_NOT_READY " +
+        "사업자등록증을 먼저 등록해 주세요."
     );
   }
 
-  // F. 업무 유형 ≥ 1 (workTypes 서브컬렉션, isActive == true)
-  const wtSnap = await db
-    .collection("businesses").doc(bizId)
-    .collection("workTypes")
-    .where("isActive", "==", true)
-    .limit(1)
-    .get();
-  if (wtSnap.empty) {
+  // D/F/G/H — 승인 · 활성 업무 · 계약서 템플릿 · 고용주 날인.
+  //   판정 코드는 한 벌이다. 예전에는 scheduler 가 자기 버전을 따로 갖고
+  //   있었고 그 버전에는 템플릿·날인이 빠져 있었다(등록증도 약한 판정).
+  const reason = await evaluatePostingReadinessFirestore(
+    bizId, bizData, dbReadinessReader
+  );
+  if (reason) {
     throw new HttpsError(
       "failed-precondition",
-      "POSTING_NOT_READY:NO_ACTIVE_WORK_TYPE 사업장 업무를 먼저 등록해 주세요."
+      "POSTING_NOT_READY:" + reason + " " + postingNotReadyMessage(reason)
     );
   }
+}
 
-  // G. [P4.4C] 계약서 템플릿 — **이 사업장**에 신규 계약에 쓸 수 있는 것이 있는가.
-  //
-  //   확정된 제품 정책: 지원 = 관심 / 확정 = 약속. 확정 이후에 관리자에게
-  //   계약 준비를 다시 요구하고 근로자를 계약 대기로 세워 두지 않는다.
-  //   그래서 공고가 **근로자에게 보이기 전에** 계약을 만들 수 있어야 한다.
-  //
-  //   `templateType` 화이트리스트는 Flutter `isSupportedForNewUse` 와 같은
-  //   값이다(daily/period). legacy `outsource` 는 조회·편집만 되고 신규
-  //   계약 선택 후보가 아니므로 여기서도 후보에 넣지 않는다 — 그것만 가진
-  //   사업장을 통과시키면 계약 단계에서 고를 것이 0개다.
-  //
-  //   **사업장 단위**로 본다. P4.4B 에서 클라이언트가 전 사업장 합산이라
-  //   A 의 템플릿으로 B 공고를 낼 수 있던 것을 고쳤다 — 서버도 같은 사실을
-  //   써야 stale/변조 클라이언트가 그 경로를 되살리지 못한다.
-  const tplSnap = await db
-    .collection("businesses").doc(bizId)
-    .collection("contract_templates")
-    .where("templateType", "in", ["daily", "period"])
-    .limit(1)
-    .get();
-  if (tplSnap.empty) {
-    throw new HttpsError(
-      "failed-precondition",
-      "POSTING_NOT_READY:NO_CONTRACT_TEMPLATE 계약서 템플릿을 먼저 등록해 주세요."
-    );
-  }
-
-  // H. [P4.4C] 사용자(고용주) 날인 — **caller 가 아니라 이 사업장의 owner** 것.
-  //
-  //   `actor seal` 과 `employer seal readiness` 는 다른 문제다.
-  //   SubAdmin 에게 개인 날인을 요구하지 않는 것은 맞지만(first-run setup
-  //   목적과 충돌한다), 고용주 날인이 없는 공고까지 허용하는 것은 다르다.
-  //   그래서 호출자가 누구든 `businesses/{id}.ownerId` 의 날인을 본다.
-  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
-  if (!ownerId) {
-    throw new HttpsError(
-      "failed-precondition",
-      "POSTING_NOT_READY:NO_EMPLOYER_SEAL 사업장 사업주 정보를 확인할 수 없습니다."
-    );
-  }
-  const ownerSnap = await db.collection("users").doc(ownerId).get();
-  const ownerSeal = ownerSnap.data()?.sealBase64;
-  if (typeof ownerSeal !== "string" || ownerSeal.length === 0) {
-    throw new HttpsError(
-      "failed-precondition",
-      "POSTING_NOT_READY:NO_EMPLOYER_SEAL 사업주 인감 또는 서명을 먼저 등록해 주세요."
-    );
-  }
+/**
+ * [P4.4C.1] 이유 코드 → 사람이 읽을 문장. Flutter 는 코드로 분기하므로
+ * 이 문장은 로그·fallback 용이다.
+ * @param {string} reason 이유 코드
+ * @return {string} 안내 문장
+ */
+function postingNotReadyMessage(reason: string): string {
+  const messages: Record<string, string> = {
+    BUSINESS_NOT_APPROVED: "사업장이 승인된 후 공고를 등록할 수 있습니다.",
+    BUSINESS_LICENSE_NOT_READY: "사업자등록증을 먼저 등록해 주세요.",
+    NO_ACTIVE_WORK_TYPE: "사업장 업무를 먼저 등록해 주세요.",
+    NO_CONTRACT_TEMPLATE: "계약서 템플릿을 먼저 등록해 주세요.",
+    NO_EMPLOYER_SEAL: "사업주 인감 또는 서명을 먼저 등록해 주세요.",
+  };
+  return messages[reason] ?? "공고 등록 조건을 확인해 주세요.";
 }
 
 // [WORKTYPE-SCOPE] 제출된 workType 이름이 해당 business의 active workType에 속하는지 검증

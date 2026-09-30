@@ -2,6 +2,67 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
+> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4C.1** (예약 공개 원자성 + blocked visibility)
+
+## 0-AAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4C.1
+
+기준 `333ad2b`. **CODE CLOSED / CF DEV DEPLOY PENDING.**
+
+### 내 P4.4C 보고 정정
+
+"scheduler 가 gate 를 부르지 않았다" 는 **부분적으로 틀렸다.** scheduler 에는
+자기 손으로 쓴 **부분** readiness 검사가 있었다 — 승인 + 등록증(**필드 truthy
+만**, Storage provenance 없음) + 활성 업무. 빠진 것은 **템플릿·고용주 날인**이고,
+게다가 canonical gate 와 **다른 판정 코드**였다. P4.4C 가 그 위에 두 번째 사전
+검사를 얹어 N+1 이 됐다. 이번에 **하나로 합쳤다**.
+
+### 상태 delta
+
+| ID | 이전 | 지금 |
+|---|---|---|
+| `[P4.4C-GATE-02]` | scheduler 사전 검사 추가(TX 밖) | **CLOSED** — 판정이 TX 안으로 |
+| `[P4.4C-GATE-03-SCHEDULED-PUBLISH-ATOMICITY]` | OPEN | **CLOSED** — read-set 방식 |
+| `[P4.4C-SCHEDULED-PUBLISH-BLOCKED-VISIBILITY]` | OPEN (소비자 0) | **CLOSED(최소)** — `tos.publishBlockedReason` + 공고 수정 화면 안내 |
+
+### §1 transaction 경계
+
+| 단계 | TX |
+|---|---|
+| due TO 조회 (`publishMode==scheduled && !isPublished && publishAt<=now`, limit 500) | 밖 |
+| ownerId 수집(scope 그룹핑용) | 밖 |
+| **등록증**(Storage `bucket.file().exists()`) | **밖 — read-set 불가** |
+| 사업장 문서 재읽기 + scope drift | **안** |
+| **승인·활성업무·계약서 템플릿·고용주 날인** | **안 (read-set)** |
+| capacity | 안 |
+| `ACTIVE`/`isPublished:true` write · blocked 이유 write | 안 |
+
+### §2 TOCTOU 판정
+
+| race | 이전 | 지금 |
+|---|---|---|
+| RACE-A 템플릿 삭제 | **ACTIVE 가능** | 문서가 read-set → TX 재시도 → 차단 |
+| RACE-B 날인 삭제 | **ACTIVE 가능** | 〃 |
+| RACE-C 승인 해제 | 사업장 문서는 이미 read-set | 차단(유지) |
+| 등록증 Storage 객체 삭제 | 가능 | **여전히 창 있음** — Storage 는 Firestore read-set 에 못 들어간다(필드 값은 들어간다) |
+
+### §4~§11
+
+- **per-business fail closed 유지** — A 미충족이 B 공개를 막지 않는다. readiness
+  미충족으로 `throw` 하지 않는다(그룹 TX 를 깨지 않는다).
+- 실패 상태: `SCHEDULED` / `isPublished:false` 유지. **자동 마감·취소 없음.**
+- 기존 필드 없음을 확인한 뒤 `publishBlockedReason`·`publishBlockedAt` 신설.
+  같은 이유면 다시 쓰지 않고, 공개 성공 시 서버가 `FieldValue.delete()`.
+- **§10 자동 재시도: 있다.** 조회 조건이 그대로라 매 실행마다 다시 잡힌다 →
+  안내 문구가 "준비를 완료하면 다음 예약 처리에서 다시 공개됩니다" 로 그 사실을 말한다.
+- **§11 예약시각 경과 후:** scheduler 에 만료 가드가 없어 `publishAt` 이 한참
+  지난 것도 공개된다. **기존 동작이고 이번에 바꾸지 않았다**(임의 만료 정책 금지).
+- **§12:** 사업장당 1회 판정(`groupBizIds` 루프) — TO 수와 무관. N+1 만들지 않았다.
+- **§6 visibility 이전 상태: 소비자 0개.** Posting·Home·Notification·Task·공고
+  상세 어디에도 예약 공개 실패가 보이지 않았다. 이번에 공고 수정 화면에만 붙였다.
+- **§7 Task 는 만들지 않았다** — 별도 제품 결정.
+- **§8 책임 owner:** SubAdmin 에게 "인감을 등록하세요" 라고 하지 않는다.
+  `canSetUp:false` → "사업장 관리자에게 확인해 주세요".
+
 > 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4C** (server authority + canonical signer)
 
 ## 0-AAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4C

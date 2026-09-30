@@ -109,6 +109,13 @@ class TOModel {
   // ── 예약 공개 ─────────────────────────────────────
   final String publishMode; // 'immediate' | 'scheduled'
   final DateTime? publishAt;
+
+  /// [R7-P4.4C.1] 예약 공개가 **막힌 이유**. 서버 scheduler 가 공개 직전
+  /// readiness 를 보고 미충족이면 이 값을 적고 SCHEDULED 로 남긴다.
+  /// 값은 `POSTING_NOT_READY` 이유 코드와 같다(`NO_CONTRACT_TEMPLATE` 등).
+  /// 공개에 성공하면 서버가 지운다 — 클라이언트는 읽기만 한다.
+  final String? publishBlockedReason;
+
   final bool isPublished;
   final int? publishDaysBefore;
   final String? publishTime;
@@ -161,6 +168,7 @@ class TOModel {
     this.reopenedBy,
     this.publishMode = 'immediate',
     this.publishAt,
+    this.publishBlockedReason,
     this.isPublished = true,
     this.publishDaysBefore,
     this.publishTime,
@@ -234,6 +242,7 @@ class TOModel {
       reopenedBy: data['reopenedBy'] as String?,
       publishMode: data['publishMode'] as String? ?? 'immediate',
       publishAt: parseTimestampNullable(data['publishAt']),
+      publishBlockedReason: data['publishBlockedReason'] as String?,
       isPublished: data['isPublished'] as bool? ?? true,
       publishDaysBefore: (data['publishDaysBefore'] as num?)?.toInt(),
       publishTime: data['publishTime'] as String?,
