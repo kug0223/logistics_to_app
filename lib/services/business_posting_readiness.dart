@@ -304,6 +304,19 @@ class FirstPostingReadiness {
   /// 인감/서명이 등록되어 있는가
   final bool sealReady;
 
+  /// [R7-P4.4E.3A] 고용주 날인 상태를 **읽지 못했다.**
+  ///
+  ///   날인은 사업장 owner 의 `users` 문서에 있는데, 그 문서는 본인과
+  ///   SUPER_ADMIN 만 읽을 수 있다(firestore.rules `users/{userId}` get).
+  ///   그래서 SubAdmin 은 고용주 날인이 있는지 **알 수가 없다.**
+  ///
+  ///   [sealReady] 는 그대로 false 로 둔다 — 모르는 것을 준비됨으로 올리면
+  ///   확정 뒤 계약을 만들 수 없는 공고가 열린다(서버가 최종 gate 다).
+  ///   이 값이 바꾸는 것은 **문구와 행동**뿐이다: 모르는 것을 "미등록" 이라고
+  ///   단정하지 않고, 본인 날인을 등록하라고 권하지도 않는다.
+  ///   SubAdmin 개인 날인은 계약서 사업주란에 쓰이지 않는다(P4.4C).
+  final bool sealUnknown;
+
   const FirstPostingReadiness({
     required this.hasAnyBusiness,
     required this.businessReady,
@@ -311,6 +324,7 @@ class FirstPostingReadiness {
     required this.contractTemplateReady,
     required this.sealReady,
     this.workTypesUnknown = false,
+    this.sealUnknown = false,
   });
 
   static const int totalTasks = 4;
@@ -467,6 +481,14 @@ class FirstPostingReadinessResolver {
         ? callerHasSeal
         : readinessMap.values.any((r) => r.hasEmployerSeal);
 
+    // [R7-P4.4E.3A] "없다" 와 "못 읽었다" 를 구분한다 — 업무 칸과 같은 규칙.
+    //   SubAdmin 은 owner 의 users 문서를 읽을 수 없어 날인 유무를 알 수 없다.
+    //   그때 "미등록" 이라고 말하면, 실제로는 등록돼 있는데 본인 날인을
+    //   등록하라고 권하게 된다 — 그 날인은 계약서 사업주란에 쓰이지 않는다.
+    final sealUnknown = !sealReady &&
+        readinessMap.isNotEmpty &&
+        readinessMap.values.every((r) => r.employerSealUnknown);
+
     return FirstPostingReadinessResult(
       readinessMap: readinessMap,
       readiness: FirstPostingReadiness(
@@ -481,6 +503,7 @@ class FirstPostingReadinessResolver {
             !readinessMap.values.any((r) => r.isMissingWorkTypes),
         contractTemplateReady: hasTemplate,
         sealReady: sealReady,
+        sealUnknown: sealUnknown,
       ),
     );
   }

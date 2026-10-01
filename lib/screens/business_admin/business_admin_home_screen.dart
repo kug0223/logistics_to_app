@@ -2100,7 +2100,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               task: FirstPostingTask.seal,
               icon: Icons.verified_outlined,
               label: '인감/서명',
-              onTap: () => _safeNavigate(() async {
+              // [R7-P4.4E.3A] 고용주 날인 상태를 못 읽었으면(SubAdmin) 본인
+              //   날인을 등록하라고 권하지 않는다. 계약서 사업주란에 들어가는
+              //   것은 사업장 owner 의 날인이고, 여기서 등록되는 것은 호출자
+              //   자신의 날인이다 — 눌러도 그 칸은 채워지지 않는다.
+              pendingHint: r.sealUnknown ? '사업장 관리자에게 확인하세요' : null,
+              onTap: r.sealUnknown
+                  ? null
+                  : () => _safeNavigate(() async {
                 await Navigator.push(
                   context,
                   MaterialPageRoute(

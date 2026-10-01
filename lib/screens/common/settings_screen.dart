@@ -45,6 +45,7 @@ import '../user/subadmin_leave_screen.dart';
 import '../super_admin/all_businesses_screen.dart';
 import '../super_admin/all_users_screen.dart';
 import '../super_admin/legal_terms_management_screen.dart';
+import '../../services/business_posting_readiness.dart';
 import '../../services/legal_terms_service.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../super_admin/help_faq_management_screen.dart';
@@ -2083,6 +2084,99 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // ── 사업자 날인 등록 카드 (도장 이미지 / 직접 서명 선택) ────────────────
 
+
+  /// [R7-P4.4E.3A] 고용주 날인 **상태만** 보여주는 카드 (SubAdmin).
+  ///
+  ///   등록·변경·삭제 CTA 를 주지 않는다. 등록할 수 있는 사람은 사업장
+  ///   owner 뿐이고, 여기서 저장하면 호출자 **본인** 날인이 기록돼
+  ///   계약서 사업주란과는 무관한 값이 생긴다(P4.4C §9 — SubAdmin 에게
+  ///   인감을 등록하라고 하지 않는다).
+  ///
+  ///   상태는 Home 이 쓰는 준비 판정과 **같은 것**을 읽는다. 못 읽은 것을
+  ///   '미등록' 으로 접지 않는다 — 실제로는 등록돼 있는데 사업장 관리자에게
+  ///   헛된 요청을 하게 만든다.
+  Widget _buildEmployerSealStatusCard(BuildContext context) {
+    return ValueListenableBuilder<FirstPostingReadinessSnapshot>(
+      valueListenable: FirstPostingReadinessStore.current,
+      builder: (ctx, snap, _) {
+        final r = snap.isResolved ? snap.value : null;
+
+        late final String title;
+        late final String body;
+        late final IconData icon;
+        late final Color tone;
+
+        if (snap.status == FirstPostingReadinessStatus.failed) {
+          icon = Icons.cloud_off_rounded;
+          tone = AppColors.grey500;
+          title = '사업주 날인';
+          body = '상태를 확인하지 못했어요';
+        } else if (r == null) {
+          icon = Icons.hourglass_empty_rounded;
+          tone = AppColors.grey400;
+          title = '사업주 날인';
+          body = '확인 중이에요';
+        } else if (r.sealReady) {
+          icon = Icons.verified_rounded;
+          tone = AppColors.success;
+          title = '사업주 날인';
+          body = '등록됨 · 계약서 사업주란에 사용됩니다';
+        } else if (r.sealUnknown) {
+          icon = Icons.help_outline_rounded;
+          tone = AppColors.grey500;
+          title = '사업주 날인';
+          body = '상태를 확인할 수 없어요\n사업장 관리자에게 확인하세요';
+        } else {
+          icon = Icons.error_outline_rounded;
+          tone = AppColors.warningDark;
+          title = '사업주 날인';
+          body = '미등록 · 사업장 관리자에게 등록을 요청하세요';
+        }
+
+        return Container(
+          decoration: CommonWidgets.compactCardDecoration(),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 12),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: ResponsiveHelper.spacing(context, 34),
+                  height: ResponsiveHelper.spacing(context, 34),
+                  decoration: BoxDecoration(
+                    color: tone.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon,
+                      color: tone,
+                      size: ResponsiveHelper.iconSize(context, 18)),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.w600)),
+                      Text(
+                        body,
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.grey500),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildSealCard(BuildContext context, UserModel? user) {
     // 사업장 조회 중
     if (_isSealLoading) {
@@ -2190,6 +2284,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     //   바로 옆 서명 카드는 처음부터 `user.signatureBase64` 를 build 때
     //   읽고 있었다. 인감도 같은 규칙으로 맞춘다. 저장 경로가 이미
     //   `refreshUserData()` 를 부르므로 provider 가 알리면 여기까지 닿는다.
+    // [R7-P4.4E.3A] 계약서 사업주란에 들어가는 것은 **사업장 owner 의 날인**
+    //   이다(P4.4C). 호출자 자신의 날인이 아니다.
+    //
+    //   여기는 `users/{callerUid}.sealBase64` 를 그리는 자리라, 호출자가
+    //   owner 인 동안만 맞는 말이었다. SubAdmin 에게는 본인 날인을 고용주
+    //   날인인 것처럼 보여 줬고 — 개인 날인이 있으면 '등록됨' 이라고 했다.
+    //   그 날인은 계약 writer 가 쓰지 않으므로 준비되지 않았는데 되었다고
+    //   말한 셈이다. 등록 버튼도 눌러 봐야 그 칸을 채우지 못한다.
+    //
+    //   owner 날인을 직접 읽을 수는 없다 — `users/{uid}` get 은 본인과
+    //   SUPER_ADMIN 만이다(firestore.rules). 그래서 Home 이 이미 쓰고 있는
+    //   준비 판정을 **같이** 본다. 새 조회도, 새 listener 도 만들지 않는다.
+    if (user?.isSubAdmin == true) {
+      return _buildEmployerSealStatusCard(context);
+    }
+
     final sealBase64 = user?.sealBase64;
     final hasSeal = sealBase64 != null && sealBase64.isNotEmpty;
     final isStamp = (user?.sealType ?? _sealType) == 'stamp';

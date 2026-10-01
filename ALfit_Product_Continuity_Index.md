@@ -2,7 +2,76 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-09-30 · 기준 HEAD: **R7-P4.4E.3** (setup mutation ↔ manage parity)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3A** (manage employer-seal owner scope)
+
+## 0-AAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3A
+
+기준 `4040b5d`. **CODE CLOSED · CF 변경 0 · DEVICE RETRY PENDING.**
+
+### 무엇이 틀렸나
+
+계약서 사업주란에 들어가는 것은 **사업장 owner 의 날인**이다(P4.4C 가
+Home·CreateTO·서버·계약 writer 를 그 하나로 정렬했다). 그런데 관리 탭의
+인감 카드만 `users/{callerUid}.sealBase64` 를 그리고 있었다.
+
+BUSINESS_ADMIN 은 보통 본인이 owner 라 드러나지 않는다. **SubAdmin 에서만**
+갈렸고, 위험한 방향은 이것이다 — SubAdmin 개인 날인이 있으면 카드가
+**"등록됨 · 계약서 사업주란에 사용됩니다"** 라고 말한다. 그 날인은 계약
+writer 가 쓰지 않으므로 준비되지 않았는데 되었다고 말한 것이고, 등록
+버튼을 눌러도 그 칸은 채워지지 않는다.
+
+### 넘을 수 없는 제약 (§1 READ 결과)
+
+| 축 | 사실 |
+|---|---|
+| `users/{userId}` get | **본인 · SUPER_ADMIN 만** (firestore.rules) |
+| `callableGetMyBusiness` | `ownerId` 를 **응답에서 제거**(SEC-20) |
+| `callableGetOwnerInfosByIds` | **SUPER_ADMIN 전용** |
+
+→ **SubAdmin 은 owner 날인 상태를 클라이언트에서 알 수 없다.** Home 의
+`forBusiness` 도 같은 이유로 `employerSealUnknown = true` 가 된다.
+
+### 고친 방식 — 거짓말을 멈추고, 모름을 모름이라 말한다
+
+1. **`FirstPostingReadiness.sealUnknown` 추가** — 기존 `workTypesUnknown` 과 대칭. `sealReady` 는 **false 그대로**(fail-closed, 서버가 최종 gate). 바뀌는 것은 **문구와 행동**뿐이다.
+2. **관리 탭**: SubAdmin 이면 `_buildEmployerSealStatusCard` — 상태만, 등록·변경·삭제 CTA **없음**(P4.4C §9). 상태는 Home 이 쓰는 **같은 판정**(`FirstPostingReadinessStore`)에서 읽는다 — 새 조회·새 listener **0개**.
+3. **Home**: `sealUnknown` 이면 본인 날인 등록 CTA 를 **닫고** "사업장 관리자에게 확인하세요" 로 바꾼다. 눌러도 사업주란이 채워지지 않는 경로를 열어 두지 않는다.
+
+### §10 네 상태
+
+| store | 카드 |
+|---|---|
+| idle / loading | 확인 중이에요 |
+| failed | 상태를 확인하지 못했어요 |
+| resolved + `sealReady` | 등록됨 · 계약서 사업주란에 사용됩니다 |
+| resolved + `sealUnknown` | 상태를 확인할 수 없어요 · 사업장 관리자에게 확인하세요 |
+| resolved + 둘 다 아님 | 미등록 · 사업장 관리자에게 등록을 요청하세요 |
+
+**ERROR ≠ 미등록, UNKNOWN ≠ 미등록.**
+
+### §2 역할 matrix (실제 routing 기준)
+
+| 역할 | 보는 seal | 편집 | 문구 |
+|---|---|---|---|
+| BUSINESS_ADMIN (= owner) | 본인 = owner | **YES** | 등록/변경/삭제 (기존 유지) |
+| SubAdmin (`canManageContract`) | **owner 상태**(판정 경유) | **NO** | 상태만 + 관리자에게 요청 |
+| 일반 USER | — | NO | 카드 자체가 없음(432줄 조건) |
+| SUPER_ADMIN | 본인 문서 | 해당 경로 없음 | 관리 탭 인감 카드 비대상 |
+
+### 남은 한 가지 (수정 안 함)
+
+SubAdmin 에게 **실제** owner 날인 유무(등록됨/미등록)를 보여주려면 읽기 전용
+CF 가 필요하다. §8·§13 이 writer 확장을 금지했고 배포도 승인 대기라
+만들지 않았다 — `[R7-P4.4E.3A-EMPLOYER-SEAL-READ-CF]` 로 남긴다.
+그때까지 SubAdmin 은 정직하게 **UNKNOWN** 을 본다.
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · **CF 변경 0**
+- **RENDER**: 신규 **13/13**(SEAL-ROLE-00~10)
+- **DEVICE**: **RETRY PENDING** — SubAdmin 계정이 필요해 실기기 확인은 별도
+
+
 
 ## 0-AAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-09-30 / R7-P4.4E.3
 
