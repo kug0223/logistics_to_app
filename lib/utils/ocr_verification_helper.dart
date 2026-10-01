@@ -632,8 +632,10 @@ class OcrVerificationHelper {
   ///   돌려주는 것은 (계좌 후보, 제외된 후보) 두 묶음이다. 제외된 것만
   ///   남았다면 그것은 "계좌번호를 읽었다" 가 아니다 — UNREADABLE 이다.
   @visibleForTesting
-  static ({List<String> usable, List<String> rejected}) collectAccountCandidates(
-      String rawText) {
+  static ({
+    List<String> usableAccountCandidates,
+    List<String> rejectedNonAccountCandidates,
+  }) collectAccountCandidates(String rawText) {
     final usable = <String>[];
     final rejected = <String>[];
 
@@ -657,7 +659,10 @@ class OcrVerificationHelper {
         usable.add(c.digits);
       }
     }
-    return (usable: usable, rejected: rejected);
+    return (
+      usableAccountCandidates: usable,
+      rejectedNonAccountCandidates: rejected,
+    );
   }
 
   /// 계좌번호 판정. **expected 와의 정확 일치가 가장 강한 증거다.**
@@ -680,15 +685,23 @@ class OcrVerificationHelper {
 
     final found = collectAccountCandidates(rawText);
 
-    // 1) expected 와 정확히 같은 후보가 있으면 그것이 답이다.
-    //    제외됐던 후보에서도 찾는다 — 사용자가 입력한 번호와 숫자가 똑같다면
-    //    그건 전화번호가 아니라 그 계좌다(형태 추정보다 입력값이 강하다).
-    if (found.usable.contains(expected) || found.rejected.contains(expected)) {
+    // 1) expected 와 정확히 같은 **계좌 후보**가 있으면 그것이 답이다.
+    //
+    //    [R7-P4.4E.9A.1] 제외된 후보까지 보던 것을 걷었다. 그 경로는
+    //    거짓 일치를 만들 수 있었다 — 통장 표지에 `고객센터 1588-2588` 만
+    //    있고 사용자가 계좌번호를 `15882588` 로 잘못 입력하면, 숫자가 같다는
+    //    이유만으로 MATCHED 가 됐다. **문서는 그 값을 계좌라고 말하지
+    //    않았다.** 일치의 근거는 "같은 숫자가 어딘가 있다" 가 아니라
+    //    "문서가 계좌번호라고 말한 값과 같다" 다.
+    //
+    //    계좌 라벨(`계좌번호`·`평생계좌`·`ACCOUNT` 등)이 붙은 숫자는 전화처럼
+    //    생겼어도 usable 이다 — 계좌 의미가 형태 추정을 이긴다.
+    if (found.usableAccountCandidates.contains(expected)) {
       return (outcome: DocFieldOutcome.matched, extracted: expectedAccountNumber);
     }
 
     // 2) 쓸 수 있는 계좌 후보를 하나도 못 모았다 — 다르다고 말할 근거가 없다.
-    if (found.usable.isEmpty) {
+    if (found.usableAccountCandidates.isEmpty) {
       return (outcome: DocFieldOutcome.unreadable, extracted: null);
     }
 
@@ -705,12 +718,32 @@ class OcrVerificationHelper {
   ///   적혀 있으면 "은행명이 다르다" 가 됐다. 은행은 supporting evidence
   ///   이므로 사용자를 막지는 않았지만, 화면에 거짓을 말했다.
   ///   긴 alias 를 먼저 본다 — `기업은행` 이 `중소기업은행` 을 가로채지 않도록.
+  ///   [R7-P4.4E.9A.1] canonical 은 **제품의 금융기관 목록**
+  ///   (`document_management_screen.dart` 의 `AppSelectGroup`)에 실제로 있는
+  ///   이름만 쓴다. 그 목록이 사용자가 고르고 `users.bankName` 에 저장되는
+  ///   값이다 — bank code 는 없다.
+  ///
+  ///   **alias 는 같은 기관의 이름 차이만 합친다.** 편의를 위해 서로 다른
+  ///   금융기관을 하나로 만들지 않는다. 그래서 다음을 뺐다:
+  ///     · `KB` — 목록에 **`KB증권`** 이 따로 있다. 두 글자 토큰으로 묶으면
+  ///       증권사 서류가 은행으로 정규화된다.
+  ///     · `SC` — 두 글자 토큰이라 본문 아무 데나 걸린다.
+  ///     · `단위농협` — 지역농축협은 `NH농협은행` 과 **다른 기관**이고
+  ///       목록에도 항목이 없다. 합치면 기관 병합이 된다.
+  ///   목록에 없는 기관(증권사·씨티·산업은행·신협·저축은행 등)은 여기 넣지
+  ///   않는다 — 매칭이 안 되면 `UNREADABLE` 이 되고, 그게 엉뚱한 은행으로
+  ///   정규화되는 것보다 낫다.
   static const Map<String, List<String>> bankAliases = {
-    'KB국민은행': ['KB국민은행', '국민은행', 'KB'],
+    'KB국민은행': ['KB국민은행', '국민은행'],
     '신한은행': ['신한은행'],
-    'NH농협은행': ['NH농협은행', '농협은행', '단위농협', '농협'],
+    // 목록에는 `NH농협은행` 하나뿐이다. 지역농축협은 합치지 않는다.
+    //   bare `농협` 은 쓰지 않는다 — `단위농협`·`지역농축협` 의 부분문자열이라
+    //   substring 으로 묶으면 **다른 기관이 NH농협은행이 된다.**
+    //   `농협` 만 적힌 서류는 은행을 못 읽은 것으로 둔다(supporting-only 이므로
+    //   사용자를 막지 않는다).
+    'NH농협은행': ['NH농협은행', '농협은행'],
     '우리은행': ['우리은행'],
-    '하나은행': ['하나은행', 'KEB하나은행'],
+    '하나은행': ['KEB하나은행', '하나은행'],
     'IBK기업은행': [
       'IBK Industrial Bank of Korea',
       'Industrial Bank of Korea',
@@ -719,14 +752,15 @@ class OcrVerificationHelper {
       '기업은행',
       'IBK',
     ],
-    'SC제일은행': ['SC제일은행', '제일은행', 'SC'],
+    'SC제일은행': ['SC제일은행', '제일은행'],
     '카카오뱅크': ['카카오뱅크'],
     '토스뱅크': ['토스뱅크'],
     '케이뱅크': ['케이뱅크', 'K뱅크'],
-    '새마을금고': ['새마을금고', 'MG새마을금고'],
+    '새마을금고': ['MG새마을금고', '새마을금고'],
     '우체국': ['우체국예금', '우체국'],
     '수협은행': ['수협은행', '수협'],
-    '대구은행': ['iM뱅크', '대구은행'],
+    // 같은 기관의 브랜드 변경(DGB대구은행 → iM뱅크).
+    '대구은행': ['DGB대구은행', 'iM뱅크', '대구은행'],
     '부산은행': ['부산은행'],
     '경남은행': ['경남은행'],
     '광주은행': ['광주은행'],
