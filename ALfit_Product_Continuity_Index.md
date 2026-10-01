@@ -2,7 +2,58 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B.1** (seal read permission boundary)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B.1-D** (seal read 제한 배포)
+
+## 0-AAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B.1-D
+
+기준 `ab9d6e4`. **DEV DEPLOYED · RUNTIME NOT SEEN (FIXTURE NOT AVAILABLE) · DEVICE NOT SEEN.**
+
+### 배포 — 성공, target 1개
+
+| 축 | 결과 |
+|---|---|
+| HEAD | `ab9d6e4` 일치 · 제품 코드(`functions`/`lib`/`test`/rules) 변경 **0** |
+| artifact | 새로 빌드. 권한 gate **코드로 포함**, `sealBase64`·`ownerId` 코드 기준 **0건** |
+| 명령 | `--only functions:callableGetEmployerSealReadiness --project alfit-89567` |
+| 결과 | `creating` 1건 · `Successful create operation` · exit 0 |
+| 금지 대상 | `deleting function` 0 · firestore·storage·hosting·rules **0** |
+| 함수 집합 | 244 → **245**, 추가 1개(`callableGetEmployerSealReadiness`), **사라진 함수 0** |
+| 새 함수 | `gcfv2` · `nodejs22` · `asia-northeast3` · **ACTIVE** |
+| updateTime / source hash | **NOT SEEN** — CLI 미제공, gcloud 없음(기록된 제약) |
+
+### Runtime — **돌릴 수 없었다. 두 가지 이유가 각각 독립적으로 막는다.**
+
+**① fixture 부재.** DEV 실측: 사업장 **1건**(실사용 first-run), 그 사업장
+`members` 서브컬렉션 **0건**, SubAdmin 보유 계정 **0건**. §8 matrix 의 여섯
+줄(canManageTo-only / canManageContract-only / neither / workers-only /
+wage-only)은 전부 SubAdmin 이 전제다. §7 이 실사용 계정 개조를 금지했으므로
+만들지 않았다.
+
+**② App Check 강제.** 이 callable 은 `enforceAppCheck: true` 다. Admin SDK
+스크립트는 auth + App Check 컨텍스트로 callable 을 호출할 수 없고, §11 이
+"이 callable 만 예외로 열지 않는다" 고 했으므로 우회하지 않았다.
+
+**③ 덧붙여 — owner 경로는 이 함수를 부르지 않는다.** 클라이언트는 owner
+문서 읽기가 **실패했을 때만** 서버로 간다. owner 본인은 읽기가 성공하므로
+실기기에서도 SubAdmin 없이는 이 함수가 **한 번도 호출되지 않는다**.
+
+가용 fixture 는 owner 날인 **true** 하나뿐이다. `false` 케이스는 실제
+사용자의 날인을 지워야 만들어지는데 §10 이 금지한다.
+
+→ §19 의 DEV VERIFIED 조건을 충족시킬 수 없다. **돌려보지 않은 것을 통과로
+적지 않는다.**
+
+### 데이터 mutation
+
+**0건.** fixture probe 는 read-only 였고 권한·날인·도메인 데이터를 건드리지
+않았다.
+
+### 다음
+
+`[R7-P4.4E.3B.1-RUNTIME]` — SubAdmin fixture 가 생기면(실제 팀원 초대 흐름을
+타거나 별도 테스트 사업장) §8 matrix 를 그대로 돌린다.
+
+
 
 ## 0-AAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B.1
 
