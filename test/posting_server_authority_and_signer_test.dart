@@ -129,7 +129,18 @@ void main() {
     });
 
     test('AUTH-01e ownerId 를 모르면 통과시키지 않는다', () {
-      expect(ev.contains('if (!ownerId) return "NO_EMPLOYER_SEAL";'), isTrue);
+      // [R7-P4.4E.3B] 날인 판정을 `employerSealPresent` 로 **추출**했다 —
+      //   읽기 전용 callable 과 이 gate 가 같은 코드를 쓰게 하기 위해서다.
+      //   동작은 그대로다: ownerId 를 모르면 false → NO_EMPLOYER_SEAL.
+      final cf = File('functions/src/index.ts').readAsStringSync();
+      final i = cf.indexOf('async function employerSealPresent(');
+      expect(i, greaterThan(-1), reason: '날인 판정 helper 가 사라졌다');
+      expect(cf.substring(i, i + 700).contains('if (!ownerId) return false;'),
+          isTrue);
+      expect(ev.contains('if (!(await employerSealPresent(bizData, reader)))'),
+          isTrue,
+          reason: 'gate 가 그 helper 를 거쳐야 두 경로가 갈리지 않는다');
+      expect(ev.contains('"NO_EMPLOYER_SEAL"'), isTrue);
       // 승인 축도 계약 능력 쪽으로 옮겨졌다.
       expect(ev.contains('BUSINESS_NOT_APPROVED'), isTrue);
     });

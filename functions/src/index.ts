@@ -9127,6 +9127,55 @@ export const callableSaveSeal = onCall(
   }
 );
 
+// ── callableGetEmployerSealReadiness ──────────────────────
+// [R7-P4.4E.3B] 이 사업장에 고용주 날인이 있는가 — **boolean 하나만** 돌려준다.
+//
+//   왜 서버가 필요한가: 날인은 `users/{ownerId}.sealBase64` 에 있고, 그 문서는
+//   본인과 SUPER_ADMIN 만 읽을 수 있다(firestore.rules). 그래서 SubAdmin 은
+//   고용주 날인이 있는지 **알 수가 없었고**, 화면은 그 모름을 '미등록' 으로
+//   말하거나 — 더 나쁘게는 SubAdmin 본인 날인을 고용주 날인인 것처럼
+//   보여 줬다. 본인 날인은 계약서 사업주란에 쓰이지 않는다(P4.4C-SEAL-02).
+//
+//   그래서 날인 **값**은 끝까지 서버 밖으로 내보내지 않고, 있는지 여부만
+//   답한다. ownerId 도 돌려주지 않는다 — 다른 관리자 UID 노출 방지(SEC-20)와
+//   같은 이유다. 클라이언트는 ownerId 를 **보낼 수도 없다**: 서버가
+//   businessId 로 사업장 문서를 읽어 스스로 정한다.
+//
+//   권한은 새로 만들지 않는다. `assertBizAdmin` 이 보는 소속(owner/adminIds/
+//   subAdminBusinessIds)을 그대로 쓴다 — 이 값을 필요로 하는 네 화면(Home
+//   준비 카드 · 공고 root · CreateTO · 관리 인감 카드)이 모두 그 사업장
+//   관리 화면이고, 특정 permission 하나로 좁히면 공고 권한만 가진 SubAdmin 이
+//   공고 준비 상태를 볼 수 없게 된다.
+//
+// Input:  { businessId: string }
+// Output: { employerSealReady: boolean }
+export const callableGetEmployerSealReadiness = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const callerUid = request.auth.uid;
+    const {businessId} = request.data as {businessId?: string};
+
+    if (!businessId || typeof businessId !== "string" ||
+        businessId.length > 100) {
+      throw new HttpsError(
+        "invalid-argument", "businessId가 필요합니다.");
+    }
+
+    // 소속 확인 + 사업장 문서 확보. 없는 사업장이면 여기서 not-found 다.
+    const {bizData} = await assertBizAdmin(callerUid, businessId);
+
+    // 공고 gate 와 **같은 술어**를 쓴다 — 여기서만 다르게 판정하면
+    // 화면은 준비됐다는데 서버는 막는 상태가 생긴다.
+    const ready = await employerSealPresent(bizData, dbReadinessReader);
+
+    // 날인 값·ownerId·owner 개인정보는 응답에도 로그에도 남기지 않는다.
+    return {employerSealReady: ready};
+  }
+);
+
 // ── callableSaveUserSignature ────────────────────────────
 // 근무자 사전 등록 서명 저장/삭제 — Admin SDK 경유로 signatureBase64 필드를 저장.
 // firestore.rules에서 클라이언트 직접 쓰기를 차단하므로 반드시 이 CF 경유 필요.
@@ -22711,14 +22760,35 @@ async function evaluateContractCapability(
   if (tplSnap.empty) return "NO_CONTRACT_TEMPLATE";
 
   // 고용주 날인 — caller 가 아니라 이 사업장 owner 것.
-  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
-  if (!ownerId) return "NO_EMPLOYER_SEAL";
-  const ownerSnap = await reader.getDoc(db.collection("users").doc(ownerId));
-  const ownerSeal = ownerSnap.data()?.sealBase64;
-  if (typeof ownerSeal !== "string" || ownerSeal.length === 0) {
+  if (!(await employerSealPresent(bizData, reader))) {
     return "NO_EMPLOYER_SEAL";
   }
   return null;
+}
+
+/**
+ * [R7-P4.4E.3B] 이 사업장에 **고용주 날인**이 있는가.
+ *
+ *   caller 의 날인이 아니라 `business.ownerId` 의 것이다(P4.4C-SEAL-02).
+ *   계약 writer 가 실제로 찍는 값과 같은 자리를 본다.
+ *
+ *   읽기 전용 callable 과 공고 gate 가 **같은 코드**를 쓰게 하려고 뽑았다 —
+ *   `sealBase64 != null` 을 두 곳에서 손으로 쓰면 언젠가 갈라진다.
+ *   동작은 바뀌지 않는다(순수 추출).
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서
+ * @param {PostingReadinessReader} reader db 또는 transaction 기반 reader
+ * @return {Promise<boolean>} 날인이 있으면 true
+ */
+async function employerSealPresent(
+  bizData: FirebaseFirestore.DocumentData | undefined,
+  reader: PostingReadinessReader,
+): Promise<boolean> {
+  const ownerId = typeof bizData?.ownerId === "string" ? bizData.ownerId : "";
+  if (!ownerId) return false;
+  const ownerSnap = await reader.getDoc(db.collection("users").doc(ownerId));
+  const ownerSeal = ownerSnap.data()?.sealBase64;
+  return typeof ownerSeal === "string" && ownerSeal.length > 0;
 }
 
 /**

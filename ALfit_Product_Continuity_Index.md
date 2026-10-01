@@ -2,7 +2,87 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3A** (manage employer-seal owner scope)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B** (employer seal read-only callable)
+
+## 0-AAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B
+
+기준 `45588ad`. **CODE CLOSED · DEV DEPLOY PENDING · DEVICE NOT SEEN.**
+
+### §2 consumer map — 네 화면 모두 **boolean 하나**면 된다
+
+| Consumer | 실제 capability | seal raw 필요? | readiness bool 필요? |
+|---|---|---|---|
+| Home 준비 카드 | 그 사업장 관리 화면 | NO | **YES** |
+| 공고 root SETUP_REQUIRED | 〃 | NO | **YES** |
+| CreateTO | 〃 | NO | **YES** |
+| 관리 인감 카드 | 〃 | NO | **YES** |
+
+### §3 권한 — 새로 만들지 않았다
+
+`assertBizAdmin` 이 보는 **소속**(owner / `adminIds` / `subAdminBusinessIds`)을
+그대로 쓴다. `canManageContract` 하나로 좁히면 **공고 권한만 가진 SubAdmin 이
+공고 준비 상태를 못 본다** — §3 이 경고한 그 경우다. 네 소비자가 모두 그
+사업장의 관리 화면이므로 소속이 올바른 기준이다.
+
+### §4·§5 API 계약 — 가장 좁은 형태
+
+```
+callableGetEmployerSealReadiness({ businessId })  →  { employerSealReady: boolean }
+```
+
+- 입력은 `businessId` **뿐**이다. `ownerId`·`targetUid` 를 받지 않는다 — 서버가 사업장 문서를 읽어 owner 를 **스스로** 정한다.
+- 응답에 `sealBase64`·`ownerId`·owner 개인정보 **없음**. 로그에도 남기지 않는다(핸들러에 `console.` 0개).
+- 전체 posting readiness 를 돌려주지 않았다(§8) — 클라이언트는 승인·등록증·업무·템플릿을 이미 읽을 수 있고 막힌 축은 날인 하나뿐이다.
+
+### §7 canonical 술어 재사용
+
+날인 판정이 `evaluateContractCapability` 안에 인라인이었다. **`employerSealPresent(bizData, reader)` 로 추출**해 공고 gate 와 읽기 callable 이 같은 코드를 쓴다. 순수 추출이라 동작은 바뀌지 않는다. `ownerSnap.data()?.sealBase64` 는 이제 파일 전체에 **1곳**이다.
+
+### §13·§14 클라이언트 통합 — owner 는 CF 를 부르지 않는다
+
+`forBusiness` 의 owner 문서 읽기가 **실패했을 때만** CF 로 간다.
+
+| 경우 | 경로 |
+|---|---|
+| BUSINESS_ADMIN(= owner) | 본인 문서 읽기 성공 → **CF 호출 없음**(기존 그대로) |
+| SubAdmin | rules 로 읽기 실패 → CF → true/false 확정 |
+| CF 도 실패 | `employerSealUnknown = true` |
+
+### §15 상태 의미
+
+**UNKNOWN**: 네트워크·권한·서버 실패. **NOT_READY**: 날인이 실제로 없음.
+둘을 섞지 않는다 — 없으면 등록을 요청해야 하고, 모르면 확인해야 한다.
+
+### §16·§26·§27 호출 수
+
+새 listener·polling·timer·second cache **0개**. 호출 지점은 resolver **한 곳**이고, `forBusiness` 는 readiness 적재 lifecycle 에서만 돈다 — `build()` 에서 CF 를 부르지 않는다. 화면 코드에는 callable 이름이 **등장하지 않는다**.
+
+### §17 재조회 지점 (기존 hook 만)
+
+| 경로 | 재조회 |
+|---|---|
+| 앱 복귀 | 공고 root `_ensureReadiness(force: true)` |
+| Home 재활성 | `_onHomeReactivated` → `_reloadReadiness()` |
+| 계정 전환 | `signOut` → `FirestPostingReadinessStore.reset()` |
+| 사업장 집합 변경 | `scopeKey` 불일치 → 재계산 |
+
+### §33 배포 대상
+
+변경 hunk 는 **3개**뿐이다: 새 export 1개 + `evaluateContractCapability` 의
+순수 추출 + 새 helper. 추출은 **동작이 동일**하므로 기존 export 들은
+기능상 재배포가 필요하지 않다.
+
+**배포 대상: `functions:callableGetEmployerSealReadiness` 1개.**
+(전 Functions 일괄 배포 금지.)
+
+### 증거
+
+- **CODE**: `tsc` 통과 · eslint **4973**(기준선 동일) · compiled artifact 에 새 export·권한 검사·canonical 술어·최소 응답 모두 확인, 핸들러 구간 `sealBase64` **0건**
+- **RENDER**: 신규 **18/18**(EMP-SEAL-READ-01~11 · SEAL-READ-CLIENT-01~08)
+- **DEV**: **DEPLOY PENDING** — 승인 없이 배포하지 않았다
+- **DEVICE**: **NOT SEEN** — SubAdmin 계정 필요
+
+
 
 ## 0-AAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3A
 

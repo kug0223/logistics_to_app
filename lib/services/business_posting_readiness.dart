@@ -97,6 +97,27 @@ class BusinessPostingReadiness {
     }
   }
 
+  /// [R7-P4.4E.3B] 고용주 날인 유무를 **서버에 묻는다.**
+  ///
+  ///   돌려받는 것은 boolean 하나다 — 날인 값도, ownerId 도, owner 의 다른
+  ///   정보도 받지 않는다. 서버가 `businessId` 로 사업장을 읽어 owner 를
+  ///   스스로 정하므로 클라이언트가 대상을 지목할 수 없다.
+  ///
+  ///   `null` 은 **모름**이다(네트워크·권한·서버 실패). "날인 없음"(false)과
+  ///   섞지 않는다 — 없으면 등록을 요청해야 하고, 모르면 확인해야 한다.
+  static Future<bool?> _employerSealFromServer(String businessId) async {
+    try {
+      final res = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetEmployerSealReadiness')
+          .call<Map<dynamic, dynamic>>({'businessId': businessId});
+      final ready = res.data['employerSealReady'];
+      return ready is bool ? ready : null;
+    } catch (e) {
+      debugPrint('⚠️ [readiness] 고용주 날인 조회 실패 [$businessId]: $e');
+      return null;
+    }
+  }
+
   /// [R8-P5.1] owner 문서의 사업자등록증 보유 여부.
   ///
   ///   서버(checkBusinessLicense)와 같은 순서로 본다 —
@@ -152,8 +173,22 @@ class BusinessPostingReadiness {
             (ownerData?['sealBase64'] as String?)?.isNotEmpty == true;
       } catch (e) {
         debugPrint('⚠️ [readiness] 사업주 문서 조회 실패 [${biz.id}]: $e');
-        // 읽기 실패를 "날인 없음" 으로 접지 않는다 — 서버가 최종 gate 다.
-        employerSealUnknown = true;
+        // [R7-P4.4E.3B] 여기로 오는 전형적인 경우가 **SubAdmin** 이다.
+        //   `users/{uid}` get 은 본인과 SUPER_ADMIN 만 허용된다
+        //   (firestore.rules). 그래서 SubAdmin 은 고용주 날인이 있는지
+        //   영영 알 수 없었고, 화면은 그 모름을 '미등록' 이라고 말하거나
+        //   본인 날인을 고용주 날인인 것처럼 보여 줬다.
+        //
+        //   서버에 **있는지 여부만** 물어본다. 날인 값도 ownerId 도 받지
+        //   않는다. owner 본인(BUSINESS_ADMIN)은 위 읽기가 성공하므로
+        //   이 경로로 오지 않는다 — 모든 관리자가 CF 를 부르게 만들지 않는다.
+        final viaServer = await _employerSealFromServer(biz.id);
+        if (viaServer == null) {
+          // 서버도 답을 못 줬다 → 여전히 **모름**. 없음이 아니다.
+          employerSealUnknown = true;
+        } else {
+          hasEmployerSeal = viaServer;
+        }
       }
     }
 
