@@ -2,7 +2,81 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B.1-D** (seal read 제한 배포)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B.2** (posting root viewer scope)
+
+## 0-AAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B.2
+
+기준 `0f6adcd`. **CODE CLOSED · CF 변경 0 · DEVICE NOT SEEN.**
+
+### 무엇이 틀렸나
+
+공고 관리 권한이 없는 하위관리자가 공고 탭을 열면, 고용주 날인을 읽을 수
+없어 `sealUnknown` → `allReady=false` → **"아직 공고를 등록할 준비가
+끝나지 않았어요"** 가 떴다.
+
+그 사람의 진실은 준비 미완료가 아니라 **권한 없음**이다.
+**준비는 사업장의 사실이고, 권한은 보는 사람의 사실이다** — 둘을 같은
+문장으로 말하면 안 된다.
+
+### §10 — client read-only 를 만들지 않은 이유
+
+공고 목록 read 권한은 서버에서 **`canManageTo`** 다
+(`srvAssertToAuthority`, "공고 목록 read 권한 = canManageTo"). 읽을 수 없는
+사람에게 클라이언트만의 read-only 목록을 새로 만들지 않는다 → **NO_PERMISSION
+root 가 자연스럽다.**
+
+### §2 역할별 (셸은 탭을 거르지 않는다 — 기존 설계 유지)
+
+| Actor | 공고 탭 | root | `+` | 서버 목록 read |
+|---|---|---|---|---|
+| BUSINESS_ADMIN | 노출 | 준비/정상 | 준비 완료 시 | 허용 |
+| SubAdmin `canManageTo=true` | 노출 | 준비/정상 | 준비 완료 시 | 허용 |
+| SubAdmin `canManageTo=false` | 노출 | **NO_PERMISSION** | **없음** | **거부** |
+| SUPER_ADMIN | 노출 | 정상 | 있음 | 허용 |
+
+탭을 숨기지 않는 이유: 숨기면 "권한을 빼앗겼다" 가 아니라 "기능이 사라졌다"
+로 읽히고, **모르는 동안에도** 자리가 사라진다.
+
+### §6·§7 적용한 우선순위
+
+| Permission | Readiness | Posting root |
+|---|---|---|
+| `denied` | any | **NO_PERMISSION** (자물쇠 + 문의 안내) |
+| `unknown` / `error` | any | **"권한을 확인하지 못했습니다 · 권한이 없다는 뜻이 아닙니다"** |
+| `allowed` | idle/loading | 로딩 |
+| `allowed` | failed | 준비 상태 확인 실패 |
+| `allowed` | not ready | SETUP_REQUIRED |
+| `allowed` | ready + 0 | 정상 empty |
+| `allowed` | ready + N | 정상 목록 |
+
+**거부 + 모름을 SETUP_REQUIRED 로 만들지 않는다.** 모름·실패도 거부가 아니다.
+
+### §8 — 새 컴포넌트 0
+
+계약 관리 화면이 이미 쓰는 `AppEmptyState` + 같은 두 문구(자물쇠 '접근 권한이
+없습니다' / 느낌표 '권한을 확인하지 못했습니다')를 그대로 재사용했다.
+같은 사건을 두 화면이 다르게 보이면 사용자는 다른 일이라고 읽는다.
+
+### §5·§17 — 권한 없는 사람 때문에 날인 조회를 부르지 않는다
+
+`_ensureReadiness()` 를 `initState` 의 **무조건 호출**에서 빼고, 권한이
+**허용으로 확인된 뒤** build 에서 한 번 건다. 그래서 `canManageTo=false`
+actor 는 `callableGetEmployerSealReadiness` 를 Posting 목적으로 부르지 않는다.
+**Manage 의 seal 조회(`canManageContract`)는 별개로 유지된다.**
+
+### §13·§14 권한 전이
+
+`context.select` 구독이라 **회수가 화면까지 닿는다** — 이전 목록·준비 화면·
+`+` 가 남지 않는다. 부여도 같은 경로로 build 에 닿아 그때 준비를 평가한다.
+**새 listener·polling 0개**, full reload 없음.
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · **CF·rules 변경 0**
+- **RENDER**: 신규 **15/15**(JOBS-VIEWER-00~12)
+- **DEVICE**: NOT SEEN — SubAdmin fixture 부재(배포 Phase 와 같은 제약)
+
+
 
 ## 0-AAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B.1-D
 

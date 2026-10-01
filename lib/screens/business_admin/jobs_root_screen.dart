@@ -37,6 +37,7 @@ import '../../models/core/contract_template_model.dart';
 import '../../services/business_posting_readiness.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/common/app_empty_state.dart';
 import '../../utils/admin_business_scope_label.dart';
 import '../../utils/admin_tab_switcher.dart';
 import '../../utils/navigation_helper.dart';
@@ -84,6 +85,9 @@ class _JobsRootScreenState extends State<JobsRootScreen>
 
   /// [POSTING-V2-03A.1] 알림이 지정한 공고 — WorkforceListView에 1회성으로 전달.
   String? _targetToId;
+  /// [R7-P4.4E.3B.2] 권한이 허용으로 확인된 뒤 준비 상태를 **한 번** 묻는다.
+  bool _readinessRequested = false;
+
   late final void Function(String toId) _onJobsTarget;
 
   @override
@@ -94,11 +98,9 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.load(context);
-      // [R7-P4.4E.2A] Home 을 한 번도 그리지 않았어도 스스로 묻는다.
-      //   예전에는 이 값을 Home 위젯만 채웠다. 앱을 껐다 켜고 공고 탭으로
-      //   바로 들어오면 아무도 답을 갖고 있지 않았고, 그 모름이 '정상 ·
-      //   공고 0건' 으로 보였다. 같은 scope 값이 이미 있으면 다시 세지 않는다.
-      unawaited(_ensureReadiness());
+      // [R7-P4.4E.3B.2] 준비 상태 조회는 **권한이 허용으로 확인된 뒤** build
+      //   에서 건다. 공고를 관리할 수 없는 사람 때문에 고용주 날인 조회를
+      //   부르지 않기 위해서다(초기엔 권한이 아직 모름일 수 있다).
     });
 
     // [POSTING-V2-03A.1] 알림 → Jobs 탭 target 수신.
@@ -234,6 +236,50 @@ class _JobsRootScreenState extends State<JobsRootScreen>
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
+
+    // [R7-P4.4E.3B.2] 권한을 **먼저** 본다.
+    //
+    //   예전에는 준비 상태부터 계산하고 권한은 `+` 버튼에서만 봤다. 그래서
+    //   공고 관리 권한이 없는 하위관리자가 이 탭을 열면, 고용주 날인을 읽을
+    //   수 없어 `sealUnknown` → `allReady=false` → **"아직 공고를 등록할
+    //   준비가 끝나지 않았어요"** 가 떴다. 그 사람의 진실은 준비 미완료가
+    //   아니라 **권한 없음**이다. 준비는 그 사업장의 사실이고, 권한은 보는
+    //   사람의 사실이다 — 둘을 같은 문장으로 말하면 안 된다.
+    //
+    //   공고 목록 자체도 서버가 `canManageTo` 를 요구한다
+    //   (`srvAssertToAuthority`). 읽을 수 없는 사람에게 read-only 목록을
+    //   클라이언트에서 새로 만들지 않는다.
+    //
+    //   `select` 라 권한이 회수되면 여기까지 닿는다 — 이전 목록·준비 화면·
+    //   `+` 가 남아 있지 않다.
+    final toPermission = context.select<UserProvider, PermissionCheck>(
+        (p) => p.checkCurrentBusiness((x) => x.canManageTo));
+
+    if (toPermission.hidesAffordance) {
+      return _JobsPermissionSurface(
+        icon: Icons.lock_outline,
+        title: '접근 권한이 없습니다',
+        subtitle: '공고 관리 권한이 있는 관리자에게 문의하세요.',
+      );
+    }
+    if (toPermission.isPending) {
+      // 모름·확인 실패를 "권한 없음" 으로도, 준비 미완료로도 말하지 않는다.
+      return _JobsPermissionSurface(
+        icon: Icons.error_outline,
+        title: '권한을 확인하지 못했습니다',
+        subtitle: '권한이 없다는 뜻이 아닙니다.',
+      );
+    }
+
+    // 허용이 확인된 뒤에만 준비 상태를 묻는다 — 공고를 관리할 수 없는
+    // 사람 때문에 고용주 날인 조회를 부르지 않는다.
+    if (!_readinessRequested) {
+      _readinessRequested = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_ensureReadiness());
+      });
+    }
+
     return Scaffold(
       backgroundColor: AppColors.grey50,
       body: SafeArea(
@@ -423,13 +469,7 @@ class _JobsRootScreenState extends State<JobsRootScreen>
     );
   }
 
-  double _scale(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    if (w < 360) return 0.82;
-    if (w < 400) return 0.92;
-    if (w < 480) return 1.0;
-    return 1.08;
-  }
+  double _scale(BuildContext context) => _jobsScale(context);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -671,6 +711,78 @@ class _JobsReadinessUnknownView extends StatelessWidget {
               },
               icon: const Icon(Icons.refresh, size: 18),
               label: const Text('다시 확인'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 화면 폭에 따른 배율 — 권한 surface 도 같은 규칙을 쓴다.
+///   State 안에만 두면 다른 위젯이 같은 값을 쓸 수 없어 규칙이 갈린다.
+double _jobsScale(BuildContext context) {
+  final w = MediaQuery.sizeOf(context).width;
+  if (w < 360) return 0.82;
+  if (w < 400) return 0.92;
+  if (w < 480) return 1.0;
+  return 1.08;
+}
+
+/// [R7-P4.4E.3B.2] 공고 탭의 권한 상태 surface.
+///
+///   계약 관리 화면이 쓰는 것과 **같은 모양**이다(`AppEmptyState` + 자물쇠 /
+///   느낌표). 새 컴포넌트를 만들지 않는다 — 같은 사건을 두 화면이 다르게
+///   보이면 사용자는 다른 일이라고 읽는다.
+///
+///   탭 자체는 그대로 둔다. 숨기면 "권한을 빼앗겼다" 가 아니라 "기능이
+///   사라졌다" 로 읽히고, 모르는 동안에도 자리가 사라진다.
+class _JobsPermissionSurface extends StatelessWidget {
+  const _JobsPermissionSurface({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _jobsScale(context);
+    return Scaffold(
+      backgroundColor: AppColors.grey50,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 제목 줄은 남긴다 — 어디에 있는지는 알 수 있어야 한다.
+            // 다만 필터·공고등록 같은 **행동**은 없다.
+            Container(
+              color: Colors.white,
+              padding: EdgeInsets.fromLTRB(20 * s, 12 * s, 12 * s, 10 * s),
+              child: Row(
+                children: [
+                  Text(
+                    '공고',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: AppEmptyState(
+                icon: icon,
+                title: title,
+                subtitle: subtitle,
+              ),
             ),
           ],
         ),
