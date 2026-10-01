@@ -95,8 +95,13 @@ class _ContractImportPasteScreenState
 
   // ─── 0개 fallback 시트 ────────────────────────────────────────
   Future<void> _showParseFailureSheet(String text) async {
+    // [R7-P4.4E.6A] isScrollControlled 를 주지 않으면 바텀시트 최대 높이가
+    //   화면 높이의 9/16 으로 잠긴다. 이 시트 본문은 ~356px 를 요구하므로
+    //   화면 높이 640 이하 기기(9/16 = 360)에서 그대로 넘쳤다 — 실측 36~49px.
+    //   본문에도 스크롤을 줘서 배율을 올린 경우까지 받는다.
     final choice = await DialogHelper.showSheet<String>(
       context,
+      isScrollControlled: true,
       builder: (ctx) => _ParseFailureSheet(hasText: text.isNotEmpty),
     );
     if (!mounted) return;
@@ -288,17 +293,20 @@ class _ParseFailureSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          ResponsiveHelper.spacing(context, 20),
-          ResponsiveHelper.spacing(context, 20),
-          ResponsiveHelper.spacing(context, 20),
-          ResponsiveHelper.spacing(context, 16),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      // [R7-P4.4E.6A] 본문이 세로로 들어가지 않으면 잘리는 대신 스크롤된다.
+      //   버튼 세 개가 모두 CTA 이므로 어느 것도 화면 밖에 남겨둘 수 없다.
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            ResponsiveHelper.spacing(context, 20),
+            ResponsiveHelper.spacing(context, 20),
+            ResponsiveHelper.spacing(context, 20),
+            ResponsiveHelper.spacing(context, 16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             // 드래그 핸들
             Center(
               child: Container(
@@ -388,7 +396,8 @@ class _ParseFailureSheet extends StatelessWidget {
                 ),
               ),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );

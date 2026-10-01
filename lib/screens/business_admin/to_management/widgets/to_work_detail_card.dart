@@ -247,28 +247,47 @@ class TOWorkDetailCard extends StatelessWidget {
                         ),
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                      // [R7-P4.4E.6A] 이 줄에는 줄어들 수 있는 자식이 없었다.
+                      //   아이콘·시간·실근무를 고정 폭 자식으로만 늘어놓아서
+                      //   '(실근무 ...)' 가 붙는 순간 Row 가 자식 고유 폭의 합을
+                      //   그대로 요구했고, 360dp 기기에서 넘쳤다.
+                      //   시간은 ALfit 의 핵심 사실이므로 ellipsis 로 감추지
+                      //   않는다 — Wrap 으로 줄을 바꿔 전체를 보여준다.
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            Icons.access_time,
-                            size: ResponsiveHelper.iconSize(context, 13),
-                            color: AppColors.grey500,
+                          Padding(
+                            padding: EdgeInsets.only(
+                              top: ResponsiveHelper.spacing(context, 2),
+                            ),
+                            child: Icon(
+                              Icons.access_time,
+                              size: ResponsiveHelper.iconSize(context, 13),
+                              color: AppColors.grey500,
+                            ),
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                          Text(
-                            '$startTime ~ $endTime',
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                          ),
-                          if (netTime.isNotEmpty) ...[
-                            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                            Text(
-                              '(실근무 $netTime)',
-                              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                color: AppColors.grey500,
-                                fontWeight: FontWeight.w500,
-                              ),
+                          Expanded(
+                            child: Wrap(
+                              spacing: ResponsiveHelper.spacing(context, 6),
+                              runSpacing: ResponsiveHelper.spacing(context, 2),
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  '$startTime ~ $endTime',
+                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                ),
+                                if (netTime.isNotEmpty)
+                                  Text(
+                                    '(실근무 $netTime)',
+                                    style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                      color: AppColors.grey500,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                              ],
                             ),
-                          ],
+                          ),
                         ],
                       ),
                     ],

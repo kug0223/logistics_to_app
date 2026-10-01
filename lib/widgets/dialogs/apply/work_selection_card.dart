@@ -270,79 +270,117 @@ class WorkSelectionCard extends StatelessWidget {
   // 중단: 시간 + 급여 + 인원
   // ═══════════════════════════════════════════════════════════
 
+  /// 메타데이터 한 조각 — 아이콘 + 글자.
+  ///
+  /// [R7-P4.4E.6A] `Wrap` 은 자식에게 **maxWidth: Infinity** 를 준다. 그래서
+  ///   `Row(mainAxisSize: min)` 조각은 줄어들 수 있는 자식이 있어도 절대
+  ///   줄어들지 않는다. 320dp 에서 시간 조각이 242.3px 를 요구하는데 가용
+  ///   폭은 226.9px 였고 그대로 12px 넘쳤다.
+  ///   조각을 가용 폭으로 묶어 주면 글자가 조각 안에서 줄을 바꾼다 —
+  ///   근무시간·급여는 핵심 사실이므로 ellipsis 로 감추지 않는다.
+  Widget _metaChunk(
+    BuildContext context, {
+    required IconData icon,
+    required Color iconColor,
+    required double maxWidth,
+    required List<Widget> texts,
+  }) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.only(
+              top: ResponsiveHelper.spacing(context, 1),
+            ),
+            child: Icon(
+              icon,
+              size: ResponsiveHelper.iconSize(context, 14),
+              color: iconColor,
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Flexible(
+            child: Wrap(
+              spacing: ResponsiveHelper.spacing(context, 3),
+              runSpacing: ResponsiveHelper.spacing(context, 2),
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: texts,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDetails(BuildContext context, ThemeData theme) {
     return Padding(
       padding: EdgeInsets.only(
         left: ResponsiveHelper.spacing(context, 42),
       ),
-      child: Wrap(
-        spacing: ResponsiveHelper.spacing(context, 12),
-        runSpacing: ResponsiveHelper.spacing(context, 4),
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          // 근무시간 + 순근무시간
-          Row(
-            mainAxisSize: MainAxisSize.min,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 조각들이 쓸 수 있는 실제 폭 — Wrap 이 자식에게 주지 않는 값이다.
+          final maxW = constraints.maxWidth;
+          return Wrap(
+            spacing: ResponsiveHelper.spacing(context, 12),
+            runSpacing: ResponsiveHelper.spacing(context, 4),
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Icon(
-                Icons.access_time,
-                size: ResponsiveHelper.iconSize(context, 14),
-                color: AppColors.grey500,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                workDetail.timeRange,
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-              ),
-              if (_netWorkTime.isNotEmpty) ...[
-                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                Text(
-                  '($_netWorkTime)',
-                  style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: AppColors.grey500,
-                    fontWeight: FontWeight.w500,
+              // 근무시간 + 순근무시간
+              _metaChunk(
+                context,
+                icon: Icons.access_time,
+                iconColor: AppColors.grey500,
+                maxWidth: maxW,
+                texts: [
+                  Text(
+                    workDetail.timeRange,
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
                   ),
+                  if (_netWorkTime.isNotEmpty)
+                    Text(
+                      '($_netWorkTime)',
+                      style: ResponsiveHelper.tinyStyle(context).copyWith(
+                        color: AppColors.grey500,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                ],
+              ),
+              // 지원 마감 시각 (단기 TO, 마감 정보 있을 때)
+              if (!isLongTerm && _deadlineLabel != null)
+                _metaChunk(
+                  context,
+                  icon: Icons.timer_off_outlined,
+                  iconColor: AppColors.warningDark,
+                  maxWidth: maxW,
+                  texts: [
+                    Text(
+                      _deadlineLabel!,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: AppColors.warningDark,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ],
-          ),
-          // 지원 마감 시각 (단기 TO, 마감 정보 있을 때)
-          if (!isLongTerm && _deadlineLabel != null)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.timer_off_outlined,
-                  size: ResponsiveHelper.iconSize(context, 14),
-                  color: AppColors.warningDark,
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  _deadlineLabel!,
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: AppColors.warningDark,
+              // 급여 (아이콘 + 금액/유형) — 배지는 별도 Wrap 아이템으로 분리해 overflow 방지
+              _metaChunk(
+                context,
+                icon: Icons.payments_outlined,
+                iconColor: _wageColor,
+                maxWidth: maxW,
+                texts: [
+                  Text(
+                    '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
+                    style: ResponsiveHelper.smallStyle(context, color: _wageColor)
+                        .copyWith(fontWeight: FontWeight.w600),
                   ),
-                ),
-              ],
-            ),
-          // 급여 (아이콘 + 금액/유형) — 배지는 별도 Wrap 아이템으로 분리해 overflow 방지
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.payments_outlined,
-                size: ResponsiveHelper.iconSize(context, 14),
-                color: _wageColor,
+                ],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(
-                '${FormatHelper.formatNumber(workDetail.wage)}원/${workDetail.wageTypeLabel}',
-                style: ResponsiveHelper.smallStyle(context, color: _wageColor)
-                    .copyWith(fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
           // 정산방식 배지 — Wrap 아이템으로 독립 분리 (좁은 화면에서 다음 줄 개행)
           if (workDetail.payScheduleTypeLabel.isNotEmpty)
             Container(
@@ -360,45 +398,41 @@ class WorkSelectionCard extends StatelessWidget {
                     color: _wageColor, fontWeight: FontWeight.w600),
               ),
             ),
-          // 입금일 상세 (주급/월급 등 날짜·시간 있을 때만)
-          if (workDetail.payScheduleDetail.isNotEmpty)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.account_balance_wallet_outlined,
-                  size: ResponsiveHelper.iconSize(context, 14),
-                  color: AppColors.grey500,
+              // 입금일 상세 (주급/월급 등 날짜·시간 있을 때만)
+              if (workDetail.payScheduleDetail.isNotEmpty)
+                _metaChunk(
+                  context,
+                  icon: Icons.account_balance_wallet_outlined,
+                  iconColor: AppColors.grey500,
+                  maxWidth: maxW,
+                  texts: [
+                    Text(
+                      '${workDetail.payScheduleDetail} 입금',
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                    ),
+                  ],
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  '${workDetail.payScheduleDetail} 입금',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                ),
-              ],
-            ),
 
-          // 모집 인원
-          if (workDetail.requiredCount > 0)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.people_outline,
-                  size: ResponsiveHelper.iconSize(context, 14),
-                  color: AppColors.grey500,
+              // 모집 인원
+              if (workDetail.requiredCount > 0)
+                _metaChunk(
+                  context,
+                  icon: Icons.people_outline,
+                  iconColor: AppColors.grey500,
+                  maxWidth: maxW,
+                  texts: [
+                    Text(
+                      '${workDetail.requiredCount}명 모집',
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                    ),
+                  ],
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  '${workDetail.requiredCount}명 모집',
-                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-                ),
-              ],
-            ),
 
-          // 공제 방식 (none이면 자동으로 SizedBox.shrink)
-          TaxDeductionBadge.chip(taxDeductionType: workDetail.taxDeductionType),
-        ],
+              // 공제 방식 (none이면 자동으로 SizedBox.shrink)
+              TaxDeductionBadge.chip(taxDeductionType: workDetail.taxDeductionType),
+            ],
+          );
+        },
       ),
     );
   }
