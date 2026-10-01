@@ -50,6 +50,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/common_widgets.dart';
+import 'application_relation.dart';
 import 'document_access_consent.dart';
 
 // ─ 결과 타입 ──────────────────────────────────────────────────────────────────
@@ -80,6 +81,10 @@ class _ItemMeta {
   /// [R8-P3A.1] 서버가 준 결과의 성격. null = 아직 제출 전.
   ///   실패와 "결과를 모름"을 같은 칸에 넣지 않기 위해 따로 둔다.
   ApplyOutcome? outcome;
+
+  /// [R7-P4.4E.7A] 제출 전 이미 존재하던 관계. 초대와 지원을 구별해 말하기
+  ///   위해 둔다 — 초대는 수락·거절로 답하는 것이지 다시 지원하는 게 아니다.
+  WorkApplyRelation relation = WorkApplyRelation.none;
 
   bool get applyOk => outcome == ApplyOutcome.success ||
       outcome == ApplyOutcome.alreadyApplied;
@@ -130,30 +135,26 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
   // ─ 초기화 ────────────────────────────────────────────────────────────────
 
   /// myApplications 기반 already-applied 선분류
+  ///
+  /// [R7-P4.4E.7A] 여기 있던 자체 matcher 를 지웠다. `selectedWorkType` 하나로
+  ///   비교해서, 같은 업무명이 시간대만 다른 **별개 근무**를 하나로 뭉쳤다 —
+  ///   하나에 지원한 뒤 다른 하나를 고르면 `alreadyApplied` 로 분류돼
+  ///   **제출에서 조용히 빠졌다**. 서버는 (uid, toId, slotId, wdId) 로 보고,
+  ///   그 함수 주석이 workType 단독 매칭을 이미 경고해 뒀다.
+  ///   이제 공고 상세와 **같은** `ApplicationRelationResolver` 를 쓴다.
   void _initAlreadyApplied() {
     for (final meta in _metas) {
-      if (_hasActiveApplication(meta.item)) {
+      final relation = ApplicationRelationResolver.resolve(
+        myApplications: widget.myApplications,
+        toId: widget.to.id,
+        slotId: meta.item.slot?.id,
+        work: meta.item.work,
+      );
+      meta.relation = relation;
+      if (relation.blocksNewApplication) {
         meta.status = _ItemStatus.alreadyApplied;
       }
     }
-  }
-
-  bool _hasActiveApplication(({SlotModel? slot, WorkDetailModel work}) item) {
-    final slotId = item.slot?.id;
-    return widget.myApplications.any((app) {
-      final sameTO = app.toId == widget.to.id;
-      final sameWork = app.selectedWorkType == item.work.workType;
-      // slotId가 null이면 contract TO (slotId 없는 지원서와 매칭)
-      final sameSlot = slotId == null
-          ? (app.slotId == null || app.slotId!.isEmpty)
-          : app.slotId == slotId;
-      const active = [
-        AppStatus.pending,
-        AppStatus.contractPending,
-        AppStatus.confirmed,
-      ];
-      return sameTO && sameWork && sameSlot && active.contains(app.status);
-    });
   }
 
   // ─ Conflict 체크 ─────────────────────────────────────────────────────────
@@ -566,7 +567,15 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
         case _ItemStatus.alreadyApplied:
           borderColor = AppColors.grey300;
           bgColor = AppColors.grey50;
-          badgeText = '이미 지원중';
+          // [R7-P4.4E.7A] 초대와 지원을 같은 말로 덮지 않는다 — 서버도
+          //   초대에는 "내 지원 내역에서 초대를 확인해주세요" 를 준다.
+          if (meta.relation.isInvitation) {
+            badgeText = '초대 확인';
+            subMsg = '초대받은 근무예요. 내 지원 내역에서 수락·거절해주세요.';
+            subColor = AppColors.grey600;
+          } else {
+            badgeText = '이미 지원중';
+          }
           badgeColor = AppColors.grey500;
       }
     }

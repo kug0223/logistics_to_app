@@ -36,6 +36,7 @@ import '../../widgets/common/loading_widget.dart';
 // WorkTypeIcon import removed — 업무카드 placeholder 아이콘 제거 (spec 요구)
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
+import '../../widgets/dialogs/apply/application_relation.dart';
 import '../../widgets/dialogs/apply/multi_apply_confirm_sheet.dart';
 import '../../widgets/dialogs/apply/longterm_apply_sheet.dart';
 import '../../widgets/dialogs/apply/apply_summary_section.dart';
@@ -179,10 +180,54 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     ).firstOrNull;
   }
 
-  int get _totalSelectedCount {
-    if (_to?.isFlexType ?? false) return _flexSelected.length;
-    return _contractSelected.length;
+  // ── [R7-P4.4E.7A] 지원 관계 — 판정은 공용 resolver 하나로 ────────────
+  //
+  //   이 화면은 `_myApplications` 를 이미 들고 있으면서도 선택 가능 여부를
+  //   그것과 무관하게 정했다. 그래서 이미 지원한 업무에도 `선택` 이 보이고,
+  //   누르면 선택 집합에 들어가 CTA 의 N 을 부풀렸다. 사용자는 확인 시트에
+  //   들어간 뒤에야 이미 지원한 건임을 알았다.
+  //
+  //   확인 시트·서버와 **같은** 판정을 쓴다. 새 reader 도 새 identity 도
+  //   만들지 않는다 — `_myApplications` + `ApplicationRelationResolver`.
+
+  /// 이 근무에 지금 어떤 관계가 있는가. `none` 이면 신규 지원 후보다.
+  WorkApplyRelation _relationFor(WorkDetailModel work, SlotModel? slot) {
+    final toId = _to?.id;
+    if (toId == null) return WorkApplyRelation.none;
+    return ApplicationRelationResolver.resolve(
+      myApplications: _myApplications,
+      toId: toId,
+      slotId: slot?.id,
+      work: work,
+    );
   }
+
+  /// 선택된 것 중 **신규 지원 가능한** 것만. 카운트와 제출이 같은 목록을 본다.
+  ///
+  ///   선택 시점에 막아도 그 뒤 데이터가 갱신되면 선택 집합이 낡을 수 있다.
+  ///   그래서 세는 자리에서도 다시 걸러낸다.
+  List<({SlotModel? slot, WorkDetailModel work})> get _newApplyTargets {
+    final out = <({SlotModel? slot, WorkDetailModel work})>[];
+    if (_to?.isFlexType ?? false) {
+      for (final slot in _allSlots) {
+        final wid = _flexSelected[_dateKey(slot.date)];
+        if (wid == null) continue;
+        final work = slot.workDetails.where((w) => w.id == wid).firstOrNull;
+        if (work == null) continue;
+        if (_relationFor(work, slot).blocksNewApplication) continue;
+        out.add((slot: slot, work: work));
+      }
+    } else {
+      for (final work
+          in _workDetails.where((w) => _contractSelected.contains(w.id))) {
+        if (_relationFor(work, null).blocksNewApplication) continue;
+        out.add((slot: null, work: work));
+      }
+    }
+    return out;
+  }
+
+  int get _totalSelectedCount => _newApplyTargets.length;
 
   bool _isWorkSelected(WorkDetailModel work) {
     if (_to?.isFlexType ?? false) {
@@ -195,7 +240,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   String _dateKey(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  void _toggleWork(WorkDetailModel work) {
+  void _toggleWork(WorkDetailModel work, SlotModel? slot) {
+    // [R7-P4.4E.7A] 이미 관계가 있는 근무는 선택 집합에 들어갈 수 없다.
+    //   렌더에서 affordance 를 지우는 것만으로는 부족하다 — 낡은 화면에서
+    //   눌리는 경로가 남으면 같은 거짓이 되돌아온다.
+    if (_relationFor(work, slot).blocksNewApplication) return;
     if (_to?.isFlexType ?? false) {
       if (_selectedSlotDate == null) return;
       final key = _dateKey(_selectedSlotDate!);
@@ -1332,6 +1381,53 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     );
   }
 
+  /// [R7-P4.4E.7A] 이미 관계가 있는 근무에 보여주는 상태 칩.
+  ///
+  ///   신규 지원 affordance(`선택`/`선택됨`)를 대신한다. 누를 수 없다 —
+  ///   여기서 할 수 있는 일이 없기 때문이다. 상태 낱말은 새로 만들지 않고
+  ///   기존 지원 UI(`WorkSelectionCard`)의 `확정` · `지원완료` 를 쓴다.
+  Widget _buildRelationChip(BuildContext context, WorkApplyRelation relation) {
+    final (String label, IconData icon, Color color) = switch (relation) {
+      WorkApplyRelation.confirmed ||
+      WorkApplyRelation.contractPending =>
+        ('확정', Icons.verified_outlined, AppColors.success),
+      WorkApplyRelation.pending =>
+        ('지원완료', Icons.check_circle_outline, AppColors.infoDark),
+      // 초대는 수락·거절로 답하는 것이지 다시 지원하는 것이 아니다.
+      WorkApplyRelation.invited =>
+        ('초대 확인', Icons.mail_outline, AppColors.warningDark),
+      WorkApplyRelation.none => ('', Icons.circle, AppColors.grey400),
+    };
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 14, color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          // 좁은 폭·큰 배율에서 줄을 바꿔 전체를 보여준다.
+          Flexible(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: ResponsiveHelper.tinyStyle(context, color: color)
+                  .copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── 업무 카드 ─────────────────────────────────
 
   Widget _buildWorkCard(
@@ -1396,7 +1492,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     // 이미지 유무로 레이아웃 분기 (16:9 대형 이미지 금지)
     final hasImage = workType?.thumbnailUrl != null;
     final isSelected = _isWorkSelected(work);
-    final canSelect = widget.mode == TODetailMode.applicant && !isClosed;
+    // [R7-P4.4E.7A] 이미 관계가 있는 근무는 신규 선택 후보가 아니다.
+    final relation = _relationFor(work, slot);
+    final canSelect = widget.mode == TODetailMode.applicant &&
+        !isClosed &&
+        !relation.blocksNewApplication;
+    // 업무 카드와 상세보기는 그대로 둔다 — 사용자는 한 공고에서 '이미 지원한
+    // 업무' 와 '아직 지원하지 않은 업무' 를 나란히 비교해야 한다.
+    final showRelation = widget.mode == TODetailMode.applicant &&
+        relation.blocksNewApplication;
 
     final availableColor = workAvailable == null
         ? AppColors.grey400
@@ -1655,12 +1759,20 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     ),
                   ),
                 ),
+                // [R7-P4.4E.7A] 관계가 있으면 신규 지원 affordance 대신
+                //   지금 관계를 말한다. vocabulary 는 기존 지원 UI 와 맞춘다.
+                if (showRelation) ...[
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: _buildRelationChip(context, relation),
+                  ),
+                ],
                 if (canSelect) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: isSelected
                         ? ElevatedButton.icon(
-                            onPressed: () => _toggleWork(work),
+                            onPressed: () => _toggleWork(work, slot),
                             icon: const Icon(Icons.check_circle, size: 14),
                             label: const Text('선택됨'),
                             style: ElevatedButton.styleFrom(
@@ -1675,7 +1787,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                             ),
                           )
                         : OutlinedButton.icon(
-                            onPressed: () => _toggleWork(work),
+                            onPressed: () => _toggleWork(work, slot),
                             icon: const Icon(Icons.add_circle_outline, size: 14),
                             label: const Text('선택'),
                             style: OutlinedButton.styleFrom(
@@ -2707,28 +2819,27 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     }
 
     // 선택 목록 수집
-    final List<({SlotModel? slot, WorkDetailModel work})> items = [];
+    // [R7-P4.4E.7A] 카운트와 **같은 목록**을 쓴다. 세는 곳과 보내는 곳이
+    //   갈라지면 `N개 업무 선택됨` 과 실제 제출이 어긋난다.
+    final List<({SlotModel? slot, WorkDetailModel work})> items = [
+      ..._newApplyTargets,
+    ];
 
-    if (_to!.isFlexType) {
-      for (final slot in _allSlots) {
-        final key = _dateKey(slot.date);
-        final wid = _flexSelected[key];
-        if (wid == null) continue;
-        final work = slot.workDetails.where((w) => w.id == wid).firstOrNull;
-        if (work != null) items.add((slot: slot, work: work));
-      }
-      // 아무것도 선택 안 됐으면 현재 슬롯의 전체 업무로 (멀티 날짜 선택 없이 전체 지원)
-      if (items.isEmpty && _currentWorkDetails.isNotEmpty) {
-        for (final wd in _currentWorkDetails.where((w) => !w.isTimeExpired)) {
-          items.add((slot: _currentSlot, work: wd));
+    if (items.isEmpty) {
+      // 아무것도 선택 안 됐으면 전체 업무로 (멀티 날짜 선택 없이 전체 지원).
+      //   여기서도 이미 관계가 있는 근무는 넣지 않는다.
+      if (_to!.isFlexType) {
+        if (_currentWorkDetails.isNotEmpty) {
+          for (final wd in _currentWorkDetails.where((w) => !w.isTimeExpired)) {
+            if (_relationFor(wd, _currentSlot).blocksNewApplication) continue;
+            items.add((slot: _currentSlot, work: wd));
+          }
         }
-      }
-    } else {
-      final works = _contractSelected.isEmpty
-          ? _workDetails
-          : _workDetails.where((w) => _contractSelected.contains(w.id)).toList();
-      for (final work in works) {
-        items.add((slot: null, work: work));
+      } else if (_contractSelected.isEmpty) {
+        for (final work in _workDetails) {
+          if (_relationFor(work, null).blocksNewApplication) continue;
+          items.add((slot: null, work: work));
+        }
       }
     }
 

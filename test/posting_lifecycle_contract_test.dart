@@ -251,7 +251,15 @@ void main() {
       final s = _flat(_codeOf(_src('lib/screens/common/job_posting_screen.dart')));
       expect(s.contains('if (widget.mode == TODetailMode.adminPreview) { return const SizedBox.shrink(); }'),
           true, reason: '관리자가 근로자 권한을 얻는 화면이 되면 안 된다');
-      expect(s.contains('final canSelect = widget.mode == TODetailMode.applicant && !isClosed;'), true);
+      // [R7-P4.4E.7A 갱신] 예전에는 이 한 줄을 통째로 고정했다.
+      //   계약은 "선택 affordance 가 applicant 모드에서만 열린다" 이고,
+      //   그 줄이 몇 개의 조건을 더 보는지는 계약이 아니다. 7A 에서
+      //   `!relation.blocksNewApplication` 이 더해지며 줄이 바뀌었다.
+      //   조건을 빼는 변경은 여전히 이 단언에서 걸린다.
+      expect(s.contains('final canSelect = widget.mode == TODetailMode.applicant'),
+          true, reason: '선택 affordance 는 applicant 모드에서만 열린다');
+      expect(s.contains('!isClosed'), true,
+          reason: '마감된 공고에서 선택이 열리면 안 된다');
       expect(s.contains("_applicantUid = widget.mode == TODetailMode.applicant"), true);
     });
   });
