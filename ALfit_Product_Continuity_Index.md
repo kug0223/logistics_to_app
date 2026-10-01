@@ -2,7 +2,112 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.5.2** (업무유형 저장 실패 복구성 — **E5 전체 종료**)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.6B** (Tier-1 responsive 종료 — **E6 는 CODE/RENDER 만 닫혔고 DEVICE 는 열려 있다**)
+
+## 0-AAAAAAAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.6B
+
+기준 `496d817` → 커밋 **`a371893`**. **CODE CLOSED / RENDER VERIFIED / DEVICE PENDING.**
+
+### 무엇을 했나
+
+6A 가 A등급(TIER-1 RENDER REQUIRED)으로 남긴 후보 6건을 **실제로 그려 보고** 판정했다.
+정적 Row 구조만 보고 고치지 않았다 — production 부모를 세우고
+320/360/411dp × 배율 1.0/1.3/2.0 으로 재현된 것만 고쳤다.
+
+| Surface | 판정 | 재현 조건 | 수정 |
+|---|---|---|---|
+| `to_date_selector:302` + **506** | **CONFIRMED** | 360dp 13px · 320dp 48px · 배율 2.0 288px | Expanded + Wrap / Expanded |
+| `income_detail_screen:530` | **CONFIRMED** | 320dp 2.5px · 배율 2.0 183px | Flexible 2중 |
+| `day_applicants_dialog` **1217·1522·2782** | **CONFIRMED** | 배율 2.0 55px · 지원120/확정48 127px · 6.8px | Flexible+Wrap / Expanded / Flexible |
+| `wage_confirm_dialog` **2519·2611·3281** (+연쇄 2632·3363) | **CONFIRMED** | 360dp 배율 1.0 에서 21·68·23px | Expanded / Flexible 2중 / Flexible / Row→Wrap |
+| `to_detail_dialogs:164` | **NO PATCH — dead code** | 도달 불가 | 없음 |
+| `create_to_screen:832` | **DEVICE DEFERRED** | 하네스 도달 불가 | 없음 |
+
+### 측정이 내 6A 기록을 고쳤다
+
+- `day_applicants` 는 내가 적은 **1255 가 아니라** 1217·1522·2782 였다.
+- `wage_confirm` 은 **2623 이 아니라** 2519·2611·3281 이었다.
+- `to_detail_dialogs:164` 는 **dead code** 였다 — `TODetailDialogs` 가 `lib` 전체에서
+  인스턴스화되지 않는다. R7-P1-2 DEVICE.1H 가 이미 같은 결론을 적어 뒀는데,
+  6A 에서 내가 **도달성을 확인하지 않고 A 로 올린 것이 오류**다.
+- **정적 스캔 순위를 중요도로 읽지 않는다.** 6A 스캔 1위(`to_date_selector:302`)는
+  맞았지만, 6A 에서 실제로 터진 것은 **25위**(`work_selection_card:284`)였다.
+
+### 중첩 Flexible — 바깥만 묶으면 재발한다
+
+`wage_confirm:2611` 은 배지를 `Flexible` 로 묶자 **안쪽 `Row(min)`** 이 그대로
+경직돼 88px 로 다시 넘쳤다. 안쪽 텍스트까지 줄어들 수 있어야 끝난다.
+`Wrap` 이 자식에게 `maxWidth: Infinity` 를 준다는 6A 의 발견과 같은 성질이다.
+
+### 핵심 사실은 하나도 감추지 않았다
+
+ellipsis 추가 **0** · fontSize 축소 **0** · Clip **0** · 임의 px 감소 **0**.
+전부 줄바꿈으로 풀었고, 셀마다 **시각·금액·인원·휴게 문구·CTA 가시성**을 단언한다.
+`income_detail_screen` 의 `fontSize: 20` 하드코딩은 **건드리지 않았다** —
+디자인 시스템 위반 여부와 responsive 결함은 별개 문제다.
+
+### 열린 채로 남긴 것
+
+- `[R7-P4.4E.6A-APPLY-CONFIRM-BOTTOM]` — 기기 9.7px, 하네스 25셀 미재현. **UNRESOLVED.**
+  speculative patch 하지 않았다.
+- `[R7-P4.4E.6B-CREATE-TO-TILE-DEVICE]` — 타일이 `_recentTOsForLoad`(Firestore 전용,
+  주입점 없음)에 걸려 재현 불가.
+- 동의 content hierarchy — **CORRECTION CANDIDATE / OPEN.** 문구·구조 둘 다 무변경.
+- **DEVICE 전부 미확인.**
+
+### 증거
+
+신규 render **21건**(`tier1_responsive_closure_test`) · 전체 **15047 PASS / 0 FAIL / 2 skip** ·
+`flutter analyze lib test` No issues · CF·schema·rules·permission 변경 **0** ·
+공용 `DialogHelper`·`sheetBottomInset` 무변경.
+
+## 0-AAAAAAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.6A
+
+기준 `8e28c39` → 커밋 **`496d817`**. **ACCEPTED (6B §0).**
+
+### 세 곳 모두 줄어들 수 있는 자식이 없는 Row 였다
+
+| 반례 | 측정 | 수정 |
+|---|---|---|
+| ② `to_work_detail_card:250` | 360dp 가용 185.6 / 요구 293.3 → 하네스 105px, 기기 3.9px | Expanded + Wrap |
+| ① `contract_import_paste_screen` 실패 시트 | 상한 **9/16**: 360×640 → 360.0 vs 본문 356.0 → **36px**; 320×640 → **49px**; 360×800 → 450.0 넘침 없음 | `isScrollControlled` + 본문 스크롤 |
+| ③ `work_selection_card:284` | 320dp `Wrap` 가용 226.9 / 시간 조각 242.3 → **12px** | 조각을 가용 폭으로 묶고 안에서 줄바꿈 |
+
+### 두 가지 구조적 발견
+
+- **`isScrollControlled` 를 주지 않으면 바텀시트 상한이 화면 높이의 9/16 으로 잠긴다.**
+  본문이 스크롤 불가면 그대로 잘린다. A(상한 해제) 단독은 큰 배율에서 재발하고,
+  B(본문 스크롤) 단독은 넘치지 않는 기기에서도 버튼을 보려고 스크롤하게 만든다 → **둘 다** 적용.
+  이 모양은 `ApplyConfirmDialog` 가 이미 쓰는 형태다 — 새 패턴을 만들지 않았다.
+- **`Wrap` 은 자식에게 `maxWidth: Infinity` 를 준다.** 그래서 `Wrap` 안의
+  `Row(mainAxisSize: min)` 조각은 안에 `Flexible` 이 있어도 줄어들지 않는다.
+
+### 하네스 px 를 기기 px 로 읽지 않는다
+
+테스트 폰트(Ahem)가 실제 폰트보다 넓다 — `09:00 ~ 18:00` 이 172.3px.
+하네스 105px vs 기기 3.9px 의 차이가 이것이다. 구조적 결함은 동일하고
+**하네스가 더 엄격**하므로 통과는 유효하다.
+
+### ③ 지원 확인 시트는 내가 처음 세운 부모가 production 이 아니었다
+
+`ApplyConfirmDialog.show` 는 `ApplyWorkDialog` **안에서** 불리고 그 자체가
+`showSheet` 로 열린 시트다(`apply_work_dialog.dart:108`) — **시트 안의 시트**.
+평평한 Scaffold 16셀 + 중첩 9셀 = **25셀 모두 세로 넘침 0**.
+기기 반례(9.7px)는 **부정하지 않고 UNRESOLVED 로 유지**한다.
+그 중첩을 세우는 과정에서 위 ③(바깥 카드 12px)이 드러났다.
+
+### 동의 lifecycle (문구 무변경)
+
+canonical owner `DocumentAccessConsent`, `version = '2026-09-18-v3'`.
+구현 측 확인: 검토 단계 gate 가 **v3 미만을 조용히 승격하지 않는다** ·
+`processExpiredIdCardAccess` 가 자정에 `approved ∧ expiresAt<=now → expired`(멱등) ·
+열람 authority = `BUSINESS_ADMIN` 또는 실제 SubAdmin + businessId 인가 + `canManageWage`.
+→ **DOC CORRECTION**: CLAUDE.md 는 이 callable 을 "SUPER_ADMIN" 으로 적고 있어 낡았다.
+
+### 증거
+
+신규 render **31건** · 전체 **15026 PASS / 0 FAIL / 2 skip** ·
+`flutter analyze lib test` No issues · CF·schema·rules·permission 변경 **0**.
 
 ## 0-AAAAAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.5.2
 
