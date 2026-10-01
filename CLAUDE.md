@@ -372,7 +372,15 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
 **CURRENT IMPLEMENTATION:**
 - 금융기관 계좌 실명조회 API 없음
 - `callableMarkBankbookVerified`: 통장사본 업로드 → `bankbookImageUrl`/`bankbookImagePath`/`bankbookUploadedAt` 기록만 (status 전환 없음)
-- `callableGetBankbookSignedUrl`: SUPER_ADMIN + businessId 권한 확인 후 1시간 Signed URL 반환
+- `callableGetBankbookSignedUrl`: 1시간 Signed URL 반환.
+  권한은 **SUPER_ADMIN 이 아니다** — `BUSINESS_ADMIN` 또는 **실제 SubAdmin**
+  (`role == 'USER'` + 비어 있지 않은 `subAdminBusinessIds`/`subAdminOf`)이고,
+  호출자가 보낸 `businessId` 를 `businesses`(ownerId/adminIds)와 SubAdmin 배정으로
+  인가한 뒤, `members` 문서의 **`canManageWage`** 로 열람을 한 번 더 막는다.
+  `users.businessId` 는 legacy hint 일 뿐 authorization truth 가 아니고,
+  `managedBusinessIds` 는 클라이언트가 쓰는 값이라 인가 근거에서 제거됐다.
+  [R7-P4.4E.6A DOC CORRECTION] 이전 기술("SUPER_ADMIN + businessId")은 실제 구현과
+  달랐다. 코드가 canonical 이며, 문서를 코드에 맞췄다.
 - [Phase 6 삭제됨] `callableSuperAdminVerifyBankAccount`, `callableSuperAdminMarkBankMismatch`, `callableGetPendingBankVerification`, `callableMigrateBankVerificationStatus`
 
 **FUTURE OPTION:**
