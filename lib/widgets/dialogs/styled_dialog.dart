@@ -516,11 +516,20 @@ class StyledDialogInfoCard extends StatelessWidget {
   final IconData icon;
   final Color color;
 
+  /// [R7-P4.4E.6C] 한 덩어리 글을 **문단으로 끊어** 보여줄 때 쓴다.
+  ///
+  ///   긴 안내문을 `message` 한 줄로 넣으면 줄바꿈만 있는 벽이 되어 읽는
+  ///   사람이 어디서 어디까지가 한 조건인지 알 수 없다. 글자는 그대로 두고
+  ///   **간격만** 준다 — 문자열을 바꾸지 않는다.
+  ///   null 이면 기존처럼 `message` 하나를 그린다(기존 호출부 동작 불변).
+  final List<String>? segments;
+
   const StyledDialogInfoCard({
     super.key,
     required this.message,
     this.icon = Icons.info_outline,
     this.color = AppColors.info,
+    this.segments,
   });
 
   /// Info 카드 (파란색)
@@ -536,6 +545,16 @@ class StyledDialogInfoCard extends StatelessWidget {
   factory StyledDialogInfoCard.warning(String message) {
     return StyledDialogInfoCard(
       message: message,
+      icon: Icons.warning_amber,
+      color: AppColors.warning,
+    );
+  }
+
+  /// Warning 카드 — 문단으로 끊어 보여준다. 글자는 바꾸지 않는다.
+  factory StyledDialogInfoCard.warningSegments(List<String> segments) {
+    return StyledDialogInfoCard(
+      message: segments.join('\n'),
+      segments: segments,
       icon: Icons.warning_amber,
       color: AppColors.warning,
     );
@@ -583,13 +602,31 @@ class StyledDialogInfoCard extends StatelessWidget {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
-            child: Text(
-              message,
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: _getShade(color, 800),
-              ),
-            ),
+            child: segments == null
+                ? Text(
+                    message,
+                    style: ResponsiveHelper.smallStyle(
+                      context,
+                      color: _getShade(color, 800),
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (var i = 0; i < segments!.length; i++) ...[
+                        if (i > 0)
+                          SizedBox(
+                              height: ResponsiveHelper.spacing(context, 8)),
+                        Text(
+                          segments![i],
+                          style: ResponsiveHelper.smallStyle(
+                            context,
+                            color: _getShade(color, 800),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
           ),
         ],
       ),

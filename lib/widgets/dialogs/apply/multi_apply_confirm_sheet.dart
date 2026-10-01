@@ -35,7 +35,6 @@
 //   Partial fail → sheet 내 결과 표시 (성공/실패 항목 구분)
 //   All fail     → sheet 내 결과 표시
 
-import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -395,13 +394,13 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
 
   @override
   Widget build(BuildContext context) {
+    // [R7-P4.4E.6C] 하단 여백은 `DialogHelper.showSheet` 가 **이미** 넣는다
+    //   (`useSafeArea: true` + `Padding(bottom: sheetBottomInset)`).
+    //   여기서 `viewPadding.bottom` 을 또 읽어 더하고 있었다 — 같은 inset 을
+    //   두 번 센 것이다. 공용 `sheetBottomInset` 은 건드리지 않고 이쪽의
+    //   중복만 걷는다.
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        20,
-        20,
-        max(20, MediaQuery.viewPaddingOf(context).bottom),
-      ),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,28 +408,37 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           _buildHeader(context),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
 
-          // 업무 목록 — 많을 경우 이 영역만 스크롤, sheet 전체 무한 확장 방지
-          ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(context).height * 0.42,
-            ),
+          // [R7-P4.4E.6C] 본문 **하나**만 스크롤한다.
+          //
+          //   예전에는 업무 목록만 `ConstrainedBox(0.42×화면높이)` 안에서
+          //   따로 스크롤했고, 동의 안내와 헤더·CTA 는 전부 intrinsic 이었다.
+          //   root `Column(mainAxisSize: min)` 에 `Flexible` 이 하나도 없어
+          //   합이 시트 높이를 넘는 순간 그대로 잘렸다 —
+          //   실측 360×800 3건 **87px**, 320×640 3건 **290px**, 5건 145px.
+          //   게다가 본문 scroll owner 가 없어 **스크롤로 볼 수도 없었다**.
+          //
+          //   `Flexible` 이라 내용이 적으면 시트는 내용 크기대로 작게 뜨고
+          //   (1건: 시트 701.9 < 800 — 고정 높이로 키우지 않는다),
+          //   많아지면 이 안에서 스크롤된다. 중첩 스크롤도 없다.
+          Flexible(
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: _metas
-                    .map((meta) => _buildItemCard(context, meta))
-                    .toList(),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ..._metas.map((meta) => _buildItemCard(context, meta)),
+
+                  // 서류 접근 사전동의 — submit 전에만 표시 (result 후 불필요)
+                  if (!_submitDone) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    _buildConsent(context),
+                  ],
+                ],
               ),
             ),
           ),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-          // 서류 접근 사전동의 — submit 전에만 표시 (result 후 불필요)
-          if (!_submitDone) ...[
-            _buildConsent(context),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          ],
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
           _submitDone ? _buildResult(context) : _buildCTA(context),
         ],

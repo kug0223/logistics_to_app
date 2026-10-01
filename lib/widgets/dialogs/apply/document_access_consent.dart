@@ -42,7 +42,20 @@ class DocumentAccessConsent {
       '동일 고용관계의 계약이 갱신되는 경우 기존 서류 접근 동의는 '
       '갱신된 근무관계에도 승계됩니다.';
 
+  /// [R7-P4.4E.6C] 같은 문구를 **읽을 수 있는 단위로** 끊은 것.
+  ///
+  /// 문자열을 바꾸지 않는다 — `copyFor` 를 `\n` 으로 자른 것이 전부다.
+  /// 그래서 `partsFor(x).join('\n') == copyFor(x)` 가 항상 참이고,
+  /// 사용자가 보는 문장이 그대로이므로 [version] 은 계속 사실이다.
+  /// 이 등식은 테스트로 고정되어 있다 — 한쪽만 고치면 깨진다.
+  ///
+  /// 왜 필요했나: 일곱 가지 조건(동의·검토 중·확정 후·종료 기간·계좌·
+  /// 거절/취소/만료·갱신 승계)이 한 덩어리로 붙어 있어 어디서 어디까지가
+  /// 한 조건인지 읽어낼 수 없었다. 간격만 준다.
+  static List<String> partsFor(String businessName) =>
+      copyFor(businessName).split('\n');
+
   /// 지원 확인 UI에 삽입하는 고지 카드.
   static Widget card(String businessName) =>
-      StyledDialogInfoCard.warning(copyFor(businessName));
+      StyledDialogInfoCard.warningSegments(partsFor(businessName));
 }
