@@ -39,7 +39,12 @@ import 'package:ALfit/providers/notification_provider.dart';
 import 'package:ALfit/providers/user_provider.dart';
 import 'package:ALfit/screens/common/job_posting_reads.dart';
 import 'package:ALfit/screens/common/job_posting_screen.dart';
+import 'package:ALfit/services/firestore_service.dart';
+import 'package:ALfit/services/schedule_conflict_service.dart';
+import 'package:ALfit/utils/navigation_key.dart';
 import 'package:ALfit/widgets/dialogs/apply/application_relation.dart';
+import 'package:ALfit/widgets/dialogs/apply/apply_work_dialog.dart';
+import 'package:ALfit/widgets/dialogs/apply/apply_work_reads.dart';
 import 'package:ALfit/widgets/dialogs/apply/multi_apply_confirm_sheet.dart';
 
 // ── Firebase core 가짜 ────────────────────────────────────────────
@@ -104,6 +109,13 @@ class _Applicant extends UserProvider {
 const kTo = 'to1';
 const kSlot = 'slot1';
 final kDate = DateTime(2026, 10, 10);
+
+/// 미래 근무일 — 과거면 마감 경로로 빠져 카드가 덮인다.
+final kFutureDate = DateTime(
+  DateTime.now().year,
+  DateTime.now().month,
+  DateTime.now().day,
+).add(const Duration(days: 5));
 
 /// 같은 업무명 + 서로 다른 wdId. 결함 B 의 핵심 표본이다.
 WorkDetailData _wd({
@@ -186,6 +198,28 @@ TOModel _to() => TOModel(
       totalPending: 0,
       isPublished: true,
       publishMode: 'immediate',
+      createdAt: DateTime(2026, 9, 1),
+      statusUpdatedAt: DateTime(2026, 9, 1),
+    );
+
+/// ApplyWorkDialog 는 `mainTO.date` 를 쓴다 — 과거면 마감 안내가 카드를 덮는다.
+TOModel _toDated() => TOModel(
+      id: kTo,
+      businessId: 'biz1',
+      businessName: '강남 물류센터',
+      type: 'flex',
+      title: '단기 모집',
+      creatorUID: 'admin1',
+      status: TOStatus.active,
+      deadlineType: 'NONE',
+      hoursBeforeStart: 0,
+      workDetails: const [],
+      totalRequired: 4,
+      totalConfirmed: 0,
+      totalPending: 0,
+      isPublished: true,
+      publishMode: 'immediate',
+      rangeStart: kFutureDate,
       createdAt: DateTime(2026, 9, 1),
       statusUpdatedAt: DateTime(2026, 9, 1),
     );
@@ -613,6 +647,162 @@ void main() {
       );
       expect(find.text('이미 지원중'), findsNothing,
           reason: '서버가 재지원을 허용하는 상태다');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // 5) ApplyWorkDialog — E7B 수렴
+  // ══════════════════════════════════════════════════════════════
+  group('ARP-5x ApplyWorkDialog', () {
+    Future<void> pumpDialog(
+      WidgetTester tester, {
+      required List<WorkDetailData> works,
+      required List<ApplicationModel> myApps,
+    }) async {
+      tester.view.physicalSize = const Size(390, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(
+        ChangeNotifierProvider<UserProvider>(
+          create: (_) => _Applicant(),
+          child: MaterialApp(
+            navigatorKey: navigatorKey,
+            home: Scaffold(
+              body: ApplyWorkDialog(
+                mainTO: _toDated(),
+                workDetails: works,
+                slotId: kSlot,
+                businessName: '강남 물류센터',
+                reads: ApplyWorkReads(
+                  applicationsForTO:
+                      ({required String toId, required String uid}) async =>
+                          myApps,
+                  confirmedSchedules: (
+                          {required String uid,
+                          required DateTime workDate}) async =>
+                      const <ApplicationModel>[],
+                  conflictsForWorkDetails: (
+                          {required DateTime workDate,
+                          required List<WorkDetailData> workDetails}) async =>
+                      <String, ConflictInfo>{},
+                  myApplicationsForTOFresh: (toId) async =>
+                      const <ApplicationModel>[],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // 선결조건·지원서 조회는 실제 플랫폼 채널을 탄다 — 진짜 async 한 틱.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 80)));
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    testWidgets('ARP-50 신규 업무는 지원 버튼이 있다', (tester) async {
+      await pumpDialog(tester, works: [_wd(wdId: 'wdA')], myApps: const []);
+      expect(find.widgetWithText(InkWell, '지원'), findsWidgets,
+          reason: '관계가 없으면 지원할 수 있어야 한다');
+    });
+
+    testWidgets('ARP-51 PENDING → 지원 버튼 없음 + 지원완료', (tester) async {
+      await pumpDialog(
+        tester,
+        works: [_wd(wdId: 'wdA')],
+        myApps: [_app(status: AppStatus.pending, wdId: 'wdA')],
+      );
+      expect(find.text('지원완료'), findsWidgets);
+      expect(find.widgetWithText(InkWell, '지원'), findsNothing,
+          reason: '이미 지원한 업무에 지원 CTA 를 주지 않는다');
+    });
+
+    testWidgets('ARP-52 INVITED → 지원 버튼 없음 + 초대 확인', (tester) async {
+      await pumpDialog(
+        tester,
+        works: [_wd(wdId: 'wdA')],
+        myApps: [_app(status: AppStatus.invited, wdId: 'wdA')],
+      );
+      expect(find.text('초대 확인'), findsWidgets,
+          reason: '초대는 수락·거절로 답하는 사건이다');
+      expect(find.widgetWithText(InkWell, '지원'), findsNothing,
+          reason: '서버가 초대받은 근무의 재지원을 막는다');
+    });
+
+    testWidgets('ARP-53 CONFIRMED → 확정', (tester) async {
+      await pumpDialog(
+        tester,
+        works: [_wd(wdId: 'wdA')],
+        myApps: [_app(status: AppStatus.confirmed, wdId: 'wdA')],
+      );
+      expect(find.text('확정'), findsWidgets);
+      expect(find.widgetWithText(InkWell, '지원'), findsNothing);
+    });
+
+    testWidgets('ARP-54 CONTRACT_PENDING → 확정', (tester) async {
+      await pumpDialog(
+        tester,
+        works: [_wd(wdId: 'wdA')],
+        myApps: [_app(status: AppStatus.contractPending, wdId: 'wdA')],
+      );
+      expect(find.text('확정'), findsWidgets);
+      expect(find.widgetWithText(InkWell, '지원'), findsNothing);
+    });
+
+    for (final s in [
+      AppStatus.rejected,
+      AppStatus.canceled,
+      AppStatus.autoCanceled,
+      AppStatus.expired,
+    ]) {
+      testWidgets('ARP-55 $s → 지원 가능', (tester) async {
+        await pumpDialog(
+          tester,
+          works: [_wd(wdId: 'wdA')],
+          myApps: [_app(status: s, wdId: 'wdA')],
+        );
+        expect(find.widgetWithText(InkWell, '지원'), findsWidgets,
+            reason: '서버가 재지원을 허용하는 상태다');
+      });
+    }
+
+    testWidgets('ARP-56 같은 workType 다른 wdId — 하나만 막힌다', (tester) async {
+      await pumpDialog(
+        tester,
+        works: [
+          _wd(wdId: 'wdA', start: '09:00', end: '13:00'),
+          _wd(wdId: 'wdB', start: '14:00', end: '18:00'),
+        ],
+        myApps: [
+          _app(
+              status: AppStatus.pending,
+              wdId: 'wdA',
+              start: '09:00',
+              end: '13:00')
+        ],
+      );
+      expect(find.text('지원완료'), findsWidgets);
+      expect(find.widgetWithText(InkWell, '지원'), findsWidgets,
+          reason: '업무명이 같아도 wdId 가 다르면 별개 근무다');
+    });
+
+    testWidgets('ARP-57 레거시(wdId 없음) 호환 유지', (tester) async {
+      await pumpDialog(
+        tester,
+        works: [_wd(wdId: null, start: '09:00', end: '13:00')],
+        myApps: [
+          _app(
+              status: AppStatus.pending,
+              wdId: null,
+              start: '09:00',
+              end: '13:00')
+        ],
+      );
+      expect(find.text('지원완료'), findsWidgets,
+          reason: 'wdId 가 없으면 workType + 시작 + 종료 로 맞춘다');
+      expect(find.widgetWithText(InkWell, '지원'), findsNothing);
     });
   });
 }

@@ -70,8 +70,26 @@ class ApplicationRelationResolver {
     required String toId,
     required String? slotId,
     required WorkDetailData work,
+  }) =>
+      match(
+        myApplications: myApplications,
+        toId: toId,
+        slotId: slotId,
+        work: work,
+      ).relation;
+
+  /// 관계와 **그 관계를 만든 지원서**를 함께 돌려준다.
+  ///
+  /// 취소·확정취소처럼 그 문서를 직접 다루는 화면이 있어서 둘을 같이 준다.
+  /// 판정과 대상을 서로 다른 코드가 고르면 또 갈라진다 — 한 곳이 말한다.
+  static ({WorkApplyRelation relation, ApplicationModel? application}) match({
+    required List<ApplicationModel> myApplications,
+    required String toId,
+    required String? slotId,
+    required WorkDetailData work,
   }) {
     WorkApplyRelation found = WorkApplyRelation.none;
+    ApplicationModel? hit;
     for (final app in myApplications) {
       if (!_sameWork(app: app, toId: toId, slotId: slotId, work: work)) {
         continue;
@@ -79,9 +97,12 @@ class ApplicationRelationResolver {
       final r = _relationOf(app);
       if (r == WorkApplyRelation.none) continue;
       // 여러 줄이 잡히면 더 강한 약속을 보여준다.
-      if (_rank(r) > _rank(found)) found = r;
+      if (_rank(r) > _rank(found)) {
+        found = r;
+        hit = app;
+      }
     }
-    return found;
+    return (relation: found, application: hit);
   }
 
   /// 같은 근무인가. **wdId 우선, 레거시만 폴백.** workType 단독 비교는 하지 않는다.

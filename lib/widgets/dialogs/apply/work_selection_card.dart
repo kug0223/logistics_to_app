@@ -19,7 +19,14 @@ enum WorkApplicationStatus {
   
   /// 확정됨 (CONFIRMED)
   confirmed,
-  
+
+  /// [R7-P4.4E.7B] 관리자 초대를 받았고 아직 답하지 않았다 (INVITED)
+  ///
+  /// 지원과 다른 사건이다. 서버는 초대받은 근무의 **재지원을 막고**
+  /// "내 지원 내역에서 초대를 확인해주세요" 를 준다 — 초대는 수락·거절로
+  /// 답하는 것이지 다시 지원하는 것이 아니다. 그래서 지원 버튼을 주지 않는다.
+  invited,
+
   /// 마감됨
   closed,
   
@@ -220,6 +227,11 @@ class WorkSelectionCard extends StatelessWidget {
           text = '지원완료';
           bgColor = AppColors.infoBg;
           textColor = AppColors.infoDark;
+          break;
+        case WorkApplicationStatus.invited:
+          text = '초대 확인';
+          bgColor = AppColors.warningBg;
+          textColor = AppColors.warningDark;
           break;
         case WorkApplicationStatus.closed:
           text = '마감';
@@ -471,7 +483,15 @@ class WorkSelectionCard extends StatelessWidget {
         
       case WorkApplicationStatus.pending:
         return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
-        
+
+      case WorkApplicationStatus.invited:
+        // 지원 버튼을 주지 않는다 — 여기서 할 일은 초대에 답하는 것이고,
+        // 그건 내 지원 내역에서 한다. 서버도 재지원을 막는다.
+        return _buildSmallButton(
+            context, '초대 확인', AppColors.warningDark, null,
+            icon: Icons.mail_outline);
+
+
       case WorkApplicationStatus.confirmed:
         // ✅ 확정취소 버튼 활성화
         return _buildSmallButton(context, '확정취소', AppColors.error, onCancelConfirm, icon: Icons.cancel_outlined);
@@ -611,6 +631,8 @@ class WorkSelectionCard extends StatelessWidget {
         return AppColors.successBg.withValues(alpha: 0.3);
       case WorkApplicationStatus.pending:
         return AppColors.infoBg.withValues(alpha: 0.3);
+      case WorkApplicationStatus.invited:
+        return AppColors.warningBg.withValues(alpha: 0.3);
       case WorkApplicationStatus.closed:
         return AppColors.grey100;
       case WorkApplicationStatus.autoCanceled:
@@ -635,6 +657,8 @@ class WorkSelectionCard extends StatelessWidget {
         return AppColors.success.withValues(alpha: 0.5);
       case WorkApplicationStatus.pending:
         return AppColors.info.withValues(alpha: 0.5);
+      case WorkApplicationStatus.invited:
+        return AppColors.warning.withValues(alpha: 0.5);
       case WorkApplicationStatus.closed:
         return AppColors.grey300;
       case WorkApplicationStatus.autoCanceled:

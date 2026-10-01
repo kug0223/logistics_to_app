@@ -17,6 +17,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
+import 'application_relation.dart';
 import 'work_selection_card.dart';
 
 import 'confirm_cancel_dialog.dart';
@@ -155,6 +156,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 날짜별 지원 상태 캐시
   // key: DateTime, value: Map<workKey, ApplicationModel>
   final Map<DateTime, Map<String, ApplicationModel>> _applicationsByDate = {};
+
+  /// [R7-P4.4E.7B] 그 날짜/슬롯 범위의 **거르지 않은** 지원서.
+  ///
+  ///   `_applicationsByDate` 는 `workType_start_end` 를 키로 쓰는 **렌더 캐시**다.
+  ///   그 키는 wdId 를 보지 않아서 같은 업무명·같은 시간의 서로 다른 wdId 가
+  ///   한 칸에서 덮어쓰이고, INVITED 는 애초에 걸러져 "미지원" 으로 보였다
+  ///   (지원 버튼이 뜨고 서버가 "이미 초대를 받은 근무입니다" 로 거부).
+  ///
+  ///   관계 판정은 공고 상세·확인 시트와 **같은** `ApplicationRelationResolver`
+  ///   에 맡기고, 그 입력으로 이 원본 목록을 쓴다. 캐시는 장기공고의 다른
+  ///   소비처(지원 구간 표시 등)가 계속 쓰므로 그대로 둔다.
+  final Map<DateTime, List<ApplicationModel>> _scopedAppsByDate = {};
 
   // 충돌 정보 캐시: Map<날짜키, Map<workDetailId, ConflictInfo>>
   final Map<String, Map<String, ConflictInfo>> _conflictCache = {};
@@ -371,6 +384,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       // 날짜/슬롯 필터 + 활성 상태 필터를 통합 처리해 캐시에 저장
       _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
+      _scopedAppsByDate[_appsDateKey(date)] = _scopeApps(applications, dateKey);
 
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       // [CF-MIGRATED 2026-07-15] attendance list USER 직접 차단 → workerHasAttendanceRecord CF 경유
@@ -798,11 +812,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           
           ...widget.workDetails.map((work) {
-            final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
-            // 🔥 dateKey를 동일한 방식으로 생성
-            final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
-            final application = _applicationsByDate[dateKey]?[workKey];
-            
+            // [R7-P4.4E.7B] 관계 판정은 공용 resolver 한 곳이 한다.
+            //   예전에는 `_makeWorkKey` 로 캐시를 뒤졌고, 그 dateKey 가
+            //   **로컬** `DateTime(...)` 이라 적재 키(utc)와 달라 조회가 늘
+            //   빗나갔다 — 이미 지원한 업무에도 `지원` 버튼이 떴다.
+            final match = _relationAt(
+              toId: widget.mainTO.id,
+              dateKey: _appsDateKey(widget.mainTO.date),
+              slotId: widget.slotId,
+              work: work,
+            );
+            final application = match.application;
+
             // ✅ 장기공고: 상단에 충돌 경고 박스가 있으므로 개별 카드 충돌 메시지 숨김
             // ✅ 희망시작일 미선택 + 충돌 날짜 있으면 지원 불가
             final hasConflictAndNoDate = _confirmedDatesInRange.isNotEmpty && _desiredStartDate == null;
@@ -819,12 +840,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
             return WorkSelectionCard(
               workDetail: work,
-              status: _getApplicationStatus(application),
+              status: _statusOfRelation(match.relation),
               conflictInfo: conflictInfo,
               isLoading: _loadingWorkIds.contains(work.id),
               slotDate: widget.mainTO.date,
               isLongTerm: _isLongTerm,
-              onApply: (hasConflictAndNoDate || _isSubmitting) ? null : () => _applyForWork(widget.mainTO, work),
+              // 관계가 있으면 지원 CTA 를 주지 않는다 — 서버도 막는다.
+              onApply: (hasConflictAndNoDate ||
+                      _isSubmitting ||
+                      match.relation.blocksNewApplication)
+                  ? null
+                  : () => _applyForWork(widget.mainTO, work),
               onCancelApplication: application != null
                   ? () => _cancelApplication(application)
                   : null,
@@ -2066,14 +2092,22 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           opacity: isPending ? 0.4 : 1.0,
           child: Column(
             children: workDetails.map((work) {
-              final workKey = _makeWorkKey(work.workType, work.startTime, work.endTime);
-              final application = _applicationsByDate[dateKey]?[workKey];
-              final conflictInfo = _conflictCache[_dateKey(date)]?[work.id] 
+              // [R7-P4.4E.7B] 그룹 TO 경로도 같은 resolver 를 지난다.
+              final match = _relationAt(
+                toId: to.id,
+                dateKey: _appsDateKey(date),
+                slotId: widget.slotId ?? widget.groupSlotIdsByDate?[dateKey],
+                work: work,
+              );
+              final application = match.application;
+              final conflictInfo = _conflictCache[_dateKey(date)]?[work.id]
                   ?? ConflictInfo.ok;
-              
+
               return WorkSelectionCard(
                 workDetail: work,
-                status: isPending ? WorkApplicationStatus.closed : _getApplicationStatus(application),
+                status: isPending
+                    ? WorkApplicationStatus.closed
+                    : _statusOfRelation(match.relation),
                 conflictInfo: isPending
                     ? const ConflictInfo(
                         level: ConflictLevel.blocked,
@@ -2082,7 +2116,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     : conflictInfo,
                 isLoading: _loadingWorkIds.contains('${date.millisecondsSinceEpoch}_${work.id}'),
                 slotDate: date,
-                onApply: (isPending || _isSubmitting) ? null : () => _applyForWork(to, work, date: date),
+                // 관계가 있으면 지원 CTA 를 주지 않는다 — 서버도 막는다.
+                onApply: (isPending ||
+                        _isSubmitting ||
+                        match.relation.blocksNewApplication)
+                    ? null
+                    : () => _applyForWork(to, work, date: date),
                 onCancelApplication: application != null
                     ? () => _cancelApplication(application)
                     : null,
@@ -2222,22 +2261,47 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 헬퍼 메서드
   // ═══════════════════════════════════════════════════════════
 
-  WorkApplicationStatus _getApplicationStatus(ApplicationModel? application) {
-    if (application == null) return WorkApplicationStatus.notApplied;
+  /// [R7-P4.4E.7B] 이 근무의 관계와 그 관계를 만든 지원서.
+  ///
+  ///   예전에는 `_makeWorkKey(workType, start, end)` 로 캐시를 뒤졌다. 그 키는
+  ///   wdId 를 보지 않아 같은 업무명·같은 시간의 다른 wdId 가 한 칸에서
+  ///   덮어쓰였고, 캐시가 INVITED 를 걸러 "미지원" 으로 보였다.
+  ///   판정은 공고 상세·확인 시트와 **같은** resolver 가 한다.
+  ({WorkApplyRelation relation, ApplicationModel? application}) _relationAt({
+    required String toId,
+    required DateTime dateKey,
+    required String? slotId,
+    required WorkDetailData work,
+  }) =>
+      ApplicationRelationResolver.match(
+        myApplications: _scopedAppsByDate[dateKey] ?? const <ApplicationModel>[],
+        toId: toId,
+        slotId: slotId,
+        work: work,
+      );
 
-    // 🔥 퇴사/해지 완료된 장기공고는 미지원 취급
-    if (application.isLongTermApplication && application.isTerminationApproved) {
-      return WorkApplicationStatus.notApplied;
-    }
+  /// [R7-P4.4E.7B] `_scopedAppsByDate` 의 **유일한** 키 생성자.
+  ///
+  ///   기존 `_applicationsByDate` 는 같은 날짜를 두 가지로 만들고 있었다 —
+  ///   적재는 `DateTime.utc(...)`(= `toKstDate` 와 같은 꼴), 메인 TO 카드는
+  ///   **로컬** `DateTime(...)`. Dart 의 `DateTime ==` 는 `isUtc` 까지 보므로
+  ///   그 둘은 **같은 날짜여도 다른 키**다. 그래서 메인 TO 카드의 관계 조회가
+  ///   늘 빗나갔고, 이미 지원한 업무에도 `지원` 버튼이 떴다.
+  ///   새 맵은 쓰는 곳과 읽는 곳이 이 함수 하나를 지난다. 식을 새로 고르지
+  ///   않고 `_loadDateApplications` 가 쓰던 식을 **그대로** 옮겼다.
+  DateTime _appsDateKey(DateTime date) => _isLongTerm
+      ? FormatHelper.toKstDate(widget.mainTO.date)
+      : DateTime.utc(date.year, date.month, date.day);
 
-    if (AppStatus.confirmedStatuses.contains(application.status)) {
-      return WorkApplicationStatus.confirmed;
-    }
-    if (application.status == AppStatus.pending) {
-      return WorkApplicationStatus.pending;
-    }
-    return WorkApplicationStatus.notApplied;
-  }
+  /// 관계 → 카드 표현. 낱말을 새로 만들지 않는다.
+  WorkApplicationStatus _statusOfRelation(WorkApplyRelation r) => switch (r) {
+        WorkApplyRelation.none => WorkApplicationStatus.notApplied,
+        WorkApplyRelation.pending => WorkApplicationStatus.pending,
+        WorkApplyRelation.invited => WorkApplicationStatus.invited,
+        WorkApplyRelation.contractPending ||
+        WorkApplyRelation.confirmed =>
+          WorkApplicationStatus.confirmed,
+      };
 
   String _dateKey(DateTime date) {
     return _isoFmt.format(date);
@@ -2279,11 +2343,19 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   /// - 단기/그룹: _filterApplicationsByDateOrSlot으로 해당 날짜/슬롯의 지원서만 추출
   /// - 장기공고: 날짜 필터 없이 전체 사용 (dateKey = TO 시작일 고정)
   /// - 공통: 퇴사/해지 완료된 장기공고 지원서 제거
+  /// [R7-P4.4E.7B] 그 날짜/슬롯 범위로만 좁힌다 — **상태로는 거르지 않는다.**
+  ///
+  ///   상태 판정은 `ApplicationRelationResolver` 의 몫이다. 여기서 미리
+  ///   걸러 버리면 INVITED 처럼 서버가 막는 상태가 "없는 것" 이 된다.
+  List<ApplicationModel> _scopeApps(
+          List<ApplicationModel> applications, DateTime dateKey) =>
+      _isLongTerm
+          ? applications
+          : _filterApplicationsByDateOrSlot(applications, dateKey);
+
   Map<String, ApplicationModel> _buildActiveDateCache(
       List<ApplicationModel> applications, DateTime dateKey) {
-    final scoped = _isLongTerm
-        ? applications
-        : _filterApplicationsByDateOrSlot(applications, dateKey);
+    final scoped = _scopeApps(applications, dateKey);
 
     final active = scoped.where((app) {
       // [BUG-2-FIX] 단기 TO도 CANCELED/REJECTED 제외
@@ -2657,6 +2729,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (mounted) {
         setState(() {
           _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
+          _scopedAppsByDate[_appsDateKey(date)] =
+              _scopeApps(applications, dateKey);
         });
       }
     } catch (e) {
