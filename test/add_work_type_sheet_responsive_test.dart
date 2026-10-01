@@ -10,14 +10,61 @@
 //   여기 남긴 것은 측정으로 뒷받침되는 두 가지다:
 //     ① 바닥 여백 값을 두 곳이 **짐작하지 않고 한 곳에서 본다**
 //     ② 색 preset 이 좁은 화면에서 줄바꿈한다(고정폭 Row 였다)
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+
 import 'package:flutter_test/flutter_test.dart';
+
+import 'package:ALfit/widgets/pickers/add_work_type_sheet.dart';
 
 String _helper() =>
     File('lib/utils/dialog_helper.dart').readAsStringSync();
 String _sheet() =>
     File('lib/widgets/pickers/add_work_type_sheet.dart').readAsStringSync();
+
+
+/// 시트를 띄운 상태로 pump 한다. [insetBottom] 이 키보드 높이다.
+///
+///   §4 재현 기준: **키보드 OFF 에서 넘침 0** 이어야 이 하네스를 믿을 수
+///   있다. E5 에서는 OFF 에서도 깨져 충실도를 확립하지 못했고, 그래서
+///   그때는 이 표를 쓰지 않았다.
+Future<void> _openSheet(
+  WidgetTester tester, {
+  required Size size,
+  double textScale = 1.0,
+  double insetBottom = 0,
+  double viewPaddingBottom = 6, // 실기기와 같은 조건(8dp 미만)
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
+  late BuildContext ctx;
+  await tester.pumpWidget(
+    MaterialApp(
+      builder: (c, child) => MediaQuery(
+        data: MediaQuery.of(c).copyWith(
+          textScaler: TextScaler.linear(textScale),
+          viewInsets: EdgeInsets.only(bottom: insetBottom),
+          viewPadding: EdgeInsets.only(bottom: viewPaddingBottom),
+          padding:
+              EdgeInsets.only(bottom: insetBottom > 0 ? 0 : viewPaddingBottom),
+        ),
+        child: child!,
+      ),
+      home: Builder(builder: (c) {
+        ctx = c;
+        return const Scaffold(body: SizedBox.expand());
+      }),
+    ),
+  );
+
+  unawaited(AddWorkTypeSheet.show(ctx));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
 
 void main() {
   group('[R7-P4.4E.5] 바닥 여백은 한 곳에서 온다', () {
@@ -76,10 +123,109 @@ void main() {
       expect(s.contains('_bgColor.withValues(alpha: 0.18)'), isTrue);
     });
 
-    test('WT-SHEET-05 아이콘 검색 예시가 실제 쓰임에 가깝다', () {
+    test('WT-SHEET-05 검색 예시는 **사전이 찾아 주는 말**이다', () {
       final s = _sheet();
-      expect(s.contains('예: 배달, 청소, 요리, 운동'), isFalse);
-      expect(s.contains('예: 포장, 상하차, 홀서빙, 청소'), isTrue);
+      expect(s.contains('예: 배달, 청소, 요리, 운동'), isFalse,
+          reason: '이 제품에서 관리자가 만드는 업무와 거리가 있다');
+
+      // 예시로 적은 말이 실제로 매칭되는지 사전에서 확인한다.
+      //   E5 에서 '상하차' 를 넣었는데 매칭이 0건이었다 — 찾으라고 적어 둔
+      //   말이 안 찾아지면 검색이 고장난 것처럼 보인다.
+      final hint = RegExp(r"hintText: '예: ([^']+)'").firstMatch(s);
+      expect(hint, isNotNull, reason: '검색 예시 문구를 찾지 못했다');
+      final terms = hint!.group(1)!.split(',').map((t) => t.trim());
+
+      final dict = File('lib/widgets/pickers/icon_picker_dialog.dart')
+          .readAsStringSync();
+      for (final t in terms) {
+        expect(dict.contains("'$t'"), isTrue,
+            reason: '"$t" 는 아이콘 사전에 없다 — 검색해도 0건이다');
+      }
+    });
+  });
+
+  group('[R7-P4.4E.5.1] 반응형 — 넘침 0', () {
+    // §4 재현 기준: 키보드 OFF 에서 0 이어야 하네스를 믿을 수 있다.
+    //   E5 에서는 OFF 에서도 깨져 하네스 충실도를 확립하지 못했다.
+    //   원인(고정 높이 상자)을 없애자 OFF 가 0 이 됐고, 그래서 이 표가
+    //   비로소 의미를 갖는다.
+    for (final w in const [320.0, 360.0, 411.0]) {
+      testWidgets('WT-UX-0${w == 320.0 ? 1 : (w == 360.0 ? 5 : 6)} '
+          '${w.toInt()}dp 키보드 OFF/ON', (tester) async {
+        await _openSheet(tester, size: Size(w, 740));
+        expect(tester.takeException(), isNull, reason: '${w.toInt()}dp OFF');
+
+        await _openSheet(tester, size: Size(w, 740), insetBottom: 320);
+        expect(tester.takeException(), isNull, reason: '${w.toInt()}dp ON');
+      });
+    }
+
+    testWidgets('WT-UX-04 320dp × 배율 2.0 × 키보드 ON', (tester) async {
+      await _openSheet(tester,
+          size: const Size(320, 740), textScale: 2.0, insetBottom: 320);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('WT-UX-04b 320dp × 배율 1.3 · 411dp × 배율 2.0', (tester) async {
+      await _openSheet(tester,
+          size: const Size(320, 740), textScale: 1.3, insetBottom: 320);
+      expect(tester.takeException(), isNull, reason: '320 × 1.3');
+
+      await _openSheet(tester,
+          size: const Size(411, 740), textScale: 2.0, insetBottom: 320);
+      expect(tester.takeException(), isNull, reason: '411 × 2.0');
+    });
+  });
+
+  group('[R7-P4.4E.5.1] 키보드 ON 에서 저장까지 닿는다', () {
+    testWidgets('WT-UX-03 320dp 키보드 ON — 스크롤로 저장 버튼에 닿는다',
+        (tester) async {
+      await _openSheet(tester, size: const Size(320, 740), insetBottom: 320);
+      // 모든 것이 한 화면에 보일 필요는 없다 — 스크롤로 닿으면 된다(§19).
+      final scroll = find.byType(SingleChildScrollView);
+      expect(scroll, findsWidgets);
+      await tester.drag(scroll.first, const Offset(0, -600));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.text('추가'), findsOneWidget, reason: '저장 CTA 에 닿아야 한다');
+    });
+
+    testWidgets('WT-UX-11 빈 이름으로는 저장할 수 없다', (tester) async {
+      await _openSheet(tester, size: const Size(360, 740));
+      final scroll = find.byType(SingleChildScrollView);
+      await tester.drag(scroll.first, const Offset(0, -600));
+      await tester.pump();
+      final btn = tester.widget<ElevatedButton>(
+          find.ancestor(of: find.text('추가'), matching: find.byType(ElevatedButton)));
+      expect(btn.onPressed, isNull, reason: '이름이 비면 저장이 열리지 않는다');
+    });
+  });
+
+  group('[R7-P4.4E.5.1] 고정 높이 상자를 없앴다', () {
+    test('WT-UX-15 아이콘 줄은 내용이 높이를 정한다', () {
+      final s = _sheet();
+      final i = s.indexOf("Widget _iconRow(");
+      final body = s.substring(i, i + 2600);
+      expect(body.contains('height: ResponsiveHelper.spacing(context, 80)'),
+          isFalse,
+          reason: '상자는 폭에 따라 줄고 칩은 고정이라 좁은 화면에서 넘쳤다');
+      expect(body.contains('SingleChildScrollView('), isTrue);
+      expect(body.contains('scrollDirection: Axis.horizontal'), isTrue);
+    });
+
+    test('WT-UX-16 제목과 라벨이 공간을 양보한다', () {
+      final s = _sheet();
+      // 줄바꿈 모양이 아니라 **성질**을 본다 — 제목이 줄 수 있어야 한다.
+      final i = s.indexOf("_isEdit ? '업무유형 수정' : '새 업무유형 추가'");
+      expect(i, greaterThan(-1));
+      final around = s.substring(i - 400, i + 300);
+      expect(around.contains('Expanded('), isTrue,
+          reason: '제목이 줄지 못해 배율 2.0 에서 96px 넘쳤다');
+      expect(around.contains('maxLines: 2'), isTrue,
+          reason: '큰 배율에서는 잘라내기 전에 줄바꿈한다');
+      expect(s.contains("Expanded(child: _label('아이콘')),"), isTrue);
+      // Spacer 로 되돌아가지 않는다.
+      expect(s.contains('const Spacer(),'), isFalse);
     });
   });
 }

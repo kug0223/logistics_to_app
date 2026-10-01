@@ -211,12 +211,19 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         ),
         child: Row(
           children: [
-            Text(
-              _isEdit ? '업무유형 수정' : '새 업무유형 추가',
-              style: ResponsiveHelper.titleStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+            // [R7-P4.4E.5.1] 제목이 공간을 양보한다.
+            //   `Text + Spacer` 는 제목이 길어져도 줄지 못한다. 글자 배율
+            //   2.0 에서 '새 업무유형 추가' 만으로 320dp 를 넘겼다(실측 96px).
+            //   줄바꿈을 허용해 큰 배율에서도 제목을 끝까지 읽게 한다.
+            Expanded(
+              child: Text(
+                _isEdit ? '업무유형 수정' : '새 업무유형 추가',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: ResponsiveHelper.titleStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold),
+              ),
             ),
-            const Spacer(),
             IconButton(
               icon: const Icon(Icons.close),
               onPressed: () {
@@ -326,7 +333,11 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
               //   '배달·청소·요리·운동' 은 이 제품에서 관리자가 만드는 업무와
               //   거리가 있다. 다만 한 업종으로 고정하지도 않는다 — 물류·
               //   매장·서비스가 섞이게 둔다.
-              hintText: '예: 포장, 상하차, 홀서빙, 청소',
+              // [R7-P4.4E.5.1] 예시는 **사전이 실제로 찾아 주는 말**이어야 한다.
+              //   직전에 넣은 '상하차' 는 매칭이 0건이었다 — 찾으라고 적어 둔
+              //   말이 안 찾아지면 검색이 고장난 것처럼 보인다.
+              //   아래 넷은 모두 매칭이 있다(포장 3 · 검수 2 · 청소 2 · 서빙 1).
+              hintText: '예: 포장, 검수, 청소, 서빙',
               prefixIcon:
                   Icon(Icons.search, color: theme.primaryColor),
               suffixIcon: ListenableBuilder(
@@ -350,8 +361,9 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         children: [
           Row(
             children: [
-              _label('아이콘'),
-              const Spacer(),
+              // 같은 이유로 여기도 양보한다 — 라벨과 '전체 보기' 가
+              //   큰 배율에서 한 줄을 넘길 수 있다.
+              Expanded(child: _label('아이콘')),
               TextButton.icon(
                 onPressed: _openFullPicker,
                 icon: Icon(Icons.grid_view_rounded,
@@ -371,10 +383,20 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          SizedBox(
-            height: ResponsiveHelper.spacing(context, 80),
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+          // [R7-P4.4E.5.1] 고정 높이 상자를 없앴다 — **내용이 높이를 정한다.**
+          //
+          //   예전에는 상자가 `spacing(context, 80)` 이라 화면이 좁으면 같이
+          //   줄었는데(320dp → ×0.82 → 65.6), 안에 든 칩은 `52 + 5 + 라벨` 로
+          //   **고정**이었다. 좁은 화면과 큰 글자 배율에서 내용이 상자보다
+          //   커져 바닥이 넘쳤다 — 키보드와 무관하게 늘 넘치던 자리다.
+          //
+          //   수평 스크롤에는 높이 제약이 필요하지만, 그 높이를 숫자로 정할
+          //   이유가 없다. `Row` 를 감싸면 내용의 실제 높이가 그대로 상자가
+          //   된다. 8을 6으로 깎는 식의 보정이 아니라 **원인을 없앤다.**
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _iconChip(null, isNone: true, theme: theme),
                 const SizedBox(width: 8),
