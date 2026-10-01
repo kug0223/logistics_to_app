@@ -136,11 +136,17 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // DialogHelper가 viewPaddingOf.bottom(홈 인디케이터)을 처리하므로,
-    // 키보드가 홈 인디케이터보다 더 높이 올라온 초과분만 추가 패딩으로 사용.
+    // [R7-P4.4E.5] 바깥(DialogHelper)이 **실제로 넣은 값**을 빼야 한다.
+    //
+    //   예전에는 `viewPadding.bottom` 을 뺐는데, 바깥은
+    //   `max(8.0, viewPadding.bottom)` 을 넣고 있었다. 홈 인디케이터가 8dp
+    //   보다 얇은 기기에서는 그 차이만큼 바닥이 넘쳤다 — 실기기에서 정확히
+    //   `BOTTOM OVERFLOWED BY 2.0 PIXELS`(=8-6) 였다.
+    //   두 곳이 같은 함수를 본다. 숫자를 2 깎아 숨기지 않는다.
     final bottom = max(
       0.0,
-      MediaQuery.viewInsetsOf(context).bottom - MediaQuery.viewPaddingOf(context).bottom,
+      MediaQuery.viewInsetsOf(context).bottom -
+          DialogHelper.sheetBottomInset(context),
     );
 
     return Container(
@@ -231,11 +237,18 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
       decoration: BoxDecoration(
         color: _bgColor,
         borderRadius: BorderRadius.circular(16),
+        // [R7-P4.4E.5] 컬러 글로우(alpha 0.4 · blur 16)를 낮췄다.
+        //
+        //   이 블록은 **미리보기**다 — 저장하면 공고·일정·근태 카드에
+        //   그대로 나타나는 그 칩이다. 그런데 그림자가 세서 입력란이
+        //   아니라 큰 CTA 버튼처럼 읽혔고, 아래 아이콘·색 선택보다 훨씬
+        //   무거워 "업무를 등록하는 화면" 이 "꾸미는 화면" 처럼 보였다.
+        //   현재 관리자 화면 기준은 낮은 elevation 이다.
         boxShadow: [
           BoxShadow(
-            color: _bgColor.withValues(alpha: 0.4),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: _bgColor.withValues(alpha: 0.18),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -309,7 +322,11 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
           TextField(
             controller: _searchCtrl,
             decoration: InputDecoration(
-              hintText: '예: 배달, 청소, 요리, 운동',
+              // [R7-P4.4E.5] 예시를 실제 쓰임에 가깝게 바꿨다.
+              //   '배달·청소·요리·운동' 은 이 제품에서 관리자가 만드는 업무와
+              //   거리가 있다. 다만 한 업종으로 고정하지도 않는다 — 물류·
+              //   매장·서비스가 섞이게 둔다.
+              hintText: '예: 포장, 상하차, 홀서빙, 청소',
               prefixIcon:
                   Icon(Icons.search, color: theme.primaryColor),
               suffixIcon: ListenableBuilder(
@@ -443,8 +460,16 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         children: [
           _label('배경색'),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // [R7-P4.4E.5] 고정폭 8칸을 `Row` 에 넣어 좁은 화면에서 넘쳤다.
+          //
+          //   320dp 에서 쓸 수 있는 가로는 ~280dp 인데 swatch 8개가 288dp 다
+          //   (선택된 칸은 42dp 로 더 커져 6dp 가 더 붙는다). `spaceBetween`
+          //   은 남는 공간을 나눌 뿐 모자란 공간을 만들지 못한다.
+          //   줄바꿈을 허용한다 — preset 을 줄이면 색 선택지가 사라지고,
+          //   칸을 더 줄이면 터치 영역이 작아진다.
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 8),
             children: _palette.map((color) {
               final isSelected =
                   _bgColor.toARGB32() == color.toARGB32();

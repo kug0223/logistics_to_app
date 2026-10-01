@@ -2,7 +2,80 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.4** (준비 카드 시각 정리)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.5** (업무유형 생성 시트 — **부분 종료**)
+
+## 0-AAAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.5
+
+기준 `b0d03ec`. **PARTIAL — 세로 넘침은 원인 미확정.**
+
+### 먼저: 닫지 못한 것
+
+**`BOTTOM OVERFLOWED BY 2.0 PIXELS` 의 원인을 찾지 못했다.** 가설 두 개를
+세웠고 둘 다 **측정으로 반증**됐다.
+
+| 가설 | 근거 | 결과 |
+|---|---|---|
+| ① helper 는 `max(8, viewPadding.bottom)` 을 넣는데 시트는 `viewPadding.bottom` 만 뺐다 | 기기 홈 인디케이터 6dp → 차이 2dp 가 보고된 2.0px 와 **정확히 일치** | 값을 맞춰도 **넘침 수치 불변** → 원인 아님 |
+| ② `useSafeArea: true` 와 helper 여백이 하단 inset 을 이중 계상 | `viewPadding` 은 SafeArea 가 지우지 않는다 | 상수로 바꿔도 **수치 불변** → 원인 아님. 전 앱 시트에 영향을 주므로 **되돌렸다** |
+
+숫자가 그럴듯하게 맞았다고 원인이 되지는 않는다. 하네스 충실도를 확립하지
+못한 채 숫자를 쫓는 패치를 멈췄다.
+
+### 고친 것 (측정으로 뒷받침되는 것만)
+
+| 항목 | 내용 |
+|---|---|
+| **가로 넘침** | 색 preset 8칸이 **고정폭 `Row`** 였다. 320dp 가용폭 ~280 인데 swatch 8×36=288(선택 시 42). `Wrap` 으로 줄바꿈 허용 → 측정에서 **8.0px 우측 넘침 소멸** |
+| 바닥 여백 | 값을 `DialogHelper.sheetBottomInset()` **한 곳**에서 본다. 동작은 동일하되 두 곳이 다시 어긋날 수 없다 |
+| 미리보기 글로우 | `alpha 0.4 · blur 16` → `0.18 · 8`. 입력란이 CTA 처럼 읽히던 무게를 낮췄다 |
+| 아이콘 검색 예시 | `배달·청소·요리·운동` → `포장·상하차·홀서빙·청소` (한 업종에 고정하지 않음) |
+
+### A. writer 계약 (§1)
+
+`businesses/{id}/workTypes` — `name`(필수) · `icon`(필수, `''` 허용) · `color` ·
+`backgroundColor` · `wageType='hourly'` · `displayOrder`(자동=기존 개수) ·
+`isActive: true` · `createdAt` serverTimestamp. **같은 이름 활성 업무 중복 차단**
+(trim 비교). **writer 는 건드리지 않았다.**
+
+**발견(미수정, 보고만)**: 중복 검사는 `name.trim()` 으로 하는데 저장은
+`name` 원문이다 — 앞뒤 공백이 그대로 저장될 수 있다. `[R7-P4.4E.5-WT-NAME-TRIM]`
+
+### B. 소비자 전수 (§2) — icon/color 는 **살아 있다**
+
+아이콘 소비 파일 **28개**. 관리자(공고 생성·공고 카드·근태·인력·업무상세)와
+**지원자**(일자리 화면·일정 카드·지원 시트·대체근무 제안) 양쪽이다.
+`WorkTypeIcon` 이 `color`(아이콘 틴트)와 `backgroundColor`(타일 배경)를 **모두**
+쓰고, 모든 화면이 같은 모델 필드를 읽어 **같은 업무 = 같은 색**이다.
+
+→ §9 **operational encoding** 이다. decoration 이 아니다.
+
+### C·D·E. reference 판단
+
+| Reference 원리 | 판단 | 근거 |
+|---|---|---|
+| 이름이 Role/Position 의 primary identity (7shifts·When I Work) | **채택** | 서버 `assertWorkTypesInBusiness` 가 **이름으로** 대조하고 공고·지원 snapshot 도 이름으로 저장한다 |
+| color 는 operational visual cue (Deputy) | **채택** | 28개 소비처가 같은 색을 쓴다 |
+| color 는 preset 중심 (When I Work) | **이미 충족** | `workTypePalette` 8색 preset, 무제한 custom 아님 |
+| icon picker (외부 서비스엔 드묾) | **유지** | 외부에 없다는 이유로 빼지 않는다 — 28개 소비처가 최종 근거(§R) |
+| compact create flow | **부분 채택** | 글로우·예시 문구만 손봄. IA 전면 재배치는 하지 않음 |
+| modal bottom sheet | **유지**(§12) | entity 1개 · field 소수 · 완료 후 목록 복귀 |
+
+**Model C(아이콘 제거) 거부** — 28개 소비처가 반증한다.
+
+### 미리보기에 대한 정정
+
+지시서는 "거대한 파란 업무명 입력" 을 hero/CTA 문제로 봤지만, 그 블록은
+**실제 미리보기**다 — 저장하면 공고·일정·근태 카드에 그대로 나타나는 칩이고
+이름 입력이 그 안에 들어 있다. §21 이 요구한 구조가 이미 있다.
+문제는 구조가 아니라 **그림자 무게**였고, 그것만 낮췄다.
+
+### 증거
+
+- **CODE**: `flutter analyze` No issues · writer·CF·rules·권한 **변경 0**
+- **RENDER**: 신규 **6/6**(WT-SHEET-00~05) — 측정으로 뒷받침되는 축만
+- **DEVICE**: 세로 넘침 **여전히 재현될 수 있다**(원인 미확정)
+
+
 
 ## 0-AAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.4
 

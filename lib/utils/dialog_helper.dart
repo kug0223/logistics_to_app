@@ -412,6 +412,24 @@ class DialogHelper {
   ///   builder: (ctx) => MySheet(),
   /// );
   /// ```
+  /// [R7-P4.4E.5] `showSheet` 가 시트 **아래에 실제로 넣는 여백**.
+  ///
+  ///   시트 안에서 키보드를 직접 보정하려면 "바깥이 이미 얼마를 넣었는가" 를
+  ///   알아야 한다. 그 값을 각자 **짐작하다가 어긋났다** — 시트는 바깥이
+  ///   `viewPadding.bottom` 을 넣는다고 보고 그만큼 뺐는데, 실제로는
+  ///   `max(8.0, viewPadding.bottom)` 을 넣고 있었다.
+  ///
+  ///   그래서 홈 인디케이터가 8dp 보다 얇은 기기에서는 그 차이만큼 시트가
+  ///   더 밀렸다. 2 를 빼서 숨길 문제가 아니라 **두 곳이 같은 값을 보게**
+  ///   하는 문제다 — 그래서 값을 여기 하나로 둔다.
+  ///
+  ///   계산 자체는 바꾸지 않았다. `useSafeArea: true` 와 이 여백이 하단
+  ///   inset 을 이중으로 세는 것처럼 보여 상수로 바꿔 봤지만, 실측에서
+  ///   넘침 수치가 **달라지지 않았다** — 원인이 아니다. 전 앱 시트의 여백을
+  ///   근거 없이 바꾸지 않는다.
+  static double sheetBottomInset(BuildContext context) =>
+      max(8.0, MediaQuery.viewPaddingOf(context).bottom);
+
   static Future<T?> showSheet<T>(
     BuildContext context, {
     required WidgetBuilder builder,
@@ -435,7 +453,7 @@ class DialogHelper {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        final safeBottom = max(8.0, MediaQuery.viewPaddingOf(ctx).bottom);
+        final safeBottom = sheetBottomInset(ctx);
         return PopScope(
           canPop: false,
           onPopInvokedWithResult: (didPop, result) {
