@@ -1252,9 +1252,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   ),
                 ),
                 // 전체 통계 요약
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+                // [R7-P4.4E.6B] 이 요약이 줄어들 수 없어 제목과 함께 줄을
+                //   넘쳤다(배율 2.0 55px, 지원 120·확정 48 표본 127px).
+                //   지원·확정 수는 운영 판단의 근거이므로 감추지 않고
+                //   좁아지면 배지를 아래로 내린다.
+                Flexible(
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    runSpacing: ResponsiveHelper.spacing(context, 2),
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
                     if (totalPending > 0)
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -1287,7 +1294,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                               .copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1527,9 +1535,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               decoration: BoxDecoration(
                   color: color, borderRadius: BorderRadius.circular(2))),
           const SizedBox(width: 6),
-          Text(label,
-              style: ResponsiveHelper.smallStyle(context, color: color)
-                  .copyWith(fontWeight: FontWeight.bold)),
+          // [R7-P4.4E.6B] 구분선 라벨이 줄어들 수 없어 배율을 올리면 넘쳤다.
+          Expanded(
+            child: Text(label,
+                style: ResponsiveHelper.smallStyle(context, color: color)
+                    .copyWith(fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
@@ -2799,22 +2810,28 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else
-            InkWell(
-              onTap: () => _batchCreateContracts(g),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 6),
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.success,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '계약서 일괄작성',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white)
-                      .copyWith(fontWeight: FontWeight.w600),
+            // [R7-P4.4E.6B] 안내문과 이 CTA 가 둘 다 고정 폭이라 배율을
+            //   올리면 넘쳤다(실측 6.8px). CTA 는 눌려야 하고 안내문의
+            //   인원 수도 사실이므로 둘 다 줄어들 수 있게만 바꾼다.
+            Flexible(
+              child: InkWell(
+                onTap: () => _batchCreateContracts(g),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 12),
+                    vertical: ResponsiveHelper.spacing(context, 6),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.success,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '계약서 일괄작성',
+                    textAlign: TextAlign.center,
+                    style: ResponsiveHelper.smallStyle(context, color: Colors.white)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ),

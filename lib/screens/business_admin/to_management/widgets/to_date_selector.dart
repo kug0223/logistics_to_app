@@ -303,34 +303,42 @@ class _TODateSelectorState extends State<TODateSelector> {
                 key: const ValueKey('header'),
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        '근무 날짜 선택',
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      if (widget.selectedDates.isNotEmpty) ...[
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: ResponsiveHelper.spacing(context, 10),
-                            vertical: ResponsiveHelper.spacing(context, 4),
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '${widget.selectedDates.length}일',
-                            style: ResponsiveHelper.smallStyle(context).copyWith(
-                              color: AppColors.surface,
-                              fontWeight: FontWeight.bold,
+                  // [R7-P4.4E.6B] 제목과 선택 일수를 고정 폭 자식으로만 늘어놓아
+                  //   오른쪽 '전체 해제' 와 함께 줄을 넘쳤다(360dp 13px,
+                  //   320dp 48px, 배율 2.0 288px). 몇 일을 골랐는지는 핵심
+                  //   사실이므로 감추지 않고 Wrap 으로 줄을 바꾼다.
+                  Expanded(
+                    child: Wrap(
+                      spacing: ResponsiveHelper.spacing(context, 8),
+                      runSpacing: ResponsiveHelper.spacing(context, 4),
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '근무 날짜 선택',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        if (widget.selectedDates.isNotEmpty)
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 10),
+                              vertical: ResponsiveHelper.spacing(context, 4),
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${widget.selectedDates.length}일',
+                              style: ResponsiveHelper.smallStyle(context).copyWith(
+                                color: AppColors.surface,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
-                        ),
                       ],
-                    ],
+                    ),
                   ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Opacity(
                     opacity: widget.selectedDates.isNotEmpty ? 1.0 : 0.0,
                     child: IgnorePointer(
@@ -521,11 +529,16 @@ class _TODateSelectorState extends State<TODateSelector> {
               child: Icon(Icons.chevron_left, color: Theme.of(context).primaryColor),
             ),
           ),
-          Text(
-            FormatHelper.formatYearMonth(_focusedDay),
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).primaryColor,
+          // [R7-P4.4E.6B] 좌우 이동 버튼 사이에서 연월이 줄어들 수 없었다.
+          //   어느 달을 보고 있는지는 핵심 사실이므로 자르지 않고 줄을 바꾼다.
+          Expanded(
+            child: Text(
+              FormatHelper.formatYearMonth(_focusedDay),
+              textAlign: TextAlign.center,
+              style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).primaryColor,
+              ),
             ),
           ),
           IconButton(

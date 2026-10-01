@@ -535,28 +535,36 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
                           size: 28 * s, color: AppColors.textPrimary),
                       onPressed: _prevMonth,
                     ),
-                    GestureDetector(
-                      onTap: _showMonthPicker,
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 16 * s, vertical: 6 * s),
-                        decoration: BoxDecoration(
-                          color: AppColors.background,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          Text(
-                            '$_year년 $_month월',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textPrimary,
-                            ),
+                    // [R7-P4.4E.6B] 좌우 이동 버튼 사이의 연월 칩이 줄어들 수
+                    //   없었다 — 320dp 2.5px, 배율 2.0 183px 넘침(실측).
+                    //   어느 달의 수입인지는 핵심 사실이므로 글자를 줄이거나
+                    //   자르지 않고, 칩과 글자가 줄어들 수 있게만 바꾼다.
+                    Flexible(
+                      child: GestureDetector(
+                        onTap: _showMonthPicker,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 16 * s, vertical: 6 * s),
+                          decoration: BoxDecoration(
+                            color: AppColors.background,
+                            borderRadius: BorderRadius.circular(20),
                           ),
-                          SizedBox(width: 4 * s),
-                          Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 18 * s, color: AppColors.textSecondary),
-                        ]),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Flexible(
+                              child: Text(
+                                '$_year년 $_month월',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 4 * s),
+                            Icon(Icons.keyboard_arrow_down_rounded,
+                                size: 18 * s, color: AppColors.textSecondary),
+                          ]),
+                        ),
                       ),
                     ),
                     IconButton(

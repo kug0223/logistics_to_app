@@ -2521,10 +2521,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                               Icon(Icons.schedule_outlined,
                                   size: 13, color: AppColors.grey400),
                               SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                              Text(
-                                '$workTime (실근무 ${workHours}h)',
-                                style: ResponsiveHelper.smallStyle(context,
-                                    color: AppColors.grey500),
+                              // [R7-P4.4E.6B] 출퇴근 시각과 실근무 시간은 임금
+                              //   산정 근거다. 줄어들 수 없어 넘쳤던 것을
+                              //   줄바꿈으로 풀고, 자르지 않는다(실측 68px).
+                              Expanded(
+                                child: Text(
+                                  '$workTime (실근무 ${workHours}h)',
+                                  style: ResponsiveHelper.smallStyle(context,
+                                      color: AppColors.grey500),
+                                ),
                               ),
                             ],
                           ),
@@ -2611,7 +2616,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 Row(
                   children: [
                     // [Phase 3.1] 모든 근무자가 배지 탭으로 휴게 조정 가능
-                    GestureDetector(
+                    // [R7-P4.4E.6B] 이 배지와 오른쪽 금액이 둘 다 고정 폭이라
+                    //   Spacer 가 0 이 되어도 넘쳤다(실측 23px). 휴게 문구는
+                    //   임금 산정 근거이므로 숨기지 않고 배지가 줄어들게 한다.
+                    Flexible(
+                      child: GestureDetector(
                       onTap: () => _showBreakReviewSheet(context, app),
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -2627,20 +2636,27 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                                 size: 11, color: AppColors.successDark),
                             SizedBox(width: ResponsiveHelper.spacing(context, 3)),
                             // [Phase 3.1] breakdown이 있으면 상세 표시
+                            // [R7-P4.4E.6B] 배지를 Flexible 로 묶어도 이 안쪽
+                            //   Row 가 경직되어 있으면 줄어들지 않는다. 휴게
+                            //   문구 자체가 줄어들 수 있어야 한다.
                             if ((hasReducedBreak || hasAdditional) && !needsReview)
-                              Text(
-                                _formatBreakBadgeText(breakMins, appliedSchedBreak, scheduledBreakMins, additionalBreakMins),
-                                style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                  color: AppColors.successDark,
-                                  fontWeight: FontWeight.w600,
+                              Flexible(
+                                child: Text(
+                                  _formatBreakBadgeText(breakMins, appliedSchedBreak, scheduledBreakMins, additionalBreakMins),
+                                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                    color: AppColors.successDark,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               )
                             else
-                              Text(
-                                '무급휴게 ${FormatHelper.formatCompactHours(breakMins)}',
-                                style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                  color: AppColors.successDark,
-                                  fontWeight: FontWeight.w600,
+                              Flexible(
+                                child: Text(
+                                  '무급휴게 ${FormatHelper.formatCompactHours(breakMins)}',
+                                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                    color: AppColors.successDark,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 3)),
@@ -2648,6 +2664,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                                 size: 10, color: AppColors.successDark.withValues(alpha: 0.6)),
                           ],
                         ),
+                      ),
                       ),
                     ),
                     const Spacer(),
@@ -2668,11 +2685,17 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     ],
-                    Text(
-                      totalAmount,
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: accentColor,
+                    // [R7-P4.4E.6B] 금액도 줄어들 수 있어야 한다 — 휴게 배지만
+                    //   양보시키면 큰 배율에서 이 줄이 다시 넘친다.
+                    //   금액은 자르지 않는다(ellipsis 없음) — 줄만 바뀐다.
+                    Flexible(
+                      child: Text(
+                        totalAmount,
+                        textAlign: TextAlign.right,
+                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: accentColor,
+                        ),
                       ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 2)),
@@ -3308,9 +3331,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Icon(Icons.schedule_outlined, size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-              Text(
-                timeRange,
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              // [R7-P4.4E.6B] 업무명·시간대·인원수가 모두 고정 폭이라
+              //   Spacer 가 0 이 되어도 넘쳤다(실측 21px). 시간대를
+              //   줄어들 수 있게만 바꾼다 — 자르지 않는다.
+              Flexible(
+                child: Text(
+                  timeRange,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                ),
               ),
               const Spacer(),
               Text(
@@ -3338,7 +3366,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 5)),
           // [Phase 3.1] 추가 무급휴게 칩 — 그룹 기본값, 근무자별 override 가능
-          Row(
+          // [R7-P4.4E.6B] 칩 네 개가 한 줄에 고정이라 좁은 폭·큰 배율에서
+          //   넘쳤다. 선택지를 줄이지 않고 줄을 바꾼다.
+          Wrap(
+            runSpacing: ResponsiveHelper.spacing(context, 5),
             children: options.map((min) {
               final isSelected = extra == min;
               final label = min == 0 ? '없음' : '+$min분';
