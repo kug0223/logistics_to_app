@@ -8,20 +8,37 @@ import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'icon_picker_dialog.dart';
 
+/// 저장을 실제로 수행하는 쪽이 돌려주는 결과. `true` 면 저장됐다.
+typedef WorkTypeSubmit = Future<bool> Function(Map<String, dynamic> draft);
+
 /// 업무유형 추가/수정 바텀시트
+///
+///   [R7-P4.4E.5.2] 예전에는 저장을 누르면 **먼저 닫고** 부모가 쓰기를 했다.
+///   그래서 중복 이름이나 네트워크로 실패하면 시트는 이미 사라진 뒤였고,
+///   관리자는 이름·아이콘·색을 처음부터 다시 골라야 했다. 잘못 저장된 것도
+///   권한이 샌 것도 아니지만, **정상적인 실패에서 한 일을 잃게** 만든다.
+///
+///   쓰기 주체는 **그대로 부모**다 — businessId·중복 검사·권한·timestamps·
+///   목록 갱신 전부. 바뀐 것은 **닫는 시점**뿐이다: 저장이 성공해야 닫는다.
 class AddWorkTypeSheet extends StatefulWidget {
   final BusinessWorkTypeModel? editTarget;
 
-  const AddWorkTypeSheet._({this.editTarget});
+  /// 시트가 모은 draft 로 **부모가** 저장을 수행한다.
+  final WorkTypeSubmit onSubmit;
 
-  static Future<Map<String, dynamic>?> show(
+  const AddWorkTypeSheet._({this.editTarget, required this.onSubmit});
+
+  /// 저장에 성공하면 `true` 로 닫힌다. 사용자가 그냥 닫으면 `null`.
+  static Future<bool?> show(
     BuildContext context, {
     BusinessWorkTypeModel? editTarget,
+    required WorkTypeSubmit onSubmit,
   }) {
-    return DialogHelper.showSheet<Map<String, dynamic>>(
+    return DialogHelper.showSheet<bool>(
       context,
       isScrollControlled: true,
-      builder: (_) => AddWorkTypeSheet._(editTarget: editTarget),
+      builder: (_) =>
+          AddWorkTypeSheet._(editTarget: editTarget, onSubmit: onSubmit),
     );
   }
 
@@ -42,6 +59,13 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
   late Color _bgColor;
   IconItem? _selectedIcon;
   List<IconItem> _suggested = [];
+
+  /// [R7-P4.4E.5.2] 저장이 진행 중인가 — 중복 전송을 막는다.
+  bool _saving = false;
+
+  /// 직전 저장이 실패했는가 — 입력이 그대로 남아 있다는 것을 말해 준다.
+  ///   실패 **이유**는 writer 가 구분해서 말하므로 여기서 다시 쓰지 않는다.
+  bool _failed = false;
 
   bool get _isEdit => widget.editTarget != null;
 
@@ -112,7 +136,11 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
     }
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    // [R7-P4.4E.5.2] 저장 중에는 한 번만 보낸다 — 빠르게 두 번 눌러도
+    //   쓰기는 1회다. 버튼 비활성만으로는 탭이 겹치는 순간을 못 막는다.
+    if (_saving) return;
+
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) return;
     if (name.length > 50) {
@@ -124,12 +152,41 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         ? 'material:${_selectedIcon!.icon.codePoint}'
         : null;
 
-    FocusScope.of(context).unfocus();
-    Navigator.pop(context, {
+    final draft = <String, dynamic>{
       'name': name,
       'icon': iconStr,
       'iconColor': '#FFFFFF',
       'backgroundColor': _toHex(_bgColor),
+    };
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _saving = true;
+      _failed = false;
+    });
+
+    bool ok = false;
+    try {
+      ok = await widget.onSubmit(draft);
+    } catch (e) {
+      // 부모가 못 삼킨 예외도 draft 를 잃는 이유가 되지 않는다.
+      debugPrint('❌ 업무유형 저장 실패: $e');
+      ok = false;
+    }
+    if (!mounted) return;
+
+    if (ok) {
+      // **성공했을 때만** 닫는다.
+      Navigator.pop(context, true);
+      return;
+    }
+
+    // 실패 — 시트도 입력도 그대로 두고 다시 누를 수 있게 한다.
+    //   실패 이유는 writer 가 이미 구분해서 말한다(중복 / 그 외).
+    //   여기서 그 판정을 다시 쓰지 않는다.
+    setState(() {
+      _saving = false;
+      _failed = true;
     });
   }
 
@@ -529,11 +586,28 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
       );
 
   // ─── 액션 버튼 ────────────────────────────────────────────────────
-  Widget _actions(ThemeData theme) => Row(
+  Widget _actions(ThemeData theme) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // [R7-P4.4E.5.2] 왜 안 닫혔는지, 무엇이 남아 있는지 말한다.
+          //   실패 **이유**는 writer 가 이미 구분해서 알린다(중복 / 그 외).
+          //   여기서는 그 판정을 다시 쓰지 않고, 이 시트의 맥락에서만
+          //   필요한 것을 말한다 — 입력이 살아 있고 다시 누르면 된다.
+          if (_failed) ...[
+            Text(
+              '저장하지 못했어요. 입력한 내용은 그대로예요.',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.error),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          ],
+          Row(
         children: [
           Expanded(
             child: OutlinedButton(
-              onPressed: () {
+              onPressed: _saving
+                  ? null
+                  : () {
                 FocusScope.of(context).unfocus();
                 Navigator.pop(context);
               },
@@ -551,16 +625,26 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
             child: ListenableBuilder(
               listenable: _nameCtrl,
               builder: (_, __) => ElevatedButton(
-                onPressed:
-                    _nameCtrl.text.trim().isEmpty ? null : _submit,
+                onPressed: (_saving || _nameCtrl.text.trim().isEmpty)
+                    ? null
+                    : _submit,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                 ),
-                child: Text(_isEdit ? '수정 완료' : '추가'),
+                child: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : Text(_isEdit ? '수정 완료' : '추가'),
               ),
             ),
+          ),
+            ],
           ),
         ],
       );

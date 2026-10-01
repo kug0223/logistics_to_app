@@ -79,16 +79,31 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   /// 업무 유형 추가
   Future<void> _showAddDialog() async {
-    final result = await AddWorkTypeSheet.show(context);
-    if (result == null || !mounted) return;
-
-    final newId = await _firestoreService.addBusinessWorkType(
-      businessId: widget.businessId,
-      name: result['name'] as String,
-      icon: (result['icon'] as String?) ?? '',
-      color: result['iconColor'] as String? ?? '#FFFFFF',
-      backgroundColor: result['backgroundColor'] as String?,
+    // [R7-P4.4E.5.2] 쓰기는 **여기가** 계속 소유한다 — businessId 도 여기 것이다.
+    //   시트에 넘기는 것은 "저장을 수행해 달라" 는 요청뿐이고, 시트는 그
+    //   결과로 닫을지 말지만 정한다. 실패하면 시트가 열린 채 남아 관리자가
+    //   고른 이름·아이콘·색이 살아 있다.
+    String? newId;
+    Map<String, dynamic>? draftUsed;
+    final saved = await AddWorkTypeSheet.show(
+      context,
+      onSubmit: (draft) async {
+        draftUsed = draft;
+        newId = await _firestoreService.addBusinessWorkType(
+          businessId: widget.businessId,
+          name: draft['name'] as String,
+          icon: (draft['icon'] as String?) ?? '',
+          color: draft['iconColor'] as String? ?? '#FFFFFF',
+          backgroundColor: draft['backgroundColor'] as String?,
+        );
+        return newId != null;
+      },
     );
+    // 저장되지 않았으면(사용자가 닫았거나 실패 후 직접 닫았거나) 아무것도
+    //   하지 않는다 — 목록도 readiness 도 건드릴 이유가 없다.
+    if (saved != true || !mounted) return;
+
+    final result = draftUsed ?? const <String, dynamic>{};
     // [MOUNTED-02 수정] addBusinessWorkType await 후 mounted 체크를 &&로만 처리하면
     // newId == null일 때 mounted 미체크 — 명시적 가드로 통일
     if (!mounted) return;
@@ -96,10 +111,13 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       await _loadWorkTypes();
       if (!mounted) return;
 
+      // `newId` 는 캡처된 지역 변수라 promotion 이 되지 않는다 —
+      //   이 분기는 `newId != null` 안이므로 여기서 고정해 쓴다.
+      final createdId = newId!;
       final newWorkType = _workTypes.firstWhere(
-        (wt) => wt.id == newId,
+        (wt) => wt.id == createdId,
         orElse: () => BusinessWorkTypeModel(
-          id: newId,
+          id: createdId,
           businessId: widget.businessId,
           name: result['name'] as String,
           icon: (result['icon'] as String?) ?? '',
@@ -148,23 +166,25 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   /// 업무 유형 수정
   Future<void> _showEditDialog(BusinessWorkTypeModel workType) async {
-    final result = await AddWorkTypeSheet.show(
+    // [R7-P4.4E.5.2] 생성과 **같은 규칙**이다 — 같은 시트를 쓰는데 한쪽만
+    //   실패에서 입력을 잃으면 구조가 갈린다. 수정도 성공해야 닫힌다.
+    final saved = await AddWorkTypeSheet.show(
       context,
       editTarget: workType,
+      onSubmit: (draft) async {
+        return _firestoreService.updateBusinessWorkType(
+          businessId: widget.businessId,
+          workTypeId: workType.id,
+          name: draft['name'] as String,
+          icon: draft['icon'] as String?,
+          color: draft['iconColor'] as String? ?? '#FFFFFF',
+          backgroundColor: draft['backgroundColor'] as String?,
+        );
+      },
     );
-    if (result == null || !mounted) return;
+    if (saved != true || !mounted) return;
 
-    final success = await _firestoreService.updateBusinessWorkType(
-      businessId: widget.businessId,
-      workTypeId: workType.id,
-      name: result['name'] as String,
-      icon: result['icon'] as String?,
-      color: result['iconColor'] as String? ?? '#FFFFFF',
-      backgroundColor: result['backgroundColor'] as String?,
-    );
-    if (!mounted) return;
-
-    if (success) _loadWorkTypes();
+    _loadWorkTypes();
   }
 
   /// 삭제 확인 다이얼로그

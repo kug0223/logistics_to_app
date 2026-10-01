@@ -36,6 +36,7 @@ Future<void> _openSheet(
   double textScale = 1.0,
   double insetBottom = 0,
   double viewPaddingBottom = 6, // 실기기와 같은 조건(8dp 미만)
+  WorkTypeSubmit? onSubmit,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -61,9 +62,18 @@ Future<void> _openSheet(
     ),
   );
 
-  unawaited(AddWorkTypeSheet.show(ctx));
+  unawaited(AddWorkTypeSheet.show(ctx,
+      onSubmit: onSubmit ?? (_) async => true));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// 모달 전이를 충분히 흘린다 — pumpAndSettle 은 시트의 반복 애니메이션에
+/// 걸릴 수 있어 유한 프레임으로 돌린다.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 12; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 void main() {
@@ -226,6 +236,208 @@ void main() {
       expect(s.contains("Expanded(child: _label('아이콘')),"), isTrue);
       // Spacer 로 되돌아가지 않는다.
       expect(s.contains('const Spacer(),'), isFalse);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // [R7-P4.4E.5.2] 저장이 성공해야 닫힌다
+  // ═══════════════════════════════════════════════════════════
+  group('[R7-P4.4E.5.2] 저장 실패에서 한 일을 잃지 않는다', () {
+    /// 시트를 열고 이름을 넣는다. [onSubmit] 이 저장 주체다.
+    Future<void> openWith(
+      WidgetTester tester, {
+      required WorkTypeSubmit onSubmit,
+      Size size = const Size(360, 740),
+      double textScale = 1.0,
+      double insetBottom = 0,
+      String name = '피킹',
+    }) async {
+      await _openSheet(tester,
+          size: size,
+          textScale: textScale,
+          insetBottom: insetBottom,
+          onSubmit: onSubmit);
+      await tester.enterText(find.byType(TextField).first, name);
+      await tester.pump();
+    }
+
+    Future<void> tapSave(WidgetTester tester) async {
+      final scroll = find.byType(SingleChildScrollView);
+      await tester.drag(scroll.first, const Offset(0, -600));
+      await tester.pump();
+      await tester.tap(find.text('추가'));
+      await tester.pump();
+    }
+
+    testWidgets('WT-SAVE-02 성공하면 writer 1회 · 시트가 닫힌다', (tester) async {
+      var calls = 0;
+      await openWith(tester, onSubmit: (d) async {
+        calls++;
+        return true;
+      });
+      await tapSave(tester);
+      await _settle(tester);
+
+      expect(calls, 1);
+      expect(find.text('새 업무유형 추가'), findsNothing, reason: '성공하면 닫힌다');
+    });
+
+    testWidgets('WT-SAVE-03/04 실패하면 시트와 입력이 그대로다', (tester) async {
+      await openWith(tester, onSubmit: (d) async => false);
+      await tapSave(tester);
+      await _settle(tester);
+
+      expect(find.text('새 업무유형 추가'), findsOneWidget, reason: '닫히지 않는다');
+      expect(find.text('피킹'), findsWidgets, reason: '이름이 남아 있다');
+      expect(find.text('저장하지 못했어요. 입력한 내용은 그대로예요.'), findsOneWidget);
+    });
+
+    testWidgets('WT-SAVE-01 성공 전에는 닫히지 않는다', (tester) async {
+      final gate = Completer<bool>();
+      await openWith(tester, onSubmit: (d) => gate.future);
+      await tapSave(tester);
+      await tester.pump();
+
+      // 아직 writer 가 답하지 않았다 — 시트는 그대로다.
+      expect(find.text('새 업무유형 추가'), findsOneWidget);
+      gate.complete(true);
+      await _settle(tester);
+      expect(find.text('새 업무유형 추가'), findsNothing);
+    });
+
+    testWidgets('WT-SAVE-09 저장 중 두 번 눌러도 writer 는 1회', (tester) async {
+      var calls = 0;
+      final gate = Completer<bool>();
+      await openWith(tester, onSubmit: (d) {
+        calls++;
+        return gate.future;
+      });
+      await tapSave(tester);
+      await tester.pump();
+      // 응답 전에 한 번 더 — 버튼은 비활성이고 _saving 가드도 있다.
+      await tester.tap(find.byType(ElevatedButton), warnIfMissed: false);
+      await tester.pump();
+
+      expect(calls, 1, reason: '중복 전송이 없어야 한다');
+      gate.complete(false);
+      await _settle(tester);
+    });
+
+    testWidgets('WT-SAVE-06/07 실패 후 같은 draft 로 다시 저장된다', (tester) async {
+      var calls = 0;
+      final seen = <String>[];
+      await openWith(tester, onSubmit: (d) async {
+        calls++;
+        seen.add(d['name'] as String);
+        return calls > 1; // 첫 번째만 실패
+      });
+
+      await tapSave(tester);
+      await _settle(tester);
+      expect(find.text('새 업무유형 추가'), findsOneWidget);
+
+      await tester.tap(find.text('추가'));
+      await _settle(tester);
+
+      expect(calls, 2);
+      expect(seen, ['피킹', '피킹'], reason: '두 번째도 같은 draft 여야 한다');
+      expect(find.text('새 업무유형 추가'), findsNothing);
+    });
+
+    testWidgets('WT-SAVE-08 실패 후 이름을 고쳐 저장할 수 있다', (tester) async {
+      final seen = <String>[];
+      await openWith(tester, onSubmit: (d) async {
+        seen.add(d['name'] as String);
+        return seen.length > 1;
+      });
+      await tapSave(tester);
+      await _settle(tester);
+
+      await tester.enterText(find.byType(TextField).first, '냉장 피킹');
+      await tester.pump();
+      await tester.tap(find.text('추가'));
+      await _settle(tester);
+
+      expect(seen, ['피킹', '냉장 피킹']);
+      expect(find.text('새 업무유형 추가'), findsNothing);
+    });
+
+    testWidgets('WT-SAVE-10 실패 뒤 저장 버튼이 다시 눌린다', (tester) async {
+      await openWith(tester, onSubmit: (d) async => false);
+      await tapSave(tester);
+      await _settle(tester);
+
+      final btn = tester.widget<ElevatedButton>(find.ancestor(
+          of: find.text('추가'), matching: find.byType(ElevatedButton)));
+      expect(btn.onPressed, isNotNull);
+    });
+
+    testWidgets('WT-SAVE-11 320dp 키보드 ON 에서 오류가 보여도 넘치지 않는다',
+        (tester) async {
+      await openWith(tester,
+          onSubmit: (d) async => false,
+          size: const Size(320, 740),
+          insetBottom: 320);
+      await tapSave(tester);
+      await _settle(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('WT-SAVE-12 배율 2.0 에서 오류가 보여도 넘치지 않는다',
+        (tester) async {
+      await openWith(tester,
+          onSubmit: (d) async => false,
+          size: const Size(320, 740),
+          textScale: 2.0,
+          insetBottom: 320);
+      await tapSave(tester);
+      await _settle(tester);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('[R7-P4.4E.5.2] 소유권은 그대로다', () {
+    test('WT-SAVE-13 businessId 는 부모가 쥔다', () {
+      // 시트는 businessId 를 알지도, 넘기지도 않는다.
+      //   (주석은 제외한다 — 누가 쥐는지 적어 둔 설명까지 금지할 이유가 없다)
+      final sheet = _sheet()
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//')
+              && !l.trimLeft().startsWith('///'))
+          .join('\n');
+      expect(sheet.contains('businessId'), isFalse);
+
+      final parent = File(
+              'lib/screens/business_admin/work_type_management_screen.dart')
+          .readAsStringSync();
+      expect(parent.contains('businessId: widget.businessId'), isTrue);
+    });
+
+    test('WT-SAVE-14 실패하면 목록을 갱신하지 않는다', () {
+      final parent = File(
+              'lib/screens/business_admin/work_type_management_screen.dart')
+          .readAsStringSync();
+      // 성공(saved == true)일 때만 아래로 내려간다.
+      expect(parent.contains('if (saved != true || !mounted) return;'), isTrue);
+    });
+
+    test('WT-SAVE-15 수정 경로도 같은 규칙이다', () {
+      final parent = File(
+              'lib/screens/business_admin/work_type_management_screen.dart')
+          .readAsStringSync();
+      final i = parent.indexOf('Future<void> _showEditDialog');
+      final body = parent.substring(i, i + 1400);
+      expect(body.contains('onSubmit: (draft) async {'), isTrue,
+          reason: '같은 시트를 쓰는데 한쪽만 입력을 잃으면 구조가 갈린다');
+      expect(body.contains('updateBusinessWorkType('), isTrue);
+    });
+
+    test('WT-SAVE-16 writer 판정을 시트가 다시 쓰지 않는다', () {
+      final sheet = _sheet();
+      for (final dup in const ['StateError', '이미 있습니다', 'duplicate']) {
+        expect(sheet.contains(dup), isFalse,
+            reason: '중복 판정은 writer 의 것이다 — 복제하면 갈린다');
+      }
     });
   });
 }
