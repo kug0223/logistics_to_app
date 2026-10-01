@@ -57,10 +57,21 @@ void main() {
     });
 
     test('EMP-SEAL-READ-02b 새 permission 을 만들지 않았다', () {
-      // 기존 소속 판정만 쓴다 — canManageTo/canManageContract 중 하나로
-      // 좁히면 공고 권한만 가진 SubAdmin 이 공고 준비 상태를 못 본다.
-      expect(body.contains('canManageContract'), isFalse);
-      expect(body.contains('canManageTo'), isFalse);
+      // [R7-P4.4E.3B.1 갱신] 이 셀은 "소속만 본다" 를 고정했었다. 그건
+      //   틀렸다 — 이 제품은 TO 관리 = canManageTo, 계약 = canManageContract
+      //   이고, UI 에서만 숨기고 서버가 소속만 보는 구조를 허용하지 않는다.
+      //   지켜야 할 것은 **새 capability 를 만들지 않는 것**이지, 권한을
+      //   보지 않는 것이 아니다.
+      expect(body.contains('canManageTo'), isTrue);
+      expect(body.contains('canManageContract'), isTrue);
+      // 기존 두 개만 쓴다 — 새 이름을 발명하지 않았다.
+      for (final invented in const [
+        'canReadSeal',
+        'canViewEmployerSeal',
+        'canManageSeal',
+      ]) {
+        expect(body.contains(invented), isFalse, reason: '$invented 를 만들었다');
+      }
     });
 
     test('EMP-SEAL-READ-08 없는 사업장은 fail closed 다', () {
@@ -206,6 +217,94 @@ void main() {
       expect(save.contains('const uid = request.auth.uid;'), isTrue);
       expect(save.contains('collection("users").doc(uid).update('), isTrue,
           reason: 'owner-target write API 로 넓히지 않았다');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // [R7-P4.4E.3B.1] 소속만으로 열지 않는다
+  // ═══════════════════════════════════════════════════════════
+  group('[R7-P4.4E.3B.1] 권한 경계', () {
+    test('EMP-SEAL-PERM-00 assertBizAdmin 은 소속까지만 본다', () {
+      final i = cf.indexOf('async function assertBizAdmin');
+      final gate = cf.substring(i, i + 2200);
+      // 소속은 본다.
+      for (final k in ['adminIds', 'ownerId', 'subAdminBusinessIds']) {
+        expect(gate.contains(k), isTrue);
+      }
+      // 세부 권한은 보지 않는다 — 그래서 callable 쪽에 따로 둬야 한다.
+      expect(gate.contains('canManageTo'), isFalse);
+      expect(gate.contains('canManageContract'), isFalse);
+      expect(gate.contains('permissions'), isFalse);
+    });
+
+    test('EMP-SEAL-PERM-01/04 owner·관리자는 통과, 역할 없으면 세부 권한을 본다', () {
+      // BUSINESS_ADMIN·SUPER_ADMIN 은 세부 권한 개념이 없다 (기존 CF 와 동형).
+      expect(
+          body.contains('sealCallerRole !== "BUSINESS_ADMIN" &&'), isTrue);
+      expect(body.contains('sealCallerRole !== "SUPER_ADMIN"'), isTrue);
+    });
+
+    test('EMP-SEAL-PERM-02/03 canManageTo 또는 canManageContract 면 통과', () {
+      expect(
+          body.contains(
+              'perms.canManageTo !== true && perms.canManageContract !== true'),
+          isTrue,
+          reason: '둘의 합집합 — 하나로 좁히면 한쪽 소비자가 막힌다');
+    });
+
+    test('EMP-SEAL-PERM-05/06 둘 다 없으면 거부한다', () {
+      // 근무만·급여만 가진 하위관리자는 이 값을 쓰는 화면이 없다.
+      expect(body.contains('"permission-denied"'), isTrue);
+      expect(body.contains('canManageWorkers'), isFalse,
+          reason: '쓸 일이 없는 권한으로 열지 않는다');
+      expect(body.contains('canManageWage'), isFalse);
+    });
+
+    test('EMP-SEAL-PERM-07 권한은 그 사업장 member 문서에서 읽는다', () {
+      expect(
+          body.contains(
+              'db.collection("businesses").doc(businessId)'),
+          isTrue);
+      expect(body.contains('.collection("members").doc(callerUid).get()'), isTrue,
+          reason: '다른 사업장 권한으로 통과할 수 없다');
+    });
+
+    test('EMP-SEAL-PERM-09 거부에도 내부 정보가 없다', () {
+      final code = body
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//'))
+          .join('\n');
+      // 거부 메시지는 무엇이 필요한지만 말한다.
+      expect(code.contains('"공고 또는 계약 관리 권한이 필요합니다."'), isTrue);
+      expect(code.contains('sealBase64'), isFalse);
+      expect(code.contains('ownerId'), isFalse);
+      // 권한 목록·membership 세부를 돌려주지 않는다.
+      expect(code.contains('return {employerSealReady: ready};'), isTrue);
+      expect(code.contains('perms}'), isFalse);
+    });
+
+    test('EMP-SEAL-PERM-10 전역 assertBizAdmin semantics 는 그대로다', () {
+      // 다른 CF 소비자가 많아 전역 계약을 바꾸지 않았다 — gate 는 이 callable
+      // 안에만 있다.
+      expect('permissions as Record<string, boolean>'.allMatches(cf).length,
+          greaterThan(1),
+          reason: '기존 CF 들이 쓰던 같은 패턴을 그대로 썼다');
+      final i = cf.indexOf('async function assertBizAdmin');
+      expect(cf.substring(i, i + 2200).contains('members'), isFalse);
+    });
+
+    test('EMP-SEAL-PERM-11 Home 준비 카드는 하위관리자 소비자가 아니다', () {
+      final home =
+          File('lib/screens/business_admin/business_admin_home_screen.dart')
+              .readAsStringSync();
+      final i = home.indexOf('Widget _buildPostingSetupCard');
+      expect(i, greaterThan(-1));
+      expect(
+          home
+              .substring(i, i + 400)
+              .contains("currentUser?.isSubAdmin == true"),
+          isTrue,
+          reason: '그래서 권한 합집합에 Home 을 넣지 않았다');
     });
   });
 }

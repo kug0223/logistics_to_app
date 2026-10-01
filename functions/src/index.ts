@@ -9165,7 +9165,37 @@ export const callableGetEmployerSealReadiness = onCall(
     }
 
     // 소속 확인 + 사업장 문서 확보. 없는 사업장이면 여기서 not-found 다.
-    const {bizData} = await assertBizAdmin(callerUid, businessId);
+    const {callerData, bizData} = await assertBizAdmin(callerUid, businessId);
+
+    // [R7-P4.4E.3B.1] 소속만으로는 열지 않는다.
+    //
+    //   `assertBizAdmin` 은 membership 까지만 본다(owner/adminIds/
+    //   subAdminBusinessIds). 이 제품의 원칙은 **TO 관리 = canManageTo,
+    //   계약 = canManageContract** 이고, UI 에서만 숨기고 서버는 소속만
+    //   보는 구조를 허용하지 않는다.
+    //
+    //   이 값을 실제로 쓰는 곳은 셋이다 — 공고 root 의 준비 표시와
+    //   CreateTO(둘 다 `canManageTo`), 그리고 관리 탭의 사업주 날인 카드
+    //   (`canManageContract`). Home 준비 카드는 SubAdmin 에게 아예 그려지지
+    //   않으므로 소비자가 아니다. 그래서 가장 좁은 공통 경계는 **둘의 합집합**
+    //   이다. 하나로 좁히면 공고 권한만 가진 사람이 공고 준비 상태를 못 보고,
+    //   소속만 보면 쓸 일이 없는 사람에게까지 열린다.
+    //
+    //   BUSINESS_ADMIN·SUPER_ADMIN 은 세부 권한 개념이 없다 — 기존 CF 들이
+    //   쓰는 분기와 같은 모양이다.
+    const sealCallerRole = callerData?.role as string | undefined;
+    if (sealCallerRole !== "BUSINESS_ADMIN" &&
+        sealCallerRole !== "SUPER_ADMIN") {
+      const memberSnap = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const perms =
+        (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (perms.canManageTo !== true && perms.canManageContract !== true) {
+        throw new HttpsError(
+          "permission-denied",
+          "공고 또는 계약 관리 권한이 필요합니다.");
+      }
+    }
 
     // 공고 gate 와 **같은 술어**를 쓴다 — 여기서만 다르게 판정하면
     // 화면은 준비됐다는데 서버는 막는 상태가 생긴다.

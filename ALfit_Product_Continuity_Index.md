@@ -2,7 +2,91 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B** (employer seal read-only callable)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.3B.1** (seal read permission boundary)
+
+## 0-AAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B.1
+
+기준 `581dfeb`. **CODE CLOSED · DEV DEPLOY PENDING · DEVICE NOT SEEN.**
+
+### §2 `assertBizAdmin` 이 보는 것 — **소속까지다**
+
+| 검사 | 여부 |
+|---|---|
+| auth | 호출부(`request.auth`) |
+| 사업장 존재 | ✔ 없으면 `not-found` |
+| `accountStatus == active` | ✔ |
+| owner / `adminIds` | ✔ |
+| `subAdminBusinessIds` · `subAdminOf` | ✔ |
+| role | SUPER_ADMIN 단축만 |
+| **`canManageTo` / `canManageContract`** | **✘ 검사하지 않는다** |
+
+→ **capability aware = NO.** 소속만으로 열려 있었다 → **PATCH 함**(§9).
+
+### §3 소비자별 진입 조건 (actual code)
+
+| Consumer | 진입 조건 | 필요 capability |
+|---|---|---|
+| Home 준비 카드 | **SubAdmin 은 `SizedBox.shrink()`** — 아예 안 그려진다 | **소비자 아님** |
+| 공고 root SETUP_REQUIRED · `+` | `checkCurrentBusiness(canManageTo)` | `canManageTo` |
+| CreateTO | `+` 경유 · 서버도 `canManageTo` 검증 | `canManageTo` |
+| 관리 탭 사업주 날인 카드 | `isBusinessAdmin \|\| !canManageContract.hidesAffordance` | `canManageContract` |
+
+Home 이 SubAdmin 소비자가 **아니라는 것**이 경계를 좁혔다.
+
+### §4 선택한 경계 — 둘의 합집합
+
+```
+owner / BUSINESS_ADMIN / SUPER_ADMIN            → ALLOW (세부 권한 개념 없음)
+그 외 member AND (canManageTo || canManageContract) → ALLOW
+그 외                                            → permission-denied
+```
+
+하나로 좁히면 **공고 권한만 가진 사람이 공고 준비 상태를 못 보고**, 소속만
+보면 쓸 일이 없는 사람에게까지 열린다. **새 capability 는 만들지 않았다** —
+기존 두 개만 쓴다. 권한은 그 사업장의 `businesses/{id}/members/{uid}.permissions`
+에서 읽어 **다른 사업장 권한으로 통과할 수 없다**. 기존 CF(`callableCreateTO`
+등)가 쓰는 패턴과 같은 모양이다.
+
+### §9 전역 semantics 무변경
+
+gate 는 **이 callable 안에만** 있다. `assertBizAdmin` 은 손대지 않았다 —
+67곳이 쓰는 전역 계약을 바꾸면 영향이 너무 크다.
+
+### §6·§7 판정
+
+`canManageWorkers` 만 / `canManageWage` 만 → **DENY**. 그 권한으로 도달하는
+소비자 중 이 값을 쓰는 것이 없다.
+
+**관찰(미수정)**: 그 사용자가 공고 탭을 열면 readiness 가 `sealUnknown` 이라
+`allReady=false` → SETUP_REQUIRED 화면을 본다. 배포 전 현재 동작과 **같다**
+(지금도 owner 문서를 못 읽어 같은 결과). 공고를 낼 수 없는 사람에게 준비
+화면을 보이는 것이 맞는지는 별건이라 `[R7-P4.4E.3B.1-JOBS-ROOT-VIEWER-SCOPE]`
+로 남긴다.
+
+### §10·§11 회귀
+
+응답은 `{employerSealReady: boolean}` 그대로. 거부 응답에도 내부 정보 없음
+(무엇이 필요한지만 말한다). 날인 술어는 계속 `employerSealPresent` 한 벌 —
+공고 gate 와 같은 코드다.
+
+### §12 클라이언트 변경 **0**
+
+`permission-denied` 는 기존 catch 로 들어가 `null` → **UNKNOWN**. 지금 계약과
+맞다. 새 UI 를 만들지 않았다.
+
+### §15 배포 대상 — 여전히 1개
+
+gate 가 callable 내부에만 있어 shared helper 를 건드리지 않았다.
+**`functions:callableGetEmployerSealReadiness`**
+
+### 증거
+
+- **CODE**: `tsc` 통과 · eslint **4973**(기준선 동일)
+- **artifact**: 권한 gate 가 **코드로** 포함(`perms.canManageTo !== true && perms.canManageContract !== true`), 핸들러 구간 `sealBase64` **0건**, `ownerId` 는 주석에만
+- **RENDER**: 신규 **26/26**(EMP-SEAL-READ-01~11 · SEAL-READ-CLIENT-01~08 · **EMP-SEAL-PERM-00~11**)
+- **DEV**: DEPLOY PENDING · **DEVICE**: NOT SEEN
+
+
 
 ## 0-AAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.3B
 
