@@ -15,6 +15,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:ALfit/utils/identity_identifier.dart';
+import 'package:ALfit/utils/ocr_verification_helper.dart';
+
 String _src(String p) {
   final f = File(p);
   if (!f.existsSync()) throw StateError('$p 를 찾지 못함');
@@ -56,8 +59,25 @@ void main() {
     test('01 "기본값 true"가 사라졌다', () {
       // `bool isAccountValid = true;` 가 신분증 R1-B3와 같은 함정이었다.
       expect(bankFn, isNot(contains('bool isAccountValid = true;')));
-      expect(bankFn,
-          contains('DocFieldOutcome accountOutcome = DocFieldOutcome.unassessed;'));
+      // [R7-P4.4E.9A 갱신] 판정이 `evaluateAccount` 한 곳으로 옮겨갔다.
+      //   계약은 그대로다 — **비교하지 않았으면 UNASSESSED** 다.
+      //   예전에는 초기값 한 줄을 고정했는데, 그건 계약이 아니라 구현이다.
+      //   지금은 그 계약을 **실행해서** 확인한다.
+      expect(
+        OcrVerificationHelper.evaluateAccount(
+          rawText: '계좌번호 110-1234-567890',
+          expectedAccountNumber: null,
+        ).outcome,
+        DocFieldOutcome.unassessed,
+        reason: '대조 기준이 없으면 일치도 불일치도 아니다',
+      );
+      expect(
+        OcrVerificationHelper.evaluateAccount(
+          rawText: '계좌번호 110-1234-567890',
+          expectedAccountNumber: '',
+        ).outcome,
+        DocFieldOutcome.unassessed,
+      );
     });
 
     test('02 expected가 없으면 UNASSESSED로 남는다', () {
@@ -112,11 +132,28 @@ void main() {
 
   group('INV-3 — 못 읽음 ≠ 불일치', () {
     test('09 계좌: 후보를 읽었는지로 MISMATCH/UNREADABLE을 가른다', () {
-      expect(bankFn, contains('bool sawAccountCandidate = false;'));
+      // [R7-P4.4E.9A 갱신] 계약은 그대로이고 **더 엄격해졌다.**
+      //   예전 `sawAccountCandidate` 는 "계좌처럼 생긴 숫자 하나" 로 세워져
+      //   휴대전화 `010-1234-5678` 만 있어도 MISMATCH 가 됐다 — `OCR 실패
+      //   != MISMATCH` 를 깨는 자리였다. 이제는 전화·고객센터·날짜로
+      //   분류되지 않은 **쓸 수 있는** 후보가 있어야 "읽었다" 다.
+      //   소스 한 줄이 아니라 그 계약을 실행해서 확인한다.
       expect(
-          _flat(bankFn),
-          contains('accountOutcome = sawAccountCandidate '
-              '? DocFieldOutcome.mismatch : DocFieldOutcome.unreadable;'));
+        OcrVerificationHelper.evaluateAccount(
+          rawText: 'IBK기업은행\n연락처 010-1234-5678',
+          expectedAccountNumber: '010-123456-01-017',
+        ).outcome,
+        DocFieldOutcome.unreadable,
+        reason: '전화번호를 봤다는 사실이 불일치의 근거가 되지 않는다',
+      );
+      expect(
+        OcrVerificationHelper.evaluateAccount(
+          rawText: '계좌번호 110-9999-888888',
+          expectedAccountNumber: '110-1234-567890',
+        ).outcome,
+        DocFieldOutcome.mismatch,
+        reason: '계좌 후보를 읽었고 다르면 불일치다',
+      );
     });
 
     test('10 예금주: 라벨로 읽은 경우만 MISMATCH', () {

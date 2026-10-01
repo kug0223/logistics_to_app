@@ -184,7 +184,13 @@ void main() {
       expect(result['isBankValid'], isTrue,
           reason: '"국민은행" 이 전체 텍스트에 포함됨');
       expect(result['extractedName'], equals('홍길동'));
-      expect(result['extractedBankName'], equals('국민은행'));
+      // [R7-P4.4E.9A 갱신] 은행명을 **canonical 로** 돌려준다.
+      //   예전에는 substring 목록에서 맞은 alias 문자열을 그대로 줬다 —
+      //   그래서 사용자가 'IBK기업은행' 을 골랐고 서류에 '중소기업은행' 이
+      //   적혀 있으면 "은행명이 다르다" 고 말했다. alias→canonical 로 모았고,
+      //   그 결과 '국민은행' 서류는 canonical 'KB국민은행' 으로 보고된다.
+      //   비교(`bankOutcome`)는 그대로 통과한다 — 아래 isBankValid 참조.
+      expect(result['extractedBankName'], equals('KB국민은행'));
     });
 
     // BANK-02

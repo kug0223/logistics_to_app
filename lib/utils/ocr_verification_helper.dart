@@ -293,8 +293,9 @@ class OcrVerificationHelper {
     final holderRead = _extractAccountHolder(rawText, recognizedText);
     final String? extractedName = holderRead.name;
 
-    // ✅ 은행명 추출
-    String? extractedBankName = _extractBankName(rawText);
+    // ✅ 은행명 추출 — canonical 우선, 없으면 기존 패턴 폴백
+    String? extractedBankName =
+        canonicalBankOf(rawText) ?? _extractBankName(rawText);
 
     // ✅ 검증
     final cleanedOcr = _cleanText(rawText);
@@ -327,77 +328,19 @@ class OcrVerificationHelper {
       debugPrint('📄 [통장사본 OCR] 예금주: ${holderOutcome.wire}');
     }
 
-    // 2. 계좌번호 검증 — [OCR-P1-002 FIX] any-match 방식
-    // expectedAccountNumber 기준으로 OCR 후보 전체를 스캔하여 일치 여부 확인.
-    // 이전 버전(firstMatch)의 문제:
-    //   전화번호 등 패턴이 먼저 나타나면 오인식 → false-negative.
-    // [PII-DOC-R1.3 / INV-1] 비교하지 않은 계좌번호를 일치로 만들지 않는다.
-    //   여기 있던 `bool isAccountValid = true;`가 신분증의 R1-B3와 같은 함정이었다.
-    DocFieldOutcome accountOutcome = DocFieldOutcome.unassessed;
-    String? extractedAccountNumber;
-    // 문서에서 **계좌번호처럼 보이는 것**을 하나라도 읽었는가.
-    //   읽은 게 있는데 다르면 MISMATCH, 아무것도 못 읽었으면 UNREADABLE이다.
-    bool sawAccountCandidate = false;
-
+    // 2. 계좌번호 검증 — [R7-P4.4E.9A] 후보 수집 + 문맥 분류 + expected 대조
+    //
+    //   후보를 segment 개수에 고정하지 않고 모으고, 전화·고객센터·날짜로
+    //   분류된 것은 "계좌번호를 읽었다" 로 세지 않는다. 그래서 계좌를
+    //   못 읽었을 때 MISMATCH 가 아니라 UNREADABLE 이 된다.
+    //   판정은 evaluateAccount 한 곳이 한다.
+    final acct = evaluateAccount(
+      rawText: rawText,
+      expectedAccountNumber: expectedAccountNumber,
+    );
+    final DocFieldOutcome accountOutcome = acct.outcome;
+    final String? extractedAccountNumber = acct.extracted;
     if (expectedAccountNumber != null && expectedAccountNumber.isNotEmpty) {
-      final cleanedExpectedAccount =
-          expectedAccountNumber.replaceAll(RegExp(r'\D'), '');
-
-      // Step 1: "계좌번호" 키워드 근처에서 keyword-match
-      bool foundByKeyword = false;
-      for (final line in rawText.split('\n')) {
-        if (line.contains('계좌번호') || line.contains('계좌 번호')) {
-          final accountPattern = RegExp(r'[\d]+[-\s]*[\d]+[-\s]*[\d]+');
-          final match = accountPattern.firstMatch(line);
-          if (match != null) {
-            final candidate =
-                (match.group(0) ?? '').replaceAll(RegExp(r'\D'), '');
-            // 숫자열을 읽어냈다는 사실 자체를 기록한다 (일치 여부와 별개).
-            if (candidate.isNotEmpty) sawAccountCandidate = true;
-            if (candidate == cleanedExpectedAccount) {
-              accountOutcome = DocFieldOutcome.matched;
-              extractedAccountNumber = match.group(0)?.replaceAll(' ', '');
-              foundByKeyword = true;
-              break;
-            }
-          }
-        }
-      }
-
-      // Step 2: 전체 텍스트에서 계좌번호 패턴 후보 전체 스캔 — any-match
-      if (!foundByKeyword) {
-        final patterns = [
-          RegExp(r'(\d{3,4})[-\s](\d{4,6})[-\s](\d{4,6})'),
-          RegExp(r'(\d{2,4})[-\s](\d{2,4})[-\s](\d{4,7})'),
-        ];
-        bool anyMatch = false;
-        for (final pattern in patterns) {
-          for (final match in pattern.allMatches(rawText)) {
-            final g1 = match.group(1) ?? '';
-            final g2 = match.group(2) ?? '';
-            final g3 = match.group(3) ?? '';
-            final candidate = '$g1$g2$g3';
-            if (candidate.isNotEmpty) sawAccountCandidate = true;
-            if (candidate == cleanedExpectedAccount) {
-              accountOutcome = DocFieldOutcome.matched;
-              extractedAccountNumber = '$g1-$g2-$g3';
-              anyMatch = true;
-              break;
-            }
-          }
-          if (anyMatch) break;
-        }
-        if (!anyMatch) {
-          // [PII-DOC-R1.3 / §4] 못 읽은 것과 다른 것을 구분한다.
-          //   계좌번호처럼 보이는 숫자열을 하나도 못 찾았다면 "다르다"고
-          //   말할 근거가 없다 — 사진이 흐렸을 뿐일 수 있다.
-          accountOutcome = sawAccountCandidate
-              ? DocFieldOutcome.mismatch
-              : DocFieldOutcome.unreadable;
-          extractedAccountNumber = null;
-        }
-      }
-
       if (kDebugMode) {
         debugPrint('📄 [통장사본 OCR] 계좌번호: ${accountOutcome.wire}');
       }
@@ -586,6 +529,228 @@ class OcrVerificationHelper {
   }
 
   /// ✅ 은행명 추출
+  // ──────────────────────────────────────────────────────────────────────────
+  // [R7-P4.4E.9A] 통장사본 숫자 후보 — 모으고, 분류하고, 대조한다
+  //
+  //   예전 구조는 **세 그룹 고정** 정규식 둘뿐이었다.
+  //     (\d{3,4})[-\s](\d{4,6})[-\s](\d{4,6})
+  //     (\d{2,4})[-\s](\d{2,4})[-\s](\d{4,7})
+  //   그래서 구분자가 셋인 계좌번호(`010-123456-01-017`)는 **어떤 패턴에도
+  //   맞지 않았다.** 게다가 `계좌번호` 라벨이 있는 줄에서는 greedy 패턴이
+  //   `010-123456-01` 까지만 잘라 읽고 "계좌번호처럼 보이는 것을 읽었다"를
+  //   세웠다 — 결과는 UNREADABLE 이 아니라 **MISMATCH** 였다.
+  //   정상 서류·정상 입력으로 "통장사본의 계좌번호가 일치하지 않습니다 /
+  //   인식: 확인 불가" 를 보게 되는 자리다.
+  //
+  //   두 번째 결함: 휴대전화 `010-1234-5678` 도 그 세 그룹 패턴에 맞아
+  //   같은 플래그를 세웠다. 계좌를 못 읽었는데 MISMATCH 가 됐다 —
+  //   `OCR 실패 != MISMATCH` 를 깨는 자리다.
+  //
+  //   여기서 바꾸는 것은 **후보를 모으는 방식과 "읽었다"의 뜻**이다.
+  //   OCR 이 읽은 글자를 고쳐 쓰지는 않는다(O→0 같은 복원 금지) —
+  //   확신이 없으면 "읽지 못했다" 가 원칙이다.
+
+  /// 숫자 후보 하나.
+  @visibleForTesting
+  static const int accountMinDigits = 9;
+
+  /// 계좌번호로 볼 수 있는 자릿수 상한. 너무 긴 것은 참조번호·카드번호다.
+  @visibleForTesting
+  static const int accountMaxDigits = 20;
+
+  /// 계좌 의미가 확인되는 라벨.
+  static const List<String> _accountPositiveLabels = [
+    '계좌번호', '계좌 번호', '예금계좌', '입출금계좌', '평생계좌',
+    'ACCOUNT', 'A/C',
+  ];
+
+  /// 계좌가 아니라고 말하는 문맥.
+  static const List<String> _accountNegativeLabels = [
+    '고객센터', '상담', '문의', '대표전화', '지점 전화', '전화',
+    'TEL', 'FAX', 'T.', '콜센터',
+  ];
+
+  /// 날짜로 보이는 문맥·형태.
+  static final RegExp _datePattern = RegExp(
+      r'(19|20)\d{2}[-.\/](0?[1-9]|1[0-2])[-.\/](0?[1-9]|[12]\d|3[01])');
+
+  /// 숫자 후보 — 구분자(하이픈·공백) 개수에 **고정되지 않는다.**
+  ///
+  ///   `010-123456-01-017` · `010 123456 01 017` · `01012345601017` ·
+  ///   5-segment 까지 같은 규칙으로 모인다.
+  static final RegExp _numericCandidatePattern =
+      RegExp(r'\d[\d\-\s]{6,}\d');
+
+  /// 후보 하나의 판정.
+  static ({
+    String raw,
+    String digits,
+    String line,
+    bool positive,
+    bool negative,
+    bool dateLike,
+  }) _classifyCandidate(String raw, String line) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    final upper = line.toUpperCase();
+    final positive =
+        _accountPositiveLabels.any((l) => upper.contains(l.toUpperCase()));
+    final negative =
+        _accountNegativeLabels.any((l) => upper.contains(l.toUpperCase()));
+    final dateLike = _datePattern.hasMatch(raw) || _datePattern.hasMatch(line);
+    return (
+      raw: raw.trim(),
+      digits: digits,
+      line: line.trim(),
+      positive: positive,
+      negative: negative,
+      dateLike: dateLike,
+    );
+  }
+
+  /// 전화번호로 **강하게** 보이는가.
+  ///
+  ///   `010-` 접두만으로 정하지 않는다 — 계좌번호가 그 접두를 쓸 수 있다
+  ///   (실제로 기업은행 계좌가 `010-` 으로 시작한다). 번호 형태와 문맥을
+  ///   **함께** 본다: 부정 라벨이 있거나, 휴대전화/대표번호의 전형적 자릿수다.
+  static bool _looksLikePhone({
+    required String digits,
+    required bool negative,
+    required bool positive,
+  }) {
+    if (positive) return false; // 계좌 라벨이 이긴다
+    if (negative) return true; // 고객센터·전화 문맥이면 전화다
+    // 라벨이 없을 때만 형태로 본다.
+    if (digits.length == 11 && digits.startsWith('01')) return true; // 휴대전화
+    if (digits.length == 10 && digits.startsWith('01')) return true;
+    if (digits.length == 8) return true; // 1588-2588 류 대표번호
+    if (digits.length == 9 && digits.startsWith('02')) return true;
+    return false;
+  }
+
+  /// 통장사본 OCR 텍스트에서 **쓸 수 있는 계좌 후보**를 모은다.
+  ///
+  ///   돌려주는 것은 (계좌 후보, 제외된 후보) 두 묶음이다. 제외된 것만
+  ///   남았다면 그것은 "계좌번호를 읽었다" 가 아니다 — UNREADABLE 이다.
+  @visibleForTesting
+  static ({List<String> usable, List<String> rejected}) collectAccountCandidates(
+      String rawText) {
+    final usable = <String>[];
+    final rejected = <String>[];
+
+    for (final line in rawText.split('\n')) {
+      for (final m in _numericCandidatePattern.allMatches(line)) {
+        final c = _classifyCandidate(m.group(0) ?? '', line);
+        if (c.digits.length < accountMinDigits ||
+            c.digits.length > accountMaxDigits) {
+          rejected.add(c.digits);
+          continue;
+        }
+        if (c.dateLike) {
+          rejected.add(c.digits);
+          continue;
+        }
+        if (_looksLikePhone(
+            digits: c.digits, negative: c.negative, positive: c.positive)) {
+          rejected.add(c.digits);
+          continue;
+        }
+        usable.add(c.digits);
+      }
+    }
+    return (usable: usable, rejected: rejected);
+  }
+
+  /// 계좌번호 판정. **expected 와의 정확 일치가 가장 강한 증거다.**
+  ///
+  ///   문서에서 "아무 계좌번호나 찾기" 가 목적이 아니다 — 사용자가 이미
+  ///   입력한 계좌가 이 서류 안에 있는지 확인하는 것이다. 그래서 전화번호가
+  ///   먼저 등장했다는 이유로 실패하지 않는다.
+  @visibleForTesting
+  static ({DocFieldOutcome outcome, String? extracted}) evaluateAccount({
+    required String rawText,
+    required String? expectedAccountNumber,
+  }) {
+    if (expectedAccountNumber == null || expectedAccountNumber.isEmpty) {
+      return (outcome: DocFieldOutcome.unassessed, extracted: null);
+    }
+    final expected = expectedAccountNumber.replaceAll(RegExp(r'\D'), '');
+    if (expected.isEmpty) {
+      return (outcome: DocFieldOutcome.unassessed, extracted: null);
+    }
+
+    final found = collectAccountCandidates(rawText);
+
+    // 1) expected 와 정확히 같은 후보가 있으면 그것이 답이다.
+    //    제외됐던 후보에서도 찾는다 — 사용자가 입력한 번호와 숫자가 똑같다면
+    //    그건 전화번호가 아니라 그 계좌다(형태 추정보다 입력값이 강하다).
+    if (found.usable.contains(expected) || found.rejected.contains(expected)) {
+      return (outcome: DocFieldOutcome.matched, extracted: expectedAccountNumber);
+    }
+
+    // 2) 쓸 수 있는 계좌 후보를 하나도 못 모았다 — 다르다고 말할 근거가 없다.
+    if (found.usable.isEmpty) {
+      return (outcome: DocFieldOutcome.unreadable, extracted: null);
+    }
+
+    // 3) 계좌 후보를 읽었는데 입력값과 다르다 — 근거 있는 불일치다.
+    return (outcome: DocFieldOutcome.mismatch, extracted: null);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /// [R7-P4.4E.9A] 은행 alias → canonical.
+  ///
+  ///   예전에는 substring 목록에서 **맞은 alias 문자열을 그대로** 돌려줬다.
+  ///   그래서 사용자가 `IBK기업은행` 을 골랐고 서류에 `중소기업은행` 이
+  ///   적혀 있으면 "은행명이 다르다" 가 됐다. 은행은 supporting evidence
+  ///   이므로 사용자를 막지는 않았지만, 화면에 거짓을 말했다.
+  ///   긴 alias 를 먼저 본다 — `기업은행` 이 `중소기업은행` 을 가로채지 않도록.
+  static const Map<String, List<String>> bankAliases = {
+    'KB국민은행': ['KB국민은행', '국민은행', 'KB'],
+    '신한은행': ['신한은행'],
+    'NH농협은행': ['NH농협은행', '농협은행', '단위농협', '농협'],
+    '우리은행': ['우리은행'],
+    '하나은행': ['하나은행', 'KEB하나은행'],
+    'IBK기업은행': [
+      'IBK Industrial Bank of Korea',
+      'Industrial Bank of Korea',
+      'IBK기업은행',
+      '중소기업은행',
+      '기업은행',
+      'IBK',
+    ],
+    'SC제일은행': ['SC제일은행', '제일은행', 'SC'],
+    '카카오뱅크': ['카카오뱅크'],
+    '토스뱅크': ['토스뱅크'],
+    '케이뱅크': ['케이뱅크', 'K뱅크'],
+    '새마을금고': ['새마을금고', 'MG새마을금고'],
+    '우체국': ['우체국예금', '우체국'],
+    '수협은행': ['수협은행', '수협'],
+    '대구은행': ['iM뱅크', '대구은행'],
+    '부산은행': ['부산은행'],
+    '경남은행': ['경남은행'],
+    '광주은행': ['광주은행'],
+    '전북은행': ['전북은행'],
+    '제주은행': ['제주은행'],
+  };
+
+  /// [rawText] 안의 은행을 canonical 이름으로 돌려준다.
+  @visibleForTesting
+  static String? canonicalBankOf(String rawText) {
+    final upper = rawText.toUpperCase();
+    String? best;
+    int bestLen = 0;
+    for (final entry in bankAliases.entries) {
+      for (final alias in entry.value) {
+        if (upper.contains(alias.toUpperCase()) && alias.length > bestLen) {
+          best = entry.key;
+          bestLen = alias.length;
+        }
+      }
+    }
+    return best;
+  }
+
   static String? _extractBankName(String rawText) {
     // 주요 은행 목록
     final banks = [
