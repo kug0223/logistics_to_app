@@ -201,7 +201,11 @@ void main() {
       //   오른쪽 힌트 슬롯(폭을 나눠 갖는 자리)에 문장을 넣었더니 라벨이
       //   '계약 / 서 템 / 플릿' 으로 쪼개져, 라벨 아래 줄로 내렸다.
       //   새 크기를 만들지 않고 힌트와 같은 12px 를 쓴다.
-      expect('fontSize: 12'.allMatches(home).length, 19);
+      // [R7-P4.4E.4] 19 → 18: 준비 카드 헤더의 `2 / 4 완료` 를 뺐다.
+      //   제목이 이미 "2단계 남았어요" 라고 말한다 — 같은 사실을 같은 무게로
+      //   두 번 두면 정작 다음 행동이 늦게 보이고, 좁은 화면에서는 제목을
+      //   밀어냈다. 크기 체계는 그대로다(새 scale 없음).
+      expect('fontSize: 12'.allMatches(home).length, 18);
       expect(home.contains('fontSize: 11'), isFalse, reason: 'TYPO-50 하한 유지');
     });
 

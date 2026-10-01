@@ -258,7 +258,12 @@ void main() {
       final src = _source(_homePath);
       // [HOME-V2-08D.2] 제목이 Hero 문장으로 바뀌었다 — 카드 구성은 그대로다.
       expect(src.contains(r'공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요'), true);
-      expect(src.contains('/ \${FirstPostingReadiness.totalTasks} 완료'), true);
+      // [R7-P4.4E.4] 우측 `N / 4 완료` 는 **의도적으로 제거**했다.
+      //   제목이 이미 같은 사실을 말한다 — 같은 무게로 두 번 두면 정작
+      //   다음 행동이 늦게 보이고, 좁은 화면에서는 제목을 밀어냈다.
+      //   지켜야 할 것은 "남은 단계를 한 문장으로 말한다" 이지 카운트 자체가
+      //   아니다.
+      expect(src.contains('/ \${FirstPostingReadiness.totalTasks} 완료'), false);
       expect(src.contains('SettingsTarget.seal'), true);
       expect(src.contains('if (r == null || r.allReady) return const SizedBox.shrink();'),
           true);

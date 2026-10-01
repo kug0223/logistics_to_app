@@ -547,7 +547,9 @@ void main() {
       final code = _codeOf(_homePath);
       // [HOME-V2-08D.2] 제목이 Hero 문장으로 바뀌었다 — 카드 구성은 그대로다.
       expect(code.contains(r'공고 등록까지 ${FirstPostingReadiness.totalTasks - done}단계 남았어요'), true);
-      expect(code.contains('/ \${FirstPostingReadiness.totalTasks} 완료'), true);
+      // [R7-P4.4E.4] 우측 `N / 4 완료` 제거 — 제목이 이미 같은 사실을 말한다.
+      //   4단계 모델과 라벨은 그대로이므로 아래 셀들이 계약을 계속 지킨다.
+      expect(code.contains('/ \${FirstPostingReadiness.totalTasks} 완료'), false);
       expect(code.contains("'사업장 등록'"), true);
       expect(code.contains("'업무 등록'"), true);
       expect(code.contains("'계약서 템플릿'"), true);

@@ -1989,16 +1989,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                       ),
                     ),
                   ),
-                  SizedBox(width: 8 * s),
-                  // 완료/전체 — 남은 개수가 아니라 진척을 보여준다
-                  Text(
-                    '$done / ${FirstPostingReadiness.totalTasks} 완료',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: theme.primaryColor,
-                    ),
-                  ),
+                  // [R7-P4.4E.4] `2 / 4 완료` 를 뺐다.
+                  //
+                  //   제목이 이미 "2단계 남았어요" 라고 말한다. 같은 사실을
+                  //   같은 무게로 한 번 더 두면, 읽는 사람이 둘을 대조하느라
+                  //   정작 **지금 무엇을 하면 되는지**가 늦게 보인다.
+                  //   이 카드는 진행률 KPI 가 아니라 다음 행동을 가리키는
+                  //   자리다. 좁은 화면에서 제목을 밀어내던 요소이기도 하다.
                 ],
               ),
             ),
@@ -2162,12 +2159,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         padding: EdgeInsets.symmetric(horizontal: 14 * s, vertical: 10 * s),
         child: Row(
           children: [
-            Icon(
-              done ? Icons.check_circle : icon,
-              size: 15 * s,
-              color: done
-                  ? AppColors.success
-                  : (actionable ? AppColors.textSecondary : AppColors.grey300),
+            // [R7-P4.4E.4] leading 영역을 고정 폭으로 둔다 — 체크(채움)와
+            //   업무·문서(외곽선)는 글리프 폭이 달라서, 그냥 놓으면 라벨
+            //   시작점이 행마다 미세하게 어긋난다.
+            SizedBox(
+              width: 18 * s,
+              child: Center(
+                child: Icon(
+                  done ? Icons.check_circle : icon,
+                  size: 15 * s,
+                  color: done
+                      ? AppColors.success
+                      : (actionable
+                          ? AppColors.textSecondary
+                          : AppColors.grey300),
+                ),
+              ),
             ),
             SizedBox(width: 9 * s),
             Expanded(
@@ -2198,10 +2205,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                       purpose,
                       // 힌트 슬롯과 같은 12px — 이 화면의 하한이다.
                       // 새 typography scale 을 만들지 않는다.
+                      //
+                      // [R7-P4.4E.4] 색을 한 단계 올렸다. grey400 은 이 화면에서
+                      //   **비활성**을 뜻하는 톤이라, 읽으라고 쓴 설명이 꺼진
+                      //   항목처럼 보였다. 설명문은 본문보다 약하되 분명히
+                      //   읽히는 보조 텍스트다.
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.35,
-                        color: AppColors.grey400,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -2214,8 +2226,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 style: TextStyle(fontSize: 12, color: AppColors.grey400),
               )
             else if (!done && actionable)
-              Icon(Icons.chevron_right,
-                  size: 16 * s, color: AppColors.grey400),
+              // [R7-P4.4E.4] 지금 할 수 있는 행동은 chevron **하나만** 파랗다.
+              //
+              //   완료는 초록 체크로 이미 분명한데, 미완료는 회색 아이콘 ·
+              //   검은 글씨 · 회색 chevron 이라 "누를 수 있는 일" 로 읽히지
+              //   않았다. 강조는 하나면 충분하다 — 제목을 파랗게 하거나
+              //   버튼·배경을 더하면 네 줄이 서로 경쟁한다.
+              //   완료 행에는 주지 않는다(§7) — 상태가 행동과 겨루면 안 된다.
+              Icon(Icons.chevron_right, size: 16 * s, color: AppColors.info),
           ],
         ),
       ),
