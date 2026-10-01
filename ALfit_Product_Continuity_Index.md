@@ -2,7 +2,71 @@
 
 > 세션·단계가 바뀌어도 **무엇이 어디까지 닫혔고 무엇이 누구 소유인지** 한 장에서 잇는다.
 > 세부 근거는 각 감사 문서에 있고 이 파일은 **포인터와 상태**만 유지한다.
-> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.6B** (Tier-1 responsive 종료 — **E6 는 CODE/RENDER 만 닫혔고 DEVICE 는 열려 있다**)
+> 마지막 갱신: 2026-10-01 · 기준 HEAD: **R7-P4.4E.7B** (지원 관계 projection 수렴 — **E6·E7 모두 CODE/RENDER 만 닫혔고 DEVICE 는 열려 있다**)
+
+## 0-AAAAAAAAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.7 (7A+7B)
+
+기준 `c660935` → 커밋 **`94a420b`**(7A) · **`94854a0`**(7B).
+**R7-P4.4E.7 = CODE/RENDER CLOSED / DEVICE PENDING.**
+
+### 한 관계를 네 곳이 다르게 보고 있었다
+
+| 소비처 | 예전 키 | 이제 |
+|---|---|---|
+| 서버 `srvFindRelationApplications` | `(uid, toId, slotId, wdId)` | **canonical — 무변경** |
+| `MultiApplyConfirmSheet` | `(toId, slotId, **workType**)` | 공용 resolver |
+| `ApplyWorkDialog` | `(date, **workType_start_end**)` | 공용 resolver |
+| `job_posting_screen` | **보지 않음** | 공용 resolver |
+
+**shared resolver:** `lib/widgets/dialogs/apply/application_relation.dart`
+`ApplicationRelationResolver.resolve/match` → `WorkApplyRelation{none,pending,invited,contractPending,confirmed}`.
+새 reader·새 identity 만들지 않았다 — `_myApplications` · `wdId ?? workType_start_end` ·
+`AppStatus.*` · `isExitDecided`(서버 guard 건너뜀 조건과 동일 식) 재사용.
+
+### 고친 네 결함
+
+- **A** `job_posting_screen.canSelect` 가 `_myApplications` 를 보지 않아, 이미 지원한
+  업무에 `선택` 이 뜨고 CTA 의 N 이 부풀었다. → 상태 칩(`지원완료`/`확정`/`초대 확인`)으로
+  대체. 업무 카드와 `업무 자세히 보기` 는 유지.
+- **B** 확인 시트가 `selectedWorkType` 하나로 비교해, 같은 업무명이 **시간대만 다른**
+  별개 근무를 하나로 뭉쳤다 → **정당한 지원이 제출에서 조용히 빠졌다.**
+  서버의 그 함수 주석이 이미 경고한 실수다.
+- **C** INVITED 가 신규 지원 가능처럼 보였다. 서버는 막고 다른 문구를 준다.
+  `WorkSelectionCard.invited` 추가 — 지원 버튼 없음.
+- **D (7B 에서 발견)** **`ApplyWorkDialog` 메인 TO 카드의 관계 조회가 늘 빗나갔다.**
+  카드는 `DateTime(y,m,d)`(**로컬**), 적재는 `DateTime.utc`/`toKstDate`(**utc**).
+  Dart 의 `DateTime ==` 는 `isUtc` 까지 비교하므로 **같은 날짜여도 다른 키**다.
+  → 이미 지원·확정한 업무에도 `지원` 버튼이 떴다. **스크린샷 증상의 유력한 실제 원인.**
+
+### 용도를 읽고 필요한 곳만 바꿨다
+
+`_makeWorkKey` 는 두 용도였다 — 관계 판정(교체)과 **로컬 로딩 상태 키**(유지).
+`_applicationsByDate` 는 장기공고의 다른 소비처가 계속 쓰므로 **보존**하고,
+관계용으로 `_scopedAppsByDate` 를 따로 뒀다. 키는 `_appsDateKey` 한 함수만 만들고
+식은 loader 가 쓰던 것을 그대로 옮겼다(새로 고르지 않았다).
+
+### 네 단계가 같은 semantics
+
+render(`canSelect`·카드 status) · toggle(`_toggleWork` guard) ·
+reconciliation(`_newApplyTargets` — 카운트와 제출이 같은 목록 · 시트 `_initAlreadyApplied`) ·
+server guard(**무변경**).
+
+EXPIRED 는 서버의 active/inactive 어느 집합에도 없어 재지원으로 통과한다 — 그대로 비춘다.
+같은 날짜·같은 시간을 이유로 막지 않는다.
+
+### 증거
+
+신규 **38건**(ARP-10~57) · 전체 **15085 PASS / 0 FAIL / 2 skip** ·
+`flutter analyze lib test` No issues · CF·schema·rules·permission 변경 **0** ·
+Application snapshot·`ALREADY_APPLIED` semantics 무변경.
+낡은 단언 1건 갱신(삭제 0): `posting_lifecycle_contract_test` 가 `canSelect` 한 줄을
+통째로 고정하고 있었다 → 계약("선택은 applicant 모드에서만")으로 재고정.
+
+### DEVICE PENDING
+
+전부 하네스 증거다. 다음 빌드에서 **원래 스크린샷 경로 + ApplyWorkDialog** 를 함께 확인하고,
+`내 지원 일정` 행과 공고 카드가 같은 `toId`/`slotId`/`wdId` 인지 한 번 매핑해
+PRODUCT evidence 로 남긴다. 7A·7B 모두 기기 ID 매핑 없이 **코드 증거로** 진행했다.
 
 ## 0-AAAAAAAAAAAAAAAAAAAAAAA. CURRENT SNAPSHOT — 2026-10-01 / R7-P4.4E.6B
 
