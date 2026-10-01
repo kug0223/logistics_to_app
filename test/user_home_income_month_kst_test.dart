@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
@@ -147,6 +148,7 @@ UserHomeReads _reads({
   Object? ledgerError,
 }) =>
     UserHomeReads(
+    slotsForTO: (toId) async => const <SlotModel>[],
       myApplications: (uid) async => apps,
       myMonthlyAttendances: (
           {required String userId, required int year, required int month}) async {

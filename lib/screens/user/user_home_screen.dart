@@ -11,6 +11,7 @@ import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/business_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
+import '../../models/core/slot_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/user_model.dart';
 import '../../models/core/user_region.dart';
@@ -45,6 +46,7 @@ import '../auth/pass_auth_recovery_screen.dart';
 import '../../services/payroll_correction_service.dart';
 import '../../models/core/renewal_proposal_model.dart';
 import 'renewal_proposal_screen.dart';
+import 'home_recruitable_projection.dart';
 import 'user_home_reads.dart';
 
 // ── 지원자 홈 화면 ────────────────────────────────────────────────
@@ -121,6 +123,19 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   Map<String, int> _cachedWorkTypeStats = {};
   // STATE C — 날짜별 공고 수 (오늘 이후 60일 범위, _publishedTos 기반)
   final Map<DateTime, int> _toDateCounts = {};
+
+  /// [R7-P4.4E.8A] 날짜별 모집 가능한 공고 — **날짜칩과 추천 목록의 공용 결과**.
+  ///   두 곳이 각각 판단하면 "칩은 1인데 목록은 0" 같은 어긋남이 생긴다.
+  HomeRecruitableProjection? _recruitable;
+
+  /// 내가 **활성 지원을 가진 flex 공고**의 슬롯만 담는다.
+  ///   그 날짜에 형제 근무가 남아 있는지는 슬롯을 봐야 정확히 알 수 있고,
+  ///   관계가 없는 날짜는 애초에 지울 이유가 없어 읽지 않는다 —
+  ///   후보 공고 수만큼 읽기가 늘어나는 구조(N+1)를 만들지 않는다.
+  final Map<String, List<SlotModel>> _slotsByToId = {};
+
+  /// 이미 슬롯을 시도한 공고 id — 같은 로드에서 두 번 읽지 않는다.
+  final Set<String> _slotFetchAttempted = {};
   // STATE C — 확정 근무가 있는 날짜 Set (Green Dot Indicator용)
   // AppStatus.confirmedStatuses(confirmed, contractPending) 기준
   // contractPending은 계약 대기 상태이지만 시간 점유가 확정된 상태이므로 포함
@@ -140,6 +155,45 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // STATE A "미확인" 추적 — SharedPreferences에 persist (앱 재시작 후에도 유지)
   Set<String> _seenConfirmIds = {};
   static const _kSeenKey = 'seen_confirm_ids_v1';
+
+  /// [R7-P4.4E.8A] 내가 활성 지원을 가진 **flex 공고의 슬롯만** 읽는다.
+  ///
+  ///   왜 전부 읽지 않는가 — 관계가 없는 날짜는 지울 이유가 없으므로 슬롯을
+  ///   볼 필요가 없다. 후보 공고마다 읽으면 공고 수만큼 읽기가 늘어난다.
+  ///   여기서 늘어나는 읽기는 **내가 지원한 flex 공고 수**(보통 0~2)다.
+  ///
+  ///   실패는 삼키고 남긴다 — 못 읽은 것을 "모집 없음" 으로 바꾸지 않는다.
+  Future<void> _loadRelationSlots(bool Function() superseded) async {
+    final flexIds = <String>{};
+    for (final to in _publishedTos) {
+      if (!to.isFlexType) continue;
+      if (_slotFetchAttempted.contains(to.id)) continue;
+      final hasActive = _applications.any((a) {
+        if (a.toId != to.id) return false;
+        if (a.isExitDecided) return false;
+        final s = a.status;
+        return s == AppStatus.pending ||
+            s == AppStatus.contractPending ||
+            s == AppStatus.confirmed ||
+            s == AppStatus.invited;
+      });
+      if (hasActive) flexIds.add(to.id);
+    }
+    if (flexIds.isEmpty) return;
+
+    for (final id in flexIds) {
+      _slotFetchAttempted.add(id);
+      try {
+        final slots = await _reads.slotsForTO(id);
+        if (!mounted || superseded()) return;
+        _slotsByToId[id] = slots;
+      } catch (e) {
+        debugPrint('⚠️ 홈 슬롯 로드 실패($id): $e');
+      }
+    }
+    if (!mounted || superseded()) return;
+    setState(_rebuildCaches);
+  }
 
   void _rebuildCaches() {
     final sorted = [..._applications]
@@ -223,77 +277,26 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }
 
     // ── STATE C: 오늘 이후 60일 날짜별 지원 가능한 공고 수 ────────────
-    // 섹션 헤더 "N개 모두보기"와 동일한 기준 사용 — 숫자 일관성 보장
-    //   contract: rangeStart/rangeEnd + workDays 날짜 집계
-    //   flex: rangeStart/rangeEnd 날짜 범위만 사용 (SlotModel 미로드 → 범위 근사)
-    // 필터: _getRecommendedTos와 동일 — 마감·삭제·정원초과·이미지원 TO 제외
-    _toDateCounts.clear();
-    const dowLabels = ['월', '화', '수', '목', '금', '토', '일'];
+    //
+    // [R7-P4.4E.8A] 날짜칩과 추천 목록이 **같은 projection 하나**를 본다.
+    //   예전에는 두 곳이 각각 판단했고, 둘 다 지원서가 있으면 `to.id` 로
+    //   **공고 전체를 버렸다**. 그래서 flex 공고의 10/05 에 지원하면
+    //   10/06~10/11 의 다른 날짜 모집까지 홈에서 사라졌다(DEV 실측: 6일 ×
+    //   2업무 = 12건). 이제 관계가 있는 **그 wdId 만** 빠지고 형제는 산다.
     final cutoff = today.add(const Duration(days: 60));
-    final appliedToIdsForCount = _applications.map((a) => a.toId).toSet();
-    for (final to in _publishedTos) {
-      // _getRecommendedTos와 동일한 후보 필터
-      if (to.status == TOStatus.closed ||
-          to.status == TOStatus.expired ||
-          to.status == TOStatus.scheduled) { continue; }
-      if (to.isDeleted) { continue; }
-      // [R8-P9D] 공고 전체 정원은 flex 를 닫는 근거가 아니다.
-      //   서버가 이미 그렇게 정해 두었다 — 슬롯 지원은 그 날짜의 정원을
-      //   직접 보고, 공고 전체 FULL 을 관문으로 쓰지 않는다.
-      //   한 날짜가 찼다고 다른 날짜 모집까지 사라지면 안 된다.
-      if (!to.isFlexType &&
-          (to.status == TOStatus.full ||
-              (to.totalRequired > 0 &&
-                  to.totalConfirmed >= to.totalRequired))) { continue; }
-      if (appliedToIdsForCount.contains(to.id)) { continue; }
-
-      // [R8-P9D] flex 는 날짜 하나하나가 근무다 — 범위로 근사하지 않는다.
-      //
-      //   이전에는 rangeStart~rangeEnd 를 하루씩 훑어 집계했다. 그런데
-      //   DEV 에서 노출 가능한 flex 공고 4건이 전부 rangeStart 가 없어
-      //   `rawRangeS == null` 에서 통째로 빠졌다 — 오늘 근무가 있는 공고가
-      //   날짜칩에 한 번도 잡히지 않았다. 게다가 범위를 훑는 방식은 슬롯이
-      //   없는 중간 날짜까지 세므로 숫자 자체도 틀렸다.
-      //
-      //   공고 문서의 `dates` 가 슬롯 날짜를 그대로 들고 있다. 그것을 쓴다.
-      //   비어 있으면 세지 않는다 — 모르는 것을 지어내지 않는다.
-      if (to.isFlexType) {
-        for (final key in to.slotDateKeys) {
-          final d = FormatHelper.parseKstDateKey(key);
-          if (d == null) continue;
-          if (d.isBefore(today) || d.isAfter(cutoff)) continue;
-          _toDateCounts[d] = (_toDateCounts[d] ?? 0) + 1;
-        }
-        continue;
-      }
-
-      // 신규 preset: workStartAvailableFrom ~ Until / custom·legacy: rangeStart ~ rangeEnd
-      final rawRangeS = to.hasWorkStartAvailableRange
-          ? to.workStartAvailableFrom
-          : to.rangeStart;
-      final rawRangeE = to.hasWorkStartAvailableRange
-          ? to.workStartAvailableUntil
-          : to.rangeEnd;
-      if (rawRangeS == null) continue;
-      final rangeS = FormatHelper.toKstDate(rawRangeS);
-      final rangeE = rawRangeE != null ? FormatHelper.toKstDate(rawRangeE) : null;
-      final effectiveStart = rangeS.isBefore(today) ? today : rangeS;
-      final effectiveEnd = rangeE == null
-          ? cutoff
-          : (rangeE.isAfter(cutoff) ? cutoff : rangeE);
-      if (effectiveStart.isAfter(effectiveEnd)) continue;
-      var cur = effectiveStart;
-      while (!cur.isAfter(effectiveEnd)) {
-        final label = dowLabels[cur.weekday - 1];
-        // contract: workDays 필터 적용 / flex: 날짜 범위만으로 집계
-        if (to.type != 'contract' ||
-            to.workDays.isEmpty ||
-            to.workDays.contains(label)) {
-          _toDateCounts[cur] = (_toDateCounts[cur] ?? 0) + 1;
-        }
-        cur = cur.add(const Duration(days: 1));
-      }
+    _recruitable = HomeRecruitableProjection.build(
+      publishedTos: _publishedTos,
+      myApplications: _applications,
+      today: today,
+      cutoff: cutoff,
+      slotsByToId: _slotsByToId,
+    );
+    _toDateCounts.clear();
+    for (final entry in _recruitable!.byDate.entries) {
+      // 홈의 `일자리 N개` 는 **공고 수**다 — 업무 수로 바꾸지 않는다.
+      _toDateCounts[entry.key] = _recruitable!.countOn(entry.key);
     }
+
 
     // STATE C — 확정 근무 날짜 Set 계산
     // 날짜 스트립 Green Dot: 지원중/검토중 제외, 확정(confirmed+contractPending)만
@@ -445,6 +448,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }
     _isLoadingHomeData = true;
     setState(() => _isLoadingData = true);
+    // [R7-P4.4E.8A] 새로고침마다 슬롯을 다시 본다 — 정원·마감이 바뀐다.
+    //   읽기 수는 "내가 활성 지원을 가진 flex 공고 수"(보통 0~2)이고
+    //   후보 공고 수와 무관하다.
+    _slotFetchAttempted.clear();
     final now = _now();
     try {
       // [PREDEVICE-CONTRACT-CONTEXT] 미서명 계약 목록도 홈 로드에 합류시킨다.
@@ -547,6 +554,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       // 어느 쪽이든 못 읽었으면 어제의 퇴근 여부를 말할 수 없다.
       _overnightUnknown = attsErr != null || tailErr != null;
       _rebuildCaches();
+
+      // [R7-P4.4E.8A] 관계가 있는 flex 공고의 슬롯만 뒤이어 읽는다.
+      //   1차 계산은 슬롯 없이도 **거짓 0 을 만들지 않는다**(모르면 남긴다).
+      //   슬롯이 오면 그 날짜만 정확해진다. 읽기 수는 "내가 지원한 공고 수"
+      //   이고 후보 공고 수와 무관하다.
+      unawaited(_loadRelationSlots(superseded));
 
       // [PII-DOC-R1.6.1] 보완 요청은 홈의 숫자를 만들지 않으므로 별도로
       //   가져오고, 실패해도 다른 영역을 오류 상태로 만들지 않는다.
@@ -3897,7 +3910,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   ///   4. 마감임박 (남은 자리 적을수록 우선)
   ///   5. 최신 등록 (Firebase auto-id 역순)
   List<TOModel> _getRecommendedTos(UserModel user) {
-    final appliedToIds = _applications.map((a) => a.toId).toSet();
+    // [R7-P4.4E.8A] 여기 있던 `appliedToIds.contains(to.id)` 를 지웠다.
+    //   지원서 하나가 공고 전체를 지웠고, 그래서 flex 의 다른 날짜 모집이
+    //   사라졌다. 판정은 날짜칩과 **같은** projection 이 한다.
+    final proj = _recruitable;
 
     // ── 날짜 선택 시: 해당 날짜의 확정 일정 캐시 (충돌 검사용) ──
     final List<ApplicationModel> confirmedOnDate;
@@ -3946,7 +3962,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   to.totalConfirmed >= to.totalRequired))) {
         return false;
       }
-      if (appliedToIds.contains(to.id)) return false;
+      // 지원 여부로 공고를 버리지 않는다 — 어느 하루라도 신규 지원 가능한
+      //   근무가 남아 있으면 후보다. projection 이 아직 없으면(첫 프레임)
+      //   남긴다 — 모르는 것을 "없다" 로 바꾸지 않는다.
+      if (proj != null && !proj.hasAnyDate(to.id)) return false;
       return true;
     }).toList();
 
@@ -3959,11 +3978,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       final sdKey = FormatHelper.toKstDateKey(sd);
 
       candidates = candidates.where((to) {
-        // [R8-P9D] flex 는 그 날짜에 슬롯이 있는지로 본다.
-        //   rangeStart 가 없다고 제외하면, DEV 의 노출 가능한 flex 4건이
-        //   날짜를 고르는 순간 전부 사라진다.
+        // [R7-P4.4E.8A] flex 는 **그 날짜에 신규 지원 가능한 근무가 남아
+        //   있는지**로 본다. 날짜칩과 같은 projection 을 쓴다 — 칩은 1인데
+        //   목록은 0 같은 어긋남을 만들지 않는다.
         //   날짜를 확실히 알 때만 걸러내고, 모르면 남긴다 — 서버가 판정한다.
         if (to.isFlexType) {
+          if (proj != null) return proj.isRecruitable(to.id, sd);
           if (to.slotDateKeys.isEmpty || !to.slotDatesLookComplete) return true;
           return to.slotDateKeys.contains(sdKey);
         }

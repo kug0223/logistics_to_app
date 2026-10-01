@@ -3,6 +3,7 @@ import '../../models/core/attendance_model.dart';
 import '../../models/core/business_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
 import '../../models/core/renewal_proposal_model.dart';
+import '../../models/core/slot_model.dart';
 import '../../models/core/to_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/payroll_correction_service.dart';
@@ -23,6 +24,7 @@ class UserHomeReads {
     required this.pendingIdCardRequests,
     required this.myRenewalProposals,
     required this.businessById,
+    required this.slotsForTO,
     required this.invalidatePublishedTOsCache,
     required this.documentCorrections,
   });
@@ -52,10 +54,20 @@ class UserHomeReads {
 
   final void Function() invalidatePublishedTOsCache;
 
+  /// [R7-P4.4E.8A] flex 공고의 **그 날짜 근무 목록**.
+  ///
+  ///   새 reader 를 만들지 않았다 — 공고 상세(`JobPostingReads.slots`)가 쓰는
+  ///   `svc.getSlots` 를 그대로 가져왔다.
+  ///   홈은 이것을 **내가 활성 지원을 가진 공고에만** 부른다. 모든 후보
+  ///   공고마다 부르면 공고 수만큼 읽기가 늘어난다(N+1) — 그건 하지 않는다.
+  final Future<List<SlotModel>> Function(String toId) slotsForTO;
+
   factory UserHomeReads.of([FirestoreService? service]) {
     final svc = service ?? FirestoreService();
     return UserHomeReads(
       myApplications: svc.getMyApplications,
+      // 공고 상세가 쓰는 것과 **같은 호출**이다 — 새 reader 를 만들지 않았다.
+      slotsForTO: (toId) => svc.getSlots(toId, visibleOnly: true),
       myMonthlyAttendances: ({
         required String userId,
         required int year,

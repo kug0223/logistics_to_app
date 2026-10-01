@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:ALfit/models/core/slot_model.dart';
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/core/business_model.dart';
@@ -253,6 +254,7 @@ UserHomeReads _reads({
   var tosCall = 0;
   var corrCall = 0;
   return UserHomeReads(
+    slotsForTO: (toId) async => const <SlotModel>[],
     myApplications: (uid) {
       if (calls != null) calls['apps'] = (calls['apps'] ?? 0) + 1;
       final i = appCall++;
@@ -1574,6 +1576,7 @@ void main() {
     final gate = Completer<DocumentCorrectionSurface>();
     var corr = 0;
     final reads = UserHomeReads(
+    slotsForTO: (toId) async => const <SlotModel>[],
       myApplications: (uid) async => const <ApplicationModel>[],
       myMonthlyAttendances: (
               {required String userId,
@@ -1718,6 +1721,7 @@ void main() {
 UserHomeReads _correctionOnlyReads(
         Future<DocumentCorrectionSurface> Function() corrections) =>
     UserHomeReads(
+    slotsForTO: (toId) async => const <SlotModel>[],
       myApplications: (uid) async => const <ApplicationModel>[],
       myMonthlyAttendances: (
               {required String userId,

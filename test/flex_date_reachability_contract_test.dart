@@ -123,10 +123,21 @@ void main() {
     });
 
     test('CONS-2 홈 날짜칩이 flex 를 슬롯 날짜로 센다', () {
-      final code = _flat(_codeOf(_read(home)));
-      expect(code.contains('if (to.isFlexType) { for (final key in to.slotDateKeys)'),
-          isTrue, reason: 'flex 는 범위를 훑지 않고 실제 날짜만 센다');
+      // [R7-P4.4E.8A 갱신] 이 규칙의 owner 가 옮겨갔다.
+      //   홈의 두 곳(날짜칩·추천 목록)이 각각 판단하던 것을 공용
+      //   `HomeRecruitableProjection` 하나로 모았다. 계약은 그대로다 —
+      //   **flex 는 범위를 훑지 않고 실제 슬롯 날짜만 센다.**
+      //   어느 파일에 있느냐가 아니라 무엇을 보느냐가 계약이다.
+      const proj = 'lib/screens/user/home_recruitable_projection.dart';
+      final code = _flat(_codeOf(_read(proj)));
+      expect(code.contains('for (final key in to.slotDateKeys)'), isTrue,
+          reason: 'flex 는 범위를 훑지 않고 실제 날짜만 센다');
       expect(code.contains('FormatHelper.parseKstDateKey(key)'), isTrue);
+      // 그리고 홈은 그 결과를 소비한다 — 자기만의 두 번째 판단을 갖지 않는다.
+      final home3 = _flat(_codeOf(_read(home)));
+      expect(home3.contains('HomeRecruitableProjection.build('), isTrue);
+      expect(home3.contains('appliedToIdsForCount'), isFalse,
+          reason: '지원서 하나로 공고 전체를 버리던 자리다');
     });
 
     test('CONS-3 칩 선택 필터가 rangeStart 없음으로 flex 를 버리지 않는다', () {
