@@ -10939,6 +10939,78 @@ export const callableRecordTermsConsent = onCall(
  *
  * @return {Promise<{attemptSeq: number}>} 이번 제출의 순번
  */
+/**
+ * [R7-P4.4E.10A.2 §3·§4·§5] 고아 object 하나를 치운다 — **현재 것은 빼고.**
+ *
+ *   `protect` 와 같은 경로는 **절대 지우지 않는다.** 현재 accepted 문서를
+ *   지우면 정리가 곧 데이터 손실이 된다.
+ *   이미 없는 파일을 지우는 것은 성공과 같다 — 같은 정리를 여러 번 실행해도
+ *   안전하다(멱등).
+ *   실패하면 `users/{uid}.idDocumentOrphanPaths` 에 기록해 다음 기회에
+ *   다시 시도한다. **이 실패로 현재 truth 를 되돌리지 않는다.**
+ *
+ * @param {string} uid 소유자
+ * @param {string | null} path 지울 경로
+ * @param {string | null} protect 지키는 경로(현재 accepted)
+ * @return {Promise<void>}
+ */
+async function srvDeleteOrQueueOrphan(
+  uid: string,
+  path: string | null,
+  protect: string | null
+): Promise<void> {
+  if (!path) return;
+  if (protect !== null && path === protect) return; // §4 — 현재 것은 못 지운다
+  if (!path.startsWith(`users/${uid}/`)) return; // 남의 경로는 건드리지 않는다
+  try {
+    await admin.storage().bucket().file(path).delete({ignoreNotFound: true});
+    // 성공했으면 대기 목록에서 빼 둔다(있었다면).
+    await db.collection("users").doc(uid).update({
+      idDocumentOrphanPaths: admin.firestore.FieldValue.arrayRemove(path),
+    });
+  } catch (e) {
+    console.warn(`[orphan] delete 실패 uid=${uid} — 정리 대기로 기록: ${e}`);
+    try {
+      await db.collection("users").doc(uid).update({
+        idDocumentOrphanPaths: admin.firestore.FieldValue.arrayUnion(path),
+      });
+    } catch (e2) {
+      // 기록조차 실패했다 — 그래도 현재 truth 는 건드리지 않는다.
+      console.warn(`[orphan] 기록 실패 uid=${uid}: ${e2}`);
+    }
+  }
+}
+
+/**
+ * [R7-P4.4E.10A.2 §3] 쌓인 정리 대기 경로를 비운다. best-effort.
+ *
+ *   성공한 제출 뒤에만 부른다 — 그때가 "현재 것이 무엇인지" 가장 확실하다.
+ *   실패는 다음 기회로 넘긴다. 전 앱 이미지 lifecycle 을 여기서 설계하지
+ *   않는다 — 신분증 고아만 치운다.
+ *
+ * @param {string} uid 소유자
+ * @param {string | null} protect 지키는 경로(현재 accepted)
+ * @return {Promise<void>}
+ */
+async function srvDrainOrphanPaths(
+  uid: string,
+  protect: string | null
+): Promise<void> {
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const raw = snap.data()?.["idDocumentOrphanPaths"];
+    if (!Array.isArray(raw) || raw.length === 0) return;
+    const paths = raw
+      .filter((p): p is string => typeof p === "string")
+      .slice(0, 20);
+    for (const p of paths) {
+      await srvDeleteOrQueueOrphan(uid, p, protect);
+    }
+  } catch (e) {
+    console.warn(`[orphan] drain 실패 uid=${uid}: ${e}`);
+  }
+}
+
 export const callableBeginIdDocumentSubmission = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -11128,15 +11200,28 @@ export const callableMarkIdCardVerified = onCall(
     const idMatchStatus =
       srvEvaluateMatchStatus(idDoc.evidence, {requireName: true});
     const idUserRef = db.collection("users").doc(callerUid);
-    const idNextVersion = await db.runTransaction(async (tx) => {
+    const idTxResult = await db.runTransaction(async (tx) => {
       const cur = (await tx.get(idUserRef)).data() ?? {};
+      const curPath =
+        (cur["idCardImagePath"] as string | undefined) ?? null;
 
       // [R7-P4.4E.10A.1 / E10-D] 늦게 도착한 옛 제출은 아무것도 바꾸지 않는다.
       //   버전·현재 경로·판정·검토 필드·준비 상태 전부 그대로 둔다.
+      //
+      // [R7-P4.4E.10A.2 / §1] **fail-closed.** 순번 protocol 이 이 사용자에게
+      //   한 번이라도 켜졌다면(`idDocumentAttemptSeq > 0`), 순번 없는
+      //   finalize 는 더 받지 않는다. 예전에는 순번이 없으면 무조건
+      //   받아들였는데, 그건 A/B 경합에서 **가드를 우회하는 길**이었다 —
+      //   늦은 호출이 순번을 빼고 오면 그대로 현재 truth 가 됐다.
+      //   아직 protocol 을 쓴 적이 없는 사용자(0 또는 없음)만 legacy 로 받는다.
       const latestSeq =
         (cur["idDocumentAttemptSeq"] as number | undefined) ?? 0;
-      if (myAttemptSeq !== null && myAttemptSeq < latestSeq) {
-        return null; // stale — no-op
+      if (myAttemptSeq === null) {
+        if (latestSeq > 0) {
+          return {version: null, curPath, reason: "missing-seq"};
+        }
+      } else if (myAttemptSeq < latestSeq) {
+        return {version: null, curPath, reason: "stale-seq"};
       }
 
       const nextV =
@@ -11163,19 +11248,34 @@ export const callableMarkIdCardVerified = onCall(
         idCardReviewedAt: admin.firestore.FieldValue.delete(),
         idCardReviewNote: admin.firestore.FieldValue.delete(),
       });
-      return nextV;
+      return {version: nextV, curPath, reason: null as string | null};
     });
+    const idNextVersion = idTxResult.version;
 
     // [R7-P4.4E.10A.1 / E10-D] stale 제출 — 현재 truth 를 건드리지 않았다.
-    //   후속 작업(보완 요청 전이 등)도 하지 않는다. 호출자에게는 받아들이지
-    //   않았다는 사실을 알린다. 올라간 이미지 object 는 남으므로 정리는
-    //   별도 정책이다 — 그 정리 실패가 현재 truth 를 뒤집어서는 안 된다.
+    //   후속 작업(보완 요청 전이 등)도 하지 않는다.
+    //
+    // [R7-P4.4E.10A.2 / §3] 그리고 이 제출이 올린 object 를 치운다.
+    //   현재 accepted 경로와 같으면 **절대 지우지 않는다**(§4).
+    //   실패하면 정리 대상으로 기록하고, 그 실패로 현재 truth 를 뒤집지
+    //   않는다(§3). 이미 없는 파일을 지우는 것은 성공과 같다(§5).
     if (idNextVersion === null) {
+      await srvDeleteOrQueueOrphan(
+        callerUid, storagePath, idTxResult.curPath);
       console.info(
-        `[markIdCardVerified] uid=${callerUid} STALE attempt=${myAttemptSeq} ` +
-        "— no-op");
-      return {success: false, stale: true};
+        `[markIdCardVerified] uid=${callerUid} NOT-ACCEPTED ` +
+        `reason=${idTxResult.reason} attempt=${myAttemptSeq} — no-op`);
+      return {success: false, stale: true, reason: idTxResult.reason};
     }
+
+    // [R7-P4.4E.10A.2 / §6] 교체된 이전 current object 를 서버가 치운다.
+    //   클라이언트도 지우지만 그쪽은 실패가 조용히 묻히고(debugPrint),
+    //   A/B 경합에서는 업로드 **전**에 캡처한 경로라 실제 이전 current 와
+    //   다를 수 있다. 서버는 트랜잭션에서 본 값을 쓴다.
+    //   그리고 쌓인 정리 대기 경로를 함께 비운다(best-effort).
+    await srvDeleteOrQueueOrphan(
+      callerUid, idTxResult.curPath, storagePath);
+    await srvDrainOrphanPaths(callerUid, storagePath);
 
     console.info(
       `[markIdCardVerified] uid=${callerUid} state=${idDoc.state} ` +

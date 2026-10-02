@@ -141,8 +141,11 @@ void main() {
 
     test('12 신분증 재등록도 같은 방식이다', () {
       // idDocumentVersion만 올리고, 검토 문서는 그대로 둔다.
+      // [R7-P4.4E.10A.2 갱신] 트랜잭션 반환이 `nextV` 하나에서 객체로
+      //   바뀌었다(제출 순번 가드가 stale 을 구별해야 해서다). 계약은
+      //   그대로이고 slice 의 끝 anchor 만 현재 모양으로 맞춘다.
       final mark = _flat(_codeOf(_sliceOf(cfRaw,
-          'idDocumentVersion: nextV,', 'return nextV;')));
+          'idDocumentVersion: nextV,', 'return {version: nextV,')));
       expect(mark, isNot(contains('taxIdentityDecision')));
       expect(mark, isNot(contains('BIZ_DOC_REVIEW_COL')));
     });

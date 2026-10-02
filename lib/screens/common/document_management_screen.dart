@@ -871,16 +871,30 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       //   서버는 도착 순서만 알았다. A→B 로 올렸는데 A 의 호출이 나중에
       //   완료되면 A 가 더 높은 버전을 받아 **옛 문서가 현재 truth** 가 됐다.
       //   클라이언트 시계를 권위로 쓰지 않고 **서버가 세는 순번**만 쓴다.
-      //   실패하면 순번 없이 진행한다 — 등록 자체를 막지 않는다(종전 동작).
-      int? attemptSeq;
+      //
+      // [R7-P4.4E.10A.2 / §2] 순번을 못 받으면 **여기서 멈춘다.**
+      //   예전에는 "순번 없이 진행" 했는데, 그건 가드를 우회하는 길이었다 —
+      //   순번 없는 finalize 가 그대로 현재 truth 가 됐다. 서버도 이제
+      //   protocol 이 켜진 사용자의 순번 없는 finalize 를 받지 않으므로,
+      //   그대로 진행하면 업로드만 하고 등록은 실패하는 더 나쁜 결과가 된다.
+      //   재시도 가능한 오류로 말하고 끝낸다.
+      final int attemptSeq;
       try {
         final begin = await FirebaseFunctions.instanceFor(
                 region: 'asia-northeast3')
             .httpsCallable('callableBeginIdDocumentSubmission')
             .call<Map<String, dynamic>>();
-        attemptSeq = (begin.data['attemptSeq'] as num?)?.toInt();
+        final seq = (begin.data['attemptSeq'] as num?)?.toInt();
+        if (seq == null || seq <= 0) {
+          throw StateError('attemptSeq 없음');
+        }
+        attemptSeq = seq;
       } catch (e) {
-        debugPrint('⚠️ 제출 순번 발급 실패 (순번 없이 진행): $e');
+        debugPrint('⚠️ 제출 순번 발급 실패: $e');
+        if (mounted) {
+          ToastHelper.showError('잠시 후 다시 시도해주세요');
+        }
+        return; // finalize 까지 진행하지 않는다
       }
 
       // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
@@ -910,7 +924,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           .call({
         'storagePath': storagePath,
         'selfCheck': picked.selfCheck,
-        if (attemptSeq != null) 'attemptSeq': attemptSeq,
+        'attemptSeq': attemptSeq,
       });
       newIdCardPath = null; // CF 성공 — Storage 정리 불필요
 
