@@ -10940,6 +10940,36 @@ export const callableRecordTermsConsent = onCall(
  * @return {Promise<{attemptSeq: number}>} 이번 제출의 순번
  */
 /**
+ * [R7-P4.4E.10A.4 §5] 이 경로가 **이 사용자의 신분증 artifact** 인가.
+ *
+ *   `users/{uid}/` 접두만 보던 술어는 너무 넓었다. 같은 네임스페이스에
+ *   통장사본(`bankbook_*`)·사업자등록증(`businessLicense_*`)이 함께 산다.
+ *   신분증 정리가 그것들을 지울 수 있는 상태였고, DEV 실측에서 정리 대기
+ *   목록에 통장사본 경로를 넣는 것만으로 삭제 경로에 도달했다.
+ *
+ *   살아 있는 형식만 허용한다 — 클라이언트 writer 네 곳 전부
+ *   `users/{uid}/idCard_{millisecondsSinceEpoch}.jpg` 를 만들고
+ *   (document_management 1곳, foreign_register 3곳), DEV `idCardImagePath`
+ *   7건도 전부 그 모양이다. `idCard/{...}` 같은 하위 경로 형식은 코드에도
+ *   데이터에도 없으므로 열지 않는다.
+ *
+ *   세그먼트 하나로 제한하는 이유: 하위 경로를 허용하면 `idCard_x.jpg/../`
+ *   같은 모양으로 네임스페이스를 벗어나는 길이 생긴다.
+ *
+ * @param {string} uid 소유자
+ * @param {unknown} p 검사할 경로
+ * @return {boolean} 이 사용자의 신분증 경로인가
+ */
+function srvIsOwnedIdDocumentStoragePath(uid: string, p: unknown): boolean {
+  if (typeof p !== "string" || p.length === 0 || p.length > 500) return false;
+  const prefix = `users/${uid}/`;
+  if (!p.startsWith(prefix)) return false;
+  const name = p.slice(prefix.length);
+  if (name.includes("/") || name.includes("..")) return false;
+  return /^idCard_\d{10,}\.(jpg|jpeg|png|webp|heic|heif)$/i.test(name);
+}
+
+/**
  * [R7-P4.4E.10A.2 §3·§4·§5] 고아 object 하나를 치운다 — **현재 것은 빼고.**
  *
  *   `protect` 와 같은 경로는 **절대 지우지 않는다.** 현재 accepted 문서를
@@ -10961,7 +10991,12 @@ async function srvDeleteOrQueueOrphan(
 ): Promise<void> {
   if (!path) return;
   if (protect !== null && path === protect) return; // §4 — 현재 것은 못 지운다
-  if (!path.startsWith(`users/${uid}/`)) return; // 남의 경로는 건드리지 않는다
+  // [R7-P4.4E.10A.4 §3·§4] 신분증 artifact 만 치운다. 남의 경로도,
+  //   같은 폴더의 통장사본·사업자등록증도 건드리지 않는다.
+  if (!srvIsOwnedIdDocumentStoragePath(uid, path)) {
+    console.warn(`[orphan] 신분증 경로가 아니라 건너뜀 uid=${uid} path=${path}`);
+    return;
+  }
   try {
     await admin.storage().bucket().file(path).delete({ignoreNotFound: true});
     // 성공했으면 대기 목록에서 빼 둔다(있었다면).
@@ -10987,6 +11022,13 @@ async function srvDeleteOrQueueOrphan(
  *   성공한 제출 뒤에만 부른다 — 그때가 "현재 것이 무엇인지" 가장 확실하다.
  *   실패는 다음 기회로 넘긴다. 전 앱 이미지 lifecycle 을 여기서 설계하지
  *   않는다 — 신분증 고아만 치운다.
+ *
+ *   [R7-P4.4E.10A.4 §3·§8] "신분증 고아만" 은 이제 주석이 아니라 코드다.
+ *   목록에 무엇이 들어 있든 `srvDeleteOrQueueOrphan` 의
+ *   `srvIsOwnedIdDocumentStoragePath` 가 걸러낸다 — 통장사본·사업자등록증
+ *   경로를 심어도 삭제에 도달하지 않는다. 그런 항목은 목록에서 빼지도
+ *   않는다(건드리지 않는 것이 더 안전하다). 전역 정리는 다음
+ *   IMAGE STORAGE LIFECYCLE 감사 소유다.
  *
  * @param {string} uid 소유자
  * @param {string | null} protect 지키는 경로(현재 accepted)
@@ -11053,22 +11095,30 @@ export const callableMarkIdCardVerified = onCall(
 
     let storagePath: string;
 
+    // [R7-P4.4E.10A.4 §6] 입력 경계도 같은 술어를 쓴다.
+    //
+    //   예전에는 `users/{callerUid}/` 접두만 봤다. 그래서 자기 통장사본
+    //   경로를 신분증으로 등록할 수 있었고, 그 값이 그대로
+    //   `idCardImagePath` 가 되어 관리자 열람 Signed URL 이 통장사본을
+    //   신분증으로 서명했다. 클라이언트 writer 네 곳이 전부
+    //   `idCard_{millis}.jpg` 를 만들고 legacy `imageUrl` 분기는 호출자가
+    //   없으므로(lib/ 전수 확인) 좁혀도 깨지는 경로가 없다.
     if (directPath && typeof directPath === "string" && directPath.length > 0 && directPath.length <= 500) {
       // [BUG-ID-01] 신규 flow: storagePath 직접 전달 — getDownloadURL() 미호출로 permanent URL 생성 없음
-      if (!directPath.startsWith(`users/${callerUid}/`)) {
+      if (!srvIsOwnedIdDocumentStoragePath(callerUid, directPath)) {
         throw new HttpsError("permission-denied", "본인 신분증 이미지만 등록 가능합니다.");
       }
       storagePath = directPath;
     } else if (imageUrl && typeof imageUrl === "string" && imageUrl.length > 0 && imageUrl.length <= 2048) {
       // Legacy flow: URL 파싱으로 경로 추출 (register_screen 등 기존 호출 경로 호환)
       // [M-01-FIX] includes()는 쿼리 파라미터/프래그먼트에도 매칭 → 경로 우회 가능
-      //   → /o/{encoded_path} 부분만 추출 후 startsWith로 정확히 검증
+      //   → /o/{encoded_path} 부분만 추출 후 같은 술어로 정확히 검증
       const pathMatch = imageUrl.match(/\/o\/([^?#]+)/);
       if (!pathMatch) {
         throw new HttpsError("invalid-argument", "유효하지 않은 Storage URL 형식입니다.");
       }
       storagePath = decodeURIComponent(pathMatch[1]);
-      if (!storagePath.startsWith(`users/${callerUid}/`)) {
+      if (!srvIsOwnedIdDocumentStoragePath(callerUid, storagePath)) {
         throw new HttpsError("permission-denied", "본인 신분증 이미지만 등록 가능합니다.");
       }
     } else {

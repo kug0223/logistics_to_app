@@ -167,7 +167,12 @@ void main() {
     });
 
     test('SUB-42 남의 경로는 건드리지 않는다', () {
-      expect(cf, contains(r'if (!path.startsWith(`users/${uid}/`)) return;'));
+      // [R7-P4.4E.10A.4 §3 갱신] 술어가 `users/{uid}/` 접두 검사에서 신분증
+      //   네임스페이스 helper 로 좁혀졌다. 계약("남의 것은 안 건드린다")은
+      //   그대로이고 더 강해졌다 — 같은 폴더의 통장사본도 못 건드린다.
+      expect(cf, contains('if (!srvIsOwnedIdDocumentStoragePath(uid, path)) {'));
+      expect(cf, isNot(contains(r'if (!path.startsWith(`users/${uid}/`)) return;')),
+          reason: '넓은 술어가 남아 있으면 좁힌 의미가 없다');
     });
 
     test('SUB-43 멱등 — 이미 없는 파일은 성공과 같다 (§5)', () {

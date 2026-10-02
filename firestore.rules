@@ -348,6 +348,11 @@ service cloud.firestore {
                          'idCardMatchStatus', 'idCardMatchEvidenceSource',
                          'idCardMatchAssurance', 'idCardMatchDocumentVersion',
                          'idCardMatchEvaluatedAt',
+                         // [R7-P4.4E.10A.4 §1] 신분증 제출 제어 필드 — CF 전용.
+                         //   아래 본인 update 와 같은 이유다. 운영 권한이
+                         //   제출순서 카운터와 삭제 대기 목록을 직접 고칠
+                         //   이유는 없다.
+                         'idDocumentAttemptSeq', 'idDocumentOrphanPaths',
                          'isIdVerified', 'idCardImagePath', 'idCardImageUrl'
                        ]);
 
@@ -485,6 +490,23 @@ service cloud.firestore {
                          'bankbookMatchStatus', 'bankbookMatchEvidenceSource',
                          'bankbookMatchAssurance', 'bankbookMatchDocumentVersion',
                          'bankbookMatchAccountVersion', 'bankbookMatchEvaluatedAt',
+                         // [R7-P4.4E.10A.4 §1] 신분증 제출 제어 필드 — CF 전용.
+                         //
+                         //   이 denylist 는 열거되지 않은 필드를 허용한다. 두 필드가
+                         //   10A.1/10A.2 에서 신설됐는데 여기 들어오지 않아서,
+                         //   DEV 실측에서 소유자 직접 write 가 **HTTP 200** 으로 통과했다.
+                         //
+                         //   idDocumentAttemptSeq — 0 으로 되돌리면 서버의 제출순서
+                         //     fail-closed 가 legacy 분기로 떨어진다. 10A.2 가 막은
+                         //     "늦게 도착한 옛 제출이 현재가 되는" 경로가 다시 열린다.
+                         //   idDocumentOrphanPaths — 서버 삭제 대기 목록이다. 경로를
+                         //     심으면 다음 신분증 제출에서 서버가 그것을 지운다.
+                         //     (서버 쪽도 신분증 네임스페이스로 좁혔으나, 삭제 대상을
+                         //      클라이언트가 지정하는 구조 자체를 닫는다.)
+                         //
+                         //   정당한 writer 는 callableBeginIdDocumentSubmission /
+                         //   callableMarkIdCardVerified(Admin SDK) 뿐이다.
+                         'idDocumentAttemptSeq', 'idDocumentOrphanPaths',
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -659,6 +681,12 @@ service cloud.firestore {
                        request.resource.data.get('idCardMatchDocumentVersion', null) == null &&
                        request.resource.data.get('bankbookSelfCheck', null) == null &&
                        request.resource.data.get('idCardSelfCheck', null) == null &&
+                       // [R7-P4.4E.10A.4 §1] 가입 시점 제출 제어 필드 주입 차단.
+                       //   큰 attemptSeq 를 심으면 이후 정상 finalize 가 전부
+                       //   stale 로 거절되고(자기 발등), 0 을 심으면 legacy 분기로
+                       //   떨어진다. 삭제 대기 목록도 가입 시 만들 이유가 없다.
+                       request.resource.data.get('idDocumentAttemptSeq', null) == null &&
+                       request.resource.data.get('idDocumentOrphanPaths', null) == null &&
                        // [HIGH-U3] termsConsentAt/termsConsent: CF callableRecordTermsConsent 전용
                        //   법적 타임스탬프 위조 차단 (Trust Boundary Charter)
                        request.resource.data.get('termsConsentAt', null) == null &&
