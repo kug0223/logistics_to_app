@@ -2816,6 +2816,66 @@ function srvIsOwnedStoragePath(
   return path.startsWith(`users/${ownerUid}/`);
 }
 
+/**
+ * [R7-P4.4E.11A §5] 이 경로가 **이 사업장이 소유한** Storage object 인가.
+ *
+ *   왜 필요한가: hard delete cascade 는 Firestore 에 적힌 이미지 URL 에서
+ *   경로를 뽑아 Admin SDK 로 지웠다. Admin SDK 는 Storage rules 를 우회한다.
+ *   그런데 `mainImageUrl`·`imageUrls[]`·`transportImageUrls[]` 와
+ *   `businesses/{id}/workTypes` 의 이미지 필드는 사업장 관리자가 클라이언트에서
+ *   **직접 쓸 수 있다.** 그래서 거기에 남의 네임스페이스 경로를 적어 두고
+ *   자기 사업장을 삭제하면, 그 cascade 가 타인의 신분증 object 를 지웠다.
+ *   포인터(`idCardImagePath`)와 `isIdVerified` 는 그대로 남아 "제출 완료"로
+ *   보이는데 파일만 없어지는 상태가 가능했다.
+ *
+ *   그래서 삭제 권한을 **경로로** 좁힌다. 지울 수 있는 것은 정확히
+ *   `businesses/{businessId}/` 아래뿐이다.
+ *
+ * @param {string} businessId 소유 사업장
+ * @param {unknown} p 검사할 경로
+ * @return {boolean} 이 사업장 소유 경로인가
+ */
+function srvIsOwnedBusinessStoragePath(
+  businessId: string, p: unknown
+): boolean {
+  if (typeof businessId !== "string" || businessId.length === 0) return false;
+  // businessId 자체가 경로 조각을 품으면 접두 비교가 무의미해진다.
+  if (businessId.includes("/") || businessId.includes("..")) return false;
+  if (typeof p !== "string" || p.length === 0 || p.length > 500) return false;
+  if (p.includes("..")) return false;
+  const prefix = `businesses/${businessId}/`;
+  if (!p.startsWith(prefix)) return false;
+  return p.length > prefix.length;
+}
+
+/**
+ * [R7-P4.4E.11A §5·§6] download URL 또는 경로를 **이 사업장 소유 경로**로 환원한다.
+ *
+ *   callsite 마다 `/o/` 파싱과 접두 검사를 따로 쓰면 한 곳만 빠뜨려도
+ *   구멍이 된다 — 실제로 cascade 두 곳이 그렇게 빠져 있었다. 환원과 검증을
+ *   한 함수에 묶어, 삭제하는 쪽은 `null` 이면 건너뛰기만 하면 되게 한다.
+ *
+ * @param {string} businessId 소유 사업장
+ * @param {unknown} urlOrPath Firestore 에 적힌 값(URL 또는 경로)
+ * @return {string | null} 삭제해도 되는 경로, 아니면 null
+ */
+function srvResolveBusinessStoragePath(
+  businessId: string, urlOrPath: unknown
+): string | null {
+  if (typeof urlOrPath !== "string" || urlOrPath.length === 0) return null;
+  let candidate = urlOrPath;
+  const m = urlOrPath.match(/\/o\/([^?#]+)/);
+  if (m) {
+    try {
+      candidate = decodeURIComponent(m[1]);
+    } catch (e) {
+      return null; // 깨진 인코딩 — 무엇을 지울지 모른다
+    }
+  }
+  return srvIsOwnedBusinessStoragePath(businessId, candidate) ?
+    candidate : null;
+}
+
 // ═══════════════════════════════════════════════════════════
 // [PII-DOC-R1.1] 외국인 신원 판별 — canonical predicate
 //
@@ -8854,6 +8914,15 @@ export const onBusinessDeleted = onDocumentDeleted(
         if (Array.isArray(imgs)) imgs.forEach((u: unknown) => typeof u === "string" && bizImageUrls.push(u));
         const transportImgs = deletedData["transportImageUrls"];
         if (Array.isArray(transportImgs)) transportImgs.forEach((u: unknown) => typeof u === "string" && bizImageUrls.push(u));
+        // [R7-P4.4E.11A §10] 사업자등록증 — 수집 자체가 빠져 있었다.
+        //   사업장 문서가 사라지면 이 포인터도 사라지므로, 그때 지우지 않으면
+        //   민감 서류가 추적할 수 없는 상태로 영구히 남는다.
+        //   [§13] 여기서 지우는 것은 **business-scoped** license 뿐이다.
+        //   `users/{uid}/businessLicense_*`(owner-scoped)는 사업장 삭제를
+        //   이유로 지우지 않는다 — validator 가 구조적으로 그것을 막는다.
+        if (typeof deletedData["businessLicenseImageUrl"] === "string") {
+          bizImageUrls.push(deletedData["businessLicenseImageUrl"]);
+        }
       }
 
       // work_types 루트 컬렉션 URL 수집 + Firestore 삭제 (페이지네이션)
@@ -8879,20 +8948,57 @@ export const onBusinessDeleted = onDocumentDeleted(
         lastWt = wtSnap.docs[wtSnap.docs.length - 1];
       }
 
-      // URL에서 Storage 경로 추출 후 삭제 (실패 허용 — retry로 재시도)
+      // [R7-P4.4E.11A §4·§6] 영구 삭제에서만, 그리고 **이 사업장 소유 경로만**
+      //   지운다. 모든 후보가 같은 validator 한 벌을 거친다 — callsite 마다
+      //   접두 로직을 복제하지 않는다.
+      //
+      //   [§7] 남의 네임스페이스로 환원되는 값은 건너뛸 뿐 사업장 삭제를
+      //   실패시키지 않는다. 정리 실패가 cascade 를 막으면 사업장이 지워지지
+      //   않는 더 나쁜 결과가 된다.
       const allImageUrls = [...bizImageUrls, ...workTypeUrls, ...subWorkTypeUrls];
-      if (allImageUrls.length > 0) {
+      const ownedPaths = new Set<string>(); // [§12] 중복 입력도 한 번만 지운다
+      let skippedForeign = 0;
+      for (const url of allImageUrls) {
+        const p = srvResolveBusinessStoragePath(businessId, url);
+        if (p === null) {
+          skippedForeign++;
+          continue;
+        }
+        ownedPaths.add(p);
+      }
+      if (skippedForeign > 0) {
+        console.warn(
+          "[onBusinessDeleted] 이 사업장 소유가 아닌 이미지 경로 " +
+          `${skippedForeign}건 건너뜀: ${businessId}`
+        );
+      }
+
+      // [§11] 포인터만으로는 부족하다 — 과거 교체분이 license 네임스페이스에
+      //   남아 있을 수 있고, 그 포인터는 이미 덮여 사라졌다. 정확히
+      //   `businesses/{businessId}/license/` 접두만 열거한다.
+      try {
+        const licensePrefix = `businesses/${businessId}/license/`;
+        const [licenseFiles] = await bucket.getFiles({prefix: licensePrefix});
+        for (const f of licenseFiles) {
+          if (srvIsOwnedBusinessStoragePath(businessId, f.name)) {
+            ownedPaths.add(f.name);
+          }
+        }
+      } catch (e) {
+        console.warn("[onBusinessDeleted] license 네임스페이스 열거 실패: " +
+          `${businessId} — ${e}`);
+      }
+
+      if (ownedPaths.size > 0) {
+        // [§12] 멱등 — 이미 없는 파일은 성공과 같다.
         const results = await Promise.allSettled(
-          allImageUrls.map(async (url) => {
-            const match = url.match(/\/o\/([^?#]+)/);
-            if (!match) return;
-            await bucket.file(decodeURIComponent(match[1])).delete();
-          })
+          [...ownedPaths].map((p) =>
+            bucket.file(p).delete({ignoreNotFound: true}))
         );
         const failed = results.filter((r) => r.status === "rejected").length;
         console.log(
-          `Storage 이미지 정리: ${allImageUrls.length - failed}/${allImageUrls.length}건 삭제` +
-          `(실패 ${failed}건): ${businessId}`
+          `Storage 이미지 정리: ${ownedPaths.size - failed}/${ownedPaths.size}건 삭제` +
+          `(실패 ${failed}건, 외부경로 건너뜀 ${skippedForeign}건): ${businessId}`
         );
       }
     }
@@ -12700,6 +12806,12 @@ export const callableDeleteBusinessImage = onCall(
       throw new HttpsError("invalid-argument", "유효하지 않은 Storage 경로입니다.");
     }
     const businessId = parts[1];
+    // [R7-P4.4E.11A §19] 접두 의미를 shared validator 로 통합한다.
+    //   businessId 를 경로에서 뽑았으므로 접두는 항상 맞지만, 이 helper 는
+    //   `..` 환원 같은 모양을 함께 거른다 — cascade 와 같은 말을 쓴다.
+    if (!srvIsOwnedBusinessStoragePath(businessId, filePath)) {
+      throw new HttpsError("permission-denied", "businesses 이미지 경로만 삭제 가능합니다.");
+    }
 
     // [H-1 수정 2026-07-15] managedBusinessIds 클라이언트 오염 취약 → businesses.adminIds 기반 검증
     // callableCreateTO HIGH-04-FIX와 동일 패턴: managedBusinessIds는 arrayUnion으로 임의 businessId 추가 가능
@@ -17776,42 +17888,26 @@ export const onBusinessDeactivated = onDocumentUpdated(
       }
     }
 
-    // [MEDIUM-2] 4) 비활성화된 사업장의 workType 이미지 Storage 정리
-    // work_types/{id}.thumbnailUrl / .images[] → businesses/{bizId}/workTypes/ 경로
-    {
-      const bucket = admin.storage().bucket();
-      const workTypeSnap = await db.collection("work_types")
-        .where("businessId", "==", businessId)
-        .limit(500)
-        .get();
-
-      const imageUrls: string[] = [];
-      for (const doc of workTypeSnap.docs) {
-        const d = doc.data();
-        if (d["thumbnailUrl"]) imageUrls.push(d["thumbnailUrl"] as string);
-        const imgs = d["images"];
-        if (Array.isArray(imgs)) {
-          for (const u of imgs) {
-            if (typeof u === "string") imageUrls.push(u);
-          }
-        }
-      }
-
-      if (imageUrls.length > 0) {
-        const deleteResults = await Promise.allSettled(
-          imageUrls.map(async (url) => {
-            const match = url.match(/\/o\/([^?#]+)/);
-            if (!match) return;
-            const path = decodeURIComponent(match[1]);
-            await bucket.file(path).delete();
-          })
-        );
-        const failed = deleteResults.filter((r) => r.status === "rejected").length;
-        console.log(
-          `✅ [사업장 비활성화] workType 이미지 정리: ${imageUrls.length - failed}/${imageUrls.length}건 삭제 (실패 ${failed}건): ${businessId}`
-        );
-      }
-    }
+    // [R7-P4.4E.11A §2·§3·§14] 여기서 이미지를 지우지 않는다.
+    //
+    //   비활성화는 **임시 중단**이다(`isApproved: false`). 영구 삭제가 아니다.
+    //   그런데 예전 [MEDIUM-2] 블록은 workType 이미지를 Storage 에서 물리
+    //   삭제했다. 결과는 두 가지였다:
+    //
+    //     ① 재활성화해도 이미지가 돌아오지 않는다. Firestore 포인터는
+    //        그대로 남아 있으므로 **dangling pointer** 가 되고, 화면은
+    //        "등록됨"인데 파일은 없다. 사용자는 이유 없이 재업로드를
+    //        요구받는다 — 중단은 서류를 버리겠다는 뜻이 아니었다.
+    //     ② 그 삭제는 Firestore 에 적힌 URL 을 그대로 Admin SDK 로
+    //        지웠다. 그 필드는 사업장 관리자가 직접 쓸 수 있으므로
+    //        남의 네임스페이스 경로를 적어 두면 비활성화만으로
+    //        타인 object 를 지울 수 있었다.
+    //
+    //   그래서 파괴적 정리는 **영구 삭제(`onBusinessDeleted`)에만** 둔다.
+    //   대표·추가·교통·업무유형 이미지와 사업자등록증, 그리고 그 포인터들은
+    //   비활성화에서 전부 보존한다.
+    //
+    //   DEACTIVATE != DELETE — 이 블록을 되살리지 않는다.
   }
 );
 
