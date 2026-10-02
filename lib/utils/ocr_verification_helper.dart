@@ -25,6 +25,8 @@ class OcrVerificationHelper {
     String imagePath,
     String expectedName, {
     String? expectedResidentNumber,
+    /// [R7-P4.4E.10A.1] 성별·세기 코드가 다르다 — 내국인 1~4, 외국인 5~8.
+    bool isForeign = false,
   }) async {
     TextRecognizer? textRecognizer;
 
@@ -42,6 +44,7 @@ class OcrVerificationHelper {
         rawText,
         expectedName,
         expectedResidentNumber: expectedResidentNumber,
+        isForeign: isForeign,
       );
 
       return {
@@ -121,6 +124,64 @@ class OcrVerificationHelper {
   ///   비교는 서버가 한다. 서버는 canonical 값을 돌려주지 않는다.
   ///
   ///   날짜·면허번호 같은 짧은 숫자는 13자리가 아니라 애초에 후보가 아니다.
+  /// [R7-P4.4E.10A.1] 13자리 숫자가 **주민/외국인등록번호 구조를 만족하는가.**
+  ///
+  ///   13자리라는 사실만으로는 신원번호가 아니다 — 문서번호·참조번호도
+  ///   13자리일 수 있다. 그런 숫자를 "읽었다" 로 세면, 실제 번호를 못 읽은
+  ///   사진에서 **MISMATCH** 가 나온다. 구조를 만족하지 않으면 후보가 아니다.
+  ///
+  ///   보는 것: 유효한 YYMMDD 달력 날짜 + 성별·세기 코드.
+  ///     내국인 1·2(1900년대) / 3·4(2000년대)
+  ///     외국인 5·6(1900년대) / 7·8(2000년대)
+  ///   **legacy checksum 은 보지 않는다** — 2020년 10월 이후 발급분은 뒤 6자리가
+  ///   난수라 checksum 이 성립하지 않는다. 그걸로 거부하면 정상 번호를 막는다.
+  @visibleForTesting
+  static bool looksLikeIdentityNumber(String digits, {required bool isForeign}) {
+    if (digits.length != 13) return false;
+    final code = int.tryParse(digits[6]);
+    if (code == null) return false;
+    final allowed = isForeign ? const [5, 6, 7, 8] : const [1, 2, 3, 4];
+    if (!allowed.contains(code)) return false;
+
+    final century = (code == 1 || code == 2 || code == 5 || code == 6)
+        ? 1900
+        : 2000;
+    final yy = int.tryParse(digits.substring(0, 2));
+    final mm = int.tryParse(digits.substring(2, 4));
+    final dd = int.tryParse(digits.substring(4, 6));
+    if (yy == null || mm == null || dd == null) return false;
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+    // 달력에 실제로 있는 날인가 — 02-30 같은 값을 걸러낸다.
+    final y = century + yy;
+    final d = DateTime(y, mm, dd);
+    return d.year == y && d.month == mm && d.day == dd;
+  }
+
+  /// 신원번호 후보 — **쓸 수 있는 것과 아닌 것을 나눠서** 돌려준다.
+  ///
+  ///   `rejected` 만 남았다면 그것은 "번호를 읽었다" 가 아니다 — UNREADABLE 이다.
+  ///   통장사본 계좌번호에서 쓴 것과 같은 축이다.
+  @visibleForTesting
+  static ({
+    List<String> usableIdentityCandidates,
+    List<String> rejectedNumericCandidates,
+  }) identityCandidates(String rawText, {required bool isForeign}) {
+    final all = fullIdentifierCandidates(rawText);
+    final usable = <String>[];
+    final rejected = <String>[];
+    for (final c in all) {
+      if (looksLikeIdentityNumber(c, isForeign: isForeign)) {
+        usable.add(c);
+      } else {
+        rejected.add(c);
+      }
+    }
+    return (
+      usableIdentityCandidates: usable,
+      rejectedNumericCandidates: rejected,
+    );
+  }
+
   @visibleForTesting
   static List<String> fullIdentifierCandidates(String rawText) {
     final out = <String>{};
@@ -145,6 +206,7 @@ class OcrVerificationHelper {
     String rawText,
     String expectedName, {
     String? expectedResidentNumber,
+    bool isForeign = false,
   }) {
     final cleanedOcr = _cleanText(rawText);
     final cleanedExpected = _cleanText(expectedName);
@@ -230,7 +292,12 @@ class OcrVerificationHelper {
           'extractedResidentNumber': null,
           // 클라이언트는 판정하지 않는다 — **서버가** canonical 지문과
           //   대조한다. 여기서는 문서에서 읽은 13자리 후보만 넘긴다.
-          'identifierCandidates': fullIdentifierCandidates(rawText),
+          // [R7-P4.4E.10A.1] 구조를 만족하는 것만 올린다. 13자리 문서번호를
+          //   올리면 서버가 "번호를 읽었는데 다르다"(MISMATCH)로 읽는다 —
+          //   실제로는 못 읽은 것이다.
+          'identifierCandidates': identityCandidates(rawText,
+                  isForeign: isForeign)
+              .usableIdentityCandidates,
         };
       }
       // [PII-B4-R1.4 §30·§31] 기대값이 전체 13자리면 전체를 대조한다.
@@ -268,7 +335,14 @@ class OcrVerificationHelper {
       }
       // [PII-DOC-R1.2 / §6] 비교는 했는데 서류에서 번호를 **하나도 못 읽은** 경우와
       //   읽었는데 다른 경우를 구분한다. 전자는 불일치가 아니라 인식 실패다.
-      final anyCandidate = residentPattern.hasMatch(rawText);
+      // [R7-P4.4E.10A.1] "번호를 읽었다"는 **구조를 만족하는 후보**가 있을
+      //   때만이다. 13자리 문서번호·참조번호를 읽었다는 사실은 신원번호를
+      //   읽었다는 뜻이 아니다 — 그걸 세면 못 읽은 사진이 MISMATCH 가 된다.
+      //   서버도 같은 필터를 다시 적용한다(MISMATCH 방향을 클라이언트
+      //   신뢰에 걸어 두지 않는다).
+      final anyCandidate = identityCandidates(rawText, isForeign: isForeign)
+          .usableIdentityCandidates
+          .isNotEmpty;
       isResidentNumberValid = matchedCandidate != null;
       extractedResidentNumber = matchedCandidate;
       identifierOutcome = isResidentNumberValid
@@ -317,16 +391,20 @@ class OcrVerificationHelper {
   ///   verifyIdCardForTesting(rawText, expectedName)
   ///     → _verifyIdCardFromText()               [production logic]
   ///       → _cleanText()
-  ///       → RegExp(r'(\d{6})[-\s]?(\d)').allMatches() → any-match [P0-001 FIX]
+  ///       → _extractIdCardName()                라벨 기반 [10A]
+  ///       → identityCandidates(isForeign:)      구조 판정 [10A.1]
+  ///       → RegExp(r'(\d{6})[- ]?(\d{7})')      전체 13자리만 [10A]
   ///       → 'extractedName': null               [P0-002 FIX]
   @visibleForTesting
   static Map<String, dynamic> verifyIdCardForTesting(
     String rawText,
     String expectedName, {
     String? expectedResidentNumber,
+    bool isForeign = false,
   }) =>
       _verifyIdCardFromText(rawText, expectedName,
-          expectedResidentNumber: expectedResidentNumber);
+          expectedResidentNumber: expectedResidentNumber,
+          isForeign: isForeign);
 
   // ──────────────────────────────────────────────────────────────────────────
   // 통장사본

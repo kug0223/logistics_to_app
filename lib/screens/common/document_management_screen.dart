@@ -854,6 +854,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         context,
         user.name,
         expectedResidentNumber: residentNumber,
+        // [R7-P4.4E.10A.1] 신원번호 구조 판정에 쓴다 — 성별·세기 코드가
+        //   내국인 1~4, 외국인 5~8 로 다르다. 같은 범위로 보면 한쪽에서
+        //   정상 번호를 "구조 불만족" 으로 버린다.
+        isForeign: user.isForeign,
       );
 
       if (picked == null || !mounted) return; // finally가 _isLoading 초기화
@@ -861,6 +865,23 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
       final oldUrl = user.idCardImageUrl;
       final oldPath = user.idCardImagePath;
+
+      // [R7-P4.4E.10A.1 / E10-D] 제출 시작을 서버에 알리고 순번을 받는다.
+      //
+      //   서버는 도착 순서만 알았다. A→B 로 올렸는데 A 의 호출이 나중에
+      //   완료되면 A 가 더 높은 버전을 받아 **옛 문서가 현재 truth** 가 됐다.
+      //   클라이언트 시계를 권위로 쓰지 않고 **서버가 세는 순번**만 쓴다.
+      //   실패하면 순번 없이 진행한다 — 등록 자체를 막지 않는다(종전 동작).
+      int? attemptSeq;
+      try {
+        final begin = await FirebaseFunctions.instanceFor(
+                region: 'asia-northeast3')
+            .httpsCallable('callableBeginIdDocumentSubmission')
+            .call<Map<String, dynamic>>();
+        attemptSeq = (begin.data['attemptSeq'] as num?)?.toInt();
+      } catch (e) {
+        debugPrint('⚠️ 제출 순번 발급 실패 (순번 없이 진행): $e');
+      }
 
       // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
       final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -886,7 +907,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       newIdCardPath = storagePath; // CF 호출 전 Storage orphan 추적
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkIdCardVerified')
-          .call({'storagePath': storagePath, 'selfCheck': picked.selfCheck});
+          .call({
+        'storagePath': storagePath,
+        'selfCheck': picked.selfCheck,
+        if (attemptSeq != null) 'attemptSeq': attemptSeq,
+      });
       newIdCardPath = null; // CF 성공 — Storage 정리 불필요
 
       // 3. 기존 이미지 삭제 (best-effort)

@@ -10921,14 +10921,63 @@ export const callableRecordTermsConsent = onCall(
 //   { storagePath: string } — Storage 경로 직접 전달 (신규 flow, getDownloadURL 미호출 경로)
 //   { imageUrl: string }    — Storage 다운로드 URL (legacy 호환 — URL 파싱 후 경로 추출)
 // Output: { success: true }
+/**
+ * [R7-P4.4E.10A.1 / E10-D] 신분증 제출 **시작**을 서버에 알린다.
+ *
+ *   왜 필요한가: `callableMarkIdCardVerified` 는 도착 순서만 알았다.
+ *   A→B 순서로 올렸는데 A 의 호출이 **나중에** 완료되면 A 가 더 높은 버전을
+ *   받고 A 의 경로·근거가 현재 truth 가 됐다 — 바꿔치기한 옛 문서가 최신이
+ *   된다. 클라이언트 `_isLoading` 가드는 같은 화면 내 이중 시작만 막는다.
+ *
+ *   클라이언트 시계를 권위로 쓰지 않는다. **서버가 세는 순번**만 쓴다.
+ *   A begin→1, B begin→2, B finalize(2) 수락, A finalize(1) 는 1 < 2 이므로
+ *   stale no-op 이다.
+ *
+ *   Storage 는 이미 attempt 별 경로(`idCard_{millis}.jpg`)를 쓰므로 늦은 A 가
+ *   B 의 물리 파일을 덮어쓰지 않는다. 그래서 여기서 막아야 하는 것은
+ *   **Firestore 의 현재 포인터** 하나다.
+ *
+ * @return {Promise<{attemptSeq: number}>} 이번 제출의 순번
+ */
+export const callableBeginIdDocumentSubmission = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const ref = db.collection("users").doc(uid);
+    const seq = await db.runTransaction(async (tx) => {
+      const cur = (await tx.get(ref)).data() ?? {};
+      const next =
+        ((cur["idDocumentAttemptSeq"] as number | undefined) ?? 0) + 1;
+      tx.update(ref, {idDocumentAttemptSeq: next});
+      return next;
+    });
+    return {attemptSeq: seq};
+  }
+);
+
 export const callableMarkIdCardVerified = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {imageUrl, storagePath: directPath, selfCheck} = request.data as {
-      imageUrl?: string; storagePath?: string; selfCheck?: SrvDocSelfCheck;
+    const {
+      imageUrl,
+      storagePath: directPath,
+      selfCheck,
+      attemptSeq,
+    } = request.data as {
+      imageUrl?: string;
+      storagePath?: string;
+      selfCheck?: SrvDocSelfCheck;
+      attemptSeq?: unknown;
     };
+    // [R7-P4.4E.10A.1] 이번 제출의 서버 순번. 구버전 클라이언트는 보내지
+    //   않으므로 null 이고, 그때는 종전대로 받는다 — 거부하면 배포 전 앱이
+    //   신분증을 등록할 수 없게 된다.
+    const myAttemptSeq =
+      typeof attemptSeq === "number" && Number.isInteger(attemptSeq) &&
+      attemptSeq > 0 ? attemptSeq : null;
 
     let storagePath: string;
 
@@ -11015,19 +11064,51 @@ export const callableMarkIdCardVerified = onCall(
         .slice(0, 20) :
       [];
 
-    const taxSnapForId =
-      await db.collection(TAX_ID_COL).doc(callerUid).get();
+    const [taxSnapForId, userSnapForEval] = await Promise.all([
+      db.collection(TAX_ID_COL).doc(callerUid).get(),
+      db.collection("users").doc(callerUid).get(),
+    ]);
     const canonicalFpForId =
       (taxSnapForId.data()?.["identifierFingerprint"] as string | undefined) ??
       "";
+    const idUserDataForEval = userSnapForEval.data();
+
+    // [R7-P4.4E.10A.1] 구조를 서버에서 **다시** 본다.
+    //
+    //   13자리라는 사실만으로는 신원번호가 아니다 — 문서번호·참조번호도
+    //   13자리일 수 있다. 그런 숫자를 "읽었다"로 세면 실제 번호를 못 읽은
+    //   사진에서 MISMATCH 가 나온다. 클라이언트가 이미 거르지만 여기서도
+    //   보는 이유는 MISMATCH 방향을 클라이언트 신뢰에 걸어 두지 않기
+    //   위해서다(일치 방향은 지문이라 위조할 수 없다).
+    //
+    //   legacy checksum 은 보지 않는다 — 2020-10 이후 발급분은 뒤 6자리가
+    //   난수라 checksum 이 성립하지 않는다. 그걸로 거부하면 정상 번호를 막는다.
+    const idIsForeignUser =
+      typeof idUserDataForEval?.["foreignIdentityFingerprint"] === "string" &&
+      (idUserDataForEval["foreignIdentityFingerprint"] as string).length > 0;
+    const idUsableCandidates = idCandidates.filter((digits) => {
+      const code = Number(digits[6]);
+      const allowed = idIsForeignUser ? [5, 6, 7, 8] : [1, 2, 3, 4];
+      if (!allowed.includes(code)) return false;
+      const century = (code === 1 || code === 2 || code === 5 || code === 6) ?
+        1900 : 2000;
+      const yy = Number(digits.slice(0, 2));
+      const mm = Number(digits.slice(2, 4));
+      const dd = Number(digits.slice(4, 6));
+      if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+      const d = new Date(Date.UTC(century + yy, mm - 1, dd));
+      return d.getUTCFullYear() === century + yy &&
+        d.getUTCMonth() === mm - 1 && d.getUTCDate() === dd;
+    });
 
     let srvIdentifierOutcome: string;
     if (canonicalFpForId.length === 0) {
       srvIdentifierOutcome = DOC_FIELD_UNASSESSED;
-    } else if (idCandidates.length === 0) {
+    } else if (idUsableCandidates.length === 0) {
+      // 구조를 만족하는 후보가 없다 — 다르다고 말할 근거가 없다.
       srvIdentifierOutcome = DOC_FIELD_UNREADABLE;
     } else {
-      const hit = idCandidates.some(
+      const hit = idUsableCandidates.some(
         (c) => srvTaxIdentifierFingerprint(c) === canonicalFpForId);
       srvIdentifierOutcome =
         hit ? DOC_FIELD_MATCHED : DOC_FIELD_MISMATCH;
@@ -11048,9 +11129,18 @@ export const callableMarkIdCardVerified = onCall(
       srvEvaluateMatchStatus(idDoc.evidence, {requireName: true});
     const idUserRef = db.collection("users").doc(callerUid);
     const idNextVersion = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(idUserRef);
+      const cur = (await tx.get(idUserRef)).data() ?? {};
+
+      // [R7-P4.4E.10A.1 / E10-D] 늦게 도착한 옛 제출은 아무것도 바꾸지 않는다.
+      //   버전·현재 경로·판정·검토 필드·준비 상태 전부 그대로 둔다.
+      const latestSeq =
+        (cur["idDocumentAttemptSeq"] as number | undefined) ?? 0;
+      if (myAttemptSeq !== null && myAttemptSeq < latestSeq) {
+        return null; // stale — no-op
+      }
+
       const nextV =
-        (((snap.data() ?? {})["idDocumentVersion"] as number | undefined) ?? 0) + 1;
+        ((cur["idDocumentVersion"] as number | undefined) ?? 0) + 1;
       tx.update(idUserRef, {
         idCardImageUrl: admin.firestore.FieldValue.delete(), // 기존 permanent URL 제거
         idCardImagePath: storagePath,    // [BUG-ID-01] authoritative Storage path
@@ -11075,6 +11165,18 @@ export const callableMarkIdCardVerified = onCall(
       });
       return nextV;
     });
+
+    // [R7-P4.4E.10A.1 / E10-D] stale 제출 — 현재 truth 를 건드리지 않았다.
+    //   후속 작업(보완 요청 전이 등)도 하지 않는다. 호출자에게는 받아들이지
+    //   않았다는 사실을 알린다. 올라간 이미지 object 는 남으므로 정리는
+    //   별도 정책이다 — 그 정리 실패가 현재 truth 를 뒤집어서는 안 된다.
+    if (idNextVersion === null) {
+      console.info(
+        `[markIdCardVerified] uid=${callerUid} STALE attempt=${myAttemptSeq} ` +
+        "— no-op");
+      return {success: false, stale: true};
+    }
+
     console.info(
       `[markIdCardVerified] uid=${callerUid} state=${idDoc.state} ` +
       `match=${idMatchStatus} v=${idNextVersion} ` +

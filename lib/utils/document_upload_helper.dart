@@ -140,6 +140,8 @@ class DocumentUploadHelper {
     BuildContext context,
     String expectedName, {
     String? expectedResidentNumber,
+    /// [R7-P4.4E.10A.1] 성별·세기 코드가 다르다 — 내국인 1~4, 외국인 5~8.
+    bool isForeign = false,
   }) async {
     // image를 try 바깥에 선언해야 catch에서도 delete() 가능.
     // try 안에서 선언하면 예외 발생 시 임시 압축 파일이 /tmp에 영구 누적된다.
@@ -173,6 +175,7 @@ class DocumentUploadHelper {
           image.path,
           expectedName,
           expectedResidentNumber: expectedResidentNumber,
+          isForeign: isForeign,
         ).timeout(
           const Duration(seconds: 30),
           onTimeout: () => {
@@ -217,6 +220,7 @@ class DocumentUploadHelper {
             context,
             expectedName,
             expectedResidentNumber: expectedResidentNumber,
+            isForeign: isForeign,
           );
         } else if (action == null) {
           // 그대로 등록 — image 유지, 호출자가 업로드 후 delete() 책임

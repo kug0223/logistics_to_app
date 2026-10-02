@@ -269,6 +269,99 @@ void main() {
   });
 
   // ══════════════════════════════════════════════════════════════
+  // [R7-P4.4E.10A.1] 후보 semantics — 13자리라는 사실만으로는 신원번호가 아니다
+  //
+  //   문서번호·참조번호도 13자리일 수 있다. 그런 숫자를 "읽었다" 로 세면
+  //   실제 번호를 못 읽은 사진에서 **MISMATCH** 가 나온다.
+  // ══════════════════════════════════════════════════════════════
+  group('IDE-6x 후보 구조 판정', () {
+    ({List<String> usableIdentityCandidates, List<String> rejectedNumericCandidates})
+        cands(String raw, {bool isForeign = false}) =>
+            OcrVerificationHelper.identityCandidates(raw, isForeign: isForeign);
+
+    test('IDE-60 정상 13자리 → usable', () {
+      final c = cands('주민등록증\n$kFullHyphen');
+      expect(c.usableIdentityCandidates, contains(kFull));
+      expect(c.rejectedNumericCandidates, isEmpty);
+    });
+
+    test('IDE-61 잘못된 생년월일 → rejected', () {
+      for (final bad in [
+        '993201-1234567', // 32월
+        '990230-1234567', // 2월 30일
+        '991340-1234567', // 13월 40일
+      ]) {
+        final c = cands('주민등록증\n$bad');
+        expect(c.usableIdentityCandidates, isEmpty, reason: bad);
+        expect(c.rejectedNumericCandidates,
+            contains(bad.replaceAll('-', '')), reason: bad);
+      }
+    });
+
+    test('IDE-62 성별코드 0·5·9 는 국내 path 에서 rejected', () {
+      for (final code in ['0', '5', '9']) {
+        final c = cands('주민등록증\n990101-${code}234567');
+        expect(c.usableIdentityCandidates, isEmpty, reason: 'code=$code');
+      }
+    });
+
+    test('IDE-63 외국인 path 는 5~8 을 받는다', () {
+      for (final code in ['5', '6', '7', '8']) {
+        final c = cands('외국인등록증\n990101-${code}234567', isForeign: true);
+        expect(c.usableIdentityCandidates, isNotEmpty, reason: 'code=$code');
+      }
+      // 국내 코드는 외국인 path 에서 rejected 다.
+      expect(cands('990101-1234567', isForeign: true).usableIdentityCandidates,
+          isEmpty);
+    });
+
+    test('IDE-64 문서번호형 13자리 distractor 만 있으면 MISMATCH 금지', () {
+      // 성별코드 자리가 0 인 13자리 — 신원번호 구조가 아니다.
+      final r = _verify('주민등록증\n$kName\n문서번호 1234567890123',
+          expectedResidentNumber: kFullHyphen);
+      expect(_ident(r), DocFieldOutcome.unreadable,
+          reason: '13자리라는 이유로 "다르다"고 말하지 않는다');
+    });
+
+    test('IDE-65 유효한 다른 13자리 → MISMATCH', () {
+      final r = _verify('주민등록증\n$kName\n880202-2888888',
+          expectedResidentNumber: kFullHyphen);
+      expect(_ident(r), DocFieldOutcome.mismatch,
+          reason: '구조를 만족하고 읽혔고 다르다');
+    });
+
+    test('IDE-66 여러 후보 중 하나가 canonical 과 같으면 MATCHED', () {
+      final r = _verify(
+        '주민등록증\n$kName\n880202-2888888\n$kFullHyphen',
+        expectedResidentNumber: kFullHyphen,
+      );
+      expect(_ident(r), DocFieldOutcome.matched);
+    });
+
+    test('IDE-67 후보 여러 개가 모두 유효하고 전부 다르면 MISMATCH', () {
+      final r = _verify(
+        '주민등록증\n$kName\n880202-2888888\n770303-1777777',
+        expectedResidentNumber: kFullHyphen,
+      );
+      expect(_ident(r), DocFieldOutcome.mismatch);
+    });
+
+    test('IDE-68 legacy checksum 으로 거부하지 않는다', () {
+      // 2020-10 이후 발급분은 뒤 6자리가 난수다 — checksum 이 성립하지 않는다.
+      //   그걸로 거부하면 정상 번호를 막는다.
+      final c = cands('주민등록증\n990101-1111111');
+      expect(c.usableIdentityCandidates, contains('9901011111111'),
+          reason: 'checksum 은 hard gate 가 아니다');
+    });
+
+    test('IDE-69 7자리만 있으면 후보 0건', () {
+      final c = cands('주민등록증\n990101-1');
+      expect(c.usableIdentityCandidates, isEmpty);
+      expect(c.rejectedNumericCandidates, isEmpty);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
   // raw OCR 원문 누출 (§31·§32)
   // ══════════════════════════════════════════════════════════════
   group('IDE-5x raw 원문', () {
