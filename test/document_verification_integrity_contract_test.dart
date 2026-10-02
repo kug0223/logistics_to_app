@@ -101,8 +101,15 @@ void main() {
     });
 
     test('매핑 지점이 하나다', () {
+      // [R7-P4.4E.10A 갱신] 매핑 함수는 여전히 하나다.
+      //   신분증만 입력이 달라졌다 — 식별번호 판정을 **서버가** 하고
+      //   클라이언트가 올린 값을 덮어쓴 뒤 그 함수에 넘긴다. 앞 7자리로
+      //   MATCHED 를 만들던 클라이언트 판정을 더 믿지 않기 때문이다(E10-B).
+      //   통장사본은 종전대로 클라이언트 evidence 를 그대로 넘긴다.
       expect(cf, contains('function srvComputeDocumentState('));
-      expect(markId, contains('srvComputeDocumentState(selfCheck)'));
+      expect(markId, contains('srvComputeDocumentState(idSelfCheckForState)'));
+      expect(markId, contains('identifier: srvIdentifierOutcome,'),
+          reason: '식별번호 판정은 서버가 canonical 지문과 대조한다');
       expect(markBank, contains('srvComputeDocumentState(selfCheck)'));
     });
 

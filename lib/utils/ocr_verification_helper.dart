@@ -46,7 +46,7 @@ class OcrVerificationHelper {
 
       return {
         ...result,
-        'rawText': kDebugMode ? rawText : '',
+        // [R7-P4.4E.10A] raw OCR 원문을 돌려주지 않는다 — debug 빌드에서도.
       };
     } catch (e) {
       if (kDebugMode) debugPrint('❌ [신분증 OCR] 실패: $e');
@@ -57,7 +57,7 @@ class OcrVerificationHelper {
         'confidence': 0.0,
         'extractedName': null,
         'extractedResidentNumber': null,
-        'rawText': '',
+        // raw OCR 원문은 결과에 담지 않는다.
         'error': e.toString(),
       };
     } finally {
@@ -73,6 +73,74 @@ class OcrVerificationHelper {
   /// [주민번호 검증] any-match: expected와 일치하는 candidate가 존재하는지 확인.
   ///   앞에 전화번호·계좌번호 등 유사 패턴이 있어도 expected가 뒤에 있으면 valid.
   /// [extractedName] 신뢰 가능한 신분증 이름 추출 로직 없음 → null 반환.
+  /// 신분증에서 **라벨 옆의 이름**을 읽는다. 라벨이 없으면 추측하지 않는다.
+  ///
+  /// [R7-P4.4E.10A] 이름을 못 읽은 것과 다른 이름을 읽은 것을 가르기 위한
+  ///   최소 구조다. 통장사본의 `_extractAccountHolder` 와 같은 축이다 —
+  ///   **라벨 근거가 있을 때만** "읽었다" 고 말한다.
+  ///   문서 전체에서 2~5자 한글을 주워 이름이라고 하지 않는다(그건 E9 에서
+  ///   `보통예금`·`잔액확인` 을 예금주로 집어 왔던 실수다).
+  static ({String? name, bool labeled}) _extractIdCardName(String rawText) {
+    const labels = ['성명', '이름', '姓名', 'NAME', 'Name'];
+    final lines = rawText.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final upper = line.toUpperCase();
+      final hit = labels.firstWhere(
+          (l) => upper.contains(l.toUpperCase()),
+          orElse: () => '');
+      if (hit.isEmpty) continue;
+
+      // 같은 줄의 라벨 뒤, 없으면 다음 줄.
+      final idx = upper.indexOf(hit.toUpperCase());
+      final tail = line.substring(idx + hit.length);
+      final sameLine = _firstNameToken(tail);
+      if (sameLine != null) return (name: sameLine, labeled: true);
+      if (i + 1 < lines.length) {
+        final next = _firstNameToken(lines[i + 1]);
+        if (next != null) return (name: next, labeled: true);
+      }
+    }
+    return (name: null, labeled: false);
+  }
+
+  /// 이름으로 볼 수 있는 토큰 — 한글 2~5자 또는 영문 이름.
+  static String? _firstNameToken(String s) {
+    final ko = RegExp(r'[가-힣]{2,5}').firstMatch(s);
+    if (ko != null) return ko.group(0);
+    final en = RegExp(r'[A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*').firstMatch(s);
+    if (en != null) return en.group(0)!.trim();
+    return null;
+  }
+
+  /// [R7-P4.4E.10A] 문서에서 읽은 **전체 13자리 후보**.
+  ///
+  ///   클라이언트는 이것으로 판정하지 않는다 — canonical 전체 번호는
+  ///   서버에만 있고(`taxIdentities.identifierFingerprint`, 서버 HMAC),
+  ///   클라이언트가 평문으로 복원할 수 없다. 그래서 **후보만** 서버에 넘기고
+  ///   비교는 서버가 한다. 서버는 canonical 값을 돌려주지 않는다.
+  ///
+  ///   날짜·면허번호 같은 짧은 숫자는 13자리가 아니라 애초에 후보가 아니다.
+  @visibleForTesting
+  static List<String> fullIdentifierCandidates(String rawText) {
+    final out = <String>{};
+    // `YYMMDD-NNNNNNN` 또는 구분자 없는 13자리.
+    //   구분자를 `[- ]` 로 제한한다 — `[-\s]` 는 **줄바꿈을 포함**해서
+    //   서로 다른 줄의 `990101` 과 `1234567` 을 한 번호로 이어붙였다.
+    //   (이 테스트가 그 거짓 후보를 잡아냈다.)
+    for (final m in RegExp(r'(\d{6})[- ]?(\d{7})').allMatches(rawText)) {
+      out.add('${m.group(1)}${m.group(2)}');
+    }
+    // OCR 이 숫자 사이에 잡음을 끼운 경우 — 한 줄 안의 숫자만 모아 본다.
+    //   서로 무관한 숫자가 이어붙어 생기는 거짓 후보를 막기 위해 줄을 넘지
+    //   않는다. 13자리가 정확히 될 때만 후보다.
+    for (final line in rawText.split('\n')) {
+      final digits = line.replaceAll(RegExp(r'\D'), '');
+      if (digits.length == 13) out.add(digits);
+    }
+    return out.toList();
+  }
+
   static Map<String, dynamic> _verifyIdCardFromText(
     String rawText,
     String expectedName, {
@@ -82,11 +150,35 @@ class OcrVerificationHelper {
     final cleanedExpected = _cleanText(expectedName);
 
     // [PII-DOC-R1.2] 이름은 기대값이 없으면 비교하지 않는다.
+    // [R7-P4.4E.10A] 못 읽은 것을 "다르다"고 말하지 않는다.
+    //
+    //   예전에는 `cleanedOcr.contains(expected)` 하나로 갈라서, 흐릿한
+    //   사진이나 각도 때문에 이름을 못 읽으면 곧바로 **MISMATCH** 였다.
+    //   서버는 `requireName: true` 로 그것을 그대로 `idCardMatchStatus =
+    //   MISMATCH` 로 기록하고, 사용자는 정상 문서로 "일치하지 않습니다" 를
+    //   봤다. 소비처(`document_upload_helper`)는 이미 `name == unreadable`
+    //   분기를 갖고 있었지만 parser 가 그 값을 만들지 않아 **도달할 수 없는
+    //   분기**였다.
+    //
+    //   MISMATCH 는 **라벨 옆에서 다른 이름을 읽어냈을 때만** 말한다.
+    //   fuzzy 비교는 하지 않는다 — 비슷한 이름을 같다고 하지 않는다.
     final bool nameAssessable = cleanedExpected.isNotEmpty;
+    final nameRead = _extractIdCardName(rawText);
     final isNameValid = nameAssessable && cleanedOcr.contains(cleanedExpected);
-    final DocFieldOutcome nameOutcome = !nameAssessable
-        ? DocFieldOutcome.unassessed
-        : (isNameValid ? DocFieldOutcome.matched : DocFieldOutcome.mismatch);
+    final DocFieldOutcome nameOutcome;
+    if (!nameAssessable) {
+      nameOutcome = DocFieldOutcome.unassessed;
+    } else if (isNameValid) {
+      nameOutcome = DocFieldOutcome.matched;
+    } else if (nameRead.labeled &&
+        nameRead.name != null &&
+        _cleanText(nameRead.name!) != cleanedExpected) {
+      // 이름 칸에서 읽어낸 값이 기대와 다르다 — 근거 있는 불일치다.
+      nameOutcome = DocFieldOutcome.mismatch;
+    } else {
+      // 이름 칸을 찾지 못했거나 읽어낸 것이 없다 — 다르다고 말할 근거가 없다.
+      nameOutcome = DocFieldOutcome.unreadable;
+    }
 
     // [PII-DOC-R1.2 / INV-1] 검사하지 않은 값을 true로 만들지 않는다.
     //
@@ -112,6 +204,35 @@ class OcrVerificationHelper {
       //   계좌번호·전화번호 등이 앞에 있으면 false-negative 발생.
       final cleanedExpectedRN =
           expectedResidentNumber.replaceAll(RegExp(r'\D'), '');
+
+      // [R7-P4.4E.10A] **앞 7자리로는 일치를 선언하지 않는다.**
+      //
+      //   등록 경로가 넘기던 기대값은 `YYMMDD-C` 7자리였다(birthDate+gender
+      //   파생). 그건 개인 식별값이 아니다 — 같은 날 태어난 같은 성별이면
+      //   누구의 신분증이든 일치했다. 그런데도 `identifierOutcome = MATCHED`
+      //   까지 올라가 canonical `idCardMatchStatus = MATCHED` 가 됐다.
+      //
+      //   그리고 7자리 패턴(`(\d{6})[-\s]?(\d)`)은 날짜·면허번호·전화 조각에
+      //   거의 항상 걸려서 `anyCandidate` 가 늘 참이었다 — 못 읽어도
+      //   UNREADABLE 이 아니라 MISMATCH 였다.
+      //
+      //   이제 전체 13자리 기대값이 없으면 **판정하지 않는다**(UNASSESSED).
+      //   비교하지 않았다는 사실이 남고, 서버는 그것을 MATCHED 로 읽지 않는다.
+      if (cleanedExpectedRN.length != 13) {
+        return {
+          'isValid': false,
+          'isNameValid': isNameValid,
+          'isResidentNumberValid': false,
+          'nameOutcome': nameOutcome,
+          'identifierOutcome': DocFieldOutcome.unassessed,
+          'confidence': 0.0,
+          'extractedName': null,
+          'extractedResidentNumber': null,
+          // 클라이언트는 판정하지 않는다 — **서버가** canonical 지문과
+          //   대조한다. 여기서는 문서에서 읽은 13자리 후보만 넘긴다.
+          'identifierCandidates': fullIdentifierCandidates(rawText),
+        };
+      }
       // [PII-B4-R1.4 §30·§31] 기대값이 전체 13자리면 전체를 대조한다.
       //
       //   기대값 길이로 분기하는 이유: 기준을 아는 쪽이 비교 범위를 정해야
@@ -119,11 +240,11 @@ class OcrVerificationHelper {
       //   면허번호를 집어 올 수 있다. 기대값과 같은 후보만 찾으면 그 위험이
       //   구조적으로 없다 — 다른 숫자군은 애초에 일치하지 않는다.
       //
-      //   앞 7자리만 아는 경우(전체번호 미등록)는 기존 동작 그대로다.
-      final wantsFull = cleanedExpectedRN.length == 13;
-      final residentPattern = wantsFull
-          ? RegExp(r'(\d{6})[-\s]?(\d{7})')
-          : RegExp(r'(\d{6})[-\s]?(\d)');
+      //   [R7-P4.4E.10A] 7자리 패턴은 **없앴다.** 위 early-return 이
+      //   전체 13자리가 아닌 기대값을 이미 걸러내므로 여기 오는 기대값은
+      //   항상 13자리다. 7자리 패턴을 남겨 두면 날짜·면허번호 조각이
+      //   "번호를 읽었다" 로 세어져 UNREADABLE 이 가려진다.
+      final residentPattern = RegExp(r'(\d{6})[- ]?(\d{7})');
       String? matchedCandidate;
       for (final match in residentPattern.allMatches(rawText)) {
         final front = match.group(1)!;
@@ -137,7 +258,7 @@ class OcrVerificationHelper {
       // [§31] 줄 단위 2차 대조 — OCR이 숫자 사이에 잡음을 끼워 넣으면
       //   위 패턴이 끊긴다. 한 줄 안에서만 숫자를 모아 보는 것이므로
       //   서로 무관한 숫자가 이어붙어 생기는 거짓 일치는 없다.
-      if (matchedCandidate == null && wantsFull) {
+      if (matchedCandidate == null) {
         for (final line in rawText.split('\n')) {
           if (line.replaceAll(RegExp(r'\D'), '') == cleanedExpectedRN) {
             matchedCandidate = cleanedExpectedRN;
@@ -245,7 +366,7 @@ class OcrVerificationHelper {
 
       return {
         ...result,
-        'rawText': kDebugMode ? rawText : '',
+        // [R7-P4.4E.10A] raw OCR 원문을 돌려주지 않는다 — debug 빌드에서도.
       };
     } catch (e) {
       if (kDebugMode) debugPrint('❌ [통장사본 OCR] 실패: $e');
@@ -262,7 +383,7 @@ class OcrVerificationHelper {
         'extractedName': null,
         'extractedAccountNumber': null,
         'extractedBankName': null,
-        'rawText': '',
+        // raw OCR 원문은 결과에 담지 않는다.
         'error': e.toString(),
       };
     } finally {
@@ -974,7 +1095,7 @@ class OcrVerificationHelper {
 
       return {
         ...result,
-        'rawText': kDebugMode ? rawText : '',
+        // [R7-P4.4E.10A] raw OCR 원문을 돌려주지 않는다 — debug 빌드에서도.
       };
     } catch (e) {
       if (kDebugMode) debugPrint('❌ [사업자등록증 OCR] 실패: $e');
@@ -984,7 +1105,7 @@ class OcrVerificationHelper {
         'confidence': 0.0,
         'extractedNumber': null,
         'extractedName': null,
-        'rawText': '',
+        // raw OCR 원문은 결과에 담지 않는다.
         'error': e.toString(),
       };
     } finally {

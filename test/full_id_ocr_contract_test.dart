@@ -51,13 +51,27 @@ void main() {
 
   group('INV-1 — 기대값이 비교 범위를 정한다 (§30)', () {
     test('01 13자리 기대값이면 13자리 패턴을 쓴다', () {
+      // [R7-P4.4E.10A 갱신] 계약이 **더 엄격해졌다.**
+      //   예전에는 기대값 길이로 분기해 7자리 기대값이면 7자리 패턴으로
+      //   대조하고 그것으로 MATCHED 까지 올라갔다. 앞 7자리는 생년월일+성별
+      //   파생이라 **개인 식별값이 아니다** — 같은 날 태어난 같은 성별이면
+      //   누구의 신분증이든 통과했다(E10-B, BLOCKER).
+      //   이제 13자리만 대조하고, 7자리 패턴은 **코드에서 없앴다**.
+      //   소스 한 줄이 아니라 그 계약을 실행해서 확인한다.
       final fn = _flat(_codeOf(_sliceOf(ocrRaw,
           'static Map<String, dynamic> _verifyIdCardFromText(',
           'static Map<String, dynamic> verifyIdCardForTesting(')));
-      expect(fn, contains('final wantsFull = cleanedExpectedRN.length == 13;'));
-      expect(fn, contains(r"RegExp(r'(\d{6})[-\s]?(\d{7})')"));
-      // 7자리 기대값 경로는 그대로 남는다.
-      expect(fn, contains(r"RegExp(r'(\d{6})[-\s]?(\d)')"));
+      expect(fn, contains(r"RegExp(r'(\d{6})[- ]?(\d{7})')"));
+      expect(fn, isNot(contains(r"RegExp(r'(\d{6})[-\s]?(\d)')")),
+          reason: '7자리 패턴은 날짜·면허번호 조각에 걸려 UNREADABLE 을 가린다');
+
+      // 13자리 기대값 → 대조한다.
+      expect(_outcome('홍길동\n990101-1234567', '9901011234567'),
+          DocFieldOutcome.matched);
+      // 7자리 기대값 → **판정하지 않는다**(MATCHED 금지).
+      expect(_outcome('홍길동\n990101-1234567', '990101-1'),
+          DocFieldOutcome.unassessed,
+          reason: '앞 7자리로는 일치를 선언하지 않는다');
     });
 
     test('02 O1 — 신분증에 그 번호가 보이면 MATCHED', () {
@@ -145,8 +159,15 @@ void main() {
   });
 
   group('INV-4 — 추출값은 남지 않는다 (§55)', () {
-    test('15 rawText는 릴리스에서 비어 있다', () {
-      expect(ocr, contains("'rawText': kDebugMode ? rawText : ''"));
+    test('15 rawText는 결과에 담기지 않는다', () {
+      // [R7-P4.4E.10A 갱신] 예전 계약은 "릴리스에서는 비어 있다" 였다.
+      //   그건 **debug 빌드에서는 주민번호 전체를 포함한 원문이 결과 map 에
+      //   실려 나간다**는 뜻이기도 했다. 내부테스트에서도 debug/profile
+      //   빌드가 쓰이므로 kDebugMode 를 안전한 기본값으로 보지 않는다(§32).
+      //   소비처는 0건이었고(전수 확인) 키 자체를 없앴다.
+      expect(ocr, isNot(contains("'rawText': kDebugMode ? rawText : ''")));
+      expect(ocr, isNot(contains("'rawText':")),
+          reason: 'raw OCR 원문을 결과로 돌려주지 않는다');
     });
 
     test('16 로그에 번호를 담지 않는다', () {

@@ -33,12 +33,22 @@ class DocumentPickResult {
   /// 경고를 보고도 사용자가 그대로 제출했는가.
   final bool overridden;
 
+  /// [R7-P4.4E.10A] 신분증에서 읽은 **전체 13자리 후보**.
+  ///
+  ///   클라이언트는 이것으로 판정하지 않는다. canonical 전체 번호는 서버에만
+  ///   있고(`taxIdentities.identifierFingerprint` — 서버 HMAC) 클라이언트가
+  ///   평문으로 복원할 수 없다. 그래서 후보만 올리고 **비교는 서버가** 한다.
+  ///   예전에는 앞 7자리(생년월일+성별)만 맞으면 MATCHED 였다 — 같은 날
+  ///   태어난 같은 성별이면 누구의 신분증이든 통과하는 증거였다.
+  final List<String> identifierCandidates;
+
   const DocumentPickResult({
     required this.path,
     this.nameOutcome = DocFieldOutcome.unassessed,
     this.identifierOutcome = DocFieldOutcome.unassessed,
     this.ocrFailed = false,
     this.overridden = false,
+    this.identifierCandidates = const [],
   });
 
   /// CF로 보낼 근거 payload. 서버가 이 값으로 상태를 계산한다.
@@ -56,6 +66,11 @@ class DocumentPickResult {
         'identifier': identifierOutcome.wire,
         'ocrFailed': ocrFailed,
         'overridden': overridden,
+        // [R7-P4.4E.10A] 서버가 canonical 지문과 대조할 후보. 비어 있으면
+        //   서버는 식별번호를 "읽지 못했다" 로 본다 — 앞 7자리 추정으로
+        //   일치를 만들지 않는다.
+        if (identifierCandidates.isNotEmpty)
+          'identifierCandidates': identifierCandidates,
       };
 
   /// 비교 기준이 없어 아무것도 판정하지 못한 제출.
@@ -221,6 +236,9 @@ class DocumentUploadHelper {
           (result['nameOutcome'] as DocFieldOutcome?) ?? DocFieldOutcome.unassessed;
       final idIdent = (result['identifierOutcome'] as DocFieldOutcome?) ??
           DocFieldOutcome.unassessed;
+      // [R7-P4.4E.10A] 전체 13자리 후보 — 판정은 서버가 한다.
+      final idCandidates =
+          (result['identifierCandidates'] as List<String>?) ?? const <String>[];
       final idHasMismatch = idName == DocFieldOutcome.mismatch ||
           idIdent == DocFieldOutcome.mismatch;
       final idHasUnreadable = idName == DocFieldOutcome.unreadable ||
@@ -253,6 +271,7 @@ class DocumentUploadHelper {
           path: image.path,
           nameOutcome: idName,
           identifierOutcome: idIdent,
+          identifierCandidates: idCandidates,
         );
       }
 
@@ -278,6 +297,7 @@ class DocumentUploadHelper {
           path: image.path,
           nameOutcome: idName,
           identifierOutcome: idIdent,
+          identifierCandidates: idCandidates,
         );
 
       } else {
@@ -326,6 +346,7 @@ class DocumentUploadHelper {
           path: image.path,
           nameOutcome: idName,
           identifierOutcome: idIdent,
+          identifierCandidates: idCandidates,
           overridden: idHasMismatch,
         );
       }

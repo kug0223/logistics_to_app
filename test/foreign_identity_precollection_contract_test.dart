@@ -364,12 +364,22 @@ void main() {
       expect(gate, contains('user.isBlacklisted || user.isRestricted'));
     });
 
-    test('31 7자리 대조 경로가 사라지지 않았다', () {
-      // 전체번호를 아직 등록하지 않은 사용자는 이 경로로 대조한다.
-      final idOcr = _src('lib/utils/ocr_verification_helper.dart');
-      expect(idOcr, contains(r"RegExp(r'(\d{6})[-\s]?(\d)')"));
-      expect(idOcr, contains(r"RegExp(r'(\d{6})[-\s]?(\d{7})')"),
-          reason: 'R1.4 전체 대조');
+    test('31 전체 13자리 대조만 남고 7자리 경로는 제거됐다', () {
+      // [R7-P4.4E.10A 갱신] 이 계약은 **뒤집혔다.**
+      //   예전에는 "전체번호를 아직 등록하지 않은 사용자는 7자리로 대조한다"
+      //   였다. 그런데 앞 7자리는 생년월일+성별 파생이라 개인 식별값이
+      //   아니다 — 같은 날 태어난 같은 성별이면 누구의 신분증이든 통과했고
+      //   그대로 canonical MATCHED 가 됐다(E10-B, BLOCKER).
+      //   전체번호 미등록 사용자는 이제 **UNASSESSED** 이고, 전체 13자리
+      //   비교는 서버가 canonical 지문과 한다. 외국인도 같은 축이다 —
+      //   가입 경로(`foreign_id_ocr_service`)는 건드리지 않았다.
+      // 주석이 아니라 **실행 코드**만 본다 — 주석에는 옛 패턴이 왜 사라졌는지
+      //   설명으로 남아 있고, 그건 계약이 아니다.
+      final idOcr = _codeOf(_src('lib/utils/ocr_verification_helper.dart'));
+      expect(idOcr, contains(r"RegExp(r'(\d{6})[- ]?(\d{7})')"),
+          reason: 'R1.4 전체 대조는 남는다');
+      expect(idOcr, isNot(contains(r"RegExp(r'(\d{6})[-\s]?(\d)')")),
+          reason: '7자리 대조 경로는 제거됐다');
     });
 
     test('32 CONFIRMED 자동 신분증 grant 재도입 없음 (§29)', () {

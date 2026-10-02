@@ -433,6 +433,34 @@ class ImageHelper {
       // minSize 이하면 압축 안함 — 하지만 **원본을 그대로 돌려주지는 않는다**.
       // [R7-P4.3B TEMP-01] 아래 `_stage` 주석 참조.
       if (fileSize <= config.minSize) {
+        // [R7-P4.4E.10A] 신원 문서는 이 빠른 경로에서도 metadata 를 지운다.
+        //
+        //   `_stage` 는 바이트 복사다(재인코딩 없음). 그래서 200KB 이하
+        //   신분증·통장사본은 **원본 EXIF 를 그대로** 업로드했다 —
+        //   촬영 위치·기기·시각이 민감 서류에 함께 남는다. 압축이 실행될
+        //   때만 `keepExif` 기본값(false)으로 지워지고 있었다.
+        //
+        //   화질을 해치지 않으려고 **같은 최대 크기 + quality 100** 으로
+        //   재인코딩만 한다. 추가 압축이 아니라 metadata 제거가 목적이다.
+        //   실패하면 기존 경로(`_stage`)로 떨어진다 — 등록을 막지 않는다.
+        if (type == ImageType.document) {
+          final stripped = await FlutterImageCompress.compressWithFile(
+            file.absolute.path,
+            minWidth: config.maxWidth,
+            minHeight: config.maxHeight,
+            quality: 100,
+            rotate: 0,
+            format: CompressFormat.jpeg,
+          );
+          if (stripped != null) {
+            final dir = await _stagingDir();
+            final out = File(
+                '${dir.path}/stripped_${DateTime.now().microsecondsSinceEpoch}.jpg');
+            await out.writeAsBytes(stripped);
+            debugPrint('✅ 압축 불필요 — metadata 만 제거 (${fileSize}KB)');
+            return out;
+          }
+        }
         debugPrint('✅ 압축 불필요 (${config.minSize}KB 이하)');
         return _stage(file);
       }

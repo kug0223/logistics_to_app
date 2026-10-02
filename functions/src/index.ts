@@ -10991,7 +10991,53 @@ export const callableMarkIdCardVerified = onCall(
     //   재업로드는 이전 판정을 물려받지 않는다. 사람이 승인한 문서를 바꿔치고
     //   그 승인을 그대로 들고 가는 경로를 남기지 않는다 — 관리자 결정 필드를
     //   여기서 명시적으로 지운다(값이 없으면 지우기는 no-op이다).
-    const idDoc = srvComputeDocumentState(selfCheck);
+    // [R7-P4.4E.10A / E10-B] 식별번호 판정은 **서버가** 한다.
+    //
+    //   예전에는 클라이언트가 `selfCheck.identifier` 를 그대로 올렸고, 그
+    //   근거는 주민번호 **앞 7자리**(생년월일+성별 파생)였다. 앞 7자리는
+    //   개인 식별값이 아니다 — 같은 날 태어난 같은 성별이면 누구의
+    //   신분증이든 일치했고, 그 값으로 canonical MATCHED 까지 올라갔다.
+    //
+    //   전체 13자리 canonical 은 서버에만 있다
+    //   (`taxIdentities/{uid}.identifierFingerprint` — 서버 HMAC).
+    //   그래서 클라이언트는 **문서에서 읽은 13자리 후보만** 올리고, 비교는
+    //   여기서 한다. canonical 값은 클라이언트로 돌려주지 않는다.
+    //
+    //   후보가 없으면 "읽지 못했다"(UNREADABLE)다 — 다르다고 말하지 않는다.
+    //   canonical 지문이 아직 없으면 비교 기준이 없으므로 UNASSESSED다.
+    const idCandidatesRaw = (selfCheck as Record<string, unknown> | undefined)
+      ?.["identifierCandidates"];
+    const idCandidates = Array.isArray(idCandidatesRaw) ?
+      idCandidatesRaw
+        .filter((c): c is string => typeof c === "string")
+        .map((c) => c.replace(/\D/g, ""))
+        .filter((c) => c.length === 13)
+        .slice(0, 20) :
+      [];
+
+    const taxSnapForId =
+      await db.collection(TAX_ID_COL).doc(callerUid).get();
+    const canonicalFpForId =
+      (taxSnapForId.data()?.["identifierFingerprint"] as string | undefined) ??
+      "";
+
+    let srvIdentifierOutcome: string;
+    if (canonicalFpForId.length === 0) {
+      srvIdentifierOutcome = DOC_FIELD_UNASSESSED;
+    } else if (idCandidates.length === 0) {
+      srvIdentifierOutcome = DOC_FIELD_UNREADABLE;
+    } else {
+      const hit = idCandidates.some(
+        (c) => srvTaxIdentifierFingerprint(c) === canonicalFpForId);
+      srvIdentifierOutcome =
+        hit ? DOC_FIELD_MATCHED : DOC_FIELD_MISMATCH;
+    }
+
+    const idSelfCheckForState = {
+      ...(selfCheck ?? {}),
+      identifier: srvIdentifierOutcome,
+    } as SrvDocSelfCheck;
+    const idDoc = srvComputeDocumentState(idSelfCheckForState);
     // [PII-DOC-R1.4] 버전과 판정을 **같은 트랜잭션**에서 쓴다.
     //
     //   `increment(1)`은 결과값을 알려주지 않는다. 그래서 증가 후에 따로

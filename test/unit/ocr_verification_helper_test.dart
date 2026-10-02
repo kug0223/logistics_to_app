@@ -66,7 +66,11 @@ void main() {
       final result = OcrVerificationHelper.verifyIdCardForTesting(
         raw,
         '홍길동',
-        expectedResidentNumber: '900101-1',
+        // [R7-P4.4E.10A 갱신] 앞 7자리('900101-1')로는 더 이상
+        //   일치를 선언하지 않는다 — 생년월일+성별은 개인 식별값이
+        //   아니다(E10-B). 이 테스트가 지키는 계약(정상 이름 + 정상
+        //   주민번호 → isValid)은 **전체 13자리**로 그대로 성립한다.
+        expectedResidentNumber: '900101-1234567',
       );
 
       expect(result['isValid'], isTrue,
@@ -74,7 +78,7 @@ void main() {
       expect(result['isNameValid'], isTrue);
       expect(result['isResidentNumberValid'], isTrue);
       expect(result['confidence'], equals(1.0));
-      expect(result['extractedResidentNumber'], equals('900101-1'));
+      expect(result['extractedResidentNumber'], equals('900101-1234567'));
     });
 
     // NATIVE-ID-02
@@ -91,14 +95,18 @@ void main() {
       final result = OcrVerificationHelper.verifyIdCardForTesting(
         raw,
         '홍길동',
-        expectedResidentNumber: '900101-1',
+        // [R7-P4.4E.10A 갱신] 앞 7자리('900101-1')로는 더 이상
+        //   일치를 선언하지 않는다 — 생년월일+성별은 개인 식별값이
+        //   아니다(E10-B). 이 테스트가 지키는 계약(정상 이름 + 정상
+        //   주민번호 → isValid)은 **전체 13자리**로 그대로 성립한다.
+        expectedResidentNumber: '900101-1234567',
       );
 
       // FIXED: any-match 가 "900101-1" 을 발견 → true
       expect(result['isResidentNumberValid'], isTrue,
           reason: '[P0-001 FIXED] any-match: "900101-1" 발견 → VALID (앞의 "123456-1" 무관)');
       expect(result['isValid'], isTrue);
-      expect(result['extractedResidentNumber'], equals('900101-1'),
+      expect(result['extractedResidentNumber'], equals('900101-1234567'),
           reason: 'expected와 일치하는 candidate 반환');
       expect(result['isNameValid'], isTrue);
     });
@@ -143,13 +151,17 @@ void main() {
       final result = OcrVerificationHelper.verifyIdCardForTesting(
         raw,
         '홍길동',
-        expectedResidentNumber: '900101-1',
+        // [R7-P4.4E.10A 갱신] 앞 7자리('900101-1')로는 더 이상
+        //   일치를 선언하지 않는다 — 생년월일+성별은 개인 식별값이
+        //   아니다(E10-B). 이 테스트가 지키는 계약(정상 이름 + 정상
+        //   주민번호 → isValid)은 **전체 13자리**로 그대로 성립한다.
+        expectedResidentNumber: '900101-1234567',
       );
 
       expect(result['isResidentNumberValid'], isTrue,
           reason: 'any-match 가 "900101-1" 을 발견. 앞의 유사 패턴 무관');
       expect(result['isValid'], isTrue);
-      expect(result['extractedResidentNumber'], equals('900101-1'));
+      expect(result['extractedResidentNumber'], equals('900101-1234567'));
     });
   });
 
