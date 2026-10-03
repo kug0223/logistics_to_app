@@ -124,7 +124,23 @@ void main() {
 
     test('10 §8 — 원본은 현재 버전일 때만 열린다', () {
       expect(url, contains('expectedBankbookVersion !== cur.bankbook'));
-      expect(url, contains('srvIsOwnedStoragePath(storagePath, targetUid)'));
+      // [R7-P4.4E.11B.1C 갱신] 이 셀은 `srvIsOwnedStoragePath`(= 소유자
+      //   접두만)를 이 reader 의 계약으로 **고정하고 있었다.** 그 술어는
+      //   무슨 서류인지 보지 않으므로, `bankbookImagePath` 에 같은 사용자의
+      //   신분증 경로가 들어 있으면 급여 권한만으로 신분증이 서명돼 나갔다 —
+      //   감사 로그에는 `view_bankbook_image` 로 남는다.
+      //
+      //   즉 테스트가 취약한 쪽을 지키고 있었다. 보려던 것("심어진 경로가
+      //   그대로 서명되지 않는다")은 그대로 두고 술어만 exact 로 올린다.
+      //   reader 전수 inventory 는 bankbook_reader_namespace_contract_test
+      //   가 소유한다.
+      expect(url, contains(
+          'srvResolveOwnedBankbookStoragePath(targetUid, storagePath)'));
+      expect(url, contains('if (safeBankbookPath === null) {'));
+      expect(url, isNot(contains('srvIsOwnedStoragePath(storagePath, targetUid)')),
+          reason: '넓은 술어가 최종 인가로 남아 있으면 안 된다');
+      // 서명 대상이 검증된 값이다 — 호출만 하고 raw 를 쓰는 우회 방지.
+      expect(url, contains('.file(safeBankbookPath)'));
       expect(url, contains('60 * 60 * 1000'));
     });
 

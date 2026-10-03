@@ -25,6 +25,18 @@ String _after(String src, String name, int chars) {
   return src.substring(i, end);
 }
 
+/// 함수 **경계**까지 자른다 — 고정폭 창 대신.
+///
+/// [R7-P4.4E.11B.1C] `_after(..., 3000)` 는 함수가 조금만 길어지면 끝부분이
+///   창 밖으로 밀려 `indexOf` 가 -1 이 된다. 실제 계약이 깨진 것이 아니라
+///   창이 짧았을 뿐인데 셀이 실패한다. 순서를 보는 셀은 함수 전체가 필요하다.
+String _fnBody(String src, String name) {
+  final i = src.indexOf(name);
+  expect(i, greaterThan(-1), reason: '$name 을 찾지 못했다');
+  final j = src.indexOf('\nexport const ', i + name.length);
+  return src.substring(i, j < 0 ? src.length : j);
+}
+
 // ─────────────────────────────────────────────────────────────
 // 창 계산 — 서버 srvIdWindowLastWorkDay / srvIdWindowOpen 과 같은 식
 // ─────────────────────────────────────────────────────────────
@@ -579,7 +591,11 @@ void main() {
 
   group('DOCS1A 감사 fail-closed', () {
     test('S1A-30 지원자 서류 감사 실패는 URL 을 막는다', () {
-      final body = _after(code, 'callableGetApplicantDocumentUrl', 3000);
+      // [R7-P4.4E.11B.1C 갱신] 고정폭 3000자 창을 쓰고 있었다. BANKBOOK
+      //   분기에 exact 네임스페이스 검증이 들어가며 함수가 길어지자 `return {`
+      //   가 창 밖으로 밀려 이 셀이 깨졌다 — 계약은 그대로다. 순서를 보는
+      //   셀이므로 함수 경계까지 읽는다.
+      final body = _fnBody(code, 'callableGetApplicantDocumentUrl');
       expect(
         body.contains('.catch((e) => console.error("[applicantDocumentUrl]'),
         isFalse,

@@ -12541,11 +12541,31 @@ export const callableGetApplicantDocumentUrl = onCall(
       throw new HttpsError("not-found", "등록된 서류가 없습니다.");
     }
     // [R0] 심어진 경로가 서명되지 않게 — 읽는 쪽에서 매번 본다.
-    if (!srvIsOwnedStoragePath(storagePath, targetUid)) {
+    //
+    // [R7-P4.4E.11B.1C] 그 검사가 소유자 접두만 봤다. `documentType` 은
+    //   클라이언트가 보내고, 두 분기가 한 변수로 합쳐진 뒤 같은 넓은 술어를
+    //   거쳤다. 그래서 `documentType = BANKBOOK` 요청이 신분증 bytes 를
+    //   돌려주면서 감사 로그에는 `documentType: BANKBOOK` 으로 남을 수
+    //   있었다 — 감사가 말하는 서류와 실제로 준 서류가 다르다.
+    //
+    //   BANKBOOK 분기만 exact 술어로 좁힌다. ID 분기는 이번에 건드리지
+    //   않는다 — ID reader 네임스페이스는 별도 owner 다
+    //   ([ID-DOCUMENT-READER-NAMESPACE-OBSERVATION]).
+    //
+    //   `documentType` 은 위에서 이미 ID/BANKBOOK 둘 중 하나로 검증됐다.
+    //   따라서 else 는 ID 분기이고, unknown 이 BANKBOOK 으로 흐르지 않는다.
+    let safeStoragePath: string | null = null;
+    if (documentType === DOC_TYPE_BANKBOOK) {
+      safeStoragePath =
+        srvResolveOwnedBankbookStoragePath(targetUid, storagePath);
+    } else if (srvIsOwnedStoragePath(storagePath, targetUid)) {
+      safeStoragePath = storagePath;
+    }
+    if (safeStoragePath === null) {
       throw new HttpsError(
         "failed-precondition", "서류 파일 경로가 올바르지 않습니다.");
     }
-    const file = admin.storage().bucket().file(storagePath);
+    const file = admin.storage().bucket().file(safeStoragePath);
     const [exists] = await file.exists();
     if (!exists) throw new HttpsError("not-found", "서류 파일을 찾을 수 없습니다.");
     const [signedUrl] = await file.getSignedUrl({
@@ -32001,13 +32021,29 @@ export const callableGetPayrollBankbookUrl = onCall(
     if (!storagePath) {
       throw new HttpsError("not-found", "통장사본이 등록되지 않았습니다.");
     }
-    if (!srvIsOwnedStoragePath(storagePath, targetUid)) {
+    // [R7-P4.4E.11B.1C] 소유자 접두만 보던 검사였다. 그래서 이 함수는
+    //   `bankbookImagePath` 에 같은 사용자의 **신분증** 경로가 들어 있으면
+    //   그것을 서명해 돌려줬다 — 급여 권한(`canManageWage`)만 가진 열람자가
+    //   신분증 bytes 를 받고, 감사 로그에는 `view_bankbook_image` 로 남는다.
+    //   신분증은 ID-CONSENT Grant 가 필요한 서류인데 그 경계를 우회한다.
+    //
+    //   `callableGetBankbookSignedUrl` 은 11B 에서 좁혀졌는데 이 reader 와
+    //   `callableGetApplicantDocumentUrl` 은 빠져 있었다. writer 가 인정하는
+    //   경로 = reader 가 읽을 수 있는 경로 = delete 가 지울 수 있는 경로 —
+    //   이제 세 reader 가 모두 같은 술어를 쓴다.
+    //
+    //   인가·목적·동의 gate 는 위에서 이미 통과했다. 여기서 바뀌는 것은
+    //   "이 포인터가 통장사본인가" 하나뿐이고, 오류 taxonomy 도 그대로다
+    //   (없음 = not-found, 통장사본 아님 = failed-precondition).
+    const safeBankbookPath =
+      srvResolveOwnedBankbookStoragePath(targetUid, storagePath);
+    if (safeBankbookPath === null) {
       console.error(
-        `[getPayrollBankbookUrl] 경로 소유자 불일치 — target=${targetUid}`);
+        `[getPayrollBankbookUrl] 통장사본 경로가 아니다 — target=${targetUid}`);
       throw new HttpsError("failed-precondition",
         "통장사본 파일 경로가 올바르지 않습니다. 근로자에게 재등록을 요청해주세요.");
     }
-    const file = admin.storage().bucket().file(storagePath);
+    const file = admin.storage().bucket().file(safeBankbookPath);
     const [exists] = await file.exists();
     if (!exists) {
       throw new HttpsError("not-found", "통장사본 파일이 Storage에 존재하지 않습니다.");

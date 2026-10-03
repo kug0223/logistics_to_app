@@ -146,7 +146,19 @@ void main() {
       final d = getUrl.substring(getUrl.indexOf('request.data as {'),
           getUrl.indexOf('};', getUrl.indexOf('request.data as {')));
       expect(d.toLowerCase().contains('path'), isFalse);
-      expect(getUrl, contains('srvIsOwnedStoragePath(storagePath, targetUid)'));
+      // [R7-P4.4E.11B.1C 갱신] 이 단정은 계속 통과하지만 **의미가 좁아졌다.**
+      //   예전에는 이 reader 의 유일한 경로 검증이었고, 이제는 ID 분기의
+      //   검증이다. BANKBOOK 분기는 exact 통장사본 술어를 거친다 — 넓은
+      //   술어로는 같은 사용자의 신분증이 BANKBOOK 으로 통과했다.
+      //   실패하지 않았다고 두면 "이 reader 는 넓은 술어로 충분하다"로
+      //   읽히므로 두 분기를 모두 못박는다.
+      expect(getUrl, contains('srvIsOwnedStoragePath(storagePath, targetUid)'),
+          reason: 'ID 분기 검증');
+      expect(getUrl, contains(
+          'srvResolveOwnedBankbookStoragePath(targetUid, storagePath)'),
+          reason: 'BANKBOOK 분기는 exact 통장사본 술어를 거친다');
+      expect(getUrl, contains('.file(safeStoragePath)'),
+          reason: '서명 대상은 분기별로 검증된 값이다');
     });
   });
 

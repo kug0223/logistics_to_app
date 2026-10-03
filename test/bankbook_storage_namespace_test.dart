@@ -201,6 +201,27 @@ void main() {
       expect(r, contains('"not-found", "통장사본 파일이 Storage에 존재하지 않습니다."'));
     });
 
+    test('BANK-READ-07 이 그룹은 reader 하나만 본다 — 나머지 둘도 좁혀졌다', () {
+      // [R7-P4.4E.11B.1C] 이 그룹의 맹점이 11B2 BLOCKER 였다. BANK-READ-01~06
+      //   은 `callableGetBankbookSignedUrl` **하나만** 검사했고, 통장사본
+      //   bytes 를 돌려줄 수 있는 입구가 셋이라는 사실을 아무 셀도 보지
+      //   않았다. 그래서 나머지 둘이 `srvIsOwnedStoragePath`(소유자 접두만)로
+      //   남아 있는 상태가 세 단계를 통과했다.
+      //
+      //   reader 전수 inventory 는 bankbook_reader_namespace_contract_test
+      //   가 소유한다(네 번째 reader 가 생기면 거기서 깨진다). 여기서는 이
+      //   파일이 한 reader 만 보는 것이 **의도된 범위**임을 분명히 하고,
+      //   나머지 둘이 같은 술어를 쓰는지 최소 확인만 한다.
+      for (final other in [
+        'export const callableGetPayrollBankbookUrl',
+        'export const callableGetApplicantDocumentUrl',
+      ]) {
+        final body = _flat(_codeOf(_slice(raw, other, '\n// ──')));
+        expect(body, contains('srvResolveOwnedBankbookStoragePath('),
+            reason: '$other 이 exact 통장사본 술어를 쓰지 않는다');
+      }
+    });
+
     test('BANK-READ-06 인가 축(canManageWage·확정·동의)은 바뀌지 않았다', () {
       final r = reader();
       for (final keep in [
