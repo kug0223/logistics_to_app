@@ -353,6 +353,10 @@ service cloud.firestore {
                          //   제출순서 카운터와 삭제 대기 목록을 직접 고칠
                          //   이유는 없다.
                          'idDocumentAttemptSeq', 'idDocumentOrphanPaths',
+                         // [R7-P4.4E.11B.1A §7·§8] 통장사본 cleanup 제어 필드.
+                         //   삭제 대상을 지정하는 값이므로 운영 권한도 직접
+                         //   쓰지 않는다 — CF Admin SDK 전용.
+                         'bankbookCleanupPendingPaths',
                          'isIdVerified', 'idCardImagePath', 'idCardImageUrl'
                        ]);
 
@@ -507,6 +511,16 @@ service cloud.firestore {
                          //   정당한 writer 는 callableBeginIdDocumentSubmission /
                          //   callableMarkIdCardVerified(Admin SDK) 뿐이다.
                          'idDocumentAttemptSeq', 'idDocumentOrphanPaths',
+                         // [R7-P4.4E.11B.1A §7·§8] 통장사본 cleanup 제어 필드.
+                         //
+                         //   신분증의 `idDocumentOrphanPaths` 를 client-writable
+                         //   로 뒀을 때 cross-artifact 삭제 BLOCKER 가 났던
+                         //   전례를 반복하지 않는다 — 이 값은 **서버가 지울
+                         //   대상을 지정하는 목록**이다. 심을 수 있으면
+                         //   자기 신분증·통장사본을 서버에게 지우게 만들 수
+                         //   있다. readiness 도 UI state 도 아니고, 정당한
+                         //   writer 는 CF(Admin SDK) 뿐이다.
+                         'bankbookCleanupPendingPaths',
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -687,6 +701,8 @@ service cloud.firestore {
                        //   떨어진다. 삭제 대기 목록도 가입 시 만들 이유가 없다.
                        request.resource.data.get('idDocumentAttemptSeq', null) == null &&
                        request.resource.data.get('idDocumentOrphanPaths', null) == null &&
+                       // [R7-P4.4E.11B.1A §8] 가입 시점 cleanup 목록 주입 차단.
+                       request.resource.data.get('bankbookCleanupPendingPaths', null) == null &&
                        // [HIGH-U3] termsConsentAt/termsConsent: CF callableRecordTermsConsent 전용
                        //   법적 타임스탬프 위조 차단 (Trust Boundary Charter)
                        request.resource.data.get('termsConsentAt', null) == null &&

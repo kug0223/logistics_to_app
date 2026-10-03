@@ -75,10 +75,16 @@ void main() {
   //   쓰도록 하기 위해서다. 계약 자체는 그대로이고 사는 곳만 바뀌었다.
   String collector() => _flat(_codeOf(_slice(
       raw, 'function srvCollectOwnedBankbookPaths(', '\n}')));
-  String artifactDel() => _flat(_codeOf(_slice(
-      raw, 'async function srvDeleteOwnedBankbookArtifacts(', '\n}')));
   String updater() => _flat(_codeOf(_slice(
       raw, 'export const callableUpdateBankAccount', '\n// ──')));
+  // [R7-P4.4E.11B.1A] `srvDeleteOwnedBankbookArtifacts` 는 사라졌다.
+  //   물리 삭제는 Phase 2 drain 하나가 소유하고, canonical mutation +
+  //   cleanup owner 등록은 Phase 1 helper 가 소유한다. 예전 셀들은
+  //   이 두 접근자로 **갱신**된다 — 삭제하지 않는다.
+  String phase1() => _flat(_codeOf(_slice(
+      raw, 'async function srvResetBankStateWithCleanupOwner(', '\n}')));
+  String drain() => _flat(_codeOf(_slice(
+      raw, 'async function srvDrainBankbookCleanup(', '\n}')));
 
   // ══════════════════════════════════════════════════════════════
   group('BANK-NS-0x 네임스페이스 술어 (§7·§10)', () {
@@ -208,10 +214,22 @@ void main() {
   });
 
   // ══════════════════════════════════════════════════════════════
-  group('BANK-DEL-0x 삭제 lifecycle (§19~§28)', () {
+  // [R7-P4.4E.11B.1A 갱신 — 삭제 아님]
+  //
+  //   이 그룹의 셀들은 §19~§28 의 "Storage 먼저 → 실패하면 Firestore 를
+  //   건드리지 않는다" 계약을 고정하고 있었다. 그 계약이 반대 방향의
+  //   실패를 만들었다 — Storage 삭제 성공 + Firestore update 실패 =
+  //   포인터는 남고 bytes 는 없는 **canonical dangling pointer**.
+  //
+  //   그래서 순서가 바뀌었다: Phase 1(canonical mutation + cleanup owner
+  //   등록, atomic) → Phase 2(물리 삭제 drain). 셀 ID 는 그대로 두고
+  //   **같은 질문을 새 구조에 다시 묻는다.** 셀을 지우면 그 질문이 다시
+  //   퇴행했을 때 아무도 모른다.
+  group('BANK-DEL-0x 삭제 lifecycle (§19~§28 → 11B.1A 2단계로 갱신)', () {
     test('BANK-DEL-01 canonical path 를 후보로 수집한다 (B2 핵심)', () {
-      // [R7-P4.4E.11B.1 §21 갱신] 수집이 공유 helper 로 옮겨졌다.
-      expect(deleter(), contains('srvCollectOwnedBankbookPaths(callerUid, userSnap.data())'));
+      // 수집은 여전히 공유 collector 가 한다. 호출 지점만 Phase 1 로 옮겼다.
+      expect(phase1(), contains('srvCollectOwnedBankbookPaths(uid, cur)'));
+      expect(deleter(), contains('await srvResetBankStateWithCleanupOwner('));
       expect(collector(), contains('data?.["bankbookImagePath"]'),
           reason: 'V3 canonical 포인터가 수집되지 않으면 물리 삭제가 일어나지 않는다');
     });
@@ -236,47 +254,50 @@ void main() {
 
     test('BANK-DEL-06 중복 후보는 한 번만 지운다', () {
       expect(collector(), contains('const paths = new Set<string>();'));
+      // 큐에 들어갈 때도 집합 의미다 — 이미 대기 중인 경로를 중복시키지 않는다.
+      expect(phase1(), contains('admin.firestore.FieldValue.arrayUnion(...found.paths)'));
     });
 
     test('BANK-DEL-07 not-found 는 성공 동치다 (§28)', () {
-      expect(artifactDel(), contains('.delete({ignoreNotFound: true});'));
+      expect(drain(), contains('.delete({ignoreNotFound: true});'));
     });
 
-    test('BANK-DEL-08 실제 Storage 오류면 Firestore 를 건드리지 않고 실패한다 (§22)', () {
-      // helper 가 던지고, 호출부는 그 전에 Firestore 를 건드리지 않는다.
-      final h = artifactDel();
-      final delAt = h.indexOf('.delete({ignoreNotFound: true});');
-      final throwAt = h.indexOf('"unavailable",');
-      expect(delAt, greaterThan(0));
-      expect(throwAt, greaterThan(delAt));
+    test('BANK-DEL-08 Storage 오류가 canonical state 를 되돌리지 않는다 (§22 갱신)', () {
+      // [갱신] 예전 기대는 "Storage 실패 → Firestore 미도달"이었다. 이제
+      //   순서가 반대다. 같은 걱정("한쪽만 성립한 채 침묵")을 새 구조에
+      //   묻는다 — Phase 1 이 atomic 하게 먼저 끝나고, Phase 2 실패는
+      //   **항목을 큐에 남긴다**. 되돌리지 않고, 삼키지도 않는다.
       final d = deleter();
-      final callAt = d.indexOf('await srvDeleteOwnedBankbookArtifacts(');
-      final fsAt = d.indexOf('bankName: admin.firestore.FieldValue.delete(),');
-      expect(callAt, greaterThan(0));
-      expect(fsAt, greaterThan(callAt),
-          reason: '물리 삭제 → (실패 시 throw) → Firestore 정리 순서');
-      expect(d, isNot(contains('Storage 삭제 실패 (무시)')),
+      final p1At = d.indexOf('await srvResetBankStateWithCleanupOwner(');
+      final p2At = d.indexOf('await srvDrainBankbookCleanup(callerUid, "callableDeleteBankInfo")');
+      expect(p1At, greaterThan(0));
+      expect(p2At, greaterThan(p1At), reason: 'Phase 1 → Phase 2 순서');
+      final dr = drain();
+      expect(dr, contains('out.failed++;'));
+      expect(dr, contains('continue;'),
+          reason: '실패한 항목은 목록에 남아야 다음 drain 이 다시 집는다');
+      expect(dr, isNot(contains('Storage 삭제 실패 (무시)')),
           reason: '삼키고 성공으로 끝내는 경로가 남아 있으면 안 된다');
     });
 
-    test('BANK-DEL-09·10 재호출로 복구된다 (§23)', () {
+    test('BANK-DEL-09·10 재호출이 아니라 **큐가** 주인이다 (§23 갱신)', () {
+      // [갱신] 예전 계약은 "사용자가 다시 호출하면 수렴한다"였다. 그건
+      //   durable recovery 가 아니다. 이제 경로·대기 여부·재시도 주인이
+      //   `bankbookCleanupPendingPaths` 에 남는다.
       final d = deleter();
-      // Storage 는 not-found 로 지나가고 Firestore 정리만 다시 시도된다.
-      expect(artifactDel(), contains('.delete({ignoreNotFound: true});'));
-      // Firestore update 실패를 삼키지 않는다 — await 그대로 전파한다.
-      //   helper 의 catch 는 의도된 것이다(rethrow 해서 Firestore 를
-      //   건드리지 않는다). 그래서 **Firestore 정리 구간만** 본다.
-      expect(d, contains('await db.collection("users").doc(callerUid).update({'));
-      final fsBlock = _flat(_codeOf(_slice(raw,
-          'await db.collection("users").doc(callerUid).update({\n      bankName:',
-          'return {success: true};')));
-      expect(fsBlock, isNot(contains('catch')),
-          reason: 'Firestore 정리를 try/catch 로 감싸 성공으로 끝내면 안 된다');
-      // helper 쪽 catch 는 rethrow 한다 — 삼키지 않는다.
-      expect(artifactDel(), contains('throw new HttpsError( "unavailable",'));
+      expect(d, contains('const bankDelDrain ='));
+      expect(cf, contains('const BANKBOOK_CLEANUP_FIELD = "bankbookCleanupPendingPaths";'));
+      // Phase 1 은 쓰기 경계가 하나다 — 중간 상태가 관측되지 않는다.
+      final p = phase1();
+      expect(p, contains('db.runTransaction(async (tx) => {'));
+      expect('tx.update(ref,'.allMatches(p).length, 1,
+          reason: '쪼개 쓰면 "포인터는 지워졌는데 주인은 없는" 금지 상태가 생긴다');
+      // 재호출해도 수렴한다는 성질 자체는 유지된다(not-found = 성공).
+      expect(drain(), contains('.delete({ignoreNotFound: true});'));
     });
 
     test('BANK-DEL-11 canonical state cleanup 은 그대로다 (§25)', () {
+      // 필드 집합은 helper 인자로 **위치만** 옮겼다 — 내용 무변경.
       final d = deleter();
       for (final f in [
         'bankName: admin.firestore.FieldValue.delete(),',
@@ -290,18 +311,23 @@ void main() {
       ]) {
         expect(d, contains(f), reason: '$f 가 바뀌면 안 된다');
       }
+      // 그 패치가 실제로 Phase 1 로 전달된다.
+      expect(phase1(), contains('const write: Record<string, unknown> = {...patch};'));
     });
 
     test('BANK-DEL-12 invalid 포인터 때문에 계좌 삭제가 막히지 않는다 (§24)', () {
-      final d = deleter();
-      final skipAt = d.indexOf('if (bankDel.skipped > 0) {');
-      final fsAt = d.indexOf('bankName: admin.firestore.FieldValue.delete(),');
-      expect(skipAt, greaterThan(0));
-      expect(fsAt, greaterThan(skipAt),
-          reason: '건너뛰고도 Firestore 정리는 진행한다');
-      expect(d, isNot(contains('if (bankDel.skipped > 0) { throw')));
-      // collector 가 skip 을 실패로 승격시키지 않는다 (§22 helper 계약).
+      // [갱신] 예전엔 호출부에 `if (bankDel.skipped > 0)` 분기가 있었다.
+      //   이제 skip 집계는 Phase 1 안에서 끝나고, 같은 트랜잭션이 canonical
+      //   패치를 그대로 적용한다 — 건너뛴 포인터가 삭제를 막을 수 없다.
+      final p = phase1();
+      expect(p, contains('if (found.skipped > 0) {'));
+      expect(p, contains('return found.skipped;'));
+      expect(p, isNot(contains('if (found.skipped > 0) { throw')));
+      // collector 가 skip 을 실패로 승격시키지 않는다.
       expect(collector(), isNot(contains('throw')));
+      // 호출부도 skip 때문에 던지지 않는다.
+      final d = deleter();
+      expect(d, isNot(contains('if (bankDelSkipped > 0) { throw')));
     });
   });
 
@@ -309,56 +335,63 @@ void main() {
   group('BANK-UPD-xx 계좌 변경이 옛 통장사본 bytes 를 종료한다 (§0·§4·§10)', () {
     test('BANK-UPD-01·02·03·04 같은 helper 로 후보를 모으고 지운다', () {
       final u = updater();
-      expect(u, contains('const bankUpd = srvCollectOwnedBankbookPaths(callerUid, userData);'));
-      expect(u, contains('await srvDeleteOwnedBankbookArtifacts( bankUpd.paths, "callableUpdateBankAccount");'));
-      // path·URL 독립 수집 + dedupe 는 helper 계약이다(BANK-DEL-02·06 참조).
+      expect(u, contains('const bankUpdSkipped = await srvResetBankStateWithCleanupOwner('));
+      expect(u, contains('await srvDrainBankbookCleanup(callerUid, "callableUpdateBankAccount")'));
+      // path·URL 독립 수집 + dedupe 는 collector 계약이다(BANK-DEL-02·06 참조).
       expect(collector(), contains('const paths = new Set<string>();'));
+      // 삭제와 **같은** 두 소유자를 쓴다 — 경로 문법이 복제되지 않았다.
+      expect(deleter(), contains('await srvResetBankStateWithCleanupOwner('));
     });
 
-    test('BANK-UPD-05 검증이 전부 끝난 뒤에 삭제를 시작한다 (§4)', () {
+    test('BANK-UPD-05 검증이 전부 끝난 뒤에 Phase 1 을 시작한다 (§4)', () {
       final u = updater();
       final bankNameAt = u.indexOf('"은행명이 필요합니다."');
       final acctAt = u.indexOf('"계좌번호가 필요합니다."');
       final roleAt = u.indexOf('"지원자 계정만 급여 계좌를 등록할 수 있습니다."');
       final holderAt = u.indexOf('"사용자 이름이 등록되지 않았습니다."');
-      final delAt = u.indexOf('await srvDeleteOwnedBankbookArtifacts(');
+      final delAt = u.indexOf('await srvResetBankStateWithCleanupOwner(');
       for (final at in [bankNameAt, acctAt, roleAt, holderAt]) {
         expect(at, greaterThan(0));
         expect(delAt, greaterThan(at),
-            reason: '검증보다 삭제가 먼저면 invalid 입력에 통장사본을 잃는다');
+            reason: '검증보다 cleanup 등록이 먼저면 invalid 입력에 통장사본을 잃는다');
       }
     });
 
     test('BANK-UPD-10~13 invalid 포인터는 건너뛰되 계좌 변경을 막지 않는다 (§9)', () {
+      // [갱신] skip 집계가 Phase 1 반환값으로 옮겨졌다. canonical 패치는
+      //   같은 트랜잭션에서 그대로 적용되므로 skip 이 변경을 막을 수 없다.
       final u = updater();
-      final skipAt = u.indexOf('if (bankUpd.skipped > 0) {');
-      final fsAt = u.indexOf('bankName: bankName.trim(),');
-      expect(skipAt, greaterThan(0));
-      expect(fsAt, greaterThan(skipAt));
-      expect(u, isNot(contains('if (bankUpd.skipped > 0) { throw')),
+      expect(u, contains('bankName: bankName.trim(),'));
+      expect(u, isNot(contains('if (bankUpdSkipped > 0) { throw')),
           reason: 'INVALID_POINTER ≠ STORAGE_FAILURE — DOS 로 만들지 않는다');
+      expect(phase1(), contains('return found.skipped;'));
     });
 
-    test('BANK-UPD-30·31 Storage 실패면 Firestore 에 도달하지 않는다 (§11·§15)', () {
+    test('BANK-UPD-30·31 drain 실패가 새 계좌를 되돌리지 않는다 (§11·§15 갱신)', () {
+      // [갱신] 예전 기대는 "Storage 실패면 Firestore 에 도달하지 않는다"
+      //   였다. 이제 순서가 반대이고, 실패한 bytes 는 큐에 남는다. 같은
+      //   걱정("한쪽만 성립")을 새 구조에 묻는다.
       final u = updater();
-      final delAt = u.indexOf('await srvDeleteOwnedBankbookArtifacts(');
-      final fsAt = u.indexOf('await db.collection("users").doc(callerUid).update({');
-      expect(delAt, greaterThan(0));
-      expect(fsAt, greaterThan(delAt));
-      // helper 가 던지므로 update 에 도달하지 않는다 → 계좌·버전·포인터 보존.
-      expect(artifactDel(), contains('throw new HttpsError( "unavailable",'));
-      // 호출부가 그 예외를 삼키지 않는다.
-      final seg = u.substring(delAt, fsAt);
-      expect(seg, isNot(contains('catch')));
+      final p1At = u.indexOf('await srvResetBankStateWithCleanupOwner(');
+      final p2At = u.indexOf('const bankUpdDrain =');
+      expect(p1At, greaterThan(0));
+      expect(p2At, greaterThan(p1At));
+      // §17·§18 — 여기서는 던지지 않는다. version 이 중복 전진하면 안 된다.
+      final seg = u.substring(p2At);
+      expect(seg, isNot(contains('throw new HttpsError( "unavailable",')),
+          reason: '계좌 변경은 이미 성립했다 — 던지면 version 이 두 번 오른다');
+      expect(u, contains('return {success: true, cleanupPending: bankUpdDrain.pendingAfter > 0};'));
     });
 
     test('BANK-UPD-40 bankAccountVersion semantics 불변 (§15)', () {
       final u = updater();
       expect(u, contains('bankAccountVersion: admin.firestore.FieldValue.increment(1),'));
       expect(u, contains('bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),'));
-      // 실패 호출에서 증가하지 않는다 — update 가 단일 경계다.
-      expect('db.collection("users").doc(callerUid).update({'.allMatches(u).length, 1,
-          reason: '쪼개 쓰면 중간 상태가 관측된다 (§14)');
+      // [갱신] 단일 경계는 이제 Phase 1 트랜잭션이다 — 호출부는 users 문서를
+      //   직접 쓰지 않는다. 쪼개 쓰면 중간 상태가 관측된다 (§14).
+      expect(u, isNot(contains('db.collection("users").doc(callerUid).update({')),
+          reason: 'canonical 쓰기가 Phase 1 밖에 또 있으면 원자성이 깨진다');
+      expect('tx.update(ref,'.allMatches(phase1()).length, 1);
     });
 
     test('BANK-UPD-41 bankbook reset semantics 불변 (§2·§38)', () {
@@ -399,12 +432,45 @@ void main() {
       }
     });
 
-    test('BANK-UPD-21 helper 가 not-found 를 성공으로 본다 (§12)', () {
-      expect(artifactDel(), contains('.delete({ignoreNotFound: true});'));
+    test('BANK-UPD-21 drain 이 not-found 를 성공으로 본다 (§12)', () {
+      expect(drain(), contains('.delete({ignoreNotFound: true});'));
     });
   });
 
   // ══════════════════════════════════════════════════════════════
+  // [R7-P4.4E.11B.1A 신규] 네임스페이스 축에서 본 2단계 소유자.
+  //
+  //   lifecycle **상세**(drain cap, current 보호, 목록 제거 실패 복구,
+  //   rules 권위, return semantics)는 bankbook_durable_cleanup_test.dart
+  //   가 소유한다. 이 파일은 네임스페이스 권위를 소유하므로, 큐에 들어가고
+  //   큐에서 나오는 양쪽이 **같은 술어**를 거치는지만 여기서 고정한다.
+  group('BANK-*-20 2단계 소유자가 네임스페이스 술어를 거친다', () {
+    test('BANK-DEL-20 삭제가 Phase 1 helper + drain 을 쓴다', () {
+      final d = deleter();
+      expect(d, contains('await srvResetBankStateWithCleanupOwner('));
+      expect(d, contains('await srvDrainBankbookCleanup(callerUid, "callableDeleteBankInfo")'));
+      expect(d, isNot(contains('oldImageUrl.match(')));
+      expect(d, isNot(contains('decodeURIComponent(pathMatch[1])')));
+    });
+
+    test('BANK-UPD-20 계좌 변경이 같은 두 소유자를 쓴다', () {
+      final u = updater();
+      expect(u, contains('await srvResetBankStateWithCleanupOwner('));
+      expect(u, contains('await srvDrainBankbookCleanup(callerUid, "callableUpdateBankAccount")'));
+    });
+
+    test('BANK-NS-20 큐 입구·출구가 모두 통장사본 술어를 본다', () {
+      final c = collector();
+      expect(c, contains('const ok = srvResolveOwnedBankbookStoragePath(uid, raw);'));
+      expect(c, contains('if (ok === null) { skipped++; continue; }'));
+      expect(c, contains('data?.["bankbookImagePath"]'));
+      expect(c, contains('data?.["bankbookImageUrl"]'));
+      expect(c, contains('const paths = new Set<string>();'));
+      // 출구에서도 본다 — 목록이 오염돼도 다른 서류를 지우지 않는다.
+      expect(drain(), contains('if (!srvIsOwnedBankbookStoragePath(uid, p)) {'));
+    });
+  });
+
   group('BANK-X-xx 교체 권위 · cross-artifact · 비변경 (§15~§17·§38·§41·§46)', () {
     test('BANK-X-01 교체 시 지울 경로는 서버가 검증해서 돌려준다 (§16)', () {
       final w = writer();
@@ -412,7 +478,13 @@ void main() {
       expect(w, contains('const prevSafe = srvResolveOwnedBankbookStoragePath(callerUid, prevRaw);'));
       expect(w, contains('safePrevPath = (prevSafe !== null && prevSafe !== storagePath) ? prevSafe : null;'),
           reason: '새 경로와 같으면 null — 현재 것을 지우지 않는다');
-      expect(w, contains('return {success: true, previousBankbookPath: safePrevPath};'));
+      // [R7-P4.4E.11B.1A 갱신] 응답에 `cleanupPending` 이 더해졌다 —
+      //   교체도 같은 durable owner 를 쓰게 됐기 때문이다.
+      //   `previousBankbookPath` 는 구버전 클라이언트 호환으로 유지된다.
+      expect(w, contains('previousBankbookPath: safePrevPath,'));
+      expect(w, contains('cleanupPending: bbDrain.pendingAfter > 0,'));
+      expect(w, contains('admin.firestore.FieldValue.arrayUnion(safePrevPath)'),
+          reason: '포인터 교체와 같은 트랜잭션에서 cleanup owner 를 등록한다');
     });
 
     test('BANK-X-02 클라이언트는 서버가 준 값만 지운다 (§17)', () {

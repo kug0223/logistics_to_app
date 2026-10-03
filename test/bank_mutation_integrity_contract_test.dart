@@ -89,44 +89,45 @@ void main() {
     });
 
     test('04 단일 원자 쓰기다 — 버전과 내용이 갈라지지 않는다', () {
-      final updates = RegExp(r'\.update\(').allMatches(del).length;
-      expect(updates, 1, reason: '두 번 쓰면 중간 상태가 관측된다');
+      // [R7-P4.4E.11B.1A 갱신] canonical 쓰기가 공유 Phase 1 helper
+      //   `srvResetBankStateWithCleanupOwner` 안으로 옮겨졌다. 원자성 계약은
+      //   그대로이고 더 강해졌다 — 같은 트랜잭션에서 cleanup owner 까지
+      //   함께 쓴다. 그래서 "포인터는 지웠는데 주인이 없는" 상태가
+      //   관측될 수 없다.
+      expect(del, contains('srvResetBankStateWithCleanupOwner('));
+      final helper = _flat(_codeOf(_sliceOf(rawCf,
+          'async function srvResetBankStateWithCleanupOwner(', '\n}')));
+      expect(RegExp(r'tx\.update\(').allMatches(helper).length, 1,
+          reason: '두 번 쓰면 중간 상태가 관측된다');
+      expect(helper, contains('return db.runTransaction(async (tx) => {'));
     });
 
-    test('05 통장사본 물리 삭제를 먼저 하고 Firestore 정리는 그 뒤다', () {
-      // [R7-P4.4E.11B §22 — 순서 역전, 의도된 변경]
+    test('05 canonical mutation 이 먼저, 물리 삭제는 추적된 뒤에 한다', () {
+      // [R7-P4.4E.11B.1A — 두 번째 순서 변경, 의도된 것]
       //
-      //   예전 계약은 "Firestore 먼저"였고 근거는 CLAUDE.md 의 일반 규칙
-      //   ("Firestore 실패 시 Storage 는 건드리지 않는다 → broken URL 방지")
-      //   이었다. 그런데 이 함수에서는 **반대 실패가 더 나쁘다**:
+      //   세 가지를 차례로 거쳤다.
+      //     ① Firestore 먼저 → Storage 실패
+      //        = 포인터·소유자 동시 소멸 → 영구 untracked orphan (B2)
+      //     ② Storage 먼저 → Firestore 실패
+      //        = 포인터 남고 bytes 없음 → canonical dangling pointer
+      //          (readiness true, 파일 없음)
+      //     ③ 지금: canonical mutation 과 **cleanup owner 등록**을 한
+      //        트랜잭션에 묶고, 물리 삭제는 그 뒤에 한다.
       //
-      //     Firestore 먼저 → Storage 실패
-      //       → 포인터·소유자·재시도 경로가 동시에 사라진다
-      //       → 민감 서류가 영구 untracked orphan (= B2)
-      //
-      //     Storage 먼저 → Storage 실패
-      //       → throw, Firestore 미변경, 포인터 유지 → 재호출로 복구
-      //     Storage 먼저 → Firestore 실패
-      //       → 일시적 dangling pointer, 다음 호출에서 not-found(성공 동치)
-      //         로 지나가고 정리만 재시도 → 스스로 수렴
-      //
-      //   그래서 최악이 "영구 고아"에서 "일시적 dangling"으로 바뀐다.
-      //   CLAUDE.md 의 일반 규칙과 다른 순서를 **이 함수에 한해** 쓴다.
-      // [R7-P4.4E.11B.1 §21 갱신] 물리 삭제가 공유 helper
-      //   `srvDeleteOwnedBankbookArtifacts` 로 옮겨졌다 —
-      //   `callableUpdateBankAccount` 가 같은 계약을 쓰게 하려고 수렴시켰다.
-      //   순서 계약은 그대로다: helper 호출 → (실패 시 throw) → Firestore.
-      final st = del.indexOf('await srvDeleteOwnedBankbookArtifacts(');
-      final fs = del.indexOf('.update(');
-      expect(st, greaterThan(-1));
-      expect(fs, greaterThan(st),
-          reason: '물리 삭제 실패 시 포인터를 남겨 재시도 가능하게 한다');
-      // 그리고 Storage 실패를 삼키지 않는다 — 삼키면 B2 가 그대로 남는다.
-      final helper = _flat(_codeOf(_sliceOf(rawCf,
-          'async function srvDeleteOwnedBankbookArtifacts(', '\n}')));
-      expect(helper, contains('throw new HttpsError( "unavailable",'));
-      expect(helper, contains('.delete({ignoreNotFound: true});'));
+      //   ①②는 둘 다 "사용자가 다시 호출하면 수렴"에 기댔다. 그건 durable
+      //   recovery 가 아니다. ③에서는 삭제가 실패해도 **정확한 경로가
+      //   추적된 상태**로 남고, 다음 mutation 이 다시 집는다.
+      final p1 = del.indexOf('srvResetBankStateWithCleanupOwner(');
+      final p2 = del.indexOf('srvDrainBankbookCleanup(');
+      expect(p1, greaterThan(-1));
+      expect(p2, greaterThan(p1),
+          reason: 'Phase 1(원자) → Phase 2(물리) 순서');
+      // Phase 1 앞에 Storage 삭제가 없다 — ②로 돌아가지 않는다.
+      expect(del.substring(0, p1), isNot(contains('.delete({ignoreNotFound')));
+      // 실패를 삼키지 않는다 — 추적하고, 삭제 요청에서는 재시도를 말한다.
       expect(_flat(del), isNot(contains('Storage 삭제 실패 (무시)')));
+      expect(_flat(del),
+          contains('if (bankDelDrain.pendingAfter > 0) { throw new HttpsError('));
     });
   });
 

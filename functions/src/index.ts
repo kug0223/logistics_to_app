@@ -2936,34 +2936,165 @@ function srvCollectOwnedBankbookPaths(
 }
 
 /**
- * [R7-P4.4E.11B.1 §10·§11·§12·§22] 통장사본 bytes 를 종료한다.
+ * [R7-P4.4E.11B.1A §10·§11·§12·§21·§22] canonical bank state 변경과
+ * cleanup owner 등록을 **같은 atomic 경계**에서 수행한다.
  *
- *   계약은 호출자마다 다르게 해석되지 않는다:
- *     이미 없는 object  → 성공 동치(`ignoreNotFound`) — 없는 파일 때문에
- *                        사용자가 영구히 계좌를 바꾸거나 지울 수 없게
- *                        만들지 않는다.
- *     실제 Storage 오류 → **throw**. 호출자는 Firestore 를 건드리지 않고
- *                        끝내야 한다. 포인터와 소유자가 남아 있으므로
- *                        재호출이 곧 retry 다.
+ *   트랜잭션 안에서 현재 포인터를 읽어 검증된 통장사본 경로만 뽑고,
+ *   호출자가 준 canonical 패치와 함께 `arrayUnion` 으로 등록한다. 그래서
+ *   다음 상태는 **관측될 수 없다**:
  *
- * @param {Set<string>} paths 검증된 통장사본 경로
+ *     current pointer 제거 완료 + cleanup 등록 실패
+ *     cleanup 등록 완료 + current pointer 그대로
+ *
+ *   [§12] 통장사본이 아닌 포인터(신분증·사업자등록증·프로필·타인)는
+ *   목록에 넣지 않는다 — 그건 실패도 cleanup 대상도 아니다.
+ *   그래도 canonical reset 은 그대로 진행한다.
+ *
+ *   [§21] 이미 대기 중인 경로는 `arrayUnion` 이 보존한다 — 새 경로로
+ *   덮어쓰지 않는다. [§22] 같은 object 가 path·URL·기존 목록에 겹쳐도
+ *   집합 의미로 한 항목이다.
+ *
+ * @param {string} uid 소유자
  * @param {string} label 로그 라벨
- * @return {Promise<void>} 실제 오류면 HttpsError 를 던진다
+ * @param {Record<string, unknown>} patch canonical bank 패치
+ * @return {Promise<number>} 통장사본이 아니라 건너뛴 포인터 수
  */
-async function srvDeleteOwnedBankbookArtifacts(
-  paths: Set<string>, label: string
-): Promise<void> {
-  for (const p of paths) {
+async function srvResetBankStateWithCleanupOwner(
+  uid: string, label: string, patch: Record<string, unknown>
+): Promise<number> {
+  const ref = db.collection("users").doc(uid);
+  return db.runTransaction(async (tx) => {
+    const cur = (await tx.get(ref)).data() ?? {};
+    const found = srvCollectOwnedBankbookPaths(uid, cur);
+    const write: Record<string, unknown> = {...patch};
+    if (found.paths.size > 0) {
+      write[BANKBOOK_CLEANUP_FIELD] =
+        admin.firestore.FieldValue.arrayUnion(...found.paths);
+    }
+    tx.update(ref, write);
+    if (found.skipped > 0) {
+      console.warn(
+        `[${label}] 통장사본이 아닌 포인터 ${found.skipped}건 건너뜀 (삭제 안 함)`);
+    }
+    return found.skipped;
+  });
+}
+
+/**
+ * [R7-P4.4E.11B.1A §5·§6] 통장사본 cleanup 추적 필드.
+ *
+ *   canonical bankbook state 에서 **이미 분리됐지만** physical delete 가
+ *   아직 확정되지 않은, 검증된 통장사본 Storage 경로들.
+ *
+ *   이 필드는 readiness 가 아니다. 문서 존재 표시도, UI state 도,
+ *   review/match state 도 아니다. **오직 cleanup ownership** 이다.
+ */
+const BANKBOOK_CLEANUP_FIELD = "bankbookCleanupPendingPaths";
+
+/** 한 mutation 에서 비울 최대 개수 — 긴 목록이 한 호출을 붙잡지 않는다. */
+const BANKBOOK_CLEANUP_DRAIN_CAP = 20;
+
+/** [§13] drain 결과 집계. 로그·ACK 판정에 쓴다. */
+type SrvBankbookDrainResult = {
+  pendingBefore: number;
+  deleted: number;
+  /** 실제 Storage 오류 또는 목록 제거 실패 — 항목을 남긴다. */
+  failed: number;
+  /** 통장사본이 아닌 항목 — 지우지 않고 남긴다(defense-in-depth). */
+  skippedInvalid: number;
+  /** 현재 current 와 같은 경로 — 절대 지우지 않는다(§14). */
+  skippedCurrent: number;
+  pendingAfter: number;
+};
+
+/**
+ * [R7-P4.4E.11B.1A §13·§14·§15·§23] 추적된 통장사본 cleanup 을 비운다.
+ *
+ *   왜 이 구조인가: 이전 구현은 "Storage 먼저 지우고 Firestore 를 바꾼다"
+ *   였다. 그건 영구 고아를 막았지만 반대 실패를 만들었다 —
+ *
+ *     Storage 삭제 성공 → Firestore update 실패
+ *       → `bankbookImagePath` 는 그대로 → readiness 는 true
+ *       → 실제 object 는 없음 = **canonical dangling pointer**
+ *
+ *   "사용자가 다시 호출하면 수렴한다"는 durable recovery 가 아니다.
+ *   사용자가 재시도하지 않아도 시스템에 **정확한 경로 + 대기 여부 +
+ *   재시도 주인**이 남아 있어야 한다. 그래서 canonical mutation 과 같은
+ *   atomic 경계에서 경로를 이 목록에 등록하고, 물리 삭제는 그 뒤에 한다.
+ *
+ *   [§23] 범위는 **이 사용자의 추적된 경로뿐**이다. `users/{uid}/` 전체를
+ *   훑지 않고, 포인터 없는 `bankbook_*` 을 스스로 찾아내지도 않는다.
+ *
+ *   [§14] 현재 `bankbookImagePath` 와 같은 경로는 지우지 않는다 — 대기
+ *   등록 후 새 통장사본이 올라오는 경합에서 살아 있는 bytes 를 파괴하면
+ *   안 된다. 그래서 drain 직전에 **fresh** 사용자 상태를 읽는다.
+ *
+ *   [§15] 삭제는 성공했는데 목록 제거가 실패하면 항목이 남는다. 그 상태는
+ *   안전하다 — 다음 drain 에서 not-found(성공 동치)로 지나가고 제거만
+ *   다시 시도해 수렴한다.
+ *
+ * @param {string} uid 소유자
+ * @param {string} label 로그 라벨
+ * @return {Promise<SrvBankbookDrainResult>} 집계
+ */
+async function srvDrainBankbookCleanup(
+  uid: string, label: string
+): Promise<SrvBankbookDrainResult> {
+  const ref = db.collection("users").doc(uid);
+  const out: SrvBankbookDrainResult = {
+    pendingBefore: 0, deleted: 0, failed: 0,
+    skippedInvalid: 0, skippedCurrent: 0, pendingAfter: 0,
+  };
+  let raw: unknown;
+  let protectPath: string | null = null;
+  try {
+    const snap = await ref.get();
+    raw = snap.data()?.[BANKBOOK_CLEANUP_FIELD];
+    protectPath =
+      (snap.data()?.["bankbookImagePath"] as string | undefined) ?? null;
+  } catch (e) {
+    console.warn(`[${label}] cleanup 목록 읽기 실패 uid=${uid} — ${e}`);
+    out.failed++;
+    return out;
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return out;
+  const all = raw.filter((p): p is string => typeof p === "string");
+  out.pendingBefore = all.length;
+  out.pendingAfter = all.length;
+
+  for (const p of all.slice(0, BANKBOOK_CLEANUP_DRAIN_CAP)) {
+    // [§9·§35] defense-in-depth — 목록에는 검증된 경로만 들어가지만,
+    //   읽는 쪽에서도 본다. 통장사본이 아니면 지우지 않고 남긴다.
+    if (!srvIsOwnedBankbookStoragePath(uid, p)) {
+      out.skippedInvalid++;
+      continue;
+    }
+    // [§14] 현재 것은 절대 지우지 않는다.
+    if (protectPath !== null && p === protectPath) {
+      out.skippedCurrent++;
+      continue;
+    }
     try {
+      // [§12] 이미 없는 object 는 성공과 같다.
       await admin.storage().bucket().file(p).delete({ignoreNotFound: true});
     } catch (e) {
-      console.error(
-        `[${label}] 통장사본 물리 삭제 실패 — Firestore 미변경: ${e}`);
-      throw new HttpsError(
-        "unavailable",
-        "통장사본 파일을 정리하지 못했습니다. 잠시 후 다시 시도해주세요.");
+      out.failed++;
+      console.warn(`[${label}] 통장사본 물리 삭제 실패 uid=${uid} — ${e}`);
+      continue; // 항목을 남긴다 — 다음 drain 이 다시 시도한다
+    }
+    try {
+      await ref.update({
+        [BANKBOOK_CLEANUP_FIELD]: admin.firestore.FieldValue.arrayRemove(p),
+      });
+      out.deleted++;
+      out.pendingAfter--;
+    } catch (e) {
+      // [§15] bytes 는 사라졌고 항목만 남았다 — 안전한 상태다.
+      out.failed++;
+      console.warn(`[${label}] cleanup 목록 제거 실패 uid=${uid} — ${e}`);
     }
   }
+  return out;
 }
 
 /**
@@ -12081,6 +12212,13 @@ export const callableMarkBankbookVerified = onCall(
       const prevSafe = srvResolveOwnedBankbookStoragePath(callerUid, prevRaw);
       safePrevPath = (prevSafe !== null && prevSafe !== storagePath) ?
         prevSafe : null;
+      // [R7-P4.4E.11B.1A §1·§26·§27] 교체도 같은 invariant 를 지켜야 한다.
+      //   예전에는 서버가 안전한 옛 경로를 **알려주기만** 했고 실제 삭제는
+      //   클라이언트가 했다. 그 호출이 실패하거나 앱이 죽으면
+      //   "pointer 없음 + object 있음 + cleanup owner 없음" 이 된다 —
+      //   §1 이 금지한 상태다. 그래서 포인터 교체와 같은 트랜잭션에서
+      //   cleanup owner 를 등록한다. 클라이언트가 먼저 지워도 안전하다:
+      //   drain 이 not-found 를 성공 동치로 보고 목록에서 뺀다.
       tx.update(bbUserRef, {
         // [R8-P5] 영구 download URL을 남기지 않는다 — 신분증([BUG-ID-01])과 같은 규칙.
         //
@@ -12111,6 +12249,10 @@ export const callableMarkBankbookVerified = onCall(
         bankbookReviewedBy: admin.firestore.FieldValue.delete(),
         bankbookReviewedAt: admin.firestore.FieldValue.delete(),
         bankbookReviewNote: admin.firestore.FieldValue.delete(),
+        ...(safePrevPath !== null ? {
+          [BANKBOOK_CLEANUP_FIELD]:
+            admin.firestore.FieldValue.arrayUnion(safePrevPath),
+        } : {}),
       });
       return {bb: nextBb, acc: curAcc};
     });
@@ -12121,9 +12263,25 @@ export const callableMarkBankbookVerified = onCall(
       ` prevSafe=${safePrevPath !== null}`);
     await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_BANKBOOK);
 
-    // [§16·§17] 이전 통장사본 경로를 돌려준다 — 클라이언트는 **이 값만**
-    //   지운다. 자기 로컬 모델의 값을 믿고 지우지 않는다.
-    return {success: true, previousBankbookPath: safePrevPath};
+    // [§26·§27] 새 current 가 확정된 뒤 대기 목록을 비운다.
+    //   **새 제출 성공을 옛 cleanup 실패 때문에 되돌리지 않는다.**
+    //   drain 은 fresh current 를 읽어 새 object 를 보호한다(§14·§42).
+    const bbDrain =
+      await srvDrainBankbookCleanup(callerUid, "callableMarkBankbookVerified");
+    console.info(
+      `[markBankbookVerified] uid=${callerUid} cleanup ` +
+      `pending=${bbDrain.pendingBefore}→${bbDrain.pendingAfter} ` +
+      `deleted=${bbDrain.deleted} failed=${bbDrain.failed} ` +
+      `skippedCurrent=${bbDrain.skippedCurrent}`);
+
+    // [§16·§17] 이전 통장사본 경로를 계속 돌려준다 — 구버전·신버전
+    //   클라이언트 모두 안전하다. 클라이언트가 지우면 drain 이 not-found
+    //   로 받고, 지우지 않아도 drain 이 책임진다.
+    return {
+      success: true,
+      previousBankbookPath: safePrevPath,
+      cleanupPending: bbDrain.pendingAfter > 0,
+    };
   }
 );
 
@@ -12830,90 +12988,105 @@ export const callableDeleteBankInfo = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
 
-    // [R7-P4.4E.11B §19·§20·§21] 삭제 후보를 **둘 다** 모은다.
+    // [R7-P4.4E.11B.1A §11·§19·§20] **Phase 1 — canonical mutation + cleanup
+    //   owner 등록을 같은 atomic 경계에서.**
     //
-    //   예전에는 `bankbookImageUrl`(legacy) 하나만 수집했다. V3 사용자는 그
-    //   필드가 없고 canonical 포인터가 `bankbookImagePath` 이므로, Firestore
-    //   에서 포인터를 지우면서 **물리 object 는 한 번도 지우지 않았다** —
-    //   포인터·소유자·재시도 경로가 동시에 사라져 민감 서류가 추적 불가
-    //   상태로 영구히 남았다.
+    //   두 번의 설계를 거쳐 여기 왔다.
+    //     ① Firestore 먼저 → Storage 실패 = 포인터·소유자 동시 소멸
+    //        → 영구 untracked orphan
+    //     ② Storage 먼저 → Firestore 실패 = 포인터는 남고 bytes 는 없음
+    //        → canonical dangling pointer (readiness true, 파일 없음)
+    //   둘 다 "사용자가 다시 호출하면 수렴"에 기댔다. 그건 durable
+    //   recovery 가 아니다 — 사용자가 재시도하지 않으면 아무도 모른다.
     //
-    //   후보는 각각 독립적으로 resolve → validate → dedupe 한다.
-    //   `path ?? url` 로 우선순위를 두면 invalid path 가 valid legacy URL
-    //   검사를 막는다(§21).
+    //   그래서 **같은 mutation 에서** "더 이상 current 가 아니다"와
+    //   "이 bytes 에게 cleanup 주인이 있다"가 동시에 성립하게 한다.
+    //   물리 삭제는 그 뒤(Phase 2)이고, 실패해도 추적된 상태로 남는다.
+    //
+    //   [§19·§20] 그리고 재호출이 안전해야 한다. 이미 비어 있는 상태에서
+    //   canonical mutation 을 다시 적용하면 version 이 또 올라가 사업장
+    //   검토가 이유 없이 낡는다. 지울 것이 없으면 **drain 만** 한다.
     const userSnap = await db.collection("users").doc(callerUid).get();
-    const bankDel = srvCollectOwnedBankbookPaths(callerUid, userSnap.data());
+    const bankDelPre = userSnap.data() ?? {};
+    const bankDelAlreadyClean = [
+      "bankName", "accountNumber", "accountHolder",
+      "bankbookImagePath", "bankbookImageUrl",
+    ].every((f) => bankDelPre[f] === undefined);
+    let bankDelSkipped = 0;
 
-    // [§22] **물리 삭제를 먼저 한다.**
-    //
-    //   CLAUDE.md 의 일반 규칙은 "Firestore 먼저"다. 그 규칙의 이유는
-    //   "Firestore 실패 시 broken URL 이 남지 않게"인데, 민감 서류에서는
-    //   반대 실패가 더 나쁘다: Firestore 를 먼저 지우면 Storage 실패 시
-    //   포인터가 사라져 **영구 untracked orphan** 이 된다.
-    //
-    //   순서를 뒤집으면 최악이 "일시적 dangling pointer"로 바뀌고, 그것은
-    //   not-found = 성공 동치 + 재호출로 스스로 수렴한다.
-    //   이 함수에 한해 일반 규칙과 다른 순서를 쓴다는 사실을 여기 남긴다.
-    await srvDeleteOwnedBankbookArtifacts(
-      bankDel.paths, "callableDeleteBankInfo");
-    if (bankDel.skipped > 0) {
-      console.warn(
-        "[callableDeleteBankInfo] 통장사본이 아닌 포인터 " +
-        `${bankDel.skipped}건 건너뜀 (삭제 안 함)`);
+    if (!bankDelAlreadyClean) {
+      bankDelSkipped = await srvResetBankStateWithCleanupOwner(
+        callerUid, "callableDeleteBankInfo", {
+          // [BATCH-1B Policy 5] 계좌 삭제 시 BATCH-1A/1B 신규 인증 필드도 함께 초기화
+          //
+          // [PII-DOC-R1.5.5] 삭제는 계좌와 통장사본 **둘 다** 바꾸는 mutation이다.
+          //
+          //   그런데 이 경로만 버전을 올리지 않았다. 사업장의 검토 기록은
+          //   버전 비교로 낡음을 판정하므로, 계좌가 사라졌는데도 예전
+          //   REVIEWED_OK가 최신으로 남았다. 그 결과 급여 확정이 "검토 통과"
+          //   경로를 타고 wageAccountReviewRequired를 **지워** 버렸다 —
+          //   지급할 계좌가 없다는 사실이 아무 데도 남지 않는 침묵이었다.
+          //
+          //   callableUpdateBankAccount와 같은 semantics로 맞춘다: 두 버전을
+          //   함께 올리고, 그 계좌·그 통장사본에 매달린 상태를 같이 정리한다.
+          //   단일 update()는 문서 단위 원자 쓰기다.
+          bankName: admin.firestore.FieldValue.delete(),
+          accountNumber: admin.firestore.FieldValue.delete(),
+          accountHolder: admin.firestore.FieldValue.delete(),
+          bankbookImageUrl: admin.firestore.FieldValue.delete(),
+          bankbookImagePath: admin.firestore.FieldValue.delete(), // [V3]
+          // [Phase 6] legacy data 정리용으로만 유지
+          bankVerificationStatus: admin.firestore.FieldValue.delete(),
+          bankbookUploadedAt: admin.firestore.FieldValue.delete(),
+          bankVerifiedAt: admin.firestore.FieldValue.delete(),
+          bankVerifiedBy: admin.firestore.FieldValue.delete(),
+          // [R1.5.5] 두 canonical state가 모두 바뀌었다 — 검토는 낡았다.
+          bankAccountVersion: admin.firestore.FieldValue.increment(1),
+          bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
+          // [R1.5.5] 없는 문서에 대한 검토 상태를 남기지 않는다.
+          //   남겨 두면 SUPER_ADMIN 검토 큐에 열 수 없는 행이 생긴다.
+          bankbookDocumentState: admin.firestore.FieldValue.delete(),
+          bankbookSelfCheck: admin.firestore.FieldValue.delete(),
+          bankbookReviewedBy: admin.firestore.FieldValue.delete(),
+          bankbookReviewedAt: admin.firestore.FieldValue.delete(),
+          bankbookReviewNote: admin.firestore.FieldValue.delete(),
+          bankReviewedAt: admin.firestore.FieldValue.delete(),
+          bankReviewedBy: admin.firestore.FieldValue.delete(),
+          // [PII-DOC-R1.4] 문서·계좌가 사라졌으면 그에 대한 판정도 사라진다.
+          bankbookMatchStatus: admin.firestore.FieldValue.delete(),
+          bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
+          bankbookMatchAssurance: admin.firestore.FieldValue.delete(),
+          bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
+          bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
+          bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
     }
 
-    // 1. Firestore 정리 — 물리 삭제가 끝난 뒤.
-    //   [§23] 이 update 가 실패하면 callable 이 실패하고 포인터가 남는다.
-    //   다음 호출에서 Storage 는 not-found(성공 동치)로 지나가고 이 정리만
-    //   다시 시도된다 — retry owner 가 살아 있다.
-    // [BATCH-1B Policy 5] 계좌 삭제 시 BATCH-1A/1B 신규 인증 필드도 함께 초기화
-    //
-    // [PII-DOC-R1.5.5] 삭제는 계좌와 통장사본 **둘 다** 바꾸는 mutation이다.
-    //
-    //   그런데 이 경로만 버전을 올리지 않았다. 사업장의 검토 기록은
-    //   버전 비교로 낡음을 판정하므로, 계좌가 사라졌는데도 예전
-    //   REVIEWED_OK가 최신으로 남았다. 그 결과 급여 확정이 "검토 통과"
-    //   경로를 타고 wageAccountReviewRequired를 **지워** 버렸다 —
-    //   지급할 계좌가 없다는 사실이 아무 데도 남지 않는 침묵이었다.
-    //
-    //   callableUpdateBankAccount와 같은 semantics로 맞춘다: 두 버전을
-    //   함께 올리고, 그 계좌·그 통장사본에 매달린 상태를 같이 정리한다.
-    //   단일 update()는 문서 단위 원자 쓰기다.
-    await db.collection("users").doc(callerUid).update({
-      bankName: admin.firestore.FieldValue.delete(),
-      accountNumber: admin.firestore.FieldValue.delete(),
-      accountHolder: admin.firestore.FieldValue.delete(),
-      bankbookImageUrl: admin.firestore.FieldValue.delete(),
-      bankbookImagePath: admin.firestore.FieldValue.delete(), // [V3]
-      bankVerificationStatus: admin.firestore.FieldValue.delete(), // [Phase 6] legacy data 정리용으로만 유지
-      bankbookUploadedAt: admin.firestore.FieldValue.delete(),
-      bankVerifiedAt: admin.firestore.FieldValue.delete(),
-      bankVerifiedBy: admin.firestore.FieldValue.delete(),
-      // [R1.5.5] 두 canonical state가 모두 바뀌었다 — 검토는 낡았다.
-      bankAccountVersion: admin.firestore.FieldValue.increment(1),
-      bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
-      // [R1.5.5] 없는 문서에 대한 검토 상태를 남기지 않는다.
-      //   남겨 두면 SUPER_ADMIN 검토 큐에 열 수 없는 행이 생긴다.
-      bankbookDocumentState: admin.firestore.FieldValue.delete(),
-      bankbookSelfCheck: admin.firestore.FieldValue.delete(),
-      bankbookReviewedBy: admin.firestore.FieldValue.delete(),
-      bankbookReviewedAt: admin.firestore.FieldValue.delete(),
-      bankbookReviewNote: admin.firestore.FieldValue.delete(),
-      bankReviewedAt: admin.firestore.FieldValue.delete(),
-      bankReviewedBy: admin.firestore.FieldValue.delete(),
-      // [PII-DOC-R1.4] 문서·계좌가 사라졌으면 그에 대한 판정도 사라진다.
-      bankbookMatchStatus: admin.firestore.FieldValue.delete(),
-      bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
-      bankbookMatchAssurance: admin.firestore.FieldValue.delete(),
-      bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
-      bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
-      bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
+    // [§13] Phase 2 — 추적된 bytes 를 비운다. 실패는 목록에 남는다.
+    const bankDelDrain =
+      await srvDrainBankbookCleanup(callerUid, "callableDeleteBankInfo");
     console.info(
-      `[deleteBankInfo] uid=${callerUid} 통장사본 삭제 ` +
-      `${bankDel.paths.size}건 · 통장사본 아님 ${bankDel.skipped}건`);
+      `[deleteBankInfo] uid=${callerUid} alreadyClean=${bankDelAlreadyClean} ` +
+      `skippedInvalidPointer=${bankDelSkipped} ` +
+      `pending=${bankDelDrain.pendingBefore}→${bankDelDrain.pendingAfter} ` +
+      `deleted=${bankDelDrain.deleted} failed=${bankDelDrain.failed} ` +
+      `skippedCurrent=${bankDelDrain.skippedCurrent} ` +
+      `skippedInvalidQueue=${bankDelDrain.skippedInvalid}`);
+
+    // [§4·§19] 사용자가 **삭제**를 요청한 mutation 이다. 민감 bytes 가 아직
+    //   남아 있는데 `{success:true}` 로 "완전히 삭제됐다"고 보이게 하지
+    //   않는다. 현재 클라이언트는 결과를 읽지 않고 성공/실패 토스트만
+    //   띄우므로, 남아 있으면 **재시도 가능한 오류**로 말한다.
+    //
+    //   재호출은 안전하다 — 위 `bankDelAlreadyClean` 분기가 canonical
+    //   mutation 을 다시 적용하지 않으므로 version 이 두 번 오르지 않고,
+    //   drain 만 다시 돈다(§19).
+    if (bankDelDrain.pendingAfter > 0) {
+      throw new HttpsError(
+        "unavailable",
+        "통장사본 파일 정리가 끝나지 않았습니다. 잠시 후 다시 시도해주세요.");
+    }
     return {success: true};
   }
 );
@@ -13015,53 +13188,70 @@ export const callableUpdateBankAccount = onCall(
     //   [§11·§15] 실제 Storage 오류는 throw 다 — 아래 update 에 도달하지
     //     않으므로 계좌·bankAccountVersion·포인터·평가 상태가 모두 그대로
     //     남고, 재호출이 곧 retry 다.
-    const bankUpd = srvCollectOwnedBankbookPaths(callerUid, userData);
-    await srvDeleteOwnedBankbookArtifacts(
-      bankUpd.paths, "callableUpdateBankAccount");
-    if (bankUpd.skipped > 0) {
-      console.warn(
-        "[callableUpdateBankAccount] 통장사본이 아닌 포인터 " +
-        `${bankUpd.skipped}건 건너뜀 (삭제 안 함)`);
-    }
-
     // 계좌 정보 업데이트 + 인증 상태 초기화
     // [Policy 5] 계좌 변경 시 기존 bankVerificationStatus/bankVerifiedAt 리셋
     //   새 계좌는 통장사본 재제출 → callableMarkBankbookVerified → SUPER_ADMIN 검토 순서 필요
     //   기존 Attendance wageAccount* snapshot은 변경 금지 — 확정 당시 계좌 기록 보존
     // [BUG-FIX] bankbookImageUrl + bankVerifiedBy 초기화 추가 (DATA-ISSUE-BANK-01)
     //   AES-CBC random IV 구조상 동일 계좌 재저장 판별 불가 → 호출 자체를 계좌 변경 신호로 간주
-    //   Storage 실제 파일은 별도 cleanup 정책에서 처리 (이번 수정은 Firestore reference만)
-    await db.collection("users").doc(callerUid).update({
-      bankName: bankName.trim(),
-      accountNumber: accountNumber.trim(), // 클라이언트에서 AES 암호화 적용 후 전달
-      accountHolder,
-      // 인증 상태 전면 초기화 (CF Admin SDK 전용 필드들)
-      bankVerificationStatus: admin.firestore.FieldValue.delete(),
-      bankbookUploadedAt: admin.firestore.FieldValue.delete(),
-      bankVerifiedAt: admin.firestore.FieldValue.delete(),
-      bankVerifiedBy: admin.firestore.FieldValue.delete(),   // 감사 trail 초기화
-      bankbookImageUrl: admin.firestore.FieldValue.delete(), // 구 통장사본 연결 차단
-      bankbookImagePath: admin.firestore.FieldValue.delete(), // [V3] 구 통장사본 경로 초기화
-      bankReviewedAt: admin.firestore.FieldValue.delete(),   // [TD-03] 이전 계좌 검토 기록 stale 제거
-      bankReviewedBy: admin.firestore.FieldValue.delete(),   // [TD-03]
-      // [R1.2] 계좌 버전 — 통장사본 경로가 함께 비워지므로 사업장의 계좌 검토는
-      //   이 값 하나로 낡는다. 지급 직전 guard가 같은 값을 본다.
-      bankAccountVersion: admin.firestore.FieldValue.increment(1),
-      bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
-      bankbookDocumentState: admin.firestore.FieldValue.delete(),
-      bankbookSelfCheck: admin.firestore.FieldValue.delete(),
-      // [PII-DOC-R1.4] 계좌가 바뀌면 그 통장사본과의 대조는 더 이상 유효하지
-      //   않다. source of truth는 버전 비교지만, 남겨 둘 이유도 없다.
-      bankbookMatchStatus: admin.firestore.FieldValue.delete(),
-      bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
-      bankbookMatchAssurance: admin.firestore.FieldValue.delete(),
-      bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
-      bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
-      bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    //
+    // [R7-P4.4E.11B.1A §10] 그리고 같은 atomic 경계에서 **cleanup owner**를
+    //   등록한다. 예전 주석은 "Storage 실제 파일은 별도 cleanup 정책에서
+    //   처리"라고 미뤘고, 그게 추적 불가 고아의 원인이었다. 이제
+    //   "더 이상 current 가 아니다"와 "이 bytes 에게 주인이 있다"가 한
+    //   mutation 에서 함께 성립한다.
+    const bankUpdSkipped = await srvResetBankStateWithCleanupOwner(
+        callerUid, "callableUpdateBankAccount", {
+        bankName: bankName.trim(),
+        accountNumber: accountNumber.trim(), // 클라이언트에서 AES 암호화 적용 후 전달
+        accountHolder,
+        // 인증 상태 전면 초기화 (CF Admin SDK 전용 필드들)
+        bankVerificationStatus: admin.firestore.FieldValue.delete(),
+        bankbookUploadedAt: admin.firestore.FieldValue.delete(),
+        bankVerifiedAt: admin.firestore.FieldValue.delete(),
+        bankVerifiedBy: admin.firestore.FieldValue.delete(),   // 감사 trail 초기화
+        bankbookImageUrl: admin.firestore.FieldValue.delete(), // 구 통장사본 연결 차단
+        bankbookImagePath: admin.firestore.FieldValue.delete(), // [V3] 구 통장사본 경로 초기화
+        bankReviewedAt: admin.firestore.FieldValue.delete(),   // [TD-03] 이전 계좌 검토 기록 stale 제거
+        bankReviewedBy: admin.firestore.FieldValue.delete(),   // [TD-03]
+        // [R1.2] 계좌 버전 — 통장사본 경로가 함께 비워지므로 사업장의 계좌 검토는
+        //   이 값 하나로 낡는다. 지급 직전 guard가 같은 값을 본다.
+        bankAccountVersion: admin.firestore.FieldValue.increment(1),
+        bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),
+        bankbookDocumentState: admin.firestore.FieldValue.delete(),
+        bankbookSelfCheck: admin.firestore.FieldValue.delete(),
+        // [PII-DOC-R1.4] 계좌가 바뀌면 그 통장사본과의 대조는 더 이상 유효하지
+        //   않다. source of truth는 버전 비교지만, 남겨 둘 이유도 없다.
+        bankbookMatchStatus: admin.firestore.FieldValue.delete(),
+        bankbookMatchEvidenceSource: admin.firestore.FieldValue.delete(),
+        bankbookMatchAssurance: admin.firestore.FieldValue.delete(),
+        bankbookMatchDocumentVersion: admin.firestore.FieldValue.delete(),
+        bankbookMatchAccountVersion: admin.firestore.FieldValue.delete(),
+        bankbookMatchEvaluatedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
-    return {success: true};
+    // [§13·§17] Phase 2 — 추적된 bytes 를 비운다.
+    //
+    //   [§17·§18] 여기서는 drain 실패를 throw 하지 않는다. 사용자 의도는
+    //   "계좌를 바꾼다"이고 그건 이미 이뤄졌다. canonical truth 는 새
+    //   계좌이고 readiness 에서 옛 통장사본은 제거됐으며 bytes 에는 주인이
+    //   있다. 여기서 던지면 사용자가 같은 계좌 변경을 반복하게 되고, 이
+    //   함수는 호출 1회당 version 을 올리므로 **version 이 중복 전진**한다.
+    //   그건 고치려는 문제보다 나쁘다.
+    const bankUpdDrain =
+      await srvDrainBankbookCleanup(callerUid, "callableUpdateBankAccount");
+    console.info(
+      `[updateBankAccount] uid=${callerUid} ` +
+      `skippedInvalidPointer=${bankUpdSkipped} ` +
+      `pending=${bankUpdDrain.pendingBefore}→${bankUpdDrain.pendingAfter} ` +
+      `deleted=${bankUpdDrain.deleted} failed=${bankUpdDrain.failed} ` +
+      `skippedCurrent=${bankUpdDrain.skippedCurrent} ` +
+      `skippedInvalidQueue=${bankUpdDrain.skippedInvalid}`);
+
+    // [§17] 구버전 클라이언트가 무시해도 되는 추가 메타데이터다.
+    //   사용자 action 이 필요한 Task 가 아니다 — 내부 정리 상태다.
+    return {success: true, cleanupPending: bankUpdDrain.pendingAfter > 0};
   }
 );
 
@@ -20224,6 +20414,9 @@ export const callableGetUsersBatch = onCall(
       //   명명 규칙을 드러낸다. 원본 접근은 전용 callable 만 한다.
       "idCardImageUrl", "idCardImagePath",
       "signatureBase64", "sealBase64", "bankbookImageUrl",
+      // [R7-P4.4E.11B.1A §30] 통장사본 cleanup 제어 상태 — internal server
+      //   state 다. 어떤 화면에도 Storage 경로를 내보내지 않는다.
+      "bankbookCleanupPendingPaths",
       "fcmToken", "fcmTokens",
       "passwordHistory",  // 비밀번호 해시 이력 — 오프라인 딕셔너리 공격에 활용 가능
       "ciHash",           // CI 해시 — 개인식별정보
@@ -20322,6 +20515,9 @@ export const callableGetAllUsers = onCall(
       //   명명 규칙을 드러낸다. 원본 접근은 전용 callable 만 한다.
       "idCardImageUrl", "idCardImagePath",
       "signatureBase64", "sealBase64", "bankbookImageUrl",
+      // [R7-P4.4E.11B.1A §30] 통장사본 cleanup 제어 상태 — internal server
+      //   state 다. 어떤 화면에도 Storage 경로를 내보내지 않는다.
+      "bankbookCleanupPendingPaths",
       "fcmToken", "fcmTokens",
       "passwordHistory", "ciHash", "phoneHash", "accountNumber",
     ]);

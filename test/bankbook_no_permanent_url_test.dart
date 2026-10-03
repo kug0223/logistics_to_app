@@ -144,8 +144,11 @@ void main() {
       expect(f.contains('final oldPath = user.bankbookImagePath;'), false,
           reason: '로컬 모델 값을 믿고 지우는 경로가 남아 있으면 안 된다');
       expect(f.contains('final oldUrl = user.bankbookImageUrl;'), false);
-      // 서버 쪽 계약도 같이 고정한다.
-      expect(_flat(fn).contains('return {success: true, previousBankbookPath: safePrevPath};'), true);
+      // [R7-P4.4E.11B.1A 갱신] 서버 응답에 `cleanupPending` 이 더해졌고,
+      //   교체 경로도 durable cleanup owner 를 쓰게 됐다. 클라이언트가
+      //   먼저 지워도, 지우지 않아도 안전하다 — 서버가 책임진다.
+      expect(_flat(fn).contains('previousBankbookPath: safePrevPath,'), true);
+      expect(_flat(fn).contains('cleanupPending: bbDrain.pendingAfter > 0,'), true);
     });
   });
 
