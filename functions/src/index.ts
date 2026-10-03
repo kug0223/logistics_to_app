@@ -2840,6 +2840,69 @@ function srvIsOwnedStoragePath(
 }
 
 /**
+ * [R7-P4.4E.11B §7] 이 경로가 **이 사용자의 통장사본 artifact** 인가.
+ *
+ *   왜 필요한가: writer·reader·delete 가 모두 `srvIsOwnedStoragePath`
+ *   (= `users/{uid}/` 접두만)를 썼다. 소유자만 보고 **무슨 서류인지는 보지
+ *   않았다.** 그래서 자기 신분증 경로를 통장사본으로 등록할 수 있었고,
+ *   그 결과
+ *     · 급여 권한(`canManageWage`)만으로 신분증 Signed URL 을 받았다
+ *       — 신분증은 ID-CONSENT Grant 가 필요한데 그 경계를 우회한다
+ *     · 통장사본을 한 번도 내지 않고 지원 준비 상태를 만들 수 있었다
+ *     · 다음 통장사본 교체 때 **신분증 object 가 삭제**됐다
+ *
+ *   살아 있는 형식만 허용한다 — 클라이언트 writer 는
+ *   `document_management_screen.dart` 한 곳이고
+ *   `users/{uid}/bankbook_{millisecondsSinceEpoch}.jpg` 를 만든다.
+ *   DEV `bankbookImagePath` 7건도 전부 그 모양이다(legacy URL 0건).
+ *   확장자는 `StorageService._validImageExtensions` 가 업로드 단계에서
+ *   허용하는 집합으로 둔다 — 지금 .jpg 만 쓰지만 과거 업로드가 다른
+ *   확장자일 수 있고, 좁히는 쪽의 비용은 "못 지우고 남는 고아"다.
+ *
+ *   세그먼트 하나로 제한하는 이유는 신분증 술어와 같다 — 하위 경로를
+ *   허용하면 네임스페이스를 벗어나는 모양이 생긴다.
+ *
+ * @param {string} uid 소유자
+ * @param {unknown} p 검사할 경로
+ * @return {boolean} 이 사용자의 통장사본 경로인가
+ */
+function srvIsOwnedBankbookStoragePath(uid: string, p: unknown): boolean {
+  if (typeof uid !== "string" || uid.length === 0) return false;
+  if (uid.includes("/") || uid.includes("..")) return false;
+  if (typeof p !== "string" || p.length === 0 || p.length > 500) return false;
+  const prefix = `users/${uid}/`;
+  if (!p.startsWith(prefix)) return false;
+  const name = p.slice(prefix.length);
+  if (name.includes("/") || name.includes("..")) return false;
+  return /^bankbook_\d{10,}\.(jpg|jpeg|png|gif|webp|heic|heif)$/i.test(name);
+}
+
+/**
+ * [R7-P4.4E.11B §8] download URL 또는 경로를 **이 사용자의 통장사본 경로**로
+ * 환원한다. 환원과 검증을 한 경계에서 한다 — callsite 마다 `/o/` 파싱과
+ * 접두 검사를 복제하면 한 곳만 빠뜨려도 구멍이 된다.
+ *
+ * @param {string} uid 소유자
+ * @param {unknown} urlOrPath Firestore 에 적힌 값(URL 또는 경로)
+ * @return {string | null} 통장사본으로 확인된 경로, 아니면 null
+ */
+function srvResolveOwnedBankbookStoragePath(
+  uid: string, urlOrPath: unknown
+): string | null {
+  if (typeof urlOrPath !== "string" || urlOrPath.length === 0) return null;
+  let candidate = urlOrPath;
+  const m = urlOrPath.match(/\/o\/([^?#]+)/);
+  if (m) {
+    try {
+      candidate = decodeURIComponent(m[1]);
+    } catch (e) {
+      return null; // 깨진 인코딩 — 무엇을 가리키는지 모른다
+    }
+  }
+  return srvIsOwnedBankbookStoragePath(uid, candidate) ? candidate : null;
+}
+
+/**
  * [R7-P4.4E.11A §5] 이 경로가 **이 사업장이 소유한** Storage object 인가.
  *
  *   왜 필요한가: hard delete cascade 는 Firestore 에 적힌 이미지 URL 에서
@@ -11899,26 +11962,26 @@ export const callableMarkBankbookVerified = onCall(
       imageUrl?: string; storagePath?: string; selfCheck?: SrvDocSelfCheck;
     };
 
-    let storagePath: string;
-    if (bbDirectPath && typeof bbDirectPath === "string" &&
-        bbDirectPath.length > 0 && bbDirectPath.length <= 500) {
-      storagePath = bbDirectPath;
-    } else if (imageUrl && typeof imageUrl === "string" &&
-      imageUrl.length <= 2048) {
-      // [M-01-FIX] includes()는 쿼리 파라미터/프래그먼트에도 매칭 → 경로 우회 가능
-      //   → /o/{encoded_path} 부분만 추출 후 startsWith로 정확히 검증
-      const pathMatch = imageUrl.match(/\/o\/([^?#]+)/);
-      if (!pathMatch) {
-        throw new HttpsError("invalid-argument", "유효하지 않은 Storage URL 형식입니다.");
-      }
-      storagePath = decodeURIComponent(pathMatch[1]);
-    } else {
+    // [R7-P4.4E.11B §9] 두 분기 **모두** 같은 exact validator 를 거친다.
+    //   예전에는 `srvIsOwnedStoragePath`(소유자 접두만)였고, 그래서
+    //   자기 신분증·사업자등록증 경로를 통장사본으로 등록할 수 있었다.
+    //   같은 사용자 소유라는 것은 "이게 통장사본이다"의 근거가 아니다.
+    const rawBbInput =
+      (bbDirectPath && typeof bbDirectPath === "string" &&
+        bbDirectPath.length > 0 && bbDirectPath.length <= 500) ? bbDirectPath :
+        (imageUrl && typeof imageUrl === "string" && imageUrl.length <= 2048) ?
+          imageUrl : null;
+    if (rawBbInput === null) {
       throw new HttpsError(
         "invalid-argument", "storagePath 또는 imageUrl이 필요합니다.");
     }
-    if (!srvIsOwnedStoragePath(storagePath, callerUid)) {
-      throw new HttpsError("permission-denied", "본인 통장사본 이미지만 등록 가능합니다.");
+    const resolvedBb =
+      srvResolveOwnedBankbookStoragePath(callerUid, rawBbInput);
+    if (resolvedBb === null) {
+      throw new HttpsError(
+        "permission-denied", "본인 통장사본 이미지만 등록 가능합니다.");
     }
+    const storagePath: string = resolvedBb;
     // Storage 파일 실제 존재 검증 — 존재하지 않는 URL로 isBankbookVerified 설정 차단
     const [fileExists] =
       await admin.storage().bucket().file(storagePath).exists();
@@ -11934,11 +11997,26 @@ export const callableMarkBankbookVerified = onCall(
     const bbMatchStatus =
       srvEvaluateMatchStatus(bbDoc.evidence, {requireName: false});
     const bbUserRef = db.collection("users").doc(callerUid);
+    /** [§16] 클라이언트가 지워도 되는 이전 통장사본 경로. 없으면 null. */
+    let safePrevPath: string | null = null;
     const bbVersions = await db.runTransaction(async (tx) => {
       const cur = (await tx.get(bbUserRef)).data() ?? {};
       const nextBb =
         ((cur["bankbookDocumentVersion"] as number | undefined) ?? 0) + 1;
       const curAcc = (cur["bankAccountVersion"] as number | undefined) ?? 0;
+      // [R7-P4.4E.11B §16] 교체 시 지워도 되는 **이전 통장사본 경로**를
+      //   서버가 정한다. 예전에는 클라이언트가 자기 로컬 모델의
+      //   `bankbookImagePath` 를 그대로 믿고 지웠다. 그 값이 (패치 전에
+      //   심어진) 신분증 경로라면 신분증 object 가 삭제됐다.
+      //
+      //   서버가 트랜잭션에서 읽은 값을 같은 통장사본 술어로 검증해 주고,
+      //   클라이언트는 **그 값만** 지운다(§17 — 경로 문법을 양쪽에 복제하지
+      //   않는다). 새 경로와 같으면 null 이다 — 현재 것을 지우지 않는다.
+      const prevRaw = (cur["bankbookImagePath"] as string | undefined) ??
+        (cur["bankbookImageUrl"] as string | undefined);
+      const prevSafe = srvResolveOwnedBankbookStoragePath(callerUid, prevRaw);
+      safePrevPath = (prevSafe !== null && prevSafe !== storagePath) ?
+        prevSafe : null;
       tx.update(bbUserRef, {
         // [R8-P5] 영구 download URL을 남기지 않는다 — 신분증([BUG-ID-01])과 같은 규칙.
         //
@@ -11975,10 +12053,13 @@ export const callableMarkBankbookVerified = onCall(
     console.info(
       `[markBankbookVerified] uid=${callerUid} state=${bbDoc.state} ` +
       `match=${bbMatchStatus} bbV=${bbVersions.bb} accV=${bbVersions.acc} ` +
-      `evidence=${bbDoc.evidence ? "present" : "none"}`);
+      `evidence=${bbDoc.evidence ? "present" : "none"}` +
+      ` prevSafe=${safePrevPath !== null}`);
     await srvMarkCorrectionsResubmitted(callerUid, DOC_TYPE_BANKBOOK);
 
-    return {success: true};
+    // [§16·§17] 이전 통장사본 경로를 돌려준다 — 클라이언트는 **이 값만**
+    //   지운다. 자기 로컬 모델의 값을 믿고 지우지 않는다.
+    return {success: true, previousBankbookPath: safePrevPath};
   }
 );
 
@@ -12685,11 +12766,73 @@ export const callableDeleteBankInfo = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
 
-    // 삭제 전 기존 URL 수집
+    // [R7-P4.4E.11B §19·§20·§21] 삭제 후보를 **둘 다** 모은다.
+    //
+    //   예전에는 `bankbookImageUrl`(legacy) 하나만 수집했다. V3 사용자는 그
+    //   필드가 없고 canonical 포인터가 `bankbookImagePath` 이므로, Firestore
+    //   에서 포인터를 지우면서 **물리 object 는 한 번도 지우지 않았다** —
+    //   포인터·소유자·재시도 경로가 동시에 사라져 민감 서류가 추적 불가
+    //   상태로 영구히 남았다.
+    //
+    //   후보는 각각 독립적으로 resolve → validate → dedupe 한다.
+    //   `path ?? url` 로 우선순위를 두면 invalid path 가 valid legacy URL
+    //   검사를 막는다(§21).
     const userSnap = await db.collection("users").doc(callerUid).get();
-    const oldImageUrl = userSnap.data()?.bankbookImageUrl as string | undefined;
+    const bankDelCandidates = new Set<string>();
+    let bankDelSkippedForeign = 0;
+    for (const raw of [
+      userSnap.data()?.bankbookImagePath as string | undefined,
+      userSnap.data()?.bankbookImageUrl as string | undefined,
+    ]) {
+      if (typeof raw !== "string" || raw.length === 0) continue;
+      const ok = srvResolveOwnedBankbookStoragePath(callerUid, raw);
+      if (ok === null) {
+        // [§20·§24] 통장사본이 아니다 — Firestore 가 그렇게 적혀 있어도
+        //   지우지 않는다. 신분증·사업자등록증·프로필·타인 경로 보호가
+        //   계좌정보 삭제보다 우선이다. 다만 이것 때문에 계좌 삭제 자체를
+        //   영원히 막지는 않는다(아래 Firestore 정리는 그대로 진행).
+        bankDelSkippedForeign++;
+        continue;
+      }
+      bankDelCandidates.add(ok);
+    }
 
-    // 1. Firestore 먼저 업데이트 (실패 시 Storage 건드리지 않음 — 설계 원칙 준수)
+    // [§22] **물리 삭제를 먼저 한다.**
+    //
+    //   CLAUDE.md 의 일반 규칙은 "Firestore 먼저"다. 그 규칙의 이유는
+    //   "Firestore 실패 시 broken URL 이 남지 않게"인데, 민감 서류에서는
+    //   반대 실패가 더 나쁘다: Firestore 를 먼저 지우면 Storage 실패 시
+    //   포인터가 사라져 **영구 untracked orphan** 이 된다.
+    //
+    //   순서를 뒤집으면 최악이 "일시적 dangling pointer"로 바뀌고, 그것은
+    //   not-found = 성공 동치 + 재호출로 스스로 수렴한다(§23·§28).
+    //   이번 Phase 요청서(§22)가 그 방향을 지시했다 — 이 함수에 한해
+    //   일반 규칙과 다른 순서를 쓴다는 사실을 여기 남긴다.
+    for (const p of bankDelCandidates) {
+      try {
+        // [§28] 이미 없는 object 는 성공과 같다 — 없는 파일 때문에 사용자가
+        //   영구히 계좌를 못 지우는 상태를 만들지 않는다.
+        await admin.storage().bucket().file(p).delete({ignoreNotFound: true});
+      } catch (e) {
+        // [§22] 실제 Storage 오류다 — Firestore 를 건드리지 않고 실패를
+        //   돌려준다. 포인터와 소유자가 남아 있으므로 재호출로 복구된다.
+        console.error(
+          `[callableDeleteBankInfo] 통장사본 물리 삭제 실패 — Firestore 미변경: ${e}`);
+        throw new HttpsError(
+          "unavailable",
+          "통장사본 파일을 정리하지 못했습니다. 잠시 후 다시 시도해주세요.");
+      }
+    }
+    if (bankDelSkippedForeign > 0) {
+      console.warn(
+        "[callableDeleteBankInfo] 통장사본이 아닌 포인터 " +
+        `${bankDelSkippedForeign}건 건너뜀 (삭제 안 함)`);
+    }
+
+    // 1. Firestore 정리 — 물리 삭제가 끝난 뒤.
+    //   [§23] 이 update 가 실패하면 callable 이 실패하고 포인터가 남는다.
+    //   다음 호출에서 Storage 는 not-found(성공 동치)로 지나가고 이 정리만
+    //   다시 시도된다 — retry owner 가 살아 있다.
     // [BATCH-1B Policy 5] 계좌 삭제 시 BATCH-1A/1B 신규 인증 필드도 함께 초기화
     //
     // [PII-DOC-R1.5.5] 삭제는 계좌와 통장사본 **둘 다** 바꾸는 mutation이다.
@@ -12735,19 +12878,9 @@ export const callableDeleteBankInfo = onCall(
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // 2. Storage 삭제 best-effort (Firestore 성공 후)
-    if (oldImageUrl) {
-      try {
-        const pathMatch = oldImageUrl.match(/\/o\/(.+?)(\?|$)/);
-        if (pathMatch) {
-          const filePath = decodeURIComponent(pathMatch[1]);
-          await admin.storage().bucket().file(filePath).delete();
-        }
-      } catch (e) {
-        console.warn(`[callableDeleteBankInfo] Storage 삭제 실패 (무시): ${e}`);
-      }
-    }
-
+    console.info(
+      `[deleteBankInfo] uid=${callerUid} 통장사본 삭제 ` +
+      `${bankDelCandidates.size}건 · 통장사본 아님 ${bankDelSkippedForeign}건`);
     return {success: true};
   }
 );
@@ -19495,32 +19628,27 @@ export const callableGetBankbookSignedUrl = onCall(
     if (!workerDoc.exists) throw new HttpsError("not-found", "근로자 정보를 찾을 수 없습니다.");
     const workerData = workerDoc.data()!;
 
-    // bankbookImagePath 우선; 없으면 bankbookImageUrl에서 경로 파싱 (legacy 호환)
-    let storagePath = workerData.bankbookImagePath as string | undefined;
-    if (!storagePath) {
-      const downloadUrl = workerData.bankbookImageUrl as string | undefined;
-      if (!downloadUrl) {
-        throw new HttpsError("not-found", "통장사본이 등록되지 않았습니다.");
-      }
-      try {
-        const url = new URL(downloadUrl);
-        const match = url.pathname.match(/\/o\/(.+)$/);
-        if (!match) throw new Error("경로 파싱 실패");
-        storagePath = decodeURIComponent(match[1]);
-      } catch {
-        throw new HttpsError("internal", "통장사본 Storage 경로를 파싱할 수 없습니다.");
-      }
+    // bankbookImagePath 우선; 없으면 bankbookImageUrl (legacy 호환)
+    const bbPointer = (workerData.bankbookImagePath as string | undefined) ??
+      (workerData.bankbookImageUrl as string | undefined);
+    if (!bbPointer) {
+      throw new HttpsError("not-found", "통장사본이 등록되지 않았습니다.");
     }
 
     // [BLOCKER-BANKBOOK-PATH-INJECTION-SIGNED-URL]
     //   `bankbookImagePath`는 rules 어디에도 없어 클라이언트가 직접 쓸 수 있었고,
-    //   여기서는 그 값을 그대로 서명했다. 근로자가 경로를 타인의 신분증으로
-    //   바꾸면 관리자는 통장사본인 줄 알고 그 이미지를 받고, 감사 로그에도
-    //   통장사본 열람으로 남는다. rules를 막아도 이미 심어진 값은 남으므로
-    //   서명 직전에 매번 확인한다.
-    if (!srvIsOwnedStoragePath(storagePath, appUid)) {
+    //   여기서는 그 값을 그대로 서명했다. rules 로 막은 뒤에도 **이미 심어진
+    //   값은 남으므로** 서명 직전에 매번 확인한다.
+    //
+    // [R7-P4.4E.11B §12·§29] 그 확인이 소유자 접두만 봤다. 그래서 같은
+    //   사용자의 **신분증** 경로가 저장돼 있으면 그대로 서명됐다 — 급여
+    //   권한만으로 신분증을 받고, 감사 로그에는 통장사본 열람으로 남는다.
+    //   writer 가 인정하는 경로 = reader 가 읽을 수 있는 경로 = delete 가
+    //   지울 수 있는 경로. 세 곳이 같은 술어를 쓴다.
+    const storagePath = srvResolveOwnedBankbookStoragePath(appUid, bbPointer);
+    if (storagePath === null) {
       console.error(
-        `[callableGetBankbookSignedUrl] 경로 소유자 불일치 — target=${appUid}`);
+        `[callableGetBankbookSignedUrl] 통장사본 경로가 아니다 — target=${appUid}`);
       throw new HttpsError(
         "failed-precondition",
         "통장사본 파일 경로가 올바르지 않습니다. 근로자에게 재등록을 요청해주세요.");
@@ -19624,11 +19752,13 @@ export const callableBackfillBankbookImagePath = onCall(
       processed++;
       lastDocId = doc.id;
       try {
-        // URL에서 Storage 경로 추출
-        const urlObj = new URL(imageUrl);
-        const match = urlObj.pathname.match(/\/o\/(.+)$/);
-        if (!match) { failed++; continue; }
-        const storagePath = decodeURIComponent(match[1]);
+        // [R7-P4.4E.11B §9] 이 함수도 `bankbookImagePath` 의 writer 다.
+        //   legacy URL 이 통장사본이 아닌 경로를 가리키고 있었다면, 여기서
+        //   그것을 canonical 포인터로 승격시켜 poisoned pointer 를 만든다.
+        //   writer 는 하나도 빠짐없이 같은 술어를 거친다.
+        const storagePath =
+          srvResolveOwnedBankbookStoragePath(doc.id, imageUrl);
+        if (storagePath === null) { failed++; continue; }
 
         // Storage 파일 실제 존재 확인
         const [fileExists] = await admin.storage().bucket().file(storagePath).exists();

@@ -92,12 +92,23 @@ void main() {
     });
 
     test('BBU-32 legacy imageUrl 입력 자체는 계속 받는다 (구버전 앱 호환)', () {
-      // 구버전 앱이 URL만 보내도 경로를 뽑아 등록은 된다.
-      expect(bbCf.contains('const pathMatch = imageUrl.match'), true);
+      // [R7-P4.4E.11B 갱신] URL 파싱이 writer 본문에서 공용 resolver 로
+      //   옮겨졌다. 구버전 앱이 URL 만 보내도 받는 계약은 그대로다 —
+      //   `rawBbInput` 이 imageUrl 을 후보로 받고 resolver 가 환원한다.
+      expect(bbCf.contains('imageUrl.length <= 2048) ?'), true);
+      expect(bbCf.contains('srvResolveOwnedBankbookStoragePath(callerUid, rawBbInput)'), true);
+      expect(_flat(fn).contains(r'const m = urlOrPath.match(/\/o\/([^?#]+)/);'), true,
+          reason: 'URL 환원은 공용 resolver 가 한다');
     });
 
-    test('BBU-33 경로 소유권 검증은 그대로다', () {
-      expect(bbCf.contains('srvIsOwnedStoragePath(storagePath, callerUid)'), true);
+    test('BBU-33 경로 소유권 검증은 그대로다 — 그리고 통장사본 네임스페이스로 좁혀졌다', () {
+      // [R7-P4.4E.11B §9 갱신] 소유자 접두만 보던 술어로는 같은 사용자의
+      //   신분증도 통장사본으로 등록됐다. 소유권 검증은 유지되고(uid 접두가
+      //   술어 안에 있다) artifact 종류까지 본다.
+      expect(bbCf.contains('if (resolvedBb === null) {'), true);
+      expect(bbCf.contains('"본인 통장사본 이미지만 등록 가능합니다."'), true);
+      expect(bbCf.contains('srvIsOwnedStoragePath(storagePath, callerUid)'), false,
+          reason: '넓은 술어가 남아 있으면 좁힌 의미가 없다');
     });
 
     test('BBU-34 Storage 파일 존재 확인도 그대로다', () {
@@ -120,13 +131,21 @@ void main() {
       expect(c.contains('deleteImageByUrl'), false);
     });
 
-    test('BBU-42 기존 파일 삭제는 path 우선 + URL 폴백 (신분증과 같은 순서)', () {
+    test('BBU-42 기존 파일 삭제 대상은 **서버가 검증해서 돌려준 경로** 하나다', () {
+      // [R7-P4.4E.11B §16·§17 갱신] 예전 계약은 "클라이언트가 자기 로컬
+      //   모델의 path 우선 + URL 폴백으로 지운다"였다. 그 값이 (패치 전에
+      //   심어진) 신분증 경로면 신분증 object 가 삭제됐다 — 통장사본 교체가
+      //   다른 서류를 파괴하는 경로였다. 이제 서버가 트랜잭션에서 읽은 값을
+      //   통장사본 술어로 검증해 `previousBankbookPath` 로 주고, 클라이언트는
+      //   그 값만 지운다. 경로 문법은 클라이언트에 복제하지 않는다.
       final f = _flat(bankbook);
-      expect(f.contains('final oldPath = user.bankbookImagePath;'), true);
-      expect(f.contains('if (oldPath != null) { try { await _storageService.deleteImage(oldPath);'),
-          true);
-      expect(f.contains('} else if (oldUrl != null) {'), true,
-          reason: '레거시 사용자는 URL만 갖고 있다');
+      expect(f.contains("(markResult.data as Map)['previousBankbookPath'] as String?"), true);
+      expect(f.contains('await _storageService.deleteImage(prev);'), true);
+      expect(f.contains('final oldPath = user.bankbookImagePath;'), false,
+          reason: '로컬 모델 값을 믿고 지우는 경로가 남아 있으면 안 된다');
+      expect(f.contains('final oldUrl = user.bankbookImageUrl;'), false);
+      // 서버 쪽 계약도 같이 고정한다.
+      expect(_flat(fn).contains('return {success: true, previousBankbookPath: safePrevPath};'), true);
     });
   });
 

@@ -93,11 +93,33 @@ void main() {
       expect(updates, 1, reason: '두 번 쓰면 중간 상태가 관측된다');
     });
 
-    test('05 Firestore 를 먼저 쓰고 Storage 는 그 뒤다', () {
-      final fs = del.indexOf('.update(');
+    test('05 통장사본 물리 삭제를 먼저 하고 Firestore 정리는 그 뒤다', () {
+      // [R7-P4.4E.11B §22 — 순서 역전, 의도된 변경]
+      //
+      //   예전 계약은 "Firestore 먼저"였고 근거는 CLAUDE.md 의 일반 규칙
+      //   ("Firestore 실패 시 Storage 는 건드리지 않는다 → broken URL 방지")
+      //   이었다. 그런데 이 함수에서는 **반대 실패가 더 나쁘다**:
+      //
+      //     Firestore 먼저 → Storage 실패
+      //       → 포인터·소유자·재시도 경로가 동시에 사라진다
+      //       → 민감 서류가 영구 untracked orphan (= B2)
+      //
+      //     Storage 먼저 → Storage 실패
+      //       → throw, Firestore 미변경, 포인터 유지 → 재호출로 복구
+      //     Storage 먼저 → Firestore 실패
+      //       → 일시적 dangling pointer, 다음 호출에서 not-found(성공 동치)
+      //         로 지나가고 정리만 재시도 → 스스로 수렴
+      //
+      //   그래서 최악이 "영구 고아"에서 "일시적 dangling"으로 바뀐다.
+      //   CLAUDE.md 의 일반 규칙과 다른 순서를 **이 함수에 한해** 쓴다.
       final st = del.indexOf('admin.storage()');
-      expect(fs, greaterThan(-1));
-      expect(st, greaterThan(fs), reason: 'Firestore 실패 시 Storage 는 건드리지 않는다');
+      final fs = del.indexOf('.update(');
+      expect(st, greaterThan(-1));
+      expect(fs, greaterThan(st),
+          reason: '물리 삭제 실패 시 포인터를 남겨 재시도 가능하게 한다');
+      // 그리고 Storage 실패를 삼키지 않는다 — 삼키면 B2 가 그대로 남는다.
+      expect(_flat(del), contains('throw new HttpsError( "unavailable",'));
+      expect(_flat(del), isNot(contains('Storage 삭제 실패 (무시)')));
     });
   });
 

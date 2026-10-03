@@ -220,12 +220,24 @@ void main() {
     });
 
     test('두 Signed URL 모두 서명 직전에 확인한다', () {
+      // [R7-P4.4E.11B §12 갱신] 통장사본 쪽 판정이 **artifact 종류까지**
+      //   보도록 좁혀졌다. 소유자만 보던 술어로는 같은 사용자의 신분증이
+      //   통장사본으로 서명됐다(급여 권한만으로 ID-CONSENT 경계 우회).
+      //   "서명 직전에 확인한다"는 계약은 그대로이고 더 강해졌다.
       expect(idUrl, contains('srvIsOwnedStoragePath(storagePath, targetUserId)'));
-      expect(bankUrl, contains('srvIsOwnedStoragePath(storagePath, appUid)'));
+      expect(bankUrl,
+          contains('srvResolveOwnedBankbookStoragePath(appUid, bbPointer)'));
+      expect(bankUrl, isNot(contains('srvIsOwnedStoragePath(storagePath, appUid)')),
+          reason: '넓은 술어가 남아 있으면 poisoned 포인터가 통과한다');
     });
 
     test('제출 경로도 같은 판정을 쓴다', () {
-      expect(markBank, contains('srvIsOwnedStoragePath(storagePath, callerUid)'));
+      // [R7-P4.4E.11B §29 갱신] writer·reader·delete 가 같은 통장사본 술어
+      //   하나를 쓴다 — 세 곳이 다른 접두 규칙을 갖지 않는다.
+      expect(markBank,
+          contains('srvResolveOwnedBankbookStoragePath(callerUid, rawBbInput)'));
+      expect(cf, contains('function srvIsOwnedBankbookStoragePath('));
+      expect(cf, contains('function srvResolveOwnedBankbookStoragePath('));
     });
 
     test('rules가 통장사본 경로 필드를 클라이언트에서 막는다', () {

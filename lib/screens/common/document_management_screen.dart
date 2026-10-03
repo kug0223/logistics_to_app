@@ -1734,8 +1734,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       if (picked == null || !mounted) return; // finally가 _isLoading 초기화
       final imagePath = picked.path;
 
-      final oldUrl = user.bankbookImageUrl;
-      final oldPath = user.bankbookImagePath;
+      // [R7-P4.4E.11B §16] 이전 경로를 여기서 캡처하지 않는다 — 서버가
+      //   검증해서 돌려주는 `previousBankbookPath` 만 삭제 대상이다.
 
       // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
       //
@@ -1766,7 +1766,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       //    [DOCUMENT-VERIFICATION-INTEGRITY-R0] storagePath 직통 + 기기 확인 근거.
       //    [R8-P5] imageUrl 미전달 — 서버가 canonical 로 쓰는 값은 storagePath 하나다.
       newBankbookPath = storagePath; // CF 호출 전 Storage orphan 추적
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      final markResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableMarkBankbookVerified')
           .call({
         'storagePath': storagePath,
@@ -1775,18 +1775,23 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       newBankbookPath = null; // CF 성공 — Storage 정리 불필요
 
       // 3. 기존 이미지 삭제 (best-effort)
-      //    [R8-P5] path 기반 우선, 없으면 URL fallback — 신분증과 같은 순서.
-      if (oldPath != null) {
+      //
+      // [R7-P4.4E.11B §16·§17] 예전엔 **클라이언트가 자기 로컬 모델의**
+      //   `bankbookImagePath`/`bankbookImageUrl` 을 그대로 믿고 지웠다.
+      //   그 값이 (패치 전에 심어진) 신분증 경로라면 신분증 object 가
+      //   삭제됐다 — 통장사본 교체가 다른 서류를 파괴하는 경로였다.
+      //
+      //   이제 서버가 트랜잭션에서 읽은 값을 통장사본 술어로 검증해
+      //   `previousBankbookPath` 로 돌려준다. 그 값만 지운다.
+      //   경로 문법을 클라이언트에 복제하지 않는다.
+      final prev = (markResult.data is Map)
+          ? (markResult.data as Map)['previousBankbookPath'] as String?
+          : null;
+      if (prev != null && prev.isNotEmpty) {
         try {
-          await _storageService.deleteImage(oldPath);
+          await _storageService.deleteImage(prev);
         } catch (e) {
           debugPrint('⚠️ 기존 통장사본 삭제 실패 (무시): $e');
-        }
-      } else if (oldUrl != null) {
-        try {
-          await _storageService.deleteImageByUrl(oldUrl);
-        } catch (e) {
-          debugPrint('⚠️ 기존 통장사본 URL 삭제 실패 (무시): $e');
         }
       }
 
