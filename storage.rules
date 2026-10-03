@@ -77,12 +77,35 @@ service firebase.storage {
     //   Firestore rules에서 users/{uid} 문서를 본인·슈퍼어드민만 GET 허용 (2026-08-10 관리자 제거).
     //   Storage 직접 경로(SDK)는 아래 규칙에서 본인만 허용; 관리자는 항상 CF 경유.
     //   → 추가 Signed URL 불필요. 재탐색 금지.
+    // [R7-P4.4E.11C.0B §28~§37] 계정 삭제 write barrier.
+    //
+    //   `account_deletion_tombstones/{uid}` 가 존재하면 그 UID 의 계정 삭제가
+    //   파괴 단계에 진입한 것이므로 **새 bytes 를 만들지 못하게** 한다.
+    //   존재만 본다 — 문서 내용을 해석하지 않는다(§5).
+    //
+    //   [전제] 이 cross-service 조회에는 Firebase Storage service agent 에
+    //   `roles/firebaserules.firestoreServiceAgent` 가 필요하다. 없으면
+    //   조회가 실패하고 조건이 거짓이 되어 **fail-closed** 된다(§37) —
+    //   조회 실패를 "삭제 중 아님"으로 바꾸는 fallback 을 두지 않는다.
+    //   DEV 에는 적용돼 있고(R7-P4.4E.11C.0A.1 live verified), PROD 는 별도 확인.
+    function accountDeletionBarrierExists(uid) {
+      return firestore.exists(
+          /databases/(default)/documents/account_deletion_tombstones/$(uid));
+    }
+
     match /users/{uid}/{allPaths=**} {
+      // [§30] read·delete 는 바꾸지 않는다. 삭제 중 client delete 는 bytes 를
+      //   **줄이는** 쪽이라 고아 경합의 원인이 아니고, 서버 정리는 Admin SDK 라
+      //   rules 와 무관하다.
       allow read, delete:
           if isLoggedIn() && request.auth.uid == uid;
+      // [§36] 권한·정책을 먼저 보고 마지막에 barrier 를 본다 — 무권한
+      //   요청 때문에 불필요한 cross-service 조회가 일어나지 않도록.
+      //   [§39·§40] 이 평가에서 Firestore 접근은 **정확히 1회**다.
       allow create, update:
           if isLoggedIn() && request.auth.uid == uid &&
-             isUnder5MB() && isImageType();
+             isUnder5MB() && isImageType() &&
+             !accountDeletionBarrierExists(uid);
     }
 
     // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────

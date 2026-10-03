@@ -125,7 +125,13 @@ void main() {
       final rules = _storageRules();
       final i = rules.indexOf('match /users/{uid}/{allPaths=**}');
       expect(i, greaterThan(-1));
-      final block = rules.substring(i, i + 400);
+      // [R7-P4.4E.11C.0B 갱신] 고정폭 400자 창을 쓰고 있었다. 계정 삭제
+      //   write barrier(`!accountDeletionBarrierExists(uid)`)와 그 설명이
+      //   들어가며 블록이 길어지자 `isUnder5MB()` 가 창 밖으로 밀려 이 셀이
+      //   깨졌다 — 계약은 그대로다. 블록 **경계**까지 읽는다.
+      final blockEnd = rules.indexOf('\n    }', i);
+      expect(blockEnd, greaterThan(i), reason: 'users 블록의 끝을 찾지 못했다');
+      final block = rules.substring(i, blockEnd);
       expect(block.contains('request.auth.uid == uid'), isTrue,
           reason: '소유권 — Firestore 읽기 없이 경로로 증명된다');
       expect(block.contains('isUnder5MB()'), isTrue, reason: '크기 상한');

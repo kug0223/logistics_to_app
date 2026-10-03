@@ -2375,6 +2375,32 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // account_deletion_tombstones 컬렉션
+    //   [R7-P4.4E.11C.0B §22~§26] 계정 삭제 write barrier.
+    //
+    //   `account_deletion_tombstones/{uid}` 의 **존재 자체**가
+    //   "이 UID 소유 Storage 에 새 bytes 를 허용하지 않는다"는 뜻이다.
+    //   storage.rules 가 cross-service firestore.exists() 로 이 문서를 본다.
+    //
+    //   그래서 클라이언트 접근을 전부 막는다 — 양방향 모두 위험하다.
+    //     · create 가 열리면: 사용자가 자기 UID 에 문서를 만들어
+    //       자기 Storage 업로드를 영구 봉쇄할 수 있다(가용성).
+    //     · delete 가 열리면: 삭제 진행 중인 사용자가 barrier 를 걷어내
+    //       경합을 되살릴 수 있다(보안).
+    //   그래서 SUPER_ADMIN 클라이언트 SDK 도 읽기·쓰기 모두 거부한다.
+    //   canonical writer 는 callableDeleteAccountFinal(Admin SDK) 하나다.
+    //
+    //   미명시 컬렉션은 아래 `/{document=**}` 가 이미 전면 차단하지만,
+    //   SEC-75 방침대로 기본 동작에 의존하지 않고 명시한다.
+    // ═══════════════════════════════════════════════════════════
+    match /account_deletion_tombstones/{uid} {
+      allow read: if false;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // pending_token_revocations 컬렉션 (세션 무효화 실패 재처리 큐 — CF 내부용)
     // ═══════════════════════════════════════════════════════════
     match /pending_token_revocations/{docId} {

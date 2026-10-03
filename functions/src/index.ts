@@ -43038,6 +43038,71 @@ export const callableDeleteAccountPreData = onCall(
   }
 );
 
+/**
+ * [R7-P4.4E.11C.0B §4·§6] 계정 삭제 write barrier 의 canonical collection.
+ *
+ *   `account_deletion_tombstones/{uid}` — 이 Firebase UID 가 계정 삭제의
+ *   파괴 단계에 진입했고, 그 UID 소유 Storage 에 **새 bytes 를 더 이상
+ *   허용하면 안 된다**는 뜻이다.
+ *
+ *   이것이 아닌 것: 사용자 profile · 탈퇴 이력 UI · 재가입 제한 record ·
+ *   blacklist · Notification · Task. 그런 의미는 `deleted_accounts` 가
+ *   따로 갖고 있고, 그 문서는 **무작위 auto-ID** 라서 Storage Rules 가
+ *   `uid` 로 직접 조회할 수 없다(§3) — 그래서 별 lifecycle owner 를 둔다.
+ */
+const ACCOUNT_DELETION_TOMBSTONE_COL = "account_deletion_tombstones";
+
+/**
+ * [R7-P4.4E.11C.0B §5·§12·§13·§14·§15·§53] barrier 를 세운다(멱등).
+ *
+ *   [§5] **존재 자체가 barrier 다.** status·phase·completed 같은 값을
+ *   Storage Rules 가 해석하게 만들지 않는다. 삭제 중이든, partial 이든,
+ *   user 문서가 사라졌든, Auth 삭제가 실패했든, 완전히 끝났든 —
+ *   그 UID 에 새 Storage write 를 다시 열어 줄 단계는 없다.
+ *
+ *   [§6] 필드는 최소다. UID 는 document key 에 이미 있으므로 중복 저장하지
+ *   않고, 이름·연락처·CI·계좌·경로 목록 같은 것은 담지 않는다.
+ *
+ *   [§13·§53] 재호출은 성공 동치다. 이미 있으면 `barrierAt` 을 그대로
+ *   둔다 — 재시도마다 시각을 되돌리면 "언제부터 막혔는가"를 잃는다.
+ *   Final 호출 전에 이미 존재하는 경우도 fail-safe 로 그대로 쓴다.
+ *
+ *   [§14·§15] key 는 `request.auth.uid` 하나다. `.add()` 나 클라이언트가
+ *   보낸 uid 를 쓰지 않는다 — Storage Rules 가 조회할 수 있어야 하고,
+ *   남의 계정을 봉쇄할 수 있으면 안 된다.
+ *
+ *   [§72] 로그에 전체 uid·경로를 남기지 않는다.
+ *
+ * @param {string} uid 계정 소유자 (canonical caller uid)
+ * @return {Promise<boolean>} barrier 가 확실히 서 있는가
+ */
+async function srvEnsureAccountDeletionTombstone(uid: string): Promise<boolean> {
+  if (typeof uid !== "string" || uid.length === 0 ||
+      uid.includes("/") || uid.includes("..")) {
+    console.error("[accountDeletionTombstone] uid 형식이 안전하지 않다");
+    return false;
+  }
+  const ref = db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid);
+  try {
+    const snap = await ref.get();
+    if (snap.exists) {
+      console.info("[accountDeletionTombstone] already existed");
+      return true;
+    }
+    await ref.set({
+      barrierAt: admin.firestore.FieldValue.serverTimestamp(),
+      schemaVersion: 1,
+    });
+    console.info("[accountDeletionTombstone] created");
+    return true;
+  } catch (e) {
+    console.error(
+      "[accountDeletionTombstone] write failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+    return false;
+  }
+}
+
 /** [R7-P4.4E.11C §50] account-owned Storage 정리 집계. */
 type SrvAccountStorageSweep = {
   /** 열거된 object 수. */
@@ -43231,6 +43296,35 @@ export const callableDeleteAccountFinal = onCall(
           `미서명 계약서(${unsignedCount}건)를 먼저 서명해주세요.`
         );
       }
+    }
+
+    // PHASE 0. [R7-P4.4E.11C.0B §0·§10·§11] **write barrier 를 먼저 세운다.**
+    //
+    //   95cc737 이 Storage 정리를 hard gate 로 만들었지만 경합이 하나 남았다.
+    //
+    //     sweep → 재열거 0 확인 → **다른 기기가 새 파일 업로드** →
+    //     users 문서 삭제 → Auth 삭제 → 그 파일은 주인 없는 고아
+    //
+    //   DEV 실측(R7-P4.4E.11C.0A.1)에서 Storage Rules 는 resumable session
+    //   의 `start` 가 아니라 **`finalize` 시점**에 Firestore 상태를 읽어
+    //   평가한다는 것이 확인됐다. 그래서 barrier 를 켜면 이미 열려 있던
+    //   session 도 완료되지 못한다(CREATE·OVERWRITE 모두 거부, 기존
+    //   generation 불변). 뒤늦게 도착하는 object 를 정리하는 trigger 가
+    //   필요 없는 이유다.
+    //
+    //   barrier 의 주인은 **identity 보다 오래 살아야 한다.** user 문서에
+    //   두면 Final 이 그 문서를 지우는 순간 barrier 가 사라지고, 과거
+    //   session 이 다시 열린다. 그래서 별도 collection 을 쓴다.
+    //
+    //   [§11] precondition 이 실패하는 호출에서는 세우지 않는다. 사용자가
+    //   Final 에 실제로 진입할 수 있는 상태임이 확인된 뒤에만 barrier 다 —
+    //   PreData/Applications 단계 실패만으로 모든 업로드를 영구 봉쇄하면
+    //   안 된다.
+    const tombstoneOk = await srvEnsureAccountDeletionTombstone(uid);
+    if (!tombstoneOk) {
+      // [§16] barrier 가 없으면 파괴적 작업을 **하나도** 하지 않는다.
+      //   Storage 열거·삭제 0, business mutation 0, user 문서 0, Auth 0.
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 
     // 0+1. worker_locations 삭제 + users 문서 조회 병렬 실행 (상호 독립)
