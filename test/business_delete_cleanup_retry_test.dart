@@ -117,7 +117,10 @@ void main() {
       expect(mirror(), isNot(contains('throw ')));
       final mirrorAt = h.indexOf('bizCleanup.mirrorFailed += adminRes.failed;');
       final storageAt = h.indexOf('const bucket = admin.storage().bucket();');
-      final throwAt = h.indexOf('throw new Error(');
+      // [R7-P4.4E.11A.3 갱신] 이제 cascade 안에 **다른** throw 가 하나 더
+      //   있다(계약 branch 가 내부 실패를 reject 로 올린다). 첫 등장을
+      //   집으면 엉뚱한 곳을 가리키므로 최종 verdict throw 로 고정한다.
+      final throwAt = h.indexOf('if (bizRetryReason !== null) { throw new Error(');
       expect(mirrorAt, greaterThan(0));
       expect(storageAt, greaterThan(mirrorAt),
           reason: 'Storage 정리가 mirror 집계 뒤에 온다');
@@ -254,8 +257,10 @@ void main() {
         'status: "absent"',
         'voidReason: "BUSINESS_DELETED"',
         'historicalOwnerUid',
-        r'deleteSubcollection(`businesses/${businessId}/workTypes`)',
-        r'deleteSubcollection(`businesses/${businessId}/members`)',
+        // [R7-P4.4E.11A.3 갱신] 세 서브컬렉션이 이름 배열 + map 으로 돈다
+        //   (branch identity 를 로그에 남기기 위해). 대상은 그대로다.
+        'const subColBranches = ["workTypes", "members", "contract_templates"];',
+        r'deleteSubcollection(`businesses/${businessId}/${c}`)',
       ]) {
         expect(h, contains(keep), reason: '$keep 가 바뀌면 안 된다');
       }

@@ -242,7 +242,9 @@ void main() {
       // Storage 삭제 전용 anchor — `Promise.allSettled(` 는 cascade 앞쪽
       //   도메인 정리에도 있어서 첫 등장을 집으면 엉뚱한 곳을 가리킨다.
       final delAt = h.indexOf('.delete({ignoreNotFound: true})');
-      final throwAt = h.indexOf('throw new Error(');
+      // [R7-P4.4E.11A.3 갱신] cascade 안에 throw 가 둘이다(계약 branch 가
+      //   내부 실패를 reject 로 올린다). 최종 verdict throw 로 고정한다.
+      final throwAt = h.indexOf('if (bizRetryReason !== null) { throw new Error(');
       expect(delAt, greaterThan(listAt), reason: '열거 실패 후에도 삭제 단계는 실행된다');
       expect(throwAt, greaterThan(delAt), reason: 'throw 는 마지막이다');
     });
@@ -282,14 +284,15 @@ void main() {
         'cancelReason: "BUSINESS_DELETED"',
         'srvLifecycleCancelBulk(appsSnap.docs',
         'status: "AUTO_CANCELED"',
-        // workType cleanup
-        r'deleteSubcollection(`businesses/${businessId}/workTypes`)',
+        // workType · member cleanup
+        //   [R7-P4.4E.11A.3 갱신] 세 서브컬렉션이 이름 배열 + map 으로 돈다.
+        //   대상 집합은 그대로이고, branch 이름이 로그에 남게 됐다.
+        'const subColBranches = ["workTypes", "members", "contract_templates"];',
+        r'deleteSubcollection(`businesses/${businessId}/${c}`)',
         // contract / attendance retention
         'voidReason: "BUSINESS_DELETED"',
         'historicalOwnerUid',
         'status: "absent"',
-        // business member cleanup
-        r'deleteSubcollection(`businesses/${businessId}/members`)',
         'subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)',
         'managedBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)',
       ]) {

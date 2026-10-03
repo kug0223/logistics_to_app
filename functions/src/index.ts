@@ -713,6 +713,19 @@ type SrvLifecycleCancelReport = {
   canceled: FirebaseFirestore.QueryDocumentSnapshot[];
   preserved: SrvPreservedApp[];
   skipped: string[];
+  /**
+   * [R7-P4.4E.11A.3 §17] 트랜잭션이 **실패해서** 판정하지 못한 건의 id.
+   *
+   *   이 건들은 `preserved` 에도 **그대로 남는다** — 분류를 바꾸지 않는다.
+   *   `preserved` 를 "손대지 않을 건"으로 읽는 호출자(TO 삭제)가 있고,
+   *   실패를 그 보호에서 빼면 실근무 여부를 모르는 건을 강제 취소하게 된다.
+   *   그건 이 helper 가 애초에 막으려던 것이다(ERROR ≠ ZERO).
+   *
+   *   그래서 이 배열은 **추가 신호**일 뿐이다: 읽고 싶은 호출자만 읽는다.
+   *   사업장 삭제는 이것을 재시도 사유로 쓴다 — 지원서가 확정 상태로
+   *   남았는데 사업장이 사라지면 business truth 가 갈라지기 때문이다.
+   */
+  failed: string[];
 };
 
 /**
@@ -734,6 +747,7 @@ async function srvLifecycleCancelBulk(
   const canceled: FirebaseFirestore.QueryDocumentSnapshot[] = [];
   const preserved: SrvPreservedApp[] = [];
   const skipped: string[] = [];
+  const failed: string[] = [];
   // 건마다 트랜잭션이므로 동시성을 제한한다.
   const CHUNK = 10;
   for (let i = 0; i < docs.length; i += CHUNK) {
@@ -744,7 +758,13 @@ async function srvLifecycleCancelBulk(
       } catch (e) {
         // [§7] ERROR ≠ ZERO. 모르는 것을 "근무 없음"으로 읽지 않는다.
         //   트랜잭션이 실패하면 아무것도 쓰이지 않았다 — 보존으로 센다.
+        //
+        // [R7-P4.4E.11A.3 §17] 그런데 "보존"으로만 세면 **실패가 보이지 않는다.**
+        //   정상 보존(실근무 있음)과 구별이 안 되므로, 호출자는 지원서가
+        //   확정 상태로 남은 것을 알 수 없었다. 분류는 그대로 두고
+        //   id 를 따로 기록한다 — 읽고 싶은 호출자만 읽는다.
         console.error(`[lifecycle] 취소 트랜잭션 실패 (${d.id}) — 보존:`, e);
+        failed.push(d.id);
         return "preserved" as SrvLifecycleCancelOutcome;
       }
     }));
@@ -760,7 +780,10 @@ async function srvLifecycleCancelBulk(
       `[lifecycle] 실근무 보존 ${preserved.length}건: ` +
       preserved.map((p) => p.id).join(", ").slice(0, 500));
   }
-  return {canceled, preserved, skipped};
+  if (failed.length > 0) {
+    console.error(`[lifecycle] 판정 실패 ${failed.length}건 — 상태 미변경`);
+  }
+  return {canceled, preserved, skipped, failed};
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -8419,6 +8442,16 @@ export const verifySmsCode = onCall(
 
 /** [R7-P4.4E.11A.2 §8·§24] 정리 단계별 집계. 최종 ACK 의 근거다. */
 type SrvBizCleanupTally = {
+  /**
+   * [R7-P4.4E.11A.3 §7] REQUIRED 로 분류된 domain cleanup branch 실패 수.
+   *
+   *   Phase A 는 여러 branch 를 `Promise.allSettled` 로 끝까지 돌린다. 그건
+   *   의도다 — 한 branch 실패가 다른 정리를 막으면 안 된다. 문제는 그
+   *   결과를 **버렸다는** 것이다. 그러면 사업장은 지워졌는데 지원서·근태·
+   *   계약·요청이 여전히 actionable 인 상태로 남고, 트리거는 성공으로
+   *   ACK 해서 `retry: true` 가 아무 일도 하지 않았다.
+   */
+  domainRequiredFailed: number;
   /** 존재하지 않아 건너뛴 사용자 수 — 실패가 아니다(§5). */
   missingSkipped: number;
   /** 살아 있는 사용자 mirror 쓰기가 실패한 batch 수 — retryable(§6·§18). */
@@ -8448,6 +8481,9 @@ type SrvBizCleanupTally = {
  */
 function srvBusinessCleanupVerdict(t: SrvBizCleanupTally): string | null {
   const parts: string[] = [];
+  if (t.domainRequiredFailed > 0) {
+    parts.push(`domain=${t.domainRequiredFailed}`);
+  }
   if (t.mirrorFailed > 0) parts.push(`mirror=${t.mirrorFailed}`);
   if (t.listFailed > 0) parts.push(`list=${t.listFailed}`);
   if (t.deleteFailed > 0) parts.push(`delete=${t.deleteFailed}`);
@@ -8546,8 +8582,28 @@ export const onBusinessDeleted = onDocumentDeleted(
     //   마지막에 `srvBusinessCleanupVerdict` 가 resolve/throw 를 정한다.
     //   user mirror 실패가 Storage 정리 실행 자체를 막지 않게 하는 장치다.
     const bizCleanup: SrvBizCleanupTally = {
-      missingSkipped: 0, mirrorFailed: 0,
+      domainRequiredFailed: 0, missingSkipped: 0, mirrorFailed: 0,
       listFailed: 0, deleteFailed: 0, foreignSkipped: 0,
+    };
+    /**
+     * [R7-P4.4E.11A.3 §6] branch identity 를 잃지 않게 이름과 함께 센다.
+     *   배열 index 만 보고 운영 로그를 해석하는 구조를 만들지 않는다.
+     *
+     * @param {string} name branch 이름
+     * @param {PromiseSettledResult<unknown>[]} results allSettled 결과
+     * @return {void}
+     */
+    const countDomain = (
+      name: string, results: PromiseSettledResult<unknown>[]
+    ): void => {
+      results.forEach((r, i) => {
+        if (r.status !== "rejected") return;
+        bizCleanup.domainRequiredFailed++;
+        const at = results.length > 1 ? `#${i}` : "";
+        console.error(
+          `[onBusinessDeleted] domain cleanup 실패 branch=${name}${at} ` +
+          `biz=${businessId} — ${r.reason}`);
+      });
     };
 
     // [STRUCT-07] limit 없는 get()은 수만 건 문서 시 CF 메모리 초과 위험 — 500건 단위 페이지네이션으로 안전 삭제
@@ -8605,11 +8661,15 @@ export const onBusinessDeleted = onDocumentDeleted(
         lastSub = snap.docs[snap.docs.length - 1];
       }
     }
-    await Promise.allSettled([
-      deleteSubcollection(`businesses/${businessId}/workTypes`),
-      deleteSubcollection(`businesses/${businessId}/members`),
-      deleteSubcollection(`businesses/${businessId}/contract_templates`), // [B-M1-FIX]
-    ]);
+    // [R7-P4.4E.11A.3 §1·§7] 세 서브컬렉션 전부 REQUIRED 다.
+    //   members 는 `collectionGroup("members")` 가 전역으로 읽고 권한
+    //   필드(canManageWage)를 들고 있다. workTypes·contract_templates 는
+    //   부모가 사라진 뒤 이 트리거 말고 지울 주인이 없다 — 여기서 성공으로
+    //   ACK 하면 영구히 남는다. delete 는 멱등이라 재시도가 안전하다.
+    const subColBranches = ["workTypes", "members", "contract_templates"];
+    countDomain("subcollection", await Promise.allSettled(
+      subColBranches.map((c) =>
+        deleteSubcollection(`businesses/${businessId}/${c}`))));
 
     // [BB-001] 수락된 멤버의 subAdminBusinessIds 초기화 — [M-9 수정 2026-07-15] limit(2000) → 페이지네이션
     {
@@ -8691,6 +8751,11 @@ export const onBusinessDeleted = onDocumentDeleted(
           cancelReason: "BUSINESS_DELETED",
           canceledAt: Timestamp.now(),
         });
+        // [R7-P4.4E.11A.3 §17] 판정 트랜잭션이 실패한 건은 상태가 그대로다 —
+        //   사업장은 사라졌는데 지원서는 확정 계열로 남는다. helper 는 그것을
+        //   `preserved` 로도 세지만(그 보호는 그대로 둔다) 실패 id 를 따로
+        //   준다. 그걸 재시도 사유로 올린다 — 다음 시도에서 다시 판정한다.
+        bizCleanup.domainRequiredFailed += bizDelReport.failed.length;
         if (bizDelReport.canceled.length > 0) {
           const batchSize = 499;
           // scheduled attendance → absent
@@ -8742,9 +8807,14 @@ export const onBusinessDeleted = onDocumentDeleted(
 
       // [D-BIZ-05] TO 삭제 전 slots 서브컬렉션 orphan 방지 — 각 TO의 slots를 먼저 정리
       // [PERF-2026-07-16] 순차 → Promise.allSettled 병렬 처리 (TO 간 독립적)
-      await Promise.allSettled(
+      // [R7-P4.4E.11A.3 §1·§7] REQUIRED — 근거가 구체적이다. 전역 스케줄러
+      //   `processSlotWorkDetailExpiry` 가 `collectionGroup("slots")` 를
+      //   `status in [open, full]` 로 읽는다. 삭제된 사업장의 slot 이 남으면
+      //   그 스케줄러가 영원히 집는다 — "삭제된 Business 를 참조하는 live
+      //   operational state" 그 자체다.
+      countDomain("to-slots", await Promise.allSettled(
         tosPage.docs.map((toDoc) => deleteSubcollection(`tos/${toDoc.id}/slots`))
-      );
+      ));
 
       // [NEW-06] groups 수집 (전체 페이지 완료 후 일괄 삭제)
       for (const toDoc of tosPage.docs) {
@@ -8817,14 +8887,29 @@ export const onBusinessDeleted = onDocumentDeleted(
         `historicalOwnerUid 스탬핑 불가. 계약 보존은 유지됨.`,
       );
     }
-    await Promise.allSettled([
-      deleteByBusinessId("schedule_change_requests"),
+    // [R7-P4.4E.11A.3 §6·§7] 이름 있는 branch 로 결과를 수집한다.
+    //   전부 REQUIRED — 근무변경요청·월간리뷰·급여변경요청·중간정산요청·
+    //   리뷰요청은 모두 사용자가 계속 해야 할 Task 이거나 정산 truth 다.
+    //   사업장이 사라졌는데 이것들이 남으면 "삭제된 사업장이 아직 행동을
+    //   요구하는" 상태가 된다. delete 는 멱등이라 재시도가 안전하다.
+    const domainNamed: {name: string; p: Promise<unknown>}[] = [
+      {
+        name: "schedule_change_requests",
+        p: deleteByBusinessId("schedule_change_requests"),
+      },
       // [EC-M-01] employment_contracts: pending_employer만 삭제, 서명·완료·무효 계약 보존
       // [DATA-ARCH-CONTRACT-RETENTION] pending_worker/completed/voided/unknown → Firestore + Storage 보존
       // [ACCESS-GAP-PATCH-01] P1: pending_worker → voided(BUSINESS_DELETED) TX-atomic TOCTOU-safe
       //                        P2: 전체 retained에 historicalOwnerUid 스탬핑 (deleted business.ownerId)
       // 이유: 서명 artifact(signature_employer.png 등)는 분쟁·감사 증거 — 사업장 삭제로 파기 금지
-      (async () => {
+      {name: "employment_contracts", p: (async () => {
+        // [R7-P4.4E.11A.3 §17] 내부에서 삼키던 실패를 IIFE 밖으로 올린다.
+        //   pending_worker 트랜잭션과 historicalOwnerUid 개별 fallback 은
+        //   `Promise.allSettled` 로 돌면서 rejection 을 로그만 남겼다 —
+        //   계약이 actionable(pending_worker) 로 남았는데 사업장은 사라진
+        //   상태가 성공으로 ACK 됐다. 같은 값을 다시 쓰는 것은 멱등이고
+        //   TOCTOU 가드가 completed 를 보호하므로 재시도가 안전하다.
+        let contractInnerFailed = 0;
         try {
           let last: FirebaseFirestore.DocumentSnapshot | undefined;
           let retainedCount = 0;
@@ -8943,7 +9028,8 @@ export const onBusinessDeleted = onDocumentDeleted(
                 if (r.value === "VOIDED") voidedCount++;
                 else toctouCount++;
               } else {
-                // TX 실패: outer allSettled가 swallow하므로 여기서 명시적 오류 로그
+                // TX 실패: 로그 + 집계 → IIFE 끝에서 reject 로 올린다.
+                contractInnerFailed++;
                 console.error(
                   `🚨 [EC-M-01] pending_worker contract ${pendingWorkerDocs[i].id} TX 실패:`,
                   r.reason,
@@ -8975,9 +9061,11 @@ export const onBusinessDeleted = onDocumentDeleted(
                   `(${stableRetainedDocs.length}건) — 개별 fallback:`,
                   err,
                 );
-                await Promise.allSettled(
+                const indiv = await Promise.allSettled(
                   stableRetainedDocs.map((d) => d.ref.update({historicalOwnerUid}))
                 );
+                contractInnerFailed +=
+                  indiv.filter((r) => r.status === "rejected").length;
               }
             }
 
@@ -8991,6 +9079,11 @@ export const onBusinessDeleted = onDocumentDeleted(
               (malformedStatusCount > 0 ? `, 알 수 없는 status ${malformedStatusCount}건` : ""),
             );
           }
+          // [§17] 내부 실패가 있었으면 이 branch 를 실패로 끝낸다.
+          if (contractInnerFailed > 0) {
+            throw new Error(
+              `employment_contracts 내부 처리 ${contractInnerFailed}건 실패`);
+          }
         } catch (err) {
           // IIFE 전체 실패 — outer allSettled가 rejection을 swallow하기 전 명시적 로그
           console.error(
@@ -9000,12 +9093,29 @@ export const onBusinessDeleted = onDocumentDeleted(
           );
           throw err;
         }
-      })(),
-      deleteByBusinessId("monthly_reviews"),
-      deleteByBusinessId("payment_change_requests"),
-      deleteByBusinessId("interim_settlement_requests"),
-      deleteByBusinessId("review_requests"), // [NEW-08] [M-9c 수정 2026-07-15]
-    ]);
+      })()},
+      {name: "monthly_reviews", p: deleteByBusinessId("monthly_reviews")},
+      {
+        name: "payment_change_requests",
+        p: deleteByBusinessId("payment_change_requests"),
+      },
+      {
+        name: "interim_settlement_requests",
+        p: deleteByBusinessId("interim_settlement_requests"),
+      },
+      // [NEW-08] [M-9c 수정 2026-07-15]
+      {name: "review_requests", p: deleteByBusinessId("review_requests")},
+    ];
+    {
+      const settled = await Promise.allSettled(domainNamed.map((b) => b.p));
+      settled.forEach((r, i) => {
+        if (r.status !== "rejected") return;
+        bizCleanup.domainRequiredFailed++;
+        console.error(
+          `[onBusinessDeleted] domain cleanup 실패 branch=${domainNamed[i].name}` +
+          ` biz=${businessId} — ${r.reason}`);
+      });
+    }
 
     // [BB-003] 모든 관리자의 managedBusinessIds에서 삭제된 사업장 ID 제거 (adminIds 기준)
     // [ACCESS-GAP-PATCH-01] deletedData는 historicalOwnerUid 추출을 위해 위에서 미리 선언됨
@@ -9157,6 +9267,7 @@ export const onBusinessDeleted = onDocumentDeleted(
     //   실패가 아니므로 여기에 들어오지 않는다.
     console.log(
       `사업장 삭제 cascade 완료: ${businessId} — ` +
+      `domainRequiredFailed=${bizCleanup.domainRequiredFailed} ` +
       `missingSkipped=${bizCleanup.missingSkipped} ` +
       `mirrorFailed=${bizCleanup.mirrorFailed} ` +
       `listFailed=${bizCleanup.listFailed} ` +

@@ -41,9 +41,12 @@ void main() {
 
   final one = _flat(_codeOf(_sliceOf(cfRaw,
       'async function srvLifecycleCancelOne(', 'return "canceled";')));
+  // [R7-P4.4E.11A.3 갱신] 반환에 `failed` 가 더해졌다(판정 실패 id —
+  //   `preserved` 분류는 그대로 두고 추가 신호만 준다). slice 끝 anchor 만
+  //   현재 모양으로 맞춘다. 이 파일이 고정하는 실근무 보존 계약은 불변이다.
   final bulk = _flat(_codeOf(_sliceOf(cfRaw,
       'async function srvLifecycleCancelBulk(',
-      'return {canceled, preserved, skipped};')));
+      'return {canceled, preserved, skipped, failed};')));
 
   group('INV-1 — 경계의 정의는 하나다 (§5)', () {
     test('01 R5.3E.1 판정 함수를 그대로 쓴다', () {
