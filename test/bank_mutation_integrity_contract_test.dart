@@ -112,13 +112,20 @@ void main() {
       //
       //   그래서 최악이 "영구 고아"에서 "일시적 dangling"으로 바뀐다.
       //   CLAUDE.md 의 일반 규칙과 다른 순서를 **이 함수에 한해** 쓴다.
-      final st = del.indexOf('admin.storage()');
+      // [R7-P4.4E.11B.1 §21 갱신] 물리 삭제가 공유 helper
+      //   `srvDeleteOwnedBankbookArtifacts` 로 옮겨졌다 —
+      //   `callableUpdateBankAccount` 가 같은 계약을 쓰게 하려고 수렴시켰다.
+      //   순서 계약은 그대로다: helper 호출 → (실패 시 throw) → Firestore.
+      final st = del.indexOf('await srvDeleteOwnedBankbookArtifacts(');
       final fs = del.indexOf('.update(');
       expect(st, greaterThan(-1));
       expect(fs, greaterThan(st),
           reason: '물리 삭제 실패 시 포인터를 남겨 재시도 가능하게 한다');
       // 그리고 Storage 실패를 삼키지 않는다 — 삼키면 B2 가 그대로 남는다.
-      expect(_flat(del), contains('throw new HttpsError( "unavailable",'));
+      final helper = _flat(_codeOf(_sliceOf(rawCf,
+          'async function srvDeleteOwnedBankbookArtifacts(', '\n}')));
+      expect(helper, contains('throw new HttpsError( "unavailable",'));
+      expect(helper, contains('.delete({ignoreNotFound: true});'));
       expect(_flat(del), isNot(contains('Storage 삭제 실패 (무시)')));
     });
   });

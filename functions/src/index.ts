@@ -2903,6 +2903,70 @@ function srvResolveOwnedBankbookStoragePath(
 }
 
 /**
+ * [R7-P4.4E.11B.1 §5·§7·§19·§20·§21] 이 사용자의 **유효한 통장사본 경로**를 모은다.
+ *
+ *   `bankbookImagePath` 와 `bankbookImageUrl` 을 각각 독립적으로 본다 —
+ *   `path ?? url` 로 우선순위를 두면 invalid path 가 valid legacy URL 검사를
+ *   막는다. 둘이 다른 object 를 가리키면 둘 다 대상이고(legacy migration
+ *   중간 상태), 같은 object 를 가리키면 `Set` 이 한 번으로 줄인다.
+ *
+ *   통장사본이 아닌 포인터는 **건너뛴다**(skip). 그건 실패가 아니다 —
+ *   신분증·사업자등록증·프로필·타인 경로를 지우지 않는 것이 정답이고,
+ *   그것 때문에 계좌 mutation 을 영구히 막지도 않는다(§9).
+ *
+ * @param {string} uid 소유자
+ * @param {FirebaseFirestore.DocumentData | undefined} data users 문서
+ * @return {object} paths(지워도 되는 경로) / skipped(통장사본 아닌 포인터 수)
+ */
+function srvCollectOwnedBankbookPaths(
+  uid: string, data: FirebaseFirestore.DocumentData | undefined
+): {paths: Set<string>; skipped: number} {
+  const paths = new Set<string>();
+  let skipped = 0;
+  for (const raw of [data?.["bankbookImagePath"], data?.["bankbookImageUrl"]]) {
+    if (typeof raw !== "string" || raw.length === 0) continue;
+    const ok = srvResolveOwnedBankbookStoragePath(uid, raw);
+    if (ok === null) {
+      skipped++;
+      continue;
+    }
+    paths.add(ok);
+  }
+  return {paths, skipped};
+}
+
+/**
+ * [R7-P4.4E.11B.1 §10·§11·§12·§22] 통장사본 bytes 를 종료한다.
+ *
+ *   계약은 호출자마다 다르게 해석되지 않는다:
+ *     이미 없는 object  → 성공 동치(`ignoreNotFound`) — 없는 파일 때문에
+ *                        사용자가 영구히 계좌를 바꾸거나 지울 수 없게
+ *                        만들지 않는다.
+ *     실제 Storage 오류 → **throw**. 호출자는 Firestore 를 건드리지 않고
+ *                        끝내야 한다. 포인터와 소유자가 남아 있으므로
+ *                        재호출이 곧 retry 다.
+ *
+ * @param {Set<string>} paths 검증된 통장사본 경로
+ * @param {string} label 로그 라벨
+ * @return {Promise<void>} 실제 오류면 HttpsError 를 던진다
+ */
+async function srvDeleteOwnedBankbookArtifacts(
+  paths: Set<string>, label: string
+): Promise<void> {
+  for (const p of paths) {
+    try {
+      await admin.storage().bucket().file(p).delete({ignoreNotFound: true});
+    } catch (e) {
+      console.error(
+        `[${label}] 통장사본 물리 삭제 실패 — Firestore 미변경: ${e}`);
+      throw new HttpsError(
+        "unavailable",
+        "통장사본 파일을 정리하지 못했습니다. 잠시 후 다시 시도해주세요.");
+    }
+  }
+}
+
+/**
  * [R7-P4.4E.11A §5] 이 경로가 **이 사업장이 소유한** Storage object 인가.
  *
  *   왜 필요한가: hard delete cascade 는 Firestore 에 적힌 이미지 URL 에서
@@ -12778,24 +12842,7 @@ export const callableDeleteBankInfo = onCall(
     //   `path ?? url` 로 우선순위를 두면 invalid path 가 valid legacy URL
     //   검사를 막는다(§21).
     const userSnap = await db.collection("users").doc(callerUid).get();
-    const bankDelCandidates = new Set<string>();
-    let bankDelSkippedForeign = 0;
-    for (const raw of [
-      userSnap.data()?.bankbookImagePath as string | undefined,
-      userSnap.data()?.bankbookImageUrl as string | undefined,
-    ]) {
-      if (typeof raw !== "string" || raw.length === 0) continue;
-      const ok = srvResolveOwnedBankbookStoragePath(callerUid, raw);
-      if (ok === null) {
-        // [§20·§24] 통장사본이 아니다 — Firestore 가 그렇게 적혀 있어도
-        //   지우지 않는다. 신분증·사업자등록증·프로필·타인 경로 보호가
-        //   계좌정보 삭제보다 우선이다. 다만 이것 때문에 계좌 삭제 자체를
-        //   영원히 막지는 않는다(아래 Firestore 정리는 그대로 진행).
-        bankDelSkippedForeign++;
-        continue;
-      }
-      bankDelCandidates.add(ok);
-    }
+    const bankDel = srvCollectOwnedBankbookPaths(callerUid, userSnap.data());
 
     // [§22] **물리 삭제를 먼저 한다.**
     //
@@ -12805,28 +12852,14 @@ export const callableDeleteBankInfo = onCall(
     //   포인터가 사라져 **영구 untracked orphan** 이 된다.
     //
     //   순서를 뒤집으면 최악이 "일시적 dangling pointer"로 바뀌고, 그것은
-    //   not-found = 성공 동치 + 재호출로 스스로 수렴한다(§23·§28).
-    //   이번 Phase 요청서(§22)가 그 방향을 지시했다 — 이 함수에 한해
-    //   일반 규칙과 다른 순서를 쓴다는 사실을 여기 남긴다.
-    for (const p of bankDelCandidates) {
-      try {
-        // [§28] 이미 없는 object 는 성공과 같다 — 없는 파일 때문에 사용자가
-        //   영구히 계좌를 못 지우는 상태를 만들지 않는다.
-        await admin.storage().bucket().file(p).delete({ignoreNotFound: true});
-      } catch (e) {
-        // [§22] 실제 Storage 오류다 — Firestore 를 건드리지 않고 실패를
-        //   돌려준다. 포인터와 소유자가 남아 있으므로 재호출로 복구된다.
-        console.error(
-          `[callableDeleteBankInfo] 통장사본 물리 삭제 실패 — Firestore 미변경: ${e}`);
-        throw new HttpsError(
-          "unavailable",
-          "통장사본 파일을 정리하지 못했습니다. 잠시 후 다시 시도해주세요.");
-      }
-    }
-    if (bankDelSkippedForeign > 0) {
+    //   not-found = 성공 동치 + 재호출로 스스로 수렴한다.
+    //   이 함수에 한해 일반 규칙과 다른 순서를 쓴다는 사실을 여기 남긴다.
+    await srvDeleteOwnedBankbookArtifacts(
+      bankDel.paths, "callableDeleteBankInfo");
+    if (bankDel.skipped > 0) {
       console.warn(
         "[callableDeleteBankInfo] 통장사본이 아닌 포인터 " +
-        `${bankDelSkippedForeign}건 건너뜀 (삭제 안 함)`);
+        `${bankDel.skipped}건 건너뜀 (삭제 안 함)`);
     }
 
     // 1. Firestore 정리 — 물리 삭제가 끝난 뒤.
@@ -12880,7 +12913,7 @@ export const callableDeleteBankInfo = onCall(
 
     console.info(
       `[deleteBankInfo] uid=${callerUid} 통장사본 삭제 ` +
-      `${bankDelCandidates.size}건 · 통장사본 아님 ${bankDelSkippedForeign}건`);
+      `${bankDel.paths.size}건 · 통장사본 아님 ${bankDel.skipped}건`);
     return {success: true};
   }
 );
@@ -12964,6 +12997,31 @@ export const callableUpdateBankAccount = onCall(
       if (!accountHolder) {
         throw new HttpsError("failed-precondition", "사용자 이름이 등록되지 않았습니다.");
       }
+    }
+
+    // [R7-P4.4E.11B.1 §0·§3·§4·§10] 계좌가 바뀌면 기존 통장사본은 새 계좌의
+    //   증빙이 아니다. 그래서 아래 update 가 포인터와 평가 상태를 전부
+    //   지운다 — 그게 이미 현재 정책이다. 그런데 **bytes 는 지우지 않았다.**
+    //   주석이 "Storage 실제 파일은 별도 cleanup 정책에서 처리"라고 미뤘고,
+    //   그 결과 포인터·소유자·재시도 경로가 동시에 사라져 민감 서류가
+    //   추적 불가 상태로 남았다(= B2 와 같은 class). 새 정책을 만드는 것이
+    //   아니라, Firestore 에서 무효화하는 것을 Storage 에서도 같은 mutation
+    //   안에서 끝낸다.
+    //
+    //   [§4] 입력·권한·예금주 검증이 **모두 끝난 뒤**에 시작한다 — 기존
+    //     통장사본을 지우고 나서 새 계좌가 invalid 로 드러나면 안 된다.
+    //   [§9] 통장사본이 아닌 포인터는 건너뛸 뿐 계좌 변경을 막지 않는다.
+    //     INVALID_POINTER ≠ STORAGE_FAILURE.
+    //   [§11·§15] 실제 Storage 오류는 throw 다 — 아래 update 에 도달하지
+    //     않으므로 계좌·bankAccountVersion·포인터·평가 상태가 모두 그대로
+    //     남고, 재호출이 곧 retry 다.
+    const bankUpd = srvCollectOwnedBankbookPaths(callerUid, userData);
+    await srvDeleteOwnedBankbookArtifacts(
+      bankUpd.paths, "callableUpdateBankAccount");
+    if (bankUpd.skipped > 0) {
+      console.warn(
+        "[callableUpdateBankAccount] 통장사본이 아닌 포인터 " +
+        `${bankUpd.skipped}건 건너뜀 (삭제 안 함)`);
     }
 
     // 계좌 정보 업데이트 + 인증 상태 초기화

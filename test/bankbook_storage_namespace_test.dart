@@ -70,6 +70,15 @@ void main() {
       raw, 'export const callableDeleteBankInfo', '\n// ──')));
   String backfill() => _flat(_codeOf(_slice(
       raw, 'export const callableBackfillBankbookImagePath', '\n// ──')));
+  // [R7-P4.4E.11B.1 §21] 삭제 후보 수집·물리 삭제가 공유 helper 로 수렴했다.
+  //   `callableDeleteBankInfo` 와 `callableUpdateBankAccount` 가 같은 계약을
+  //   쓰도록 하기 위해서다. 계약 자체는 그대로이고 사는 곳만 바뀌었다.
+  String collector() => _flat(_codeOf(_slice(
+      raw, 'function srvCollectOwnedBankbookPaths(', '\n}')));
+  String artifactDel() => _flat(_codeOf(_slice(
+      raw, 'async function srvDeleteOwnedBankbookArtifacts(', '\n}')));
+  String updater() => _flat(_codeOf(_slice(
+      raw, 'export const callableUpdateBankAccount', '\n// ──')));
 
   // ══════════════════════════════════════════════════════════════
   group('BANK-NS-0x 네임스페이스 술어 (§7·§10)', () {
@@ -201,45 +210,50 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('BANK-DEL-0x 삭제 lifecycle (§19~§28)', () {
     test('BANK-DEL-01 canonical path 를 후보로 수집한다 (B2 핵심)', () {
-      final d = deleter();
-      expect(d, contains('userSnap.data()?.bankbookImagePath as string | undefined,'),
+      // [R7-P4.4E.11B.1 §21 갱신] 수집이 공유 helper 로 옮겨졌다.
+      expect(deleter(), contains('srvCollectOwnedBankbookPaths(callerUid, userSnap.data())'));
+      expect(collector(), contains('data?.["bankbookImagePath"]'),
           reason: 'V3 canonical 포인터가 수집되지 않으면 물리 삭제가 일어나지 않는다');
     });
 
     test('BANK-DEL-02 legacy URL 도 독립 후보다 (§21)', () {
-      final d = deleter();
-      expect(d, contains('userSnap.data()?.bankbookImageUrl as string | undefined,'));
+      final c = collector();
+      expect(c, contains('data?.["bankbookImageUrl"]'));
       // `path ?? url` 우선순위가 아니라 **둘 다** 돈다.
-      expect(d, contains('for (const raw of ['));
-      expect(d, isNot(contains('bankbookImagePath ?? ')));
+      expect(c, contains('for (const raw of [data?.["bankbookImagePath"], data?.["bankbookImageUrl"]])'));
+      expect(c, isNot(contains('bankbookImagePath"] ?? ')));
     });
 
     test('BANK-DEL-03·04·05 후보마다 resolve+validate 를 거친다', () {
-      final d = deleter();
-      expect(d, contains('const ok = srvResolveOwnedBankbookStoragePath(callerUid, raw);'));
-      expect(d, contains('if (ok === null) {'));
-      expect(d, contains('bankDelSkippedForeign++;'));
+      final c = collector();
+      expect(c, contains('const ok = srvResolveOwnedBankbookStoragePath(uid, raw);'));
+      expect(c, contains('if (ok === null) { skipped++; continue; }'));
       // 검증 없는 삭제 경로가 사라졌다.
+      final d = deleter();
       expect(d, isNot(contains('oldImageUrl.match(')));
       expect(d, isNot(contains('decodeURIComponent(pathMatch[1])')));
     });
 
     test('BANK-DEL-06 중복 후보는 한 번만 지운다', () {
-      expect(deleter(), contains('const bankDelCandidates = new Set<string>();'));
+      expect(collector(), contains('const paths = new Set<string>();'));
     });
 
     test('BANK-DEL-07 not-found 는 성공 동치다 (§28)', () {
-      expect(deleter(), contains('.delete({ignoreNotFound: true});'));
+      expect(artifactDel(), contains('.delete({ignoreNotFound: true});'));
     });
 
     test('BANK-DEL-08 실제 Storage 오류면 Firestore 를 건드리지 않고 실패한다 (§22)', () {
-      final d = deleter();
-      final delAt = d.indexOf('.delete({ignoreNotFound: true});');
-      final throwAt = d.indexOf('"unavailable",');
-      final fsAt = d.indexOf('bankName: admin.firestore.FieldValue.delete(),');
+      // helper 가 던지고, 호출부는 그 전에 Firestore 를 건드리지 않는다.
+      final h = artifactDel();
+      final delAt = h.indexOf('.delete({ignoreNotFound: true});');
+      final throwAt = h.indexOf('"unavailable",');
       expect(delAt, greaterThan(0));
       expect(throwAt, greaterThan(delAt));
-      expect(fsAt, greaterThan(throwAt),
+      final d = deleter();
+      final callAt = d.indexOf('await srvDeleteOwnedBankbookArtifacts(');
+      final fsAt = d.indexOf('bankName: admin.firestore.FieldValue.delete(),');
+      expect(callAt, greaterThan(0));
+      expect(fsAt, greaterThan(callAt),
           reason: '물리 삭제 → (실패 시 throw) → Firestore 정리 순서');
       expect(d, isNot(contains('Storage 삭제 실패 (무시)')),
           reason: '삼키고 성공으로 끝내는 경로가 남아 있으면 안 된다');
@@ -248,9 +262,9 @@ void main() {
     test('BANK-DEL-09·10 재호출로 복구된다 (§23)', () {
       final d = deleter();
       // Storage 는 not-found 로 지나가고 Firestore 정리만 다시 시도된다.
-      expect(d, contains('.delete({ignoreNotFound: true});'));
+      expect(artifactDel(), contains('.delete({ignoreNotFound: true});'));
       // Firestore update 실패를 삼키지 않는다 — await 그대로 전파한다.
-      //   Storage 삭제 쪽 catch 는 의도된 것이다(rethrow 해서 Firestore 를
+      //   helper 의 catch 는 의도된 것이다(rethrow 해서 Firestore 를
       //   건드리지 않는다). 그래서 **Firestore 정리 구간만** 본다.
       expect(d, contains('await db.collection("users").doc(callerUid).update({'));
       final fsBlock = _flat(_codeOf(_slice(raw,
@@ -258,8 +272,8 @@ void main() {
           'return {success: true};')));
       expect(fsBlock, isNot(contains('catch')),
           reason: 'Firestore 정리를 try/catch 로 감싸 성공으로 끝내면 안 된다');
-      // Storage 쪽 catch 는 rethrow 한다 — 삼키지 않는다.
-      expect(d, contains('throw new HttpsError( "unavailable",'));
+      // helper 쪽 catch 는 rethrow 한다 — 삼키지 않는다.
+      expect(artifactDel(), contains('throw new HttpsError( "unavailable",'));
     });
 
     test('BANK-DEL-11 canonical state cleanup 은 그대로다 (§25)', () {
@@ -280,12 +294,113 @@ void main() {
 
     test('BANK-DEL-12 invalid 포인터 때문에 계좌 삭제가 막히지 않는다 (§24)', () {
       final d = deleter();
-      final skipAt = d.indexOf('bankDelSkippedForeign++;');
+      final skipAt = d.indexOf('if (bankDel.skipped > 0) {');
       final fsAt = d.indexOf('bankName: admin.firestore.FieldValue.delete(),');
       expect(skipAt, greaterThan(0));
       expect(fsAt, greaterThan(skipAt),
           reason: '건너뛰고도 Firestore 정리는 진행한다');
-      expect(d, isNot(contains('if (bankDelSkippedForeign > 0) { throw')));
+      expect(d, isNot(contains('if (bankDel.skipped > 0) { throw')));
+      // collector 가 skip 을 실패로 승격시키지 않는다 (§22 helper 계약).
+      expect(collector(), isNot(contains('throw')));
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  group('BANK-UPD-xx 계좌 변경이 옛 통장사본 bytes 를 종료한다 (§0·§4·§10)', () {
+    test('BANK-UPD-01·02·03·04 같은 helper 로 후보를 모으고 지운다', () {
+      final u = updater();
+      expect(u, contains('const bankUpd = srvCollectOwnedBankbookPaths(callerUid, userData);'));
+      expect(u, contains('await srvDeleteOwnedBankbookArtifacts( bankUpd.paths, "callableUpdateBankAccount");'));
+      // path·URL 독립 수집 + dedupe 는 helper 계약이다(BANK-DEL-02·06 참조).
+      expect(collector(), contains('const paths = new Set<string>();'));
+    });
+
+    test('BANK-UPD-05 검증이 전부 끝난 뒤에 삭제를 시작한다 (§4)', () {
+      final u = updater();
+      final bankNameAt = u.indexOf('"은행명이 필요합니다."');
+      final acctAt = u.indexOf('"계좌번호가 필요합니다."');
+      final roleAt = u.indexOf('"지원자 계정만 급여 계좌를 등록할 수 있습니다."');
+      final holderAt = u.indexOf('"사용자 이름이 등록되지 않았습니다."');
+      final delAt = u.indexOf('await srvDeleteOwnedBankbookArtifacts(');
+      for (final at in [bankNameAt, acctAt, roleAt, holderAt]) {
+        expect(at, greaterThan(0));
+        expect(delAt, greaterThan(at),
+            reason: '검증보다 삭제가 먼저면 invalid 입력에 통장사본을 잃는다');
+      }
+    });
+
+    test('BANK-UPD-10~13 invalid 포인터는 건너뛰되 계좌 변경을 막지 않는다 (§9)', () {
+      final u = updater();
+      final skipAt = u.indexOf('if (bankUpd.skipped > 0) {');
+      final fsAt = u.indexOf('bankName: bankName.trim(),');
+      expect(skipAt, greaterThan(0));
+      expect(fsAt, greaterThan(skipAt));
+      expect(u, isNot(contains('if (bankUpd.skipped > 0) { throw')),
+          reason: 'INVALID_POINTER ≠ STORAGE_FAILURE — DOS 로 만들지 않는다');
+    });
+
+    test('BANK-UPD-30·31 Storage 실패면 Firestore 에 도달하지 않는다 (§11·§15)', () {
+      final u = updater();
+      final delAt = u.indexOf('await srvDeleteOwnedBankbookArtifacts(');
+      final fsAt = u.indexOf('await db.collection("users").doc(callerUid).update({');
+      expect(delAt, greaterThan(0));
+      expect(fsAt, greaterThan(delAt));
+      // helper 가 던지므로 update 에 도달하지 않는다 → 계좌·버전·포인터 보존.
+      expect(artifactDel(), contains('throw new HttpsError( "unavailable",'));
+      // 호출부가 그 예외를 삼키지 않는다.
+      final seg = u.substring(delAt, fsAt);
+      expect(seg, isNot(contains('catch')));
+    });
+
+    test('BANK-UPD-40 bankAccountVersion semantics 불변 (§15)', () {
+      final u = updater();
+      expect(u, contains('bankAccountVersion: admin.firestore.FieldValue.increment(1),'));
+      expect(u, contains('bankbookDocumentVersion: admin.firestore.FieldValue.increment(1),'));
+      // 실패 호출에서 증가하지 않는다 — update 가 단일 경계다.
+      expect('db.collection("users").doc(callerUid).update({'.allMatches(u).length, 1,
+          reason: '쪼개 쓰면 중간 상태가 관측된다 (§14)');
+    });
+
+    test('BANK-UPD-41 bankbook reset semantics 불변 (§2·§38)', () {
+      final u = updater();
+      for (final f in [
+        'bankbookImagePath: admin.firestore.FieldValue.delete(),',
+        'bankbookImageUrl: admin.firestore.FieldValue.delete(),',
+        'bankbookUploadedAt: admin.firestore.FieldValue.delete(),',
+        'bankbookDocumentState: admin.firestore.FieldValue.delete(),',
+        'bankbookSelfCheck: admin.firestore.FieldValue.delete(),',
+        'bankbookMatchStatus: admin.firestore.FieldValue.delete(),',
+        'bankReviewedAt: admin.firestore.FieldValue.delete(),',
+      ]) {
+        expect(u, contains(f), reason: '$f 가 바뀌면 안 된다');
+      }
+    });
+
+    test('BANK-UPD-16 accountHolder 정책 불변 (§16)', () {
+      final u = updater();
+      expect(u, contains('const isForeign = srvIsForeignIdentity(userData);'));
+      expect(u, contains('accountHolder = userData.name as string;'),
+          reason: '내국인은 서버가 users.name 에서 읽는다');
+      expect(u, contains('"외국인 근로자는 예금주명을 입력해야 합니다."'));
+    });
+
+    test('BANK-UPD-37 암호화·정규화 비변경 (§37)', () {
+      final u = updater();
+      expect(u, contains('accountNumber: accountNumber.trim(),'));
+      expect(u, isNot(contains('EncryptionHelper')));
+      expect(u, isNot(contains('decrypt')));
+    });
+
+    test('BANK-UPD-39 side-effect notification 0 (§39)', () {
+      final u = updater();
+      for (final s in ['messaging()', 'sendNotification', 'createNotification',
+        'notifications', 'audit']) {
+        expect(u, isNot(contains(s)), reason: '$s 가 있으면 재시도로 중복된다');
+      }
+    });
+
+    test('BANK-UPD-21 helper 가 not-found 를 성공으로 본다 (§12)', () {
+      expect(artifactDel(), contains('.delete({ignoreNotFound: true});'));
     });
   });
 
