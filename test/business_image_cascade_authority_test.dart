@@ -189,27 +189,41 @@ void main() {
       // 집합에 넣는 지점은 두 곳이고 **둘 다** 검증을 거친다.
       expect('ownedPaths.add('.allMatches(h).length, 2);
       expect(h, contains('const p = srvResolveBusinessStoragePath(businessId, url);'));
-      expect(h, contains('if (p === null) { skippedForeign++; continue; }'));
+      // [R7-P4.4E.11A.2 갱신] 카운터가 지역변수에서 단계별 집계로 옮겨졌다.
+      //   건너뛴다는 계약은 그대로다.
+      expect(h, contains('if (p === null) {'));
+      expect(h, contains('bizCleanup.foreignSkipped++;'));
       expect(h, contains('if (srvIsOwnedBusinessStoragePath(businessId, f.name)) { ownedPaths.add(f.name); }'));
       // 예전의 무검증 삭제가 남아 있지 않다.
       expect(h, isNot(contains('bucket.file(decodeURIComponent(')));
     });
 
     test('BUS-IMG-26 건너뛰기가 사업장 삭제를 실패시키지 않는다 (§7)', () {
+      // [R7-P4.4E.11A.2 갱신] 이제 cascade 는 **정리 실패 시 일부러 던진다**
+      //   (retry owner 에게 넘긴다). 그러나 외부 경로 건너뜀은 실패가 아니므로
+      //   던지는 사유에 들어가지 않는다 — 그것이 이 셀의 원래 계약이다.
       final h = hardDelete();
-      expect(h, contains('skippedForeign++;'));
-      expect(h, isNot(contains('throw new HttpsError')),
-          reason: 'cascade 는 정리 실패로 중단되지 않는다');
+      expect(h, contains('bizCleanup.foreignSkipped++;'));
       expect(h, contains('console.warn('));
+      final verdict = _flat(_codeOf(_slice(
+          raw, 'function srvBusinessCleanupVerdict(', '\n}')));
+      expect(verdict, isNot(contains('foreignSkipped')),
+          reason: '건너뜀이 throw 사유가 되면 영구 retry loop 다');
     });
   });
 
   // ══════════════════════════════════════════════════════════════
   group('BUS-IMG-3x 사업자등록증 정리 (§10·§11·§13)', () {
-    test('BUS-IMG-30 license 네임스페이스를 정확한 접두로만 열거한다', () {
+    test('BUS-IMG-30 사업장 네임스페이스를 정확한 접두로만 열거한다', () {
+      // [R7-P4.4E.11A.2 갱신] license 접두 전용 sweep 이 **사업장 root 접두**
+      //   sweep 으로 넓어졌다 — 재시도가 포인터 없이도 잔여를 찾아야 해서다
+      //   (§2). license/ 는 그 안에 포함되므로 계약은 강화됐다.
+      //   그 범위가 안전한 근거: 이 네임스페이스의 production writer 는
+      //   callableUploadBusinessImage 하나이고 보존 대상이 없다(§1 READ).
       final h = hardDelete();
-      expect(h, contains(r'const licensePrefix = `businesses/${businessId}/license/`;'));
-      expect(h, contains('await bucket.getFiles({prefix: licensePrefix})'));
+      expect(h, contains(r'await bucket.getFiles({ prefix: `businesses/${businessId}/`, })'));
+      expect(h, isNot(contains('licensePrefix')),
+          reason: '좁은 접두만 보던 구현이 남아 있으면 재시도 복구가 불완전하다');
     });
 
     test('BUS-IMG-31 열거 결과도 validator 를 거친다', () {
@@ -217,10 +231,20 @@ void main() {
           contains('if (srvIsOwnedBusinessStoragePath(businessId, f.name)) { ownedPaths.add(f.name); }'));
     });
 
-    test('BUS-IMG-32 열거 실패가 cascade 를 막지 않는다', () {
+    test('BUS-IMG-32 열거 실패가 cascade 를 막지 않는다 — 그리고 삼켜지지도 않는다', () {
+      // [R7-P4.4E.11A.2 갱신] 예전엔 "삼키고 기록"이 전부였다. 그건 기존
+      //   residual(실패가 추적되지 않음) 그 자체였다. 이제는 기록 + 집계 +
+      //   마지막에 throw 다 — 다른 정리는 계속하되 성공으로 ACK 하지 않는다.
       final h = hardDelete();
-      final at = h.indexOf('license 네임스페이스 열거 실패');
-      expect(at, greaterThan(0), reason: '실패를 삼키고 기록한다');
+      expect(h, contains('네임스페이스 열거 실패'), reason: '기록은 유지');
+      expect(h, contains('bizCleanup.listFailed++;'), reason: '집계로 올린다');
+      final listAt = h.indexOf('bizCleanup.listFailed++;');
+      // Storage 삭제 전용 anchor — `Promise.allSettled(` 는 cascade 앞쪽
+      //   도메인 정리에도 있어서 첫 등장을 집으면 엉뚱한 곳을 가리킨다.
+      final delAt = h.indexOf('.delete({ignoreNotFound: true})');
+      final throwAt = h.indexOf('throw new Error(');
+      expect(delAt, greaterThan(listAt), reason: '열거 실패 후에도 삭제 단계는 실행된다');
+      expect(throwAt, greaterThan(delAt), reason: 'throw 는 마지막이다');
     });
 
     test('BUS-IMG-33 owner-scoped 등록증은 사업장 삭제로 지우지 않는다 (§13)', () {

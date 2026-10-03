@@ -8417,6 +8417,120 @@ export const verifySmsCode = onCall(
 // 🗑️ 사업장 삭제 시 연관 데이터 정리 (BUG-5)
 // ═══════════════════════════════════════════════════════════
 
+/** [R7-P4.4E.11A.2 §8·§24] 정리 단계별 집계. 최종 ACK 의 근거다. */
+type SrvBizCleanupTally = {
+  /** 존재하지 않아 건너뛴 사용자 수 — 실패가 아니다(§5). */
+  missingSkipped: number;
+  /** 살아 있는 사용자 mirror 쓰기가 실패한 batch 수 — retryable(§6·§18). */
+  mirrorFailed: number;
+  /** 네임스페이스 열거 실패 수 — retryable(§11). */
+  listFailed: number;
+  /** object 삭제 실패 수 — retryable(§10). */
+  deleteFailed: number;
+  /** 이 사업장 소유가 아니라 건너뛴 경로 수 — **security skip, 실패 아님**(§13). */
+  foreignSkipped: number;
+};
+
+/**
+ * [R7-P4.4E.11A.2 §9·§13] 최종 ACK 를 정한다. **순수 함수**다.
+ *
+ *   `null` 이면 resolve(정리 완료 또는 success-equivalent),
+ *   문자열이면 그 이유로 throw 해서 `retry: true` 가 다시 집도록 한다.
+ *
+ *   외부 경로 건너뛰기는 **절대 throw 사유가 아니다** — 지우지 않는 것이
+ *   올바른 동작이고, 재시도해도 결과가 같다. 그걸 실패로 세면 사업장 삭제가
+ *   영구히 retry loop 에 빠진다.
+ *
+ *   존재하지 않는 사용자도 실패가 아니다 — 되살릴 수 없고 되살려서도 안 된다.
+ *
+ * @param {SrvBizCleanupTally} t 단계별 집계
+ * @return {string | null} throw 이유, 또는 null
+ */
+function srvBusinessCleanupVerdict(t: SrvBizCleanupTally): string | null {
+  const parts: string[] = [];
+  if (t.mirrorFailed > 0) parts.push(`mirror=${t.mirrorFailed}`);
+  if (t.listFailed > 0) parts.push(`list=${t.listFailed}`);
+  if (t.deleteFailed > 0) parts.push(`delete=${t.deleteFailed}`);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+/**
+ * [R7-P4.4E.11A.2 §4·§5·§6·§7] 사용자 쪽 mirror 를 지운다 — **존재하는 것만.**
+ *
+ *   무엇이 잘못됐었나: `batch.update(users/{uid}, …)` 를 바로 commit 했다.
+ *   Firestore batch 는 대상 문서가 없으면 **전체가** NOT_FOUND 로 실패한다.
+ *   탈퇴한 관리자가 한 명이라도 끼면 batch 가 터지고, 그 뒤의 cascade —
+ *   TO·계약·그리고 **Storage 이미지 정리** — 가 아예 실행되지 않았다.
+ *   DEV 런타임에서 실제로 관찰됐다(11A.1 §26).
+ *
+ *   그렇다고 `try { commit } catch { 로그 }` 로 끝내면 안 된다(§6). 그러면
+ *   없는 사용자 한 명 때문에 **살아 있는** SubAdmin 의 권한 mirror 가
+ *   낡은 채로 남고, 그 사실이 성공으로 ACK 된다.
+ *
+ *   그래서: 먼저 존재를 확인해 없는 사용자는 **건너뛴다**(되살리지 않는다),
+ *   존재하는 사용자만 chunk 로 쓴다. chunk 실패는 세어서 올려 보내고
+ *   최종 ACK 가 throw 를 결정한다 — 다음 retry 가 살아 있는 쪽을 다시 고친다.
+ *
+ *   읽은 직후 그 사용자가 탈퇴하는 race 는 그 chunk 의 실패로 나타난다(§7).
+ *   다음 retry 에서는 존재 확인이 그를 걸러내므로 영구 실패가 되지 않는다.
+ *
+ * @param {string[]} uids 대상 사용자
+ * @param {object} patch 각 사용자에게 적용할 mirror 제거 패치
+ * @param {string} label 로그 라벨
+ * @return {Promise<object>} updated / missingSkipped / failed 집계
+ */
+async function srvRemoveUserBusinessMirrors(
+  uids: string[],
+  patch: Record<string, unknown>,
+  label: string
+): Promise<{updated: number; missingSkipped: number; failed: number}> {
+  const unique = [...new Set(uids.filter(
+    (u): u is string => typeof u === "string" && u.length > 0))];
+  if (unique.length === 0) return {updated: 0, missingSkipped: 0, failed: 0};
+
+  const existing: string[] = [];
+  let missingSkipped = 0;
+  let failed = 0;
+
+  // 존재 확인 — getAll 은 없는 문서도 snapshot 으로 돌려준다(throw 하지 않는다).
+  const READ_CHUNK = 100;
+  for (let i = 0; i < unique.length; i += READ_CHUNK) {
+    const slice = unique.slice(i, i + READ_CHUNK);
+    try {
+      const snaps = await db.getAll(
+        ...slice.map((u) => db.collection("users").doc(u)));
+      for (const s of snaps) {
+        if (s.exists) existing.push(s.id);
+        else missingSkipped++;
+      }
+    } catch (e) {
+      // 읽기 자체가 실패했다 — 지웠는지 알 수 없으므로 retryable 로 센다.
+      failed++;
+      console.warn(`[onBusinessDeleted] ${label} 존재확인 실패 — ${e}`);
+    }
+  }
+
+  // [§5] 없는 사용자는 **절대 set(...merge) 로 되살리지 않는다.** update 만 쓴다.
+  const WRITE_CHUNK = 400;
+  let updated = 0;
+  for (let i = 0; i < existing.length; i += WRITE_CHUNK) {
+    const slice = existing.slice(i, i + WRITE_CHUNK);
+    const batch = db.batch();
+    for (const u of slice) {
+      batch.update(db.collection("users").doc(u), patch);
+    }
+    try {
+      await batch.commit();
+      updated += slice.length;
+    } catch (e) {
+      failed++;
+      console.warn(
+        `[onBusinessDeleted] ${label} mirror chunk ${slice.length}건 실패 — ${e}`);
+    }
+  }
+  return {updated, missingSkipped, failed};
+}
+
 export const onBusinessDeleted = onDocumentDeleted(
   {
     document: "businesses/{businessId}",
@@ -8428,6 +8542,13 @@ export const onBusinessDeleted = onDocumentDeleted(
   async (event) => {
     const businessId = event.params.businessId;
     console.log(`사업장 삭제 cascade 시작: ${businessId}`);
+    // [R7-P4.4E.11A.2 §8·§9] 단계별 집계. 중간에 던지지 않고 여기에 모은 뒤,
+    //   마지막에 `srvBusinessCleanupVerdict` 가 resolve/throw 를 정한다.
+    //   user mirror 실패가 Storage 정리 실행 자체를 막지 않게 하는 장치다.
+    const bizCleanup: SrvBizCleanupTally = {
+      missingSkipped: 0, mirrorFailed: 0,
+      listFailed: 0, deleteFailed: 0, foreignSkipped: 0,
+    };
 
     // [STRUCT-07] limit 없는 get()은 수만 건 문서 시 CF 메모리 초과 위험 — 500건 단위 페이지네이션으로 안전 삭제
     const PAGE = 499; // Firestore batch 500건 제한 안전 마진
@@ -8501,20 +8622,21 @@ export const onBusinessDeleted = onDocumentDeleted(
         if (lastAccepted) q = q.startAfter(lastAccepted);
         const snap2 = await q.get();
         if (snap2.empty) break;
-        let userBatch = db.batch();
-        let cnt = 0;
-        for (const doc of snap2.docs) {
-          const targetUid = doc.data().targetUid as string | undefined;
-          if (targetUid) {
-            userBatch.update(db.collection("users").doc(targetUid), {
-              subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId),
-              subAdminOf: admin.firestore.FieldValue.delete(),
-            });
-            cnt++;
-            if (cnt % 499 === 0) { await userBatch.commit(); userBatch = db.batch(); cnt = 0; }
-          }
-        }
-        if (cnt > 0) await userBatch.commit();
+        // [R7-P4.4E.11A.2 §4·§6] 예전엔 batch.update 를 바로 commit 했다.
+        //   탈퇴한 SubAdmin 한 명이면 batch 전체가 NOT_FOUND 로 터지고,
+        //   이 블록은 cascade 맨 앞이라 **그 뒤 전부**가 실행되지 않았다.
+        //   subAdminBusinessIds 는 권한 mirror 이므로 포기할 수도 없다 —
+        //   존재하는 사용자만 쓰고, 실패는 집계해 최종 ACK 에 맡긴다.
+        const subRes = await srvRemoveUserBusinessMirrors(
+          snap2.docs.map((d) => d.data().targetUid as string | undefined)
+            .filter((u): u is string => typeof u === "string" && u.length > 0),
+          {
+            subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId),
+            subAdminOf: admin.firestore.FieldValue.delete(),
+          },
+          "subAdmin");
+        bizCleanup.missingSkipped += subRes.missingSkipped;
+        bizCleanup.mirrorFailed += subRes.failed;
         if (snap2.docs.length < 499) break;
         lastAccepted = snap2.docs[snap2.docs.length - 1];
       }
@@ -8891,15 +9013,18 @@ export const onBusinessDeleted = onDocumentDeleted(
       ? (Array.isArray(deletedData.adminIds) ? deletedData.adminIds
         : (deletedData.ownerId ? [deletedData.ownerId as string] : []))
       : [];
-    if (allAdminIds.length > 0) {
-      const adminBatch = db.batch();
-      for (const adminUid of allAdminIds) {
-        adminBatch.update(db.collection("users").doc(adminUid), {
-          managedBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId),
-        });
-      }
-      await adminBatch.commit();
-    }
+    // [R7-P4.4E.11A.2 §4·§5] 여기가 DEV 런타임에서 실제로 터진 지점이다.
+    //   `adminBatch.commit()` 이 NOT_FOUND 로 던지면 바로 아래 Storage 정리
+    //   블록에 **도달조차 하지 못했다.** 탈퇴 시 사업장은 비활성화만 되므로
+    //   (`callableDeleteAccountFinal`) adminIds 에 없는 사용자가 남아 있는
+    //   사업장이 실제로 존재하고, 그 사업장을 나중에 삭제하면 이미지와
+    //   사업자등록증이 전부 추적 불가 고아가 됐다.
+    const adminRes = await srvRemoveUserBusinessMirrors(
+      allAdminIds,
+      {managedBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId)},
+      "admin");
+    bizCleanup.missingSkipped += adminRes.missingSkipped;
+    bizCleanup.mirrorFailed += adminRes.failed;
 
     // [LOW-STORAGE] 사업장 이미지 + work_types 이미지 Storage 정리
     // work_types 루트 컬렉션 Firestore 삭제 + thumbnailUrl/images[] Storage 정리
@@ -8957,35 +9082,50 @@ export const onBusinessDeleted = onDocumentDeleted(
       //   않는 더 나쁜 결과가 된다.
       const allImageUrls = [...bizImageUrls, ...workTypeUrls, ...subWorkTypeUrls];
       const ownedPaths = new Set<string>(); // [§12] 중복 입력도 한 번만 지운다
-      let skippedForeign = 0;
       for (const url of allImageUrls) {
         const p = srvResolveBusinessStoragePath(businessId, url);
         if (p === null) {
-          skippedForeign++;
+          // [§13] 남의 네임스페이스다 — 지우지 않는 것이 정답이고, 재시도해도
+          //   결과가 같다. **실패로 세지 않는다**(세면 영구 retry loop 다).
+          bizCleanup.foreignSkipped++;
           continue;
         }
         ownedPaths.add(p);
       }
-      if (skippedForeign > 0) {
+      if (bizCleanup.foreignSkipped > 0) {
         console.warn(
           "[onBusinessDeleted] 이 사업장 소유가 아닌 이미지 경로 " +
-          `${skippedForeign}건 건너뜀: ${businessId}`
+          `${bizCleanup.foreignSkipped}건 건너뜀: ${businessId}`
         );
       }
 
-      // [§11] 포인터만으로는 부족하다 — 과거 교체분이 license 네임스페이스에
-      //   남아 있을 수 있고, 그 포인터는 이미 덮여 사라졌다. 정확히
-      //   `businesses/{businessId}/license/` 접두만 열거한다.
+      // [R7-P4.4E.11A.2 §2] **재시도의 authoritative source 는 네임스페이스
+      //   열거다.** 포인터 수집은 최적화·로그용으로 남긴다.
+      //
+      //   왜: 1차 실행이 workType·business 문서를 이미 지운 뒤 Storage 에서
+      //   실패하면, 재시도 때 그 이미지 URL 을 다시 읽을 방법이 없다. 포인터에
+      //   의존하는 recovery 는 그 순간 빈손이 된다. 반면 경로 자체는
+      //   `businesses/{businessId}/` 아래에 그대로 있으므로 다시 찾을 수 있다.
+      //
+      //   §1 READ 로 이 네임스페이스에 보존 대상이 없음을 확인했다 —
+      //   production writer 는 `callableUploadBusinessImage` 하나이고 shape 는
+      //   표시 이미지와 `license/` 둘뿐이다(storage.rules 도 그 둘만 선언한다).
+      //   그래서 root prefix 열거가 안전하다.
+      //
+      //   [§11] 열거 실패를 "지울 게 없었다"로 읽지 않는다 — retryable 이다.
       try {
-        const licensePrefix = `businesses/${businessId}/license/`;
-        const [licenseFiles] = await bucket.getFiles({prefix: licensePrefix});
-        for (const f of licenseFiles) {
+        const [nsFiles] = await bucket.getFiles({
+          prefix: `businesses/${businessId}/`,
+        });
+        for (const f of nsFiles) {
+          // 열거 결과도 같은 술어를 거친다 — 접두가 같아도 모양이 이상하면 뺀다.
           if (srvIsOwnedBusinessStoragePath(businessId, f.name)) {
             ownedPaths.add(f.name);
           }
         }
       } catch (e) {
-        console.warn("[onBusinessDeleted] license 네임스페이스 열거 실패: " +
+        bizCleanup.listFailed++;
+        console.warn("[onBusinessDeleted] 네임스페이스 열거 실패: " +
           `${businessId} — ${e}`);
       }
 
@@ -8995,15 +9135,38 @@ export const onBusinessDeleted = onDocumentDeleted(
           [...ownedPaths].map((p) =>
             bucket.file(p).delete({ignoreNotFound: true}))
         );
+        // [§10] 실제 삭제 실패는 로그로 끝내지 않는다 — 집계해서 최종 ACK 가
+        //   던지게 한다. 성공한 삭제는 되돌리지 않는다(롤백 없음).
         const failed = results.filter((r) => r.status === "rejected").length;
+        bizCleanup.deleteFailed += failed;
         console.log(
           `Storage 이미지 정리: ${ownedPaths.size - failed}/${ownedPaths.size}건 삭제` +
-          `(실패 ${failed}건, 외부경로 건너뜀 ${skippedForeign}건): ${businessId}`
+          `(실패 ${failed}건, 외부경로 건너뜀 ${bizCleanup.foreignSkipped}건): ${businessId}`
         );
       }
     }
 
-    console.log(`사업장 삭제 cascade 완료: ${businessId}`);
+    // [R7-P4.4E.11A.2 §9·§24] 최종 ACK.
+    //
+    //   required cleanup 이 전부 성공했거나 대상이 이미 없었으면 resolve 한다.
+    //   하나라도 retryable 실패가 남았으면 **던진다** — `retry: true` 가
+    //   이 트리거의 실제 retry owner 다. 실패를 로그만 남기고 성공으로
+    //   ACK 하면 고아가 추적되지 않은 채 영구히 남는다(기존 residual).
+    //
+    //   외부 경로 건너뜀(foreignSkipped)과 없는 사용자(missingSkipped)는
+    //   실패가 아니므로 여기에 들어오지 않는다.
+    console.log(
+      `사업장 삭제 cascade 완료: ${businessId} — ` +
+      `missingSkipped=${bizCleanup.missingSkipped} ` +
+      `mirrorFailed=${bizCleanup.mirrorFailed} ` +
+      `listFailed=${bizCleanup.listFailed} ` +
+      `deleteFailed=${bizCleanup.deleteFailed} ` +
+      `foreignSkipped=${bizCleanup.foreignSkipped}`);
+    const bizRetryReason = srvBusinessCleanupVerdict(bizCleanup);
+    if (bizRetryReason !== null) {
+      throw new Error(
+        `[onBusinessDeleted] 정리 미완료 — 재시도 필요 (${bizRetryReason}): ${businessId}`);
+    }
   }
 );
 
