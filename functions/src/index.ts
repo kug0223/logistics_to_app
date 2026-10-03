@@ -43038,8 +43038,135 @@ export const callableDeleteAccountPreData = onCall(
   }
 );
 
+/** [R7-P4.4E.11C §50] account-owned Storage 정리 집계. */
+type SrvAccountStorageSweep = {
+  /** 열거된 object 수. */
+  listed: number;
+  /** 삭제 성공(없던 것 포함 — §16 not-found 는 성공 동치). */
+  deleted: number;
+  /** 실제 실패 수. 목록 조회 실패도 포함한다. */
+  failed: number;
+  /** 삭제 후 재조회한 잔존 수. **-1 = 알 수 없음**(조회 실패). */
+  residual: number;
+  /** 열거 자체가 실패했는가 — "0건"과 구별하기 위해 따로 둔다. */
+  listFailed: boolean;
+};
+
+/**
+ * [R7-P4.4E.11C §13·§15·§16·§17·§18·§39·§49] 계정 소유 Storage 를 비운다.
+ *
+ *   왜 account 전용인가: 범용 prefix 삭제기를 만들면 호출부마다 "어디까지가
+ *   내 것인가"를 다시 판단하게 된다. 이 함수의 권위는 하나뿐이다 —
+ *   서버가 `request.auth.uid` 로 만든 **`users/{uid}/` exact prefix**.
+ *
+ *   [§39] cross-user 안전: `users/abc/` 와 `users/abc2/` 를 섞지 않으려면
+ *   구분자까지 포함한 접두가 필요하다. 열거 결과에도 같은 접두를 다시
+ *   확인한다 — 목록 API 를 믿고 지우지 않는다.
+ *
+ *   [§15] **ERROR ≠ ZERO.** 목록 조회가 실패하면 "지울 파일이 없다"가
+ *   아니다. `listFailed` 로 분리하고 `failed` 를 올린다.
+ *
+ *   [§17] 삭제 API 성공만 믿지 않는다. 끝에 같은 접두를 **다시 열거**해
+ *   실제 잔존 수를 센다. 조회가 실패하면 `residual = -1`(알 수 없음)이고,
+ *   호출부는 그것을 성공으로 해석하면 안 된다.
+ *
+ *   [§18] `getFiles({prefix})` 는 `autoPaginate` 기본값이 true 라 전 페이지를
+ *   돌려준다(@google-cloud/storage 7.x). 그래서 수동 `nextPageToken` 이
+ *   필요 없다 — 대신 `autoPaginate: false`/`maxResults` 를 **주지 않는다**는
+ *   것이 계약이다. 주면 일부 페이지만 지우고 성공이라 말하게 된다.
+ *
+ *   [§38] bankbook 교체 cleanup 과 달리 current 보호가 없다. 목표가
+ *   "account-owned Storage = 0" 이므로 current 신분증·통장사본·프로필도
+ *   삭제 대상이다.
+ *
+ *   [§51] 로그에 전체 경로·전체 uid 를 남기지 않는다 — scope 라벨과 수치만.
+ *   GCS 오류 메시지에는 전체 object 경로가 들어 있어 `${e}` 를 그대로 찍으면
+ *   그게 로그로 새어 나간다([LOG-PATH-UID-EXPOSURE] 를 넓히지 않는다).
+ *
+ * @param {string} uid 계정 소유자
+ * @return {Promise<SrvAccountStorageSweep>} 집계
+ */
+async function srvSweepAccountOwnedStorage(
+  uid: string
+): Promise<SrvAccountStorageSweep> {
+  const out: SrvAccountStorageSweep = {
+    listed: 0, deleted: 0, failed: 0, residual: -1, listFailed: false,
+  };
+  // 안전하지 않은 uid 로는 아무것도 지우지 않는다 — prefix 가 넓어질 수 있다.
+  if (typeof uid !== "string" || uid.length === 0 ||
+      uid.includes("/") || uid.includes("..")) {
+    out.failed++;
+    console.error("[accountStorageSweep] uid 형식이 안전하지 않다 — 삭제 0");
+    return out;
+  }
+  const scope = `users/${uid.slice(0, 4)}…/`;
+  const prefix = `users/${uid}/`;
+  const bucket = admin.storage().bucket();
+
+  let files: Array<{name: string; delete: (o?: unknown) => Promise<unknown>}>;
+  try {
+    [files] = await bucket.getFiles({prefix}) as unknown as [typeof files];
+  } catch (e) {
+    out.listFailed = true;
+    out.failed++;
+    console.error(
+      `[accountStorageSweep] 목록 조회 실패 scope=${scope} ` +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+    return out;
+  }
+  out.listed = files.length;
+
+  for (const f of files) {
+    // [§39] 목록 결과도 다시 본다. 접두가 다르면 남의 것이다 — 지우지 않는다.
+    if (!f.name.startsWith(prefix)) {
+      out.failed++;
+      console.error(`[accountStorageSweep] 접두 밖 object 발견 scope=${scope}`);
+      continue;
+    }
+    try {
+      // [§16] 이미 없는 것은 목표 상태와 같다 — 성공 동치.
+      await f.delete({ignoreNotFound: true});
+      out.deleted++;
+    } catch (e) {
+      out.failed++;
+      console.warn(
+        `[accountStorageSweep] 삭제 실패 scope=${scope} ` +
+        `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+    }
+  }
+
+  // [§17] 최종 재열거 — 삭제 결과가 아니라 실제 상태를 본다.
+  try {
+    const [again] = await bucket.getFiles({prefix}) as unknown as [typeof files];
+    out.residual = again.filter((f) => f.name.startsWith(prefix)).length;
+  } catch (e) {
+    out.listFailed = true;
+    out.failed++;
+    out.residual = -1; // 알 수 없음 — 0 이 아니다
+    console.error(
+      `[accountStorageSweep] 재열거 실패 scope=${scope} ` +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+  return out;
+}
+
+/**
+ * [R7-P4.4E.11C §28·§85] 이 집계로 identity 파괴를 허용해도 되는가.
+ *
+ *   허용 조건은 하나다 — **account-owned Storage 가 실제로 0 임이 확인됨**.
+ *   `failed > 0`, `listFailed`, `residual !== 0`(알 수 없음 포함) 중 하나라도
+ *   있으면 user 문서도 Auth 도 지우지 않는다.
+ *
+ * @param {SrvAccountStorageSweep} s 집계
+ * @return {boolean} identity 파괴로 넘어가도 되는가
+ */
+function srvAccountStorageCleared(s: SrvAccountStorageSweep): boolean {
+  return s.failed === 0 && !s.listFailed && s.residual === 0;
+}
+
 // ─── callableDeleteAccountFinal ──────────────────────────────────────────────
-// 탈퇴 최종 단계: users 문서 삭제 → Storage 정리 → notifications 정리 → businesses 정리 → Auth 삭제
+// 탈퇴 최종 단계: Storage 정리(HARD GATE) → notifications → businesses
+//   → users 문서 삭제 → Auth 삭제
 // 반드시 callableDeleteAccountPreData / callableDeleteAccountApplications /
 // callableDeleteWorkerLocations 완료 후 마지막에 호출
 //
@@ -43191,52 +43318,59 @@ export const callableDeleteAccountFinal = onCall(
       console.error(`callableDeleteAccountFinal: trust_settings cleanup failed (${uid}):`, e)
     );
 
-    // 2. users Firestore 문서 삭제 (개인정보보호법 §21)
-    if (userSnap.exists) {
-      await userRef.delete();
+    // 2. notifications 서브컬렉션 삭제 (paginated 200건씩)
+    //    Firestore: 상위 document 삭제 후에도 서브컬렉션 독립 접근 가능 → 순서 무관
+    try {
+      const notifRef = db.collection("users").doc(uid).collection("notifications");
+      let hasMore = true;
+      while (hasMore) {
+        const snap = await notifRef.limit(200).get();
+        if (snap.empty) break;
+        hasMore = snap.docs.length === 200;
+        const batch = db.batch();
+        for (const doc of snap.docs) batch.delete(doc.ref);
+        await batch.commit();
+      }
+    } catch (e) {
+      console.error(`callableDeleteAccountFinal: Notifications cleanup failed (${uid}):`, e);
     }
 
-    // 3+4. Storage 정리 + notifications 삭제 병렬 실행 (상호 독립, best-effort)
-    //      [PERF] 두 paginated 작업을 병렬화 — ~0.5s 단축
-    await Promise.all([
-      // 3. Storage users/ 정리 (신분증·서명 이미지)
-      (async () => {
-        try {
-          const bucket = admin.storage().bucket();
-          const [files] = await bucket.getFiles({prefix: `users/${uid}/`});
-          if (files.length > 0) {
-            await Promise.all(
-              files.map((f) =>
-                f.delete().catch((e) => {
-                  console.warn(`callableDeleteAccountFinal: Storage file skip (${f.name}):`, e);
-                })
-              )
-            );
-          }
-        } catch (e) {
-          console.error(`callableDeleteAccountFinal: Storage cleanup failed (${uid}):`, e);
-          // continue — 파일 고아 잔류는 허용, Auth 삭제 우선
-        }
-      })(),
-      // 4. notifications 서브컬렉션 삭제 (paginated 200건씩)
-      //    Firestore: 상위 document 삭제 후에도 서브컬렉션 독립 접근 가능 → 순서 무관
-      (async () => {
-        try {
-          const notifRef = db.collection("users").doc(uid).collection("notifications");
-          let hasMore = true;
-          while (hasMore) {
-            const snap = await notifRef.limit(200).get();
-            if (snap.empty) break;
-            hasMore = snap.docs.length === 200;
-            const batch = db.batch();
-            for (const doc of snap.docs) batch.delete(doc.ref);
-            await batch.commit();
-          }
-        } catch (e) {
-          console.error(`callableDeleteAccountFinal: Notifications cleanup failed (${uid}):`, e);
-        }
-      })(),
-    ]);
+    // 3. [R7-P4.4E.11C §0·§13·§28·§34] **account-owned Storage 는 HARD GATE 다.**
+    //
+    //   이전 순서는 이랬다.
+    //     users 문서 삭제 → Storage sweep → Auth 삭제
+    //   그리고 sweep 안에는 이런 주석이 있었다 —
+    //     "continue — 파일 고아 잔류는 허용, Auth 삭제 우선".
+    //
+    //   그래서 민감 파일이 남아도 탈퇴는 성공으로 끝났고, 그때 남은 것은
+    //   object 뿐이었다. 가리키는 포인터도, `bankbookCleanupPendingPaths`
+    //   같은 cleanup 주인도, 재시도할 경로도 user 문서와 함께 사라졌다.
+    //   게다가 `files.length === 0` 과 목록 조회 실패가 구별되지 않아,
+    //   열거가 실패하면 "지울 것이 없다"로 읽혔다.
+    //
+    //   순서를 뒤집는다. Storage 가 **실제로 0** 임을 재열거로 확인한 뒤에만
+    //   identity 를 파괴한다. 확인 전에는 user 문서를 지우지 않는다 —
+    //   그 문서가 cleanup 주인과 현재 포인터의 owner 이기 때문이다.
+    //
+    //   [§29·§30·§31] 실패는 터미널 오류가 아니라 **재시도 가능한 미완료**다.
+    //   일부가 이미 지워진 상태에서 사용자를 정상 서비스로 되돌리면 서류
+    //   일부가 사라진 계정을 그대로 쓰게 된다. 그래서 세션·로컬 상태를
+    //   유지한 채 "다시 시도"로 수렴시킨다
+    //   (`callableAbortForeignRegistration` 의 STORAGE_RETRYABLE 과 같은 계약).
+    const accSweep = await srvSweepAccountOwnedStorage(uid);
+    console.info(
+      `[deleteAccountFinal] storage listed=${accSweep.listed} ` +
+      `deleted=${accSweep.deleted} failed=${accSweep.failed} ` +
+      `residual=${accSweep.residual} listFailed=${accSweep.listFailed}`);
+    if (!srvAccountStorageCleared(accSweep)) {
+      // [§28] user 문서 삭제 0 / Auth 삭제 0 — 주인이 남아야 재시도가 된다.
+      return {
+        success: false,
+        partial: true,
+        reason: "STORAGE_RETRYABLE",
+        residual: accSweep.residual,
+      };
+    }
 
     // 5. BUSINESS_ADMIN 사업장 정리
     //    [M-01 수정] adminIds array-contains 쿼리 → 복수 사업장 전체 처리
@@ -43274,14 +43408,33 @@ export const callableDeleteAccountFinal = onCall(
       }
     }
 
-    // 6. Firebase Auth 계정 삭제 (Admin SDK) — 마지막, 멱등
+    // 6. [R7-P4.4E.11C §34·§37·§45] users 문서 삭제 (개인정보보호법 §21)
+    //
+    //   Storage 가 0 임이 확인된 뒤다. 그래서 이제 이 문서가 들고 있던
+    //   cleanup 주인(`bankbookCleanupPendingPaths`·`idDocumentOrphanPaths`)이
+    //   사라져도 괜찮다 — 남아 있는 물리적 책임이 없다.
+    //
+    //   [§45] 이 삭제가 실패하면 Auth 는 건드리지 않는다. 다음 호출은 빈
+    //   prefix 를 성공으로 보고(§16) 여기까지 다시 와서 재시도한다.
+    if (userSnap.exists) {
+      let userDocFail = false;
+      await userRef.delete().catch((e) => {
+        userDocFail = true;
+        console.error(`callableDeleteAccountFinal: user doc 삭제 실패 (${uid}):`, e);
+      });
+      if (userDocFail) {
+        return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
+      }
+    }
+
+    // 7. Firebase Auth 계정 삭제 (Admin SDK) — 마지막, 멱등
     //    auth.deleteUser()가 마지막이므로: 앞 단계 실패 시 사용자가 재시도 가능
     try {
       await admin.auth().deleteUser(uid);
     } catch (authErr: unknown) {
       const errCode = (authErr as {code?: string}).code;
       if (errCode === "auth/user-not-found") {
-        // 이미 삭제됨 — 멱등 OK
+        // [§48] 목표 final truth 가 이미 만족됐다 — 멱등 OK
         console.info(`callableDeleteAccountFinal: Auth already deleted (${uid})`);
       } else {
         throw authErr; // 예상치 못한 오류 → 클라이언트 전달

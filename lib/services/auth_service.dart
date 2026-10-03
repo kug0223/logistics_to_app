@@ -498,7 +498,26 @@ class AuthService {
           .httpsCallable('callableDeleteAccountFinal',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 300)));
       try {
-        await deleteFinalCallable.call<Map<String, dynamic>>({});
+        final finalResult = await deleteFinalCallable.call<Map<String, dynamic>>({});
+
+        // [R7-P4.4E.11C §29·§33·§69] 서버가 "미완료"로 답할 수 있다.
+        //
+        //   계정 소유 Storage 정리가 끝나지 않으면 서버는 user 문서도 Auth 도
+        //   지우지 않고 `{success:false, partial:true, reason:...}` 을 준다.
+        //   예전에는 이 응답을 **읽지 않고** 바로 signOut 했다 — 사용자에게는
+        //   탈퇴가 끝난 것처럼 보이고, 실제로는 민감 파일이 남은 계정이
+        //   그대로 살아 있었다.
+        //
+        //   [§33·§71] 그래서 미완료일 때는 signOut·로컬 정리·화면 이동을
+        //   모두 하지 않는다. 세션을 유지한 채 재시도할 수 있게 둔다.
+        final finalData =
+            Map<String, dynamic>.from(finalResult.data as Map? ?? {});
+        if (finalData['success'] != true) {
+          final reason = finalData['reason'] as String? ?? '';
+          debugPrint('⚠️ 계정 삭제 미완료: $reason');
+          // [§69] "탈퇴 완료"로 읽힐 문구를 쓰지 않는다.
+          return '탈퇴가 완료되지 않았습니다. 데이터 정리를 마치려면 다시 시도해 주세요.';
+        }
       } on FirebaseFunctionsException catch (e) {
         // [BUG-AUTH FIX] 응답 유실(deadline-exceeded/unavailable): 서버에서 Auth 계정 삭제가
         //   완료됐을 가능성 → 로컬 세션 강제 정리 (permission-denied 루프 / 유효 JWT 방치 방지)
