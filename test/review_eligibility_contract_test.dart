@@ -290,10 +290,14 @@ void main() {
     });
 
     test('06-f application.status만으로 생성하지 않는다', () {
+      // [R7-P4.4E.11C.0C.0a.4.2 갱신] create 가 transaction 안으로 들어갔다
+      //   (탈퇴 barrier read 와 같은 원자 경계). 묻는 것은 그대로다 —
+      //   eligibility gate 가 생성보다 앞인가.
       final flat = schedulerCode.replaceAll(RegExp(r'\s+'), ' ');
       final gateAt = flat.indexOf('srvHasActualWorkInMonth');
-      final createAt = flat.indexOf('await requestRef.create(');
+      final createAt = flat.indexOf('tx.create(requestRef,');
       expect(gateAt, greaterThan(-1));
+      expect(createAt, greaterThan(-1));
       expect(gateAt, lessThan(createAt));
     });
   });
@@ -337,7 +341,13 @@ void main() {
   // ═══════════════════════════════════════════════════════════════
   group('[R0.2-08] dedupe · stale', () {
     test('08-a requestKey 멱등성이 유지된다', () {
-      expect(schedulerCode, contains('await requestRef.create('));
+      // [R7-P4.4E.11C.0C.0a.4.2 갱신] `requestRef.create()` → `tx.create()`.
+      //   멱등 **메커니즘은 그대로다** — transaction 안의 create 도 문서가
+      //   이미 있으면 ALREADY_EXISTS(code 6)로 commit 이 실패하고, 바깥의
+      //   같은 catch 가 그것을 중복으로 읽는다. 바뀐 것은 원자 경계뿐이다.
+      expect(schedulerCode, contains('tx.create(requestRef,'));
+      expect(schedulerCode, isNot(contains('await requestRef.create(')),
+          reason: 'transaction 밖 create 가 남아 있으면 barrier 가 우회된다');
       // create()는 이미 존재하면 code 6으로 실패 → 중복 생성 없음
       expect(schedulerCode, contains('if (err?.code !== 6) throw err;'));
     });

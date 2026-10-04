@@ -154,9 +154,17 @@ void main() {
       expect(cf, isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()')));
       expect(fin(), isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL')),
           reason: 'Final 은 상수를 직접 쓰지 않는다 — helper 하나만 부른다');
+      // [R7-P4.4E.11C.0C.0a.4.2 갱신] 2 → 3.
+      //   상수 선언 1 + ensure helper(쓰기) 1 + in-tx **읽기** helper 1.
+      //   이 셀이 막으려던 것은 "tombstone 을 지우는 writer 가 늘어나는 것"
+      //   이고, 늘어난 것은 읽기 전용 helper 다. 그 사실을 함께 고정한다 —
+      //   숫자만 올리면 다음에 쓰기가 늘어도 통과한다.
       final tombWrites = 'ACCOUNT_DELETION_TOMBSTONE_COL'.allMatches(cf).length;
-      expect(tombWrites, 2,
-          reason: '상수 선언 1 + helper 사용 1 = 2. 늘면 다른 writer 가 생겼다');
+      expect(tombWrites, 3,
+          reason: '상수 선언 1 + ensure helper 1 + in-tx 읽기 helper 1 = 3');
+      // 늘어난 자리는 `tx.get` 이고 삭제가 아니다.
+      expect(cf, contains('await tx.get(\n    db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid))'));
+      expect('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()'.allMatches(cf).length, 0);
     });
 
     test('ACC-TOMB-09 완전 성공 뒤에도 유지한다 (§21·§51)', () {

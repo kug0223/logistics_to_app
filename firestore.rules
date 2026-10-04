@@ -1496,7 +1496,23 @@ service cloud.firestore {
       //   onReviewCreated CF가 shouldPublish 평가 후 isPublished를 서버에서 제어
       // SEC-87: rating 범위 강제 (1~5) — 범위 외 rating=100 등으로 사용자/사업장 평균 오염 차단
       //   CF onReviewCreated가 rating > 0인 모든 값을 통계에 포함하므로 규칙 레벨에서 선제 차단
+      // [R7-P4.4E.11C.0C.0a.4.2 §28~§34] deletion-owned 축만 막는다.
+      //
+      //   ADMIN_TO_USER 는 `reviewerId`(관리자)와 `targetUserId`(근로자)를
+      //   모두 저장하고, 탈퇴 cleanup 은 **양쪽을** 익명화 대상으로 본다.
+      //   USER_TO_BUSINESS 는 익명 리뷰라 `reviewerId` 가 없다 — 그 경로는
+      //   deletion-owned identity 를 만들지 않으므로 막지 않는다(§34).
+      //
+      //   그래서 축 자체를 조건으로 쓴다: 값이 없으면(`''`) helper 가
+      //   `uid.size() > 0` 에서 멈춰 **exists() 를 평가하지 않는다** —
+      //   USER_TO_BUSINESS 는 추가 document access 0 이고 동작도 그대로다.
+      //
+      //   [§32] barrier 가 분기 **앞**이라 SUPER_ADMIN 도 우회할 수 없다.
       allow create: if isLoggedIn() &&
+                      !accountDeletionBarrierExists(
+                        request.resource.data.get('targetUserId', '')) &&
+                      !accountDeletionBarrierExists(
+                        request.resource.data.get('reviewerId', '')) &&
                       request.resource.data.get('isPublished', false) == false &&
                       request.resource.data.get('rating', 0) >= 1 &&
                       request.resource.data.get('rating', 0) <= 5 &&
@@ -1866,9 +1882,13 @@ service cloud.firestore {
       //
       //   [§12] 이것은 열람 **권한 요청**이다. 누가 언제 열람했는지의
       //   감사 기록(taxIdentityAuditLogs 등)과 같은 것으로 취급하지 않는다.
+      // [R7-P4.4E.11C.0C.0a.4.2 §18·§21] 축이 둘이다 — 열람 대상과 요청 관리자
+      //   모두 탈퇴 cleanup 의 삭제 대상이다. `requesterId` 는 아래에서
+      //   `request.auth.uid` 로 binding 되므로 caller 축을 그 값으로 본다.
       allow create: if isLoggedIn() &&
                     request.resource.data.targetUserId is string &&
-                    !accountDeletionBarrierExists(request.resource.data.targetUserId) && (
+                    !accountDeletionBarrierExists(request.resource.data.targetUserId) &&
+                    !accountDeletionBarrierExists(request.auth.uid) && (
                       isSuperAdmin() ||
                       (isBusinessAdmin() &&
                        request.resource.data.requesterId == request.auth.uid &&
@@ -1952,7 +1972,13 @@ service cloud.firestore {
       //   (onWageConfirmed 트리거, createPendingReviewRequests 스케줄러 — Rules 우회)
       //   클라이언트(BA/SubAdmin) 직접 create 경로 없음 → BA/SubAdmin client 생성 완전 차단
       //   Admin SDK는 Rules를 우회하므로 시스템 트리거/스케줄러에 영향 없음
-      allow create: if isSuperAdmin();
+      //
+      // [R7-P4.4E.11C.0C.0a.4.2 §39·§40] `workerId` 는 탈퇴 익명화 대상이다.
+      //   남은 SUPER_ADMIN client 경로에도 barrier 를 둔다 — 예외 없음.
+      //   서버(트리거·스케줄러) 쪽은 Rules 를 우회하므로 별도로 막았다.
+      allow create: if isSuperAdmin() &&
+                       !accountDeletionBarrierExists(
+                         request.resource.data.get('workerId', ''));
 
       // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자/하위관리자(자신의 필드만) · 슈퍼어드민
       //
@@ -2284,9 +2310,21 @@ service cloud.firestore {
       //   `targetUid` 는 정상 writer 에서 항상 존재한다 — 모델이
       //   `required String targetUid` 이고 발송 경로가 하나뿐이다(§46).
       //   그래서 전화번호만으로 보내는 미등록자 초대 흐름은 없다(§48).
+      // [R7-P4.4E.11C.0C.0a.4.2 §2·§13·§14·§16] **축이 둘이다.**
+      //
+      //   .0a.4 는 받는 사람(`targetUid`)만 막았다. 그런데 이 문서는 두
+      //   사용자를 가리킨다 — 보낸 관리자(`invitedBy`)도 탈퇴 cleanup 의
+      //   익명화 대상이다. 그래서 **삭제 중인 관리자가 정상 근로자에게**
+      //   새 초대를 보내면, cleanup 이 지나간 뒤 그 관리자의 uid 가 다시
+      //   생긴다. 받는 쪽만 막아서는 닫히지 않는다.
+      //
+      //   caller 축은 `request.auth.uid` 로 본다 — `invitedBy` 는 아래에서
+      //   이미 그 값으로 binding 되어 있으므로 문서를 다시 읽지 않는다(§15).
+      //   [§16] SUPER_ADMIN 분기도 예외가 없다 — barrier 가 분기 앞이다.
       allow create: if isLoggedIn() &&
                     request.resource.data.targetUid is string &&
-                    !accountDeletionBarrierExists(request.resource.data.targetUid) && (
+                    !accountDeletionBarrierExists(request.resource.data.targetUid) &&
+                    !accountDeletionBarrierExists(request.auth.uid) && (
                       (isAdminOf(request.resource.data.businessId) &&
                        request.resource.data.invitedBy == request.auth.uid &&
                        request.resource.data.get('status', '') == 'pending' &&

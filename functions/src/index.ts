@@ -5103,23 +5103,38 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
             || "근무자";
 
           try {
-            await requestRef.create({
-              requestKey,
-              businessId,
-              businessName: data.businessName ?? "",
-              workerId,
-              workerName,
-              reviewYear: year,
-              reviewMonth: month,
-              deadline: Timestamp.fromDate(deadline),
-              adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
-              workerStatus: "pending",
-              adminReviewId: adminAlreadyReviewed ? requestKey : null,
-              workerReviewId: null,
-              isPublished: false,
-              publishedAt: null,
-              createdAt: Timestamp.now(),
+            // [R7-P4.4E.11C.0C.0a.4.2 §39·§41·§44] 삭제 중/삭제된 근로자에게는
+            //   새 리뷰 요청을 만들지 않는다. `workerId` 는 탈퇴 익명화
+            //   대상이고, 이 스케줄러는 Auth 가 사라진 뒤에도 돈다 —
+            //   그때 만들면 지울 주인이 없다.
+            //
+            //   barrier read 와 create 가 **같은 transaction** 에 있다(§6).
+            //   transaction 밖 precheck 는 freeze-first race 를 닫지 못한다.
+            const skippedByBarrier = await db.runTransaction(async (tx) => {
+              if (await srvDeletionBarrierExistsInTx(tx, workerId)) return true;
+              tx.create(requestRef, {
+                requestKey,
+                businessId,
+                businessName: data.businessName ?? "",
+                workerId,
+                workerName,
+                reviewYear: year,
+                reviewMonth: month,
+                deadline: Timestamp.fromDate(deadline),
+                adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
+                workerStatus: "pending",
+                adminReviewId: adminAlreadyReviewed ? requestKey : null,
+                workerReviewId: null,
+                isPublished: false,
+                publishedAt: null,
+                createdAt: Timestamp.now(),
+              });
+              return false;
             });
+            if (skippedByBarrier) {
+              // [§7] 삭제 중 계정은 재시도 대상이 아니다 — no-op 으로 수렴.
+              return false;
+            }
 
             if (!adminAlreadyReviewed) {
               await _sendReviewRequestNotification(
@@ -5186,23 +5201,30 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
             || "근무자";
 
           try {
-            await requestRef.create({
-              requestKey,
-              businessId,
-              businessName: data.businessName ?? "",
-              workerId,
-              workerName,
-              reviewYear: endYear,
-              reviewMonth: endMonth,
-              deadline: Timestamp.fromDate(deadlineDate),
-              adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
-              workerStatus: "pending",
-              adminReviewId: adminAlreadyReviewed ? requestKey : null,
-              workerReviewId: null,
-              isPublished: false,
-              publishedAt: null,
-              createdAt: Timestamp.now(),
+            // [R7-P4.4E.11C.0C.0a.4.2 §39·§41·§44] 장기 근무 경로도 같은 계약.
+            //   barrier read 와 create 가 같은 transaction 안이다.
+            const skippedByBarrier = await db.runTransaction(async (tx) => {
+              if (await srvDeletionBarrierExistsInTx(tx, workerId)) return true;
+              tx.create(requestRef, {
+                requestKey,
+                businessId,
+                businessName: data.businessName ?? "",
+                workerId,
+                workerName,
+                reviewYear: endYear,
+                reviewMonth: endMonth,
+                deadline: Timestamp.fromDate(deadlineDate),
+                adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
+                workerStatus: "pending",
+                adminReviewId: adminAlreadyReviewed ? requestKey : null,
+                workerReviewId: null,
+                isPublished: false,
+                publishedAt: null,
+                createdAt: Timestamp.now(),
+              });
+              return false;
             });
+            if (skippedByBarrier) return false;
             if (!adminAlreadyReviewed) {
               await _sendReviewRequestNotification(
                 businessId, workerName,
@@ -5576,23 +5598,41 @@ export const onWageConfirmed = onDocumentUpdated(
     if (!workerName3) workerName3 = "근무자";
 
     try {
-      await requestRef.create({
-        requestKey,
-        businessId,
-        businessName: app.businessName ?? "",
-        workerId,
-        workerName: workerName3,
-        reviewYear: year,
-        reviewMonth: month,
-        deadline: Timestamp.fromDate(deadline),
-        adminStatus: "pending",
-        workerStatus: "pending",
-        adminReviewId: null,
-        workerReviewId: null,
-        isPublished: false,
-        publishedAt: null,
-        createdAt: Timestamp.now(),
+      // [R7-P4.4E.11C.0C.0a.4.2 §39·§42·§43·§44] **늦게 오는 급여 사건**이
+      //   가장 위험한 경로다. 근로자는 미이체 급여를 남긴 채 탈퇴할 수 있고
+      //   (탈퇴 blocker 에서 warning 이지 hardBlock 이 아니다), 그 뒤 관리자가
+      //   급여를 확정하면 이 트리거가 돈다. 그때 `workerId` 를 그대로 담은
+      //   리뷰 요청을 만들면 지울 주인이 없다 — `accountStatus` 는 user 문서와
+      //   함께 사라졌으므로 **살아남는 tombstone** 이 canonical source 다.
+      //
+      //   barrier read 와 create 가 같은 transaction 안이다(§6·§44).
+      const skippedByBarrier = await db.runTransaction(async (tx) => {
+        if (await srvDeletionBarrierExistsInTx(tx, workerId)) return true;
+        tx.create(requestRef, {
+          requestKey,
+          businessId,
+          businessName: app.businessName ?? "",
+          workerId,
+          workerName: workerName3,
+          reviewYear: year,
+          reviewMonth: month,
+          deadline: Timestamp.fromDate(deadline),
+          adminStatus: "pending",
+          workerStatus: "pending",
+          adminReviewId: null,
+          workerReviewId: null,
+          isPublished: false,
+          publishedAt: null,
+          createdAt: Timestamp.now(),
+        });
+        return false;
       });
+      if (skippedByBarrier) {
+        // [§7] 삭제 중/삭제된 계정 — 재시도하지 않는다. trigger 는 no-op 성공.
+        console.log(
+          "[임금 확정] 탈퇴 barrier — 리뷰 요청 생성 생략");
+        return;
+      }
       await Promise.all([
         _sendReviewRequestNotification(
           businessId, workerName3,
@@ -43126,6 +43166,41 @@ const ACCOUNT_DELETION_TOMBSTONE_COL = "account_deletion_tombstones";
 const ACCOUNT_STATUS_DELETING = "deleting";
 
 /**
+ * [R7-P4.4E.11C.0C.0a.4.2 §5·§6·§61·§62] **같은 transaction 안에서** barrier 를
+ * 읽는다.
+ *
+ *   `await tombstone.get()` 뒤에 `await ref.set()` 을 하는 것은 race closure 가
+ *   아니다. 그 사이에 탈퇴 freeze 가 commit 되면 "barrier 가 먼저 섰는데
+ *   그 뒤의 create 가 성공"하는 창이 열린다.
+ *
+ *   transaction 안에서 읽으면 그 문서가 **read set** 에 들어간다. freeze
+ *   transaction 이 같은 문서를 쓰면 이 transaction 은 ABORTED 로 재시도되고,
+ *   재시도에서는 barrier 를 보게 된다. 그래서 create 가 0 이 된다.
+ *
+ *   [§8·§60] 읽기 실패는 "barrier 없음"이 아니다. UNKNOWN 을 false 로 바꾸지
+ *   않으려면 그냥 던져야 한다 — Firestore SDK 가 그렇게 동작하므로 삼키지
+ *   않는 것으로 충분하다. 호출부는 trigger 면 재시도, callable 이면
+ *   retryable 오류로 수렴한다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 진행 중인 transaction
+ * @param {string} uid 검사 대상 계정
+ * @return {Promise<boolean>} barrier 가 존재하는가
+ */
+async function srvDeletionBarrierExistsInTx(
+  tx: FirebaseFirestore.Transaction,
+  uid: string
+): Promise<boolean> {
+  if (typeof uid !== "string" || uid.length === 0 ||
+      uid.includes("/") || uid.includes("..")) {
+    // 형식이 이상하면 barrier 판정을 할 수 없다 — 없다고 단정하지 않는다.
+    return true;
+  }
+  const snap = await tx.get(
+    db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid));
+  return snap.exists;
+}
+
+/**
  * [R7-P4.4E.11C.0B §5·§12·§13·§14·§15·§53] barrier 를 세운다(멱등).
  *
  *   [§5] **존재 자체가 barrier 다.** status·phase·completed 같은 값을
@@ -44815,19 +44890,43 @@ export const callableCreateIdCardAccessRequest = onCall(
     if (!pendingSnap.empty) return {requestId: null as string | null, reason: "ALREADY_PENDING"};
     if (!approvedSnap.empty) return {requestId: approvedSnap.docs[0].id, reason: "ALREADY_APPROVED"};
 
-    const docRef = await db.collection("idCardAccessRequests").add({
-      requesterId,
-      requesterName: requesterName ?? "",
-      requesterBusinessId,
-      requesterBusinessName: requesterBusinessName ?? "",
-      targetUserId,
-      targetUserName: targetUserName ?? "",
-      reason,
-      customReason: customReason ?? null,
-      status: "pending",
-      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-      applicationId: applicationId ?? null,
+    // [R7-P4.4E.11C.0C.0a.4.2 §18·§22·§24·§25] 두 축 모두 barrier 로 막는다.
+    //
+    //   이 문서는 요청 관리자(`requesterId`)와 열람 대상(`targetUserId`)을
+    //   함께 담고, 탈퇴 cleanup 은 **양쪽을** 삭제 대상으로 본다.
+    //
+    //   [§25] 대상 쪽이 "domain residual 때문에 우연히 막힌다"로 끝내지
+    //   않는다. 위의 소속 근무자 검사는 `callable 시작 시점`의 상태를 본
+    //   것이고, 그 뒤 freeze 가 commit 될 수 있다. [§22] 그 창을 닫으려면
+    //   barrier read 가 create 와 **같은 transaction** 에 있어야 한다.
+    //
+    //   `.add()` 는 transaction 밖 write 이므로 문서 id 를 먼저 만들고
+    //   transaction 안에서 `tx.create` 한다 — 같은 원자 경계다.
+    const docRef = db.collection("idCardAccessRequests").doc();
+    const idCardBarrierBlocked = await db.runTransaction(async (tx) => {
+      if (await srvDeletionBarrierExistsInTx(tx, requesterId)) return true;
+      if (await srvDeletionBarrierExistsInTx(tx, targetUserId)) return true;
+      tx.create(docRef, {
+        requesterId,
+        requesterName: requesterName ?? "",
+        requesterBusinessId,
+        requesterBusinessName: requesterBusinessName ?? "",
+        targetUserId,
+        targetUserName: targetUserName ?? "",
+        reason,
+        customReason: customReason ?? null,
+        status: "pending",
+        requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        applicationId: applicationId ?? null,
+      });
+      return false;
     });
+    if (idCardBarrierBlocked) {
+      // [§27] 어느 쪽이 탈퇴 중인지 구체적으로 알려주지 않는다 — 계정 상태를
+      //   외부에 더 노출하지 않고 기존 precondition 오류 계약을 재사용한다.
+      throw new HttpsError(
+        "failed-precondition", "지금은 신분증 열람을 요청할 수 없습니다.");
+    }
 
     // [R8-P3B.2 §20] 요청 문서는 이미 생성됐다 — 알림 실패가 되돌리지 않는다.
     try {
