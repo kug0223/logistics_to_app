@@ -42730,13 +42730,17 @@ export const callableDeleteAccountApplications = onCall(
     //   변경: 탈퇴 시 PENDING 상태 요청을 canceled(USER_DELETED)로 처리
     try {
       const [schedSnap, payChgSnap] = await Promise.all([
+        // [R7-P4.4E.11C.0C.0a.1] status 가 소문자 "pending" 이었다.
+        //   Firestore 쿼리는 대소문자를 구분하고, 두 collection 의 canonical
+        //   값은 생성·승인 writer 모두 대문자 "PENDING" 이다. 그래서 이
+        //   cleanup 은 **한 건도 취소하지 못했다** — 쿼리가 항상 공집합이었다.
         db.collection("schedule_change_requests")
           .where("applicantUid", "==", callerUid)
-          .where("status", "==", "pending")
+          .where("status", "==", "PENDING")
           .get(),
         db.collection("payment_change_requests")
           .where("workerId", "==", callerUid)
-          .where("status", "==", "pending")
+          .where("status", "==", "PENDING")
           .get(),
       ]);
       const changeReqDocs = [...schedSnap.docs, ...payChgSnap.docs];
@@ -42746,7 +42750,17 @@ export const callableDeleteAccountApplications = onCall(
           const reqBatch = db.batch();
           for (const doc of changeReqDocs.slice(i, i + CHUNK)) {
             reqBatch.update(doc.ref, {
-              status: "canceled",
+              // [R7-P4.4E.11C.0C.0a.1] 소문자 "canceled" 였다. 같은
+              //   대소문자 실수의 나머지 절반이다 — 쿼리는 "pending",
+              //   쓰기는 "canceled" 였고 두 collection 의 canonical 값은
+              //   둘 다 대문자다(생성 PENDING · 승인 APPROVED · 거절
+              //   REJECTED · 취소 CANCELED).
+              //
+              //   서버 승인은 `!== "PENDING"` 이라 소문자여도 막혔지만,
+              //   클라이언트 파서의 default 가 PENDING 이다. 그래서 정리된
+              //   요청이 관리자 화면에 **대기 중으로 보이고**, 누르면 서버가
+              //   거부하는 유령 요청이 됐다.
+              status: "CANCELED",
               cancelReason: "USER_DELETED",
               canceledAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -43232,10 +43246,27 @@ async function srvAssertAccountDeletionAllowed(
   }
 }
 
-/** [§15·§16] 삭제 대상 중 아직 살아 있는 관계가 있는가. -1 = 알 수 없음. */
+/** [§15·§16] 삭제 대상 중 아직 살아 있는 관계가 있는가. */
 type SrvDeletionResidual = {
   applications: number;
   attendance: number;
+  /**
+   * [R7-P4.4E.11C.0C.0a.1] 아직 **실행 가능한** 일정변경 요청 수.
+   *
+   *   "Application 을 다 취소했다"와 "계정 삭제에 딸린 업무 요청까지 다
+   *   정리했다"는 같은 사실이 아니다. 승인 writer 는 Application 의
+   *   `status` 를 보지 않고 존재만 확인하므로, Application 이 CANCELED 여도
+   *   PENDING 요청은 승인되어 `leaveDates`/`extraWorkDates` 를 바꾼다.
+   */
+  scheduleRequests: number;
+  /**
+   * 아직 실행 가능한 지급방식 변경 요청 수.
+   *
+   *   승인 writer 는 트랜잭션에서 요청 문서만 fresh-read 하고 Application
+   *   상태도 `accountStatus` 도 보지 않는다. 그리고 APPROVED 결과는
+   *   `srvResolveEffectivePaySchedule` 가 읽는 지급일의 source 다 — 돈이다.
+   */
+  paymentRequests: number;
   /** 쿼리 실패 — 0 으로 해석하면 안 된다. */
   queryFailed: boolean;
 };
@@ -43259,10 +43290,12 @@ async function srvCountDeletionDomainResidual(
   uid: string
 ): Promise<SrvDeletionResidual> {
   const out: SrvDeletionResidual = {
-    applications: 0, attendance: 0, queryFailed: false,
+    applications: 0, attendance: 0,
+    scheduleRequests: 0, paymentRequests: 0, queryFailed: false,
   };
   try {
-    const [pending, contractPending, confirmed, scheduled] = await Promise.all([
+    const [pending, contractPending, confirmed, scheduled,
+      schedReq, payReq] = await Promise.all([
       db.collection("applications")
         .where("uid", "==", uid).where("status", "==", "PENDING").get(),
       db.collection("applications")
@@ -43271,10 +43304,20 @@ async function srvCountDeletionDomainResidual(
         .where("uid", "==", uid).where("status", "==", "CONFIRMED").get(),
       db.collection("attendance")
         .where("userId", "==", uid).where("status", "==", "scheduled").get(),
+      // [§13] cleanup predicate 와 **같은 shape**. 다른 field/key 를 쓰면
+      //   "치웠다"와 "남았다"가 서로 다른 것을 세게 된다.
+      db.collection("schedule_change_requests")
+        .where("applicantUid", "==", uid).where("status", "==", "PENDING").get(),
+      db.collection("payment_change_requests")
+        .where("workerId", "==", uid).where("status", "==", "PENDING").get(),
     ]);
     out.applications =
       pending.size + contractPending.size + confirmed.size;
     out.attendance = scheduled.size;
+    // [§6·§12] 과거 기록(APPROVED·REJECTED·CANCELED)은 세지 않는다.
+    //   막아야 하는 것은 "지금도 실행 가능한" 요청뿐이다.
+    out.scheduleRequests = schedReq.size;
+    out.paymentRequests = payReq.size;
   } catch (e) {
     out.queryFailed = true;
     console.error(
@@ -43291,7 +43334,8 @@ async function srvCountDeletionDomainResidual(
  * @return {boolean} 살아 있는 삭제 대상이 0 임이 확인됐는가
  */
 function srvDeletionDomainCleared(r: SrvDeletionResidual): boolean {
-  return !r.queryFailed && r.applications === 0 && r.attendance === 0;
+  return !r.queryFailed && r.applications === 0 && r.attendance === 0 &&
+    r.scheduleRequests === 0 && r.paymentRequests === 0;
 }
 
 /** [R7-P4.4E.11C §50] account-owned Storage 정리 집계. */
@@ -43553,7 +43597,8 @@ export const callableDeleteAccountFinal = onCall(
     const domainResidual = await srvCountDeletionDomainResidual(uid);
     console.info(
       `[deleteAccountFinal] domain residual apps=${domainResidual.applications} ` +
-      `att=${domainResidual.attendance} queryFailed=${domainResidual.queryFailed}`);
+      `att=${domainResidual.attendance} schedReq=${domainResidual.scheduleRequests} ` +
+      `payReq=${domainResidual.paymentRequests} queryFailed=${domainResidual.queryFailed}`);
     if (!srvDeletionDomainCleared(domainResidual)) {
       // [§19·§20] 쿼리 실패도 "0"이 아니다. 어느 쪽이든 identity 파괴 금지.
       //   raw application id 를 클라이언트에 노출하지 않는다.

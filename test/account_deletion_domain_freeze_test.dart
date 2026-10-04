@@ -311,8 +311,11 @@ void main() {
     test('DEL-CLEAN-A43 쿼리 실패는 0 이 아니다 (§19)', () {
       final r = residual();
       expect(r, contains('out.queryFailed = true;'));
+      // [R7-P4.4E.11C.0C.0a.1 갱신] 판정에 일정변경·지급방식 요청 두 축이
+      //   더해졌다. `!queryFailed` 가 선두라는 성질은 그대로다.
       expect(_flat(cf), contains(
-          'return !r.queryFailed && r.applications === 0 && r.attendance === 0;'));
+          'return !r.queryFailed && r.applications === 0 && r.attendance === 0 && '
+          'r.scheduleRequests === 0 && r.paymentRequests === 0;'));
       // 실패를 0 으로 바꾸는 fallback 이 없다.
       expect(r, isNot(contains('out.applications = 0;')));
       expect(r, isNot(contains('catch { return')));
@@ -366,8 +369,20 @@ void main() {
     test('DEL-STATUS-RULE-05 create 허용 집합에 deleting 을 넣지 않았다 (§27)', () {
       expect(rules, contains(
           "in ['active', 'pending', 'registration_pending'] &&"));
-      expect(rules, isNot(contains("'deleting'")),
-          reason: 'rules 가 deleting 을 client 입력으로 허용하면 self-lock 이 가능하다');
+      // [R7-P4.4E.11C.0C.0a.1 갱신] 예전에는 rules 전체에 `'deleting'` 이
+      //   없다는 것으로 확인했다. 이제 두 request create 규칙이 `deleting`
+      //   을 **거부 조건으로** 참조한다 — 그건 허용이 아니라 차단이다.
+      //   묻는 것은 그대로다: 클라이언트가 보낸 값으로 `deleting` 을
+      //   **지정할 수 없다**(create 허용 집합에 없다).
+      expect(rules, isNot(contains("'deleting', 'active'")));
+      expect(rules, isNot(contains("'active', 'deleting'")));
+      expect(rules, isNot(contains("'registration_pending', 'deleting'")));
+      // 그리고 `deleting` 참조는 전부 `!=` 비교(차단)여야 한다.
+      final refs = RegExp(r"'deleting'").allMatches(rules).length;
+      final denies = RegExp(r"!= 'deleting'").allMatches(rules).length;
+      expect(denies, refs,
+          reason: 'deleting 참조 $refs 개 중 차단 비교가 $denies 개 — '
+              '하나라도 허용 쪽이면 self-lock 이 가능해진다');
     });
 
     test('DEL-STATUS-RULE-06 UserModel 이 임의 문자열을 수용한다 (§28)', () {

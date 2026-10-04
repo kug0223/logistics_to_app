@@ -151,6 +151,11 @@ service cloud.firestore {
       let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return u != null && u.data != null &&
         u.data.get('isBlacklisted', false) == false &&
+        // [R7-P4.4E.11C.0C.0a.1 §32·§34·§35] 계정 삭제 freeze 이후에는
+        //   새 일정변경 요청을 만들 수 없다. residual gate 로 "남은 요청 0"을
+        //   확인해도, 그 직후 새 요청이 생기면 race 가 다시 열린다.
+        //   이미 읽고 있는 같은 user 문서를 보므로 추가 read 가 없다.
+        u.data.get('accountStatus', 'active') != 'deleting' &&
         businessId is string && businessId.size() > 0 &&
         u.data.get('businessId', '') == businessId;
     }
@@ -2483,6 +2488,11 @@ service cloud.firestore {
                     (request.resource.data.workerId == request.auth.uid &&
                      request.resource.data.businessId != '' &&
                      request.resource.data.get('status', '') == 'PENDING' &&
+                     // [R7-P4.4E.11C.0C.0a.1 §33·§34·§35] 계정 삭제 freeze
+                     //   이후에는 새 지급방식 변경 요청을 만들 수 없다.
+                     //   APPROVED 결과가 지급일의 source 이므로 돈 사실이다.
+                     //   같은 user 문서를 이미 아래에서 읽고 있다.
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accountStatus', 'active') != 'deleting' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
                     // [RULE-FIX-M3] 관리자 경로도 status='PENDING' 강제 — 승인 이력 우회 차단
