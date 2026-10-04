@@ -152,8 +152,13 @@ void main() {
     test('ACC-TOMB-06~08 Storage·user·Auth 실패에도 tombstone 을 유지한다', () {
       // tombstone 을 지우는 코드가 **어디에도** 없다.
       expect(cf, isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()')));
-      expect(fin(), isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL')),
-          reason: 'Final 은 상수를 직접 쓰지 않는다 — helper 하나만 부른다');
+      // [R7-P4.4E.11C.0C.1 갱신] Final 이 상수를 직접 쓰는 자리가 하나
+      //   생겼다 — Auth-tail 증거("user 문서 없음 + tombstone 존재")를
+      //   읽는 곳이다. 쓰기·삭제는 여전히 없다.
+      expect('ACCOUNT_DELETION_TOMBSTONE_COL'.allMatches(fin()).length, 1);
+      expect(fin(), contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get()'));
+      expect(fin(), isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).set(')));
+      expect(fin(), isNot(contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()')));
       // [R7-P4.4E.11C.0C.0a.4.2 갱신] 2 → 3.
       //   상수 선언 1 + ensure helper(쓰기) 1 + in-tx **읽기** helper 1.
       //   이 셀이 막으려던 것은 "tombstone 을 지우는 writer 가 늘어나는 것"
@@ -162,8 +167,8 @@ void main() {
       // [R7-P4.4E.11C.0C 갱신] 3 → 4. 늘어난 자리는 삭제 재개 상태를
       //   돌려주는 self-only **읽기** callable 이다.
       final tombWrites = 'ACCOUNT_DELETION_TOMBSTONE_COL'.allMatches(cf).length;
-      expect(tombWrites, 4,
-          reason: '선언 1 + ensure helper 1 + in-tx 읽기 helper 1 + 재개 질의 1 = 4');
+      expect(tombWrites, 5,
+          reason: '선언 1 + ensure 1 + in-tx 읽기 1 + 재개 질의 1 + Auth-tail 증거 읽기 1 = 5');
       // 늘어난 자리는 `tx.get` 이고 삭제가 아니다.
       expect(cf, contains('await tx.get(\n    db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid))'));
       expect('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()'.allMatches(cf).length, 0);
@@ -231,7 +236,12 @@ void main() {
       //   두 축(tombstone·projection·userDoc)을 함께 보고한다. 묻는 것은
       //   그대로다 — 수치·상태 라벨만 남기고 uid·경로는 남기지 않는다.
       expect(h, contains('"[accountDeletionTombstone] " +'));
-      expect(h, contains(r'tombstone=${out.hadTomb ? "existed" : "created"}'));
+      // [R7-P4.4E.11C.0C.1 갱신] 상태 라벨이 셋이 됐다 — user 문서가 없어
+      //   생성을 거부한 경우(refused)가 추가됐다. 라벨만 남기는 계약은
+      //   그대로다.
+      expect(h, contains(r'const tombState = out.hadTomb ?'));
+      expect(h, contains(r'"existed" : (out.refused ? "refused" : "created");'));
+      expect(h, contains(r'tombstone=${tombState}'));
       expect(h, contains(r'projection=${out.projected ? "set" : "unchanged"}'));
       expect(h, isNot(contains(r'uid=${uid}')));
       expect(h, isNot(contains(r'${e}')),

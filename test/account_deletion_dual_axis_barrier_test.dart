@@ -291,7 +291,9 @@ void main() {
       //   상태 질의** 1. 늘어난 자리는 write authority 가 아니라 self-only
       //   읽기다 — 그 사실을 함께 고정한다. 숫자만 올리면 다음에 transaction
       //   밖 precheck 가 생겨도 통과한다.
-      expect(barrierReads, 4,
+      // [R7-P4.4E.11C.0C.1 갱신] 4 → 5. Final 이 Auth-tail 증거로 tombstone
+      //   존재를 **읽는다**. 여전히 읽기이고 write authority 가 아니다.
+      expect(barrierReads, 5,
           reason: 'barrier 문서를 읽는 자리가 늘어났다 — transaction 밖인지 확인해야 한다');
       final recovery = _fn(raw, 'callableGetAccountDeletionRecoveryState');
       expect(recovery, contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get()'));

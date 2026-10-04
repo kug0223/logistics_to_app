@@ -200,7 +200,8 @@ void main() {
       // [R7-P4.4E.11C.0C 갱신] 상수 선언 + ensure helper + in-tx helper +
       //   삭제 재개 상태 질의(읽기 전용) = 4. 알림 생성 경로는 여전히
       //   in-tx helper 하나만 쓴다.
-      expect(_count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL'), 4);
+      // [R7-P4.4E.11C.0C.1 갱신] + Final 의 Auth-tail 증거 읽기 = 5.
+      expect(_count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL'), 5);
       expect(_fn(raw, 'callableGetAccountDeletionRecoveryState'),
           isNot(contains('srvPersistNotification')));
       final h = _helper(raw, 'srvDeletionBarrierExistsInTx');

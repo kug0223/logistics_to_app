@@ -43641,6 +43641,22 @@ async function srvEnsureAccountDeletionTombstone(
 
       // [§8] 기존 tombstone 의 barrierAt 은 건드리지 않는다 — 재시도마다
       //   시각을 되돌리면 "언제부터 막혔는가"를 잃는다.
+      //
+      // [R7-P4.4E.11C.0C.1 §3·§5·§25] user 문서가 **없는 상태에서 새로**
+      //   만들지 않는다.
+      //
+      //   Auth-tail 재개는 "tombstone 있음 + user 문서 없음" 을 "Final 이
+      //   모든 pre-Auth gate 를 통과했다" 는 증거로 쓴다. 그 추론이
+      //   성립하려면 tombstone 이 **user 문서가 살아 있을 때** 세워졌어야
+      //   한다 — 그래야 그 뒤의 user 문서 삭제 주인이 Final 뿐이라는 말이
+      //   성립한다(클라이언트 삭제·재생성은 rules 가 막는다).
+      //
+      //   user 문서가 이미 없는데 tombstone 도 없다면 그것은 재개할 삭제가
+      //   아니다(§32). 거부하면 호출부가 `FIRESTORE_RETRYABLE` 로 멈추고
+      //   Auth 는 건드리지 않는다.
+      if (!hadTomb && !userSnap.exists) {
+        return {hadTomb, projected: false, userExists: false, refused: true};
+      }
       if (!hadTomb) {
         tx.set(tombRef, {
           barrierAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -43654,13 +43670,21 @@ async function srvEnsureAccountDeletionTombstone(
         tx.update(userRef, {accountStatus: ACCOUNT_STATUS_DELETING});
         projected = true;
       }
-      return {hadTomb, projected, userExists: userSnap.exists};
+      return {
+        hadTomb, projected, userExists: userSnap.exists, refused: false,
+      };
     });
+    const tombState = out.hadTomb ?
+      "existed" : (out.refused ? "refused" : "created");
     console.info(
       "[accountDeletionTombstone] " +
-      `tombstone=${out.hadTomb ? "existed" : "created"}` +
+      `tombstone=${tombState}` +
       ` projection=${out.projected ? "set" : "unchanged"}` +
       ` userDoc=${out.userExists ? "present" : "absent"}`);
+    if (out.refused) {
+      // [§32] 재개할 삭제가 아니다 — 호출부가 fail-closed 로 멈춘다.
+      return false;
+    }
     return true;
   } catch (e) {
     console.error(
@@ -45115,6 +45139,35 @@ export const callableDeleteAccountFinal = onCall(
       }
     }
 
+    // [R7-P4.4E.11C.0C.1 §3·§13·§14·§16] **검증된 Auth-tail.**
+    //
+    //   user 문서가 없고 tombstone 이 있다. 이 조합은 우연히 만들어지지
+    //   않는다 — 그 uid 의 user 문서를 지울 수 있는 주인이 하나뿐이다.
+    //
+    //     · 클라이언트 delete: rules 가 tombstone 있을 때 거부
+    //     · 클라이언트 create(재생성 후 재삭제): rules 가 거부
+    //     · callableAbortForeignRegistration: registration_pending 만
+    //       지운다 — freeze 된 계정은 deleting 이라 거부된다
+    //     · tombstone 자체: user 문서가 살아 있을 때만 생성된다
+    //
+    //   그러므로 이 상태는 **Final 이 모든 pre-Auth gate 를 통과한 뒤
+    //   user 문서를 지웠고, Auth 삭제만 실패했다**는 뜻이다.
+    //
+    //   [§13·§14·§24] 그래서 identity key 를 **다시 복원하지 못해도**
+    //   막지 않는다. 그 단계는 이미 지나갔고, deleted_accounts 의 생존
+    //   여부가 Auth-tail 완료 가능성을 결정하게 두지 않는다.
+    //
+    //   [§15] S2(user 문서 존재)는 false 다 — 전체 pipeline 을 다시 지난다.
+    //   [§17] 나머지 gate(도메인·개인·Storage·사업장)는 그대로 실행한다.
+    //   uid 쿼리만으로 판정되므로 context 가 필요 없고, 한 번 더 확인하는
+    //   비용이 싸다. 파괴 지점도 그대로 하나씩이다.
+    const authTailProven = !userSnap.exists &&
+      (await db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get())
+        .exists;
+    if (authTailProven) {
+      console.info(`[deleteAccountFinal] auth-tail proven (${uid})`);
+    }
+
     // 1-A. [R7-P4.4E.11C.0C.0a §23·§24] freeze fail-safe.
     //
     //   freeze 의 owner 는 이제 PreData 다. 그러나 구버전 client·직접
@@ -45348,7 +45401,19 @@ export const callableDeleteAccountFinal = onCall(
       `sentinels=${identityResidual.sentinels} ` +
       `queryFailed=${identityResidual.queryFailed} ` +
       `unresolved=${identityResidual.identityUnresolved}`);
-    if (!srvDeletionIdentityCleared(identityResidual)) {
+    // [R7-P4.4E.11C.0C.1 §13·§24] 검증된 Auth-tail 에서는 identity key 를
+    //   다시 복원하지 못해도 막지 않는다 — 이 gate 는 user 문서 삭제
+    //   **앞**에 있으므로, 그 문서가 없다는 사실 자체가 이미 통과했다는
+    //   증거다. `deleted_accounts` 가 사라져도 삭제를 끝낼 수 있어야 한다.
+    //
+    //   나머지 조건(쿼리 실패·잔존 행·tax·sentinel)은 그대로 본다 —
+    //   "모르면 통과" 가 아니라 "이미 지나간 단계만 면제" 다.
+    if (!srvDeletionIdentityCleared(identityResidual) &&
+        !(authTailProven && identityResidual.identityUnresolved &&
+          !identityResidual.queryFailed &&
+          identityResidual.queryRows === 0 &&
+          identityResidual.taxIdentity === 0 &&
+          identityResidual.sentinels === 0)) {
       return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 
