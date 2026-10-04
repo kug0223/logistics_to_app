@@ -17338,6 +17338,11 @@ export const callableFinalizeForeignIdentity = onCall(
         console.warn(`[finalize] ${_diagStage} FAIL | 유효하지 않은 role=${role}`);
         throw new HttpsError("invalid-argument", "유효하지 않은 role입니다.");
       }
+      // [R7-P4.4E.11C.0C.0a.4 §17·§50] 탈퇴 freeze 가 선 계정에는 identity
+      //   sentinel 과 세무 identity 를 다시 만들지 않는다. 이 함수는 둘 다
+      //   쓴다 — cleanup 직후 재개(resume) 호출이 들어오면 Final 의
+      //   MUST_DELETE 가 되살아난다. `registration_pending` 은 영향 없다.
+      srvAssertNotDeletingAccount(userSnap.data());
       console.info(`[finalize] ${_diagStage} OK | role=${role}`);
 
       // [B.1] fingerprint는 parameter validation 단계(위)에서 이미 계산됨 — 재사용
@@ -31475,6 +31480,11 @@ export const callableRegisterTaxIdentity = onCall(
       throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
     }
     const ud = userSnap.data()!;
+    // [R7-P4.4E.11C.0C.0a.4 §17·§50] 탈퇴 freeze 가 선 계정은 세무 identity 를
+    //   새로 만들지 못한다. 이 문서는 Final 의 MUST_DELETE 대상이고, cleanup
+    //   직후 다른 기기가 다시 만들면 완결성이 깨진다. 이미 읽은 snapshot 으로
+    //   판단한다 — 추가 조회 0.
+    srvAssertNotDeletingAccount(ud);
     const reqData = request.data as {
       rawIdentifier?: unknown; documentMatch?: unknown;
     };
@@ -31540,6 +31550,8 @@ export const callableUpdateTaxIdentity = onCall(
       throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
     }
     const updUd = userSnap.data()!;
+    // [R7-P4.4E.11C.0C.0a.4 §17·§50] 탈퇴 freeze 가 선 계정은 변경도 막는다.
+    srvAssertNotDeletingAccount(updUd);
     const updData = request.data as {
       rawIdentifier?: unknown; documentMatch?: unknown;
     };
@@ -31622,6 +31634,8 @@ export const callableRecoverForeignTaxIdentity = onCall(
       throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
     }
     const ud = userSnap.data()!;
+    // [R7-P4.4E.11C.0C.0a.4 §17·§50] 복구 경로도 같은 문서를 `set` 한다.
+    srvAssertNotDeletingAccount(ud);
     const ownFp = ud["foreignIdentityFingerprint"] as string | undefined;
     if (!ownFp) {
       // 외국인 신원이 없는 계정은 이 경로의 대상이 아니다.
@@ -42899,7 +42913,6 @@ export const callableDeleteAccountPreData = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
-    const fvDel = admin.firestore.FieldValue.delete;
 
     // ═══════════════════════════════════════════════════════════
     // BEGIN DELETION — [R7-P4.4E.11C.0C.0a §0·§4·§8·§9]
@@ -43038,6 +43051,10 @@ export const callableDeleteAccountPreData = onCall(
       }
     }
 
+    // [R7-P4.4E.11C.0C.0a.4 §9] 술어를 복붙하지 않는다.
+    //   PreData 와 Final 이 **같은 목록**(srvDeletionOwnedQueryTargets)을
+    //   돌린다. 한쪽만 고쳐질 때 "치웠다"와 "남았다"가 서로 다른 것을 세는
+    //   것을 구조적으로 막는다. op 번호는 기존 failedOps 와 같은 순서다.
     const paginateUpdate = async (col: string, field: string, data: Record<string, unknown>) => {
       let hasMore = true;
       while (hasMore) {
@@ -43061,30 +43078,16 @@ export const callableDeleteAccountPreData = onCall(
       }
     };
 
-    const results = await Promise.allSettled([
-      // 3-pre: review_requests workerId 익명화 (SEC-88)
-      // [BUG-E007 FIX] workerId: fvDel() 추가 — 누락 시 100건 초과 페이지네이션 무한루프
-      //   workerId가 남아 있으면 다음 while 반복에서 동일 문서가 계속 조회됨
-      paginateUpdate("review_requests", "workerId", {workerName: "탈퇴한 회원", workerId: fvDel()}),
-      // 3-pre2a: monthly_reviews 대상자 익명화 (SEC-92)
-      paginateUpdate("monthly_reviews", "targetUserId", {
-        targetUserName: "탈퇴한 회원", targetUserId: fvDel(), comment: fvDel(),
-      }),
-      // 3-pre2b: monthly_reviews 작성자 익명화 (SEC-92)
-      paginateUpdate("monthly_reviews", "reviewerId", {
-        reviewerName: "탈퇴한 회원", reviewerId: fvDel(),
-      }),
-      // 3-pre3: idCardAccessRequests 삭제 (SEC-93)
-      paginateDelete("idCardAccessRequests", "targetUserId"),
-      paginateDelete("idCardAccessRequests", "requesterId"),
-      // 3-pre6: trust_score_history 익명화 (WARN-AUTH-01)
-      paginateUpdate("trust_score_history", "userId", {userId: "탈퇴한 회원"}),
-      // 3-pre7: member_invitations 삭제 + 익명화 (WARN-AUTH-02)
-      paginateDelete("member_invitations", "targetUid"),
-      paginateUpdate("member_invitations", "invitedBy", {
-        invitedByName: "탈퇴한 회원", invitedBy: fvDel(),
-      }),
-    ]);
+    //   op0 review_requests(익명화) · op1·op2 monthly_reviews(익명화) ·
+    //   op3·op4 idCardAccessRequests(삭제) · op5 trust_score_history(익명화) ·
+    //   op6 member_invitations(삭제) · op7 member_invitations(익명화)
+    const results = await Promise.allSettled(
+      srvDeletionOwnedQueryTargets().map((t) =>
+        t.patch === null ?
+          paginateDelete(t.col, t.field) :
+          paginateUpdate(t.col, t.field, t.patch)
+      )
+    );
     const failed: string[] = [];
     results.forEach((r, i) => {
       if (r.status === "rejected") {
@@ -43575,6 +43578,361 @@ function srvDeletionPersonalCleared(r: SrvPersonalResidual): boolean {
 }
 
 /**
+ * [R7-P4.4E.11C.0C.0a.4 §9] 계정 삭제가 책임지는 **쿼리 기반** 대상 한 벌.
+ *
+ *   `patch === null` 이면 문서 삭제(MUST_DELETE), 객체면 익명화 후 보존
+ *   (DEIDENTIFY_AND_RETAIN)이다. 두 경우 모두 **같은 불변식**으로 수렴한다 —
+ *   `where(field, "==", uid)` 결과가 0 이 된다. 삭제는 문서가 사라져서,
+ *   익명화는 그 field 가 사라지거나 바뀌어서다.
+ *
+ *   그래서 Final 은 "삭제했는가"와 "익명화했는가"를 따로 묻지 않고
+ *   **하나의 잔존 술어**로 둘 다 확인할 수 있다.
+ */
+type SrvDeletionOwnedQueryTarget = {
+  /** 대상 컬렉션. */
+  col: string;
+  /** uid 를 담고 있는 field — 소유 key. */
+  field: string;
+  /** null = 문서 삭제 / 객체 = 익명화 patch. */
+  patch: Record<string, unknown> | null;
+};
+
+/**
+ * [§1·§3·§9·§55·§57] 목록을 **한 곳에서만** 정의한다.
+ *
+ *   PreData(early cleanup)와 Final(canonical cleanup + residual)이 같은
+ *   배열을 돌린다. 순서는 PreData 의 기존 `failedOps` op 번호와 같다 —
+ *   운영 로그 해석이 어긋나지 않게 한다.
+ *
+ *   [§57] 익명화 대상을 삭제로 승격하지 않는다. 그 세 컬렉션은
+ *   historical record 이고, 이 Phase 가 바꾸는 것은 "누가 그것을
+ *   보증하는가"뿐이다.
+ *
+ * @return {SrvDeletionOwnedQueryTarget[]} 대상 목록
+ */
+function srvDeletionOwnedQueryTargets(): SrvDeletionOwnedQueryTarget[] {
+  const fvDel = admin.firestore.FieldValue.delete;
+  return [
+    // op0 — review_requests 작성 대상 익명화 (SEC-88).
+    //   [BUG-E007] workerId: fvDel() 없으면 같은 문서가 계속 조회돼 무한루프.
+    {col: "review_requests", field: "workerId",
+      patch: {workerName: "탈퇴한 회원", workerId: fvDel()}},
+    // op1 — monthly_reviews 대상자 익명화 (SEC-92).
+    {col: "monthly_reviews", field: "targetUserId",
+      patch: {targetUserName: "탈퇴한 회원", targetUserId: fvDel(),
+        comment: fvDel()}},
+    // op2 — monthly_reviews 작성자 익명화 (SEC-92).
+    {col: "monthly_reviews", field: "reviewerId",
+      patch: {reviewerName: "탈퇴한 회원", reviewerId: fvDel()}},
+    // op3·op4 — 신분증 열람 요청/승인 **삭제** (SEC-93).
+    //   계정이 사라지면 열람할 신분증도 없다 — grant 의 목적이 끝난다.
+    //   [§12] 열람 **감사**(taxIdentityAuditLogs 등)와 혼동하지 않는다.
+    {col: "idCardAccessRequests", field: "targetUserId", patch: null},
+    {col: "idCardAccessRequests", field: "requesterId", patch: null},
+    // op5 — 신뢰점수 이력 익명화 (WARN-AUTH-01).
+    {col: "trust_score_history", field: "userId",
+      patch: {userId: "탈퇴한 회원"}},
+    // op6 — 나에게 온 초대 **삭제** (WARN-AUTH-02).
+    //   targetName·targetPhone 을 들고 있다. 수락할 주체가 사라지므로 보존
+    //   목적이 없다.
+    {col: "member_invitations", field: "targetUid", patch: null},
+    // op7 — 내가 보낸 초대는 **보존 + 발신자 익명화**.
+    //   [§21] 받는 사람에게는 아직 의미가 있는 기록이다. blanket delete 금지.
+    {col: "member_invitations", field: "invitedBy",
+      patch: {invitedByName: "탈퇴한 회원", invitedBy: fvDel()}},
+  ];
+}
+
+/**
+ * [§11] 계정 identity sentinel 을 지우기 위한 key.
+ *
+ *   sentinel id 는 uid 가 아니라 `{ciHash}_{role}` / `{fingerprint}_{role}`
+ *   이다. 그래서 uid 만으로는 지울 수 없고, 계정 문서(또는 그 기록)에서
+ *   먼저 key 를 복원해야 한다.
+ */
+type SrvDeletionIdentityKeys = {
+  /**
+   * key 출처를 **읽었는가**. false 면 "sentinel 이 없다"가 아니라
+   * **모른다**는 뜻이다(§25). 모르면 파괴하지 않는다.
+   */
+  resolved: boolean;
+  /** 내국인 CI 해시 (없을 수 있음 — 외국인·레거시). */
+  ciHash?: string;
+  /** 외국인 HMAC fingerprint (없을 수 있음). */
+  foreignFingerprint?: string;
+  /** sentinel id 에 들어가는 role. */
+  role?: string;
+};
+
+/**
+ * [§11] sentinel key 를 복원한다 — user 문서 → `deleted_accounts` 순.
+ *
+ *   `deleted_accounts` 는 PreData 가 `ciHash`·`foreignIdentityFingerprint`·
+ *   `role` 을 그대로 기록해 둔다. 그래서 user 문서가 이미 지워진 재시도에서도
+ *   같은 key 를 복원할 수 있다 — 기존 role 복구와 같은 패턴이다.
+ *
+ *   [§4] 이 함수는 `deleted_accounts` 를 **retention record 로서 읽기만**
+ *   한다. 그 문서를 지우지 않는다 — 재가입 제한의 근거다.
+ *
+ * @param {string} uid 계정 소유자
+ * @return {Promise<SrvDeletionIdentityKeys>} 복원 결과
+ */
+async function srvResolveDeletionIdentityKeys(
+  uid: string
+): Promise<SrvDeletionIdentityKeys> {
+  const out: SrvDeletionIdentityKeys = {resolved: false};
+  try {
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (userSnap.exists) {
+      const d = userSnap.data() ?? {};
+      out.resolved = true;
+      out.ciHash = d["ciHash"] as string | undefined;
+      out.foreignFingerprint =
+        d["foreignIdentityFingerprint"] as string | undefined;
+      out.role = (d["role"] as string | undefined) ?? "USER";
+      return out;
+    }
+    const recSnap = await db.collection("deleted_accounts")
+      .where("uid", "==", uid).limit(1).get();
+    if (!recSnap.empty) {
+      const d = recSnap.docs[0].data();
+      out.resolved = true;
+      out.ciHash = d["ciHash"] as string | undefined;
+      out.foreignFingerprint =
+        d["foreignIdentityFingerprint"] as string | undefined;
+      out.role = (d["role"] as string | undefined) ?? "USER";
+    }
+  } catch (e) {
+    console.error(
+      "[deletionIdentityKeys] resolve failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+  return out;
+}
+
+/** [§11] 해제 대상 sentinel 문서 id (해당 없으면 null). */
+type SrvDeletionSentinelIds = {
+  /** `nativeIdentityFingerprints/{ciHash}_{role}` */
+  native: string | null;
+  /** `foreignIdFingerprints/{fingerprint}_{role}` */
+  foreign: string | null;
+};
+
+/**
+ * [§11] sentinel 문서 id 두 개를 만든다(해당 없으면 null).
+ *
+ *   role 제한은 기존 PreData 와 동일하게 USER·BUSINESS_ADMIN 뿐이다 —
+ *   가입 시 그 두 role 만 sentinel 을 만든다.
+ *
+ * @param {SrvDeletionIdentityKeys} k 복원된 key
+ * @return {SrvDeletionSentinelIds} sentinel id
+ */
+function srvDeletionSentinelIds(
+  k: SrvDeletionIdentityKeys
+): SrvDeletionSentinelIds {
+  const roleOk = k.role === "USER" || k.role === "BUSINESS_ADMIN";
+  return {
+    native: roleOk && k.ciHash ? `${k.ciHash}_${k.role}` : null,
+    foreign: roleOk && k.foreignFingerprint ?
+      `${k.foreignFingerprint}_${k.role}` : null,
+  };
+}
+
+/** [§12·§13] PreData 가 책임지던 상태를 Final 이 다시 정리한 결과. */
+type SrvIdentityStateCleanup = {
+  /** 처리한 쿼리 대상 수(삭제 + 익명화). */
+  targets: number;
+  /** 세무 identity 문서 삭제 시도 여부. */
+  taxDeleted: boolean;
+  /** 해제한 sentinel 수. */
+  sentinels: number;
+  /** 실패한 작업 수. 0 이 아니면 파괴 금지. */
+  failed: number;
+  /** 열거/쿼리 실패 — "0건"이 아니다(§25). */
+  queryFailed: boolean;
+  /** sentinel key 를 복원하지 못했다 — UNKNOWN(§25). */
+  identityUnresolved: boolean;
+};
+
+/**
+ * [§5·§6·§7·§8] **Final 이 canonical cleanup authority 다.**
+ *
+ *   PreData 가 실패했든, 아예 호출되지 않았든(직접 Final 호출), 같은
+ *   MUST_DELETE truth 를 여기서 다시 정리한다. 클라이언트의 호출 순서를
+ *   correctness 근거로 쓰지 않는다.
+ *
+ *   [§8] PreData 는 early·best-effort cleanup 으로 남는다. 그 `failedOps` 는
+ *   진단값이고, 삭제 완료의 근거가 아니다.
+ *
+ * @param {string} uid 계정 소유자
+ * @param {SrvDeletionIdentityKeys} keys 복원된 sentinel key
+ * @return {Promise<SrvIdentityStateCleanup>} 집계
+ */
+async function srvCleanupDeletionOwnedIdentityState(
+  uid: string,
+  keys: SrvDeletionIdentityKeys
+): Promise<SrvIdentityStateCleanup> {
+  const out: SrvIdentityStateCleanup = {
+    targets: 0, taxDeleted: false, sentinels: 0,
+    failed: 0, queryFailed: false, identityUnresolved: !keys.resolved,
+  };
+  if (!uid || uid.includes("/")) {
+    out.failed = 1;
+    return out;
+  }
+
+  // 1. 쿼리 대상 — 삭제/익명화 모두 같은 술어로 수렴한다.
+  for (const t of srvDeletionOwnedQueryTargets()) {
+    try {
+      let more = true;
+      while (more) {
+        const snap = await db.collection(t.col)
+          .where(t.field, "==", uid).limit(100).get();
+        if (snap.empty) break;
+        more = snap.docs.length === 100;
+        const batch = db.batch();
+        for (const doc of snap.docs) {
+          if (t.patch === null) batch.delete(doc.ref);
+          else batch.update(doc.ref, t.patch);
+        }
+        await batch.commit();
+      }
+      out.targets++;
+    } catch (e) {
+      out.failed++;
+      out.queryFailed = true;
+      console.error(
+        `[identityStateCleanup] ${t.col}.${t.field} failed — ` +
+        `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+    }
+  }
+
+  // 2. 세무 identity — active profile 이다.
+  //    [§18] 보존되는 급여·세무 **증빙**과 다르다. 그 증빙은 건드리지 않는다.
+  try {
+    await db.collection(TAX_ID_COL).doc(uid).delete();
+    out.taxDeleted = true;
+  } catch (e) {
+    out.failed++;
+    console.error(
+      "[identityStateCleanup] taxIdentities failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+
+  // 3. identity sentinel — 남으면 **재가입이 영구히 막힌다.**
+  //
+  //    PreData 는 이 삭제를 inner try + console.warn 으로 삼켰고
+  //    `failedOps` 에도 넣지 않았다. 즉 실패가 어디에도 드러나지 않은 채
+  //    계정이 사라지고, 그 사람의 CI/외국인등록번호는 영원히 점유된다.
+  //    잔류물 문제가 아니라 **실제 사람이 다시 가입할 수 없게 되는** 문제다.
+  //
+  //    [§4] `deleted_accounts`(재가입 제한 record)와 섞지 않는다. 그것은
+  //    보존 대상이고, 이것은 해제 대상이다.
+  if (keys.resolved) {
+    const ids = srvDeletionSentinelIds(keys);
+    const pairs: {col: string; id: string | null}[] = [
+      {col: "nativeIdentityFingerprints", id: ids.native},
+      {col: "foreignIdFingerprints", id: ids.foreign},
+    ];
+    for (const p of pairs) {
+      if (!p.id) continue;
+      try {
+        await db.collection(p.col).doc(p.id).delete();
+        out.sentinels++;
+      } catch (e) {
+        out.failed++;
+        console.error(
+          `[identityStateCleanup] ${p.col} failed — ` +
+          `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+      }
+    }
+  }
+
+  return out;
+}
+
+/** [§24·§25] PreData 소관 상태의 잔존 확실성. */
+type SrvIdentityStateResidual = {
+  /** 아직 술어에 걸리는 쿼리 대상 수(삭제 대상 + 익명화 누락 합). */
+  queryRows: number;
+  /** 세무 identity 문서가 남아 있는가. */
+  taxIdentity: number;
+  /** 남아 있는 sentinel 수. */
+  sentinels: number;
+  /** 쿼리 실패 — 0 으로 해석하면 안 된다(§25). */
+  queryFailed: boolean;
+  /** sentinel key 미복원 — UNKNOWN(§25). */
+  identityUnresolved: boolean;
+};
+
+/**
+ * [§24·§25] 같은 술어로 직접 다시 센다.
+ *
+ *   [§22] member_invitations 의 불변식은 "문서 0"이 아니다. 삭제 대상
+ *   (`targetUid == uid`)이 0 이고, 보존되는 초대에서 삭제 대상자의 직접
+ *   개인정보(`invitedBy == uid`)가 0 이면 된다. 익명화가 그 field 를
+ *   제거하므로 두 조건 모두 같은 쿼리로 확인된다.
+ *
+ * @param {string} uid 계정 소유자
+ * @param {SrvDeletionIdentityKeys} keys 복원된 sentinel key
+ * @return {Promise<SrvIdentityStateResidual>} 집계
+ */
+async function srvCountDeletionIdentityResidual(
+  uid: string,
+  keys: SrvDeletionIdentityKeys
+): Promise<SrvIdentityStateResidual> {
+  const out: SrvIdentityStateResidual = {
+    queryRows: 0, taxIdentity: 0, sentinels: 0,
+    queryFailed: false, identityUnresolved: !keys.resolved,
+  };
+  try {
+    const targets = srvDeletionOwnedQueryTargets();
+    const snaps = await Promise.all(
+      targets.map((t) => db.collection(t.col)
+        .where(t.field, "==", uid).limit(1).get())
+    );
+    out.queryRows = snaps.reduce((n, s) => n + s.size, 0);
+    const taxSnap = await db.collection(TAX_ID_COL).doc(uid).get();
+    out.taxIdentity = taxSnap.exists ? 1 : 0;
+    if (keys.resolved) {
+      const ids = srvDeletionSentinelIds(keys);
+      const checks: Promise<FirebaseFirestore.DocumentSnapshot>[] = [];
+      if (ids.native) {
+        checks.push(db.collection("nativeIdentityFingerprints")
+          .doc(ids.native).get());
+      }
+      if (ids.foreign) {
+        checks.push(db.collection("foreignIdFingerprints")
+          .doc(ids.foreign).get());
+      }
+      const sentinelSnaps = await Promise.all(checks);
+      out.sentinels = sentinelSnaps.filter((s) => s.exists).length;
+    }
+  } catch (e) {
+    out.queryFailed = true;
+    console.error(
+      "[identityStateResidual] query failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+  return out;
+}
+
+/**
+ * [§24·§25] identity 를 파괴해도 되는가 — PreData 소관 기준.
+ *
+ *   `identityUnresolved` 는 "sentinel 이 없다"가 아니라 **모른다**다.
+ *   모르는 상태로 계정을 지우면, 남은 sentinel 때문에 그 사람이 다시
+ *   가입할 수 없게 되고 되돌릴 주인도 없다. 그래서 막는다.
+ *
+ * @param {SrvIdentityStateResidual} r 집계
+ * @return {boolean} 잔존 0 임이 **확인**됐는가
+ */
+function srvDeletionIdentityCleared(r: SrvIdentityStateResidual): boolean {
+  return !r.queryFailed && !r.identityUnresolved &&
+    r.queryRows === 0 && r.taxIdentity === 0 && r.sentinels === 0;
+}
+
+/**
  * [§27·§31] 탈퇴 freeze 가 선 계정의 재생성 write 를 거부한다.
  *
  *   cleanup 이 성공해도 같은 사용자의 **다른 기기**가 곧바로 같은 행을 다시
@@ -43841,6 +44199,32 @@ export const callableDeleteAccountFinal = onCall(
       return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 
+    // 2-B. [R7-P4.4E.11C.0C.0a.4 §5·§6·§8] **PreData 소관도 Final 이 보증한다.**
+    //
+    //   PreData 는 8개 cleanup 을 `Promise.allSettled` 로 돌린 뒤
+    //   `{success: true, failedOps}` 를 반환한다. 클라이언트는 그 failedOps 를
+    //   `debugPrint` 만 한다. 즉 **실패해도 아무도 멈추지 않았다.**
+    //   그리고 sentinel 삭제 두 건은 allSettled 밖의 inner try 라서
+    //   failedOps 에조차 들어가지 않았다.
+    //
+    //   그래서 "PreData 가 먼저 호출된다"를 correctness 근거로 쓰지 않는다
+    //   (§5). PreData 0회로 Final 만 직접 호출돼도 같은 결론이 나와야 한다
+    //   (§6). 같은 목록(srvDeletionOwnedQueryTargets)을 여기서 다시 돈다.
+    const identityKeys = await srvResolveDeletionIdentityKeys(uid);
+    const identityCleanup =
+      await srvCleanupDeletionOwnedIdentityState(uid, identityKeys);
+    console.info(
+      "[deleteAccountFinal] identity cleanup " +
+      `targets=${identityCleanup.targets} ` +
+      `tax=${identityCleanup.taxDeleted} ` +
+      `sentinels=${identityCleanup.sentinels} ` +
+      `failed=${identityCleanup.failed} ` +
+      `queryFailed=${identityCleanup.queryFailed} ` +
+      `unresolved=${identityCleanup.identityUnresolved}`);
+    if (identityCleanup.failed > 0) {
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
+    }
+
     // 3. [R7-P4.4E.11C §0·§13·§28·§34] **account-owned Storage 는 HARD GATE 다.**
     //
     //   이전 순서는 이랬다.
@@ -43964,6 +44348,28 @@ export const callableDeleteAccountFinal = onCall(
       `queryFailed=${personalResidual.queryFailed}`);
     if (!srvDeletionPersonalCleared(personalResidual)) {
       // [§37] 쿼리 실패도 0 이 아니다. 어느 쪽이든 identity 파괴 금지.
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
+    }
+
+    // 5-C. [R7-P4.4E.11C.0C.0a.4 §24·§25·§27] PreData 소관 잔존 확실성.
+    //
+    //   [§22] member_invitations 의 불변식은 "문서 0"이 아니다 — 받는 사람에게
+    //   아직 의미가 있는 초대는 보존한다. 삭제 대상(`targetUid == uid`)이 0 이고
+    //   보존 초대에 발신자 식별자(`invitedBy == uid`)가 0 이면 된다.
+    //
+    //   [§25] sentinel key 를 복원하지 못하면 "없다"가 아니라 **모른다**다.
+    //   모르는 채 계정을 지우면 남은 sentinel 때문에 그 사람이 다시 가입할 수
+    //   없게 되고, 그때는 되돌릴 주인이 없다.
+    const identityResidual =
+      await srvCountDeletionIdentityResidual(uid, identityKeys);
+    console.info(
+      "[deleteAccountFinal] identity residual " +
+      `rows=${identityResidual.queryRows} ` +
+      `tax=${identityResidual.taxIdentity} ` +
+      `sentinels=${identityResidual.sentinels} ` +
+      `queryFailed=${identityResidual.queryFailed} ` +
+      `unresolved=${identityResidual.identityUnresolved}`);
+    if (!srvDeletionIdentityCleared(identityResidual)) {
       return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 

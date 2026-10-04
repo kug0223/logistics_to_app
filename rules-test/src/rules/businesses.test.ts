@@ -528,10 +528,20 @@ describe('MEMBERS: 멤버 서브컬렉션', () => {
     await assertFails(getDoc(doc(db, `businesses/${IDS.business}/members`, IDS.subAdmin)));
   });
 
+  // [R7-P4.4E.11C.0C.0a.4] fixture 갱신 — 정책은 그대로다.
+  //   create 규칙에 path↔data identity binding 이 들어갔다. 권위는 경로의
+  //   uid 로 읽히는데(`members/$(request.auth.uid)`) 탈퇴 cleanup 은 data 의
+  //   `uid` field 로 collectionGroup 쿼리를 한다 — 어긋난 행은 cleanup 이
+  //   영원히 못 찾는다. canonical writer(callableAcceptInvitation)는 이미
+  //   `uid` 와 `businessId` 를 경로와 같게 쓴다. 이 fixture 가 그 두 필드를
+  //   빼고 있었을 뿐이다. 묻는 것은 그대로다 — "관리자가 멤버를 추가할 수
+  //   있는가".
   test('MEM-CREATE-01 관리자는 멤버를 직접 추가할 수 있다', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       setDoc(doc(db, `businesses/${IDS.business}/members`, IDS.user2), {
+        uid: IDS.user2,
+        businessId: IDS.business,
         role: 'USER',
         joinedAt: '2024-01-01T00:00:00Z',
       }),
@@ -557,6 +567,9 @@ describe('MEMBERS: 멤버 서브컬렉션', () => {
     const db = getAuth(env, newMember);
     await assertSucceeds(
       setDoc(doc(db, `businesses/${IDS.business}/members`, newMember), {
+        // [R7-P4.4E.11C.0C.0a.4] identity binding — 위 MEM-CREATE-01 주석 참조.
+        uid: newMember,
+        businessId: IDS.business,
         role: 'SUB_ADMIN',
         joinedAt: '2024-01-01T00:00:00Z',
         invitationId: 'inv-fresh',
