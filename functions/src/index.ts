@@ -43401,6 +43401,97 @@ async function srvEnsureAccountDeletionTombstone(
   }
 }
 
+/** [R7-P4.4E.11C.0C.0a.6] 미처리 중간정산의 운영 주인이 사라지는 범위. */
+type SrvInterimContinuity = {
+  /** 처리 주인이 남지 않는 사업장 수. */
+  orphanBusinesses: number;
+  /** 그 사업장들의 APPROVED 미이체 건수 합. */
+  orphanApproved: number;
+};
+
+/**
+ * [R7-P4.4E.11C.0C.0a.6 §2·§7] 미처리 금전 의무에 **주인이 남는가**.
+ *
+ *   `APPROVED` 중간정산은 이미 승인된 지급 의무다. 그런데 그것을
+ *   `PROCESSED` 로 끝내는 것은 조회가 아니라 권한 있는 actor 의 operation
+ *   이다. 단독 관리자가 탈퇴하면 그 사업장은 비활성화되고, 처리할 사람이
+ *   아무도 남지 않을 수 있다 — 승인된 돈이 영구히 미지급으로 남는다.
+ *
+ *   그래서 **역할 이름으로 판단하지 않는다**(§2). 묻는 것은 하나다 —
+ *   삭제 뒤에 그 request 를 발견하고 권한 검증을 통과해 PROCESSED 로
+ *   끝낼 수 있는 **일반 제품 actor** 가 남는가.
+ *
+ *   successor 로 인정하는 capability (processor 와 **같은 술어**):
+ *     · `adminIds` / `ownerId` 구성원 — canManageWage 면제 대상
+ *     · `members/{uid}.permissions.canManageWage == true` 서브관리자
+ *   그리고 그 계정이 실제로 쓸 수 있어야 한다(존재·active·미제재).
+ *
+ *   SUPER_ADMIN 은 세지 않는다(§8). 서버 guard 는 통과하지만 제품 UI 에
+ *   남의 사업장 정산으로 들어가는 경로가 없다 — emergency authority 이지
+ *   normal continuity 가 아니다.
+ *
+ *   [§19] 쿼리가 실패하면 throw 한다. "0건"으로 바꾸지 않는다 — 돈
+ *   의무의 삭제 gate 에서 UNKNOWN 을 통과로 읽으면 안 된다.
+ *
+ * @param {string} uid 탈퇴하려는 관리자
+ * @return {Promise<SrvInterimContinuity>} 주인이 사라지는 사업장·건수
+ */
+async function srvCountOrphanApprovedSettlements(
+  uid: string
+): Promise<SrvInterimContinuity> {
+  const out: SrvInterimContinuity = {orphanBusinesses: 0, orphanApproved: 0};
+  if (typeof uid !== "string" || uid.length === 0) return out;
+
+  const bizSnap = await db.collection("businesses")
+    .where("adminIds", "array-contains", uid)
+    .get();
+  // 이미 비활성화된 사업장은 이 탈퇴가 만드는 상태가 아니다 — 기존 blocker
+  //   관례와 같은 필터를 쓴다.
+  const live = bizSnap.docs.filter((d) => !d.data()["deactivatedAt"]);
+
+  for (const biz of live) {
+    const approved = await db.collection("interim_settlement_requests")
+      .where("businessId", "==", biz.id)
+      .where("status", "==", "APPROVED")
+      .count()
+      .get();
+    const pendingTransfer = approved.data().count;
+    if (pendingTransfer === 0) continue;
+
+    const d = biz.data();
+    const candidates = new Set<string>();
+    for (const a of ((d["adminIds"] as string[] | undefined) ?? [])) {
+      if (a && a !== uid) candidates.add(a);
+    }
+    const owner = d["ownerId"] as string | undefined;
+    if (owner && owner !== uid) candidates.add(owner);
+    const wageMembers = await biz.ref.collection("members")
+      .where("permissions.canManageWage", "==", true)
+      .get();
+    for (const m of wageMembers.docs) {
+      const mu = (m.data()["uid"] as string | undefined) ?? m.id;
+      if (mu && mu !== uid) candidates.add(mu);
+    }
+
+    let hasSuccessor = false;
+    if (candidates.size > 0) {
+      const snaps = await db.getAll(
+        ...[...candidates].map((c) => db.collection("users").doc(c)));
+      hasSuccessor = snaps.some((s) => {
+        if (!s.exists) return false;
+        const u = s.data() ?? {};
+        const status = (u["accountStatus"] as string | undefined) ?? "active";
+        return status === "active" && u["isBlacklisted"] !== true;
+      });
+    }
+    if (!hasSuccessor) {
+      out.orphanBusinesses++;
+      out.orphanApproved += pendingTransfer;
+    }
+  }
+  return out;
+}
+
 /**
  * [R7-P4.4E.11C.0C.0a §5] 계정 삭제가 허용되는 상태인가 — 공용 precondition.
  *
@@ -43454,6 +43545,36 @@ async function srvAssertAccountDeletionAllowed(
       throw new HttpsError(
         "failed-precondition",
         `미서명 계약서(${unsignedCount}건)를 먼저 서명해주세요.`
+      );
+    }
+  }
+
+  // [R7-P4.4E.11C.0C.0a.6 §1·§6·§13·§19] **승인된 돈에는 주인이 남아야 한다.**
+  //
+  //   `callableGetWithdrawBlockers` 는 **클라이언트 preview 전용**이다. 그래서
+  //   여태 금전 blocker 는 서버 삭제 경계에 하나도 없었다 — 직접 호출이든
+  //   구버전 client 든 그대로 통과했다. 돈 의무의 gate 는 preview 가 아니라
+  //   여기여야 한다(§13).
+  //
+  //   이 precondition 은 PreData(BEGIN)와 Final 이 **공유**한다. 그래서
+  //   파괴가 시작되기 전에 막히고, Final 단독 호출도 같은 답을 받는다.
+  //
+  //   [§15 R2] freeze 이후 새 APPROVED 가 생겨 판정이 낡을 수 있는가 —
+  //   아니다. 승인은 `assertBizAdmin` 을 거치고 그것은 `accountStatus` 가
+  //   active 가 아닌 호출자를 거부한다. 즉 탈퇴 중인 본인은 승인할 수 없고,
+  //   다른 누군가가 승인할 수 있다면 그 사람이 곧 successor 다 — 어느 쪽도
+  //   "주인 없는 APPROVED" 를 만들지 못한다.
+  //
+  //   [§10] 막기만 한다. 삭제를 통과시키려고 APPROVED 를 PROCESSED·CANCELED
+  //   로 바꾸거나 금액을 0 으로 만들지 않는다.
+  if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
+    const interim = await srvCountOrphanApprovedSettlements(uid);
+    if (interim.orphanApproved > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "[INTERIM_SETTLEMENT_UNPROCESSED] 승인된 중간정산 " +
+        `${interim.orphanApproved}건이 아직 이체 처리되지 않았습니다. ` +
+        "이체를 완료하거나 승인을 취소한 뒤 탈퇴해주세요."
       );
     }
   }
@@ -45328,6 +45449,22 @@ export const callableGetWithdrawBlockers = onCall(
       }
       if (interimCount > 0) {
         hardBlocks.push({type: "INTERIM_PENDING", count: interimCount});
+      }
+      // [R7-P4.4E.11C.0C.0a.6 §14] preview 와 Final 이 **같은 술어**를 쓴다.
+      //
+      //   `srvAssertAccountDeletionAllowed` 가 authoritative 하고 이것은
+      //   advisory 다. 그러나 술어가 갈라지면 "preview 는 통과인데 삭제가
+      //   거부되는" 상태가 된다 — 사용자는 이유를 알 수 없다. 그래서 같은
+      //   helper 를 부른다.
+      //
+      //   [§19] 이 helper 는 쿼리 실패를 삼키지 않는다. 그러면 preview 전체가
+      //   실패하고, 클라이언트는 이미 그때 삭제 버튼을 비활성화한다.
+      const orphanInterim = await srvCountOrphanApprovedSettlements(callerUid);
+      if (orphanInterim.orphanApproved > 0) {
+        hardBlocks.push({
+          type: "INTERIM_SETTLEMENT_UNPROCESSED",
+          count: orphanInterim.orphanApproved,
+        });
       }
       if (toData.confirmedWorkers > 0) {
         hardBlocks.push({type: "CONFIRMED_WORKERS", count: toData.confirmedWorkers});

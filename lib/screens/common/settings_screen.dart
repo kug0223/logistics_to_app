@@ -1543,6 +1543,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             return switch (b['type'] as String? ?? '') {
               'UNPAID_WAGES' => '미확정/미이체 급여 $n건',
               'INTERIM_PENDING' => '중간정산 승인 대기 $n건',
+              // [R7-P4.4E.11C.0C.0a.6] 승인된 돈인데 끝낼 사람이 남지 않는 경우다.
+              //   "승인 대기"(INTERIM_PENDING)와 다른 사실이므로 문구를 섞지 않는다.
+              'INTERIM_SETTLEMENT_UNPROCESSED' =>
+                '승인된 중간정산 $n건 미이체 — 탈퇴 후 처리할 관리자가 없습니다',
               'CONFIRMED_WORKERS' => '확정 근무자 $n명이 있는 진행 중 공고',
               'UNSIGNED_CONTRACT' => '미서명 계약서 $n건',
               'SUBADMIN_MEMBERSHIP' => '서브관리자로 등록된 사업장 $n곳 — 탈퇴 전 해제 필요',
@@ -1566,6 +1570,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               switch (b['type'] as String? ?? '') {
                 'UNPAID_WAGES' => 'payroll_unpaid',
                 'INTERIM_PENDING' => 'payroll_interim',
+                // 같은 화면(중간정산 탭)이지만 PENDING 필터를 끈 경로다 —
+                //   막힌 이유가 APPROVED 미이체이므로 그 행이 보여야 한다.
+                'INTERIM_SETTLEMENT_UNPROCESSED' => 'payroll_interim_approved',
                 'CONFIRMED_WORKERS' => 'to_management',
                 'UNSIGNED_CONTRACT' => 'my_applications',
                 'SUBADMIN_MEMBERSHIP' => 'subadmin_leave',
@@ -1751,7 +1758,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         showAllOutstanding: true, // [5C.2-S21] Home 드릴다운과 동일 전체기간 뷰
                       )));
         case 'payroll_interim':
+        case 'payroll_interim_approved':
           // 중간정산 탭(3) — 사업장 선택 후 당월 급여 지급현황으로 이동
+          //
+          // [R7-P4.4E.11C.0C.0a.6 §18] 두 blocker 가 가리키는 **행이 다르다.**
+          //   `INTERIM_PENDING` 은 승인 대기(PENDING)로 보내고,
+          //   `INTERIM_SETTLEMENT_UNPROCESSED` 는 이미 승인된(APPROVED)
+          //   미이체 행으로 보내야 한다. PENDING 필터를 그대로 쓰면 후자는
+          //   "처리 대기 중인 중간정산이 없습니다" 가 떠서, 막힌 이유를
+          //   말해 놓고 그 일을 할 화면이 비어 있게 된다.
           final bizInterim = await BusinessPickerHelper.pick(context);
           if (bizInterim == null || !context.mounted) return;
           final nowInterim = DateTime.now();
@@ -1764,7 +1779,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         year: nowInterim.year,
                         month: nowInterim.month,
                         initialTab: 3,
-                        showPendingSettlementOnly: true, // [5C.2-S21] Home 드릴다운과 동일 PENDING 필터
+                        // [5C.2-S21] Home 드릴다운과 동일 PENDING 필터 —
+                        //   승인 미이체 경로에서는 끈다(PENDING+APPROVED 전체).
+                        showPendingSettlementOnly:
+                            navTarget != 'payroll_interim_approved',
                       )));
         case 'to_management':
           await Navigator.push(
