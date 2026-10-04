@@ -43666,6 +43666,28 @@ export const callableDeleteAccountFinal = onCall(
     // 5. BUSINESS_ADMIN 사업장 정리
     //    [M-01 수정] adminIds array-contains 쿼리 → 복수 사업장 전체 처리
     //    (기존 클라이언트: businessId 단수 필드만 → 공동 관리 사업장 누락 버그)
+    // [R7-P4.4E.11C.0C.0a.2 §5·§15·§16] **사업장 정리는 hard gate 다.**
+    //
+    //   예전에는 실패를 삼키고 "사업장 정리 부분 실패도 Auth 삭제는 진행"
+    //   했다. 그런데 이 정리는 부가 작업이 아니다 — 관리자 권한과 사업장
+    //   소유관계를 **종료하는** canonical mutation 이다.
+    //
+    //   삼키면 두 가지가 남는다.
+    //     · 단독 관리자인데 비활성화가 실패 → 주인 없는 사업장이 계속
+    //       활성 상태로 남아 근로자가 지원할 수 있다
+    //     · 공동 관리자인데 제거가 실패 → 탈퇴한 uid 가 adminIds 에 남는다
+    //
+    //   게다가 그 뒤에 user 문서를 지우면 재시도에서 role 을 잃는다
+    //   (`deleted_accounts` 도 없으면 role = "" → 이 블록 자체를 건너뛴다).
+    //   그래서 실패한 정리를 **영구히 끝낼 수 없다.**
+    //
+    //   [§12] 이미 성공한 사업장은 되돌리지 않는다. 비활성화는
+    //   `deactivatedAt` 존재로, 공동관리자 제거는 `arrayRemove` 와
+    //   `array-contains` 쿼리로 멱등하므로 재시도가 수렴한다.
+    //
+    //   [§15·§16] 쿼리 실패도 개별 update 실패도 같은 catch 로 떨어진다 —
+    //   "사업장 0개"와 "모르겠다"를 구별할 수 없으므로 둘 다 차단한다.
+    let bizCleanupFailed = false;
     if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
       try {
         const bizSnap = await db
@@ -43694,9 +43716,21 @@ export const callableDeleteAccountFinal = onCall(
           }
         }
       } catch (e) {
+        bizCleanupFailed = true;
         console.error(`callableDeleteAccountFinal: Businesses cleanup failed (${uid}):`, e);
-        // continue — 사업장 정리 부분 실패도 Auth 삭제는 진행
+        // [§5] 삼키지 않는다 — 아래 gate 에서 identity destruction 을 막는다
       }
+    }
+
+    // 5-A. [§5·§6] identity destruction 직전 hard gate
+    //
+    //   invariant: business cleanup 완전 성공 < user 문서 삭제 < Auth 삭제
+    //
+    //   여기서 멈추면 tombstone·`accountStatus: "deleting"`·user 문서·Auth 가
+    //   모두 그대로다. 그래서 다음 호출이 role 을 다시 읽어 같은 사업장을
+    //   다시 집어 끝낼 수 있다. 재시도 권위를 남겨두는 것이 요점이다.
+    if (bizCleanupFailed) {
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 
     // 6. [R7-P4.4E.11C §34·§37·§45] users 문서 삭제 (개인정보보호법 §21)
