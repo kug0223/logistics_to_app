@@ -37852,8 +37852,17 @@ export const callableAcceptInvitation = onCall(
 //    callableDeclineTOInvitation  — 근로자가 초대 거절 (INVITED → REJECTED)
 // ════════════════════════════════════════════════════════════════════════════
 
-/** [R7-P4.4E.11C.0C.0b.1] INVITED 가 끝나는 방식 — 상태·사유·시각·이력. */
-type SrvInvitedTerminal = {
+/** [R7-P4.4E.11C.0C.0b.1] 대기 관계가 끝나는 방식 — 상태·사유·시각·이력. */
+type SrvWaitingTerminal = {
+  /**
+   * [R7-P4.4E.11C.0C.0b.2 §5·§6] 이 전이가 전제하는 **현재** 상태.
+   *
+   *   `PENDING_STATUSES = [PENDING, INVITED]` 는 같은 대기 projection 을
+   *   공유한다. 그래서 projection 감소는 한 주인이 갖고, 상태 semantics 는
+   *   호출자가 갖는다 — 초대 만료는 INVITED→EXPIRED, 계정삭제는
+   *   INVITED→AUTO_CANCELED 와 PENDING→CANCELED 다.
+   */
+  expectStatus: string;
   /** 전이할 종료 상태. 기존 enum 만 쓴다. */
   status: string;
   /** statusHistory 에 남길 action. */
@@ -37886,19 +37895,19 @@ type SrvInvitedTerminal = {
  *
  * @param {FirebaseFirestore.Transaction} tx 실행 중인 transaction
  * @param {FirebaseFirestore.DocumentReference} appRef 대상 지원서
- * @param {SrvInvitedTerminal} terminal 종료 상태·사유·시각·history action
+ * @param {SrvWaitingTerminal} terminal 종료 상태·사유·시각·history action
  * @return {Promise<"done" | "skipped">} 전이했는가
  */
-async function srvTerminateInvitedApplicationInTx(
+async function srvTerminateWaitingApplicationInTx(
   tx: FirebaseFirestore.Transaction,
   appRef: FirebaseFirestore.DocumentReference,
-  terminal: SrvInvitedTerminal
+  terminal: SrvWaitingTerminal
 ): Promise<"done" | "skipped"> {
   // ── Phase 1: 모든 reads (writes 이전에 완료) ──────────────────────────
 
   // R1. Application fresh read
   const fresh = await tx.get(appRef);
-  if (!fresh.exists || fresh.data()!.status !== "INVITED") {
+  if (!fresh.exists || fresh.data()!.status !== terminal.expectStatus) {
     // 이미 다른 경로로 처리됨 (EXPIRED/CONFIRMED/REJECTED 등) — idempotent skip
     return "skipped";
   }
@@ -37994,9 +38003,25 @@ async function srvTerminateInvitedApplicationInTx(
     );
   }
 
+  // [R7-P4.4E.11C.0C.0b.2 §14] slot 집계도 같은 기준으로 본다.
+  //
+  //   wd 단위 guard 만 있을 때는 slot 집계가 이미 0 인데 -1 을 더 내리는
+  //   경로가 남았다. 읽은 문서가 그대로 있으므로 **추가 read 가 없다.**
+  //   예전 계정삭제 cleanup 은 이것을 `Math.min` 으로 조용히 깎았다 —
+  //   그러면 "0 인데 대기자가 있다"는 모순이 소리 없이 남는다(§15).
+  if (slotSnap?.exists) {
+    const slotPending = (slotSnap.data()!.pendingCount as number | undefined) ?? 0;
+    if (slotPending <= 0) {
+      throw new Error(
+        `UNDERFLOW GUARD: slot.pendingCount=${slotPending}` +
+        ` (<=0) — counter mutation 금지 (app=${appRef.id})`
+      );
+    }
+  }
+
   // ── Phase 2: 모든 writes (모든 reads + validation 완료 후) ──────────
 
-  // W1. Application → EXPIRED
+  // W1. Application → 종료 상태
   tx.update(appRef, {
     status: terminal.status,
     ...terminal.fields,
@@ -38044,7 +38069,8 @@ async function processExpiredTOInvitations(now: admin.firestore.Timestamp): Prom
       // [R7-P4.4E.11C.0C.0b.1 §11] 전이와 counter 계약은 공용 helper 가
       //   갖는다 — 계정삭제 cleanup 이 같은 식을 쓴다.
       const outcome = await db.runTransaction((tx) =>
-        srvTerminateInvitedApplicationInTx(tx, doc.ref, {
+        srvTerminateWaitingApplicationInTx(tx, doc.ref, {
+          expectStatus: "INVITED",
           status: "EXPIRED",
           action: "AUTO_EXPIRE",
           at: expiredAt,
@@ -42744,10 +42770,12 @@ export const callableDeleteAccountApplications = onCall(
       const d = doc.data();
       const status = d.status as string;
       const toId = (d.toId as string | undefined) ?? null;
-      if (status === "PENDING") {
-        allUpdates.push({ref: doc.ref,
-          data: {status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}});
-      }
+      // [R7-P4.4E.11C.0C.0b.2 §1·§12] PENDING 은 여기서 쓰지 않는다.
+      //   예전에는 batch 로 상태만 바꾸고, 대기 counter 는 **나중에**
+      //   `TO.totalPending` 하나만 따로 내렸다. 그래서 삭제 뒤에
+      //   `TO 0명 / slot 1명 / workDetail 1명` 이 성립했다.
+      //   이제 상태 전이와 대기 counter 세 개가 **같은 transaction** 에서
+      //   공용 helper 로 처리된다(아래 "PENDING 종료" 구간).
       if (status === "PENDING" && toId) {
         pendingToIds.push(toId);
       } else if ((status === "CONFIRMED" || status === "CONTRACT_PENDING") && toId) {
@@ -42788,35 +42816,17 @@ export const callableDeleteAccountApplications = onCall(
     //   · 기존: PENDING → 클라이언트가 Firestore 개별 update, CONFIRMED → callableDecrementSlotConfirmed N번
     //   · 변경: Admin SDK로 직접 처리. 클라이언트 pendingToIds·confirmedApps 처리 코드 제거.
 
-    // (A) PENDING totalPending: toId 그룹화 후 Admin SDK batch (음수 방지 GET → Math.min — section B 패턴 통일)
-    if (pendingToIds.length > 0) {
-      try {
-        const pendingCountByToId = new Map<string, number>();
-        for (const toId of pendingToIds) {
-          pendingCountByToId.set(toId, (pendingCountByToId.get(toId) ?? 0) + 1);
-        }
-        // [BUG-DATA FIX] 음수 방지: GET 없이 increment(-count) → 재처리·데이터 불일치 시 음수 저장
-        // section B 패턴(병렬 GET → Math.min(count, currentValue) → batch)과 통일
-        const pendingEntries = [...pendingCountByToId.entries()];
-        const pendingToSnaps = await Promise.all(
-          pendingEntries.map(([toId]) => db.collection("tos").doc(toId).get())
-        );
-        const pendingBatch = db.batch();
-        for (let pi = 0; pi < pendingEntries.length; pi++) {
-          const [toId, count] = pendingEntries[pi];
-          const currentPending = (pendingToSnaps[pi].data()?.totalPending as number) ?? 0;
-          const actualDecrement = Math.min(count, Math.max(0, currentPending));
-          if (actualDecrement > 0) {
-            pendingBatch.update(db.collection("tos").doc(toId), {
-              totalPending: admin.firestore.FieldValue.increment(-actualDecrement),
-            });
-          }
-        }
-        await pendingBatch.commit();
-      } catch (e) {
-        console.error(`callableDeleteAccountApplications: totalPending decrement failed:`, e);
-      }
-    }
+    // (A) [R7-P4.4E.11C.0C.0b.2 §1·§21] PENDING 대기 counter 블록 **삭제**.
+    //
+    //   이 자리에는 `TO.totalPending` 만 내리는 코드가 있었다. 같은
+    //   사건에서 `slot.pendingCount` 와
+    //   `slot.workDetailCounts[wdId].pendingCount` 는 그대로 남아, 지원
+    //   생성 때 올린 세 counter 중 하나만 역연산됐다 — 삭제 뒤
+    //   "TO 0명 / slot 1명 / workDetail 1명" 이 성립했다.
+    //
+    //   이제 위 PENDING 종료 구간이 공용 helper 로 세 개를 상태 전이와
+    //   같은 transaction 에서 함께 내린다. 여기서 또 내리면 **이중 감소**가
+    //   되므로 블록을 지웠다 — 같은 counter 의 주인은 하나다.
 
     // (B) CONFIRMED/CONTRACT_PENDING totalConfirmed: 병렬 GET + 단일 batch (음수방지 + 멱등)
     //     [PERF] 기존 직렬 트랜잭션 K건 → 병렬 GET + batch 1회로 전환 (K=50: 7.5s → ~0.1s)
@@ -42947,6 +42957,50 @@ export const callableDeleteAccountApplications = onCall(
       }
     }
 
+    // ── PENDING 종료 ──────────────────────────────────────────────────────────
+    // [R7-P4.4E.11C.0C.0b.2 §2·§3·§11·§12] 상태 semantics 는 그대로다 —
+    //   `CANCELED` + `cancelReason: "USER_DELETED"`. 바뀐 것은 **대기
+    //   counter 를 같은 transaction 에서 함께 내린다**는 것뿐이다.
+    //
+    //   지원 생성(`callableApplyToTO`)이 올리는 projection 과 정확히
+    //   대칭이다:
+    //     · `TO.totalPending`                                  항상
+    //     · `slot.pendingCount`                                slot 있을 때
+    //     · `slot.workDetailCounts[wdId].pendingCount`         wdId 해석 시
+    //   장기(slot 없음) 지원은 TO 하나만 올렸으므로 하나만 내린다(§10).
+    //
+    //   [§9] identity 해석 실패·counter 모순은 transaction 전체를 실패시킨다.
+    //   그러면 지원서는 PENDING 으로 남고 Final residual 이 그것을 세서
+    //   파괴를 막는다 — "일단 aggregate 만 고치기"는 하지 않는다.
+    let pendingTerminated = 0;
+    let pendingSkipped = 0;
+    let pendingFailed = 0;
+    if (pendingSnap.docs.length > 0) {
+      const pendAt = admin.firestore.Timestamp.now();
+      for (const doc of pendingSnap.docs) {
+        try {
+          const outcome = await db.runTransaction((tx) =>
+            srvTerminateWaitingApplicationInTx(tx, doc.ref, {
+              expectStatus: "PENDING",
+              status: "CANCELED",
+              action: "USER_DELETED",
+              at: pendAt,
+              fields: {canceledAt: pendAt, cancelReason: "USER_DELETED"},
+            }));
+          if (outcome === "skipped") pendingSkipped++;
+          else pendingTerminated++;
+        } catch (e) {
+          pendingFailed++;
+          console.error(
+            "[deleteAccountApplications] PENDING 종료 실패 — " +
+            `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+        }
+      }
+      console.info(
+        `[deleteAccountApplications] PENDING terminated=${pendingTerminated} ` +
+        `skipped=${pendingSkipped} failed=${pendingFailed}`);
+    }
+
     // ── INVITED 종료 ──────────────────────────────────────────────────────────
     // [R7-P4.4E.11C.0C.0b.1 §3·§4·§5] 상태만 끝내고 **문서는 지우지 않는다.**
     //   누가 언제 어떤 조건으로 초대했는지는 남아야 한다.
@@ -42969,7 +43023,8 @@ export const callableDeleteAccountApplications = onCall(
       for (const doc of invitedSnap.docs) {
         try {
           const outcome = await db.runTransaction((tx) =>
-            srvTerminateInvitedApplicationInTx(tx, doc.ref, {
+            srvTerminateWaitingApplicationInTx(tx, doc.ref, {
+              expectStatus: "INVITED",
               status: "AUTO_CANCELED",
               action: "ACCOUNT_DELETED",
               at: invAt,
@@ -43051,6 +43106,10 @@ export const callableDeleteAccountApplications = onCall(
       invitedTerminated,
       invitedSkipped,
       invitedFailed,
+      // [R7-P4.4E.11C.0C.0b.2 §9] PENDING 도 같다 — 실패는 집계로 드러난다.
+      pendingTerminated,
+      pendingSkipped,
+      pendingFailed,
       // pendingToIds · confirmedApps: 클라이언트 CF 통합 후 참조 불필요 (하위 호환 유지용)
       pendingToIds,
       confirmedApps,

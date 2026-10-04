@@ -90,7 +90,7 @@ String _helper(String raw, String name) {
 void main() {
   final raw = _src('functions/src/index.ts');
   final code = _codeOf(raw);
-  final transition = _helper(raw, 'srvTerminateInvitedApplicationInTx');
+  final transition = _helper(raw, 'srvTerminateWaitingApplicationInTx');
   final cleanup = _fn(raw, 'callableDeleteAccountApplications');
   final residual = _helper(raw, 'srvCountDeletionDomainResidual');
   final expiry = _helper(raw, 'processExpiredTOInvitations');
@@ -113,13 +113,15 @@ void main() {
     });
 
     test('IAC-LIFE-03 canonical transition 은 한 벌이고 둘이 공유한다', () {
-      expect(_count(code, 'function srvTerminateInvitedApplicationInTx('), 1);
-      // 선언 1 + 호출 2(만료 scheduler · 계정삭제 cleanup) = 3.
-      expect(_count(code, 'srvTerminateInvitedApplicationInTx'), 3);
+      expect(_count(code, 'function srvTerminateWaitingApplicationInTx('), 1);
+      // [R7-P4.4E.11C.0C.0b.2] 선언 1 + 호출 3(만료 · 삭제 INVITED · 삭제 PENDING).
+      expect(_count(code, 'srvTerminateWaitingApplicationInTx'), 4);
       expect(_flat(expiry), contains(
-          'srvTerminateInvitedApplicationInTx(tx, doc.ref, { status: "EXPIRED",'));
+          'srvTerminateWaitingApplicationInTx(tx, doc.ref, { '
+          'expectStatus: "INVITED", status: "EXPIRED",'));
       expect(_flat(cleanup), contains(
-          'srvTerminateInvitedApplicationInTx(tx, doc.ref, { status: "AUTO_CANCELED",'));
+          'srvTerminateWaitingApplicationInTx(tx, doc.ref, { '
+          'expectStatus: "INVITED", status: "AUTO_CANCELED",'));
     });
   });
 
@@ -170,8 +172,8 @@ void main() {
 
     test('IAC-CLEAN-02 건마다 transaction 으로 전이한다', () {
       expect(_flat(cleanup), contains(
-          'const outcome = await db.runTransaction((tx) => '
-          'srvTerminateInvitedApplicationInTx(tx, doc.ref, {'));
+          'srvTerminateWaitingApplicationInTx(tx, doc.ref, { '
+          'expectStatus: "INVITED", status: "AUTO_CANCELED",'));
       expect(_flat(cleanup), contains(
           'if (outcome === "skipped") invitedSkipped++; else invitedTerminated++;'));
     });
@@ -242,8 +244,10 @@ void main() {
 
     test('IAC-CNT-02 재시도가 두 번 내리지 않는다 (I6·§11)', () {
       // fresh read 가 INVITED 가 아니면 아무것도 쓰지 않고 skip 한다.
+      // [R7-P4.4E.11C.0C.0b.2] 전제 상태는 호출자가 정한다 — PENDING 과
+      //   INVITED 가 같은 projection 주인을 공유한다.
       expect(_flat(transition), contains(
-          r'if (!fresh.exists || fresh.data()!.status !== "INVITED") {'));
+          r'if (!fresh.exists || fresh.data()!.status !== terminal.expectStatus) {'));
       final head = transition.substring(0, _at(transition, 'return "skipped";'));
       expect(head, isNot(contains('tx.update')));
       // 상태 전이 자체가 멱등 key 다 — cleanup 재호출 시 쿼리에서 빠진다.
@@ -287,7 +291,10 @@ void main() {
     });
 
     test('IAC-HIST-02 helper 도 INVITED 가 아니면 손대지 않는다', () {
-      expect(_flat(transition), contains(r'fresh.data()!.status !== "INVITED"'));
+      expect(_flat(transition), contains(
+          r'fresh.data()!.status !== terminal.expectStatus'));
+      // 삭제 cleanup 의 초대 경로는 INVITED 를 전제로 호출한다.
+      expect(_flat(cleanup), contains('expectStatus: "INVITED",'));
     });
   });
 
