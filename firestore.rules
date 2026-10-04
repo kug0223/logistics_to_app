@@ -313,6 +313,15 @@ service cloud.firestore {
                          // [M-1] role — callableUpdateUserRole CF 전용 (감사 로그 무결성)
                          //   슈퍼어드민이 직접 role 변경 시 감사 로그 없이 권한 상승 가능
                          'role',
+                         // [R7-P4.4E.11C.0C.0a §2·§26] accountStatus — 계정 삭제
+                         //   domain freeze projection 이다. self-update denylist 에는
+                         //   이미 있었지만 여기에는 없어서, 슈퍼어드민 클라이언트가
+                         //   `deleting` 을 **해제**할 수 있었다. 그러면 삭제 중인
+                         //   계정에 새 지원·확정이 다시 생길 수 있다.
+                         //   READ 결과 운영 flow(사업장 승인)는 `businesses.isApproved`
+                         //   를 CF 로 쓰고 users.accountStatus 를 client 에서 update
+                         //   하는 경로는 0건이므로, 막아도 깨지는 기능이 없다.
+                         'accountStatus',
                          'isBlacklisted', 'blacklistReason',
                          'blacklistedBy', 'blacklistedAt',
                          'unblacklistedBy', 'unblacklistedAt',

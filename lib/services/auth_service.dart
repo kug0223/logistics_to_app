@@ -457,13 +457,24 @@ class AuthService {
         final failed = List<String>.from(data['failedOps'] as List? ?? []);
         if (failed.isNotEmpty) debugPrint('⚠️ 계정 삭제: 사전정리 일부 실패 ($failed)');
       } on FirebaseFunctionsException catch (e) {
-        // [BUG-SEC FIX] CF 의도적 실패(code='internal'): 블랙리스트 deleted_accounts 기록 실패
-        //   → rethrow로 탈퇴 전체 중단 — 블랙리스트 사용자가 ciHash/phoneHash 없이 재가입 가능해지는 보안 우회 차단
-        //   네트워크 오류(unavailable/deadline-exceeded)는 best-effort로 계속 진행 (사전정리는 비필수)
-        if (e.code == 'internal') rethrow;
-        debugPrint('⚠️ 계정 삭제: 개인정보 사전정리 네트워크 오류 (계속 진행): $e');
+        // [R7-P4.4E.11C.0C.0a §9·§10·§103] PreData 는 더 이상 "사전정리"가
+        //   아니다. **BEGIN DELETION** 이다 — 이 호출이 서버에서 deletion
+        //   freeze(tombstone + accountStatus:"deleting")를 commit 한다.
+        //
+        //   예전에는 네트워크 오류를 best-effort 로 넘기고 Applications·
+        //   Final 로 계속 갔다. freeze 가 선 적도 없는데 cleanup 과
+        //   identity 파괴를 진행하는 셈이고, 그 창에서 다른 기기가 만든
+        //   새 지원·확정이 cleanup 을 빠져나간다.
+        //
+        //   그래서 PreData 실패는 **파이프라인 전체 중단**이다. 어떤 코드든
+        //   구분하지 않는다 — freeze 가 섰는지 모르는 상태로 앞으로 가지
+        //   않는다. 사용자는 같은 흐름을 다시 시도하면 되고, freeze 는
+        //   멱등이므로 재시도가 안전하다.
+        debugPrint('⚠️ 계정 삭제: BEGIN(PreData) 실패 [${e.code}] — 중단');
+        return '탈퇴 처리를 시작할 수 없습니다. 잠시 후 다시 시도해 주세요.';
       } catch (e) {
-        debugPrint('⚠️ 계정 삭제: 개인정보 사전정리 실패 (계속 진행): $e');
+        debugPrint('⚠️ 계정 삭제: BEGIN(PreData) 실패 — 중단: $e');
+        return '탈퇴 처리를 시작할 수 없습니다. 잠시 후 다시 시도해 주세요.';
       }
 
       // 3-pre4. applications 활성 상태 → CANCELED + attendance scheduled → absent
@@ -480,13 +491,21 @@ class AuthService {
         //   CF 내부(Admin SDK)로 통합 — 기존 N+1 CF 호출 제거
         //   전체 deleteAccountWithPassword: CF 4→3건 최적화
       } on FirebaseFunctionsException catch (e) {
-        // [L-2 FIX] CF 오류 구분 로깅 — 카운터 오염 여부 사후 추적 가능
-        // internal: counterBatch 실패 등 CF 내부 오류 (앱 취소 완료 + 카운터 미감소 가능)
-        // deadline-exceeded: 타임아웃 → 부분 청크 반영 후 중단 가능성
-        // 계속 진행은 유지 — Applications 실패로 Auth 삭제 차단 시 영구 탈퇴 불가 위험
-        debugPrint('⚠️ 계정 삭제: applications CF 오류 [${e.code}] (계속 진행): $e');
+        // [R7-P4.4E.11C.0C.0a §13] 예전 주석은 "Applications 실패로 Auth
+        //   삭제를 막으면 영구 탈퇴 불가 위험" 이라며 계속 진행했다. 그
+        //   판단이 지원서·확정 근무를 주인 없이 남기는 경로였다.
+        //
+        //   이제 그 걱정은 해소됐다 — freeze 가 이미 서 있으므로 새 사실이
+        //   자라지 않고, 재시도가 멱등이다. 영구 탈퇴 불가가 아니라
+        //   **다시 시도하면 수렴**한다. 그리고 Final 은 클라이언트를 믿지
+        //   않고 residual 을 직접 세므로, 여기서 계속 가도 Final 이 막는다.
+        //   그래도 호출을 멈추는 쪽이 정직하다 — 실패를 알고도 다음 단계로
+        //   넘기지 않는다.
+        debugPrint('⚠️ 계정 삭제: applications 정리 실패 [${e.code}] — 중단');
+        return '탈퇴 처리 중 정리 단계가 완료되지 않았습니다. 다시 시도해 주세요.';
       } catch (e) {
-        debugPrint('⚠️ 계정 삭제: applications/attendance 정리 실패 (계속 진행): $e');
+        debugPrint('⚠️ 계정 삭제: applications/attendance 정리 실패 — 중단: $e');
+        return '탈퇴 처리 중 정리 단계가 완료되지 않았습니다. 다시 시도해 주세요.';
       }
 
       // [CF-MIGRATED 2026-08-10] callableDeleteAccountFinal:

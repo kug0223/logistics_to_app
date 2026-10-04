@@ -42875,6 +42875,38 @@ export const callableDeleteAccountPreData = onCall(
     const uid = request.auth.uid;
     const fvDel = admin.firestore.FieldValue.delete;
 
+    // ═══════════════════════════════════════════════════════════
+    // BEGIN DELETION — [R7-P4.4E.11C.0C.0a §0·§4·§8·§9]
+    //
+    //   .0B 는 barrier 를 Final 안에서 세웠다. 그런데 클라이언트의 실제
+    //   순서는 PreData → Applications → Final 이다. 그래서 Applications
+    //   cleanup 이 끝난 뒤 Final 에 들어가기까지 창이 열려 있었다 —
+    //   그 사이 다른 기기가 새 지원·초대수락·확정을 만들면 cleanup 은
+    //   이미 지나갔고 Final 은 그것을 보지 않는다.
+    //
+    //   그래서 freeze 를 **cleanup 보다 앞으로** 옮긴다. freeze 가 commit
+    //   된 뒤에는 새 사실이 생기지 않으므로, 뒤따르는 cleanup 은 **더 이상
+    //   자라지 않는 유한한 집합**을 정리하게 된다.
+    //
+    //   PreData 를 BEGIN owner 로 승격한 이유: 구버전 client 를 포함해
+    //   모든 정상 탈퇴가 이미 이 함수를 첫 번째로 호출한다. 새 Begin
+    //   callable 을 만들면 구버전 client 는 그것을 부르지 않는다.
+    //
+    //   [§5] precondition 은 Final 과 **같은 helper** 를 쓴다 — 두 곳에
+    //   복제하면 한쪽만 고쳐질 때 조용히 갈라진다.
+    //   [§9] freeze 가 실패하면 아래 destructive cleanup 을 하나도 하지
+    //   않는다. 그래서 freeze 가 이 함수의 **첫 번째** 작업이다.
+    // ═══════════════════════════════════════════════════════════
+    await srvAssertAccountDeletionAllowed(
+      uid, request.auth.token as unknown as Record<string, unknown>);
+    const frozen = await srvEnsureAccountDeletionTombstone(uid);
+    if (!frozen) {
+      throw new HttpsError(
+        "internal",
+        "탈퇴 처리를 시작할 수 없습니다. 잠시 후 다시 시도해주세요."
+      );
+    }
+
     // [CF-MERGED] recordDeletedAccount 로직 — users 문서가 아직 존재할 때 선행 실행
     // users 문서는 callableDeleteAccountFinal에서 삭제 → 이 단계에서 ciHash/phone 읽기 가능
     // [AUTH-H2] Admin SDK → deleted_accounts if false 규칙 우회 (클라이언트 직접 쓰기 차단 유지)
@@ -43053,6 +43085,18 @@ export const callableDeleteAccountPreData = onCall(
 const ACCOUNT_DELETION_TOMBSTONE_COL = "account_deletion_tombstones";
 
 /**
+ * [R7-P4.4E.11C.0C.0a §3·§6] live-user domain freeze projection 값.
+ *
+ *   canonical truth 는 tombstone 이다. 이 값은 user 문서가 **아직 살아 있는
+ *   동안** domain writer 들이 추가 조회 없이 보는 projection 이다 — 이미
+ *   `accountStatus !== "active"` 를 보는 writer 가 많아서, 새 gate 를
+ *   여러 함수에 심는 대신 기존 gate 를 재사용한다.
+ *
+ *   이 값은 정지·제재·가입 미완료·승인 대기·휴면이 아니다.
+ */
+const ACCOUNT_STATUS_DELETING = "deleting";
+
+/**
  * [R7-P4.4E.11C.0B §5·§12·§13·§14·§15·§53] barrier 를 세운다(멱등).
  *
  *   [§5] **존재 자체가 barrier 다.** status·phase·completed 같은 값을
@@ -43076,31 +43120,178 @@ const ACCOUNT_DELETION_TOMBSTONE_COL = "account_deletion_tombstones";
  * @param {string} uid 계정 소유자 (canonical caller uid)
  * @return {Promise<boolean>} barrier 가 확실히 서 있는가
  */
-async function srvEnsureAccountDeletionTombstone(uid: string): Promise<boolean> {
+async function srvEnsureAccountDeletionTombstone(
+  uid: string
+): Promise<boolean> {
   if (typeof uid !== "string" || uid.length === 0 ||
       uid.includes("/") || uid.includes("..")) {
     console.error("[accountDeletionTombstone] uid 형식이 안전하지 않다");
     return false;
   }
-  const ref = db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid);
+  const tombRef = db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid);
+  const userRef = db.collection("users").doc(uid);
   try {
-    const snap = await ref.get();
-    if (snap.exists) {
-      console.info("[accountDeletionTombstone] already existed");
-      return true;
-    }
-    await ref.set({
-      barrierAt: admin.firestore.FieldValue.serverTimestamp(),
-      schemaVersion: 1,
+    // [R7-P4.4E.11C.0C.0a §6·§7·§14] tombstone 과 domain freeze projection 을
+    //   **같은 트랜잭션**에서 맞춘다. 둘이 어긋난 상태를 중간에 관측할 수
+    //   없어야 하고, 어긋나 있으면 frozen 쪽으로 수렴시킨다.
+    const out = await db.runTransaction(async (tx) => {
+      const [tombSnap, userSnap] = await Promise.all([
+        tx.get(tombRef), tx.get(userRef),
+      ]);
+      const hadTomb = tombSnap.exists;
+      const status = userSnap.exists ?
+        (userSnap.data()?.["accountStatus"] as string | undefined) :
+        undefined;
+
+      // [§8] 기존 tombstone 의 barrierAt 은 건드리지 않는다 — 재시도마다
+      //   시각을 되돌리면 "언제부터 막혔는가"를 잃는다.
+      if (!hadTomb) {
+        tx.set(tombRef, {
+          barrierAt: admin.firestore.FieldValue.serverTimestamp(),
+          schemaVersion: 1,
+        });
+      }
+      // [§7] user 문서가 남아 있는 동안만 projection 을 맞춘다. 이미 지워진
+      //   뒤(Final retry)에는 되살리지 않는다 — 그건 삭제를 되돌리는 일이다.
+      let projected = false;
+      if (userSnap.exists && status !== ACCOUNT_STATUS_DELETING) {
+        tx.update(userRef, {accountStatus: ACCOUNT_STATUS_DELETING});
+        projected = true;
+      }
+      return {hadTomb, projected, userExists: userSnap.exists};
     });
-    console.info("[accountDeletionTombstone] created");
+    console.info(
+      "[accountDeletionTombstone] " +
+      `tombstone=${out.hadTomb ? "existed" : "created"}` +
+      ` projection=${out.projected ? "set" : "unchanged"}` +
+      ` userDoc=${out.userExists ? "present" : "absent"}`);
     return true;
   } catch (e) {
     console.error(
-      "[accountDeletionTombstone] write failed — " +
+      "[accountDeletionTombstone] freeze failed — " +
       `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
     return false;
   }
+}
+
+/**
+ * [R7-P4.4E.11C.0C.0a §5] 계정 삭제가 허용되는 상태인가 — 공용 precondition.
+ *
+ *   Final 이 들고 있던 hard precondition 을 PreData(BEGIN)와 공유한다.
+ *   정책을 두 곳에 복제하면 한쪽만 고쳐질 때 조용히 갈라진다.
+ *
+ *   [§5] 세 검사 모두 **user 문서에 의존하지 않는다** — 그래서 user 문서가
+ *   이미 지워진 Final 재시도에서도 그대로 통과한다.
+ *     · auth_time: 토큰 claim
+ *     · role: 토큰 claim
+ *     · subAdminBusinessIds: optional chaining (문서 없으면 빈 배열)
+ *     · 미서명 계약: employment_contracts 쿼리
+ *
+ * @param {string} uid 계정 소유자
+ * @param {Record<string, unknown>} token request.auth.token
+ * @return {Promise<void>} 허용되지 않으면 throw
+ */
+async function srvAssertAccountDeletionAllowed(
+  uid: string, token: Record<string, unknown>
+): Promise<void> {
+  const authTime = token["auth_time"] as number | undefined;
+  if (authTime === undefined ||
+      Math.floor(Date.now() / 1000) - authTime > 600) {
+    throw new HttpsError(
+      "failed-precondition",
+      "재인증 후 10분이 초과되었습니다. 다시 시도해주세요."
+    );
+  }
+
+  const userDocForBlock = await db.collection("users").doc(uid).get();
+  const subAdminBizIds =
+    (userDocForBlock.data()?.subAdminBusinessIds ?? []) as string[];
+  if (subAdminBizIds.length > 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      `서브관리자로 등록된 사업장(${subAdminBizIds.length}곳)에서 직책 해제 후 탈퇴해주세요.`
+    );
+  }
+
+  const role = (token["role"] as string) || "";
+  if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN") {
+    const unsignedSnap = await db.collection("employment_contracts")
+      .where("workerId", "==", uid)
+      .where("workerSignedAt", "==", null)
+      .get();
+    const blockedStatuses = ["VOID", "EXPIRED"];
+    const unsignedCount = unsignedSnap.docs.filter(
+      (d) => !blockedStatuses.includes(d.data()["status"] as string)
+    ).length;
+    if (unsignedCount > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `미서명 계약서(${unsignedCount}건)를 먼저 서명해주세요.`
+      );
+    }
+  }
+}
+
+/** [§15·§16] 삭제 대상 중 아직 살아 있는 관계가 있는가. -1 = 알 수 없음. */
+type SrvDeletionResidual = {
+  applications: number;
+  attendance: number;
+  /** 쿼리 실패 — 0 으로 해석하면 안 된다. */
+  queryFailed: boolean;
+};
+
+/**
+ * [R7-P4.4E.11C.0C.0a §15~§21] identity 파괴 전 live domain residual 검사.
+ *
+ *   "Applications cleanup 이 성공했다고 클라이언트가 말했다"를 믿지 않는다.
+ *   서버가 직접 **아직 살아 있는 삭제 대상 관계**를 센다.
+ *
+ *   쿼리 shape 는 `callableDeleteAccountApplications` 가 이미 실행하는 것과
+ *   **같다**(equality 조합) — 그래서 신규 인덱스가 필요 없다는 것이 코드로
+ *   증명된다. `in` 으로 바꾸지 않은 이유도 그것이다.
+ *
+ *   [§19] 쿼리 실패는 0 이 아니다. `queryFailed` 로 분리한다.
+ *
+ * @param {string} uid 계정 소유자
+ * @return {Promise<SrvDeletionResidual>} 집계
+ */
+async function srvCountDeletionDomainResidual(
+  uid: string
+): Promise<SrvDeletionResidual> {
+  const out: SrvDeletionResidual = {
+    applications: 0, attendance: 0, queryFailed: false,
+  };
+  try {
+    const [pending, contractPending, confirmed, scheduled] = await Promise.all([
+      db.collection("applications")
+        .where("uid", "==", uid).where("status", "==", "PENDING").get(),
+      db.collection("applications")
+        .where("uid", "==", uid).where("status", "==", "CONTRACT_PENDING").get(),
+      db.collection("applications")
+        .where("uid", "==", uid).where("status", "==", "CONFIRMED").get(),
+      db.collection("attendance")
+        .where("userId", "==", uid).where("status", "==", "scheduled").get(),
+    ]);
+    out.applications =
+      pending.size + contractPending.size + confirmed.size;
+    out.attendance = scheduled.size;
+  } catch (e) {
+    out.queryFailed = true;
+    console.error(
+      "[deletionResidual] query failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+  return out;
+}
+
+/**
+ * [§20·§21] identity 를 파괴해도 되는가 — residual 기준.
+ *
+ * @param {SrvDeletionResidual} r 집계
+ * @return {boolean} 살아 있는 삭제 대상이 0 임이 확인됐는가
+ */
+function srvDeletionDomainCleared(r: SrvDeletionResidual): boolean {
+  return !r.queryFailed && r.applications === 0 && r.attendance === 0;
 }
 
 /** [R7-P4.4E.11C §50] account-owned Storage 정리 집계. */
@@ -43245,90 +43436,14 @@ export const callableDeleteAccountFinal = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
+    // [R7-P4.4E.11C.0C.0a §5] PreData(BEGIN)와 **같은** precondition 을 쓴다.
+    //   예전에는 이 검사들이 Final 안에만 인라인으로 있었다 — PreData 를
+    //   BEGIN owner 로 승격하면서 정책을 복제하지 않고 공유한다. 세 검사
+    //   모두 user 문서에 의존하지 않으므로 Final 재시도(user 문서 없음)에서도
+    //   그대로 통과한다.
+    await srvAssertAccountDeletionAllowed(
+      uid, request.auth.token as unknown as Record<string, unknown>);
 
-    // 재인증 최근성 검증 (10분 이내) — 계정 삭제 고위험 작업
-    const authTime = (request.auth.token as Record<string, unknown>)["auth_time"] as number | undefined;
-    // [H-3 FIX] fail-closed: auth_time 미존재 시 재인증 판별 불가 → 차단
-    // 정상 Firebase 토큰에는 auth_time이 항상 존재 — 없으면 비정상 토큰으로 간주
-    if (authTime === undefined) {
-      throw new HttpsError(
-        "failed-precondition",
-        "재인증 후 10분이 초과되었습니다. 다시 시도해주세요."
-      );
-    }
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (nowSec - authTime > 600) {
-      throw new HttpsError(
-        "failed-precondition",
-        "재인증 후 10분이 초과되었습니다. 다시 시도해주세요."
-      );
-    }
-
-    // [NEW-QA-02 FIX] 서버 최종 hardBlock 재검증 — 클라이언트 우회 불가
-    // callableGetWithdrawBlockers를 건너뛴 경로에서도 동일 정책 적용
-    // 탈퇴 가능 여부의 최종 진실 소스는 항상 서버.
-    const userDocForBlock = await db.collection("users").doc(uid).get();
-    const userRoleForBlock = (request.auth.token["role"] as string) || "";
-
-    // [F-15-1(B)] SubAdmin 차단 — 역할 무관하게 검사 (USER 중 서브관리자 겸직 가능)
-    const subAdminBizIds = (userDocForBlock.data()?.subAdminBusinessIds ?? []) as string[];
-    if (subAdminBizIds.length > 0) {
-      throw new HttpsError(
-        "failed-precondition",
-        `서브관리자로 등록된 사업장(${subAdminBizIds.length}곳)에서 직책 해제 후 탈퇴해주세요.`
-      );
-    }
-
-    // [NEW-QA-02] USER/SUB_ADMIN 역할: 미서명 계약서 확인
-    // BUSINESS_ADMIN/SUPER_ADMIN은 별도 탈퇴 흐름 — 해당 역할의 hardBlock은 settings_screen에서 처리
-    if (userRoleForBlock !== "BUSINESS_ADMIN" && userRoleForBlock !== "SUPER_ADMIN") {
-      const unsignedSnap = await db.collection("employment_contracts")
-        .where("workerId", "==", uid)
-        .where("workerSignedAt", "==", null)
-        .get();
-      const blockedStatuses = ["VOID", "EXPIRED"];
-      const unsignedCount = unsignedSnap.docs.filter(
-        (d) => !blockedStatuses.includes(d.data()["status"] as string)
-      ).length;
-      if (unsignedCount > 0) {
-        throw new HttpsError(
-          "failed-precondition",
-          `미서명 계약서(${unsignedCount}건)를 먼저 서명해주세요.`
-        );
-      }
-    }
-
-    // PHASE 0. [R7-P4.4E.11C.0B §0·§10·§11] **write barrier 를 먼저 세운다.**
-    //
-    //   95cc737 이 Storage 정리를 hard gate 로 만들었지만 경합이 하나 남았다.
-    //
-    //     sweep → 재열거 0 확인 → **다른 기기가 새 파일 업로드** →
-    //     users 문서 삭제 → Auth 삭제 → 그 파일은 주인 없는 고아
-    //
-    //   DEV 실측(R7-P4.4E.11C.0A.1)에서 Storage Rules 는 resumable session
-    //   의 `start` 가 아니라 **`finalize` 시점**에 Firestore 상태를 읽어
-    //   평가한다는 것이 확인됐다. 그래서 barrier 를 켜면 이미 열려 있던
-    //   session 도 완료되지 못한다(CREATE·OVERWRITE 모두 거부, 기존
-    //   generation 불변). 뒤늦게 도착하는 object 를 정리하는 trigger 가
-    //   필요 없는 이유다.
-    //
-    //   barrier 의 주인은 **identity 보다 오래 살아야 한다.** user 문서에
-    //   두면 Final 이 그 문서를 지우는 순간 barrier 가 사라지고, 과거
-    //   session 이 다시 열린다. 그래서 별도 collection 을 쓴다.
-    //
-    //   [§11] precondition 이 실패하는 호출에서는 세우지 않는다. 사용자가
-    //   Final 에 실제로 진입할 수 있는 상태임이 확인된 뒤에만 barrier 다 —
-    //   PreData/Applications 단계 실패만으로 모든 업로드를 영구 봉쇄하면
-    //   안 된다.
-    const tombstoneOk = await srvEnsureAccountDeletionTombstone(uid);
-    if (!tombstoneOk) {
-      // [§16] barrier 가 없으면 파괴적 작업을 **하나도** 하지 않는다.
-      //   Storage 열거·삭제 0, business mutation 0, user 문서 0, Auth 0.
-      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
-    }
-
-    // 0+1. worker_locations 삭제 + users 문서 조회 병렬 실행 (상호 독립)
-    //      [PERF] worker_locations 삭제를 users GET과 병렬화 — ~0.3s 단축
     const userRef = db.collection("users").doc(uid);
     const [, userSnap] = await Promise.all([
       // 0. worker_locations 전체 삭제 (SEC-94 위치정보 즉시 파기)
@@ -43411,6 +43526,43 @@ export const callableDeleteAccountFinal = onCall(
     await db.collection("trust_settings").doc(uid).delete().catch((e) =>
       console.error(`callableDeleteAccountFinal: trust_settings cleanup failed (${uid}):`, e)
     );
+
+    // 1-A. [R7-P4.4E.11C.0C.0a §23·§24] freeze fail-safe.
+    //
+    //   freeze 의 owner 는 이제 PreData 다. 그러나 구버전 client·직접
+    //   호출자·중간 crash 로 Final 이 **단독으로** 들어올 수 있다. 그때도
+    //   barrier 없이 파괴를 시작하면 안 되므로 같은 helper 로 ensure 한다.
+    //   PreData 와 같은 writer 를 쓰므로 drift 가 생기지 않는다.
+    const tombstoneOk = await srvEnsureAccountDeletionTombstone(uid);
+    if (!tombstoneOk) {
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
+    }
+
+    // 1-B. [§15~§23] **domain cleanup 완료를 서버가 직접 확인한다.**
+    //
+    //   이전에는 Final 이 "클라이언트가 Applications cleanup 을 호출했고
+    //   잘 됐을 것"이라는 전제 위에서 identity 를 파괴했다. 그런데
+    //   Applications 는 실패 수를 반환하지 않고, 클라이언트는 그 응답을
+    //   읽지도 않았다. 그래서 cleanup 이 일부 실패해도 Final 은 그대로
+    //   user 문서와 Auth 를 지웠다 — 살아 있는 지원서·확정 근무가 주인
+    //   없는 상태로 남는다.
+    //
+    //   [§16] 이 검사는 "cleanup 이 성공했는가"를 추측하지 않는다.
+    //   **아직 살아 있는 삭제 대상 관계가 있는가**를 직접 센다. 그래서
+    //   §23 의 "Final 만 직접 호출"하는 경로도 안전해진다.
+    const domainResidual = await srvCountDeletionDomainResidual(uid);
+    console.info(
+      `[deleteAccountFinal] domain residual apps=${domainResidual.applications} ` +
+      `att=${domainResidual.attendance} queryFailed=${domainResidual.queryFailed}`);
+    if (!srvDeletionDomainCleared(domainResidual)) {
+      // [§19·§20] 쿼리 실패도 "0"이 아니다. 어느 쪽이든 identity 파괴 금지.
+      //   raw application id 를 클라이언트에 노출하지 않는다.
+      return {
+        success: false,
+        partial: true,
+        reason: "DOMAIN_CLEANUP_INCOMPLETE",
+      };
+    }
 
     // 2. notifications 서브컬렉션 삭제 (paginated 200건씩)
     //    Firestore: 상위 document 삭제 후에도 서브컬렉션 독립 접근 가능 → 순서 무관

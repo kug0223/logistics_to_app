@@ -305,14 +305,25 @@ void main() {
     });
 
     test('ACC-DEL-44 재인증 최근성·하드블록 전제가 그대로다', () {
-      final f = fin();
+      // [R7-P4.4E.11C.0C.0a 갱신] 이 세 전제는 Final 안에 인라인으로
+      //   있었다. PreData 가 BEGIN owner 가 되면서 **같은 정책을 공유**해야
+      //   했고(복제하면 한쪽만 고쳐질 때 갈라진다), 공용 helper 로 옮겼다.
+      //   전제가 사라진 것이 아니라 한 곳으로 모였다 — 그래서 helper 에서
+      //   확인하고, Final·PreData 가 둘 다 그것을 부르는지 본다.
+      final helper = _codeOf(_slice(raw,
+          'async function srvAssertAccountDeletionAllowed(', '\n}'));
       for (final keep in [
         '"재인증 후 10분이 초과되었습니다. 다시 시도해주세요."',
         '서브관리자로 등록된 사업장',
         '미서명 계약서',
       ]) {
-        expect(f, contains(keep), reason: '$keep 전제가 바뀌면 안 된다');
+        expect(helper, contains(keep), reason: '$keep 전제가 바뀌면 안 된다');
       }
+      expect(fin(), contains('await srvAssertAccountDeletionAllowed('));
+      final pre = _codeOf(_slice(raw,
+          'export const callableDeleteAccountPreData', '\n);'));
+      expect(pre, contains('await srvAssertAccountDeletionAllowed('),
+          reason: 'BEGIN 도 같은 전제를 통과해야 한다');
     });
   });
 

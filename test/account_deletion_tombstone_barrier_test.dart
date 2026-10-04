@@ -116,15 +116,17 @@ void main() {
     });
 
     test('ACC-TOMB-04 재호출은 멱등이고 barrierAt 을 되돌리지 않는다 (§13·§53)', () {
+      // [R7-P4.4E.11C.0C.0a 갱신] helper 가 단일 `get`/`set` 에서
+      //   **트랜잭션**으로 바뀌었다 — tombstone 과 `accountStatus` freeze
+      //   projection 을 같은 경계에서 맞춰야 하기 때문이다. 묻는 것은
+      //   그대로다: 이미 있으면 barrierAt 을 다시 쓰지 않는다.
       final h = helper();
-      expect(h, contains('if (snap.exists) {'));
-      expect(_flat(h), contains(
-          'if (snap.exists) { console.info("[accountDeletionTombstone] already existed"); return true; }'));
-      // 존재할 때 set/update 로 덮어쓰지 않는다.
-      final existing = _slice(h, 'if (snap.exists) {', 'await ref.set({');
-      expect(existing, isNot(contains('ref.set(')));
-      expect(existing, isNot(contains('ref.update(')));
+      expect(h, contains('const hadTomb = tombSnap.exists;'));
+      expect(_flat(h), contains('if (!hadTomb) { tx.set(tombRef, {'));
+      expect('barrierAt:'.allMatches(h).length, 1,
+          reason: 'barrierAt 쓰기가 한 곳뿐이어야 재시도에 보존된다');
       expect(h, isNot(contains('merge: true')));
+      expect(h, contains('return true;'));
     });
 
     test('ACC-TOMB-05 commit 실패는 파괴적 작업을 전부 막는다 (§16·§46)', () {
@@ -176,8 +178,10 @@ void main() {
     });
 
     test('ACC-TOMB-11 canonical writer 는 Final 하나다 (§9)', () {
-      expect('srvEnsureAccountDeletionTombstone('.allMatches(cf).length, 2,
-          reason: '정의 1 + 호출 1. 늘면 PreData/다른 경로가 세우고 있다');
+      expect('srvEnsureAccountDeletionTombstone('.allMatches(cf).length, 3,
+          reason: '정의 1 + PreData(BEGIN) 1 + Final(fail-safe) 1. '
+              '[0C.0a 갱신] freeze owner 가 PreData 로 옮겨지고 Final 은 '
+              '구버전·직접 호출용 fail-safe 로 같은 helper 를 부른다.');
       // [정정] 끝 표지를 `// ─── callableDeleteAccountFinal` 이나 다음
       //   `export const` 로 두면, 그 사이에 있는 신규 helper 까지 슬라이스에
       //   들어와 이 단정이 자기 자신을 잡는다(helper 는 `async function` 이라
@@ -188,7 +192,8 @@ void main() {
       expect(preStart, greaterThan(-1));
       expect(preEndRel, greaterThan(0));
       final pre = _codeOf(raw.substring(preStart, preStart + preEndRel));
-      expect(pre, isNot(contains('srvEnsureAccountDeletionTombstone')));
+      // [0C.0a 갱신] PreData 가 BEGIN owner 가 됐다 — 이제 **호출해야** 한다.
+      expect(pre, contains('srvEnsureAccountDeletionTombstone(uid)'));
       final app = _codeOf(_slice(raw,
           'export const callableDeleteAccountApplications', '\n// ──'));
       expect(app, isNot(contains('srvEnsureAccountDeletionTombstone')));
@@ -212,8 +217,12 @@ void main() {
 
     test('ACC-TOMB-13 로그에 전체 uid·경로를 남기지 않는다 (§72)', () {
       final h = helper();
-      expect(h, contains('console.info("[accountDeletionTombstone] created");'));
-      expect(h, contains('console.info("[accountDeletionTombstone] already existed");'));
+      // [R7-P4.4E.11C.0C.0a 갱신] freeze 가 projection 까지 맞추므로 로그가
+      //   두 축(tombstone·projection·userDoc)을 함께 보고한다. 묻는 것은
+      //   그대로다 — 수치·상태 라벨만 남기고 uid·경로는 남기지 않는다.
+      expect(h, contains('"[accountDeletionTombstone] " +'));
+      expect(h, contains(r'tombstone=${out.hadTomb ? "existed" : "created"}'));
+      expect(h, contains(r'projection=${out.projected ? "set" : "unchanged"}'));
       expect(h, isNot(contains(r'uid=${uid}')));
       expect(h, isNot(contains(r'${e}')),
           reason: 'Firestore 오류 문자열에 문서 경로가 담긴다');
