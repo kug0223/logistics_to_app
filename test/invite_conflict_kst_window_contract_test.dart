@@ -105,7 +105,9 @@ void main() {
     });
 
     test('트랜잭션 안에서 같은 문서를 다시 본다', () {
+      // [R7-P4.4E.11C.0C.0b] 계정 freeze fence 가 TX 의 첫 read 다. 중복 가드는 그 뒤에 그대로 있다.
       expect(cf.contains('await db.runTransaction(async (invTx) => { '
+          'await srvAssertAccountNotFrozenInTx(invTx, targetUid, "근로자"); '
           'const existing = await invTx.get(newAppRef);'), true,
           reason: '비-트랜잭션 사전검사만으로는 동시 호출이 둘 다 통과한다');
     });

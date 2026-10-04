@@ -29514,6 +29514,12 @@ export const callableBatchCheckIn = onCall(
               // [R6.0B] 건너뛴 건을 성공으로 세지 않는다 — PARTIAL ≠ SUCCESS.
               //   이전에는 tx 안에서 그냥 return 했고 바깥은 그것을 처리 완료로 집계했다.
               return await db.runTransaction(async (tx): Promise<string | null> => {
+                // [R7-P4.4E.11C.0C.0b §12] 최초 출근 기록은 **새 근무 사실**
+                //   이다(이 경로는 기존 시간 수정을 거부한다 — 수정은
+                //   AdjustAttendanceTime). 호출자가 관리자라도 대상 근로자가
+                //   탈퇴 freeze 에 들어갔으면 만들지 않는다.
+                const ciFrozen = await srvAccountFreezeReasonInTx(tx, userId);
+                if (ciFrozen) return ciFrozen;
                 const snap = await tx.get(ref);
                 if (snap.exists) {
                   const snapData = snap.data()!;
@@ -29571,45 +29577,55 @@ export const callableBatchCheckIn = onCall(
               }
               const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
               const docId = `${applicationId}_${dateStr}`;
-              // [BATCH-CHECKIN-WAGE-FIX] 신규 생성 경로에서도 confirmed/transferred 덮어쓰기 차단
-              const existingSnap = await db.collection("attendance").doc(docId).get();
-              if (existingSnap.exists) {
-                const existWs = existingSnap.data()?.wageStatus as string | undefined;
-                if (existWs === "confirmed" || existWs === "transferred") {
-                  console.error(`출근 처리 건너뜀 — 이미 임금 확정/이체 완료 (${docId})`);
-                  return "wageAlreadySettled";
+              // [R7-P4.4E.11C.0C.0b §12·§17] 신규 생성도 **같은 transaction**
+              //   안에서 판정한다. 예전에는 기존 문서 조회가 밖에 있고
+              //   생성이 `.set()` 단독이었다 — 그 사이에 탈퇴 freeze 가
+              //   commit 돼도 새 근무 사실이 그대로 만들어졌다.
+              const newCiRef = db.collection("attendance").doc(docId);
+              return await db.runTransaction(async (tx): Promise<string | null> => {
+                const ciNewFrozen = await srvAccountFreezeReasonInTx(tx, userId);
+                if (ciNewFrozen) return ciNewFrozen;
+                // [BATCH-CHECKIN-WAGE-FIX] 신규 생성 경로에서도 confirmed/transferred 덮어쓰기 차단
+                const existingSnap = await tx.get(newCiRef);
+                if (existingSnap.exists) {
+                  const existWs = existingSnap.data()?.wageStatus as string | undefined;
+                  if (existWs === "confirmed" || existWs === "transferred") {
+                    console.error(`출근 처리 건너뜀 — 이미 임금 확정/이체 완료 (${docId})`);
+                    return "wageAlreadySettled";
+                  }
                 }
-              }
-              // [R5-R0 §5] 같은 이유로 여기도 undefined 를 걸러 낸다.
-              //   이쪽은 try/catch 안이라 죽어도 조용히 "실패 1건" 으로만
-              //   남았다 — 관리자는 왜 안 됐는지 알 수 없었다.
-              await db.collection("attendance").doc(docId).set(srvOmitUndefined({
-                applicationId,
-                userId,
-                businessId,
-                businessName,
-                workDate: admin.firestore.Timestamp.fromDate(workDate),
-                // [5A.1-P1-WF-13] workType: Application.selectedWorkType 우선 (클라이언트 위조 차단)
-                // callableCheckInAttendance L19967~19970 workType 교차검증 동일 원칙
-                workType: workCtx.canonicalWorkType ?? workType,
-                checkIn: checkInTs,
-                checkInMethod: "manual",
-                status,
-                isModified: false,
-                modifyRequested: false,
-                // [R6.0B §5] 관리자가 대신 만든 기록이다 — 누가 만들었는지 남긴다.
-                //   checkInMethod="manual"은 "어떻게"만 말하고 "누가"를 말하지 않았다.
-                //   기존 수정 경로와 같은 canonical actor 필드를 재사용한다.
-                modifiedBy: callerUid,
-                modifiedAt: now,
-                wageStatus: "pending",
-                // [5A.1-SNAPSHOT-PARITY] TO 레벨 임금 고정 snapshot — callableCheckInAttendance L20025~20026 parity
-                // 파트 전환 후에도 해당 날짜 기준 임금으로 계산되도록 보존
-                snapshotWage: workCtx.snapshotWage,
-                snapshotWageType: workCtx.snapshotWageType,
-                createdAt: now,
-                updatedAt: now,
-              }), {merge: true});
+                // [R5-R0 §5] 같은 이유로 여기도 undefined 를 걸러 낸다.
+                //   이쪽은 try/catch 안이라 죽어도 조용히 "실패 1건" 으로만
+                //   남았다 — 관리자는 왜 안 됐는지 알 수 없었다.
+                tx.set(newCiRef, srvOmitUndefined({
+                  applicationId,
+                  userId,
+                  businessId,
+                  businessName,
+                  workDate: admin.firestore.Timestamp.fromDate(workDate),
+                  // [5A.1-P1-WF-13] workType: Application.selectedWorkType 우선 (클라이언트 위조 차단)
+                  // callableCheckInAttendance L19967~19970 workType 교차검증 동일 원칙
+                  workType: workCtx.canonicalWorkType ?? workType,
+                  checkIn: checkInTs,
+                  checkInMethod: "manual",
+                  status,
+                  isModified: false,
+                  modifyRequested: false,
+                  // [R6.0B §5] 관리자가 대신 만든 기록이다 — 누가 만들었는지 남긴다.
+                  //   checkInMethod="manual"은 "어떻게"만 말하고 "누가"를 말하지 않았다.
+                  //   기존 수정 경로와 같은 canonical actor 필드를 재사용한다.
+                  modifiedBy: callerUid,
+                  modifiedAt: now,
+                  wageStatus: "pending",
+                  // [5A.1-SNAPSHOT-PARITY] TO 레벨 임금 고정 snapshot — callableCheckInAttendance L20025~20026 parity
+                  // 파트 전환 후에도 해당 날짜 기준 임금으로 계산되도록 보존
+                  snapshotWage: workCtx.snapshotWage,
+                  snapshotWageType: workCtx.snapshotWageType,
+                  createdAt: now,
+                  updatedAt: now,
+                }), {merge: true});
+                return null;
+              });
             }
             return null;
           } catch (e) {
@@ -30201,6 +30217,22 @@ export const callableConfirmApplication = onCall(
       if (status === "AUTO_CANCELED") throw new HttpsError("failed-precondition", "자동 취소된 지원서는 확정할 수 없습니다.");
       if (status === "REJECTED") throw new HttpsError("failed-precondition", "거절된 지원서는 확정할 수 없습니다.");
 
+      // R1-B. [R7-P4.4E.11C.0C.0b §7·§8·§10] **대상 근로자**의 계정 freeze.
+      //
+      //   확정은 약속이다. 그런데 이 함수에는 대상 근로자의 계정 lifecycle
+      //   검사가 **아예 없었다** — 서류 검토 gate 는 문서 버전만 본다.
+      //   호출자(관리자)가 active 라는 사실은 근로자가 탈퇴 중이 아니라는
+      //   뜻이 아니다(caller != target).
+      //
+      //   그리고 이 read 는 좌석/카운터 쓰기와 **같은 transaction** 에 있다.
+      //   freeze 가 먼저 commit 되면 재시도에서 관측되어 거부되고, 이
+      //   transaction 이 먼저 commit 되면 삭제 쪽이 그 약속을 발견한다
+      //   (`.0a.6.2` 의 확정 약속 blocker).
+      //
+      //   위 두 early-return(이미 CONFIRMED · CONTRACT_PENDING 재시도)
+      //   **뒤**에 둔다. 그 경로는 쓰기가 없고, 이미 성립한 약속의 후속
+      //   처리이므로 freeze 로 막을 대상이 아니다(§14).
+      await srvAssertAccountNotFrozenInTx(tx, applicantUid, "근로자");
 
       // [P4.4C.2A] 새 약속을 만들기 전에 **계약을 끝까지 만들 수 있는지** 본다.
       //
@@ -34733,6 +34765,10 @@ export const callableCheckIn = onCall(
     //   경우 이 TX가 재시도되어 현재 상태(CANCELED) 기준으로 거절된다.
     const checkInAppRef = db.collection("applications").doc(applicationId);
     await db.runTransaction(async (tx) => {
+      // [R7-P4.4E.11C.0C.0b §11] 출근은 **새 근무 사실**이다 — freeze 뒤에
+      //   만들 수 없다. 위 1단계의 user 조회는 TX 밖이라 그 사이에 freeze 가
+      //   commit 되면 그대로 기록됐다. 같은 TX 에서 다시 읽는다.
+      await srvAssertAccountNotFrozenInTx(tx, callerUid, "사용자");
       const [snap, freshAppSnap] = await Promise.all([tx.get(ref), tx.get(checkInAppRef)]);
       if (snap.exists) throw new HttpsError("already-exists", "오늘 이미 출근하셨습니다.");
       const freshAppStatus = (freshAppSnap.data()?.status as string | undefined) ?? "";
@@ -35776,6 +35812,10 @@ export const callableAcceptRenewalProposal = onCall(
 
     // 5. 트랜잭션 실행
     await db.runTransaction(async (tx) => {
+      // [R7-P4.4E.11C.0C.0b §1·§14] 연장 수락은 **새 기간에 대한 약속**이다
+      //   — 기존 약속의 후속 처리가 아니다. 이 함수에는 계정 lifecycle
+      //   검사가 아예 없었다. 새 Application 쓰기와 같은 TX 에서 본다.
+      await srvAssertAccountNotFrozenInTx(tx, callerUid, "사용자");
       // 5-0. 제안 상태 재확인.
       //
       //   수락 × 철회, 수락 × 대체, 수락 × 두 번 누르기가 모두 여기서
@@ -36970,6 +37010,16 @@ export const callableApplyToTO = onCall(
       : null;
 
     await db.runTransaction(async (tx) => {
+      // [R7-P4.4E.11C.0C.0b §5·§6] 지원자 계정 freeze 를 **commit 시점**에 본다.
+      //
+      //   위 2단계의 `accountStatus !== "active"` 검사는 transaction 밖이다.
+      //   그 사이에 탈퇴 freeze 가 commit 되면 지원서가 그대로 만들어졌다.
+      //   이 read 는 freeze transaction 이 쓰는 문서를 read-set 에 넣으므로
+      //   경합 시 재시도되고, 재시도에서 `deleting` 을 관측해 거부된다.
+      //
+      //   추가하는 것은 freeze 권위 하나다 — TO/슬롯 snapshot·임금·정원·
+      //   중복 guard·docId·알림은 바꾸지 않는다.
+      await srvAssertAccountNotFrozenInTx(tx, uid, "사용자");
       // [V3-FIX] TOCTOU: appRef 트랜잭션 내 재확인 — 동시 이중 제출 시 pendingCount +2 방지
       const existingInTx = await tx.get(appRef);
       let txIsReactivation = false;
@@ -38417,6 +38467,12 @@ export const callableInviteWorker = onCall(
     // [Phase 8.1E.2A] INVITED는 pendingCount에 포함 — Application 생성과 카운터를 atomic하게 커밋
     // [R2] batch → transaction: 같은 문서를 동시에 만들려는 두 호출 중 하나만 통과한다.
     await db.runTransaction(async (invTx) => {
+      // [R7-P4.4E.11C.0C.0b §3-A·§10] 초대도 **새 Application** 을 만든다.
+      //   3단계의 대상 계정 검사는 TX 밖이라, 그 사이 탈퇴 freeze 가
+      //   commit 되면 INVITED 행이 그대로 생겼다. 그 상태값은 삭제
+      //   cleanup 의 대상 집합(PENDING·CONTRACT_PENDING·CONFIRMED)에도
+      //   없어서 주인 없는 행으로 남는다.
+      await srvAssertAccountNotFrozenInTx(invTx, targetUid, "근로자");
       const existing = await invTx.get(newAppRef);
       if (existing.exists) {
         // 6번 검사가 INVITED/CONFIRMED/CONTRACT_PENDING/EXPIRED/초대거절을 이미
@@ -38920,6 +38976,9 @@ export const callableOfferAlternativeWork = onCall(
 
     // ── 8. 생성 + 카운터 — 초대와 같은 트랜잭션 모양 ──────────────────────
     await db.runTransaction(async (offerTx) => {
+      // [R7-P4.4E.11C.0C.0b §3-A·§10] 초대와 같은 freeze fence — 이 경로도
+      //   INVITED Application 을 만든다. 5단계 검사는 TX 밖이다.
+      await srvAssertAccountNotFrozenInTx(offerTx, offerUid, "근로자");
       const REOFFERABLE = ["REJECTED", "CANCELED", "AUTO_CANCELED"];
       const fresh = await offerTx.get(targetRef);
       if (fresh.exists) {
@@ -44577,6 +44636,83 @@ function srvAssertNotDeletingAccount(
     throw new HttpsError(
       "failed-precondition", "탈퇴 처리 중인 계정입니다.");
   }
+}
+
+/**
+ * [R7-P4.4E.11C.0C.0b §1·§16·§17] **commit 시점** 계정 freeze fence.
+ *
+ *   `srvAssertNotDeletingAccount` 는 이미 읽은 snapshot 을 판정한다. 그런데
+ *   그 snapshot 을 transaction **밖에서** 읽고 안에서 쓰면, 두 사건 사이에
+ *   freeze 가 commit 돼도 그대로 쓰기가 성립한다.
+ *
+ *     T1 writer: accountStatus=active 읽음 (TX 밖)
+ *     T2 freeze : deleting commit
+ *     T1 writer: 새 Application/근무사실 commit        ← 금지 상태
+ *
+ *   그래서 **같은 transaction 의 read-set** 에 `users/{uid}` 를 넣는다.
+ *   freeze transaction(`srvEnsureAccountDeletionTombstone`)이 그 문서를
+ *   쓰므로, 경합하면 이 transaction 이 재시도되고 재시도에서 `deleting` 을
+ *   다시 관측해 거부된다.
+ *
+ *   [§16] tombstone 을 추가로 읽지 않는다. 이유는 둘이다.
+ *     · tombstone 과 `accountStatus='deleting'` 는 **같은 transaction** 에서
+ *       세워진다(§1) — user 문서가 살아 있는 동안 둘은 어긋날 수 없다.
+ *     · user 문서가 **사라진 뒤**(Auth-tail 구간)에는 여기서 `not-found` 로
+ *       거부된다. 즉 그 구간도 tombstone read 없이 닫힌다. 없는 사람에게
+ *       약속을 만들 수 없다는 것은 그 자체로 맞는 규칙이다.
+ *
+ *   [§18] freeze 거부는 server fault 가 아니라 정상 business rejection 이다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 실행 중인 transaction
+ * @param {string} uid 대상 계정(호출자 또는 target 근로자)
+ * @param {string} label 없을 때 쓸 주체 이름 — "사용자" | "근로자"
+ * @return {Promise<FirebaseFirestore.DocumentData>} 그 시점 user 데이터
+ */
+async function srvAssertAccountNotFrozenInTx(
+  tx: FirebaseFirestore.Transaction,
+  uid: string,
+  label: string
+): Promise<FirebaseFirestore.DocumentData> {
+  if (typeof uid !== "string" || uid.length === 0 ||
+      uid.includes("/") || uid.includes("..")) {
+    throw new HttpsError("invalid-argument", `${label} 식별자가 올바르지 않습니다.`);
+  }
+  const snap = await tx.get(db.collection("users").doc(uid));
+  if (!snap.exists) {
+    throw new HttpsError("not-found", `${label} 정보를 찾을 수 없습니다.`);
+  }
+  const data = snap.data() ?? {};
+  srvAssertNotDeletingAccount(data);
+  return data;
+}
+
+/**
+ * [R7-P4.4E.11C.0C.0b §12·§19] 같은 fence 의 **분류 반환** 버전.
+ *
+ *   일괄 writer 는 건별로 "처리하지 못한 이유"를 돌려준다(PARTIAL ≠
+ *   SUCCESS). 거기서 throw 하면 바깥 try/catch 가 `unknownError` 로
+ *   뭉개고, 관리자는 왜 안 됐는지 알 수 없다. 그래서 같은 판정을
+ *   분류 문자열로 돌려준다 — 판정 규칙은 한 벌이다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 실행 중인 transaction
+ * @param {string} uid 대상 근로자
+ * @return {Promise<string | null>} 막힌 사유 코드. 통과면 null.
+ */
+async function srvAccountFreezeReasonInTx(
+  tx: FirebaseFirestore.Transaction,
+  uid: string
+): Promise<string | null> {
+  if (typeof uid !== "string" || uid.length === 0 ||
+      uid.includes("/") || uid.includes("..")) {
+    return "workerUnknown";
+  }
+  const snap = await tx.get(db.collection("users").doc(uid));
+  if (!snap.exists) return "workerMissing";
+  if ((snap.data()?.["accountStatus"] as string | undefined) ===
+      ACCOUNT_STATUS_DELETING) {
+    return "accountDeleting";
+  }
+  return null;
 }
 
 /** [R7-P4.4E.11C §50] account-owned Storage 정리 집계. */

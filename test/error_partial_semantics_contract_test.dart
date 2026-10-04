@@ -53,7 +53,8 @@ void main() {
     test('02 두 출근 writer 모두 그것을 지난다', () {
       expect(cf, contains('tx.set(ref, srvOmitUndefined(docData));'));
       expect(cf, contains(
-          'await db.collection("attendance").doc(docId).set(srvOmitUndefined({'));
+          // [R7-P4.4E.11C.0C.0b] 신규 생성이 TX 안으로 들어왔다 — 같은 srvOmitUndefined 를 쓴다.
+          'tx.set(newCiRef, srvOmitUndefined({'));
       expect('srvOmitUndefined('.allMatches(cf).length, 3,
           reason: '정의 1 + 단건 출근 1 + 일괄 출근 1');
     });

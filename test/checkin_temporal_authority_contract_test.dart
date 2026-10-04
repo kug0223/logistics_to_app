@@ -195,7 +195,10 @@ void main() {
       expect(bFlat, contains('return "alreadyCheckedIn"'));
       expect(bFlat, contains('return "wageAlreadySettled"'));
       expect(bFlat, contains('return "wageAlreadyCalculated"'));
-      expect(bFlat, contains('Promise<string | null> => { const snap = await tx.get(ref)'));
+      // [R7-P4.4E.11C.0C.0b] fence 가 TX 의 첫 read 로 들어왔다 — 그 뒤 순서는 그대로다.
+      expect(bFlat, contains('Promise<string | null> => { '
+          'const ciFrozen = await srvAccountFreezeReasonInTx(tx, userId); '
+          'if (ciFrozen) return ciFrozen; const snap = await tx.get(ref)'));
     });
 
     test('TA-71 confirmed/transferred/calculated 보호는 유지된다', () {
