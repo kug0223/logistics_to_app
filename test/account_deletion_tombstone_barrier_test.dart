@@ -159,9 +159,11 @@ void main() {
       //   이 셀이 막으려던 것은 "tombstone 을 지우는 writer 가 늘어나는 것"
       //   이고, 늘어난 것은 읽기 전용 helper 다. 그 사실을 함께 고정한다 —
       //   숫자만 올리면 다음에 쓰기가 늘어도 통과한다.
+      // [R7-P4.4E.11C.0C 갱신] 3 → 4. 늘어난 자리는 삭제 재개 상태를
+      //   돌려주는 self-only **읽기** callable 이다.
       final tombWrites = 'ACCOUNT_DELETION_TOMBSTONE_COL'.allMatches(cf).length;
-      expect(tombWrites, 3,
-          reason: '상수 선언 1 + ensure helper 1 + in-tx 읽기 helper 1 = 3');
+      expect(tombWrites, 4,
+          reason: '선언 1 + ensure helper 1 + in-tx 읽기 helper 1 + 재개 질의 1 = 4');
       // 늘어난 자리는 `tx.get` 이고 삭제가 아니다.
       expect(cf, contains('await tx.get(\n    db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid))'));
       expect('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()'.allMatches(cf).length, 0);

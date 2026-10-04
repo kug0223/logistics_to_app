@@ -197,9 +197,12 @@ void main() {
     });
 
     test('NOTIF-TX-02 transaction 밖 precheck 를 authority 로 쓰지 않는다', () {
-      // barrier 문서를 읽는 자리는 상수 선언 + ensure helper + in-tx helper
-      // 뿐이다. 늘어나면 transaction 밖 read 가 생겼는지 확인해야 한다.
-      expect(_count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL'), 3);
+      // [R7-P4.4E.11C.0C 갱신] 상수 선언 + ensure helper + in-tx helper +
+      //   삭제 재개 상태 질의(읽기 전용) = 4. 알림 생성 경로는 여전히
+      //   in-tx helper 하나만 쓴다.
+      expect(_count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL'), 4);
+      expect(_fn(raw, 'callableGetAccountDeletionRecoveryState'),
+          isNot(contains('srvPersistNotification')));
       final h = _helper(raw, 'srvDeletionBarrierExistsInTx');
       expect(h, contains('await tx.get('));
       expect(h, isNot(contains('catch')));

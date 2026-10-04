@@ -298,11 +298,13 @@ void main() {
       expect(st, isNot(contains('deleting')));
     });
 
-    test('DEL-REQ-NC-04 Auth-tail UI ±0 (§31)', () {
+    test('DEL-REQ-NC-04 Auth-tail UI — owner Phase 가 닫았다', () {
+      // [R7-P4.4E.11C.0C 갱신] "아직 없다"는 기록이었다. 이제 재개 경로가
+      //   있고, signOut 은 tombstone 이 없을 때만 일어난다.
       final up = _src('lib/providers/user_provider.dart');
       expect(up, contains('await _authService.signOut(showToast: false);'));
-      expect(up, isNot(contains("'deleting'")));
-      expect(_src('lib/main.dart'), isNot(contains('AccountDeletionRecovery')));
+      expect(up, contains('DeletionRecoveryState'));
+      expect(_src('lib/main.dart'), contains('_DeletionRecoveryScreen'));
     });
 
     test('DEL-REQ-NC-05 승인 writer 자체를 고치지 않았다', () {

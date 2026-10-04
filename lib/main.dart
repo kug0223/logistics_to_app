@@ -39,6 +39,7 @@ import 'utils/navigation_key.dart';
 import 'widgets/inputs/home_region_picker_sheet.dart';
 import 'models/core/user_region.dart';
 import 'services/firestore_service.dart';
+import 'services/auth_service.dart';
 import 'utils/toast_helper.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
@@ -288,6 +289,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
           return const SplashLoadingScreen();
         }
 
+        // [R7-P4.4E.11C.0C §14·§24·§25·§36] 삭제가 끝나지 않은 계정은
+        //   **어떤 일반 화면보다 먼저** 재개 화면으로 간다.
+        //
+        //   S2(user 문서 + accountStatus=deleting)와 S3(user 문서 없음 +
+        //   tombstone) 둘 다 여기로 온다. 이 분기가 role 라우팅·온보딩·
+        //   LoginScreen 보다 앞에 있으므로 deep link 로 들어와도 일반
+        //   화면이 먼저 뜨지 않는다.
+        if (userProvider.needsDeletionRecovery) {
+          if (kDebugMode) debugPrint('🧹 탈퇴 미완료 → 삭제 재개 화면');
+          return const _DeletionRecoveryScreen();
+        }
+
         // 🚫 로그인 안됨 (로딩 중이 아닌 경우에만 — 일시적 isLoading=true로 인한 오탐 방지)
         if (!userProvider.isLoggedIn && !userProvider.isLoading) {
           if (kDebugMode) debugPrint('🚫 로그인되지 않음 → LoginScreen');
@@ -436,6 +449,142 @@ class _AuthWrapperState extends State<AuthWrapper> {
 // homeRegion은 가입 필수 조건 — 건너뛰기(우회) 없음.
 // 저장 성공 → refreshCurrentUser() → AuthWrapper 리빌드 → UserRootScreen으로 이동.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// [R7-P4.4E.11C.0C §14·§39·§40·§51] 탈퇴 재개 화면.
+//
+//   삭제가 마지막 Auth 단계에서 멈춘 계정이 들어온다. 일반 Home 을 보여
+//   주지도, "계정이 없습니다"로 끝내지도, 완료로 오표시하지도 않는다.
+//
+//   [§10] 새 삭제 구현을 만들지 않는다 — 같은 pipeline
+//   (`deleteAccountWithPassword`: 재인증 → PreData → Applications → Final)을
+//   그대로 재개한다. 그래서 일반 탈퇴와 재시도가 서로 다른 cleanup 정책을
+//   갖는 일이 없다.
+//
+//   [§40] 자동 재시도를 넣지 않았다. 이 pipeline 은 민감 작업이라 재인증
+//   (비밀번호)을 요구하고(§18 기존 보안 계약 유지), 비밀번호 없이 자동으로
+//   돌릴 수 없다. 명시 CTA 하나만 둔다 — 네트워크 실패에서 재시도 storm 도
+//   생기지 않는다.
+//
+//   [§51] 서버가 명시적으로 성공을 말할 때만 완료로 처리한다.
+// ─────────────────────────────────────────────────────────────────────────────
+class _DeletionRecoveryScreen extends StatefulWidget {
+  const _DeletionRecoveryScreen();
+
+  @override
+  State<_DeletionRecoveryScreen> createState() => _DeletionRecoveryScreenState();
+}
+
+class _DeletionRecoveryScreenState extends State<_DeletionRecoveryScreen> {
+  final TextEditingController _pwCtrl = TextEditingController();
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void dispose() {
+    _pwCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _resume() async {
+    if (_busy) return;
+    final pw = _pwCtrl.text;
+    if (pw.isEmpty) {
+      setState(() => _message = '비밀번호를 입력해주세요.');
+      return;
+    }
+    // [키보드 포커스] Navigator 전환 전 포커스 해제.
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    // [§10] 일반 탈퇴와 **같은** 함수다.
+    final err = await AuthService().deleteAccountWithPassword(pw);
+    if (!mounted) return;
+    if (err == null) {
+      // 서버가 명시적으로 성공을 말했다 — 세션은 이미 정리됐다.
+      await context.read<UserProvider>().signOut();
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _message = err;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unknown = context.select<UserProvider, bool>(
+        (p) => p.deletionRecovery == DeletionRecoveryState.unknown);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.cleaning_services_outlined,
+                    size: 48, color: AppColors.warningDark),
+                const SizedBox(height: 16),
+                const Text('계정 삭제를 마무리하고 있어요',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Text(
+                  unknown
+                      ? '이전 탈퇴 처리가 완료됐는지 확인하지 못했습니다.\n'
+                          '아래에서 다시 시도해 주세요.'
+                      : '이전 탈퇴 처리가 완료되지 않았습니다.\n'
+                          '남은 정리를 마치려면 다시 시도해 주세요.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, color: AppColors.grey600),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: _pwCtrl,
+                  obscureText: true,
+                  enabled: !_busy,
+                  decoration: const InputDecoration(
+                    labelText: '비밀번호',
+                    helperText: '본인 확인을 위해 한 번 더 입력합니다',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (_message != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_message!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 13, color: AppColors.errorDark)),
+                ],
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: _busy ? null : _resume,
+                  child: _busy
+                      ? const SizedBox(
+                          width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('다시 시도'),
+                ),
+                const SizedBox(height: 8),
+                // 삭제를 포기할 수는 없지만(§14) 앱을 닫고 나중에 올 수는 있다.
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => context.read<UserProvider>().signOut(),
+                  child: const Text('나중에 하기 (로그아웃)'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _HomeRegionRecoveryScreen extends StatefulWidget {
   const _HomeRegionRecoveryScreen();
 

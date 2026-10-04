@@ -286,9 +286,18 @@ void main() {
       // barrier 를 읽는 유일한 서버 경로가 in-tx helper 여야 한다.
       final barrierReads = _count(code, 'ACCOUNT_DELETION_TOMBSTONE_COL');
       expect(barrierReads, greaterThan(0));
-      // 선언 + ensure helper(tx 안) + in-tx helper = 3.
-      expect(barrierReads, 3,
+      // [R7-P4.4E.11C.0C 갱신] 3 → 4.
+      //   선언 1 + ensure helper(tx 안) 1 + in-tx helper 1 + **삭제 재개
+      //   상태 질의** 1. 늘어난 자리는 write authority 가 아니라 self-only
+      //   읽기다 — 그 사실을 함께 고정한다. 숫자만 올리면 다음에 transaction
+      //   밖 precheck 가 생겨도 통과한다.
+      expect(barrierReads, 4,
           reason: 'barrier 문서를 읽는 자리가 늘어났다 — transaction 밖인지 확인해야 한다');
+      final recovery = _fn(raw, 'callableGetAccountDeletionRecoveryState');
+      expect(recovery, contains('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get()'));
+      expect(recovery, isNot(contains('.set(')));
+      expect(recovery, isNot(contains('.update(')));
+      expect(recovery, isNot(contains('.delete()')));
     });
   });
 

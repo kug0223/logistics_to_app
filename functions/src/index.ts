@@ -43117,6 +43117,49 @@ export const callableDeleteAccountApplications = onCall(
   }
 );
 
+// ─── callableGetAccountDeletionRecoveryState ─────────────────────────────────
+// [R7-P4.4E.11C.0C §2·§16·§17·§48] 삭제가 끝나지 않은 계정에게 **재개 경로**를
+// 돌려준다.
+//
+//   마지막 Auth 삭제가 실패하면 이 상태가 남는다.
+//
+//     Auth identity 존재 · users/{uid} 없음 · tombstone 존재
+//
+//   그런데 클라이언트는 user 문서가 없으면 조건 없이 signOut 했다. 다시
+//   로그인해도 같은 구조라 로그인 → 로그아웃 루프가 되고, **삭제를 끝낼
+//   경로에 도달할 수 없었다.**
+//
+//   [§16] 판정을 클라이언트가 추측하지 않는다. canonical 조건은
+//   `account_deletion_tombstones/{uid}` 존재이고, 그 컬렉션의 클라이언트
+//   read 는 전면 차단이다(§17 — rules 를 넓히지 않는다). 그래서 서버가
+//   읽어 **최소 사실만** 돌려준다.
+//
+//   [§48·§50] self-only 다. 입력 uid 를 받지 않으므로 타 계정 상태를 물을
+//   방법이 없다. tombstone 에 새 필드를 만들지 않고 존재 여부만 본다.
+//
+//   [§49] user 문서를 되살리지 않는다 — 읽기 전용이다.
+export const callableGetAccountDeletionRecoveryState = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const [tombSnap, userSnap] = await Promise.all([
+      db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).get(),
+      db.collection("users").doc(uid).get(),
+    ]);
+    const accountStatus = userSnap.exists ?
+      ((userSnap.data()?.["accountStatus"] as string | undefined) ?? null) :
+      null;
+    return {
+      // canonical deletion truth — user 문서보다 오래 산다.
+      deletionInProgress: tombSnap.exists,
+      userDocExists: userSnap.exists,
+      // user 문서가 있을 때만 의미가 있는 보조 projection.
+      accountStatus,
+    };
+  }
+);
+
 // ─── callableCleanupApplicationData ──────────────────────────────────────────
 // 지원 취소 시 연관 문서(idCardAccessRequests·schedule_change_requests·attendance) 일괄 정리
 // 권한: 지원서의 근무자 본인 OR 해당 사업장 관리자/서브어드민/슈퍼어드민

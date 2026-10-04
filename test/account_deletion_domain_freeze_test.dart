@@ -436,13 +436,18 @@ void main() {
       expect(ms.substring(0, 4000), isNot(contains('ACCOUNT_STATUS_DELETING')));
     });
 
-    test('DEL-FREEZE-NC-06 UserProvider·AuthWrapper ±0 (§29)', () {
+    test('DEL-FREEZE-NC-06 UserProvider·AuthWrapper — Auth-tail owner 가 닫았다', () {
+      // [R7-P4.4E.11C.0C 갱신] 이 셀은 "Auth-tail UI 가 아직 없다"를 기록한
+      //   것이었다. 그 blocker 의 owner Phase 가 닫았으므로 계약을 갱신한다.
+      //   signOut 은 사라지지 않았다 — **조건부**가 됐다(tombstone 없을 때만).
       final up = _src('lib/providers/user_provider.dart');
       expect(up, contains('await _authService.signOut(showToast: false);'));
+      expect(up, contains('getDeletionRecoveryState()'));
+      expect(up, contains("_currentUser?.accountStatus == 'deleting'"));
+      // 클라이언트가 tombstone 을 직접 읽지는 않는다 — 서버가 판정한다.
       expect(up, isNot(contains('account_deletion_tombstones')));
-      expect(up, isNot(contains("'deleting'")));
       final main = _src('lib/main.dart');
-      expect(main, isNot(contains('deleting')));
+      expect(main, contains('needsDeletionRecovery'));
       // [정정] `Recovery` 로 넓게 막으면 기존 `_HomeRegionRecoveryScreen`
       //   (거주지 복구 — 계정 삭제와 무관)이 걸린다. 계정 삭제 recovery 가
       //   아직 없다는 것만 본다.

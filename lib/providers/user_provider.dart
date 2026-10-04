@@ -80,6 +80,16 @@ class UserProvider with ChangeNotifier {
   bool _hasIncompleteRegistration = false;
   bool get hasIncompleteRegistration => _hasIncompleteRegistration;
 
+  // [R7-P4.4E.11C.0C §2·§14·§24·§26] 계정 삭제가 끝나지 않은 상태.
+  //   S2(user 문서 있음 + accountStatus=deleting)와 S3(user 문서 없음 +
+  //   tombstone)을 모두 여기로 모은다. 둘 다 일반 Home 으로 가면 안 되고,
+  //   같은 삭제 pipeline 을 재개할 화면으로 가야 한다.
+  //   `unknown` 을 `none` 으로 접지 않는다(§27).
+  DeletionRecoveryState _deletionRecovery = DeletionRecoveryState.none;
+  DeletionRecoveryState get deletionRecovery => _deletionRecovery;
+  bool get needsDeletionRecovery =>
+      _deletionRecovery != DeletionRecoveryState.none;
+
   // 하위 관리자 모드
   bool _isAdminMode = false;
   MemberPermissions? _memberPermissions;
@@ -1106,10 +1116,42 @@ class UserProvider with ChangeNotifier {
       //   _loadUserData가 Firestore에서 해당 uid 문서를 찾지 못해 이 경로에 진입한다.
       //   showToast: true이면 "로그아웃되었습니다" 토스트가 가입 화면 위에 오표시됨.
       if (_currentUser == null) {
+        // [R7-P4.4E.11C.0C §2·§15·§27·§28] 조건 없이 signOut 하지 않는다.
+        //
+        //   삭제가 마지막 Auth 단계에서 멈추면 이 상태가 남는다 —
+        //   Auth 존재 · user 문서 없음 · tombstone 존재. 여기서 로그아웃하면
+        //   다시 로그인해도 같은 자리로 돌아와 **삭제를 끝낼 수 없다.**
+        //
+        //   tombstone 이 없으면(= 삭제와 무관한 프로필 부재) 기존 동작을
+        //   그대로 유지한다(§28).
+        final recovery = await _authService.getDeletionRecoveryState();
+        if (_disposed || _loadGeneration != gen) return;
+        if (recovery != DeletionRecoveryState.none) {
+          // UNKNOWN 도 세션을 유지한다 — 모른다를 "삭제 아님"으로 읽지 않는다.
+          _deletionRecovery = recovery;
+          _isLoading = false;
+          notifyListeners();
+          return;
+        }
         await _authService.signOut(showToast: false); // Firebase Auth 세션만 정리 (경량, 토스트 없음)
         // authStateChanges(null) 핸들러가 _currentUser=null + _isLoading=false + notifyListeners() 처리
         return;
       }
+
+      // [R7-P4.4E.11C.0C §24] user 문서는 살아 있지만 삭제 freeze 가 선 상태.
+      //   일반 제품 화면으로 들어가면 안 된다 — 삭제를 재개할 화면으로 간다.
+      //   `accountStatus` 는 user 문서가 있는 동안의 projection 이므로 여기서
+      //   추가 조회 없이 그대로 쓴다.
+      if (_currentUser?.accountStatus == 'deleting') {
+        _currentUser = null;
+        _deletionRecovery = DeletionRecoveryState.required;
+        _error = null;
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+      // 정상 계정으로 확인됐다 — 이전 재개 상태를 남겨 두지 않는다.
+      _deletionRecovery = DeletionRecoveryState.none;
 
       // pending / registration_pending 계정 방어 — signIn 경로의 차단(auth_service)과 동일 처리.
       // 외국인 가입 직후 signUp→_loadUserData 경로에서도 AuthWrapper가 메인화면으로
@@ -1422,6 +1464,14 @@ class UserProvider with ChangeNotifier {
         debugPrint('⚠️ [signIn] 미완료 가입 계정 감지 — 복구 흐름 필요');
         return false;
       }
+      // [R7-P4.4E.11C.0C §2·§46] 삭제가 끝나지 않은 계정 — Auth 세션을
+      //   유지한 채 재개 화면으로 보낸다. 로그인 → 로그아웃 루프를 만들지
+      //   않는다.
+      if (e is DeletionRecoveryRequiredException) {
+        _deletionRecovery = DeletionRecoveryState.required;
+        debugPrint('⚠️ [signIn] 탈퇴 미완료 계정 감지 — 삭제 재개 필요');
+        return false;
+      }
       // auth_service가 이미 사용자 친화적 메시지로 throw하므로 'Exception: ' prefix만 제거
       _error = e.toString().replaceFirst('Exception: ', '');
       debugPrint('❌ 로그인 실패: $e');
@@ -1442,6 +1492,10 @@ class UserProvider with ChangeNotifier {
     try {
       // [NEW-03] Ghost session 방지: 진행 중인 _loadUserData가 있으면 즉시 무효화
       _loadGeneration++;
+      // [R7-P4.4E.11C.0C §14] 재개 상태를 들고 로그아웃하면 로그인 화면이
+      //   아니라 재개 화면이 계속 뜬다. 세션이 끊기면 그 판정도 끝난다 —
+      //   다음 로그인에서 서버에 다시 묻는다(tombstone 은 그대로 남는다).
+      _deletionRecovery = DeletionRecoveryState.none;
       // [R7-P4.4E.2A] 첫 공고 준비 판정은 **그 계정의 것**이다.
       //   버리지 않으면 다음에 로그인한 관리자가 이전 사람의 사업장 기준
       //   판정을 잠시 보게 된다. 그 값으로 '공고 등록' 버튼이 뜨거나

@@ -20,9 +20,60 @@ class IncompleteRegistrationException implements Exception {
   String toString() => 'IncompleteRegistrationException: $message';
 }
 
+/// [R7-P4.4E.11C.0C §2·§15] 계정 삭제가 마지막 단계에서 멈춘 상태.
+///
+///   `Auth 존재 + users/{uid} 없음 + tombstone 존재` 에서 조건 없이
+///   signOut 하면 로그인 → 로그아웃 루프가 되고 삭제를 끝낼 수 없다.
+///   그래서 Auth 세션을 **유지한 채** throw 해서 재개 화면으로 보낸다
+///   (`IncompleteRegistrationException` 과 같은 계약).
+class DeletionRecoveryRequiredException implements Exception {
+  final String message;
+  const DeletionRecoveryRequiredException({
+    this.message = '이전 탈퇴 처리가 완료되지 않았습니다.',
+  });
+  @override
+  String toString() => 'DeletionRecoveryRequiredException: $message';
+}
+
+/// [R7-P4.4E.11C.0C §26] 계정 lifecycle bootstrap 판정.
+///
+///   `UNKNOWN` 을 `none` 으로 접지 않는다(§27) — 삭제 미완료 가능성이
+///   있는 상태에서 조용히 로그아웃하면 사용자는 끝낼 방법을 잃는다.
+enum DeletionRecoveryState {
+  /// 삭제 진행 중이 아니다.
+  none,
+
+  /// tombstone 이 있다 — 재개 화면으로 가야 한다.
+  required,
+
+  /// 판정 자체를 못 했다(네트워크·권한·알 수 없음).
+  unknown,
+}
+
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  /// [R7-P4.4E.11C.0C §16·§17] 삭제 재개 대상인가 — **서버가 판정한다.**
+  ///
+  ///   tombstone 컬렉션은 클라이언트 read 가 차단되어 있다. rules 를
+  ///   넓히지 않고 self-only callable 로 최소 사실만 읽는다.
+  ///   실패를 `none` 으로 바꾸지 않는다(§27).
+  Future<DeletionRecoveryState> getDeletionRecoveryState() async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAccountDeletionRecoveryState',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final res = await callable.call<Map<String, dynamic>>({});
+      final data = Map<String, dynamic>.from(res.data as Map? ?? {});
+      return data['deletionInProgress'] == true
+          ? DeletionRecoveryState.required
+          : DeletionRecoveryState.none;
+    } catch (e) {
+      debugPrint('⚠️ 삭제 재개 상태 확인 실패: $e');
+      return DeletionRecoveryState.unknown;
+    }
+  }
 
   // 현재 사용자 스트림
   Stream<User?> get authStateChanges => _auth.authStateChanges();
@@ -117,6 +168,19 @@ class AuthService {
             result.user!.uid,
           );
         } else {
+          // [R7-P4.4E.11C.0C §2·§15·§28] user 문서가 없다는 사실만으로
+          //   signOut 하면, 삭제가 마지막 Auth 단계에서 멈춘 계정은
+          //   **삭제를 끝낼 경로를 영구히 잃는다**(로그인 → 로그아웃 루프).
+          //   그래서 먼저 서버에 재개 대상인지 묻는다.
+          //
+          //   tombstone 이 없으면 기존 동작을 그대로 둔다(§28) — 그쪽은
+          //   삭제가 아니라 프로필 부재/손상 처리다.
+          final recovery = await getDeletionRecoveryState();
+          if (recovery != DeletionRecoveryState.none) {
+            // [§27·§51] UNKNOWN 도 세션을 유지한다 — 삭제 미완료 가능성을
+            //   "삭제 아님"으로 접지 않는다.
+            throw const DeletionRecoveryRequiredException();
+          }
           // [F-01-1 FIX] Auth 세션이 열린 채로 throw하면 앱이 인증된 고아 세션 상태로 남음
           //   → signOut()으로 Auth 세션 정리 후 예외 발생
           await _auth.signOut();
