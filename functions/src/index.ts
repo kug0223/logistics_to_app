@@ -43401,12 +43401,23 @@ async function srvEnsureAccountDeletionTombstone(
   }
 }
 
-/** [R7-P4.4E.11C.0C.0a.6] 미처리 중간정산의 운영 주인이 사라지는 범위. */
-type SrvInterimContinuity = {
+/** [R7-P4.4E.11C.0C.0a.6] 미처리 금전 의무의 운영 주인이 사라지는 범위. */
+type SrvMoneyContinuity = {
   /** 처리 주인이 남지 않는 사업장 수. */
   orphanBusinesses: number;
-  /** 그 사업장들의 APPROVED 미이체 건수 합. */
+  /** 그 사업장들의 APPROVED 미이체 중간정산 건수 합. */
   orphanApproved: number;
+  /**
+   * [R7-P4.4E.11C.0C.0a.6.1] 그 사업장들의 미확정(`calculated`)·
+   * 미이체(`confirmed`) 급여 건수 합.
+   *
+   *   `UNPAID_WAGES` preview blocker 와 **같은 술어**다. 그리고 그 두
+   *   상태를 끝내는 writer(`callableConfirmFinalWage`·
+   *   `callableMarkTransferredBatch`)의 authority 는 중간정산 processor 와
+   *   완전히 같다 — `assertBizAdmin` + 서브관리자 `canManageWage`.
+   *   그래서 successor 판정을 공유한다.
+   */
+  orphanUnpaidWages: number;
 };
 
 /**
@@ -43434,12 +43445,14 @@ type SrvInterimContinuity = {
  *   의무의 삭제 gate 에서 UNKNOWN 을 통과로 읽으면 안 된다.
  *
  * @param {string} uid 탈퇴하려는 관리자
- * @return {Promise<SrvInterimContinuity>} 주인이 사라지는 사업장·건수
+ * @return {Promise<SrvMoneyContinuity>} 주인이 사라지는 사업장·건수
  */
-async function srvCountOrphanApprovedSettlements(
+async function srvCountOrphanMoneyObligations(
   uid: string
-): Promise<SrvInterimContinuity> {
-  const out: SrvInterimContinuity = {orphanBusinesses: 0, orphanApproved: 0};
+): Promise<SrvMoneyContinuity> {
+  const out: SrvMoneyContinuity = {
+    orphanBusinesses: 0, orphanApproved: 0, orphanUnpaidWages: 0,
+  };
   if (typeof uid !== "string" || uid.length === 0) return out;
 
   const bizSnap = await db.collection("businesses")
@@ -43450,13 +43463,34 @@ async function srvCountOrphanApprovedSettlements(
   const live = bizSnap.docs.filter((d) => !d.data()["deactivatedAt"]);
 
   for (const biz of live) {
-    const approved = await db.collection("interim_settlement_requests")
-      .where("businessId", "==", biz.id)
-      .where("status", "==", "APPROVED")
-      .count()
-      .get();
+    // [R7-P4.4E.11C.0C.0a.6.1 §12] 사업장 루프와 successor 판정을 **재사용**
+    //   한다. 같은 사업장을 두 번 훑는 helper 를 따로 만들지 않는다.
+    //
+    //   급여 쿼리 shape 는 `callableGetWithdrawBlockers` 가 이미 쓰는 것과
+    //   같다(businessId equality + wageStatus equality). 그래서 신규 인덱스가
+    //   필요 없다 — attendance(businessId, wageStatus, workDate) 복합
+    //   인덱스의 prefix 로 서빙된다.
+    const [approved, calculated, confirmed] = await Promise.all([
+      db.collection("interim_settlement_requests")
+        .where("businessId", "==", biz.id)
+        .where("status", "==", "APPROVED")
+        .count()
+        .get(),
+      db.collection("attendance")
+        .where("businessId", "==", biz.id)
+        .where("wageStatus", "==", "calculated")
+        .count()
+        .get(),
+      db.collection("attendance")
+        .where("businessId", "==", biz.id)
+        .where("wageStatus", "==", "confirmed")
+        .count()
+        .get(),
+    ]);
     const pendingTransfer = approved.data().count;
-    if (pendingTransfer === 0) continue;
+    const unpaidWages =
+      calculated.data().count + confirmed.data().count;
+    if (pendingTransfer === 0 && unpaidWages === 0) continue;
 
     const d = biz.data();
     const candidates = new Set<string>();
@@ -43487,6 +43521,7 @@ async function srvCountOrphanApprovedSettlements(
     if (!hasSuccessor) {
       out.orphanBusinesses++;
       out.orphanApproved += pendingTransfer;
+      out.orphanUnpaidWages += unpaidWages;
     }
   }
   return out;
@@ -43568,13 +43603,32 @@ async function srvAssertAccountDeletionAllowed(
   //   [§10] 막기만 한다. 삭제를 통과시키려고 APPROVED 를 PROCESSED·CANCELED
   //   로 바꾸거나 금액을 0 으로 만들지 않는다.
   if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
-    const interim = await srvCountOrphanApprovedSettlements(uid);
-    if (interim.orphanApproved > 0) {
+    const money = await srvCountOrphanMoneyObligations(uid);
+    if (money.orphanApproved > 0) {
       throw new HttpsError(
         "failed-precondition",
         "[INTERIM_SETTLEMENT_UNPROCESSED] 승인된 중간정산 " +
-        `${interim.orphanApproved}건이 아직 이체 처리되지 않았습니다. ` +
+        `${money.orphanApproved}건이 아직 이체 처리되지 않았습니다. ` +
         "이체를 완료하거나 승인을 취소한 뒤 탈퇴해주세요."
+      );
+    }
+    // [R7-P4.4E.11C.0C.0a.6.1 §2·§5A] `UNPAID_WAGES` 도 같은 성질이다.
+    //
+    //   `calculated` 는 확정할 사람이 필요하고 `confirmed` 는 이체할 사람이
+    //   필요하다 — 둘 다 조회가 아니라 operation 이다. 그리고 그 돈은
+    //   사업장 비활성화에서 **의도적으로 보존된다**:
+    //   `srvActualWorkReasonOf` 가 wageStatus ∈ {calculated, confirmed,
+    //   transferred} 를 실근무로 보고 그 지원서를 `preserved` 로 남긴다.
+    //   그러므로 자동 teardown 이 이 의무를 끝내 주지 않는다.
+    //
+    //   돈 도메인이라서가 아니라, **끝낼 actor 가 사라지기 때문에** 막는다.
+    //   successor 가 남아 있으면 통과한다(§5A·§7).
+    if (money.orphanUnpaidWages > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "[UNPAID_WAGES] 미확정·미이체 급여 " +
+        `${money.orphanUnpaidWages}건이 남아 있습니다. ` +
+        "급여 확정과 이체를 완료한 뒤 탈퇴해주세요."
       );
     }
   }
@@ -45459,7 +45513,14 @@ export const callableGetWithdrawBlockers = onCall(
       //
       //   [§19] 이 helper 는 쿼리 실패를 삼키지 않는다. 그러면 preview 전체가
       //   실패하고, 클라이언트는 이미 그때 삭제 버튼을 비활성화한다.
-      const orphanInterim = await srvCountOrphanApprovedSettlements(callerUid);
+      //   [R7-P4.4E.11C.0C.0a.6.1 §11] `UNPAID_WAGES` 는 여기서 다시 push
+      //   하지 않는다. 위 `wageCount` 가 **successor 유무와 무관하게**
+      //   사업장 전체를 세어 이미 hardBlock 으로 올렸다 — 즉 preview 가
+      //   서버보다 넓다. 같은 code 를 두 번 올리면 화면에 같은 줄이 두 번
+      //   뜨고, 수를 합치면 실제 건수와도 달라진다. 집합 관계는
+      //   `FinalBlocked ⊆ PreviewBlocked` 이므로 "preview 는 통과인데
+      //   삭제가 거부되는" 방향은 발생하지 않는다.
+      const orphanInterim = await srvCountOrphanMoneyObligations(callerUid);
       if (orphanInterim.orphanApproved > 0) {
         hardBlocks.push({
           type: "INTERIM_SETTLEMENT_UNPROCESSED",

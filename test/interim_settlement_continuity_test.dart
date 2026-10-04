@@ -94,7 +94,7 @@ String _helper(String raw, String name) {
 void main() {
   final raw = _src('functions/src/index.ts');
   final code = _codeOf(raw);
-  final helper = _helper(raw, 'srvCountOrphanApprovedSettlements');
+  final helper = _helper(raw, 'srvCountOrphanMoneyObligations');
   final assertFn = _helper(raw, 'srvAssertAccountDeletionAllowed');
 
   group('ISC-LIFE — lifecycle / 전이 / 권한 술어', () {
@@ -135,7 +135,7 @@ void main() {
   group('ISC-GATE — 서버 삭제 경계의 blocker', () {
     test('ISC-GATE-01 공용 precondition 에 금전 blocker 가 있다', () {
       // PreData(BEGIN)와 Final 이 같은 helper 를 쓴다 — 파괴 전에 막힌다.
-      expect(assertFn, contains('srvCountOrphanApprovedSettlements(uid)'));
+      expect(assertFn, contains('srvCountOrphanMoneyObligations(uid)'));
       expect(assertFn, contains('INTERIM_SETTLEMENT_UNPROCESSED'));
       // 두 호출부가 모두 이 precondition 을 거친다.
       expect(_fn(raw, 'callableDeleteAccountPreData'),
@@ -152,7 +152,7 @@ void main() {
       // 무력화를 놓친다. 그래서 조건식 **모양**을 그대로 고정한다.
       expect(_flat(assertFn), contains(
           'if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") { '
-          'const interim = await srvCountOrphanApprovedSettlements(uid);'));
+          'const money = await srvCountOrphanMoneyObligations(uid);'));
       // 상수 단축이 끼어들지 않는다.
       expect(assertFn, isNot(contains('false &&')));
       expect(assertFn, isNot(contains('&& false')));
@@ -268,7 +268,7 @@ void main() {
 
     test('ISC-ERR-02 precondition 이 그 throw 를 가로채지 않는다', () {
       final seg = _between(
-          assertFn, 'srvCountOrphanApprovedSettlements', 'INTERIM_SETTLEMENT_UNPROCESSED');
+          assertFn, 'srvCountOrphanMoneyObligations', 'INTERIM_SETTLEMENT_UNPROCESSED');
       expect(seg, isNot(contains('catch')));
       expect(seg, isNot(contains('?? 0')));
     });
@@ -276,7 +276,7 @@ void main() {
     test('ISC-ERR-03 preview 도 오류를 0건으로 바꾸지 않는다', () {
       final blockers = _fn(raw, 'callableGetWithdrawBlockers');
       final seg = _between(blockers,
-          'const orphanInterim = await srvCountOrphanApprovedSettlements',
+          'const orphanInterim = await srvCountOrphanMoneyObligations',
           'hardBlocks.push');
       expect(seg, isNot(contains('catch')));
       // 클라이언트는 preview 실패 시 삭제 버튼을 비활성화한다.
@@ -291,14 +291,14 @@ void main() {
       // Business A 가 orphan 이면 B 가 정상이어도 계정 삭제는 막힌다.
       expect(_flat(helper), contains('for (const biz of live)'));
       expect(_flat(helper), contains('out.orphanBusinesses++'));
-      expect(_flat(assertFn), contains('if (interim.orphanApproved > 0)'));
+      expect(_flat(assertFn), contains('if (money.orphanApproved > 0)'));
     });
 
     test('ISC-SCOPE-02 다른 사업장의 정산과 섞지 않는다', () {
       expect(_flat(helper), contains(r'.where("businessId", "==", biz.id)'));
       // 전체 컬렉션 스캔이나 whereIn 혼합이 없다.
       expect(helper, isNot(contains('array-contains-any')));
-      expect(_count(helper, '.where("businessId"'), 1);
+      expect(_count(helper, '.where("businessId"'), 3);
     });
   });
 
@@ -316,7 +316,7 @@ void main() {
         expect(helper, isNot(contains(bad)), reason: 'helper 는 읽기 전용이어야 한다');
       }
       final seg = _between(
-          assertFn, 'srvCountOrphanApprovedSettlements', 'INTERIM_SETTLEMENT_UNPROCESSED');
+          assertFn, 'srvCountOrphanMoneyObligations', 'INTERIM_SETTLEMENT_UNPROCESSED');
       expect(seg, isNot(contains('interim_settlement_requests')));
     });
 
@@ -331,10 +331,10 @@ void main() {
   group('ISC-UI — preview ↔ Final parity + 처리 가능한 화면', () {
     test('ISC-UI-01 preview 와 Final 이 같은 술어를 쓴다', () {
       // 호출부 2곳 + 선언 1 = 3.
-      expect(_count(code, 'srvCountOrphanApprovedSettlements'), 3);
+      expect(_count(code, 'srvCountOrphanMoneyObligations'), 3);
       expect(_fn(raw, 'callableGetWithdrawBlockers'),
-          contains('srvCountOrphanApprovedSettlements(callerUid)'));
-      expect(assertFn, contains('srvCountOrphanApprovedSettlements(uid)'));
+          contains('srvCountOrphanMoneyObligations(callerUid)'));
+      expect(assertFn, contains('srvCountOrphanMoneyObligations(uid)'));
     });
 
     test('ISC-UI-02 blocker 가 사용자에게 설명된다', () {
