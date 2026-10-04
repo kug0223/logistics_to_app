@@ -37852,6 +37852,179 @@ export const callableAcceptInvitation = onCall(
 //    callableDeclineTOInvitation  — 근로자가 초대 거절 (INVITED → REJECTED)
 // ════════════════════════════════════════════════════════════════════════════
 
+/** [R7-P4.4E.11C.0C.0b.1] INVITED 가 끝나는 방식 — 상태·사유·시각·이력. */
+type SrvInvitedTerminal = {
+  /** 전이할 종료 상태. 기존 enum 만 쓴다. */
+  status: string;
+  /** statusHistory 에 남길 action. */
+  action: string;
+  /** 전이 시각 — 같은 배치 안에서 같은 값을 쓴다. */
+  at: admin.firestore.Timestamp;
+  /** 그 상태에 딸린 필드(expiredAt / canceledAt + cancelReason). */
+  fields: Record<string, unknown>;
+};
+/**
+ * [R7-P4.4E.11C.0C.0b.1 §3·§4·§11] INVITED 를 **종료 상태로 전이**한다 —
+ * canonical transition 한 벌.
+ *
+ *   이 전이에는 counter 계약이 딸려 있다. `PENDING_STATUSES` 는
+ *   `[PENDING, INVITED]` 이므로, INVITED 가 끝나면 대기 counter 세 개가
+ *   정확히 1 내려가야 한다 — `TO.totalPending` · `slot.pendingCount` ·
+ *   `slot.workDetailCounts[wdId].pendingCount`.
+ *
+ *   그 식을 두 벌로 만들지 않는다. 예전에는 초대 만료 scheduler 안에만
+ *   있었고(wdId 해석 체인·invariant·underflow guard·fail-closed 포함),
+ *   계정삭제 cleanup 이 같은 일을 하려면 그것을 복제해야 했다. 복제하면
+ *   한쪽만 고쳐질 때 counter 가 조용히 갈라진다. 그래서 **옮겼다** —
+ *   호출자는 종료 상태와 사유만 정한다.
+ *
+ *   [§11] 멱등하다. fresh read 가 INVITED 가 아니면 "skipped" 를 돌려주고
+ *   아무것도 쓰지 않는다 — 재시도가 counter 를 두 번 내리지 않는다.
+ *
+ *   [§5] 문서를 지우지 않는다. 초대 이력(누가 언제 어떤 조건으로)은
+ *   그대로 남고 상태만 끝난다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 실행 중인 transaction
+ * @param {FirebaseFirestore.DocumentReference} appRef 대상 지원서
+ * @param {SrvInvitedTerminal} terminal 종료 상태·사유·시각·history action
+ * @return {Promise<"done" | "skipped">} 전이했는가
+ */
+async function srvTerminateInvitedApplicationInTx(
+  tx: FirebaseFirestore.Transaction,
+  appRef: FirebaseFirestore.DocumentReference,
+  terminal: SrvInvitedTerminal
+): Promise<"done" | "skipped"> {
+  // ── Phase 1: 모든 reads (writes 이전에 완료) ──────────────────────────
+
+  // R1. Application fresh read
+  const fresh = await tx.get(appRef);
+  if (!fresh.exists || fresh.data()!.status !== "INVITED") {
+    // 이미 다른 경로로 처리됨 (EXPIRED/CONFIRMED/REJECTED 등) — idempotent skip
+    return "skipped";
+  }
+  const appData = fresh.data()!;
+  const toId = appData.toId as string | undefined;
+  const slotId = appData.slotId as string | undefined;
+  const selectedWorkType = appData.selectedWorkType as string | undefined;
+  const appWdId = appData.wdId as string | undefined;
+
+  // R2. Slot read (toId/slotId 있을 때 — write 이전 완료 필수)
+  let slotRef: FirebaseFirestore.DocumentReference | undefined;
+  let slotSnap: FirebaseFirestore.DocumentSnapshot | undefined;
+  if (slotId && toId) {
+    slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
+    slotSnap = await tx.get(slotRef); // ← 반드시 write 이전
+  }
+
+  // ── wdId resolution & validation (모든 reads 완료 후, writes 이전) ──
+
+  // slot schema 판별
+  let wds: Record<string, unknown>[] = [];
+  let isNewSchemaSlot = false;
+  if (slotSnap?.exists) {
+    wds = (slotSnap.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+    isNewSchemaSlot = wds.some(
+      (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0
+    );
+  }
+
+  // wdId resolution priority chain
+  // Priority 1: app.wdId 직접 사용
+  let resolvedWdId: string | undefined = appWdId;
+  if (!resolvedWdId && isNewSchemaSlot && selectedWorkType) {
+    // Priority 2: composite workDetailId (workType_startTime_endTime)
+    const workDetailId = appData.workDetailId as string | undefined;
+    if (workDetailId && workDetailId.split("_").length >= 3) {
+      const m = wds.find(
+        (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === workDetailId
+      );
+      if (m?.["wdId"]) resolvedWdId = m["wdId"] as string;
+    }
+    // Priority 3: triple exact match
+    if (!resolvedWdId) {
+      const startTime = appData.startTime as string | undefined;
+      const endTime = appData.endTime as string | undefined;
+      if (startTime && endTime) {
+        const m = wds.find(
+          (wd) => wd["workType"] === selectedWorkType &&
+                  wd["startTime"] === startTime && wd["endTime"] === endTime
+        );
+        if (m?.["wdId"]) resolvedWdId = m["wdId"] as string;
+      }
+    }
+    // Priority 4: unique workType
+    if (!resolvedWdId) {
+      const same = wds.filter((wd) => wd["workType"] === selectedWorkType);
+      if (same.length === 1 && same[0]["wdId"]) {
+        resolvedWdId = same[0]["wdId"] as string;
+      }
+    }
+  }
+
+  // [Phase 8.1E.2C] CANONICAL INVARIANT:
+  // new-schema slot에서 resolvedWdId가 결정됐으면 workDetailCounts 엔트리가 반드시 존재해야 함
+  // (app.wdId 원본 여부와 무관 — resolve 결과 기준)
+  if (resolvedWdId && isNewSchemaSlot && slotSnap?.exists) {
+    const wdc = slotSnap.data()!.workDetailCounts as
+      Record<string, {pendingCount?: number}> | undefined;
+    if (!wdc || wdc[resolvedWdId] === undefined) {
+      throw new Error(
+        `DATA INVARIANT: new-schema slot resolvedWdId=${resolvedWdId} but ` +
+        `workDetailCounts entry missing — status EXPIRED 처리 금지 (app=${appRef.id})`
+      );
+    }
+    // [Phase 8.1E.2C] UNDERFLOW CHECK:
+    // pendingCount <= 0이면 -1 금지 (counter drift 생성 차단)
+    const currentPending = wdc[resolvedWdId].pendingCount ?? 0;
+    if (currentPending <= 0) {
+      throw new Error(
+        `UNDERFLOW GUARD: workDetailCounts[${resolvedWdId}].pendingCount=${currentPending}` +
+        ` (<=0) — counter mutation 금지 (app=${appRef.id})`
+      );
+    }
+  }
+
+  // [Phase 8.1E.2D] FAIL-CLOSED: new-schema slot에서 wdId resolve 실패
+  // → aggregate 포함 전체 mutation 금지 (recount dependency 금지)
+  if (isNewSchemaSlot && !resolvedWdId) {
+    throw new Error(
+      `FAIL-CLOSED: new-schema slot에서 workDetail resolve 실패 ` +
+      `(toId=${toId}, slotId=${slotId}, app=${appRef.id}) ` +
+      `— aggregate-only mutation 금지`
+    );
+  }
+
+  // ── Phase 2: 모든 writes (모든 reads + validation 완료 후) ──────────
+
+  // W1. Application → EXPIRED
+  tx.update(appRef, {
+    status: terminal.status,
+    ...terminal.fields,
+    statusHistory: admin.firestore.FieldValue.arrayUnion({
+      status: terminal.status, at: terminal.at, by: null,
+      action: terminal.action,
+    }),
+  });
+
+  // W2. Slot + TO counter decrements
+  if (slotRef && toId) {
+    const slotUpdate: Record<string, unknown> = {
+      pendingCount: admin.firestore.FieldValue.increment(-1),
+    };
+    // [Phase 8.1E.5] workTypeCounts.pendingCount 제거 — workDetailCounts canonical
+    if (resolvedWdId) {
+      // new-schema slot: canonical counter decrement (invariant 통과한 경우만 여기 도달)
+      slotUpdate[`workDetailCounts.${resolvedWdId}.pendingCount`] =
+        admin.firestore.FieldValue.increment(-1);
+    }
+    tx.update(slotRef, slotUpdate);
+    tx.update(db.collection("tos").doc(toId), {
+      totalPending: admin.firestore.FieldValue.increment(-1),
+    });
+  }
+  return "done";
+}
+
 // ── processExpiredTOInvitations ───────────────────────────────────────────────
 // masterScheduler 시간별 작업: inviteExpiresAt <= now 인 INVITED 지원서 → EXPIRED
 async function processExpiredTOInvitations(now: admin.firestore.Timestamp): Promise<void> {
@@ -37868,137 +38041,17 @@ async function processExpiredTOInvitations(now: admin.firestore.Timestamp): Prom
 
   for (const doc of snap.docs) {
     try {
-      await db.runTransaction(async (tx) => {
-        // ── Phase 1: 모든 reads (writes 이전에 완료) ──────────────────────────
-
-        // R1. Application fresh read
-        const fresh = await tx.get(doc.ref);
-        if (!fresh.exists || fresh.data()!.status !== "INVITED") {
-          // 이미 다른 경로로 처리됨 (EXPIRED/CONFIRMED/REJECTED 등) — idempotent skip
-          skipped++;
-          return;
-        }
-        const appData = fresh.data()!;
-        const toId = appData.toId as string | undefined;
-        const slotId = appData.slotId as string | undefined;
-        const selectedWorkType = appData.selectedWorkType as string | undefined;
-        const appWdId = appData.wdId as string | undefined;
-
-        // R2. Slot read (toId/slotId 있을 때 — write 이전 완료 필수)
-        let slotRef: FirebaseFirestore.DocumentReference | undefined;
-        let slotSnap: FirebaseFirestore.DocumentSnapshot | undefined;
-        if (slotId && toId) {
-          slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
-          slotSnap = await tx.get(slotRef); // ← 반드시 write 이전
-        }
-
-        // ── wdId resolution & validation (모든 reads 완료 후, writes 이전) ──
-
-        // slot schema 판별
-        let wds: Record<string, unknown>[] = [];
-        let isNewSchemaSlot = false;
-        if (slotSnap?.exists) {
-          wds = (slotSnap.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
-          isNewSchemaSlot = wds.some(
-            (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0
-          );
-        }
-
-        // wdId resolution priority chain
-        // Priority 1: app.wdId 직접 사용
-        let resolvedWdId: string | undefined = appWdId;
-        if (!resolvedWdId && isNewSchemaSlot && selectedWorkType) {
-          // Priority 2: composite workDetailId (workType_startTime_endTime)
-          const workDetailId = appData.workDetailId as string | undefined;
-          if (workDetailId && workDetailId.split("_").length >= 3) {
-            const m = wds.find(
-              (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === workDetailId
-            );
-            if (m?.["wdId"]) resolvedWdId = m["wdId"] as string;
-          }
-          // Priority 3: triple exact match
-          if (!resolvedWdId) {
-            const startTime = appData.startTime as string | undefined;
-            const endTime = appData.endTime as string | undefined;
-            if (startTime && endTime) {
-              const m = wds.find(
-                (wd) => wd["workType"] === selectedWorkType &&
-                        wd["startTime"] === startTime && wd["endTime"] === endTime
-              );
-              if (m?.["wdId"]) resolvedWdId = m["wdId"] as string;
-            }
-          }
-          // Priority 4: unique workType
-          if (!resolvedWdId) {
-            const same = wds.filter((wd) => wd["workType"] === selectedWorkType);
-            if (same.length === 1 && same[0]["wdId"]) {
-              resolvedWdId = same[0]["wdId"] as string;
-            }
-          }
-        }
-
-        // [Phase 8.1E.2C] CANONICAL INVARIANT:
-        // new-schema slot에서 resolvedWdId가 결정됐으면 workDetailCounts 엔트리가 반드시 존재해야 함
-        // (app.wdId 원본 여부와 무관 — resolve 결과 기준)
-        if (resolvedWdId && isNewSchemaSlot && slotSnap?.exists) {
-          const wdc = slotSnap.data()!.workDetailCounts as
-            Record<string, {pendingCount?: number}> | undefined;
-          if (!wdc || wdc[resolvedWdId] === undefined) {
-            throw new Error(
-              `DATA INVARIANT: new-schema slot resolvedWdId=${resolvedWdId} but ` +
-              `workDetailCounts entry missing — status EXPIRED 처리 금지 (app=${doc.id})`
-            );
-          }
-          // [Phase 8.1E.2C] UNDERFLOW CHECK:
-          // pendingCount <= 0이면 -1 금지 (counter drift 생성 차단)
-          const currentPending = wdc[resolvedWdId].pendingCount ?? 0;
-          if (currentPending <= 0) {
-            throw new Error(
-              `UNDERFLOW GUARD: workDetailCounts[${resolvedWdId}].pendingCount=${currentPending}` +
-              ` (<=0) — counter mutation 금지 (app=${doc.id})`
-            );
-          }
-        }
-
-        // [Phase 8.1E.2D] FAIL-CLOSED: new-schema slot에서 wdId resolve 실패
-        // → aggregate 포함 전체 mutation 금지 (recount dependency 금지)
-        if (isNewSchemaSlot && !resolvedWdId) {
-          throw new Error(
-            `FAIL-CLOSED: new-schema slot에서 workDetail resolve 실패 ` +
-            `(toId=${toId}, slotId=${slotId}, app=${doc.id}) ` +
-            `— aggregate-only mutation 금지`
-          );
-        }
-
-        // ── Phase 2: 모든 writes (모든 reads + validation 완료 후) ──────────
-
-        // W1. Application → EXPIRED
-        tx.update(doc.ref, {
+      // [R7-P4.4E.11C.0C.0b.1 §11] 전이와 counter 계약은 공용 helper 가
+      //   갖는다 — 계정삭제 cleanup 이 같은 식을 쓴다.
+      const outcome = await db.runTransaction((tx) =>
+        srvTerminateInvitedApplicationInTx(tx, doc.ref, {
           status: "EXPIRED",
-          expiredAt,
-          statusHistory: admin.firestore.FieldValue.arrayUnion({
-            status: "EXPIRED", at: expiredAt, by: null, action: "AUTO_EXPIRE",
-          }),
-        });
-
-        // W2. Slot + TO counter decrements
-        if (slotRef && toId) {
-          const slotUpdate: Record<string, unknown> = {
-            pendingCount: admin.firestore.FieldValue.increment(-1),
-          };
-          // [Phase 8.1E.5] workTypeCounts.pendingCount 제거 — workDetailCounts canonical
-          if (resolvedWdId) {
-            // new-schema slot: canonical counter decrement (invariant 통과한 경우만 여기 도달)
-            slotUpdate[`workDetailCounts.${resolvedWdId}.pendingCount`] =
-              admin.firestore.FieldValue.increment(-1);
-          }
-          tx.update(slotRef, slotUpdate);
-          tx.update(db.collection("tos").doc(toId), {
-            totalPending: admin.firestore.FieldValue.increment(-1),
-          });
-        }
-      });
-      success++;
+          action: "AUTO_EXPIRE",
+          at: expiredAt,
+          fields: {expiredAt},
+        }));
+      if (outcome === "skipped") skipped++;
+      else success++;
     } catch (err) {
       errors++;
       console.error(`[초대 만료] 처리 실패 (appId=${doc.id}):`, err);
@@ -42652,12 +42705,19 @@ export const callableDeleteAccountApplications = onCall(
     const callerUid = request.auth.uid;
 
     // 활성 지원서 병렬 조회 (Admin SDK → rules 우회)
-    const [pendingSnap, contractSnap, confirmedSnap, attSnap] = await Promise.all([
-      db.collection("applications").where("uid", "==", callerUid).where("status", "==", "PENDING").get(),
-      db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONTRACT_PENDING").get(),
-      db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONFIRMED").get(),
-      db.collection("attendance").where("userId", "==", callerUid).where("status", "==", "scheduled").get(),
-    ]);
+    // [R7-P4.4E.11C.0C.0b.1 §1] INVITED 가 빠져 있었다. 그런데 이 제품에서
+    //   INVITED 는 historical row 가 아니다 — `PENDING_STATUSES` 가
+    //   `[PENDING, INVITED]` 이고 관리자 화면은 그것을 "초대 중"으로
+    //   센다. 그래서 탈퇴가 끝난 뒤에도 **없는 사람의 응답을 기다리는**
+    //   상태가 남았다.
+    const [pendingSnap, contractSnap, confirmedSnap, attSnap, invitedSnap] =
+      await Promise.all([
+        db.collection("applications").where("uid", "==", callerUid).where("status", "==", "PENDING").get(),
+        db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONTRACT_PENDING").get(),
+        db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONFIRMED").get(),
+        db.collection("attendance").where("userId", "==", callerUid).where("status", "==", "scheduled").get(),
+        db.collection("applications").where("uid", "==", callerUid).where("status", "==", "INVITED").get(),
+      ]);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -42887,6 +42947,50 @@ export const callableDeleteAccountApplications = onCall(
       }
     }
 
+    // ── INVITED 종료 ──────────────────────────────────────────────────────────
+    // [R7-P4.4E.11C.0C.0b.1 §3·§4·§5] 상태만 끝내고 **문서는 지우지 않는다.**
+    //   누가 언제 어떤 조건으로 초대했는지는 남아야 한다.
+    //
+    //   종료 상태는 `AUTO_CANCELED` + `cancelReason: "ACCOUNT_DELETED"` 다.
+    //     · `REJECTED` 는 "초대 거절" — 근로자가 거절한 사실이 아니다
+    //     · `CANCELED` 는 "초대 철회" — 관리자가 철회한 사실도 아니다
+    //     · `EXPIRED` 는 "응답 만료" — 시간이 지난 것도 아니다
+    //   `AUTO_CANCELED` 는 화면이 "자동 종료"로 읽고, 이미 사유별 분기를
+    //   갖고 있다(`SCHEDULE_CONFLICT` → "일정 겹침 종료"). 같은 자리에
+    //   사유 하나만 더한다. 새 status enum 을 만들지 않는다.
+    //
+    //   전이와 counter 계약은 초대 만료 scheduler 와 **같은 helper** 다(§11).
+    //   그래서 대기 counter 세 개가 정확히 1 내려가고, 재시도는 멱등이다.
+    let invitedTerminated = 0;
+    let invitedSkipped = 0;
+    let invitedFailed = 0;
+    if (invitedSnap.docs.length > 0) {
+      const invAt = admin.firestore.Timestamp.now();
+      for (const doc of invitedSnap.docs) {
+        try {
+          const outcome = await db.runTransaction((tx) =>
+            srvTerminateInvitedApplicationInTx(tx, doc.ref, {
+              status: "AUTO_CANCELED",
+              action: "ACCOUNT_DELETED",
+              at: invAt,
+              fields: {canceledAt: invAt, cancelReason: "ACCOUNT_DELETED"},
+            }));
+          if (outcome === "skipped") invitedSkipped++;
+          else invitedTerminated++;
+        } catch (e) {
+          // [§8] 삼키지 않는다 — 집계로 돌려주고, Final 의 residual gate 가
+          //   active INVITED 를 다시 세서 파괴를 막는다.
+          invitedFailed++;
+          console.error(
+            "[deleteAccountApplications] INVITED 종료 실패 — " +
+            `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+        }
+      }
+      console.info(
+        `[deleteAccountApplications] INVITED terminated=${invitedTerminated} ` +
+        `skipped=${invitedSkipped} failed=${invitedFailed}`);
+    }
+
     // ── PENDING 변경 요청 취소 ─────────────────────────────────────────────────
     // [BUG-05 FIX] schedule_change_requests / payment_change_requests PENDING 고아
     //   기존: 미처리 → 관리자 화면에 탈퇴 사용자 요청 잔류, 처리 시 users 조회 실패 가능
@@ -42943,6 +43047,10 @@ export const callableDeleteAccountApplications = onCall(
       }).length,
       // [LIFECYCLE-R0] 건너뛴 건 — 탈퇴해도 일한 기록은 남는다.
       preservedCount: delPreserved.length,
+      // [R7-P4.4E.11C.0C.0b.1 §8] PARTIAL ≠ SUCCESS — 실패 수를 숨기지 않는다.
+      invitedTerminated,
+      invitedSkipped,
+      invitedFailed,
       // pendingToIds · confirmedApps: 클라이언트 CF 통합 후 참조 불필요 (하위 호환 유지용)
       pendingToIds,
       confirmedApps,
@@ -43996,7 +44104,7 @@ async function srvCountDeletionDomainResidual(
   };
   try {
     const [pending, contractPending, confirmed, scheduled,
-      schedReq, payReq] = await Promise.all([
+      schedReq, payReq, invited] = await Promise.all([
       db.collection("applications")
         .where("uid", "==", uid).where("status", "==", "PENDING").get(),
       db.collection("applications")
@@ -44011,9 +44119,15 @@ async function srvCountDeletionDomainResidual(
         .where("applicantUid", "==", uid).where("status", "==", "PENDING").get(),
       db.collection("payment_change_requests")
         .where("workerId", "==", uid).where("status", "==", "PENDING").get(),
+      // [R7-P4.4E.11C.0C.0b.1 §7] INVITED 도 **살아 있는 관계**다.
+      //   관리자가 응답을 기다리는 상태이므로, 이것이 남은 채로 계정을
+      //   지우면 없는 사람을 계속 기다린다. cleanup 이 종료 상태로
+      //   전이한 뒤에는 이 쿼리가 0 이 된다.
+      db.collection("applications")
+        .where("uid", "==", uid).where("status", "==", "INVITED").get(),
     ]);
     out.applications =
-      pending.size + contractPending.size + confirmed.size;
+      pending.size + contractPending.size + confirmed.size + invited.size;
     out.attendance = scheduled.size;
     // [§6·§12] 과거 기록(APPROVED·REJECTED·CANCELED)은 세지 않는다.
     //   막아야 하는 것은 "지금도 실행 가능한" 요청뿐이다.

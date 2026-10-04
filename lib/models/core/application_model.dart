@@ -673,6 +673,12 @@ class ApplicationModel {
     //   근로자 이력에 남는 문장이므로 사건을 정확히 말한다.
     if (isConfirmedReassignedAway) return '다른 업무로 변경 확정';
     if (isReassignedAway) return '다른 업무로 확정됨';
+    // [R7-P4.4E.11C.0C.0b.1 §13·§14] 탈퇴로 끝난 초대·지원. 사건을 정확히
+    //   말한다 — '자동 취소됨'은 왜 끝났는지 말하지 않는다. 그리고 삭제
+    //   직전 세션이 이 상태를 읽어도 '알 수 없음'이 되지 않는다.
+    if (status == 'AUTO_CANCELED' && cancelReason == 'ACCOUNT_DELETED') {
+      return '탈퇴로 종료';
+    }
     switch (status) {
       case 'PENDING':           return '대기 중';
       case 'CONTRACT_PENDING':  return '계약 대기';

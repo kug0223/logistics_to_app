@@ -2434,8 +2434,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       case AppStatus.expired:
         return ('응답 만료', AppColors.grey600);
       case AppStatus.autoCanceled:
+        // [R7-P4.4E.11C.0C.0b.1 §13] 탈퇴로 끝난 초대는 거절도 철회도
+        //   아니다. 기존 사유 분기에 한 줄만 더한다 — 새 enum 없이.
         return (
-          app.cancelReason == 'SCHEDULE_CONFLICT' ? '일정 겹침 종료' : '자동 종료',
+          switch (app.cancelReason) {
+            'SCHEDULE_CONFLICT' => '일정 겹침 종료',
+            'ACCOUNT_DELETED' => '탈퇴로 종료',
+            _ => '자동 종료',
+          },
           AppColors.grey600,
         );
       default:
