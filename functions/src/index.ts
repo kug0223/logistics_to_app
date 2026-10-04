@@ -43418,6 +43418,18 @@ type SrvMoneyContinuity = {
    *   그래서 successor 판정을 공유한다.
    */
   orphanUnpaidWages: number;
+  /**
+   * [R7-P4.4E.11C.0C.0a.6.2] 그 사업장들의 **실근무는 있는데 아직 계산되지
+   * 않은** 근태 건수.
+   *
+   *   `calculated`/`confirmed` 는 이미 정산이 개시된 돈이다. 그런데 출근은
+   *   했고 `wageStatus` 가 아직 `pending` 인 건은 그 앞 단계다 — 계산할
+   *   사람이 필요하다. 끝낼 actor 가 사라지면 이쪽이 먼저 주인을 잃는다.
+   *
+   *   실근무 판정은 새로 만들지 않는다 — `srvActualWorkReasonOf` 하나다.
+   *   그래서 노쇼·결근(terminal 비근무)은 세지 않는다.
+   */
+  orphanWorkedUncalculated: number;
 };
 
 /**
@@ -43452,8 +43464,15 @@ async function srvCountOrphanMoneyObligations(
 ): Promise<SrvMoneyContinuity> {
   const out: SrvMoneyContinuity = {
     orphanBusinesses: 0, orphanApproved: 0, orphanUnpaidWages: 0,
+    orphanWorkedUncalculated: 0,
   };
   if (typeof uid !== "string" || uid.length === 0) return out;
+  // [R7-P4.4E.11C.0C.0a.6.2 §8] 미래 예정 근무를 실근무로 오인하지 않는다.
+  //   `wageStatus == "pending"` 전체를 세면 아직 오지 않은 근무까지 걸려
+  //   관리자 탈퇴가 과차단된다. 그래서 **오늘까지**로 범위를 좁힌다.
+  //   workDate 는 이 프로젝트에서 KST 자정 instant 다.
+  const todayStartTs = admin.firestore.Timestamp.fromMillis(
+    srvKstDayStartMs(Date.now()));
 
   const bizSnap = await db.collection("businesses")
     .where("adminIds", "array-contains", uid)
@@ -43470,7 +43489,7 @@ async function srvCountOrphanMoneyObligations(
     //   같다(businessId equality + wageStatus equality). 그래서 신규 인덱스가
     //   필요 없다 — attendance(businessId, wageStatus, workDate) 복합
     //   인덱스의 prefix 로 서빙된다.
-    const [approved, calculated, confirmed] = await Promise.all([
+    const [approved, calculated, confirmed, pendingPast] = await Promise.all([
       db.collection("interim_settlement_requests")
         .where("businessId", "==", biz.id)
         .where("status", "==", "APPROVED")
@@ -43486,11 +43505,26 @@ async function srvCountOrphanMoneyObligations(
         .where("wageStatus", "==", "confirmed")
         .count()
         .get(),
+      // [§8 Option A] 같은 복합 인덱스(businessId, wageStatus, workDate)의
+      //   equality+range 로 서빙된다 — 신규 인덱스가 없다. 과거/오늘 분만
+      //   읽고 실근무 판정은 메모리에서 canonical helper 로 한다.
+      db.collection("attendance")
+        .where("businessId", "==", biz.id)
+        .where("wageStatus", "==", "pending")
+        .where("workDate", "<=", todayStartTs)
+        .select("status", "checkIn", "wageStatus")
+        .limit(500)
+        .get(),
     ]);
     const pendingTransfer = approved.data().count;
     const unpaidWages =
       calculated.data().count + confirmed.data().count;
-    if (pendingTransfer === 0 && unpaidWages === 0) continue;
+    let workedUncalculated = 0;
+    for (const att of pendingPast.docs) {
+      if (srvActualWorkReasonOf(att.data())) workedUncalculated++;
+    }
+    if (pendingTransfer === 0 && unpaidWages === 0 &&
+        workedUncalculated === 0) continue;
 
     const d = biz.data();
     const candidates = new Set<string>();
@@ -43522,9 +43556,175 @@ async function srvCountOrphanMoneyObligations(
       out.orphanBusinesses++;
       out.orphanApproved += pendingTransfer;
       out.orphanUnpaidWages += unpaidWages;
+      out.orphanWorkedUncalculated += workedUncalculated;
     }
   }
   return out;
+}
+
+/** [R7-P4.4E.11C.0C.0a.6.2] 탈퇴가 **취소·무효화해 버릴** 약속의 범위. */
+type SrvWithdrawPromiseScope = {
+  /** 이 탈퇴로 비활성화될 사업장 수. */
+  soleBusinesses: number;
+  /** 그 사업장들에서 **취소될** 살아 있는 확정 약속 수. */
+  liveConfirmed: number;
+  /** 그 사업장들에서 **무효화될** 서명 대기 계약 수. */
+  pendingContracts: number;
+};
+
+/**
+ * [R7-P4.4E.11C.0C.0a.6.2 §2·§3·§4·§5] 확정은 약속이다.
+ *
+ *   `callableGetWithdrawBlockers` 는 확정 근무자·고정계약이 있으면 탈퇴를
+ *   막는다. 그런데 서버 삭제 경계에는 그 정책이 없었다. 그래서 직접
+ *   호출하면 통과하고, Final 이 사업장을 비활성화하면
+ *   `onBusinessDeactivated` 가 확정 지원서를 `CANCELED` 로, 서명 대기
+ *   계약을 `voided` 로 바꾼다. **계정 탈퇴가 남의 근무 약속을 취소하는
+ *   business mutation 이 되는 것이다.**
+ *
+ *   [§5] teardown 이 모순 없이 종결한다는 사실은 그 사건을 **허용할지**에
+ *   대한 답이 아니다. safety mechanism 과 authorization 은 다르다.
+ *   repo 와 CLAUDE.md 에 "관리자 탈퇴 시 미래 확정 약속 자동취소를
+ *   허용한다"는 명시적 product decision 은 없다 — 유일한 자동취소 정책은
+ *   확정 시 겹치는 **PENDING** 자동취소다. 그래서 더 강한 명시적 계약인
+ *   현재 hardBlock 을 서버에서도 집행한다.
+ *
+ *   [§3·§16-C5] 범위는 **비활성화될 사업장**이다. 공동 관리자가 남으면
+ *   Final 은 `adminIds` 에서 uid 만 빼고 사업장은 그대로 산다 — 약속이
+ *   하나도 취소되지 않으므로 막을 이유가 없다. 판정 술어는 Final 의
+ *   business cleanup 과 **같다**(`adminIds.length === 1`).
+ *   `canManageWage` 서브관리자는 사업장을 살려 두지 못한다 — 급여
+ *   continuity(§9)와 약속 continuity 의 술어가 다른 이유다.
+ *
+ *   [§16-C3·C4] 세는 것은 **취소될 약속**뿐이다.
+ *     · PENDING 은 약속이 아니다(기존에도 warning) — 세지 않는다
+ *     · 좌석을 반납한 건·기간이 끝난 장기 약속 — 세지 않는다
+ *     · 단기 과거 근무일 — 미래 약속이 아니다, 세지 않는다
+ *     · 실근무가 시작된 건 — teardown 이 `preserved` 로 **보존**한다.
+ *       취소되지 않으므로 이 blocker 가 아니다(돈은 §6 gate 소관)
+ *
+ * @param {string} uid 탈퇴하려는 관리자
+ * @return {Promise<SrvWithdrawPromiseScope>} 취소·무효화될 약속 범위
+ */
+async function srvCountWithdrawPromiseScope(
+  uid: string
+): Promise<SrvWithdrawPromiseScope> {
+  const out: SrvWithdrawPromiseScope = {
+    soleBusinesses: 0, liveConfirmed: 0, pendingContracts: 0,
+  };
+  if (typeof uid !== "string" || uid.length === 0) return out;
+
+  const bizSnap = await db.collection("businesses")
+    .where("adminIds", "array-contains", uid)
+    .get();
+  const sole = bizSnap.docs.filter((d) => {
+    if (d.data()["deactivatedAt"]) return false;
+    const adminIds = (d.data()["adminIds"] as string[] | undefined) ?? [];
+    return adminIds.length === 1 && adminIds.includes(uid);
+  });
+  out.soleBusinesses = sole.length;
+  if (sole.length === 0) return out;
+
+  const todayNum = srvKstDateNum(new Date());
+  /** 단기 약속의 근무일이 오늘 이후인가 — 과거 약속은 미래 약속이 아니다. */
+  const futureShortTerm = (d: FirebaseFirestore.DocumentSnapshot): boolean => {
+    if (d.get("type") === "long_term") return true;
+    const wd = d.get("workDate") as admin.firestore.Timestamp | undefined;
+    if (!wd || typeof wd.toDate !== "function") return true; // 모르면 산 것으로
+    return srvKstDateNum(wd.toDate()) >= todayNum;
+  };
+
+  for (const biz of sole) {
+    const [appSnaps, contracts] = await Promise.all([
+      Promise.all(CONFIRMED_STATUSES.map((st) =>
+        db.collection("applications")
+          .where("businessId", "==", biz.id)
+          .where("status", "==", st)
+          .select("status", "type", "workDate", "workEndDate",
+            "actualResignDate", "staffingReleasedAt")
+          .limit(200)
+          .get())),
+      db.collection("employment_contracts")
+        .where("businessId", "==", biz.id)
+        .where("status", "in", ["pending_employer", "pending_worker"])
+        .count()
+        .get(),
+    ]);
+    out.pendingContracts += contracts.data().count;
+
+    const candidates: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    for (const snap of appSnaps) {
+      for (const d of snap.docs) {
+        if (d.get("staffingReleasedAt") != null) continue; // 반납된 자리
+        if (!srvOccupiesSeatToday(d)) continue; // 기간이 끝난 약속
+        if (!futureShortTerm(d)) continue; // 지나간 단기 근무일
+        candidates.push(d);
+      }
+    }
+    if (candidates.length === 0) continue;
+
+    // [§5] 실근무가 시작된 건은 teardown 이 보존한다 — 취소될 약속이
+    //   아니다. 판정은 canonical helper 로 하고, 읽을 양이 많으면
+    //   **모르는 쪽을 막는다**(fail closed) — 보존될 것이라고 추정하지
+    //   않는다.
+    const CHECK_CAP = 50;
+    if (candidates.length > CHECK_CAP) {
+      out.liveConfirmed += candidates.length;
+      continue;
+    }
+    for (const d of candidates) {
+      const verdict = await srvHasActualWorkStarted(d.id, d.data());
+      if (!verdict.started) out.liveConfirmed++;
+    }
+  }
+  return out;
+}
+
+/**
+ * [R7-P4.4E.11C.0C.0a.6.2 §10~§15] 근로자 본인 탈퇴로 **지급 불가가
+ * 되어 버릴** 확정 임금 건수.
+ *
+ *   `users/{uid}` 가 사라지면 그 돈은 되살릴 수 없다. 두 경로가 함께
+ *   닫히기 때문이다.
+ *     · `callableMarkTransferredBatch` → `srvWageSnapshotStaleReason` 이
+ *       현재 계좌 버전을 `srvDocumentVersionsOf({})` = 0 으로 읽고,
+ *       확정 당시 근거 버전(≥1)과 불일치하므로 `STALE_PAYMENT_SNAPSHOT`
+ *     · 회복 경로 `callableRefreshWagePaymentSnapshot` 은
+ *       `srvResolvePayrollReadiness` 가 `MISSING_BANK_ACCOUNT` 를 돌려줘
+ *       갱신 자체가 skip 된다
+ *   그리고 `calculated` 를 그 뒤에 확정하면 4필드가 비어
+ *   `wageAccountReviewRequired` 로 막힌다 — 역시 되살릴 수 없다.
+ *
+ *   그래서 freshness 검사를 "탈퇴한 사용자면 건너뛴다"로 약화시키지
+ *   않는다(§13). 대신 **지급이 끝나기 전에는 탈퇴를 완료하지 않는다.**
+ *   기존 stale 안전장치는 그대로 둔다.
+ *
+ *   [§19-P8] 노쇼·결근은 `finalWage 0` 으로 confirmed 가 된다. 보낼 돈이
+ *   없는 건으로 탈퇴를 막지 않는다 — 판정은 `srvIsNonPayableZero` 하나다.
+ *
+ * @param {string} uid 탈퇴하려는 근로자
+ * @return {Promise<number>} 지급 대상인 미이체·미확정 급여 건수
+ */
+async function srvCountWorkerUnpaidPayableWages(uid: string): Promise<number> {
+  if (typeof uid !== "string" || uid.length === 0) return 0;
+  const snaps = await Promise.all(
+    (["calculated", "confirmed"] as const).map((ws) =>
+      db.collection("attendance")
+        .where("userId", "==", uid)
+        .where("wageStatus", "==", ws)
+        .select("status", "finalWage", "wageStatus")
+        .limit(500)
+        .get()));
+  let n = 0;
+  for (const snap of snaps) {
+    for (const d of snap.docs) {
+      if (srvIsNonPayableZero(
+        d.get("status") as string | undefined,
+        d.get("finalWage") as number | undefined)) continue;
+      n++;
+    }
+  }
+  return n;
 }
 
 /**
@@ -43582,6 +43782,25 @@ async function srvAssertAccountDeletionAllowed(
         `미서명 계약서(${unsignedCount}건)를 먼저 서명해주세요.`
       );
     }
+
+    // [R7-P4.4E.11C.0C.0a.6.2 §10~§15 Option A] 확정된 임금은 끝까지
+    //   지급 가능해야 한다.
+    //
+    //   계정이 사라지면 그 돈은 **영구히 이체 불가**가 된다(stale 판정과
+    //   회복 경로가 함께 닫힌다 — `srvCountWorkerUnpaidPayableWages`).
+    //   그러므로 freshness 안전장치를 깎는 대신 지급이 끝나기 전에는
+    //   탈퇴를 완료하지 않는다. 사용자가 직접 해소할 수 없는 조건이지만
+    //   근로기준법 36조(금품청산 14일)가 상한을 준다 — 그리고 대안은
+    //   "받을 돈이 영구히 사라지는" 것이다.
+    const unpaidPayable = await srvCountWorkerUnpaidPayableWages(uid);
+    if (unpaidPayable > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `[PENDING_WAGES] 아직 받지 못한 급여 ${unpaidPayable}건이 있습니다. ` +
+        "지급이 완료된 뒤 탈퇴할 수 있습니다. " +
+        "관리자에게 급여 이체를 요청해주세요."
+      );
+    }
   }
 
   // [R7-P4.4E.11C.0C.0a.6 §1·§6·§13·§19] **승인된 돈에는 주인이 남아야 한다.**
@@ -43629,6 +43848,41 @@ async function srvAssertAccountDeletionAllowed(
         "[UNPAID_WAGES] 미확정·미이체 급여 " +
         `${money.orphanUnpaidWages}건이 남아 있습니다. ` +
         "급여 확정과 이체를 완료한 뒤 탈퇴해주세요."
+      );
+    }
+    // [R7-P4.4E.11C.0C.0a.6.2 §6·§7] 출근은 했는데 아직 계산되지 않은 건.
+    //   정산 개시 **이전** 단계라 `UNPAID_WAGES` 보다 먼저 주인을 잃는다.
+    if (money.orphanWorkedUncalculated > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "[WORKED_WAGE_UNCALCULATED] 근무는 완료됐지만 급여가 계산되지 않은 " +
+        `기록 ${money.orphanWorkedUncalculated}건이 남아 있습니다. ` +
+        "급여를 계산·확정한 뒤 탈퇴해주세요."
+      );
+    }
+
+    // [R7-P4.4E.11C.0C.0a.6.2 §2~§5] 확정은 약속이다.
+    //
+    //   preview 는 확정 근무자·고정계약이 있으면 탈퇴를 막는다. 서버에는
+    //   그 정책이 없어서, 직접 호출하면 통과하고 Final 의 비활성화가
+    //   남의 확정 약속을 `CANCELED` 로, 서명 대기 계약을 `voided` 로
+    //   바꿨다. teardown 이 모순 없이 종결한다는 것은 그 사건을
+    //   **허용할지**에 대한 답이 아니다(§5).
+    const promise = await srvCountWithdrawPromiseScope(uid);
+    if (promise.liveConfirmed > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `[CONFIRMED_WORKERS] 확정된 근무 약속 ${promise.liveConfirmed}건이 ` +
+        "남아 있습니다. 탈퇴하면 이 약속들이 취소됩니다 — " +
+        "먼저 정리한 뒤 탈퇴해주세요."
+      );
+    }
+    if (promise.pendingContracts > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `[ACTIVE_CONTRACTS] 서명 대기 계약 ${promise.pendingContracts}건이 ` +
+        "남아 있습니다. 탈퇴하면 이 계약들이 무효 처리됩니다 — " +
+        "먼저 정리한 뒤 탈퇴해주세요."
       );
     }
   }
@@ -45527,6 +45781,15 @@ export const callableGetWithdrawBlockers = onCall(
           count: orphanInterim.orphanApproved,
         });
       }
+      // [R7-P4.4E.11C.0C.0a.6.2 §6] 같은 helper 가 세는 세 번째 항목이다.
+      //   위 `wageCount` 는 `calculated`/`confirmed` 만 본다 — 출근했는데
+      //   아직 계산되지 않은 건은 어느 preview blocker 에도 없었다.
+      if (orphanInterim.orphanWorkedUncalculated > 0) {
+        hardBlocks.push({
+          type: "WORKED_WAGE_UNCALCULATED",
+          count: orphanInterim.orphanWorkedUncalculated,
+        });
+      }
       if (toData.confirmedWorkers > 0) {
         hardBlocks.push({type: "CONFIRMED_WORKERS", count: toData.confirmedWorkers});
       }
@@ -45558,25 +45821,16 @@ export const callableGetWithdrawBlockers = onCall(
           ).length;
         })(),
 
-        // 2. 미확정/미이체 급여 — WARNING (근로자 본인이 해결 불가)
-        // [FIX] 'workerId' → 'userId' (Firestore 실제 필드명)
-        // [L-1 FIX] 전수 조회 대신 wageStatus별 count() 쿼리 2회 — 3년+ 경력 근로자 1000+ 문서 읽기 방지
-        // [INDEX] attendance: (userId ASC, wageStatus ASC) 복합 인덱스 필요 (firestore.indexes.json 등록)
-        (async () => {
-          const [calcCount, confCount] = await Promise.all([
-            db.collection("attendance")
-              .where("userId", "==", callerUid)
-              .where("wageStatus", "==", "calculated")
-              .count()
-              .get(),
-            db.collection("attendance")
-              .where("userId", "==", callerUid)
-              .where("wageStatus", "==", "confirmed")
-              .count()
-              .get(),
-          ]);
-          return calcCount.data().count + confCount.data().count;
-        })(),
+        // 2. 미확정/미이체 급여 — BLOCK
+        // [R7-P4.4E.11C.0C.0a.6.2 §15] 예전에는 warning 이었다. 그런데
+        //   계정이 사라지면 그 돈은 **영구히 이체 불가**가 된다 —
+        //   stale 판정과 회복 경로가 함께 닫힌다. 서버가 막기로 했으므로
+        //   preview 도 같은 canonical 술어를 쓴다.
+        //   count() 대신 문서를 보는 이유는 노쇼·결근 0원 건을 빼기
+        //   위해서다(`srvIsNonPayableZero`) — 보낼 돈이 없는 건으로
+        //   탈퇴를 막으면 해소할 방법이 없다.
+        // [INDEX] attendance: (userId ASC, wageStatus ASC) 복합 인덱스 사용
+        srvCountWorkerUnpaidPayableWages(callerUid),
 
         // 3. 진행 중 장기 근무 확정 — WARNING
         // [FIX] 'applicantId' → 'uid' (Firestore 실제 필드명)
@@ -45602,7 +45856,7 @@ export const callableGetWithdrawBlockers = onCall(
         hardBlocks.push({type: "UNSIGNED_CONTRACT", count: unsignedCount});
       }
       if (pendingWageCount > 0) {
-        warnings.push({type: "PENDING_WAGES", count: pendingWageCount});
+        hardBlocks.push({type: "PENDING_WAGES", count: pendingWageCount});
       }
       if (confirmedWorkCount > 0) {
         warnings.push({type: "CONFIRMED_WORK", count: confirmedWorkCount});

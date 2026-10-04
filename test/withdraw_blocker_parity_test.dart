@@ -173,10 +173,13 @@ void main() {
       ]) {
         expect(userBranch, isNot(contains(biz)));
       }
-      // 근로자 측 hard 는 둘, warning 은 둘이다.
+      // 근로자 측 blocker 는 별도 code 를 쓴다.
       expect(userBranch, contains('hardBlocks.push({type: "UNSIGNED_CONTRACT"'));
       expect(userBranch, contains('hardBlocks.push({type: "SUBADMIN_MEMBERSHIP"'));
-      expect(userBranch, contains('warnings.push({type: "PENDING_WAGES"'));
+      // [R7-P4.4E.11C.0C.0a.6.2 §15] PENDING_WAGES 는 warning 에서
+      //   hardBlock 으로 승격됐다 — 계정이 사라지면 그 돈은 되살릴 수 없다.
+      //   code 는 그대로이므로 여기서는 소속만 갱신한다.
+      expect(userBranch, contains('hardBlocks.push({type: "PENDING_WAGES"'));
       expect(userBranch, contains('warnings.push({type: "CONFIRMED_WORK"'));
     });
   });
@@ -209,14 +212,18 @@ void main() {
       expect(_flat(helper), contains('.where("wageStatus", "==", "confirmed")'));
       expect(_flat(helper), contains(
           'const unpaidWages = calculated.data().count + confirmed.data().count;'));
-      // 끝난 돈과 정산 미개시는 세지 않는다 — 영구 해소 불가 blocker 방지.
+      // 끝난 돈은 세지 않는다 — 영구 해소 불가 blocker 방지.
       expect(helper, isNot(contains('"transferred"')));
-      expect(helper, isNot(contains('"pending"')));
+      // [R7-P4.4E.11C.0C.0a.6.2] `pending` 은 **별도 counter** 로 들어왔다.
+      //   UNPAID_WAGES 집계에는 섞이지 않는다 — 할 일이 다르다.
+      expect(_flat(helper), isNot(contains(
+          'const unpaidWages = calculated.data().count + '
+          'confirmed.data().count + ')));
     });
 
     test('WBP-GAP-04 사업장 scope 를 섞지 않는다', () {
-      // 정산 1 + 급여 2 = 3 개 쿼리 모두 biz.id equality 다.
-      expect(_count(helper, '.where("businessId", "==", biz.id)'), 3);
+      // 정산 1 + 급여 2 + 미계산 1 = 4 개 쿼리 모두 biz.id equality 다.
+      expect(_count(helper, '.where("businessId", "==", biz.id)'), 4);
       expect(helper, isNot(contains('array-contains-any')));
       expect(helper, isNot(contains('collectionGroup')));
     });
@@ -230,12 +237,14 @@ void main() {
       expect(_count(helper, 'out.orphanUnpaidWages +='), 1);
     });
 
-    test('WBP-GAP-06 둘 다 0 일 때만 successor 판정을 건너뛴다', () {
+    test('WBP-GAP-06 모두 0 일 때만 successor 판정을 건너뛴다', () {
+      // [R7-P4.4E.11C.0C.0a.6.2] 세 번째 counter 가 들어왔다 — 조건도 셋이다.
       expect(_flat(helper), contains(
-          'if (pendingTransfer === 0 && unpaidWages === 0) continue;'));
-      // `||` 로 바뀌면 급여만 남은 사업장이 그대로 통과한다.
+          'if (pendingTransfer === 0 && unpaidWages === 0 && '
+          'workedUncalculated === 0) continue;'));
+      // `||` 로 바뀌면 한 종류만 남은 사업장이 그대로 통과한다.
       expect(_flat(helper), isNot(contains(
-          'if (pendingTransfer === 0 || unpaidWages === 0) continue;')));
+          'if (pendingTransfer === 0 || unpaidWages === 0')));
     });
 
     test('WBP-GAP-07 successor 술어가 급여 writer 의 authority 와 같다', () {

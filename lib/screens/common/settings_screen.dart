@@ -1548,6 +1548,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'INTERIM_SETTLEMENT_UNPROCESSED' =>
                 '승인된 중간정산 $n건 미이체 — 탈퇴 후 처리할 관리자가 없습니다',
               'CONFIRMED_WORKERS' => '확정 근무자 $n명이 있는 진행 중 공고',
+              // [R7-P4.4E.11C.0C.0a.6.2] 출근은 했는데 급여 계산 전인 기록이다.
+              //   "미확정/미이체"(UNPAID_WAGES)는 정산이 이미 개시된 건이라
+              //   해야 할 일이 다르다 — 문구를 섞지 않는다.
+              'WORKED_WAGE_UNCALCULATED' =>
+                '급여 계산 전 완료 근무 $n건 — 계산·확정 후 탈퇴 가능',
+              // 근로자 본인 — 지급이 끝나기 전에 계정이 사라지면 그 돈은
+              //   되살릴 수 없다. 본인이 직접 해소할 수 없는 조건이므로
+              //   무엇을 해야 하는지 문구로 말한다.
+              'PENDING_WAGES' =>
+                '받지 못한 급여 $n건 — 관리자에게 이체 요청 후 탈퇴 가능',
               'UNSIGNED_CONTRACT' => '미서명 계약서 $n건',
               'SUBADMIN_MEMBERSHIP' => '서브관리자로 등록된 사업장 $n곳 — 탈퇴 전 해제 필요',
               'ACTIVE_CONTRACTS' => '고정계약 근로자 $n명 — 탈퇴 전 계약 종료 필요',
@@ -1560,7 +1570,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             return switch (w['type'] as String? ?? '') {
               'PENDING_APPLICANTS' => '대기 중 지원자 $n명 — 탈퇴 시 자동 취소',
               'ACTIVE_TOS' => '활성 공고 $n개 — 탈퇴 시 자동 마감',
-              'PENDING_WAGES' => '미확정/미이체 급여 $n건 — 탈퇴 전 관리자 확인 권장',
               'CONFIRMED_WORK' => '진행 중 장기 근무 $n건 — 탈퇴 전 관리자에게 퇴사 신청 권장',
               final t => t,
             };

@@ -298,7 +298,8 @@ void main() {
       expect(_flat(helper), contains(r'.where("businessId", "==", biz.id)'));
       // 전체 컬렉션 스캔이나 whereIn 혼합이 없다.
       expect(helper, isNot(contains('array-contains-any')));
-      expect(_count(helper, '.where("businessId"'), 3);
+      // [R7-P4.4E.11C.0C.0a.6.2] 정산 1 + 급여 2 + 미계산 1 = 4.
+      expect(_count(helper, '.where("businessId"'), 4);
     });
   });
 
