@@ -1125,7 +1125,18 @@ service cloud.firestore {
       //   클라이언트 직접 create 경로 전면 차단 — CF Admin SDK 전용.
       allow create: if false;
 
-      allow update: if isLoggedIn() && (
+      // [R7-P4.4E.11C.0C.0a.4.1 §1·§2] cleanup key 불변.
+      //
+      //   `applications.uid` 는 Final 의 domain residual 술어다
+      //   (PENDING·CONTRACT_PENDING·CONFIRMED 세 쿼리 모두). 관리자 분기는
+      //   이미 `uid` 를 제외하고 있었지만 마지막 `isSuperAdmin()` 에는 제한이
+      //   없어서 그 분기로 재지정이 가능했다 — members 와 같은 클래스다.
+      //
+      //   여기서 바꾸는 것은 identity key 하나뿐이다. 지원서 상태 전이 정책은
+      //   그대로다.
+      allow update: if isLoggedIn() &&
+                    !request.resource.data.diff(resource.data).affectedKeys()
+                      .hasAny(['uid']) && (
                       // 지원 취소 (본인 PENDING → CANCELED): status/canceledAt/statusHistory만 허용
                       // [036] CONTRACT_PENDING 상태에서 취소 불가 — 관리자 개입 필요
                       (isOwner(resource.data.uid) &&
@@ -1313,6 +1324,14 @@ service cloud.firestore {
       //   이전 경로: isOwner + checkOut/workHours/status 필드 허용 블록
       //   유지 경로(근무자): canceledWithApplication, absent 전이만 허용 (isOwner 경유 잔존)
       allow update: if isLoggedIn() &&
+                      // [R7-P4.4E.11C.0C.0a.4.1 §1·§2] cleanup key 불변.
+                      //   `attendance.userId` 는 Final 의 domain residual
+                      //   술어다(`status == 'scheduled'` 예정 근무). 관리자
+                      //   분기는 `userId` 를 제외했지만 SUPER_ADMIN 분기는
+                      //   금액 필드만 제한하고 `userId` 는 열려 있었다.
+                      //   근태·급여 정책은 건드리지 않는다 — key 재지정만 막는다.
+                      !request.resource.data.diff(resource.data).affectedKeys()
+                        .hasAny(['userId']) &&
                       !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['transferredBy']) ||
@@ -1868,7 +1887,13 @@ service cloud.firestore {
       // [MEDIUM-FIX] 관리자 취소 경로: BUSINESS_ADMIN cancel/expire 허용 (SubAdmin → CF 경유)
       // [E3B-01 2026-09-01] SUB_ADMIN direct admin UPDATE 제거 — CF(callableCleanupApplicationData) Admin SDK 전용
       //   · 정상 cancel/expire: CF Admin SDK 경로 존재, 클라이언트 direct write 불필요
-      allow update: if isLoggedIn() && (
+      // [R7-P4.4E.11C.0C.0a.4.1 §28·§29] cleanup key 불변.
+      //   `targetUserId`·`requesterId` 는 둘 다 삭제 술어다. SUPER_ADMIN 에게
+      //   delete 권한이 있는 것과 identity field 를 바꿀 권한은 다르다.
+      //   [§30] .0a.4 의 create barrier 는 그대로 유지된다.
+      allow update: if isLoggedIn() &&
+                    !request.resource.data.diff(resource.data).affectedKeys()
+                      .hasAny(['targetUserId', 'requesterId']) && (
                       (isOwner(resource.data.targetUserId) &&
                        // SEC-27: pending → approved/rejected 전이만 허용
                        // (approved → rejected 역변조, rejected → approved 자기 승인 차단)
@@ -1930,7 +1955,15 @@ service cloud.firestore {
       allow create: if isSuperAdmin();
 
       // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자/하위관리자(자신의 필드만) · 슈퍼어드민
-      allow update: if isLoggedIn() && (
+      //
+      // [R7-P4.4E.11C.0C.0a.4.1 §31·§33·§34] cleanup key 불변.
+      //   `workerId` 는 탈퇴 익명화 술어다. 그 값을 다른 uid 로 바꿀 수 있으면
+      //   `where("workerId","==",삭제대상)` 이 이 행을 못 찾고 이름이 남는다.
+      //   이 레코드 자체는 DEIDENTIFY_AND_RETAIN 이므로 review lifecycle·
+      //   status 정책은 건드리지 않는다 — key 재지정만 막는다.
+      allow update: if isLoggedIn() &&
+                    !request.resource.data.diff(resource.data).affectedKeys()
+                      .hasAny(['workerId']) && (
                       // 워커: 자신의 리뷰 제출 필드만 (isPublished 등 변조 불가)
                       // [MEDIUM-FIX 29차] workerStatus 값 화이트리스트 — 임의 값 삽입으로 CF 트리거 분기 오작동 차단
                       (isOwner(resource.data.workerId) &&
@@ -2266,7 +2299,14 @@ service cloud.firestore {
       // [SEC-FIX] 상태 전이 검증: pending 상태에서만 수락/거절 가능
       //   → accepted 상태에서 rejected로 재변경하는 것을 차단
       // SEC-42: 관리자 브랜치에 필드 제한 추가 — targetUid·businessId·invitedBy 위조 차단
-      allow update: if isLoggedIn() && (
+      // [R7-P4.4E.11C.0C.0a.4.1 §23·§25] cleanup key 불변.
+      //   `targetUid` 는 삭제 술어(삭제 대상), `invitedBy` 는 익명화 술어다.
+      //   기존 분기들은 status·timestamp 만 허용했지만 `isSuperAdmin()` 에는
+      //   제한이 없었다 — create 에 SUPER_ADMIN 분기가 있다는 사실로 update
+      //   도 같다고 추정하지 않고 실제 식으로 확인했다.
+      allow update: if isLoggedIn() &&
+                    !request.resource.data.diff(resource.data).affectedKeys()
+                      .hasAny(['targetUid', 'invitedBy']) && (
                       (request.auth.uid == resource.data.targetUid &&
                        resource.data.status == 'pending' &&
                        // [MEDIUM-3 수정 2026-07-15] 수신자 status 화이트리스트 누락 — 임의 값으로 초대 무효화 차단
@@ -2363,7 +2403,25 @@ service cloud.firestore {
       // SEC-SUBADMIN-ESC: SubAdmin이 자신보다 높은 permissions를 타 SubAdmin에게 부여 가능
       //   → isAdminOf(businessId)(사업주)·isSuperAdmin()만 허용으로 제한
       // [SEC-M7] permissions 필드만 허용 — 관리자가 name/phone/addedAt 등 식별 필드를 임의 수정하는 공격 차단
-      allow update: if isLoggedIn() && (
+      //
+      // [R7-P4.4E.11C.0C.0a.4.1 §10·§11·§16·§17] **cleanup key 는 불변이다.**
+      //
+      //   create 를 막는 것만으로는 부족했다. 탈퇴 cleanup 은 이 행을
+      //   `collectionGroup("members").where("uid","==",삭제대상)` 으로 찾는다.
+      //   그 `uid` 를 기존 행에서 다른 값으로 바꿀 수 있으면 cleanup 쿼리가
+      //   그 행을 못 찾고, 이름·전화번호가 남은 채 계정이 사라진다.
+      //
+      //   `isSuperAdmin()` 분기에 필드 제한이 없어서 그것이 가능했다. 그래서
+      //   분기 **앞**에 두어 역할로 우회할 수 없게 한다(§82 bypass 0).
+      //
+      //   [§12] update 에서는 path 와의 일치까지 요구하지 않는다 — 기존
+      //   malformed 행이 영구히 수정 불가가 되는 것을 피한다. create 가
+      //   canonical binding 을, update 가 불변성을 담당한다.
+      //   [§13] 자동 교정도 하지 않는다. Rules 는 mutation engine 이 아니다.
+      //   [§54] `resource` 비교뿐이라 추가 document access 0.
+      allow update: if isLoggedIn() &&
+                    !request.resource.data.diff(resource.data).affectedKeys()
+                      .hasAny(['uid', 'businessId']) && (
                       isSuperAdmin() ||
                       (isAdminOf(businessId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
