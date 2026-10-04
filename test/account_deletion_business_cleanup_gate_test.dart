@@ -340,13 +340,14 @@ void main() {
     });
 
     test('DEL-INT-02 승인은 근로자 프로필을 읽지 않는다 (알림 쓰기만)', () {
+      // [0a.5 갱신] 알림 쓰기가 canonical helper 로 옮겨졌다. 묻는 것은
+      //   그대로다 — 이 함수가 근로자 **프로필**을 읽지 않는다는 것.
       expect(
         _flat(approve),
-        contains(
-          'collection("users").doc(workerId).collection("notifications").add(',
-        ),
+        contains('srvPersistNotification(workerId, {'),
       );
-      expect(_count(approve, 'collection("users")'), 1);
+      expect(_count(approve, 'collection("users")'), 0,
+          reason: 'user 문서를 직접 읽거나 쓰지 않는다');
       for (final f in [
         'bankName',
         'accountNumber',
@@ -365,7 +366,9 @@ void main() {
         contains(r'if (ad.wageStatus !== "confirmed")'),
         reason: '확정된 근태만 지급 — 금액이 탈퇴로 흔들리지 않는 이유',
       );
-      expect(_count(process, 'collection("users")'), 1);
+      expect(_count(process, 'collection("users")'), 0,
+          reason: '알림도 helper 를 거치므로 user 경로를 직접 쓰지 않는다');
+      expect(_flat(process), contains('srvPersistNotification(workerId, {'));
       for (final f in [
         'bankName',
         'accountNumber',

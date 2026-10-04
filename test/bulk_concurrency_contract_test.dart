@@ -93,7 +93,7 @@ void main() {
       final i = flat.indexOf('type: "applicationConfirmed"');
       expect(i > 0, true);
       final block = flat.substring(i - 300, i + 400);
-      expect(block.contains('.doc(uid).collection("notifications")'), true,
+      expect(block.contains('srvPersistNotificationWithId(uid,'), true,
           reason: '수신자가 그 지원서의 근로자여야 한다');
       expect(block.contains('applicationId'), true,
           reason: 'deep link가 어느 지원서인지 가리켜야 한다');

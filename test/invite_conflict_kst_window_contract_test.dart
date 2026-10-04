@@ -116,7 +116,7 @@ void main() {
     });
 
     test('초대 알림 id도 결정적이다', () {
-      expect(cf.contains('.doc(`to_invite_\${newAppRef.id}_\${inviteTime.toMillis()}`)'),
+      expect(cf.contains('`to_invite_\${newAppRef.id}_\${inviteTime.toMillis()}`'),
           true);
     });
   });

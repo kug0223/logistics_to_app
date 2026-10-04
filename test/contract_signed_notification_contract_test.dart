@@ -69,8 +69,12 @@ void main() {
     });
 
     test('CN-12 사업주 서명 경로는 예전 그대로다', () {
+      // [R7-P4.4E.11C.0C.0a.5 갱신] 알림 persistence 가 canonical helper
+      //   (srvPersistNotificationWithId)로 옮겨졌다 — 탈퇴 수신자 barrier 를
+      //   한 곳이 소유하기 위해서다. 결정적 id 와 create 의미는 그대로다:
+      //   id 는 helper 의 두 번째 인자, create 는 helper 내부.
       final emp = _codeOf(_cfBody(fn, 'callableFinalizeEmployerSignature'));
-      expect(emp.contains('collection("notifications")'), true);
+      expect(emp.contains('srvPersistNotification'), true);
     });
   });
 
@@ -115,12 +119,21 @@ void main() {
 
   group('CN-4 — 재시도가 알림을 두 번 쌓지 않는다', () {
     test('CN-40 문서 id 를 계약·수신자로 고정한다', () {
-      expect(hf, contains(r'.doc(`contract_signed_${contractId}_${uid}`)'));
+      // [R7-P4.4E.11C.0C.0a.5 갱신] 알림 persistence 가 canonical helper
+      //   (srvPersistNotificationWithId)로 옮겨졌다 — 탈퇴 수신자 barrier 를
+      //   한 곳이 소유하기 위해서다. 결정적 id 와 create 의미는 그대로다:
+      //   id 는 helper 의 두 번째 인자, create 는 helper 내부.
+      expect(hf, contains(r'`contract_signed_${contractId}_${uid}`'));
     });
 
     test('CN-41 add 가 아니라 create 다 — 이미 있으면 실패한다', () {
-      expect(hf, contains('.create({...payload, userId: uid})'));
+      expect(hf, contains('srvPersistNotificationWithId('));
+      expect(hf, contains('{...payload, userId: uid}'));
       expect(helper.contains('.add('), false);
+      final hi = fn.indexOf('function srvPersistNotificationWithId(');
+      expect(hi, greaterThan(-1));
+      final body = fn.substring(hi, fn.indexOf(String.fromCharCode(10) + '}', hi));
+      expect(body, contains('tx.create(ref, payload)'));
     });
 
     test('CN-42 이미 있음은 오류로 취급하지 않는다', () {

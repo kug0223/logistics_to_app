@@ -95,7 +95,11 @@ void main() {
     });
 
     test('CN2-21 수신자는 근무자 본인이다', () {
-      expect(vh, contains('db.collection("users").doc(a.workerId)'));
+      // [R7-P4.4E.11C.0C.0a.5 갱신] 알림 persistence 가 canonical helper
+      //   (srvPersistNotificationWithId)로 옮겨졌다 — 탈퇴 수신자 barrier 를
+      //   한 곳이 소유하기 위해서다. 결정적 id 와 create 의미는 그대로다:
+      //   id 는 helper 의 두 번째 인자, create 는 helper 내부.
+      expect(vh, contains('srvPersistNotificationWithId(a.workerId,'));
       expect(vh, contains('category: "personal"'));
       expect(vh, contains('screen: "userContracts"'));
     });
@@ -125,16 +129,27 @@ void main() {
 
   group('CN2-4 — 재시도가 알림을 두 번 쌓지 않는다', () {
     test('CN2-40 문서 id 가 사건·수신자로 고정돼 있다', () {
-      expect(ch, contains(r'.doc(`confirmation_canceled_${a.applicationId}_${a.workerUid}`)'));
-      expect(ch, contains(r'.doc(`confirmation_canceled_by_worker_${a.applicationId}_${adminUid}`)'));
-      expect(vh, contains(r'.doc(`contract_voided_${a.contractId}_${a.workerId}`)'));
+      // [R7-P4.4E.11C.0C.0a.5 갱신] 알림 persistence 가 canonical helper
+      //   (srvPersistNotificationWithId)로 옮겨졌다 — 탈퇴 수신자 barrier 를
+      //   한 곳이 소유하기 위해서다. 결정적 id 와 create 의미는 그대로다:
+      //   id 는 helper 의 두 번째 인자, create 는 helper 내부.
+      expect(ch, contains(r'`confirmation_canceled_${a.applicationId}_${a.workerUid}`'));
+      expect(ch, contains(r'`confirmation_canceled_by_worker_${a.applicationId}_${adminUid}`'));
+      expect(vh, contains(r'`contract_voided_${a.contractId}_${a.workerId}`'));
     });
 
     test('CN2-41 add 가 아니라 create 다', () {
       expect(cancelHelper.contains('.add('), false);
       expect(voidHelper.contains('.add('), false);
-      expect(ch, contains('.create({'));
-      expect(vh, contains('.create({'));
+      // 결정적 id helper 를 쓴다 — random id 단독 형태가 아니다.
+      expect(ch, contains('srvPersistNotificationWithId('));
+      expect(vh, contains('srvPersistNotificationWithId('));
+      // 그 helper 가 실제로 create 를 쓴다(이미 있으면 실패).
+      final hi = fn.indexOf('function srvPersistNotificationWithId(');
+      expect(hi, greaterThan(-1));
+      final body = fn.substring(hi, fn.indexOf(String.fromCharCode(10) + '}', hi));
+      expect(body, contains('tx.create(ref, payload)'));
+      expect(body.contains('tx.set('), false);
     });
 
     test('CN2-42 이미 있음(6)은 오류가 아니다', () {

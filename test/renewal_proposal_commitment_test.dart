@@ -545,7 +545,9 @@ void main() {
       expect(n, contains('screen: "renewalProposal"'));
       // 같은 제안에 두 번 보내지 않는다 — 고정 id + create().
       expect(n, contains(r'renewal_proposal_${a.proposalId}'));
-      expect(n, contains('.create('));
+      // [0a.5] create 는 canonical helper 내부로 옮겨졌다 — 결정적 id 는
+      //   helper 의 두 번째 인자다. 중복 방지 방식은 그대로다.
+      expect(n, contains('srvPersistNotificationWithId('));
     });
 
     test('12-b 수락 · 거절은 관리자에게 정보로 간다', () {

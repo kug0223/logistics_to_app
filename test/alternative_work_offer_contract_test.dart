@@ -197,9 +197,11 @@ void main() {
       // [R5.3B.1] 알림 identity는 **커밋된** offerId로만 만든다. 재시도는
       //   새로 계산하지 않고 저장된 값을 읽어 쓰므로 같은 문서가 된다 —
       //   timestamp 자체가 결정적인 것이 아니다.
+      // [0a.5] 알림 persistence 가 canonical helper 로 이동했다. 결정적 id 는
+      //   helper 의 두 번째 인자가 되고 create 는 helper 내부다.
       expect(
-          offer.contains('.doc(`work_reassignment_offered_'
-              '\${committedOfferId}`) .create({'),
+          offer.contains('`work_reassignment_offered_'
+              '\${committedOfferId}`, {'),
           true,
           reason: '같은 제안의 재시도는 같은 알림 문서라 두 번 생기지 않는다');
     });
@@ -693,8 +695,8 @@ void main() {
               'Promise<"created" | "exists" | "failed"> => {'),
           true);
       expect(
-          offer.contains('.doc(`work_reassignment_offered_'
-              '\${committedOfferId}`) .create({'),
+          offer.contains('`work_reassignment_offered_'
+              '\${committedOfferId}`, {'),
           true,
           reason: '.create()이므로 같은 id로 두 번 만들어지지 않는다');
     });

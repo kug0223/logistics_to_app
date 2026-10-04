@@ -93,7 +93,7 @@ void main() {
           cf.contains('type: "applicationConfirmed", title: "지원 확정",'),
           true);
       // 확정 경로의 알림 문서 id 자체가 applicationId 기반이다.
-      expect(cf.contains('.doc(`application_confirmed_\${applicationId}`)'), true,
+      expect(cf.contains('`application_confirmed_\${applicationId}`'), true,
           reason: '중복 생성이 구조적으로 불가능한 결정적 id');
     });
 

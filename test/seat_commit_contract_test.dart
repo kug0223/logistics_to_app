@@ -248,7 +248,8 @@ void main() {
       final fn = _tsSliceOf(cf, 'export const callableConfirmApplication',
           'export const callableBatchAdminConfirm');
       expect(fn.contains('`application_confirmed_\${applicationId}`'), isTrue);
-      expect(fn.contains('.create({'), isTrue);
+      // [0a.5] create 는 canonical helper 내부다 — 호출부는 결정적 id 를 넘긴다.
+      expect(fn.contains('srvPersistNotificationWithId('), isTrue);
       // ALREADY_EXISTS(6)는 정상
       expect(fn.contains('?.code !== 6'), isTrue);
     });

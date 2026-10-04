@@ -85,20 +85,24 @@ void main() {
     });
 
     test('E 수신자가 그대로다', () {
-      expect(ended.contains('collection("users").doc(uid)'), isTrue);
+      // [0a.5] 수신자 지정이 canonical helper 의 첫 인자로 옮겨졌다.
+      expect(ended.contains('srvPersistNotificationWithId(uid,'), isTrue);
       expect(ended.contains('userId: uid'), isTrue);
       expect(ended.contains('category: "personal"'), isTrue);
     });
 
     test('F 중복키가 그대로다', () {
+      // [0a.5] 알림 persistence 가 canonical helper 로 이동했다. 결정적 id 는
+      //   helper 의 두 번째 인자가 되고 create 는 helper 내부다 — 중복키
+      //   자체는 그대로이므로 묻는 것은 바뀌지 않았다.
       expect(
         ended.contains(
-            '.doc(`worker_contract_ended_${r'$'}{doc.id}_'
-            '${r'$'}{srvKstDateKey(end.toDate())}`)'),
+            '`worker_contract_ended_${r'$'}{doc.id}_'
+            '${r'$'}{srvKstDateKey(end.toDate())}`'),
         isTrue,
       );
-      expect(ended.contains('.create({'), isTrue,
-          reason: 'create 실패(code 6)로 중복을 막는 방식 유지');
+      expect(ended.contains('srvPersistNotificationWithId('), isTrue,
+          reason: 'create 실패(code 6)로 중복을 막는 방식 유지 — helper 내부가 create');
     });
 
     test('G 발송 조건이 그대로다', () {

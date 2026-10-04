@@ -3698,13 +3698,14 @@ export const createNotification = onCall(
       ...(validatedCategory !== null ? {category: validatedCategory} : {}),
     };
 
-    const docRef = await db
-      .collection("users")
-      .doc(userId)
-      .collection("notifications")
-      .add(payload);
+    // [R7-P4.4E.11C.0C.0a.5 §32] primary recipient gate — helper 가 소유한다.
+    //   [§21·§27] 수신자가 탈퇴 파괴 단계면 생성 0 이 정상 결과다. 호출부에
+    //   오류를 주지 않는다 — 삭제 상태를 외부에 노출하지 않는다(§29).
+    const persisted = await srvPersistNotification(userId, payload);
 
-    console.log(`✅ [알림 생성] userId=${userId}, id=${docRef.id}`);
+    console.log(
+      `✅ [알림 생성] created=${persisted.created} ` +
+      `suppressed=${persisted.suppressed}`);
 
     // 서브어드민 팬아웃 — 특정 관리자 타입 알림은 해당 권한을 가진 서브어드민에게도 복사
     // [팬아웃 제외] callableApplyToTO·callableRequestResignation·callableRequestInterimSettlement는
@@ -3728,14 +3729,26 @@ export const createNotification = onCall(
           const bizAdminIds: string[] = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
           const newRecipients = subAdminIds.filter((id) => id !== userId && !bizAdminIds.includes(id));
           if (newRecipients.length > 0) {
-            const batch = db.batch();
-            for (const subAdminUid of newRecipients) {
-              const ref = db.collection("users").doc(subAdminUid)
-                .collection("notifications").doc();
-              batch.set(ref, { ...payload, userId: subAdminUid });
+            // [R7-P4.4E.11C.0C.0a.5 §33·§34·§59] fanout 은 recipient 별로
+            //   독립 판정한다. 한 명이 탈퇴 중이라 생략되는 것은 오류가
+            //   아니므로 전체 fanout 을 실패시키지 않는다 — all-or-nothing
+            //   금지. batch 는 읽을 수 없어 recipient 별 barrier 를 같은 원자
+            //   경계에 넣을 수 없으므로 helper 호출로 바꿨다. 이 batch 에는
+            //   domain mutation 이 없었다(알림만) — 결합이 깨지지 않는다.
+            const fanoutResults = await Promise.allSettled(
+              newRecipients.map((subAdminUid) => srvPersistNotification(
+                subAdminUid, {...payload, userId: subAdminUid})));
+            let fanoutCreated = 0;
+            let fanoutSuppressed = 0;
+            let fanoutFailed = 0;
+            for (const r of fanoutResults) {
+              if (r.status === "rejected") fanoutFailed++;
+              else if (r.value.created) fanoutCreated++;
+              else fanoutSuppressed++;
             }
-            await batch.commit();
-            console.log(`🔔 [팬아웃] ${rawType}: ${newRecipients.length}명 서브어드민 알림 생성`);
+            console.log(
+              `🔔 [팬아웃] ${rawType}: created=${fanoutCreated} ` +
+              `suppressed=${fanoutSuppressed} failed=${fanoutFailed}`);
           }
         } catch (e) {
           console.error(`⚠️ [팬아웃] ${rawType} 서브어드민 알림 실패:`, e);
@@ -3743,7 +3756,10 @@ export const createNotification = onCall(
       }
     }
 
-    return {id: docRef.id};
+    // [§30] 기존 client 스키마를 그대로 유지한다 — `{id}` 다.
+    //   억제된 경우 null 이고, 클라이언트는 이미 `String?` 로 받아 로그만 한다.
+    //   [§29] `ACCOUNT_DELETED` 같은 새 상태값을 노출하지 않는다.
+    return {id: persisted.notificationId};
   }
 );
 
@@ -4535,7 +4551,7 @@ async function sendReconfirmNotifications(now: admin.firestore.Timestamp): Promi
     const toTitle = (data.toTitle as string | undefined) ?? "근무";
     const startTime = (data.startTime as string | undefined) ?? "";
 
-    await db.collection("users").doc(workerUid).collection("notifications").add({
+    await srvPersistNotification(workerUid, {
       title: "오늘 근무 확인",
       body: `${toTitle}(${startTime}) 근무 예정입니다. 출근하실 수 있으신가요?`,
       type: "reconfirmRequest",
@@ -4578,7 +4594,7 @@ async function sendReconfirmNotifications(now: admin.firestore.Timestamp): Promi
 
       await Promise.all(
         [...new Set(adminUids)].map((adminUid) =>
-          db.collection("users").doc(adminUid).collection("notifications").add({
+          srvPersistNotification(adminUid, {
             title: "출근 미확인 알림",
             body: `${workerName}님이 ${dateStr} ${toTitle}(${startTime}) 출근 확인에 응답하지 않았습니다.`,
             type: "reconfirmAdminWarning",
@@ -5954,7 +5970,7 @@ async function _sendReviewRequestNotification(
         return;
       }
       await Promise.all(adminIds.map((adminUid) =>
-        db.collection("users").doc(adminUid).collection("notifications").add({
+        srvPersistNotification(adminUid, {
           userId: adminUid,
           type: "reviewRequest", // 구버전 "REVIEW_REQUEST" → camelCase 통일 (Dart enum과 동기화)
           category: "admin", // [Phase 2] 관리자에게 발송 → admin
@@ -5970,7 +5986,7 @@ async function _sendReviewRequestNotification(
 
     // worker role: targetId = workerUid
     const userId = targetId;
-    await db.collection("users").doc(userId).collection("notifications").add({
+    await srvPersistNotification(userId, {
       userId,
       type: "reviewRequest", // 구버전 "REVIEW_REQUEST" → camelCase 통일 (Dart enum과 동기화)
       category: "personal", // [Phase 2] 근무자에게 발송 → personal
@@ -6476,6 +6492,8 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
           const BATCH_SIZE = 249;
           for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
             const cancelBatch = db.batch();
+            const pendingNotifs: {uid: string;
+              payload: Record<string, unknown>;}[] = [];
             for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
               const d = appDoc.data();
               cancelBatch.update(appDoc.ref, {
@@ -6483,10 +6501,14 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
                 canceledAt: now,
                 cancelReason: "WORK_DETAIL_EXPIRED",
               });
+              // [R7-P4.4E.11C.0C.0a.5 §17·§24·§25] 알림은 batch 밖에서 보낸다.
+              //   batch 는 읽을 수 없어 recipient barrier 를 같은 원자 경계에 넣을
+              //   수 없다. 중복 방지는 domain 상태(PENDING→AUTO_CANCELED)가 하므로
+              //   commit 이후로 옮겨도 중복이 생기지 않는다.
               if (d.uid) {
-                cancelBatch.set(
-                  db.collection("users").doc(d.uid as string).collection("notifications").doc(),
-                  {
+                pendingNotifs.push({
+                  uid: d.uid as string,
+                  payload: {
                     userId: d.uid,
                     type: "confirmationCanceled",
                     category: "personal", // [Phase 2] 근무자에게 발송 → personal
@@ -6495,11 +6517,14 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
                     data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "WORK_DETAIL_EXPIRED"},
                     isRead: false,
                     createdAt: now,
-                  }
-                );
+                  },
+                });
               }
             }
             await cancelBatch.commit();
+            // [§25·§59] 알림 실패는 취소를 되돌리지 않는다. 수신자별 독립.
+            await Promise.allSettled(pendingNotifs.map(
+              (n) => srvPersistNotification(n.uid, n.payload)));
           }
           console.log(`    → ${toId}/${workType} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
         }
@@ -6673,6 +6698,8 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
           const BATCH_SIZE = 249;
           for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
             const cancelBatch = db.batch();
+            const pendingNotifs: {uid: string;
+              payload: Record<string, unknown>;}[] = [];
             for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
               const d = appDoc.data();
               cancelBatch.update(appDoc.ref, {
@@ -6680,10 +6707,14 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
                 canceledAt: now,
                 cancelReason: "SLOT_WORK_DETAIL_EXPIRED",
               });
+              // [R7-P4.4E.11C.0C.0a.5 §17·§24·§25] 알림은 batch 밖에서 보낸다.
+              //   batch 는 읽을 수 없어 recipient barrier 를 같은 원자 경계에 넣을
+              //   수 없다. 중복 방지는 domain 상태(PENDING→AUTO_CANCELED)가 하므로
+              //   commit 이후로 옮겨도 중복이 생기지 않는다.
               if (d.uid) {
-                cancelBatch.set(
-                  db.collection("users").doc(d.uid as string).collection("notifications").doc(),
-                  {
+                pendingNotifs.push({
+                  uid: d.uid as string,
+                  payload: {
                     userId: d.uid,
                     type: "confirmationCanceled",
                     category: "personal", // [Phase 2] 근무자에게 발송 → personal
@@ -6692,11 +6723,14 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
                     data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "SLOT_WORK_DETAIL_EXPIRED"},
                     isRead: false,
                     createdAt: now,
-                  }
-                );
+                  },
+                });
               }
             }
             await cancelBatch.commit();
+            // [§25·§59] 알림 실패는 취소를 되돌리지 않는다. 수신자별 독립.
+            await Promise.allSettled(pendingNotifs.map(
+              (n) => srvPersistNotification(n.uid, n.payload)));
           }
           console.log(`    → [L003] ${toId}/${slotId}/${workType} PENDING ${pendingApps.size}건 → AUTO_CANCELED`);
         }
@@ -6933,6 +6967,8 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
         const BATCH_SIZE = 249;
         for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
           const cancelBatch = db.batch();
+          const pendingNotifs: {uid: string;
+            payload: Record<string, unknown>;}[] = [];
           for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
             const d = appDoc.data();
             cancelBatch.update(appDoc.ref, {
@@ -6940,10 +6976,14 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
               canceledAt: now,
               cancelReason: "TO_EXPIRED",
             });
+            // [R7-P4.4E.11C.0C.0a.5 §17·§24·§25] 알림은 batch 밖에서 보낸다.
+            //   batch 는 읽을 수 없어 recipient barrier 를 같은 원자 경계에 넣을
+            //   수 없다. 중복 방지는 domain 상태(PENDING→AUTO_CANCELED)가 하므로
+            //   commit 이후로 옮겨도 중복이 생기지 않는다.
             if (d.uid) {
-              cancelBatch.set(
-                db.collection("users").doc(d.uid as string).collection("notifications").doc(),
-                {
+              pendingNotifs.push({
+                uid: d.uid as string,
+                payload: {
                   userId: d.uid,
                   type: "confirmationCanceled",
                   category: "personal", // [Phase 2] 근무자에게 발송 → personal
@@ -6952,11 +6992,14 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
                   data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "TO_EXPIRED"},
                   isRead: false,
                   createdAt: now,
-                }
-              );
+                },
+              });
             }
           }
           await cancelBatch.commit();
+          // [§25·§59] 알림 실패는 취소를 되돌리지 않는다. 수신자별 독립.
+          await Promise.allSettled(pendingNotifs.map(
+            (n) => srvPersistNotification(n.uid, n.payload)));
         }
         console.log(`    → ${doc.id} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
       }
@@ -6984,6 +7027,8 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
 
   if (!contractExpirySnap.empty) {
     const contractBatch = db.batch();
+    const expiryNotifs: {uid: string;
+      payload: Record<string, unknown>;}[] = [];
     const contractGroupIds = new Set<string>();
 
     for (const doc of contractExpirySnap.docs) {
@@ -7001,29 +7046,33 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
       if (d.groupId) contractGroupIds.add(d.groupId as string);
 
       // 관리자에게 만료 알림 — 다시 모집하기 안내
+      // [R7-P4.4E.11C.0C.0a.5 §17·§24·§25] 알림은 batch 밖에서 보낸다.
+      //   batch 는 읽을 수 없으므로 recipient barrier 를 같은 원자 경계에
+      //   넣을 수 없다. 중복 방지는 TO status(→CLOSED)가 담당한다.
       if (d.businessId && d.creatorUID) {
-        const notifRef = db
-          .collection("users")
-          .doc(d.creatorUID as string)
-          .collection("notifications")
-          .doc();
-        contractBatch.set(notifRef, {
-          userId: d.creatorUID,
-          type: "toPostingExpired",
-          title: "공고 게시 만료",
-          body: `'${d.title ?? "공고"}' 게시기간이 만료되었습니다. 다시 모집하려면 [다시 모집하기]를 사용하세요.`,
-          data: {
-            toId: doc.id,
-            businessId: d.businessId,
-            screen: "toDetail",
+        expiryNotifs.push({
+          uid: d.creatorUID as string,
+          payload: {
+            userId: d.creatorUID,
+            type: "toPostingExpired",
+            title: "공고 게시 만료",
+            body: `'${d.title ?? "공고"}' 게시기간이 만료되었습니다. 다시 모집하려면 [다시 모집하기]를 사용하세요.`,
+            data: {
+              toId: doc.id,
+              businessId: d.businessId,
+              screen: "toDetail",
+            },
+            isRead: false,
+            createdAt: now,
           },
-          isRead: false,
-          createdAt: now,
         });
       }
     }
 
     await contractBatch.commit();
+    // [§25] 알림 실패는 TO CLOSED 를 되돌리지 않는다.
+    await Promise.allSettled(expiryNotifs.map(
+      (n) => srvPersistNotification(n.uid, n.payload)));
     await Promise.all([...contractGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
     console.log(`  ✅ [장기 TO 게시만료] ${contractExpirySnap.size}개 CLOSED 완료`);
   } else {
@@ -7168,26 +7217,40 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
           // [STRUCT-02] Firestore 먼저 (알림 저장 + reminderSentDate 배치 통합) → FCM fire-and-forget
           // 수정 전: FCM await 성공 → Firestore 배치 실패 시 재실행에서 중복 알림 발송
           // 수정 후: Firestore 커밋 성공 후 FCM 발송 → 실패해도 앱 내 알림은 보존, 재실행 시 중복 없음
-          const reminderBatch = db.batch();
+          // [R7-P4.4E.11C.0C.0a.5 §17·§24·§56·§57] batch → transaction.
+          //
+          //   알림과 `reminderSentDate` marker 는 **같은 원자 경계**에 있어야
+          //   한다(중복 발송 방지). 그런데 batch 는 읽을 수 없으므로 수신자
+          //   barrier 를 그 경계 안에 넣을 수 없다. 쓰기 수가 적어(한 사용자의
+          //   내일 근무) transaction 으로 바꾸면 둘 다 지킬 수 있다.
+          //
+          //   [§56·§57] 수신자가 탈퇴 중이면 알림은 만들지 않지만 marker 는
+          //   그대로 세운다 — 그러지 않으면 스케줄러가 매일 다시 시도한다.
           const notifRef = db.collection("users").doc(userId).collection("notifications").doc();
-          reminderBatch.set(notifRef, {
-            userId,
-            type: "workReminder",
-            title: "내일 근무 알림",
-            body: notifBody,
-            data: { applicationId: jobs[0].id, action: "applicationDetail", businessId: jobs[0].data().businessId ?? "" },
-            isRead: false,
-            createdAt: now,
-          });
-          for (const appDoc of jobs) {
-            reminderBatch.update(appDoc.ref, {reminderSentDate: todayStr});
-          }
-          await reminderBatch.commit(); // Firestore 원자적 기록 완료 → 이후 재실행 시 reminderSentDate 필터로 중복 방지
+          const reminderSuppressed = await db.runTransaction(async (tx) => {
+            const blocked = await srvDeletionBarrierExistsInTx(tx, userId);
+            if (!blocked) {
+              tx.set(notifRef, {
+                userId,
+                type: "workReminder",
+                title: "내일 근무 알림",
+                body: notifBody,
+                data: { applicationId: jobs[0].id, action: "applicationDetail", businessId: jobs[0].data().businessId ?? "" },
+                isRead: false,
+                createdAt: now,
+              });
+            }
+            for (const appDoc of jobs) {
+              tx.update(appDoc.ref, {reminderSentDate: todayStr});
+            }
+            return blocked;
+          }); // 원자적 기록 완료 → 이후 재실행 시 reminderSentDate 필터로 중복 방지
 
           // FCM 푸시 — fire-and-forget (실패해도 Firestore에 이미 기록됨)
           // workReminder 수신 설정 확인 (onNotificationCreated가 workReminder 스킵하므로 여기서 직접 처리)
+          // [§47] 탈퇴 파괴 단계 수신자에게는 push 도 보내지 않는다.
           const notifPrefs = userData?.notifPrefs as Record<string, boolean> | undefined;
-          if (notifPrefs?.["workReminder"] !== false) {
+          if (!reminderSuppressed && notifPrefs?.["workReminder"] !== false) {
             // [G-001] fcmTokens 배열 우선 사용, 없으면 레거시 fcmToken 단일 필드 폴백
             const tokens: string[] =
               (userData?.fcmTokens as string[] | undefined)?.filter(Boolean) ??
@@ -7637,25 +7700,23 @@ async function srvNotifyWorkerContractExpiring(
       if (endNum !== targetNum) continue;
 
       const dayKey = srvKstDateKey(end.toDate());
-      await db.collection("users").doc(uid).collection("notifications")
-        .doc(`worker_contract_expiring_${doc.id}_${dayKey}`)
-        .create({
-          userId: uid,
-          type: "workerContractExpiring",
-          title: "계약 종료 예정",
-          body: `${(app.businessName as string | undefined) ?? "사업장"} ` +
-            `근로계약은 ${srvKstMd(end.toDate())}까지입니다. ` +
-            "연장 여부가 결정되면 별도로 안내됩니다.",
-          data: {
-            applicationId: doc.id,
-            businessId: app.businessId,
-            expiryDate: new Date(end.toMillis()).toISOString(),
-            screen: "mySchedule",
-          },
-          category: "personal",
-          isRead: false,
-          createdAt: now,
-        });
+      await srvPersistNotificationWithId(uid, `worker_contract_expiring_${doc.id}_${dayKey}`, {
+        userId: uid,
+        type: "workerContractExpiring",
+        title: "계약 종료 예정",
+        body: `${(app.businessName as string | undefined) ?? "사업장"} ` +
+          `근로계약은 ${srvKstMd(end.toDate())}까지입니다. ` +
+          "연장 여부가 결정되면 별도로 안내됩니다.",
+        data: {
+          applicationId: doc.id,
+          businessId: app.businessId,
+          expiryDate: new Date(end.toMillis()).toISOString(),
+          screen: "mySchedule",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: now,
+      });
       sent++;
     } catch (e) {
       // 이미 보냈다(ALREADY_EXISTS) — scheduler 재시도에서 정상이다.
@@ -7758,23 +7819,21 @@ async function srvNotifyWorkerContractEnded(
           "새로운 근무 일정이 확정되면 다시 안내드립니다.";
       }
 
-      await db.collection("users").doc(uid).collection("notifications")
-        .doc(`worker_contract_ended_${doc.id}_${srvKstDateKey(end.toDate())}`)
-        .create({
-          userId: uid,
-          type: "workerContractEnded",
-          title: "계약 종료",
-          body,
-          data: {
-            applicationId: doc.id,
-            businessId: app.businessId,
-            expiryDate: new Date(end.toMillis()).toISOString(),
-            screen: "mySchedule",
-          },
-          category: "personal",
-          isRead: false,
-          createdAt: now,
-        });
+      await srvPersistNotificationWithId(uid, `worker_contract_ended_${doc.id}_${srvKstDateKey(end.toDate())}`, {
+        userId: uid,
+        type: "workerContractEnded",
+        title: "계약 종료",
+        body,
+        data: {
+          applicationId: doc.id,
+          businessId: app.businessId,
+          expiryDate: new Date(end.toMillis()).toISOString(),
+          screen: "mySchedule",
+        },
+        category: "personal",
+        isRead: false,
+        createdAt: now,
+      });
       sent++;
     } catch (e) {
       if ((e as {code?: number})?.code === 6) continue; // 이미 보냈다
@@ -7895,10 +7954,26 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         const snap = await tx.get(doc.ref);
         if (snap.data()?.renewalNotifiedAt) return; // 이미 발송됨
 
+        // [R7-P4.4E.11C.0C.0a.5 §17·§24·§33·§59] 이 알림은 marker 갱신과
+        //   **같은 transaction** 에 묶여 있다(중복 발송 방지). 그 결합을 풀지
+        //   않고, 같은 transaction 에서 수신자 barrier 를 읽는다.
+        //
+        //   Firestore 는 한 transaction 에서 **모든 읽기가 모든 쓰기보다
+        //   앞**이어야 한다. 그래서 recipient 별 barrier 를 루프 안에서 읽지
+        //   않고 먼저 한 번에 읽는다 — 그러지 않으면 두 번째 수신자의 읽기가
+        //   첫 번째 쓰기 뒤에 와서 transaction 이 깨진다.
+        //
+        //   [§59] 한 명이 탈퇴 중이라 생략되는 것은 오류가 아니다 —
+        //   나머지 수신자는 그대로 받는다(all-or-nothing 금지).
+        const adminBlocked = await Promise.all(
+          adminIds.map((adminId) =>
+            srvDeletionBarrierExistsInTx(tx, adminId)));
+
         // 관리자 전원에게 알림
         for (let i = 0; i < adminIds.length; i++) {
           const adminId = adminIds[i];
           const notifRef = notifRefs[i];
+          if (adminBlocked[i]) continue;
           tx.set(notifRef, {
             userId: adminId,
             type: "contractExpiringReminder",
@@ -8007,6 +8082,14 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         const freshData = freshSnap.data()!;
         if (freshData.terminationCompletionNotifiedAt) return "ALREADY_NOTIFIED";
 
+        // [0a.5 §17·§24·§56·§57] marker 결합 유지 + 같은 TX 에서 barrier.
+        //   억제돼도 marker 는 세운다 — 발송 metadata 이고 domain truth 가 아니다.
+        const blocked = await srvDeletionBarrierExistsInTx(tx, freshData.uid as string);
+        if (blocked) {
+          tx.update(doc.ref, {terminationCompletionNotifiedAt: now});
+          return "SUPPRESSED";
+        }
+
         tx.set(notifRef, {
           userId: freshData.uid,
           type: "contractTerminating",
@@ -8081,7 +8164,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             return fb ? [fb] : [];
           })();
           await Promise.all(adminIds.map((aid) =>
-            db.collection("users").doc(aid).collection("notifications").add({
+            srvPersistNotification(aid, {
               userId: aid,
               type: "resignReminder",
               title: "⏰ 퇴사 요청 미처리 알림",
@@ -8129,7 +8212,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             return fb ? [fb] : [];
           })();
           await Promise.all(adminIds.map((aid) =>
-            db.collection("users").doc(aid).collection("notifications").add({
+            srvPersistNotification(aid, {
               userId: aid,
               type: "resignReminder",
               title: "⚠️ 퇴사 요청 긴급 처리 필요",
@@ -8213,7 +8296,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         // 근무자에게 자동 승인 알림 (best-effort — 알림 실패가 자동승인 자체를 막지 않음)
         // [FCM-03 수정] businessId 누락 → notification_screen resignApproved 분기에서
         // IntegratedWorkforceScreen(initialBusinessId: null)로 열리는 버그 방지
-        db.collection("users").doc(app.uid as string).collection("notifications").add({
+        srvPersistNotification(app.uid as string, {
           userId: app.uid,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인",
@@ -8232,7 +8315,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           const fallback = bizDocData?.ownerId as string | undefined;
           return fallback ? [fallback] : [];
         })();
-        await Promise.all(resignAdminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
+        await Promise.all(resignAdminIds.map((adminId) => srvPersistNotification(adminId, {
           userId: adminId,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인됨",
@@ -8311,7 +8394,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         });
 
         // 근무자에게 자동 승인 알림 (best-effort)
-        db.collection("users").doc(app.uid as string).collection("notifications").add({
+        srvPersistNotification(app.uid as string, {
           userId: app.uid,
           type: "terminationApproved",
           title: "계약해지 자동 승인",
@@ -8332,7 +8415,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           return fallback ? [fallback] : [];
         })();
         await Promise.all(terminationAdminIds.map((adminId) =>
-          db.collection("users").doc(adminId).collection("notifications").add({
+          srvPersistNotification(adminId, {
             userId: adminId,
             type: "terminationApproved",
             title: "계약해지 자동 승인됨",
@@ -10514,9 +10597,7 @@ async function srvNotifyContractSigned(args: {
     createdAt: admin.firestore.Timestamp.now(),
   };
   const results = await Promise.allSettled(recipients.map((uid) =>
-    db.collection("users").doc(uid).collection("notifications")
-      .doc(`contract_signed_${contractId}_${uid}`)
-      .create({...payload, userId: uid})));
+    srvPersistNotificationWithId(uid, `contract_signed_${contractId}_${uid}`, {...payload, userId: uid})));
   results.forEach((r, i) => {
     if (r.status !== "rejected") return;
     // 이미 있는 문서 = 같은 서명에 대한 재시도다. 두 번 쌓지 않는 것이 의도다.
@@ -11011,7 +11092,7 @@ export const callableFinalizeEmployerSignature = onCall(
       const notifBizName   = nd["businessName"] as string | undefined;
       const notifAppId     = nd["applicationId"] as string | undefined;
       if (notifWorkerId) {
-        await db.collection("users").doc(notifWorkerId).collection("notifications").add({
+        await srvPersistNotification(notifWorkerId, {
           userId:  notifWorkerId,
           type:    "contractSignRequested",
           title:   "근로계약서 서명 요청",
@@ -12408,7 +12489,7 @@ export const callableReviewUserDocument = onCall(
       (nextState === DOC_MANUAL_REJECTED ?
         `${label} 확인이 반려되었습니다. 다시 등록해주세요.` :
         `${label}을(를) 다시 등록해주세요.`);
-    db.collection("users").doc(targetUserId).collection("notifications").add({
+    srvPersistNotification(targetUserId, {
       userId: targetUserId,
       type: "documentReviewed",
       title: `${label} 확인 결과`,
@@ -12840,25 +12921,23 @@ export const callableRequestDocumentCorrection = onCall(
       const label = documentType === DOC_TYPE_ID ? "신분증" : "통장사본";
       const bizName =
         (appSnap.get("businessName") as string | undefined) ?? "사업장";
-      db.collection("users").doc(targetUid).collection("notifications")
-        .doc(`doc_correction_${reqId}_${now.toMillis()}`)
-        .create({
-          userId: targetUid,
-          type: "documentReuploadRequested",
-          title: `${label}을(를) 다시 등록해주세요`,
-          body: `${bizName}에서 ${label} 재등록을 요청했습니다.`,
-          data: {
-            applicationId, businessId, documentType, requestId: reqId,
-            action: "documentManagement",
-          },
-          isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          readAt: null,
-        }).catch((e) => {
-          if ((e as {code?: number})?.code !== 6) {
-            console.error("[requestDocumentCorrection] 알림 실패:", e);
-          }
-        });
+      srvPersistNotificationWithId(targetUid, `doc_correction_${reqId}_${now.toMillis()}`, {
+        userId: targetUid,
+        type: "documentReuploadRequested",
+        title: `${label}을(를) 다시 등록해주세요`,
+        body: `${bizName}에서 ${label} 재등록을 요청했습니다.`,
+        data: {
+          applicationId, businessId, documentType, requestId: reqId,
+          action: "documentManagement",
+        },
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        readAt: null,
+      }).catch((e) => {
+        if ((e as {code?: number})?.code !== 6) {
+          console.error("[requestDocumentCorrection] 알림 실패:", e);
+        }
+      });
     }
     return {success: true, requestId: reqId, alreadyOpen: !created};
   }
@@ -14501,11 +14580,8 @@ async function _dispatchToMatchNotifications(
         if (!hasEligible) continue;
 
         // 알림 생성 — deterministic ID, create() semantics (ALREADY_EXISTS = silent skip)
-        const notifRef = db
-          .collection("users").doc(uid)
-          .collection("notifications").doc(`toMatch_${toId}`);
         try {
-          await notifRef.create({
+          await srvPersistNotificationWithId(uid, `toMatch_${toId}`, {
             userId: uid,
             type: "toMatch",
             title: "근무 가능한 날에 새 일자리가 있어요",
@@ -21212,11 +21288,10 @@ async function srvNotifyConfirmationCanceled(a: {
   if (a.isAdminCancel) {
     // 관리자가 취소했다 → 근로자 본인에게
     const reasonLine = a.cancelReason ? `\n사유: ${a.cancelReason}` : "";
-    const ref = db.collection("users").doc(a.workerUid)
-      .collection("notifications")
-      .doc(`confirmation_canceled_${a.applicationId}_${a.workerUid}`);
     try {
-      await ref.create({
+      const canceledId =
+        `confirmation_canceled_${a.applicationId}_${a.workerUid}`;
+      await srvPersistNotificationWithId(a.workerUid, canceledId, {
         userId: a.workerUid,
         type: "confirmationCanceled",
         title: "확정 취소",
@@ -21281,9 +21356,7 @@ async function srvNotifyConfirmationCanceled(a: {
     createdAt: admin.firestore.Timestamp.now(),
   };
   const results = await Promise.allSettled(adminIds.map((adminUid) =>
-    db.collection("users").doc(adminUid).collection("notifications")
-      .doc(`confirmation_canceled_by_worker_${a.applicationId}_${adminUid}`)
-      .create({...payload, userId: adminUid})));
+    srvPersistNotificationWithId(adminUid, `confirmation_canceled_by_worker_${a.applicationId}_${adminUid}`, {...payload, userId: adminUid})));
   results.forEach((r, i) => {
     if (r.status !== "rejected") return;
     if ((r.reason as {code?: number})?.code === 6) return;
@@ -21315,23 +21388,21 @@ async function srvNotifyContractVoided(a: {
     return;
   }
   try {
-    await db.collection("users").doc(a.workerId).collection("notifications")
-      .doc(`contract_voided_${a.contractId}_${a.workerId}`)
-      .create({
-        userId: a.workerId,
-        type: "contractVoided",
-        title: "계약서 무효 처리",
-        body: `${a.businessName}의 근로계약서가 무효 처리되었습니다. ` +
-          "계약서 목록을 확인해 주세요.",
-        data: {
-          contractId: a.contractId,
-          businessId: a.businessId,
-          screen: "userContracts",
-        },
-        category: "personal",
-        isRead: false,
-        createdAt: admin.firestore.Timestamp.now(),
-      });
+    await srvPersistNotificationWithId(a.workerId, `contract_voided_${a.contractId}_${a.workerId}`, {
+      userId: a.workerId,
+      type: "contractVoided",
+      title: "계약서 무효 처리",
+      body: `${a.businessName}의 근로계약서가 무효 처리되었습니다. ` +
+        "계약서 목록을 확인해 주세요.",
+      data: {
+        contractId: a.contractId,
+        businessId: a.businessId,
+        screen: "userContracts",
+      },
+      category: "personal",
+      isRead: false,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   } catch (e) {
     if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
     console.error(
@@ -21969,7 +22040,7 @@ export const callableRespondToReconfirm = onCall(
 
         await Promise.all(
           [...new Set(adminUids)].map((adminUid) =>
-            db.collection("users").doc(adminUid).collection("notifications").add({
+            srvPersistNotification(adminUid, {
               title: "근무 취소 알림",
               body: `${workerName}님이 ${dateStr} ${toTitle} 근무를 취소했습니다.`,
               type: "reconfirmDeclined",
@@ -23222,25 +23293,23 @@ async function srvNotifyRetroactiveDeduction(a: {
   const [, m, d] = a.workDate.split("-");
   const md = `${Number(m)}/${Number(d)}`;
   try {
-    await db.collection("users").doc(a.userId).collection("notifications")
-      .doc(`retroactive_deduction_${a.attendanceId}_${a.userId}`)
-      .create({
-        userId: a.userId,
-        type: "retroactiveDeductionAlert",
-        title: "4대보험 소급 공제 안내",
-        body: `${businessName} ${md} 근무 포함 이번 달 근무 횟수가 8회를 넘어 ` +
-          "4대보험이 첫 근무부터 적용됩니다. 이전 근무분 보험료 " +
-          `${won(a.retroactiveAmount)}원이 이번 급여에서 함께 공제됩니다.\n` +
-          `실수령액: ${won(a.netWage)}원`,
-        data: {
-          attendanceId: a.attendanceId,
-          businessId: a.businessId,
-          action: "wageDetail",
-        },
-        category: "personal",
-        isRead: false,
-        createdAt: admin.firestore.Timestamp.now(),
-      });
+    await srvPersistNotificationWithId(a.userId, `retroactive_deduction_${a.attendanceId}_${a.userId}`, {
+      userId: a.userId,
+      type: "retroactiveDeductionAlert",
+      title: "4대보험 소급 공제 안내",
+      body: `${businessName} ${md} 근무 포함 이번 달 근무 횟수가 8회를 넘어 ` +
+        "4대보험이 첫 근무부터 적용됩니다. 이전 근무분 보험료 " +
+        `${won(a.retroactiveAmount)}원이 이번 급여에서 함께 공제됩니다.\n` +
+        `실수령액: ${won(a.netWage)}원`,
+      data: {
+        attendanceId: a.attendanceId,
+        businessId: a.businessId,
+        action: "wageDetail",
+      },
+      category: "personal",
+      isRead: false,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   } catch (e) {
     if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
     console.error(
@@ -25010,11 +25079,6 @@ export const callableApproveApplicationForReview = onCall(
     //   auth는 Step 3에서 이미 통과 — 권한 없는 caller는 여기까지 도달 불가.
     if (approveApplicantUid) {
       const notifDocId = `application_confirmed_${applicationId}`;
-      const notifRef = db
-        .collection("users")
-        .doc(approveApplicantUid)
-        .collection("notifications")
-        .doc(notifDocId);
 
       // body: NotificationModel.createApplicationConfirmed 동일 문구 (callableRejectApplication KST 변환 패턴 재사용)
       const APPROVE_KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -25029,7 +25093,7 @@ export const callableApproveApplicationForReview = onCall(
         ` 관리자가 곧 계약서를 발송할 예정입니다.${approveDateSuffix}`;
 
       try {
-        await notifRef.create({
+        await srvPersistNotificationWithId(approveApplicantUid, notifDocId, {
           userId: approveApplicantUid,
           type: "applicationConfirmed",
           title: "지원 승인",
@@ -25544,7 +25608,7 @@ export const callableRequestTermination = onCall(
       const tdKST = new Date(terminationDate!.toDate().getTime() + KST_OFFSET_MS);
       const tdStr = `${tdKST.getUTCMonth() + 1}/${tdKST.getUTCDate()}`;
       // best-effort: 트랜잭션 이미 커밋 후이므로 알림 실패 시 에러 반환하지 않음
-      db.collection("users").doc(workerUid).collection("notifications").add({
+      srvPersistNotification(workerUid, {
         type: "terminationRequested",
         category: "personal", // [Phase 2] 근무자에게 발송 → personal
         userId: workerUid,
@@ -25824,13 +25888,15 @@ export const callableApproveTermination = onCall(
     //   근무자 요청(terminationRequestedByUid === app.uid): 근무자에게만 1건 (중복 방지)
     const adminRequested = !!app.terminationRequestedByUid &&
                            app.terminationRequestedByUid !== app.uid;
-    const notifPromises: Promise<admin.firestore.DocumentReference>[] = [];
+    // [R7-P4.4E.11C.0C.0a.5] 알림 persistence 가 canonical helper 로 바뀌면서
+    //   반환 타입이 DocumentReference 가 아니라 생성 결과다.
+    const notifPromises: Promise<SrvNotificationPersistResult>[] = [];
     const terminationBody = `${app.businessName}과의 계약이 해지되었습니다.${terminationDateStr ? `\n해지일: ${terminationDateStr}` : ""}`;
 
     // 근무자 알림 (항상 발송)
     if (app.uid && app.uid.length > 0) {
       notifPromises.push(
-        db.collection("users").doc(app.uid).collection("notifications").add({
+        srvPersistNotification(app.uid, {
           userId: app.uid,
           type: "terminationApproved",
           title: "계약해지 완료",
@@ -25844,7 +25910,7 @@ export const callableApproveTermination = onCall(
     // 관리자 알림 (관리자가 해지 요청한 경우만 — 중복 방지)
     if (adminRequested) {
       notifPromises.push(
-        db.collection("users").doc(app.terminationRequestedByUid!).collection("notifications").add({
+        srvPersistNotification(app.terminationRequestedByUid!, {
           userId: app.terminationRequestedByUid,
           type: "terminationApproved",
           title: "계약해지 완료",
@@ -25971,7 +26037,7 @@ export const callableApproveResignation = onCall(
     if (app.uid && app.uid.length > 0) {
       const rd = app.resignRequestDate;
       const rdStr = rd ? (() => { const KST_OFFSET_MS = 9 * 60 * 60 * 1000; const dKST = new Date(rd.toDate().getTime() + KST_OFFSET_MS); return `${dKST.getUTCMonth()+1}/${dKST.getUTCDate()}`; })() : null;
-      db.collection("users").doc(app.uid).collection("notifications").add({
+      srvPersistNotification(app.uid, {
         type: "resignApproved",
         userId: app.uid,
         title: "퇴사 승인",
@@ -26578,16 +26644,15 @@ export const callableDeleteTO = onCall(
         const dKST = new Date(target.workDate.toDate().getTime() + KST_OFFSET_MS);
         dateStr = `\n근무일: ${dKST.getUTCMonth() + 1}/${dKST.getUTCDate()}`;
       }
-      db.collection("users").doc(target.uid).collection("notifications")
-        .add({
-          userId: target.uid,
-          type: "workCanceled",
-          title: "공고 취소",
-          body: `${businessName}의 "${toTitle}" 공고가 취소되어 ${statusText}이(가) 무효화되었습니다.${dateStr}`,
-          data: {businessId, action: "toList", reason: "TO_DELETED"},
-          isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        })
+      srvPersistNotification(target.uid, {
+        userId: target.uid,
+        type: "workCanceled",
+        title: "공고 취소",
+        body: `${businessName}의 "${toTitle}" 공고가 취소되어 ${statusText}이(가) 무효화되었습니다.${dateStr}`,
+        data: {businessId, action: "toList", reason: "TO_DELETED"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
         .catch((e) =>
           console.error(`[callableDeleteTO] 알림 발송 실패 (uid=${target.uid}):`, e)
         );
@@ -26725,23 +26790,22 @@ export const callableCloseSlots = onCall(
           const workDateKST = new Date(workDate.getTime() + KST_OFFSET_MS);
           const month = workDateKST.getUTCMonth() + 1;
           const day = workDateKST.getUTCDate();
-          db.collection("users").doc(applicantUid).collection("notifications")
-            .add({
-              userId: applicantUid,
-              type: "applicationRejected",
-              title: "지원 거절",
-              body:
-                `${(d.businessName as string) ?? ""}의 ` +
-                `${(d.selectedWorkType as string) ?? ""} 지원이 거절되었습니다.\n` +
-                `사유: 공고 슬롯이 마감되었습니다\n근무일: ${month}/${day}`,
-              data: {
-                applicationId: doc.id,
-                businessId: (d.businessId as string) ?? businessId,
-                action: "applicationDetail",
-              },
-              isRead: false,
-              createdAt: now,
-            })
+          srvPersistNotification(applicantUid, {
+            userId: applicantUid,
+            type: "applicationRejected",
+            title: "지원 거절",
+            body:
+              `${(d.businessName as string) ?? ""}의 ` +
+              `${(d.selectedWorkType as string) ?? ""} 지원이 거절되었습니다.\n` +
+              `사유: 공고 슬롯이 마감되었습니다\n근무일: ${month}/${day}`,
+            data: {
+              applicationId: doc.id,
+              businessId: (d.businessId as string) ?? businessId,
+              action: "applicationDetail",
+            },
+            isRead: false,
+            createdAt: now,
+          })
             .catch(() => {});
         }
       } catch (e) {
@@ -27258,37 +27322,35 @@ export const callableDeleteSlots = onCall(
         const day = workDateKST.getUTCDate();
 
         if (CONFIRMED_STATUSES.includes(status)) {
-          db.collection("users").doc(applicantUid).collection("notifications")
-            .add({
-              userId: applicantUid,
-              type: "workCanceled",
-              title: "공고 취소",
-              body:
-                `${toBusinessName}의 "${toTitle}" 공고가 취소되어 ` +
-                `확정된 근무이(가) 무효화되었습니다.\n근무일: ${month}/${day}`,
-              data: {businessId: toBusinessId, action: "toList", reason: "TO_DELETED"},
-              isRead: false,
-              createdAt: now,
-            })
+          srvPersistNotification(applicantUid, {
+            userId: applicantUid,
+            type: "workCanceled",
+            title: "공고 취소",
+            body:
+              `${toBusinessName}의 "${toTitle}" 공고가 취소되어 ` +
+              `확정된 근무이(가) 무효화되었습니다.\n근무일: ${month}/${day}`,
+            data: {businessId: toBusinessId, action: "toList", reason: "TO_DELETED"},
+            isRead: false,
+            createdAt: now,
+          })
             .catch(() => {});
         } else if (status === "PENDING") {
-          db.collection("users").doc(applicantUid).collection("notifications")
-            .add({
-              userId: applicantUid,
-              type: "applicationRejected",
-              title: "지원 거절",
-              body:
-                `${(d.businessName as string) ?? toBusinessName}의 ` +
-                `${(d.selectedWorkType as string) ?? ""} 지원이 거절되었습니다.\n` +
-                `사유: 공고 슬롯이 삭제되었습니다\n근무일: ${month}/${day}`,
-              data: {
-                applicationId: doc.id,
-                businessId: (d.businessId as string) ?? toBusinessId,
-                action: "applicationDetail",
-              },
-              isRead: false,
-              createdAt: now,
-            })
+          srvPersistNotification(applicantUid, {
+            userId: applicantUid,
+            type: "applicationRejected",
+            title: "지원 거절",
+            body:
+              `${(d.businessName as string) ?? toBusinessName}의 ` +
+              `${(d.selectedWorkType as string) ?? ""} 지원이 거절되었습니다.\n` +
+              `사유: 공고 슬롯이 삭제되었습니다\n근무일: ${month}/${day}`,
+            data: {
+              applicationId: doc.id,
+              businessId: (d.businessId as string) ?? toBusinessId,
+              action: "applicationDetail",
+            },
+            isRead: false,
+            createdAt: now,
+          })
             .catch(() => {});
         }
       }
@@ -27560,21 +27622,18 @@ export const callableRejectTermination = onCall(
     //          근무자 요청(terminationRequestedByUid === workerUid) → action:"terminationDetail"
     if (rd.terminationRequestedByUid && rd.terminationRequestedByUid.length > 0) {
       const adminRequested = rd.terminationRequestedByUid !== workerUid;
-      await db.collection("users")
-        .doc(rd.terminationRequestedByUid)
-        .collection("notifications")
-        .add({
-          userId: rd.terminationRequestedByUid,
-          type: "terminationRejected",
-          title: "계약해지 거절",
-          body: `${rd.businessName}의 계약해지 요청이 거절되었습니다.${rejectReason ? `\n사유: ${rejectReason}` : ""}`,
-          data: adminRequested
-            // [FCM-01] 관리자 요청 거절 → FCM background에서 인력관리 화면 직접 이동
-            ? {applicationId, businessId, screen: "fixedWorker"}
-            : {applicationId, businessId, action: "terminationDetail"},
-          isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        })
+      await srvPersistNotification(rd.terminationRequestedByUid, {
+        userId: rd.terminationRequestedByUid,
+        type: "terminationRejected",
+        title: "계약해지 거절",
+        body: `${rd.businessName}의 계약해지 요청이 거절되었습니다.${rejectReason ? `\n사유: ${rejectReason}` : ""}`,
+        data: adminRequested
+          // [FCM-01] 관리자 요청 거절 → FCM background에서 인력관리 화면 직접 이동
+          ? {applicationId, businessId, screen: "fixedWorker"}
+          : {applicationId, businessId, action: "terminationDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
         .catch((e) => console.error("[callableRejectTermination] 알림 전송 실패:", e));
     }
 
@@ -27712,18 +27771,15 @@ export const callableRequestResignation = onCall(
 
     // 관리자 + 서브어드민에게 알림 발송 (GCF v2 종료 전 완료 보장)
     await Promise.all(resignRecipients.map((adminUid) =>
-      db.collection("users")
-        .doc(adminUid)
-        .collection("notifications")
-        .add({
-          userId: adminUid,
-          type: "resignRequested",
-          title: "퇴사 요청",
-          body: `${workerName}님이 퇴사를 요청했습니다.\n사업장: ${businessName}\n퇴사 예정일: ${month}/${day}`,
-          data: {applicationId, businessId, action: "resignDetail"},
-          isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        })
+      srvPersistNotification(adminUid, {
+        userId: adminUid,
+        type: "resignRequested",
+        title: "퇴사 요청",
+        body: `${workerName}님이 퇴사를 요청했습니다.\n사업장: ${businessName}\n퇴사 예정일: ${month}/${day}`,
+        data: {applicationId, businessId, action: "resignDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
         .catch((e) => console.error("[callableRequestResignation] 알림 전송 실패:", e))
     ));
 
@@ -27804,18 +27860,15 @@ export const callableRejectResignation = onCall(
 
     // 근무자에게 알림 (GCF v2 종료 전 완료 보장)
     if (rd.workerUid && rd.workerUid.length > 0) {
-      await db.collection("users")
-        .doc(rd.workerUid)
-        .collection("notifications")
-        .add({
-          userId: rd.workerUid,
-          type: "resignRejected",
-          title: "퇴사 요청 거절",
-          body: `${rd.businessName}의 퇴사 요청이 거절되었습니다.${rejectReason ? `\n사유: ${rejectReason}` : ""}`,
-          data: {applicationId, businessId, action: "resignDetail"},
-          isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        })
+      await srvPersistNotification(rd.workerUid, {
+        userId: rd.workerUid,
+        type: "resignRejected",
+        title: "퇴사 요청 거절",
+        body: `${rd.businessName}의 퇴사 요청이 거절되었습니다.${rejectReason ? `\n사유: ${rejectReason}` : ""}`,
+        data: {applicationId, businessId, action: "resignDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
         .catch((e) => console.error("[callableRejectResignation] 알림 전송 실패:", e));
     }
 
@@ -28677,22 +28730,20 @@ async function srvNotifyWageEvent(
     const body = kind === "wageConfirmed" ?
       `${head} 급여가 정산되었습니다. 앱에서 확인하세요.` :
       `${head} 급여 확정이 취소되었습니다. 급여 조정 후 다시 안내드릴 예정입니다.`;
-    return db.collection("users").doc(r.userId).collection("notifications")
-      .doc(`${idPrefix}_${r.attendanceId}_${r.userId}`)
-      .create({
-        userId: r.userId,
-        type: kind,
-        title: kind === "wageConfirmed" ? "급여 정산 완료" : "급여 확정 취소",
-        body,
-        data: {
-          attendanceId: r.attendanceId,
-          businessId,
-          action: "wageDetail",
-        },
-        category: "personal",
-        isRead: false,
-        createdAt: admin.firestore.Timestamp.now(),
-      });
+    return srvPersistNotificationWithId(r.userId, `${idPrefix}_${r.attendanceId}_${r.userId}`, {
+      userId: r.userId,
+      type: kind,
+      title: kind === "wageConfirmed" ? "급여 정산 완료" : "급여 확정 취소",
+      body,
+      data: {
+        attendanceId: r.attendanceId,
+        businessId,
+        action: "wageDetail",
+      },
+      category: "personal",
+      isRead: false,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   }));
   results.forEach((r, i) => {
     if (r.status !== "rejected") return;
@@ -29928,7 +29979,7 @@ export const callableRejectApplication = onCall(
       const dateSuffix = workDateTs ? `\n근무일: ${month}/${day}` : "";
       const body = `${businessName ?? ""}의 ${selectedWorkType ?? ""} 지원이 거절되었습니다.${rejectReasonSuffix}${dateSuffix}`;
 
-      db.collection("users").doc(uid).collection("notifications").add({
+      srvPersistNotification(uid, {
         userId: uid,
         type: "applicationRejected",
         title: "지원 거절",
@@ -30654,22 +30705,20 @@ export const callableConfirmApplication = onCall(
     //   ALREADY_EXISTS(6)는 정상, 그 외만 기록한다.
     try {
       const workDateTs = appDataPre.workDate as admin.firestore.Timestamp | undefined;
-      await db.collection("users").doc(uid).collection("notifications")
-        .doc(`application_confirmed_${applicationId}`)
-        .create({
-          userId: uid,
-          type: "applicationConfirmed",
-          title: "지원 확정",
-          body: `[${businessName}] ${selectedWorkType ?? ""} 지원이 확정되었습니다.`,
-          data: {
-            applicationId,
-            businessId,
-            screen: "applicationDetail",
-            ...(workDateTs ? {workDateMs: workDateTs.toMillis()} : {}),
-          },
-          isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+      await srvPersistNotificationWithId(uid, `application_confirmed_${applicationId}`, {
+        userId: uid,
+        type: "applicationConfirmed",
+        title: "지원 확정",
+        body: `[${businessName}] ${selectedWorkType ?? ""} 지원이 확정되었습니다.`,
+        data: {
+          applicationId,
+          businessId,
+          screen: "applicationDetail",
+          ...(workDateTs ? {workDateMs: workDateTs.toMillis()} : {}),
+        },
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     } catch (e) {
       if ((e as {code?: number})?.code !== 6) {
         console.warn("[confirmApplication] 확정 알림 발송 실패 (확정은 완료됨):", e);
@@ -32639,7 +32688,7 @@ export const callableMarkTransferredBatch = onCall(
           )
           .map(n => {
             const body = `[${n.businessName ?? ""}] ${n.workerName ?? ""}님의 급여가 송금 처리되었습니다. 앱에서 확인하세요.`;
-            return db.collection("users").doc(n.userId).collection("notifications").add({
+            return srvPersistNotification(n.userId, {
               userId: n.userId,
               type: "wageTransferred",
               category: "personal", // [Phase 2] 근무자에게 발송 → personal
@@ -34178,7 +34227,7 @@ export const callableApproveScheduleChangeRequest = onCall(
       ? `${dateStr} 스케줄 변경 요청이 승인되었습니다.`
       : `${dateStr} 스케줄 변경 요청이 거절되었습니다.${rejectReason ? ` 사유: ${rejectReason}` : ""}`;
 
-    db.collection("users").doc(applicantUid).collection("notifications").add({
+    srvPersistNotification(applicantUid, {
       userId: applicantUid,
       type: action === "APPROVED" ? "scheduleChangeApproved" : "scheduleChangeRejected",
       title: notifTitle,
@@ -35064,23 +35113,21 @@ async function srvNotifyRenewalProposal(a: {
     return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
   };
   try {
-    await db.collection("users").doc(a.workerUid).collection("notifications")
-      .doc(`renewal_proposal_${a.proposalId}`)
-      .create({
-        userId: a.workerUid,
-        type: "renewalProposal",
-        title: "계약 연장 제안",
-        body: `${a.businessName}에서 ${md(a.effectiveStartMs)}~` +
-          `${md(a.effectiveEndMs)} 계약 연장을 제안했습니다.`,
-        data: {
-          proposalId: a.proposalId,
-          businessId: a.businessId,
-          screen: "renewalProposal",
-        },
-        category: "personal",
-        isRead: false,
-        createdAt: admin.firestore.Timestamp.now(),
-      });
+    await srvPersistNotificationWithId(a.workerUid, `renewal_proposal_${a.proposalId}`, {
+      userId: a.workerUid,
+      type: "renewalProposal",
+      title: "계약 연장 제안",
+      body: `${a.businessName}에서 ${md(a.effectiveStartMs)}~` +
+        `${md(a.effectiveEndMs)} 계약 연장을 제안했습니다.`,
+      data: {
+        proposalId: a.proposalId,
+        businessId: a.businessId,
+        screen: "renewalProposal",
+      },
+      category: "personal",
+      isRead: false,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   } catch (e) {
     if ((e as {code?: number})?.code === 6) return; // 이미 보냈다
     console.error("⚠️ [renewalProposal] 알림 저장 실패:", e);
@@ -35111,24 +35158,22 @@ async function srvNotifyRenewalResponse(
     const name = (userSnap.data()?.name as string | undefined) ?? "근무자";
     const type = accepted ? "renewalAccepted" : "renewalDeclined";
     await Promise.all([...targets].map((uid) =>
-      db.collection("users").doc(uid).collection("notifications")
-        .doc(`${type}_${a.oldApplicationId}_${workerUid}`)
-        .create({
-          userId: uid,
-          type,
-          title: accepted ? "연장 제안 수락" : "연장 제안 거절",
-          body: accepted ?
-            `${name}님이 계약 연장 제안을 수락했습니다.` :
-            `${name}님이 계약 연장 제안을 거절했습니다.`,
-          data: {
-            applicationId: a.oldApplicationId,
-            businessId: a.businessId,
-            screen: "fixedWorker",
-          },
-          category: "business",
-          isRead: false,
-          createdAt: admin.firestore.Timestamp.now(),
-        })
+      srvPersistNotificationWithId(uid, `${type}_${a.oldApplicationId}_${workerUid}`, {
+        userId: uid,
+        type,
+        title: accepted ? "연장 제안 수락" : "연장 제안 거절",
+        body: accepted ?
+          `${name}님이 계약 연장 제안을 수락했습니다.` :
+          `${name}님이 계약 연장 제안을 거절했습니다.`,
+        data: {
+          applicationId: a.oldApplicationId,
+          businessId: a.businessId,
+          screen: "fixedWorker",
+        },
+        category: "business",
+        isRead: false,
+        createdAt: admin.firestore.Timestamp.now(),
+      })
         .catch((e) => {
           if ((e as {code?: number})?.code !== 6) throw e;
         })
@@ -35163,22 +35208,20 @@ async function srvNotifyContractRenewed(a: {
   const end = new Date(a.newEndDateMs + 9 * 60 * 60 * 1000);
   const md = `${end.getUTCMonth() + 1}/${end.getUTCDate()}`;
   try {
-    await db.collection("users").doc(a.workerUid).collection("notifications")
-      .doc(`contract_renewed_${a.applicationId}_${a.workerUid}`)
-      .create({
-        userId: a.workerUid,
-        type: "contractRenewed",
-        title: "계약 연장 확정",
-        body: `${a.businessName}과의 계약이 ${md}까지 연장되었습니다.`,
-        data: {
-          applicationId: a.applicationId,
-          businessId: a.businessId,
-          screen: "mySchedule",
-        },
-        category: "personal",
-        isRead: false,
-        createdAt: admin.firestore.Timestamp.now(),
-      });
+    await srvPersistNotificationWithId(a.workerUid, `contract_renewed_${a.applicationId}_${a.workerUid}`, {
+      userId: a.workerUid,
+      type: "contractRenewed",
+      title: "계약 연장 확정",
+      body: `${a.businessName}과의 계약이 ${md}까지 연장되었습니다.`,
+      data: {
+        applicationId: a.applicationId,
+        businessId: a.businessId,
+        screen: "mySchedule",
+      },
+      category: "personal",
+      isRead: false,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   } catch (e) {
     if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
     console.error(
@@ -36146,7 +36189,7 @@ export const callableCreateScheduleChangeRequest = onCall(
         ? `${dateStr} ${typeLabel} 요청이 도착했습니다. 사유: ${reason}`
         : `${dateStr} ${typeLabel} 요청이 도착했습니다.`;
 
-      db.collection("users").doc(applicantUid).collection("notifications").add({
+      srvPersistNotification(applicantUid, {
         userId: applicantUid,
         type: "scheduleChangeRequest",
         title: "스케줄 변경 요청",
@@ -37211,7 +37254,7 @@ export const callableApplyToTO = onCall(
         const workDateStr = `${workDateKST.getUTCFullYear()}-${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}-${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
         const notifBody = `${applicantName}님이 ${selectedWorkType}에 지원했습니다.\n근무일: ${workDateKST.getUTCMonth() + 1}/${workDateKST.getUTCDate()}`;
         await Promise.all(allRecipients.map((adminId) =>
-          db.collection("users").doc(adminId).collection("notifications").add({
+          srvPersistNotification(adminId, {
             userId: adminId,
             type: "newApplication",
             title: "새 지원서 접수",
@@ -37735,7 +37778,7 @@ export const callableAcceptInvitation = onCall(
       const adminUid = inv.invitedBy as string | undefined;
       const businessId = inv.businessId as string;
       if (adminUid) {
-        await db.collection("users").doc(adminUid).collection("notifications").add({
+        await srvPersistNotification(adminUid, {
           userId: adminUid,
           type: "memberInvitationAccepted",
           title: "초대 수락됨",
@@ -38412,19 +38455,17 @@ export const callableInviteWorker = onCall(
     //   callableApproveApplicationForReview의 [RELIABILITY-01] 패턴과 같은 계열.
     const bizName = (invBizData?.name as string | undefined) ?? "";
     const toTitle = (toData.title     as string | undefined) ?? "업무";
-    db.collection("users").doc(targetUid).collection("notifications")
-      .doc(`to_invite_${newAppRef.id}_${inviteTime.toMillis()}`)
-      .create({
-        userId:    targetUid,
-        type:      "toInvite",
-        title:     "업무 초대가 도착했어요! 🎉",
-        body:      `${bizName}에서 '${toTitle}' 근무에 초대했습니다. 24시간 내 수락해주세요.`,
-        data:      {applicationId: newAppRef.id, businessId,
-          action: "inviteDetail"},
-        isRead:    false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        readAt:    null,
-      })
+    srvPersistNotificationWithId(targetUid, `to_invite_${newAppRef.id}_${inviteTime.toMillis()}`, {
+      userId:    targetUid,
+      type:      "toInvite",
+      title:     "업무 초대가 도착했어요! 🎉",
+      body:      `${bizName}에서 '${toTitle}' 근무에 초대했습니다. 24시간 내 수락해주세요.`,
+      data:      {applicationId: newAppRef.id, businessId,
+        action: "inviteDetail"},
+      isRead:    false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      readAt:    null,
+    })
       .catch((err: unknown) => {
         // ALREADY_EXISTS(6) — 같은 초대에 대한 알림이 이미 있다. 정상.
         if ((err as {code?: number})?.code !== 6) {
@@ -38626,30 +38667,28 @@ export const callableOfferAlternativeWork = onCall(
       committedOfferId: string
     ): Promise<"created" | "exists" | "failed"> => {
       try {
-        await db.collection("users").doc(offerUid).collection("notifications")
-          .doc(`work_reassignment_offered_${committedOfferId}`)
-          .create({
-            userId: offerUid,
-            type: "workReassignmentOffered",
-            title: "다른 업무 제안이 도착했어요",
-            body: `${(srcData.businessName as string | undefined) ?? ""}에서 ` +
-              `'${targetWD["workType"] as string}' 업무를 제안했습니다. ` +
-              "조건을 확인하고 수락해주세요.",
-            data: {
-              offerId: committedOfferId,
-              applicationId: targetAppId,
-              targetApplicationId: targetAppId,
-              sourceApplicationId,
-              businessId: offerBizId,
-              toId: offerToId,
-              slotId: offerSlotId,
-              targetWdId,
-              action: "alternativeWorkOffer",
-            },
-            isRead: false,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            readAt: null,
-          });
+        await srvPersistNotificationWithId(offerUid, `work_reassignment_offered_${committedOfferId}`, {
+          userId: offerUid,
+          type: "workReassignmentOffered",
+          title: "다른 업무 제안이 도착했어요",
+          body: `${(srcData.businessName as string | undefined) ?? ""}에서 ` +
+            `'${targetWD["workType"] as string}' 업무를 제안했습니다. ` +
+            "조건을 확인하고 수락해주세요.",
+          data: {
+            offerId: committedOfferId,
+            applicationId: targetAppId,
+            targetApplicationId: targetAppId,
+            sourceApplicationId,
+            businessId: offerBizId,
+            toId: offerToId,
+            slotId: offerSlotId,
+            targetWdId,
+            action: "alternativeWorkOffer",
+          },
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          readAt: null,
+        });
         return "created";
       } catch (err) {
         if ((err as {code?: number})?.code === 6) return "exists";
@@ -39604,7 +39643,7 @@ export const callableAcceptTOInvitation = onCall(
       const acceptOfferedWorkType =
         (appData.selectedWorkType as string | undefined) ?? "업무";
       if (invitedBy) {
-        db.collection("users").doc(invitedBy).collection("notifications").add({
+        srvPersistNotification(invitedBy, {
           userId:    invitedBy,
           type:      acceptIsReassign ? "workReassignmentAccepted" : "toInviteAccepted",
           title:     acceptIsReassign ?
@@ -39753,7 +39792,7 @@ export const callableDeclineTOInvitation = onCall(
       const declineOfferedWorkType =
         (appData.selectedWorkType as string | undefined) ?? "업무";
       if (invitedBy) {
-        db.collection("users").doc(invitedBy).collection("notifications").add({
+        srvPersistNotification(invitedBy, {
           userId:    invitedBy,
           type:      declineIsReassign ? "workReassignmentDeclined" : "toInviteDeclined",
           title:     declineIsReassign ?
@@ -39944,14 +39983,13 @@ async function srvWriteCrNotification(
   toUid: string, docId: string, body: Record<string, unknown>
 ): Promise<"created" | "exists" | "failed"> {
   try {
-    await db.collection("users").doc(toUid).collection("notifications")
-      .doc(docId).create({
-        userId: toUid,
-        isRead: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        readAt: null,
-        ...body,
-      });
+    await srvPersistNotificationWithId(toUid, docId, {
+      userId: toUid,
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      readAt: null,
+      ...body,
+    });
     return "created";
   } catch (err) {
     if ((err as {code?: number})?.code === 6) return "exists";
@@ -43166,6 +43204,91 @@ const ACCOUNT_DELETION_TOMBSTONE_COL = "account_deletion_tombstones";
 const ACCOUNT_STATUS_DELETING = "deleting";
 
 /**
+ * [R7-P4.4E.11C.0C.0a.5 §28] persistent notification 생성 결과.
+ *
+ *   `suppressed` 는 오류가 아니다 — 수신자가 계정 삭제 파괴 단계에 들어갔다는
+ *   뜻이고, 그 경우 알림을 만들지 않는 것이 정상 결과다(§21).
+ */
+type SrvNotificationPersistResult = {
+  /** Firestore 문서를 만들었는가. */
+  created: boolean;
+  /** 수신자 barrier 때문에 생략했는가. */
+  suppressed: boolean;
+  /** 만든 문서 id (생략됐으면 null). */
+  notificationId: string | null;
+};
+
+/**
+ * [R7-P4.4E.11C.0C.0a.5 §0·§12·§17·§18] **persistent notification 의 canonical
+ * authority.**
+ *
+ *   이 프로젝트의 알림은 약 70곳에서 직접 `users/{uid}/notifications` 에
+ *   쓰고 있었다. 그래서 수신자가 탈퇴한 뒤에도 — 보존된 근태에서 늦게 오는
+ *   급여 사건처럼 — 새 알림이 생길 수 있었고, 그때는 지울 주인이 없다.
+ *   `accountStatus` 는 user 문서와 함께 사라지므로 쓸 수 없다(§3·§4).
+ *   **살아남는 tombstone 이 유일한 canonical source 다**(§2).
+ *
+ *   emitter 70곳에 `if (user exists)` 를 심는 대신 persistence 자체를 한 곳이
+ *   소유한다. barrier read 와 create 가 **같은 transaction** 에 있으므로
+ *   freeze 가 그 사이에 commit 되면 ABORTED → 재시도 → barrier 확인 →
+ *   생성 0 이다(§19). transaction 밖 precheck 는 그 창을 닫지 못한다(§18).
+ *
+ *   [§20] barrier 읽기가 실패하면 쓰지 않는다 — UNKNOWN 을 "수신 가능"으로
+ *   바꾸지 않는다. helper 가 throw 하므로 호출부의 기존 오류 처리로 흐른다.
+ *
+ *   [§13] domain 권한·알림 정책·deep link·fanout 권한은 이 helper 의 책임이
+ *   아니다. 그것은 emitter 가 이미 판단하고 있고 그대로 둔다.
+ *
+ * @param {string} recipientUid 수신자
+ * @param {Record<string, unknown>} payload 알림 문서 내용 (그대로 저장)
+ * @return {Promise<SrvNotificationPersistResult>} 생성 결과
+ */
+async function srvPersistNotification(
+  recipientUid: string,
+  payload: Record<string, unknown>
+): Promise<SrvNotificationPersistResult> {
+  return srvPersistNotificationWithId(recipientUid, null, payload);
+}
+
+/**
+ * [R7-P4.4E.11C.0C.0a.5 §15·§16] 결정적 id 버전.
+ *
+ *   기존 writer 중 상당수는 `doc(`type_${domainId}`).create(...)` 로 **중복
+ *   발송을 막고** 있었다. 그 의미를 바꾸지 않는다 — `create` 는 문서가 이미
+ *   있으면 ALREADY_EXISTS(code 6)로 실패하고, 호출부의 기존 catch 가 그것을
+ *   중복으로 읽는다. random id 로 바꾸지 않는다(§15).
+ *
+ * @param {string} recipientUid 수신자
+ * @param {string | null} notificationId 결정적 id (null 이면 random)
+ * @param {Record<string, unknown>} payload 알림 문서 내용
+ * @return {Promise<SrvNotificationPersistResult>} 생성 결과
+ */
+async function srvPersistNotificationWithId(
+  recipientUid: string,
+  notificationId: string | null,
+  payload: Record<string, unknown>
+): Promise<SrvNotificationPersistResult> {
+  if (typeof recipientUid !== "string" || recipientUid.length === 0 ||
+      recipientUid.includes("/") || recipientUid.includes("..")) {
+    // 수신자를 특정할 수 없으면 쓰지 않는다 — barrier 판정도 불가능하다.
+    return {created: false, suppressed: true, notificationId: null};
+  }
+  const col = db.collection("users").doc(recipientUid)
+    .collection("notifications");
+  const ref = notificationId ? col.doc(notificationId) : col.doc();
+  const created = await db.runTransaction(async (tx) => {
+    if (await srvDeletionBarrierExistsInTx(tx, recipientUid)) return false;
+    tx.create(ref, payload);
+    return true;
+  });
+  return {
+    created,
+    suppressed: !created,
+    notificationId: created ? ref.id : null,
+  };
+}
+
+/**
  * [R7-P4.4E.11C.0C.0a.4.2 §5·§6·§61·§62] **같은 transaction 안에서** barrier 를
  * 읽는다.
  *
@@ -44795,23 +44918,20 @@ async function srvNotifyIdCardAccessRequested(a: {
     (a.customReason && a.customReason.length > 0 ? a.customReason : "기타") :
     (ID_ACCESS_REASON_TEXT[a.reason] ?? a.reason);
   try {
-    await db.collection("users").doc(a.targetUserId)
-      .collection("notifications")
-      .doc(`id_access_requested_${a.requestId}_${a.targetUserId}`)
-      .create({
-        userId: a.targetUserId,
-        type: "idCardAccessRequested",
-        title: "신분증 열람 요청",
-        body: `${a.businessName}에서 신분증 열람을 요청했습니다.\n사유: ${reasonText}`,
-        data: {
-          requestId: a.requestId,
-          businessId: a.businessId,
-          action: "idCardAccessRequest",
-        },
-        category: "personal",
-        isRead: false,
-        createdAt: admin.firestore.Timestamp.now(),
-      });
+    await srvPersistNotificationWithId(a.targetUserId, `id_access_requested_${a.requestId}_${a.targetUserId}`, {
+      userId: a.targetUserId,
+      type: "idCardAccessRequested",
+      title: "신분증 열람 요청",
+      body: `${a.businessName}에서 신분증 열람을 요청했습니다.\n사유: ${reasonText}`,
+      data: {
+        requestId: a.requestId,
+        businessId: a.businessId,
+        action: "idCardAccessRequest",
+      },
+      category: "personal",
+      isRead: false,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
   } catch (e) {
     if ((e as {code?: number})?.code === 6) return; // 재시도 — 이미 보냈다
     console.error(
@@ -45023,7 +45143,7 @@ export const callableRespondIdCardAccessRequest = onCall(
         : `${targetUserName}님이 신분증 열람을 거절했습니다.${rejectionReason ? `\n사유: ${rejectionReason}` : ""}`;
       const notifType = action === "approve" ? "idCardAccessApproved" : "idCardAccessRejected";
 
-      await db.collection("users").doc(requesterId).collection("notifications").add({
+      await srvPersistNotification(requesterId, {
         userId: requesterId,
         title: notifTitle,
         body: notifBody,
@@ -46246,7 +46366,7 @@ export const callableRequestInterimSettlement = onCall(
 
     await Promise.allSettled(
       [...adminIdSet].map((adminUid) =>
-        db.collection("users").doc(adminUid).collection("notifications").add({
+        srvPersistNotification(adminUid, {
           userId: adminUid,
           type: "interimSettlementRequested",
           title: "중간정산 요청",
@@ -46387,7 +46507,7 @@ export const callableApproveInterimSettlement = onCall(
       const transferText =
         `${transferDate.getMonth() + 1}/${transferDate.getDate()}`;
 
-      await db.collection("users").doc(workerId).collection("notifications").add({
+      await srvPersistNotification(workerId, {
         userId: workerId,
         type: "interimSettlementApproved",
         title: "중간정산 승인됨",
@@ -46546,7 +46666,7 @@ export const callableProcessInterimSettlement = onCall(
       const periodText =
         `${pStart.getMonth() + 1}/${pStart.getDate()}~${pEnd.getMonth() + 1}/${pEnd.getDate()}`;
 
-      await db.collection("users").doc(workerId).collection("notifications").add({
+      await srvPersistNotification(workerId, {
         userId: workerId,
         type: "wageTransferred",
         category: "personal", // [Phase 2] 근무자에게 발송 → personal
@@ -46621,7 +46741,7 @@ export const callableRejectInterimSettlement = onCall(
     });
 
     // 3. 상태 전이 성공 후 알림 발송 (실패해도 거절 자체에 영향 없음)
-    db.collection("users").doc(workerId).collection("notifications").add({
+    srvPersistNotification(workerId, {
       type: "interimSettlementRejected",
       businessId,
       businessName: reqPreData.businessName ?? null,
@@ -46945,7 +47065,7 @@ export const callableCancelTOInvitation = onCall(
         const body = bizName
           ? `${bizName}에서 '${toTitle}' 근무 초대를 취소했습니다.`
           : `'${toTitle}' 근무 초대가 취소되었습니다.`;
-        db.collection("users").doc(targetUid).collection("notifications").add({
+        srvPersistNotification(targetUid, {
           userId:    targetUid,
           type:      "toInviteCanceled",
           title:     "초대가 취소되었습니다",
@@ -47192,7 +47312,7 @@ export const callableAdminDirectInterimSettlement = onCall(
     // FCM 알림 (실패해도 이체에 영향 없음)
     try {
       if (actualNetAmount > 0) {
-        await db.collection("users").doc(workerId).collection("notifications").add({
+        await srvPersistNotification(workerId, {
           userId:   workerId,
           type:     "interimSettlementCompleted",
           category: "personal", // [Phase 2] 근무자에게 발송 → personal

@@ -222,8 +222,9 @@ void main() {
     test('07-a 결정적 문서 id + create() 로 한 번만 보낸다', () {
       expect(expiring, contains(r'worker_contract_expiring_${doc.id}_${dayKey}'));
       expect(ended, contains(r'worker_contract_ended_${doc.id}_'));
-      expect(expiring, contains('.create({'));
-      expect(ended, contains('.create({'));
+      // [0a.5] create 는 canonical helper 내부다 — 결정적 id 는 두 번째 인자.
+      expect(expiring, contains('srvPersistNotificationWithId('));
+      expect(ended, contains('srvPersistNotificationWithId('));
     });
 
     test('07-b 재시도에서 ALREADY_EXISTS 는 정상이다', () {
@@ -311,8 +312,9 @@ void main() {
     test('10-a 수신자는 원본 지원서의 근로자다', () {
       expect(expiring, contains('const uid = app.uid as string | undefined;'));
       expect(ended, contains('const uid = app.uid as string;'));
-      expect(expiring, contains('db.collection("users").doc(uid)'));
-      expect(ended, contains('db.collection("users").doc(uid)'));
+      // [0a.5] 수신자 지정이 canonical helper 의 첫 인자로 옮겨졌다.
+      expect(expiring, contains('srvPersistNotificationWithId(uid,'));
+      expect(ended, contains('srvPersistNotificationWithId(uid,'));
     });
 
     test('10-b payload 가 그 관계를 정확히 가리킨다', () {

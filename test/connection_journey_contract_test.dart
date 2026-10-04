@@ -265,7 +265,7 @@ void main() {
     test('04-e 알림도 결정적 id — 재초대는 새 알림, 재시도는 중복 없음', () {
       expect(invite.contains('`to_invite_\${newAppRef.id}_\${inviteTime.toMillis()}`'),
           isTrue);
-      expect(invite.contains('.create({'), isTrue);
+      expect(invite.contains('srvPersistNotificationWithId('), isTrue);
     });
   });
 

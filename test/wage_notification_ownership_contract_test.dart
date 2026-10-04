@@ -148,18 +148,33 @@ void main() {
   });
 
   group('CN3-4 — 재시도가 알림을 두 번 쌓지 않는다', () {
+    // [R7-P4.4E.11C.0C.0a.5 갱신] 알림 persistence 가 canonical helper 로
+    //   옮겨졌다(탈퇴 수신자 barrier 를 한 곳이 소유하기 위해). 결정적 id 와
+    //   create 의미는 **그대로** 다 — id 는 helper 의 두 번째 인자가 되고,
+    //   helper 내부가 `tx.create` 를 쓴다. 묻는 것은 바뀌지 않았다.
     test('CN3-40 문서 id 가 사건·수신자로 고정돼 있다', () {
-      expect(wh, contains(r'.doc(`${idPrefix}_${r.attendanceId}_${r.userId}`)'));
-      expect(_flat(idHelper), contains(r'.doc(`id_access_requested_${a.requestId}_${a.targetUserId}`)'));
-      expect(_flat(retroHelper), contains(r'.doc(`retroactive_deduction_${a.attendanceId}_${a.userId}`)'));
-      expect(_flat(renewHelper), contains(r'.doc(`contract_renewed_${a.applicationId}_${a.workerUid}`)'));
+      expect(wh, contains(r'${idPrefix}_${r.attendanceId}_${r.userId}`, {'));
+      expect(_flat(idHelper), contains(r'`id_access_requested_${a.requestId}_${a.targetUserId}`, {'));
+      expect(_flat(retroHelper), contains(r'`retroactive_deduction_${a.attendanceId}_${a.userId}`, {'));
+      expect(_flat(renewHelper), contains(r'`contract_renewed_${a.applicationId}_${a.workerUid}`, {'));
     });
 
     test('CN3-41 add 가 아니라 create 다', () {
+      // 호출부는 결정적 id helper 를 쓴다 — random id 를 만드는
+      // `srvPersistNotification(` 단독 형태가 아니다.
       for (final h in [wageHelper, idHelper, retroHelper, renewHelper]) {
         expect(h.contains('.add('), false);
-        expect(_flat(h), contains('.create({'));
+        expect(_flat(h), contains('srvPersistNotificationWithId('));
       }
+      // 그리고 그 helper 가 실제로 create 를 쓴다(이미 있으면 실패).
+      final cf = _fn();
+      final hi = cf.indexOf('function srvPersistNotificationWithId(');
+      expect(hi, greaterThan(-1));
+      // 경계는 helper 선언부터 컬럼 0 의 닫는 괄호까지다. 앞쪽에 early-exit
+      // `return {` 가 있으므로 그것을 끝으로 쓰면 구간이 잘려 공허해진다.
+      final body = cf.substring(hi, cf.indexOf('\n}', hi));
+      expect(body, contains('tx.create(ref, payload)'));
+      expect(body.contains('tx.set('), false);
     });
 
     test('CN3-42 이미 있음(6)은 오류가 아니다', () {

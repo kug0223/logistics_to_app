@@ -371,7 +371,7 @@ void main() {
     });
 
     test('결정적 id로 한 번만 쓴다', () {
-      expect(cf, contains('.doc(docId).create('));
+      expect(cf, contains('srvPersistNotificationWithId(toUid, docId,'));
       expect(propose, contains(r'`cr_proposed_${crProposalId}`'));
     });
 
