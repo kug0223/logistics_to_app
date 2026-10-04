@@ -37635,7 +37635,7 @@ export const callableAcceptInvitation = onCall(
       const userRef = db.collection("users").doc(callerUid);
 
       // [TX 내부 read 2-4] business / member / user — 병렬 조회
-      const [bizSnap, memberSnap] = await Promise.all([
+      const [bizSnap, memberSnap, userSnap] = await Promise.all([
         tx.get(bizRef),
         tx.get(memberRef),
         tx.get(userRef), // write 전 존재 보장 + TX 읽기 집합 편입
@@ -37643,6 +37643,11 @@ export const callableAcceptInvitation = onCall(
       if (!bizSnap.exists) {
         throw new HttpsError("not-found", "해당 사업장이 존재하지 않습니다.");
       }
+      // [R7-P4.4E.11C.0C.0a.3 §27·§31] 탈퇴 freeze 가 선 계정의 수락을 막는다.
+      //   members 행에는 이름과 전화번호가 들어간다. cleanup 직후 수락이
+      //   성립하면 그 개인정보가 다시 생긴다. 이 snapshot 은 이미 읽고 있던
+      //   것이다 — 추가 조회가 없다.
+      srvAssertNotDeletingAccount(userSnap.data());
       if (memberSnap.exists) {
         throw new HttpsError("already-exists", "이미 해당 사업장의 멤버입니다.");
       }
@@ -41668,6 +41673,9 @@ export const callableSetInviteRegions = onCall(
 
     // 불변식과 무관한 읽기는 트랜잭션 밖에서 — 재시도 때 다시 읽을 필요가 없다.
     const uSnap = await db.collection("users").doc(uid).get();
+    // [R7-P4.4E.11C.0C.0a.3 §27·§31] 탈퇴 freeze 가 선 계정은 여기서 막는다.
+    //   callableSetAvailability 와 같은 문서를 쓰므로 같은 gate 가 필요하다.
+    srvAssertNotDeletingAccount(uSnap.data());
     const preHome =
       uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
     const preHomeCity =
@@ -41785,6 +41793,10 @@ export const callableSetAvailability = onCall(
     // 거주지 city는 기존 스키마 유지 — 사용자가 직접 보내지 않는다.
     //   불변식(inviteKeys = regions × dates)과 무관하므로 트랜잭션 밖에서 읽는다.
     const uSnap = await db.collection("users").doc(uid).get();
+    // [R7-P4.4E.11C.0C.0a.3 §27·§31] 탈퇴 freeze 가 선 계정은 여기서 막는다.
+    //   이 문서를 지운 직후 다른 기기가 다시 만들면 cleanup 이 무의미해진다.
+    //   추가 조회 없이 이미 읽은 snapshot 으로 판단한다.
+    srvAssertNotDeletingAccount(uSnap.data());
     const home =
       uSnap.data()?.["homeRegion"] as Record<string, unknown> | undefined;
     const homeCity = ((home?.["city"] as string | undefined) ?? "").trim();
@@ -43338,6 +43350,250 @@ function srvDeletionDomainCleared(r: SrvDeletionResidual): boolean {
     r.scheduleRequests === 0 && r.paymentRequests === 0;
 }
 
+/**
+ * [R7-P4.4E.11C.0C.0a.3 §5·§33] identity 파괴 전에 **반드시 사라져야 하는**
+ * 계정 귀속 개인 데이터 정리 집계.
+ *
+ *   여기 든 다섯은 모두 같은 성질이다 — 계정에만 귀속되고, 계정이 사라지면
+ *   목적도 끝나고, 보존 근거가 없다. 그런데 Auth 를 지운 뒤에는 **본인이
+ *   CF 를 호출할 수 없으므로** 재시도 주인이 사라진다. 그래서 하나라도
+ *   실패하면 identity 를 파괴하지 않는다.
+ *
+ *   이 범주에 **넣지 않은** 것(의도적): 실제 근무·확정 근태·급여·이체·계약·
+ *   정산·audit·익명화된 리뷰/신뢰이력. 그것들은 retention class 가 다르다.
+ */
+type SrvPersonalCleanup = {
+  /** 위치 기록 삭제 수. */
+  locations: number;
+  /** 사업장 구성원 행 삭제 수(name·phone 포함). */
+  members: number;
+  /** 근무가능일/초대지역 문서 삭제 수(0 또는 1). */
+  availability: number;
+  /** 알림 삭제 수. */
+  notifications: number;
+  /** 신뢰설정 문서 삭제 수(0 또는 1). */
+  trustSettings: number;
+  /** 실패한 cleanup **종류** 수. 0 이 아니면 파괴 금지. */
+  failed: number;
+  /** 열거/쿼리 자체가 실패했는가 — "0건"과 구별한다(§37). */
+  queryFailed: boolean;
+};
+
+/**
+ * [§5·§33·§35·§36·§37] 계정 귀속 개인 Firestore 데이터를 비운다.
+ *
+ *   다섯 cleanup 을 **각자의 try** 로 감싼다. 한 종류가 실패해도 나머지는
+ *   계속 지운다 — 성공한 것을 되돌리지 않고(§35), 이미 없는 문서는 성공
+ *   동치다(§36). 실패는 종류 단위로 센다.
+ *
+ *   범용 컬렉션 삭제기가 아니다(§57). 지우는 대상 다섯이 코드에 고정되어
+ *   있고, 각 술어는 그 컬렉션의 소유 key 그대로다.
+ *
+ * @param {string} uid 계정 소유자
+ * @return {Promise<SrvPersonalCleanup>} 집계
+ */
+async function srvCleanupDeletionOwnedPersonal(
+  uid: string
+): Promise<SrvPersonalCleanup> {
+  const out: SrvPersonalCleanup = {
+    locations: 0, members: 0, availability: 0,
+    notifications: 0, trustSettings: 0, failed: 0, queryFailed: false,
+  };
+  if (!uid || uid.includes("/")) {
+    out.failed = 1;
+    return out;
+  }
+
+  // 1. worker_locations — GPS 위치 기록. 보존 근거 없음(개인정보보호법 §21).
+  try {
+    let more = true;
+    while (more) {
+      const snap = await db.collection("worker_locations")
+        .where("userId", "==", uid).limit(100).get();
+      if (snap.empty) break;
+      more = snap.docs.length === 100;
+      const batch = db.batch();
+      for (const doc of snap.docs) batch.delete(doc.ref);
+      await batch.commit();
+      out.locations += snap.docs.length;
+    }
+  } catch (e) {
+    out.failed++;
+    out.queryFailed = true;
+    console.error(
+      "[personalCleanup] worker_locations failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+
+  // 2. businesses/*/members/{uid} — **name·phone 이 들어 있다.**
+  //    예전 주석은 "인증 불가라 보안 위험 없음 → 데이터 위생"이라고 적었다.
+  //    권한 측면에서는 맞다. 그러나 그 판단은 이 행이 들고 있는 이름과
+  //    전화번호를 보지 않았다. 개인정보가 남는 것은 위생 문제가 아니다.
+  try {
+    const snap = await db.collectionGroup("members")
+      .where("uid", "==", uid).get();
+    const CHUNK = 499;
+    for (let i = 0; i < snap.docs.length; i += CHUNK) {
+      const batch = db.batch();
+      for (const doc of snap.docs.slice(i, i + CHUNK)) batch.delete(doc.ref);
+      await batch.commit();
+    }
+    out.members = snap.docs.length;
+  } catch (e) {
+    out.failed++;
+    out.queryFailed = true;
+    console.error(
+      "[personalCleanup] members failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+
+  // 3. worker_availability/{uid} — 거주 시/군 + 근무가능일 + 초대 지역.
+  //    [§4 발견] 이 문서는 탈퇴 경로 **어디에서도** 지워지지 않았다.
+  //    PreData·Applications·Final 전부 참조 0건이었다.
+  try {
+    await db.collection("worker_availability").doc(uid).delete();
+    out.availability = 1;
+  } catch (e) {
+    out.failed++;
+    console.error(
+      "[personalCleanup] worker_availability failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+
+  // 4. users/{uid}/notifications — 개인 수신 메시지.
+  //    상위 문서를 지워도 서브컬렉션은 남는다. 그래서 여기서 비운다.
+  try {
+    const notifRef = db.collection("users").doc(uid)
+      .collection("notifications");
+    let more = true;
+    while (more) {
+      const snap = await notifRef.limit(200).get();
+      if (snap.empty) break;
+      more = snap.docs.length === 200;
+      const batch = db.batch();
+      for (const doc of snap.docs) batch.delete(doc.ref);
+      await batch.commit();
+      out.notifications += snap.docs.length;
+    }
+  } catch (e) {
+    out.failed++;
+    out.queryFailed = true;
+    console.error(
+      "[personalCleanup] notifications failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+
+  // 5. trust_settings/{uid} — uid 가 문서 ID 인 계정 귀속 설정.
+  try {
+    await db.collection("trust_settings").doc(uid).delete();
+    out.trustSettings = 1;
+  } catch (e) {
+    out.failed++;
+    console.error(
+      "[personalCleanup] trust_settings failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+
+  return out;
+}
+
+/**
+ * [§40·§65] user 문서 삭제 직전의 **잔존 확실성** 집계.
+ *
+ *   "삭제 함수를 호출했다"와 "남아 있지 않다"는 다른 사실이다. cleanup 과
+ *   user 문서 삭제 사이에는 Storage sweep 과 사업장 정리가 들어가므로,
+ *   그 사이에 새로 생긴 행이 있으면 여기서 잡힌다.
+ *
+ *   각 값은 **존재 여부 탐침**이다(`limit(1)`) — 정확한 잔존 수가 아니다.
+ *   0 이면 없음, 1 이면 하나 이상 남음.
+ */
+type SrvPersonalResidual = {
+  /** 0 또는 1 — 위치 기록 잔존. */
+  locations: number;
+  /** 0 또는 1 — 구성원 행 잔존. */
+  members: number;
+  /** 0 또는 1 — 근무가능일 문서 잔존. */
+  availability: number;
+  /** 0 또는 1 — 알림 잔존. */
+  notifications: number;
+  /** 0 또는 1 — 신뢰설정 문서 잔존. */
+  trustSettings: number;
+  /** 쿼리 실패 — 0 으로 해석하면 안 된다(§37). */
+  queryFailed: boolean;
+};
+
+/**
+ * [§40·§65] 개인 데이터 잔존을 직접 센다.
+ *
+ *   cleanup 집계를 믿지 않는다. cleanup 술어와 **같은 shape** 으로 다시
+ *   읽는다 — 다른 field 를 쓰면 "치웠다"와 "남았다"가 서로 다른 것을 센다.
+ *
+ * @param {string} uid 계정 소유자
+ * @return {Promise<SrvPersonalResidual>} 집계
+ */
+async function srvCountDeletionPersonalResidual(
+  uid: string
+): Promise<SrvPersonalResidual> {
+  const out: SrvPersonalResidual = {
+    locations: 0, members: 0, availability: 0,
+    notifications: 0, trustSettings: 0, queryFailed: false,
+  };
+  try {
+    const [loc, mem, av, notif, trust] = await Promise.all([
+      db.collection("worker_locations")
+        .where("userId", "==", uid).limit(1).get(),
+      db.collectionGroup("members")
+        .where("uid", "==", uid).limit(1).get(),
+      db.collection("worker_availability").doc(uid).get(),
+      db.collection("users").doc(uid)
+        .collection("notifications").limit(1).get(),
+      db.collection("trust_settings").doc(uid).get(),
+    ]);
+    out.locations = loc.size;
+    out.members = mem.size;
+    out.availability = av.exists ? 1 : 0;
+    out.notifications = notif.size;
+    out.trustSettings = trust.exists ? 1 : 0;
+  } catch (e) {
+    out.queryFailed = true;
+    console.error(
+      "[personalResidual] query failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+  return out;
+}
+
+/**
+ * [§40] identity 를 파괴해도 되는가 — 개인 데이터 기준.
+ *
+ * @param {SrvPersonalResidual} r 집계
+ * @return {boolean} 잔존 0 임이 **확인**됐는가
+ */
+function srvDeletionPersonalCleared(r: SrvPersonalResidual): boolean {
+  return !r.queryFailed && r.locations === 0 && r.members === 0 &&
+    r.availability === 0 && r.notifications === 0 && r.trustSettings === 0;
+}
+
+/**
+ * [§27·§31] 탈퇴 freeze 가 선 계정의 재생성 write 를 거부한다.
+ *
+ *   cleanup 이 성공해도 같은 사용자의 **다른 기기**가 곧바로 같은 행을 다시
+ *   만들 수 있으면 cleanup hard gate 만으로는 닫히지 않는다. 그 writer 들은
+ *   이미 `users/{uid}` 를 읽고 있으므로, 추가 조회 없이 같은 snapshot 으로
+ *   막는다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} data user 문서 데이터
+ */
+function srvAssertNotDeletingAccount(
+  data: FirebaseFirestore.DocumentData | undefined
+): void {
+  if ((data?.["accountStatus"] as string | undefined) ===
+      ACCOUNT_STATUS_DELETING) {
+    throw new HttpsError(
+      "failed-precondition", "탈퇴 처리 중인 계정입니다.");
+  }
+}
+
 /** [R7-P4.4E.11C §50] account-owned Storage 정리 집계. */
 type SrvAccountStorageSweep = {
   /** 열거된 object 수. */
@@ -43489,33 +43745,15 @@ export const callableDeleteAccountFinal = onCall(
       uid, request.auth.token as unknown as Record<string, unknown>);
 
     const userRef = db.collection("users").doc(uid);
-    const [, userSnap] = await Promise.all([
-      // 0. worker_locations 전체 삭제 (SEC-94 위치정보 즉시 파기)
-      //    [CF-MERGED] callableDeleteWorkerLocations 통합 — CF 호출 1건 절약
-      //    위치정보: 개인정보보호법 제21조 (법령 보존 근거 없음 — 즉시 파기 대상)
-      (async () => {
-        try {
-          let wlHasMore = true;
-          while (wlHasMore) {
-            const wlSnap = await db.collection("worker_locations")
-              .where("userId", "==", uid)
-              .limit(100)
-              .get();
-            if (wlSnap.docs.length === 0) break;
-            wlHasMore = wlSnap.docs.length === 100;
-            const wlBatch = db.batch();
-            for (const doc of wlSnap.docs) wlBatch.delete(doc.ref);
-            await wlBatch.commit();
-          }
-        } catch (e) {
-          console.error(`callableDeleteAccountFinal: worker_locations cleanup failed (${uid}):`, e);
-          // best-effort — 위치정보 정리 실패도 Auth 삭제는 진행
-        }
-      })(),
-      // 1. users 문서 조회 (role 파악 — BUSINESS_ADMIN 분기용)
-      //    멱등: 이미 삭제된 경우 role = "" 로 진행
-      userRef.get(),
-    ]);
+    // 1. users 문서 조회 (role 파악 — BUSINESS_ADMIN 분기용)
+    //    멱등: 이미 삭제된 경우 role = "" 로 진행
+    //
+    // [R7-P4.4E.11C.0C.0a.3 §38] 예전에는 이 조회가 worker_locations 삭제와
+    //   `Promise.all` 로 묶여 있었다. 즉 **freeze 보다 앞에서** 개인 데이터를
+    //   지우기 시작했다. Final 이 단독 호출되면 barrier 가 서기 전에 지우는
+    //   셈이고, 그 창에서 다른 기기가 다시 만든 행은 cleanup 을 빠져나간다.
+    //   개인 cleanup 전부를 freeze·domain gate 뒤로 옮겼다.
+    const userSnap = await userRef.get();
 
     let role = userSnap.exists
       ? ((userSnap.data()!["role"] as string | undefined) ?? "")
@@ -43539,37 +43777,6 @@ export const callableDeleteAccountFinal = onCall(
         console.warn(`callableDeleteAccountFinal: role recovery from deleted_accounts failed (${uid}):`, e);
       }
     }
-
-    // 2-PRE. members 서브컬렉션 orphan 전수 정리 (best-effort)
-    //   Auth 삭제 후 businesses/members 도큐먼트가 잔류해도 보안 위험 없음(인증 불가)
-    //   그러나 관리자 멤버 목록에 유령 항목이 남으므로 데이터 위생 차원에서 정리.
-    // [BUG-03 FIX] 기존: subAdminBusinessIds 배열 기준(서브관리자 only) → 일반 멤버 고아 미정리
-    //   변경: collectionGroup("members").where("uid", "==", uid) 전수 정리
-    //   callableAcceptInvitation이 members 문서에 uid 필드를 저장하므로 쿼리 가능
-    //   userSnap 존재 여부와 무관하게 실행 → 재시도 시에도 안전 (BUG-01 연계)
-    try {
-      const memberGroupSnap = await db.collectionGroup("members")
-        .where("uid", "==", uid)
-        .get();
-      if (memberGroupSnap.docs.length > 0) {
-        const MEMBER_CHUNK = 499;
-        for (let i = 0; i < memberGroupSnap.docs.length; i += MEMBER_CHUNK) {
-          const memberBatch = db.batch();
-          for (const doc of memberGroupSnap.docs.slice(i, i + MEMBER_CHUNK)) {
-            memberBatch.delete(doc.ref);
-          }
-          await memberBatch.commit();
-        }
-      }
-    } catch (e) {
-      console.error(`[callableDeleteAccountFinal] members collectionGroup cleanup failed (${uid}):`, e);
-    }
-
-    // 2-PRE2. trust_settings/{uid} 삭제 (개인정보보호법 §21, best-effort)
-    // [BUG-04 FIX] trust_settings 문서는 uid가 문서 ID — 기존 탈퇴 CF에서 누락
-    await db.collection("trust_settings").doc(uid).delete().catch((e) =>
-      console.error(`callableDeleteAccountFinal: trust_settings cleanup failed (${uid}):`, e)
-    );
 
     // 1-A. [R7-P4.4E.11C.0C.0a §23·§24] freeze fail-safe.
     //
@@ -43609,21 +43816,29 @@ export const callableDeleteAccountFinal = onCall(
       };
     }
 
-    // 2. notifications 서브컬렉션 삭제 (paginated 200건씩)
-    //    Firestore: 상위 document 삭제 후에도 서브컬렉션 독립 접근 가능 → 순서 무관
-    try {
-      const notifRef = db.collection("users").doc(uid).collection("notifications");
-      let hasMore = true;
-      while (hasMore) {
-        const snap = await notifRef.limit(200).get();
-        if (snap.empty) break;
-        hasMore = snap.docs.length === 200;
-        const batch = db.batch();
-        for (const doc of snap.docs) batch.delete(doc.ref);
-        await batch.commit();
-      }
-    } catch (e) {
-      console.error(`callableDeleteAccountFinal: Notifications cleanup failed (${uid}):`, e);
+    // 2. [R7-P4.4E.11C.0C.0a.3 §5·§33·§38] **계정 귀속 개인 데이터는 hard gate 다.**
+    //
+    //   이전에는 위치·구성원·신뢰설정·알림이 각자 흩어진 best-effort 블록이었고,
+    //   전부 `console.error` 로 끝났다. 그리고 그 뒤에서 user 문서와 Auth 를
+    //   지웠다. 그러면 남은 개인정보에 **주인이 없다** — 본인은 인증할 수
+    //   없어 CF 를 다시 호출하지 못하고, 전역 sweeper 는 만들지 않는 것이
+    //   이 프로젝트의 원칙이다. 즉 실패 한 번이 영구 잔류가 된다.
+    //
+    //   `worker_availability` 는 애초에 **어느 단계에서도 지우지 않았다.**
+    //   거주 시/군과 근무가능일 달력이 계정과 함께 사라지지 않았다.
+    //
+    //   [§36] 이미 없는 문서는 성공 동치다. [§37] 열거 실패는 "0건"이 아니다.
+    const personalCleanup = await srvCleanupDeletionOwnedPersonal(uid);
+    console.info(
+      `[deleteAccountFinal] personal cleanup loc=${personalCleanup.locations} ` +
+      `members=${personalCleanup.members} av=${personalCleanup.availability} ` +
+      `notif=${personalCleanup.notifications} ` +
+      `trust=${personalCleanup.trustSettings} ` +
+      `failed=${personalCleanup.failed} ` +
+      `queryFailed=${personalCleanup.queryFailed}`);
+    if (personalCleanup.failed > 0) {
+      // [§33·§34] 기존 reason 재사용 — 제품 UI 는 cleanup 종류를 알 필요가 없다.
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 
     // 3. [R7-P4.4E.11C §0·§13·§28·§34] **account-owned Storage 는 HARD GATE 다.**
@@ -43730,6 +43945,25 @@ export const callableDeleteAccountFinal = onCall(
     //   모두 그대로다. 그래서 다음 호출이 role 을 다시 읽어 같은 사업장을
     //   다시 집어 끝낼 수 있다. 재시도 권위를 남겨두는 것이 요점이다.
     if (bizCleanupFailed) {
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
+    }
+
+    // 5-B. [R7-P4.4E.11C.0C.0a.3 §40·§65] **잔존 확실성** — 파괴 직전 재확인.
+    //
+    //   "삭제 함수를 호출했다"와 "남아 있지 않다"는 다른 사실이다. cleanup 과
+    //   이 지점 사이에는 Storage sweep 과 사업장 정리가 들어간다 — 수 초다.
+    //   그 사이에 같은 사용자의 다른 기기나 관리자 동작으로 새 행이 생기면
+    //   cleanup 집계는 여전히 `failed=0` 이다. 그래서 집계를 믿지 않고
+    //   같은 술어로 다시 읽는다.
+    const personalResidual = await srvCountDeletionPersonalResidual(uid);
+    console.info(
+      `[deleteAccountFinal] personal residual loc=${personalResidual.locations} ` +
+      `members=${personalResidual.members} av=${personalResidual.availability} ` +
+      `notif=${personalResidual.notifications} ` +
+      `trust=${personalResidual.trustSettings} ` +
+      `queryFailed=${personalResidual.queryFailed}`);
+    if (!srvDeletionPersonalCleared(personalResidual)) {
+      // [§37] 쿼리 실패도 0 이 아니다. 어느 쪽이든 identity 파괴 금지.
       return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 

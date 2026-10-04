@@ -63,6 +63,16 @@ String _fnRaw(String raw, String name) {
 
 String _fn(String raw, String name) => _codeOf(_fnRaw(raw, name));
 
+/// 최상위 helper 함수 본문. 경계는 선언부터 컬럼 0 의 `}` 까지 — 고정폭 창을
+/// 쓰지 않는다.
+String _helperBody(String raw, String name) {
+  final a = raw.indexOf('function $name(');
+  if (a < 0) throw StateError('$name 을 찾지 못함');
+  final rel = raw.substring(a).indexOf('\n}');
+  if (rel < 0) throw StateError('$name 의 끝을 찾지 못함');
+  return _codeOf(raw.substring(a, a + rel));
+}
+
 /// 고정폭 창(`substring(i, i + 400)`)은 코드가 길어지면 조용히 깨진다.
 /// 그래서 이 파일의 모든 구간 추출은 **경계 문자열**로만 자른다.
 int _at(String s, String needle) {
@@ -258,39 +268,53 @@ void main() {
   });
 
   group('DEL-BIZ-3x — §17 cleanup 분류', () {
-    test('DEL-BIZ-30 members 정리 실패는 gate 가 아니다 (위생 등급 유지)', () {
-      // 분류 근거: 삭제된 uid 는 인증할 수 없다. 남은 members 문서는
-      // 관리자 목록의 유령 항목이지 권한 획득 경로가 아니다.
-      // 이 판단은 이번 Phase 가 새로 만든 것이 아니라 기존 코드의 기록이다.
-      final members = _between(
-        fn,
-        'collectionGroup("members")',
-        'trust_settings',
+    // [R7-P4.4E.11C.0C.0a.3 갱신] 이 세 셀은 .0a.2 에서 "members 와
+    //   trust_settings 는 gate 가 아니다"를 고정하고 있었다. 근거는 "삭제된
+    //   uid 는 인증할 수 없으니 권한 획득 경로가 아니다"였다 — 권한 측면에서는
+    //   맞다. 그러나 그 판단은 members 행이 들고 있는 **이름과 전화번호**를
+    //   보지 않았고, trust_settings 가 uid 귀속 문서라는 사실도 함께 보지
+    //   않았다. .0a.3 에서 둘 다 MUST_DELETE 로 재분류됐다.
+    //
+    //   셀을 지우지 않는다. 같은 질문("이 cleanup 실패가 계정 파괴를
+    //   막는가")을 새 구조에 다시 묻는다 — 답이 뒤집혔다는 사실 자체가
+    //   고정할 값이다.
+
+    test('DEL-BIZ-30 members 정리는 이제 gate 다 (개인정보 포함)', () {
+      // 분류 전환: 위생 → MUST_DELETE. 근거는 name·phone 잔류다.
+      expect(fn, contains('srvCleanupDeletionOwnedPersonal('));
+      final helper = _helperBody(raw, 'srvCleanupDeletionOwnedPersonal');
+      expect(helper, contains('collectionGroup("members")'));
+      // 실패가 집계되고, Final 이 그 집계로 멈춘다.
+      expect(_flat(fn), contains('if (personalCleanup.failed > 0)'));
+      expect(
+        _at(fn, 'if (personalCleanup.failed > 0)'),
+        lessThan(_at(fn, 'userRef.delete()')),
       );
-      expect(members, contains('console.error'));
-      expect(members, isNot(contains('partial:')));
-      expect(members, isNot(contains('return {')));
     });
 
-    test('DEL-BIZ-31 trust_settings 정리 실패도 gate 가 아니다', () {
-      final trust = _between(
+    test('DEL-BIZ-31 trust_settings 정리도 이제 gate 다', () {
+      final helper = _helperBody(raw, 'srvCleanupDeletionOwnedPersonal');
+      expect(helper, contains('collection("trust_settings").doc(uid).delete()'));
+      // Final 안에 더 이상 삼키는 단독 블록이 없다.
+      expect(
         fn,
-        'collection("trust_settings")',
-        'srvEnsureAccountDeletionTombstone',
+        isNot(contains('trust_settings cleanup failed')),
+        reason: 'best-effort 단독 블록이 남아 있으면 분류 전환이 반쪽이다',
       );
-      expect(trust, contains('.catch('));
-      expect(trust, isNot(contains('partial:')));
     });
 
-    test('DEL-BIZ-32 분류의 기준선 — gate 인 cleanup 은 네 개다', () {
-      // tombstone(freeze) · 도메인 잔여 · Storage · 사업장.
+    test('DEL-BIZ-32 분류의 기준선 — gate 인 cleanup 은 여섯 개다', () {
+      // tombstone(freeze) · 도메인 잔여 · 개인 cleanup · Storage ·
+      // 사업장 · 개인 잔존 확실성.
       // 이 집합이 조용히 늘거나 줄면 실패 의미가 바뀐다.
       expect(fn, contains('if (!tombstoneOk)'));
       expect(fn, contains('srvDeletionDomainCleared('));
+      expect(fn, contains('if (personalCleanup.failed > 0)'));
       expect(fn, contains('srvAccountStorageCleared('));
       expect(fn, contains('if (bizCleanupFailed)'));
-      expect(_count(fn, 'partial: true'), 5,
-          reason: 'gate 4개 + user 문서 삭제 실패 1개');
+      expect(fn, contains('srvDeletionPersonalCleared('));
+      expect(_count(fn, 'partial: true'), 7,
+          reason: 'gate 6개 + user 문서 삭제 실패 1개');
     });
   });
 
