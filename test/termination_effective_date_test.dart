@@ -24,6 +24,9 @@ import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/ui/pending_termination_surface.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 
 String _src(String p) {
   final f = File(p);
@@ -794,7 +797,9 @@ void main() {
     });
 
     test('T-61 §26 근무일 resolver 는 그대로 — terminationEffectiveDate 를 읽지 않는다', () {
-      final res = _after(cf, 'function srvLongTermEligibleOnDay', 1800);
+      // [R7-APPLICATION-LIFECYCLE.1C.1] 규칙 본문은 canonical 모듈에 있다.
+      final res = _after(_src(_cdPath),
+          'export function longTermEligibleOnDay(', 1800);
       expect(res.contains('terminationEffectiveDate'), isFalse);
       expect(res.contains('terminationStatus'), isFalse);
     });

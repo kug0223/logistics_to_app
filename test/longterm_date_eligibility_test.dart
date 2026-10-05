@@ -23,6 +23,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/application_model.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 
 String _src(String p) {
   final f = File(p);
@@ -134,44 +137,62 @@ ApplicationModel _app({
 
 void main() {
   final cf = _codeOf(_src(_cfPath));
-  final resolver = _after(cf, 'function srvLongTermEligibleOnDay(', 2200);
+  // [R7-APPLICATION-LIFECYCLE.1C.1] 규칙 본문은 canonical 모듈에 있다.
+  //   함수 **본문만** 잘라 본다 — 파일 전체를 보면 블록 주석과 겹침 판정용
+  //   상수(`OPEN_ENDED_DAY_NUM`)까지 걸려 의도가 흐려진다.
+  final cd = _codeOf(_src(_cdPath));
+  final resolver =
+      _after(cd, 'export function longTermEligibleOnDay(', 1500);
+  final startRule =
+      _after(cd, 'export function longTermEffectiveStartNum(', 800);
 
   // ══════════════════════════════════════════════════════════════
   // 00. 거울이 서버 원본과 같은 규칙인지 — 아래 의미 테스트의 전제
   // ══════════════════════════════════════════════════════════════
   group('00. 거울 ↔ 서버 원본', () {
     test('00-a effectiveStart = desiredStartDate ?? workDate', () {
-      expect(resolver.contains('const desired = ts("desiredStartDate");'), true);
-      expect(resolver.contains('const workDate = ts("workDate");'), true);
+      // 시작일 식은 전용 함수 하나로 모여 있다.
+      expect(resolver.contains('longTermEffectiveStartNum(appData)'), true);
+      expect(startRule.contains('const desired = asDate(appData["desiredStartDate"]);'),
+          true);
+      expect(startRule.contains('const workDate = asDate(appData["workDate"]);'),
+          true);
       expect(
-        resolver.contains(
-            'let startNum = desired ?\n    srvKstDateNum(desired.toDate()) :\n'
-            '    (workDate ? srvKstDateNum(workDate.toDate()) : 0);'),
+        startRule.contains(
+            'let startNum = desired ?\n    kstDateNum(desired) :\n'
+            '    (workDate ? kstDateNum(workDate) : 0);'),
         true,
       );
     });
 
     test('00-b 확정일 보정은 desiredStartDate가 없을 때만 적용된다', () {
-      expect(resolver.contains('if (!desired) {'), true);
-      expect(resolver.contains('if (cNum > startNum) startNum = cNum;'), true);
+      expect(startRule.contains('if (!desired) {'), true);
+      expect(startRule.contains('if (cNum > startNum) startNum = cNum;'), true);
     });
 
     test('00-c effectiveEnd = actualResignDate ?? workEndDate', () {
-      expect(resolver.contains('const resign = ts("actualResignDate");'), true);
-      expect(resolver.contains('const end = resign ?? ts("workEndDate");'), true);
+      expect(resolver.contains('const resign = asDate(appData["actualResignDate"]);'), true);
+      expect(resolver.contains('const end = resign ?? asDate(appData["workEndDate"]);'), true);
     });
 
     test('00-d 퇴사 효력일은 inclusive — strict greater로만 막는다', () {
-      expect(resolver.contains('if (dayNum > srvKstDateNum(end.toDate())) {'), true);
+      expect(resolver.contains('if (dayNum > kstDateNum(end)) {'), true);
       // `>=` 로 막으면 마지막 근무 가능일 하루가 지워진다.
-      expect(resolver.contains('dayNum >= srvKstDateNum(end.toDate())'), false);
+      expect(resolver.contains('dayNum >= kstDateNum(end)'), false);
     });
 
     test('00-e workEndDate 없는 계약은 근무일을 만들지 않는다', () {
       expect(resolver.contains('if (!end) return {eligible: false, reason: "NO_END"};'),
           true);
-      // 무기한으로 해석하는 fail-open 상수가 없다.
+      // 근무일 판정에는 무기한 fail-open 상수가 없다.
       expect(resolver.contains('99991231'), false);
+      expect(resolver.contains('OPEN_ENDED_DAY_NUM'), false);
+      // [R7-APPLICATION-LIFECYCLE.1C.1] 그 상수는 **겹침 판정** 전용이다 —
+      //   종료를 모르는 약속을 "끝났다"고 단정하면 이중 약속이 성립한다.
+      //   두 질문이 섞이지 않도록, 상수를 쓰는 자리를 함께 고정한다.
+      final conflictRule =
+          _after(cd, 'export function longTermCommitmentRange(', 700);
+      expect(conflictRule.contains('OPEN_ENDED_DAY_NUM'), true);
     });
 
     test('00-f 추가근무가 휴무보다 먼저 판정된다', () {
@@ -396,10 +417,18 @@ void main() {
   // ══════════════════════════════════════════════════════════════
   group('03. consumer 배선', () {
     test('03-a resolver는 하나다', () {
+      // [R7-APPLICATION-LIFECYCLE.1C.1] 정의는 canonical 모듈에 하나,
+      //   index.ts 는 그것을 **위임**으로 받는다(식 사본 0).
       expect(
-        RegExp(r'function srvLongTermEligibleOnDay\(').allMatches(cf).length,
+        RegExp(r'export function longTermEligibleOnDay\(').allMatches(cd).length,
         1,
       );
+      expect(
+        cf.contains('const srvLongTermEligibleOnDay = longTermEligibleOnDay;'),
+        true,
+      );
+      expect(RegExp(r'function srvLongTermEligibleOnDay\(').hasMatch(cf), false,
+          reason: 'index.ts 에 두 번째 정의가 생기면 또 갈라진다');
     });
 
     test('03-b callableCheckIn이 resolver를 쓴다', () {

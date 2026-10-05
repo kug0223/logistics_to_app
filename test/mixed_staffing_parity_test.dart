@@ -19,6 +19,9 @@ import 'package:ALfit/models/ui/invite_capacity_state.dart';
 import 'package:ALfit/utils/format_helper.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 const _dayPath =
     'lib/screens/business_admin/dialogs/day_applicants_dialog.dart';
 
@@ -156,7 +159,7 @@ void main() {
       final body = _tsAfter(cf, 'function srvContractConfirmedOnDay(', 700);
       expect(body.contains('srvLongTermEligibleOnDay('), true);
 
-      final resolver = _tsAfter(cf, 'function srvLongTermEligibleOnDay(', 2200);
+      final resolver = _codeOf(_src(_cdPath));
       for (final f in [
         'workDate',
         'workEndDate',

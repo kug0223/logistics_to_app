@@ -19,6 +19,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/application_model.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 const _fixedWorkerPath =
     'lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 
@@ -327,7 +330,7 @@ void main() {
     });
 
     test('07-e resolver 가 두 배열을 모두 본다', () {
-      final res = _after(cf, 'function srvLongTermEligibleOnDay(', 2200);
+      final res = _codeOf(_src(_cdPath));
       expect(res.contains('hasDay("extraWorkDates")'), true);
       expect(res.contains('hasDay("leaveDates")'), true);
     });

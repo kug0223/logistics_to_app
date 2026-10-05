@@ -23,6 +23,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/application_model.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 const _buildPath = 'scripts/r7-fixture-build.js';
 const _verifyPath = 'scripts/r7-fixture-verify.js';
 const _seedPath = 'scripts/seed-r7-fixtures-dev.js';
@@ -95,8 +98,8 @@ void main() {
     });
 
     test('01-c 근무일 판정식도 그대로다', () {
-      final r = _after(cf, 'function srvLongTermEligibleOnDay(', 1638);
-      expect(r, contains('if (dayNum < startNum) return {eligible: false, reason: "BEFORE_START"}'));
+      final r = _codeOf(_src(_cdPath));
+      expect(r, contains('if (dayNum < longTermEffectiveStartNum(appData)) {'));
       expect(r, contains('reason: resign ? "AFTER_RESIGN" : "AFTER_END"'));
       expect(r, contains('!Array.isArray(wd) || wd.length === 0 || !wd.includes(dayWkd)'));
     });

@@ -25,6 +25,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 String _read(String p) => File(p).readAsStringSync();
 
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+const _cdPath = 'functions/src/commitment_dates.ts';
+
 String _slice(String src, String start, String end) {
   final i = src.indexOf(start);
   expect(i, greaterThan(-1), reason: '구간 시작을 찾지 못했다: $start');
@@ -53,7 +56,8 @@ void main() {
       expect(counter, contains('d.get("actualResignDate") ??'));
       expect(counter, contains('d.get("workEndDate")'));
       // 기존 canonical 판정도 그대로 살아 있다.
-      expect(cf, contains('const end = resign ?? ts("workEndDate");'));
+      expect(_read(_cdPath),
+          contains('const end = resign ?? asDate(appData["workEndDate"]);'));
       final model = _read('lib/models/core/application_model.dart');
       expect(model,
           contains('DateTime? get effectiveEndDate => actualResignDate ?? workEndDate;'));

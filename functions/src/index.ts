@@ -19,6 +19,20 @@ import {
   CONTRACT_PERIOD_RULE_VERSION,
 } from "./contract_period";
 
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속의 날짜 판정 — 같은 약속의
+//   시작일·종료일·근무일을 근태·배치·좌석 확정·지원 충돌이 모두 이 모듈
+//   하나로 읽는다. 여기에 식을 다시 적지 않는다.
+import {
+  isLongTermCommitment,
+  kstDateNum,
+  kstWeekdayKo,
+  longTermCommitmentOnDay,
+  longTermCommitmentRange,
+  longTermEligibleOnDay,
+  OPEN_ENDED_DAY_NUM,
+  type WorkerDayReason,
+} from "./commitment_dates";
+
 initializeApp();
 const db = getFirestore();
 
@@ -98,7 +112,6 @@ const EXIT_CONFLICT_STATUSES = ["PENDING", "APPROVED", "AUTO_APPROVED"];
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SRV_KST_MS = 9 * 3600 * 1000;
-const SRV_KST_WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
 
 /**
  * KST 기준 날짜 번호 (YYYYMMDD). 대소 비교용이다.
@@ -106,12 +119,7 @@ const SRV_KST_WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
  * @return {number} YYYYMMDD 정수
  */
 function srvKstDateNum(d: Date): number {
-  const kst = new Date(d.getTime() + SRV_KST_MS);
-  return (
-    kst.getUTCFullYear() * 10000 +
-    (kst.getUTCMonth() + 1) * 100 +
-    kst.getUTCDate()
-  );
+  return kstDateNum(d);
 }
 
 /**
@@ -189,8 +197,7 @@ function srvWorkDateParts(ts: admin.firestore.Timestamp): {
  * @return {string} 일~토
  */
 function srvKstWeekdayKo(d: Date): string {
-  const kst = new Date(d.getTime() + SRV_KST_MS);
-  return SRV_KST_WEEKDAY_KO[kst.getUTCDay()];
+  return kstWeekdayKo(d);
 }
 
 /**
@@ -253,79 +260,26 @@ function srvContractActiveOnDay(
 // ═══════════════════════════════════════════════════════════════════════
 
 /** 근무 대상이 아닌 이유. caller의 기존 문구를 보존하기 위해 구분한다. */
-type SrvWorkerDayReason =
-  | "ELIGIBLE"
-  | "BEFORE_START"
-  | "AFTER_RESIGN"
-  | "AFTER_END"
-  | "NO_END"
-  | "LEAVE"
-  | "NON_WORKDAY";
+type SrvWorkerDayReason = WorkerDayReason;
 
-/**
- * 이 장기 지원서의 근로자가 그 KST 날짜에 근무 대상인가.
- *
- * status(CONFIRMED·CONTRACT_PENDING)는 보지 않는다 — lifecycle gate는
- * caller의 책임이고, 여기에 넣으면 같은 정책이 두 곳에 생긴다.
- * @param {Record<string, unknown>} appData 지원서 문서
- * @param {number} dayNum 대상 날짜 KST YYYYMMDD
- * @param {string} dayWkd 대상 날짜 KST 요일 한글
- * @return {{eligible: boolean, reason: SrvWorkerDayReason}} 판정과 이유
- */
-function srvLongTermEligibleOnDay(
-  appData: Record<string, unknown>,
-  dayNum: number,
-  dayWkd: string
-): {eligible: boolean; reason: SrvWorkerDayReason} {
-  const ts = (k: string) =>
-    appData[k] as admin.firestore.Timestamp | undefined;
+// [R7-APPLICATION-LIFECYCLE.1C.1] 아래 다섯 자리는 `commitment_dates` 모듈로
+//   위임한다. 식을 여기에 다시 적지 않는다 — 같은 약속의 날짜를 네 코드가
+//   다르게 읽던 것이 이번 결함의 뿌리였다. 이름은 기존 호출자를 위해 둔다.
 
-  // ── effectiveStart ──────────────────────────────────────────────
-  //   desiredStartDate가 없으면 workDate(= 공고 시작일)로 떨어진다.
-  //   다만 공고 시작 며칠 뒤에 확정된 사람에게 확정 이전 날짜를
-  //   근무일로 만들어 주면 안 되므로 확정일로 한 번 더 민다.
-  //   희망 시작일을 직접 고른 경우에는 그 의사를 덮지 않는다.
-  const desired = ts("desiredStartDate");
-  const workDate = ts("workDate");
-  let startNum = desired ?
-    srvKstDateNum(desired.toDate()) :
-    (workDate ? srvKstDateNum(workDate.toDate()) : 0);
-  if (!desired) {
-    const confirmed = ts("confirmedAt");
-    if (confirmed) {
-      const cNum = srvKstDateNum(confirmed.toDate());
-      if (cNum > startNum) startNum = cNum;
-    }
-  }
-  if (dayNum < startNum) return {eligible: false, reason: "BEFORE_START"};
+/** 종료일을 모르는 약속의 방어적 상한. */
+const SRV_OPEN_ENDED_DAY_NUM = OPEN_ENDED_DAY_NUM;
 
-  // ── effectiveEnd ────────────────────────────────────────────────
-  const resign = ts("actualResignDate");
-  const end = resign ?? ts("workEndDate");
-  if (!end) return {eligible: false, reason: "NO_END"};
-  if (dayNum > srvKstDateNum(end.toDate())) {
-    return {eligible: false, reason: resign ? "AFTER_RESIGN" : "AFTER_END"};
-  }
+/** 이 지원서가 장기 약속인가. */
+const srvIsLongTermCommitment = isLongTermCommitment;
 
-  // ── 날짜 예외 → 요일 ────────────────────────────────────────────
-  //   추가근무가 휴무보다 먼저다. 승인 writer가 교집합을 지우지만,
-  //   legacy dual-state가 남아 있어도 기존 reader와 같은 답을 낸다.
-  const hasDay = (k: string): boolean => {
-    const arr = appData[k];
-    if (!Array.isArray(arr)) return false;
-    return (arr as admin.firestore.Timestamp[]).some(
-      (t) => t != null && typeof t.toDate === "function" &&
-        srvKstDateNum(t.toDate()) === dayNum);
-  };
-  if (hasDay("extraWorkDates")) return {eligible: true, reason: "ELIGIBLE"};
-  if (hasDay("leaveDates")) return {eligible: false, reason: "LEAVE"};
+/** 겹침 판정용 장기 약속 구간(KST YYYYMMDD). */
+const srvLongTermCommitmentRange = longTermCommitmentRange;
 
-  const wd = appData["workDays"] as string[] | undefined;
-  if (!Array.isArray(wd) || wd.length === 0 || !wd.includes(dayWkd)) {
-    return {eligible: false, reason: "NON_WORKDAY"};
-  }
-  return {eligible: true, reason: "ELIGIBLE"};
-}
+/** 이 장기 약속이 그 KST 날짜를 차지하는가 — 겹침 판정용. */
+const srvLongTermCommitmentOnDay = longTermCommitmentOnDay;
+
+/** 이 장기 지원서의 근로자가 그 KST 날짜에 근무 대상인가. */
+const srvLongTermEligibleOnDay = longTermEligibleOnDay;
 
 /**
  * 근무 대상이 아닌 이유의 사용자 문구. 기존 문구를 그대로 보존한다.
@@ -22325,7 +22279,10 @@ function _hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolea
 
 // [H-1 수정 2026-07-15] Firestore workDays는 한글 저장 (callableApplyToTO weekdayNames 기준)
 // 이전: _WEEKDAY 영문 배열 사용 → includes() 항상 false → 장단기 혼합 충돌 미감지
-const _KO_WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"] as const;
+//
+// [R7-APPLICATION-LIFECYCLE.1C.1] 이 자리의 요일 사전을 지웠다 — 같은 표가
+//   `SRV_KST_WEEKDAY_KO` 로 이미 있고, 요일은 `srvKstWeekdayKo` 가 뽑는다.
+//   사전이 두 벌이면 한쪽만 고쳐지는 날이 온다.
 
 function _isConflictShortTerm(
   app: FirebaseFirestore.DocumentData,
@@ -22334,27 +22291,21 @@ function _isConflictShortTerm(
   endTime: string,
 ): boolean {
   if (!_hasTimeOverlap(startTime, endTime, app.startTime ?? "", app.endTime ?? "")) return false;
-  const appIsLong = app.applicationType === "longTerm" || (Array.isArray(app.workDays) && (app.workDays as string[]).length > 0);
-  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
   const workDate = new Date(workDateMs);
-  if (appIsLong) {
-    const aStart: number = (app.desiredStartDate ?? app.workDate)?.toMillis?.() ?? 0;
-    const aEnd: number = (app.actualResignDate ?? app.workEndDate)?.toMillis?.() ?? Infinity;
-    const ms = workDate.getTime();
-    if (ms < aStart || ms > aEnd) return false;
-    const days: string[] = Array.isArray(app.workDays) ? (app.workDays as string[]) : [];
-    // workDateMs = KST 자정 UTC ms → KST 요일 추출
-    if (days.length > 0 && !days.includes(_KO_WEEKDAY[new Date(workDateMs + KST_OFFSET_MS).getUTCDay()])) return false;
-    return true;
-  } else {
-    const aMs: number = (app.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis?.() ?? 0;
-    const aDate = new Date(aMs);
-    return (
-      aDate.getFullYear() === workDate.getFullYear() &&
-      aDate.getMonth() === workDate.getMonth() &&
-      aDate.getDate() === workDate.getDate()
-    );
+  // [R7-APPLICATION-LIFECYCLE.1C.1] 날짜 축을 canonical 로 수렴했다.
+  //   예전에는 시작일을 `desiredStartDate ?? workDate` 의 **raw millis** 로
+  //   보고(확정일 보정 없음), 단기끼리는 `getFullYear/Month/Date` =
+  //   **서버 로컬 달력일**로 비교했다. 같은 약속의 시작일을 근태·배치·지원
+  //   충돌과 다르게 읽으면 한 사건이 네 가지 답을 갖는다.
+  if (srvIsLongTermCommitment(app)) {
+    return srvLongTermCommitmentOnDay(
+      app as Record<string, unknown>,
+      srvKstDateNum(workDate),
+      srvKstWeekdayKo(workDate));
   }
+  const aTs = app.workDate as FirebaseFirestore.Timestamp | undefined;
+  if (!aTs || typeof aTs.toDate !== "function") return false;
+  return srvKstDateNum(aTs.toDate()) === srvKstDateNum(workDate);
 }
 
 function _isConflictLongTerm(
@@ -22366,22 +22317,21 @@ function _isConflictLongTerm(
   endTime: string,
 ): boolean {
   if (!_hasTimeOverlap(startTime, endTime, app.startTime ?? "", app.endTime ?? "")) return false;
-  const appIsLong = app.applicationType === "longTerm" || (Array.isArray(app.workDays) && (app.workDays as string[]).length > 0);
-  const effectiveEnd = endDateMs >= 0 ? endDateMs : Infinity;
-  if (appIsLong) {
-    const aStart: number = (app.desiredStartDate ?? app.workDate)?.toMillis?.() ?? 0;
-    const aEnd: number = (app.actualResignDate ?? app.workEndDate)?.toMillis?.() ?? Infinity;
-    if (effectiveEnd < aStart || startDateMs > aEnd) return false;
+  // [R7-APPLICATION-LIFECYCLE.1C.1] KST 달력일 하나로 비교한다.
+  const candStartNum = srvKstDateNum(new Date(startDateMs));
+  const candEndNum = endDateMs >= 0 ?
+    srvKstDateNum(new Date(endDateMs)) : SRV_OPEN_ENDED_DAY_NUM;
+  if (srvIsLongTermCommitment(app)) {
+    const r = srvLongTermCommitmentRange(app as Record<string, unknown>);
+    if (candEndNum < r.startNum || candStartNum > r.endNum) return false;
     const aWorkDays: string[] = Array.isArray(app.workDays) ? (app.workDays as string[]) : [];
     return aWorkDays.length > 0 && workDays.some((d) => aWorkDays.includes(d));
-  } else {
-    const aMs: number = (app.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis?.() ?? 0;
-    if (aMs < startDateMs || aMs > effectiveEnd) return false;
-    // aMs = KST 자정 UTC ms → KST 요일 추출
-    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-    const dayCode = _KO_WEEKDAY[new Date(aMs + KST_OFFSET_MS).getUTCDay()];
-    return workDays.includes(dayCode);
   }
+  const aTs = app.workDate as FirebaseFirestore.Timestamp | undefined;
+  if (!aTs || typeof aTs.toDate !== "function") return false;
+  const aNum = srvKstDateNum(aTs.toDate());
+  if (aNum < candStartNum || aNum > candEndNum) return false;
+  return workDays.includes(srvKstWeekdayKo(aTs.toDate()));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -37029,42 +36979,59 @@ export const callableApplyToTO = onCall(
     function hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
       return _hasTimeOverlap(s1, e1, s2, e2);
     }
-    const weekdayNames = ["일", "월", "화", "수", "목", "금", "토"];
-    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-
-    const workDateDate = workDate.toDate();
+    // [R7-APPLICATION-LIFECYCLE.1C.1] 날짜 판정을 canonical 하나로 모았다.
+    //
+    //   고친 것 둘.
+    //   ① 기존 장기 약속의 **시작일**을 `workDate` 로 읽고 있었다. 그런데
+    //      `workDate` 는 공고 시작일 anchor 이고, 실제 약속 시작은
+    //      `desiredStartDate ?? workDate`(희망 시작일을 고르지 않았다면
+    //      `confirmedAt` 으로 한 번 더 밀린다)다. 그래서 10/15 부터 시작하는
+    //      약속을 10/01 부터라고 추측해 **10/10 의 정상 지원을 거부**했다 —
+    //      근태·배치·좌석 확정은 같은 약속을 10/15 시작으로 읽는다.
+    //   ② 날짜 비교가 `new Date(y, m, d)` = **서버 로컬 시간대** 달력일이었다.
+    //      ALfit 의 business date 는 KST 다. 자정에 저장된 날짜끼리는 양쪽이
+    //      같이 밀려 가려졌지만, `confirmedAt` 처럼 시각이 있는 값이 들어오면
+    //      00:00~09:00 KST 구간에서 하루가 갈린다.
+    //
+    //   판정은 `srvLongTermEligibleOnDay`(근태·배치가 쓰는 canonical 근무일
+    //   술어)에 위임한다 — 추가근무·휴무 예외까지 같은 답이 된다. 겹침
+    //   판정만의 차이는 "종료일을 모르는 약속" 하나이고, 그것은
+    //   `srvLongTermCommitmentOnDay` 가 열린 구간으로 방어한다.
     const newWorkDays = validatedWorkDays ?? [];
-    const newWorkEndDate = workEndDate ? workEndDate.toDate() : null;
-    const effectiveStartDate = desiredStartDate ? desiredStartDate.toDate() : workDateDate;
+    const candDayNum = srvKstDateNum(workDate.toDate());
+    const candWkd = srvKstWeekdayKo(workDate.toDate());
+    const candStartNum = srvKstDateNum(
+      (desiredStartDate ?? workDate).toDate());
+    const candEndNum = workEndDate ?
+      srvKstDateNum(workEndDate.toDate()) : null;
+    const candIsLongTerm =
+      isContract && candEndNum !== null && newWorkDays.length > 0;
 
     for (const app of confirmedApps) {
       const appStartTime = (app["startTime"] as string | undefined) ?? "";
       const appEndTime = (app["endTime"] as string | undefined) ?? "";
       if (!hasTimeOverlap(startTime, endTime, appStartTime, appEndTime)) continue;
 
-      const appWorkDateTs = app["workDate"] as admin.firestore.Timestamp | undefined;
-      if (!appWorkDateTs) continue;
-      const appWorkDate = appWorkDateTs.toDate();
-
       const isLongTermApp =
         app["type"] === "long_term" ||
         (Array.isArray(app["workDays"]) && (app["workDays"] as string[]).length > 0);
 
-      const toDateOnly = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const appWorkDateTs = app["workDate"] as admin.firestore.Timestamp | undefined;
+      if (!isLongTermApp && !appWorkDateTs) {
+        // 단기 약속인데 근무일이 없다 — 어느 날짜인지 말할 수 없다.
+        //   `callableApplyToTO` 는 `workDateMs` 를 요구하므로 정상 writer 로는
+        //   도달하지 않는다. 조용히 넘기지 않고 남긴다.
+        console.warn(
+          "[apply] 단기 확정 지원서에 workDate 가 없다 — 겹침 판정 불가 " +
+          `app=${String(app["id"] ?? "?")}`);
+        continue;
+      }
 
-      if (isContract && newWorkEndDate && newWorkDays.length > 0) {
-        // 신규 장기 지원 → 기존 확정과 충돌 체크
-        const newStartOnly = toDateOnly(effectiveStartDate);
-        const newEndOnly = toDateOnly(newWorkEndDate);
-
+      if (candIsLongTerm) {
         if (isLongTermApp) {
-          const appWorkEndDateTs = app["workEndDate"] as admin.firestore.Timestamp | undefined;
-          const appActualResignDateTs = app["actualResignDate"] as admin.firestore.Timestamp | undefined;
-          const sEnd = appActualResignDateTs?.toDate() ?? appWorkEndDateTs?.toDate() ?? new Date(9999, 11, 31);
-          const sStartOnly = toDateOnly(appWorkDate);
-          const sEndOnly = toDateOnly(sEnd);
-
-          if (newEndOnly < sStartOnly || newStartOnly > sEndOnly) continue;
+          // 장기 ↔ 장기 — 구간이 겹치고 **근무요일이 하나라도** 겹쳐야 한다.
+          const r = srvLongTermCommitmentRange(app);
+          if (candEndNum! < r.startNum || candStartNum > r.endNum) continue;
 
           const appWorkDays = (app["workDays"] as string[] | undefined) ?? [];
           const conflictDay = newWorkDays.find((d) => appWorkDays.includes(d));
@@ -37075,40 +37042,29 @@ export const callableApplyToTO = onCall(
             `매주 ${conflictDay}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
           );
         } else {
-          // 기존 단기 vs 신규 장기
-          const sDateOnly = toDateOnly(appWorkDate);
-          if (sDateOnly < newStartOnly || sDateOnly > newEndOnly) continue;
-          // appWorkDate = KST 자정 UTC → KST 요일·날짜 추출
-          const appWorkDateKST = new Date(appWorkDate.getTime() + KST_OFFSET_MS);
-          const weekday = weekdayNames[appWorkDateKST.getUTCDay()];
-          if (!newWorkDays.includes(weekday)) continue;
+          // 기존 단기 vs 신규 장기 — 그 하루가 내 구간·근무요일인가.
+          const appDayNum = srvKstDateNum(appWorkDateTs!.toDate());
+          if (appDayNum < candStartNum || appDayNum > candEndNum!) continue;
+          const appWkd = srvKstWeekdayKo(appWorkDateTs!.toDate());
+          if (!newWorkDays.includes(appWkd)) continue;
+          // KST YYYYMMDD → `M/D`. 문구는 기존과 같다.
+          const appMonth = Math.floor(appDayNum / 100) % 100;
+          const appDay = appDayNum % 100;
           throw new HttpsError(
             "permission-denied",
-            `${appWorkDateKST.getUTCMonth() + 1}/${appWorkDateKST.getUTCDate()}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
+            `${appMonth}/${appDay}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
           );
         }
       } else {
-        // 신규 단기 지원 → 해당 날짜 충돌만 체크
-        const workDateOnly = toDateOnly(workDateDate);
-        const appDateOnly = toDateOnly(appWorkDate);
-
+        // 신규 단기 지원 → 그 하루만 본다.
         if (isLongTermApp) {
-          const appWorkEndDateTs = app["workEndDate"] as admin.firestore.Timestamp | undefined;
-          const appActualResignDateTs = app["actualResignDate"] as admin.firestore.Timestamp | undefined;
-          const sEnd = appActualResignDateTs?.toDate() ?? appWorkEndDateTs?.toDate() ?? new Date(9999, 11, 31);
-          const sStartOnly = toDateOnly(appWorkDate);
-          const sEndOnly = toDateOnly(sEnd);
-          if (workDateOnly < sStartOnly || workDateOnly > sEndOnly) continue;
-          const appWorkDays = (app["workDays"] as string[] | undefined) ?? [];
-          // workDateDate = KST 자정 UTC → KST 요일 추출
-          const weekday = weekdayNames[new Date(workDateDate.getTime() + KST_OFFSET_MS).getUTCDay()];
-          if (!appWorkDays.includes(weekday)) continue;
+          if (!srvLongTermCommitmentOnDay(app, candDayNum, candWkd)) continue;
           throw new HttpsError(
             "permission-denied",
             `이미 ${appStartTime}~${appEndTime}에 확정된 근무가 있습니다.`
           );
         } else {
-          if (appDateOnly.getTime() !== workDateOnly.getTime()) continue;
+          if (srvKstDateNum(appWorkDateTs!.toDate()) !== candDayNum) continue;
           throw new HttpsError(
             "permission-denied",
             `이미 ${appStartTime}~${appEndTime}에 확정된 근무가 있습니다.`
@@ -49045,12 +49001,11 @@ function srvLongTermEffectiveStart(
   const confirmedAt = d["confirmedAt"] as Ts;
   if (!workDate) return confirmedAt;
   if (!confirmedAt) return workDate;
-  // KST 달력 날짜로 비교한다 — 같은 날 안의 시각 차이로 하루 밀리지 않게.
-  const kstDay = (ts: admin.firestore.Timestamp) => {
-    const k = new Date(ts.toMillis() + 9 * 60 * 60 * 1000);
-    return Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate());
-  };
-  return kstDay(confirmedAt) > kstDay(workDate) ? confirmedAt : workDate;
+  // [R7-APPLICATION-LIFECYCLE.1C.1] KST 달력일 비교는 canonical 자(尺) 하나로.
+  //   예전에는 이 함수 안에 `+9h` + `Date.UTC(...)` 를 또 적고 있었다 —
+  //   같은 약속의 시작일을 네 번째로 계산하는 사본이었다.
+  return kstDateNum(confirmedAt.toDate()) > kstDateNum(workDate.toDate()) ?
+    confirmedAt : workDate;
 }
 
 async function srvHomeUnclosed(

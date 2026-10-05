@@ -27,6 +27,9 @@ import 'package:ALfit/models/core/application_model.dart';
 
 String _read(String p) => File(p).readAsStringSync();
 
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+const _cdPath = 'functions/src/commitment_dates.ts';
+
 String _codeOf(String dart) => dart
     .split('\n')
     .where((l) => !l.trimLeft().startsWith('//'))
@@ -268,9 +271,10 @@ void main() {
       final model = _codeOf(_read('lib/models/core/application_model.dart'));
       expect(model,
           contains('DateTime? get effectiveEndDate => actualResignDate ?? workEndDate;'));
-      final cf = _read('functions/src/index.ts');
-      expect(cf, contains('const resign = ts("actualResignDate");'));
-      expect(cf, contains('const end = resign ?? ts("workEndDate");'));
+      // [R7-APPLICATION-LIFECYCLE.1C.1] 서버 식의 canonical 위치는 모듈이다.
+      final cd = _read(_cdPath);
+      expect(cd, contains('const resign = asDate(appData["actualResignDate"]);'));
+      expect(cd, contains('const end = resign ?? asDate(appData["workEndDate"]);'));
     });
 
     test('LCS-W3 정원 projection 이 effectiveEnd 를 실어 보낸다', () {

@@ -87,9 +87,14 @@ void main() {
     test('UES-12 KST 달력 날짜로 비교한다 (시각 차이로 하루 밀리지 않게)', () {
       final body = _flat(_codeOf(
           _bodyOf(cf, 'function srvLongTermEffectiveStart(')));
-      expect(body.contains('9 * 60 * 60 * 1000'), isTrue,
+      // [R7-APPLICATION-LIFECYCLE.1C.1] 이 함수 안에 있던 `+9h` + `Date.UTC`
+      //   인라인 계산을 지우고 canonical 자(尺) 하나를 쓴다 — 같은 약속의
+      //   시작일을 네 번째로 계산하는 사본이었다.
+      expect(body.contains('kstDateNum(confirmedAt.toDate())'), isTrue,
           reason: 'KST 보정 없이 비교하면 자정 근처에서 하루가 어긋난다.');
-      expect(body.contains('Date.UTC('), isTrue);
+      expect(body.contains('kstDateNum(workDate.toDate())'), isTrue);
+      expect(body.contains('9 * 60 * 60 * 1000'), isFalse,
+          reason: '인라인 KST 계산 사본이 남으면 또 갈라진다');
     });
   });
 

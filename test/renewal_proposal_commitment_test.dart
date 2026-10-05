@@ -28,6 +28,9 @@ import 'package:ALfit/models/core/renewal_proposal_model.dart';
 import 'package:ALfit/utils/renewal_decision_state.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 const _rulesPath = 'firestore.rules';
 const _fixedWorkerPath =
     'lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
@@ -377,9 +380,9 @@ void main() {
     });
 
     test('07-c E 이전은 eligibility 가 막는다', () {
-      final r = _after(cf, 'function srvLongTermEligibleOnDay(', 1400);
+      final r = _codeOf(_src(_cdPath));
       expect(r,
-          contains('if (dayNum < startNum) return {eligible: false, reason: "BEFORE_START"}'));
+          contains('if (dayNum < longTermEffectiveStartNum(appData)) {'));
     });
 
     test('07-d Policy C 는 그대로다 — CONTRACT_PENDING 은 여전히 출근 가능', () {

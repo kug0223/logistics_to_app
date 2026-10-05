@@ -22,6 +22,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/employment_contract_model.dart';
 
 const _cfPath = 'functions/src/index.ts';
+// [R7-APPLICATION-LIFECYCLE.1C.1] 장기 약속 날짜 규칙의 canonical 위치.
+//   식은 이 모듈 하나에만 있고, index.ts 는 그것을 부른다.
+const _cdPath = 'functions/src/commitment_dates.ts';
 const _svcPath = 'lib/services/contract_service.dart';
 
 String _src(String p) {
@@ -320,7 +323,8 @@ void main() {
       final seat = _after(cf, 'function srvContractConfirmedOnDay(', 700);
       expect(seat.contains('srvLongTermEligibleOnDay('), true);
       // 그 resolver 는 status 를 보지 않는다 — caller 가 이미 걸렀다.
-      final r = _after(cf, 'function srvLongTermEligibleOnDay(', 2200);
+      final r = _after(_codeOf(_src(_cdPath)),
+          'export function longTermEligibleOnDay(', 1500);
       expect(r.contains('CONTRACT_PENDING'), false);
     });
   });
