@@ -259,11 +259,16 @@ void main() {
   });
 
   group('PXD-5x 이번 범위 밖', () {
-    test('PXD-50 클라이언트 resolver 는 이번에 바꾸지 않았다', () {
+    test('PXD-50 클라이언트 resolver 가 canonical 로 수렴했다', () {
       final c = _read(_kClient);
-      // 1C 에서 서버 parity 를 위해 **이른 쪽**을 쓰기로 적어 둔 그 자리.
-      expect(c.contains('둘 중 **이른 쪽**을 쓴다'), isTrue,
-          reason: 'client 정확도 수렴은 1C.2 owner 다');
+      // 1C 에서는 서버 `callableApplyToTO` 가 `workDate` 를 보고 있었으므로
+      //   화면이 **이른 쪽**을 쓰는 것이 안전했다. 1C.1 이 서버를 canonical 로
+      //   고쳤고, 1C.2 가 그 보수적 해킹을 제거했다 — 남아 있으면 서버가
+      //   허용하는 지원을 화면이 과잉 차단한다.
+      expect(c.contains('둘 중 **이른 쪽**을 쓴다'), isFalse);
+      expect(c.contains('_commitmentStart('), isFalse);
+      // 하루 판정은 canonical 근무일 소유자에 위임한다(서버와 같은 규칙).
+      expect(c.contains('commitment.isWorkingOnDate(d)'), isTrue);
     });
 
     test('PXD-51 알림·카운터 경로를 건드리지 않았다', () {

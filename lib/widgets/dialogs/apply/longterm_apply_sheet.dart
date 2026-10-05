@@ -16,6 +16,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../work_type_icon.dart';
 import 'apply_work_dialog.dart' show ApplyDialogResult;
+import 'commitment_conflict.dart';
 import 'document_access_consent.dart';
 
 /// 장기공고 전용 지원 바텀시트
@@ -34,7 +35,12 @@ class LongTermApplySheet extends StatefulWidget {
     required this.selectedWorks,
     required this.businessName,
     required this.myApplications,
+    this.commitmentsSource,
   });
+
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 약속 목록의 출처 — 테스트가 끼울 수 있는
+  ///   자리 하나. production 은 null → 기존 서비스 메서드를 그대로 쓴다.
+  final Future<List<ApplicationModel>> Function()? commitmentsSource;
 
   static Future<ApplyDialogResult?> show({
     required BuildContext context,
@@ -68,7 +74,18 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
   DateTime? _focusedDay;
   bool _isSubmitting = false;
   bool _isLoadingConflicts = true;
-  Set<DateTime> _confirmedDatesInRange = {};
+
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 내 **약속**(CONFIRMED·CONTRACT_PENDING).
+  ///
+  ///   예전에는 preset 만 "충돌하는 날짜 집합"을 미리 만들어 두고 custom 은
+  ///   아예 보지 않았다. 이제 두 경로가 같은 입력(약속 목록)과 같은 판정
+  ///   (`CommitmentConflictResolver`)을 쓴다 — 읽기는 한 번이고, 선택값이
+  ///   바뀔 때마다 **메모리에서** 다시 판정한다(추가 쿼리 0).
+  List<ApplicationModel> _commitments = const [];
+
+  /// 약속 목록을 읽었는가. 못 읽었으면 판정은 `unknown` 이다 —
+  ///   읽기 실패를 "겹치는 약속이 없다" 로도 "전부 지원 불가" 로도 바꾸지 않는다.
+  bool _commitmentsKnown = false;
 
   // ─── 계산 프로퍼티 ─────────────────────────────────────
 
@@ -139,10 +156,59 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         !workDays.contains(FormatHelper.weekday(day))) {
       return false;
     }
-    for (final conflictDate in _confirmedDatesInRange) {
-      if (!conflictDate.isBefore(dayOnly)) return false;
+    // [R7-APPLICATION-LIFECYCLE.1C.2] 그 날을 **시작일로 하는 계약**이
+    //   내 약속과 겹치는지 본다.
+    //
+    //   예전에는 "기간 안에 충돌하는 날이 하나라도 있으면 그 날 이전의 모든
+    //   시작일을 막는다"(`!conflictDate.isBefore(dayOnly)`)였다. 11/20 에
+    //   충돌이 하나 있으면 10/05 시작(10/19 종료) 계약까지 선택할 수 없었다 —
+    //   서버는 허용하는 기간을 화면이 막은 것이다.
+    return !_conflictFor(dayOnly).blocksNewApplication;
+  }
+
+  /// [startDate] 를 시작일로 하는 이 공고의 계약이 내 약속과 겹치는가.
+  ///
+  /// custom 은 기간이 고정이므로 선택값과 무관하게 같은 답을 준다.
+  /// 판정은 공용 owner 하나다 — 화면 전용 충돌 함수를 만들지 않는다.
+  CommitmentConflictDecision _conflictFor(DateTime? startDate) {
+    final start = _isCustom ? widget.to.rangeStart : startDate;
+    if (start == null) return CommitmentConflictDecision.unknown;
+    return _conflictForPayload(
+      workDate: start,
+      desiredStartDate: _isCustom ? null : start,
+      workEndDate: _isCustom
+          ? widget.to.rangeEnd
+          : widget.to.computeContractEndDate(start),
+    );
+  }
+
+  /// **서버에 보낼 값 그대로** 판정한다 — 화면과 payload 가 같은 기간을 본다.
+  ///
+  /// 시작일은 `desiredStartDate ?? workDate` 다(서버 canonical 과 같은 식).
+  /// 업무를 여러 개 고를 수 있으므로 **하나라도** 겹치면 지원할 수 없다 —
+  /// 제출은 선택한 업무 전부를 한 번에 보낸다.
+  CommitmentConflictDecision _conflictForPayload({
+    required DateTime workDate,
+    required DateTime? desiredStartDate,
+    required DateTime? workEndDate,
+  }) {
+    final works = widget.selectedWorks;
+    if (works.isEmpty) return CommitmentConflictDecision.unknown;
+    CommitmentConflictDecision worst = CommitmentConflictDecision.none;
+    for (final w in works) {
+      final d = CommitmentConflictResolver.forLongTerm(
+        commitments: _commitments,
+        commitmentsKnown: _commitmentsKnown,
+        startDate: desiredStartDate ?? workDate,
+        endDate: workEndDate,
+        workDays: widget.to.workDays,
+        startTime: w.startTime,
+        endTime: w.endTime,
+      );
+      if (d.blocksNewApplication) return d;
+      if (d.isUnknown) worst = d;
     }
-    return true;
+    return worst;
   }
 
   // ─── 생명주기 ─────────────────────────────────────────
@@ -159,56 +225,36 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     });
   }
 
+  /// 내 약속을 **한 번** 읽는다.
+  ///
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 예전에는 여기서
+  ///   · custom 이면 그냥 돌아갔다 — 그래서 custom 장기 지원은 화면이 아무
+  ///     판정도 하지 않고 서버 거부로만 알게 됐다
+  ///   · preset 이면 공고 기간(최대 +5년) 을 **하루씩 돌며** 충돌 날짜를
+  ///     모았다 — 날짜 수 × 약속 수 만큼 계산하고, 그 결과를 "그 날 이전
+  ///     전부 차단" 으로 썼다
+  ///
+  /// 이제 목록만 읽고, 판정은 선택값이 정해질 때 공용 resolver 가 한다.
   Future<void> _loadConflicts() async {
     if (!mounted) return;
-
-    // custom: 날짜 선택 없음 — 캘린더 표시 안 함. 충돌 체크 생략.
-    if (_isCustom) {
-      if (mounted) setState(() => _isLoadingConflicts = false);
-      return;
-    }
-
     try {
-      final allConfirmed =
-          await _firestoreService.getMyConfirmedApplicationsForConflictCheck();
-      final workDays = widget.to.workDays;
-      final wStart = widget.selectedWorks.isNotEmpty
-          ? widget.selectedWorks.first.startTime
-          : '';
-      final wEnd = widget.selectedWorks.isNotEmpty
-          ? widget.selectedWorks.first.endTime
-          : '';
-
-      final confirmed = <DateTime>{};
-      // 신규 정책: workStartAvailableFrom 부터 workStartAvailableUntil 까지
-      // legacy: TO.date(=rangeStart) 부터 캘린더 마지막날까지
-      var cursor = _isNewPolicy
-          ? widget.to.workStartAvailableFrom!
-          : widget.to.date;
-      final endDate = _calendarLastDay; // null 시 먼 미래(+5년)로 fallback 완료
-      while (!cursor.isAfter(endDate)) {
-        final dow = FormatHelper.weekday(cursor);
-        if (workDays.isEmpty || workDays.contains(dow)) {
-          for (final app in allConfirmed) {
-            if (app.isWorkingOnDate(cursor) &&
-                ApplicationModel.hasTimeOverlap(
-                    wStart, wEnd, app.startTime, app.endTime)) {
-              confirmed.add(FormatHelper.toKstDate(cursor));
-              break;
-            }
-          }
-        }
-        cursor = cursor.add(const Duration(days: 1));
-      }
-
-      if (mounted) {
-        setState(() {
-          _confirmedDatesInRange = confirmed;
-          _isLoadingConflicts = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _isLoadingConflicts = false);
+      final all = await (widget.commitmentsSource ??
+          _firestoreService.getMyConfirmedApplicationsForConflictCheck)();
+      if (!mounted) return;
+      setState(() {
+        _commitments = CommitmentConflictResolver.commitmentsOf(all);
+        _commitmentsKnown = true;
+        _isLoadingConflicts = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ 장기 지원 — 약속 목록 로드 실패: $e');
+      if (!mounted) return;
+      // 못 읽은 것을 "겹치는 약속이 없다" 로 바꾸지 않는다 — 판정은 unknown 이고
+      //   화면이 그 사실을 말한다. 최종 판정은 서버가 한다.
+      setState(() {
+        _commitmentsKnown = false;
+        _isLoadingConflicts = false;
+      });
     }
   }
 
@@ -242,6 +288,23 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       effectiveWorkDate = widget.to.date;
       effectiveDesiredStart = _desiredStartDate;
       effectiveWorkEndDate = _effectiveEndDate;
+    }
+
+    // [R7-APPLICATION-LIFECYCLE.1C.2] 제출 직전, **보낼 값 그대로** 다시 본다.
+    //
+    //   렌더에서 CTA 를 막는 것만으로는 부족하다 — 낡은 화면에서 눌리는
+    //   경로가 남으면 같은 거짓이 되돌아온다. 그리고 판정에 쓰는 값이
+    //   payload 와 달라지면(UI 는 10/15 로 보고 서버엔 10/01 을 보내면)
+    //   화면과 서버가 다른 기간을 말한다 — 그래서 여기서는 위에서 만든
+    //   `effective*` 를 그대로 넣어 판정한다.
+    final submitConflict = _conflictForPayload(
+      workDate: effectiveWorkDate,
+      desiredStartDate: effectiveDesiredStart,
+      workEndDate: effectiveWorkEndDate,
+    );
+    if (submitConflict.blocksNewApplication) {
+      ToastHelper.showWarning(_conflictSentence(submitConflict));
+      return;
     }
 
     setState(() => _isSubmitting = true);
@@ -796,30 +859,41 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 첫 줄: 라벨 + 배지
+          //
+          // [R7-APPLICATION-LIFECYCLE.1C.2 CORRECTION] 라벨과 배지 둘 다 flex 가
+          //   없어서 320dp × 배율 2.0 에서 **68px 넘쳤다**. 이번 phase 가 추가한
+          //   이유 문구와 무관하게 이미 그랬다(LCA-R6 가 그것을 분리해 봤다).
+          //   프로젝트 규칙대로 둘에 flex 를 준다 — 글자를 줄이거나 가리지 않는다.
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '근무 예정 기간',
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.infoDark, fontWeight: FontWeight.w600),
+              Expanded(
+                child: Text(
+                  '근무 예정 기간',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.infoDark, fontWeight: FontWeight.w600),
+                ),
               ),
-              const Spacer(),
-              if (periodLabel.isNotEmpty)
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 3),
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.infoDark,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    periodLabel,
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: Colors.white, fontWeight: FontWeight.bold),
+              if (periodLabel.isNotEmpty) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Flexible(
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 8),
+                      vertical: ResponsiveHelper.spacing(context, 3),
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.infoDark,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      periodLabel,
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
+              ],
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
@@ -877,7 +951,14 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.grey200),
       ),
+      // [R7-APPLICATION-LIFECYCLE.1C.2 CORRECTION] 임금 Text 에 flex 가 없어서
+      //   320dp × 배율 2.0 에서 **68px 넘쳤다**(프로브로 생성자 체인 확인:
+      //   Row ← Padding ← DecoratedBox ← … ← Column). 이번 phase 가 추가한
+      //   이유 문구와 무관하게 이미 그랬다 — LCA-R6 이 그 사실을 분리해 본다.
+      //   E6(6E) 에서 같은 계열을 고친 방식 그대로: 글자를 줄이거나 가리지 않고
+      //   남은 폭을 나눈다.
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           WorkTypeIcon.buildWithBackground(
             iconString: work.workTypeIcon,
@@ -905,10 +986,14 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
               ],
             ),
           ),
-          Text(
-            '${work.wageType == 'hourly' ? '시급' : work.wageType == 'daily' ? '일급' : '월급'} ${FormatHelper.formatNumber(work.wage)}원',
-            style: ResponsiveHelper.bodyStyle(context, color: wageColor)
-                .copyWith(fontWeight: FontWeight.bold),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Flexible(
+            child: Text(
+              '${work.wageType == 'hourly' ? '시급' : work.wageType == 'daily' ? '일급' : '월급'} ${FormatHelper.formatNumber(work.wage)}원',
+              style: ResponsiveHelper.bodyStyle(context, color: wageColor)
+                  .copyWith(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.right,
+            ),
           ),
         ],
       ),
@@ -948,15 +1033,25 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
     // preset: 희망 시작일 선택 후 지원 가능
     final bool canApply;
     final String ctaLabel;
+    // [R7-APPLICATION-LIFECYCLE.1C.2] 선택이 끝난 조건으로 겹침을 판정한다.
+    //   custom 은 기간이 고정이므로 열자마자 판정이 나온다.
+    final conflict = _conflictFor(_desiredStartDate);
     if (_isCustom) {
-      canApply = !_isSubmitting;
-      ctaLabel = '이 조건으로 지원하기';
+      canApply = !_isSubmitting && !_isLoadingConflicts &&
+          !conflict.blocksNewApplication;
+      ctaLabel = conflict.blocksNewApplication
+          ? '확정 일정과 겹쳐 지원할 수 없어요'
+          : '이 조건으로 지원하기';
     } else {
-      canApply =
-          _desiredStartDate != null && !_isSubmitting && !_isLoadingConflicts;
-      ctaLabel = _desiredStartDate != null
-          ? '이 조건으로 지원하기'
-          : '희망 시작일을 선택해주세요';
+      canApply = _desiredStartDate != null &&
+          !_isSubmitting &&
+          !_isLoadingConflicts &&
+          !conflict.blocksNewApplication;
+      ctaLabel = _desiredStartDate == null
+          ? '희망 시작일을 선택해주세요'
+          : (conflict.blocksNewApplication
+              ? '확정 일정과 겹쳐 지원할 수 없어요'
+              : '이 조건으로 지원하기');
     }
 
     return SafeArea(
@@ -968,7 +1063,15 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
           ResponsiveHelper.spacing(context, 16),
           ResponsiveHelper.spacing(context, 16),
         ),
-        child: SizedBox(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 왜 지원할 수 없는지(또는 확인하지 못했는지) 글자로 말한다.
+            if (conflict.blocksNewApplication || conflict.isUnknown) ...[
+              _buildConflictReason(context, conflict),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            ],
+            SizedBox(
           width: double.infinity,
           child: ElevatedButton(
             onPressed: canApply ? _apply : null,
@@ -994,10 +1097,69 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-          ),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 지원할 수 없는(또는 확인하지 못한) 이유.
+  ///
+  ///   색만으로 말하지 않는다. `마감`(정원)과 다른 상태이고, "이미 지원한
+  ///   일정" 도 아니다 — 관심이 아니라 **약속**이 이유다. 문구는 1C 계열을
+  ///   그대로 쓴다.
+  Widget _buildConflictReason(
+      BuildContext context, CommitmentConflictDecision conflict) {
+    final unknown = conflict.isUnknown;
+    final color = unknown ? AppColors.grey600 : AppColors.errorDark;
+    final text = unknown
+        ? '내 일정을 확인할 수 없어요. 지원 결과는 다시 확인해주세요.'
+        : _conflictSentence(conflict);
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 2)),
+            child: Icon(
+                unknown ? Icons.help_outline : Icons.event_busy_outlined,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: color),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Expanded(
+            child: Text(
+              text,
+              style: ResponsiveHelper.captionStyle(context).copyWith(
+                  color: color, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 겹침 이유 한 줄 — 날짜·시간·사업장은 **근로자 자신의** 일정이다.
+  String _conflictSentence(CommitmentConflictDecision conflict) {
+    final when = conflict.conflictDate;
+    final time = conflict.conflictTime;
+    final biz = conflict.conflictBusinessName;
+    final where = [
+      if (when != null) FormatHelper.formatDateCompact(when),
+      if (biz != null) biz,
+      if (time != null) time,
+    ].join(' ');
+    if (where.isEmpty) return '확정된 일정과 시간이 겹쳐 지원할 수 없어요.';
+    return '확정된 일정($where)과 시간이 겹쳐 지원할 수 없어요.';
   }
 
   // ─── 이미 지원됨 상태 ─────────────────────────────────

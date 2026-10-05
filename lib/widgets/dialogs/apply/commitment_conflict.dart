@@ -52,12 +52,17 @@ enum CommitmentConflictOutcome {
 
 /// 한 후보 근무에 대한 판정과 **그 판정을 만든 약속**.
 class CommitmentConflictDecision {
-  const CommitmentConflictDecision(this.outcome, {this.commitment});
+  const CommitmentConflictDecision(this.outcome,
+      {this.commitment, this.conflictDate});
 
   final CommitmentConflictOutcome outcome;
 
   /// 충돌을 만든 약속. `conflict` 일 때만 있다.
   final ApplicationModel? commitment;
+
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 겹치는 **첫 날**(KST). 장기 후보에서만
+  /// 채워진다 — 기간 중 어느 날이 문제인지 사용자에게 말할 수 있다.
+  final DateTime? conflictDate;
 
   static const CommitmentConflictDecision none =
       CommitmentConflictDecision(CommitmentConflictOutcome.none);
@@ -125,7 +130,7 @@ class CommitmentConflictResolver {
           startTime, endTime, c.startTime, c.endTime)) {
         continue;
       }
-      if (_commitmentCoversDay(c, day)) {
+      if (coversDay(c, day)) {
         return CommitmentConflictDecision(
             CommitmentConflictOutcome.conflict, commitment: c);
       }
@@ -133,10 +138,19 @@ class CommitmentConflictResolver {
     return CommitmentConflictDecision.none;
   }
 
-  /// 장기 후보 — 기간 × 요일 × 시간대.
+  /// 장기 후보 — 사용자가 **실제로 선택한** 기간 × 요일 × 시간대.
   ///
-  /// [endDate] 가 `null` 이면 **종료를 모른다** — 서버와 같이 무한으로 본다
-  /// (서버: `new Date(9999, 11, 31)`).
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 판정을 서버
+  /// `longTermConflictDay` 와 같은 두 축으로 바꿨다. 예전에는 "기간 교집합 +
+  /// 요일 교집합" 만 봐서
+  ///   · 승인된 **추가근무** 날의 겹침을 놓쳤고(서버는 거부한다)
+  ///   · 승인된 **휴무** 로 비워진 날을 여전히 약속이라고 봤다(과잉 차단)
+  ///
+  /// 기간 전체를 하루씩 훑지 않는다.
+  ///   ① 공통 근무요일 — 교집합 안의 그 요일 날짜는 **휴무가 아니면** 둘 다
+  ///      근무다. 실패는 휴무로만 생기므로 `휴무 수 + 1` 개만 보면 결정된다.
+  ///   ② 추가근무 날짜 — 약속 쪽 배열(유한)만 확인한다. 공통 요일이 아니어도
+  ///      이쪽에서 잡힌다. (신규 후보에는 추가근무·휴무가 없다.)
   static CommitmentConflictDecision forLongTerm({
     required List<ApplicationModel> commitments,
     required DateTime startDate,
@@ -147,7 +161,8 @@ class CommitmentConflictResolver {
     bool commitmentsKnown = true,
   }) {
     if (!commitmentsKnown) return CommitmentConflictDecision.unknown;
-    if (startTime.isEmpty || endTime.isEmpty) {
+    if (startTime.isEmpty || endTime.isEmpty || workDays.isEmpty) {
+      // 후보의 시간·요일을 아직 모르면 겹침을 말할 수 없다.
       return CommitmentConflictDecision.unknown;
     }
     final newStart = FormatHelper.toKstDate(startDate);
@@ -158,73 +173,105 @@ class CommitmentConflictResolver {
           startTime, endTime, c.startTime, c.endTime)) {
         continue;
       }
-      if (c.isLongTermApplication) {
-        // 장기 ↔ 장기 — 기간이 겹치고 **요일이 하나라도** 겹치면 충돌.
-        //   기간만 겹쳐도 요일이 서로 다르면 같은 시간에 일하는 날이 없다.
-        final cStart = _commitmentStart(c);
-        final cEnd = _commitmentEnd(c);
-        if (newEnd != null && newEnd.isBefore(cStart)) continue;
-        if (cEnd != null && newStart.isAfter(cEnd)) continue;
-        final cDays = c.workDays ?? const <String>[];
-        if (cDays.isEmpty || workDays.isEmpty) continue;
-        if (!workDays.any(cDays.contains)) continue;
+      if (!c.isLongTermApplication) {
+        // 장기 후보 ↔ 단기 약속 — 그 하루가 내 기간 안이고 내 근무요일이면 충돌.
+        final cDay = FormatHelper.toKstDate(c.workDate);
+        if (cDay.isBefore(newStart)) continue;
+        if (newEnd != null && cDay.isAfter(newEnd)) continue;
+        if (!workDays.contains(FormatHelper.weekday(cDay))) continue;
         return CommitmentConflictDecision(
             CommitmentConflictOutcome.conflict, commitment: c);
       }
 
-      // 장기 후보 ↔ 단기 약속 — 그 하루가 내 기간 안이고 내 근무요일이면 충돌.
-      final cDay = FormatHelper.toKstDate(c.workDate);
-      if (cDay.isBefore(newStart)) continue;
-      if (newEnd != null && cDay.isAfter(newEnd)) continue;
-      if (workDays.isNotEmpty &&
-          !workDays.contains(FormatHelper.weekday(cDay))) {
-        continue;
+      final hit = _longTermClashDay(
+        commitment: c,
+        candStart: newStart,
+        candEnd: newEnd,
+        candWorkDays: workDays,
+      );
+      if (hit != null) {
+        return CommitmentConflictDecision(
+            CommitmentConflictOutcome.conflict,
+            commitment: c, conflictDate: hit);
       }
-      return CommitmentConflictDecision(
-          CommitmentConflictOutcome.conflict, commitment: c);
     }
     return CommitmentConflictDecision.none;
   }
 
-  /// 이 약속이 [day] 에 그 시간대를 차지하는가 — 기간·요일을 서버와 같은
-  /// 식으로 본다. 날짜 한 곳의 약속 목록이 필요한 자리(인접 경고 등)가 쓴다.
-  static bool coversDay(ApplicationModel commitment, DateTime day) =>
-      _commitmentCoversDay(commitment, FormatHelper.toKstDate(day));
+  /// 장기 약속과 장기 후보가 실제로 같은 날 겹치는 **첫 날**. 없으면 null.
+  static DateTime? _longTermClashDay({
+    required ApplicationModel commitment,
+    required DateTime candStart,
+    required DateTime? candEnd,
+    required List<String> candWorkDays,
+  }) {
+    final cStart = FormatHelper.toKstDate(
+        commitment.desiredStartDate ?? commitment.workDate);
+    final cEndRaw = commitment.effectiveEndDate;
+    final cEnd = cEndRaw == null ? null : FormatHelper.toKstDate(cEndRaw);
+
+    // 교집합 — 종료를 모르는 쪽은 열린 구간으로 본다.
+    final lo = candStart.isAfter(cStart) ? candStart : cStart;
+    DateTime? hi;
+    if (candEnd != null && cEnd != null) {
+      hi = candEnd.isBefore(cEnd) ? candEnd : cEnd;
+    } else {
+      hi = candEnd ?? cEnd;
+    }
+    if (hi != null && lo.isAfter(hi)) return null;
+
+    bool bothOn(DateTime day) =>
+        coversDay(commitment, day) &&
+        candWorkDays.contains(FormatHelper.weekday(day));
+
+    // ① 공통 근무요일 — 실패는 휴무로만 생기므로 `휴무 수 + 1` 로 상계된다.
+    final cDays = commitment.workDays ?? const <String>[];
+    final common = candWorkDays.where(cDays.contains).toList();
+    if (common.isNotEmpty) {
+      final budget = (commitment.leaveDates?.length ?? 0) + 1;
+      // 종료를 모르면 상계만큼의 공통 요일을 보기 위해 넉넉히 둔다.
+      final scanEnd = hi ?? lo.add(Duration(days: 7 * (budget + 1)));
+      var seen = 0;
+      for (var d = lo;
+          !d.isAfter(scanEnd) && seen < budget;
+          d = d.add(const Duration(days: 1))) {
+        if (!common.contains(FormatHelper.weekday(d))) continue;
+        seen++;
+        if (bothOn(d)) return d;
+      }
+    }
+
+    // ② 약속 쪽 추가근무 날짜 — 공통 요일이 아니어도 그 날은 근무다.
+    final extras = [...?commitment.extraWorkDates]
+        .map(FormatHelper.toKstDate)
+        .toList()
+      ..sort();
+    for (final d in extras) {
+      if (d.isBefore(lo)) continue;
+      if (hi != null && d.isAfter(hi)) continue;
+      if (bothOn(d)) return d;
+    }
+    return null;
+  }
 
   /// 이 약속이 [day] 에 그 시간대를 차지하는가.
-  static bool _commitmentCoversDay(ApplicationModel c, DateTime day) {
-    if (!c.isLongTermApplication) {
-      return FormatHelper.toKstDate(c.workDate) == day;
-    }
-    final start = _commitmentStart(c);
-    final end = _commitmentEnd(c);
-    if (day.isBefore(start)) return false;
-    if (end != null && day.isAfter(end)) return false;
-    final days = c.workDays ?? const <String>[];
-    // 요일을 모르는 약속은 어떤 날도 차지한다고 말하지 않는다 —
-    //   서버도 `appWorkDays.includes(weekday)` 가 false 면 넘어간다.
-    if (days.isEmpty) return false;
-    return days.contains(FormatHelper.weekday(day));
-  }
-
-  /// 약속의 시작일.
   ///
-  /// 서버는 두 자리에서 서로 다르게 읽는다 — `callableApplyToTO` 는
-  /// `workDate` 를, 공용 좌석 엔진은 `desiredStartDate ?? workDate` 를 본다.
-  /// 둘 중 **이른 쪽**을 쓴다. 어느 서버 경로가 거부하든 화면이 먼저
-  /// 지원 불가로 말해야 하고, 늦은 쪽을 쓰면 `callableApplyToTO` 가
-  /// 거부하는 관계를 화면이 "지원 가능" 이라고 광고한다.
-  static DateTime _commitmentStart(ApplicationModel c) {
-    final anchor = FormatHelper.toKstDate(c.workDate);
-    final desired = c.desiredStartDate;
-    if (desired == null) return anchor;
-    final d = FormatHelper.toKstDate(desired);
-    return d.isBefore(anchor) ? d : anchor;
-  }
-
-  /// 약속의 마지막 근무일. `null` = 모름(무한).
-  static DateTime? _commitmentEnd(ApplicationModel c) {
-    final end = c.effectiveEndDate;
-    return end == null ? null : FormatHelper.toKstDate(end);
+  /// [R7-APPLICATION-LIFECYCLE.1C.2] 판정을 **canonical 근무일 소유자**
+  /// (`ApplicationModel.isWorkingOnDate`)에 위임한다 — 서버
+  /// `longTermEligibleOnDay` 와 같은 규칙이다(희망 시작일, 희망일이 없을 때의
+  /// 확정일 보정, 퇴사일, 추가근무·휴무, KST). 예전에는 이 자리에 구간·요일만
+  /// 보는 식을 따로 적어 두었고, 그래서 승인된 추가근무·휴무를 보지 못했다.
+  static bool coversDay(ApplicationModel commitment, DateTime day) {
+    final d = FormatHelper.toKstDate(day);
+    if (commitment.isWorkingOnDate(d)) return true;
+    // 종료일을 **모르는** 약속은 끝났다고 단정하지 않는다 — 겹침 판정에서는
+    //   열린 구간으로 본다(서버 `longTermCommitmentOnDay` 와 같은 방어).
+    //   근무일 판정은 그대로 `false` 다 — 모르는 것으로 출근·급여를 만들지
+    //   않는 쪽이 canonical 이고, 이 보정은 겹침 질문에만 쓴다.
+    if (!commitment.isLongTermApplication) return false;
+    if (commitment.effectiveEndDate != null) return false;
+    return commitment
+        .copyWith(workEndDate: DateTime.utc(9999, 12, 31))
+        .isWorkingOnDate(d);
   }
 }

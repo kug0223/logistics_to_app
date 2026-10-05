@@ -53,6 +53,9 @@ ApplicationModel _commitment({
   int? endDay,
   int? desiredStartDay,
   int? actualResignDay,
+  int? confirmedAtMs,
+  List<DateTime>? extraWorkDates,
+  List<DateTime>? leaveDates,
   String businessId = 'bizOther',
   String businessName = '다른 사업장',
 }) =>
@@ -80,6 +83,11 @@ ApplicationModel _commitment({
       actualResignDate:
           actualResignDay == null ? null : kstMidnight(actualResignDay),
       appliedAt: DateTime(2026, 10, 1),
+      confirmedAt: confirmedAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(confirmedAtMs, isUtc: true),
+      extraWorkDates: extraWorkDates,
+      leaveDates: leaveDates,
     );
 
 CommitmentConflictDecision _short({
@@ -379,17 +387,36 @@ void main() {
       expect(_short(commitments: [c], day: 31).blocksNewApplication, isTrue);
     });
 
-    test('B4 약속 시작은 두 서버 경로 중 **이른 쪽**이다', () {
-      // workDate(=anchor) 10/05, desiredStartDate 10/20.
-      //   `callableApplyToTO` 는 workDate 를 본다 → 10/10 을 거부한다.
-      //   화면이 desiredStartDate 만 보면 "지원 가능" 이라고 광고한다.
+    test('B4 약속 시작은 canonical — desiredStartDate ?? workDate', () {
+      // workDate(=anchor) 10/05, desiredStartDate 10/20 → 실제 약속은 10/20 부터.
+      //
+      // [R7-APPLICATION-LIFECYCLE.1C.2] 1C 에서는 서버 `callableApplyToTO` 가
+      //   `workDate` 를 보고 있었으므로 화면도 **이른 쪽**을 쓰는 것이 안전했다
+      //   (서버가 거부하는 것을 화면이 가능하다고 광고하지 않기 위해).
+      //   1C.1 이 서버를 canonical 로 고쳤다 — 이제 10/10 은 서버가 **허용**한다.
+      //   화면이 계속 이른 쪽을 쓰면 가능한 지원을 과잉 차단한다.
       final c = _commitment(
           day: 5,
           desiredStartDay: 20,
           endDay: 40,
           workDays: const ['토'],
           type: 'long_term');
-      expect(_short(commitments: [c], day: 10).blocksNewApplication, isTrue);
+      expect(_short(commitments: [c], day: 10).blocksNewApplication, isFalse,
+          reason: '10/10 은 효력 시작(10/20) 이전이다 — 서버도 허용한다');
+      // 효력 시작 이후의 토요일은 그대로 막는다.
+      expect(_short(commitments: [c], day: 24).blocksNewApplication, isTrue);
+    });
+
+    test('B4b 희망 시작일이 없으면 확정일(KST)로 밀린다', () {
+      // workDate 10/05, confirmedAt 10/12 02:00 KST → 효력 시작 10/12.
+      final c = _commitment(
+          day: 5,
+          endDay: 40,
+          workDays: const ['토'],
+          confirmedAtMs: DateTime.utc(2026, 10, 11, 17).millisecondsSinceEpoch,
+          type: 'long_term');
+      expect(_short(commitments: [c], day: 10).blocksNewApplication, isFalse);
+      expect(_short(commitments: [c], day: 17).blocksNewApplication, isTrue);
     });
 
     test('B5 요일을 모르는 장기 약속은 아무 날도 막지 않는다 (서버 parity)', () {
