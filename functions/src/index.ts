@@ -35907,6 +35907,54 @@ export const callableAcceptRenewalProposal = onCall(
         throw new HttpsError("failed-precondition", "계약 해지가 승인된 근무자의 계약은 연장할 수 없습니다.");
       }
 
+      // 5-1a. [R7-APPLICATION-LIFECYCLE.1B] 약속이 생기는 순간의 겹침 계약
+      //
+      //   근로자가 수락하는 **이 순간**이 commitment boundary 다. 제안은
+      //   약속이 아니었고(`manager proposal ≠ commitment`), 여기서 새 기간에
+      //   대한 `CONTRACT_PENDING` 이 생긴다. 그런데 이 자리에는 겹침 계약이
+      //   없었다 — 그래서 수락 직후 다음 두 상태가 조용히 공존할 수 있었다.
+      //
+      //     새 갱신 약속  +  그 기간에 겹치는 다른 CONFIRMED/CONTRACT_PENDING
+      //     새 갱신 약속  +  그 기간에 겹치는 PENDING/INVITED 가 그대로 생존
+      //
+      //   그래서 다른 확정 writer 세 곳(`callableConfirmApplication` ·
+      //   `callableApproveApplicationForReview` · `callableAcceptTOInvitation`)
+      //   과 **같은 공용 엔진**에 합류한다. renewal 전용 겹침 정책을 만들지
+      //   않는다 — 정책이 갈리면 한쪽만 고쳐지는 날이 온다.
+      //
+      //   [§25·§75] Firestore 는 모든 읽기가 모든 쓰기보다 앞이어야 한다.
+      //   바로 아래 계약서 `voided` 루프가 이 트랜잭션의 **첫 쓰기**이므로
+      //   수집(읽기)은 반드시 그 앞이다. 엔진이 `tx.get(query)` 로 읽으므로
+      //   그 후보 집합이 read-set 에 들어간다 — 같은 근로자에 대해 다른
+      //   확정이 먼저 커밋되면 이 트랜잭션이 재시도되고 최신 상태로 다시
+      //   판정한다(경쟁하는 확정과의 직렬화).
+      //
+      //   [§6·§7] 판정 대상은 **새 기간**이다. 약속의 출처는 공고가 아니라
+      //   제안이고(`srvRenewalPromiseSnapshot(freshProposal)` — 시간·요일·
+      //   업무), 기간은 `proposal.effectiveStart/effectiveEnd` 다. 지금
+      //   공고를 다시 읽지 않는다 — 근로자가 본 조건이 약속이다.
+      //
+      //   [§13·§14] **원본 한 건만** 제외한다. 갱신은 그 관계의 연장이고
+      //   원본 종료일 다음 날부터 시작하므로 보통은 술어상 겹치지도 않는다.
+      //   그러나 원본에 종료일이 없으면(`actualResignDate ?? workEndDate` 가
+      //   `undefined`) 그 구간이 무한이 되어 **갱신이 자기 자신에게 막힌다**.
+      //   제외 대상은 클라이언트가 보낸 값이 아니다 — 서버가 proposal 을
+      //   fresh read 해서 PENDING · 같은 근로자 · 같은 사업장 · 같은 lineage ·
+      //   원본 `CONFIRMED` 를 모두 확인한 뒤의 `oldApplicationId` 다.
+      const renewalNowTs = Timestamp.now();
+      const renewalOverlapPlan = await srvCollectSeatCommitOverlap(tx, {
+        applicantUid: callerUid,
+        applicationId: newApplicationId,
+        fd: {
+          ...freshData,
+          ...srvRenewalPromiseSnapshot(freshProposal),
+          workDate: Timestamp.fromMillis(newStartDateMs),
+          desiredStartDate: Timestamp.fromMillis(newStartDateMs),
+          workEndDate: Timestamp.fromMillis(newEndDateMs),
+        },
+        excludeCommittedId: originalApplicationId,
+      });
+
       // 5-2. 서명 대기 계약서 재확인 후 voided 처리 (contractVoidedAt: serverTimestamp)
       for (const cRef of pendingContractRefs) {
         const cSnap = await tx.get(cRef);
@@ -36018,6 +36066,22 @@ export const callableAcceptRenewalProposal = onCall(
         respondedByUid: callerUid,
         respondedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // 5-6. [R7-APPLICATION-LIFECYCLE.1B] 겹치는 관심을 같은 트랜잭션에서 접는다.
+      //
+      //   위 5-1a 가 모은 것을 여기서 적용한다 — 약속 생성·원본 EXTEND·
+      //   제안 ACCEPTED 와 **한 트랜잭션**이다. 그래서 "새 약속은 생겼는데
+      //   겹치는 PENDING 이 영구히 살아 있는" 부분 상태가 생기지 않는다.
+      //
+      //   엔진은 loser 의 `AUTO_CANCELED` + `SCHEDULE_CONFLICT` + 그 자리의
+      //   `workDetailCounts[wdId].pendingCount` 만 되돌린다. 대상의 좌석을
+      //   잡지 않으므로 갱신이 유지하는 기존 `totalConfirmed`(아래 5-7 주석)
+      //   와 중복 쓰기가 없다. reliability 패널티도 쓰지 않는다 —
+      //   근로자의 선택이 아니다.
+      srvApplySeatCommitOverlap(tx, renewalOverlapPlan, {
+        applicationId: newApplicationId,
+        nowTs: renewalNowTs,
       });
 
       // [MEDIUM-3] totalConfirmed +1 제거 — 갱신은 기존 카운터 유지
