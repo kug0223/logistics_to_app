@@ -167,8 +167,9 @@ void main() {
       // [R7-P4.4E.11C.0C 갱신] 3 → 4. 늘어난 자리는 삭제 재개 상태를
       //   돌려주는 self-only **읽기** callable 이다.
       final tombWrites = 'ACCOUNT_DELETION_TOMBSTONE_COL'.allMatches(cf).length;
-      expect(tombWrites, 5,
-          reason: '선언 1 + ensure 1 + in-tx 읽기 1 + 재개 질의 1 + Auth-tail 증거 읽기 1 = 5');
+      expect(tombWrites, 6,
+          reason: '선언 1 + ensure 1 + in-tx 읽기 1 + 재개 질의 1 + '
+              'Auth-tail 증거 읽기 1 + 가입중단 race guard 1 = 6');
       // 늘어난 자리는 `tx.get` 이고 삭제가 아니다.
       expect(cf, contains('await tx.get(\n    db.collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid))'));
       expect('ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid).delete()'.allMatches(cf).length, 0);

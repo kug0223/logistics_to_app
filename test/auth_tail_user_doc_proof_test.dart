@@ -104,13 +104,15 @@ void main() {
 
   group('TAIL-W — user 문서 DELETE writer 전수 (§5·§40)', () {
     test('TAIL-W-01 서버에서 user 문서를 지우는 자리는 둘뿐이다', () {
-      // `userRef.delete()` 두 곳: 계정삭제 Final · 외국인 가입 중단.
-      expect(_count(code, 'userRef.delete()'), 2);
+      // [R7-P4.4E.11C.0C.1.1 갱신] 두 자리의 **모양**이 달라졌다.
+      //   Final 은 gate 통과 뒤의 직접 삭제, 가입중단은 transaction 안의
+      //   compare-delete 다. 자리 수는 그대로 둘이다.
+      expect(_count(code, 'userRef.delete()'), 1); // Final
       expect(finalFn, contains('userRef.delete()'));
-      expect(abortFn, contains('userRef.delete()'));
+      expect(_count(code, 'tx.delete(userRef)'), 1); // 가입중단
+      expect(abortFn, contains('tx.delete(userRef)'));
       // 다른 모양의 user 문서 삭제가 없다.
       expect(code, isNot(contains('batch.delete(userRef')));
-      expect(code, isNot(contains('tx.delete(userRef')));
       expect(code, isNot(contains('recursiveDelete')));
       expect(code, isNot(contains('bulkWriter')));
     });
@@ -121,9 +123,17 @@ void main() {
       expect(_flat(abortFn), contains(
           r'if (status !== "registration_pending") {'));
       expect(_flat(abortFn), contains('가입 대기 중인 계정에만 중단 요청이 허용됩니다.'));
-      // 그리고 그 분기가 Storage·user 삭제보다 앞이다.
-      expect(_at(abortFn, 'registration_pending'),
-          lessThan(_at(abortFn, 'userRef.delete()')));
+      // [R7-P4.4E.11C.0C.1.1 갱신] 그 판정이 **commit 시점**으로 올라갔다.
+      //   삭제와 같은 transaction 에서 fresh read 로 다시 본다. 그래서
+      //   freeze 가 먼저 commit 되면 재시도에서 거부된다.
+      expect(_flat(abortFn), contains(
+          r'if (freshStatus !== "registration_pending") {'));
+      expect(_at(abortFn, r'if (freshStatus !== "registration_pending") {'),
+          lessThan(_at(abortFn, 'tx.delete(userRef)')));
+      // tombstone 도 같은 read-set 에 있다 — deletion journey 면 거부다.
+      expect(_flat(abortFn), contains('if (freshTomb.exists) {'));
+      expect(_at(abortFn, 'if (freshTomb.exists) {'),
+          lessThan(_at(abortFn, 'tx.delete(userRef)')));
     });
 
     test('TAIL-W-03 Auth trigger·대량 삭제 utility 가 없다 (§22·§23)', () {

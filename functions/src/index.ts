@@ -17773,12 +17773,64 @@ export const callableAbortForeignRegistration = onCall(
     // D. Firestore users/{uid} 삭제 — doc이 이미 없으면 no-op
     //    [B.2.2] 실패 시 exception 대신 partial JSON 반환: Auth 삭제 금지.
     //    user doc 존재 → Auth 살아있어 재시도 가능.
-    if (userSnap.exists) {
+    //
+    // [R7-P4.4E.11C.0C.1.1 §2·§6·§9·§21] **판정과 삭제를 같은 경계로.**
+    //
+    //   예전에는 A 단계에서 읽은 snapshot(`userSnap`)으로 여기까지 와서
+    //   지웠다. 그 사이에 계정삭제 freeze 가 commit 되면 이 순서가 성립한다.
+    //
+    //     Abort: registration_pending 읽음 (transaction 밖)
+    //     Freeze: tombstone + accountStatus="deleting" commit
+    //     Abort: stale read 를 들고 user 문서 삭제
+    //
+    //   결과는 `tombstone 있음 + user 문서 없음` 이다. 그런데 Final 의
+    //   어떤 gate 도 통과하지 않았다 — `.0C.1` 의 Auth-tail 증거를 가짜로
+    //   만들어 버린다.
+    //
+    //   그래서 fresh read 와 delete 를 한 transaction 에 둔다. freeze 가
+    //   같은 `users/{uid}` 를 쓰므로 경합하면 이 transaction 이 재시도되고,
+    //   재시도에서 `deleting` 을 관측해 거부된다.
+    //
+    //   [§21] tombstone 도 같은 read-set 에 넣는다. 그래야 비정상 상태
+    //   (`tombstone 있음 + registration_pending`)에서도 거부된다 —
+    //   freeze projection 이 수렴하기를 기다리지 않는다.
+    //
+    //   [§24] transaction 안에는 Firestore read/delete 만 둔다. Storage·
+    //   Auth·알림은 들어가지 않는다(B·C 단계는 이미 밖에서 끝났다).
+    {
+      const tombRefForAbort = db
+        .collection(ACCOUNT_DELETION_TOMBSTONE_COL).doc(uid);
       let fsFail = false;
-      await userRef.delete().catch((fsErr) => {
-        console.error(`[callableAbortForeignRegistration] Firestore 삭제 실패 (uid=${uid}): ${fsErr}`);
+      try {
+        await db.runTransaction(async (tx) => {
+          const [freshUser, freshTomb] = await Promise.all([
+            tx.get(userRef), tx.get(tombRefForAbort),
+          ]);
+          if (freshTomb.exists) {
+            // 계정삭제 journey 가 시작된 계정이다 — 가입중단이 아니다.
+            throw new HttpsError(
+              "failed-precondition",
+              "탈퇴 처리 중인 계정입니다."
+            );
+          }
+          if (!freshUser.exists) return; // 이미 없음 — 멱등 no-op
+          const freshStatus =
+            freshUser.data()?.accountStatus as string | undefined;
+          if (freshStatus !== "registration_pending") {
+            throw new HttpsError(
+              "failed-precondition",
+              "가입 대기 중인 계정에만 중단 요청이 허용됩니다."
+            );
+          }
+          tx.delete(userRef);
+        });
+      } catch (fsErr) {
+        if (fsErr instanceof HttpsError) throw fsErr; // 정책 거부는 그대로
+        console.error(
+          "[callableAbortForeignRegistration] Firestore 삭제 실패 — " +
+          `code=${(fsErr as {code?: unknown})?.code ?? "unknown"}`);
         fsFail = true;
-      });
+      }
       if (fsFail) {
         return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
       }
