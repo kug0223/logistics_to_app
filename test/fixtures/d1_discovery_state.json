@@ -1,0 +1,510 @@
+{
+ "toId": "elOsFtKr3lOdL0iwwtel",
+ "dates": {
+  "full": "2027-11-11",
+  "open": "2027-11-12",
+  "closed": "2027-11-13"
+ },
+ "wdByDate": {
+  "full": {
+   "a": "DYCEc7QqD65g1acuPY5Q",
+   "b": "Wn2gQczWAPOgzh52uDKq"
+  },
+  "open": {
+   "a": "n96QYYlOmRF2SpCJXIcD",
+   "b": "tSBFoM4zborKaU9qh49m"
+  },
+  "closed": {
+   "a": "T8RKMoU3vVNNuxVg3PZp",
+   "b": "KS1qaHGGsj1TR6Uay2J2"
+  }
+ },
+ "r1": {
+  "exists": true,
+  "isPublished": true,
+  "status": "ACTIVE",
+  "isDeleted": null,
+  "isManualClosed": false,
+  "type": "flex",
+  "totalRequired": 18,
+  "totalConfirmed": 0,
+  "slotDates": [
+   "2027-11-11",
+   "2027-11-12",
+   "2027-11-13"
+  ],
+  "slots": [
+   {
+    "id": "U8uWfsqjsZhdVUAeOHh7",
+    "date": "2027-11-11",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "DYCEc7QqD65g1acuPY5Q": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "Wn2gQczWAPOgzh52uDKq": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "DYCEc7QqD65g1acuPY5Q",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "Wn2gQczWAPOgzh52uDKq",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "ghVki8THuxmUtVwIXrSn",
+    "date": "2027-11-12",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "n96QYYlOmRF2SpCJXIcD": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "tSBFoM4zborKaU9qh49m": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "n96QYYlOmRF2SpCJXIcD",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "tSBFoM4zborKaU9qh49m",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "wuUJDHut9wimHsK2XO5R",
+    "date": "2027-11-13",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "T8RKMoU3vVNNuxVg3PZp": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "KS1qaHGGsj1TR6Uay2J2": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "T8RKMoU3vVNNuxVg3PZp",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "KS1qaHGGsj1TR6Uay2J2",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   }
+  ]
+ },
+ "r2": {
+  "exists": true,
+  "isPublished": true,
+  "status": "ACTIVE",
+  "isDeleted": null,
+  "isManualClosed": false,
+  "type": "flex",
+  "totalRequired": 18,
+  "totalConfirmed": 1,
+  "slotDates": [
+   "2027-11-11",
+   "2027-11-12",
+   "2027-11-13"
+  ],
+  "slots": [
+   {
+    "id": "U8uWfsqjsZhdVUAeOHh7",
+    "date": "2027-11-11",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 1,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "Wn2gQczWAPOgzh52uDKq": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "DYCEc7QqD65g1acuPY5Q": {
+      "confirmedCount": 1,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "DYCEc7QqD65g1acuPY5Q",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "Wn2gQczWAPOgzh52uDKq",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "ghVki8THuxmUtVwIXrSn",
+    "date": "2027-11-12",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "n96QYYlOmRF2SpCJXIcD": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "tSBFoM4zborKaU9qh49m": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "n96QYYlOmRF2SpCJXIcD",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "tSBFoM4zborKaU9qh49m",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "wuUJDHut9wimHsK2XO5R",
+    "date": "2027-11-13",
+    "status": "closed",
+    "isManualClosed": true,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "T8RKMoU3vVNNuxVg3PZp": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "KS1qaHGGsj1TR6Uay2J2": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "T8RKMoU3vVNNuxVg3PZp",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "KS1qaHGGsj1TR6Uay2J2",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   }
+  ]
+ },
+ "r3_closed": {
+  "exists": true,
+  "isPublished": true,
+  "status": "ACTIVE",
+  "isDeleted": null,
+  "isManualClosed": false,
+  "type": "flex",
+  "totalRequired": 18,
+  "totalConfirmed": 1,
+  "slotDates": [
+   "2027-11-11",
+   "2027-11-12",
+   "2027-11-13"
+  ],
+  "slots": [
+   {
+    "id": "U8uWfsqjsZhdVUAeOHh7",
+    "date": "2027-11-11",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 1,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "DYCEc7QqD65g1acuPY5Q": {
+      "confirmedCount": 1,
+      "pendingCount": 0
+     },
+     "Wn2gQczWAPOgzh52uDKq": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "DYCEc7QqD65g1acuPY5Q",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "Wn2gQczWAPOgzh52uDKq",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "ghVki8THuxmUtVwIXrSn",
+    "date": "2027-11-12",
+    "status": "closed",
+    "isManualClosed": true,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "n96QYYlOmRF2SpCJXIcD": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "tSBFoM4zborKaU9qh49m": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "n96QYYlOmRF2SpCJXIcD",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "tSBFoM4zborKaU9qh49m",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "wuUJDHut9wimHsK2XO5R",
+    "date": "2027-11-13",
+    "status": "closed",
+    "isManualClosed": true,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "T8RKMoU3vVNNuxVg3PZp": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "KS1qaHGGsj1TR6Uay2J2": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "T8RKMoU3vVNNuxVg3PZp",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "KS1qaHGGsj1TR6Uay2J2",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   }
+  ]
+ },
+ "r3_reopened": {
+  "exists": true,
+  "isPublished": true,
+  "status": "ACTIVE",
+  "isDeleted": null,
+  "isManualClosed": false,
+  "type": "flex",
+  "totalRequired": 18,
+  "totalConfirmed": 1,
+  "slotDates": [
+   "2027-11-11",
+   "2027-11-12",
+   "2027-11-13"
+  ],
+  "slots": [
+   {
+    "id": "U8uWfsqjsZhdVUAeOHh7",
+    "date": "2027-11-11",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 1,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "DYCEc7QqD65g1acuPY5Q": {
+      "confirmedCount": 1,
+      "pendingCount": 0
+     },
+     "Wn2gQczWAPOgzh52uDKq": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "DYCEc7QqD65g1acuPY5Q",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "Wn2gQczWAPOgzh52uDKq",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "ghVki8THuxmUtVwIXrSn",
+    "date": "2027-11-12",
+    "status": "open",
+    "isManualClosed": false,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "n96QYYlOmRF2SpCJXIcD": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "tSBFoM4zborKaU9qh49m": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "n96QYYlOmRF2SpCJXIcD",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "tSBFoM4zborKaU9qh49m",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   },
+   {
+    "id": "wuUJDHut9wimHsK2XO5R",
+    "date": "2027-11-13",
+    "status": "closed",
+    "isManualClosed": true,
+    "confirmedCount": 0,
+    "pendingCount": 0,
+    "requiredCount": 0,
+    "workDetailCounts": {
+     "T8RKMoU3vVNNuxVg3PZp": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     },
+     "KS1qaHGGsj1TR6Uay2J2": {
+      "confirmedCount": 0,
+      "pendingCount": 0
+     }
+    },
+    "workDetails": [
+     {
+      "wdId": "T8RKMoU3vVNNuxVg3PZp",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "requiredCount": 1,
+      "isManualClosed": null
+     },
+     {
+      "wdId": "KS1qaHGGsj1TR6Uay2J2",
+      "startTime": "19:00",
+      "endTime": "22:00",
+      "requiredCount": 5,
+      "isManualClosed": null
+     }
+    ]
+   }
+  ]
+ }
+}
