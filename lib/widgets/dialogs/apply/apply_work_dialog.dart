@@ -1921,7 +1921,24 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [R7-P4.4E.6D] 이 Row 의 제목 Text 는 flex 를 받지 못하는
+          //   child 였다. 그래서 부모 폭이 아니라 **자기 자연 폭**으로
+          //   자리를 요구했고, 날짜 문자열이 한 글자 길어지는 것만으로
+          //   넘쳤다.
+          //
+          //     390dp(scale 0.9) 가용 337.6
+          //     icon 16.2 + gap 7.2 + text 320.3 = 343.7  → 6.1 초과
+          //
+          //   `10/9(금)` 에서 `10/10(토)` 로 넘어가는 날 깨진다 —
+          //   날짜 길이는 정상적인 제품 데이터 변화이고, layout 이 그것을
+          //   흡수해야 한다. 그래서 폭의 소유권을 Text 에게 준다.
+          //   줄바꿈으로 흡수하므로 문구를 자르거나(ellipsis) 글자를
+          //   줄이거나 가리지 않는다.
+          //
+          //   여러 줄이 되면 아이콘은 **첫 줄 옆**에 있어야 한다 —
+          //   center 는 2~3줄 블록의 가운데로 아이콘을 내려보낸다.
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
                 Icons.warning_amber_rounded,
@@ -1929,10 +1946,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 color: AppColors.warningDark,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '${dateFormat(targetDate)} 확정된 근무가 있습니다',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
-                  fontWeight: FontWeight.bold,
+              Expanded(
+                child: Text(
+                  '${dateFormat(targetDate)} 확정된 근무가 있습니다',
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
