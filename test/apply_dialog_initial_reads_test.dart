@@ -112,9 +112,21 @@ TOModel _to({DateTime? date}) => TOModel(
       statusUpdatedAt: DateTime(2026, 9, 1),
     );
 
-WorkDetailData _work({int required_ = 4, bool full = false}) => WorkDetailData(
-      wdId: 'wd1',
-      workType: '상하차',
+WorkDetailData _work({
+  int required_ = 4,
+  bool full = false,
+  // [R7-P4.4E.6E] 업무명·시간이 날짜 카드의 시간 문구와 업무 카드 폭을
+  //   정한다. 여러 업무를 서로 다른 시간으로 주면 날짜 카드가
+  //   `N개 업무 (시간 상이)` 로 바뀐다.
+  String wdId = 'wd1',
+  String workType = '상하차',
+  String startTime = '09:00',
+  String endTime = '18:00',
+  int order = 0,
+}) =>
+    WorkDetailData(
+      wdId: wdId,
+      workType: workType,
       workTypeIcon: 'box',
       workTypeColor: '#000000',
       workTypeBackgroundColor: '#FFFFFF',
@@ -122,9 +134,9 @@ WorkDetailData _work({int required_ = 4, bool full = false}) => WorkDetailData(
       wageType: 'hourly',
       requiredCount: required_,
       runtimeFull: full,
-      startTime: '09:00',
-      endTime: '18:00',
-      order: 0,
+      startTime: startTime,
+      endTime: endTime,
+      order: order,
     );
 
 /// 세 읽기를 각각 완료·실패·대기로 돌린다.
@@ -473,9 +485,9 @@ void main() {
           expect(find.text('시간이 겹치는 업무는 지원할 수 없습니다'),
               findsOneWidget);
 
-          // 이 Phase 범위 밖의 overflow 는 삼키지 않고 **분류해서** 비운다.
-          //   (별도 owner 로 보고한다 — 여기서 고치지 않는다.)
-          tester.takeException();
+          // [R7-P4.4E.6E] 업무 카드 Row 도 닫혔으므로 이제 전역으로 본다.
+          expect(tester.takeException(), isNull,
+              reason: "${w.toInt()}dp / scale $s / ${shape.key} 에서 화면 전체 overflow");
         });
       }
     }
@@ -569,5 +581,163 @@ void main() {
     for (final hide in ['ClipRect', 'OverflowBox', 'FittedBox', 'Transform.scale']) {
       expect(body.contains(hide), isFalse, reason: '$hide 로 가리지 않는다');
     }
+  });
+
+  // ══ [R7-P4.4E.6E] 업무 카드 — 좁은 폭 × 큰 글자 ═══════════════════════════
+  //
+  //   E6D 매트릭스가 드러낸 두 번째 Row 다(날짜 정보 카드 안의 시간 줄).
+  //   시간 Text 가 flex 를 받지 못해 자기 자연 폭을 요구했다 — E6D 와
+  //   **같은 패턴, 다른 자리**다.
+  //
+  //     320dp(scale 0.85) 가용 214.3 · icon 11.1 + gap 3.4
+  //     '09:00 ~ 18:00' 13자 × (13 × textScale)
+  //       1.3 → 219.7  → 23 초과
+  //       2.0 → 338.0  → 141 초과
+  //
+  //   큰 글자는 예외가 아니라 정상적인 접근성 환경이다.
+
+  /// 날짜 정보 카드 안의 시간 Text — 같은 문자열이 업무 카드에도 있으므로
+  ///   `근무 날짜` 라벨이 있는 Column 으로 범위를 좁힌다.
+  ///   줄번호가 아니라 **위젯 신원**으로 집는다(§35).
+  Finder dateCardTimeText(String timeText) {
+    final column =
+        find.ancestor(of: find.text('근무 날짜'), matching: find.byType(Column)).first;
+    return find.descendant(of: column, matching: find.text(timeText));
+  }
+
+  /// 그 시간 Text 와 그것을 담은 Row 의 사각형.
+  ({Rect text, Rect row}) timeRowRects(WidgetTester tester, String timeText) {
+    final t = dateCardTimeText(timeText);
+    expect(t, findsOneWidget, reason: '날짜 카드에 시간 문구가 없다: $timeText');
+    return (
+      text: tester.getRect(t),
+      row: tester.getRect(
+          find.ancestor(of: t, matching: find.byType(Row)).first),
+    );
+  }
+
+  for (final w in widths) {
+    for (final s in scales) {
+      testWidgets(
+          '[AWC-1] 업무 카드가 넘치지 않고 핵심 사실이 읽힌다 '
+          '— ${w.toInt()}dp × textScale $s', (tester) async {
+        await _pump(tester, ctl: _Ctl(), size: Size(w, 2400), textScale: s);
+
+        // 1. 화면 전체에 overflow 가 없다 — 이제 전역으로 본다.
+        expect(tester.takeException(), isNull,
+            reason: '${w.toInt()}dp / scale $s 에서 overflow');
+
+        // 2. 시간 줄이 자기 Row 안에 들어간다.
+        final r = timeRowRects(tester, '09:00 ~ 18:00');
+        expect(r.text.right, lessThanOrEqualTo(r.row.right + 0.01),
+            reason: '시간이 Row 밖으로 '
+                '${(r.text.right - r.row.right).toStringAsFixed(1)}px 넘쳤다');
+        expect(r.text.left, greaterThanOrEqualTo(r.row.left - 0.01));
+
+        // 3. 카드의 핵심 사실 — 업무명 · 시간 · 임금 · 근무 날짜.
+        expect(find.text('상하차'), findsWidgets, reason: '업무명');
+        expect(find.text('12,000원/시급'), findsWidgets, reason: '임금');
+        expect(find.text('근무 날짜'), findsOneWidget);
+        expect(find.text(FormatHelper.formatDateKorean(kWorkDate)),
+            findsOneWidget, reason: '근무 날짜');
+      });
+    }
+  }
+
+  testWidgets('[AWC-2] 긴 업무명도 카드를 넘기지 않는다 — 320dp × 2.0',
+      (tester) async {
+    await _pump(
+      tester,
+      ctl: _Ctl(),
+      workDetails: [_work(workType: '냉장창고 입출고 및 파렛트 정리')],
+      size: const Size(320, 2400),
+      textScale: 2.0,
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('냉장창고 입출고 및 파렛트 정리'), findsWidgets);
+    expect(find.text('12,000원/시급'), findsWidgets);
+  });
+
+  testWidgets('[AWC-3] 업무 3건이면 시간 문구가 길어진다 — 320dp × 2.0',
+      (tester) async {
+    // 시간이 서로 다르면 날짜 카드가 `N개 업무 (시간 상이)` 로 바뀐다 —
+    //   이 컴포넌트가 만드는 **가장 긴 한국어 시간 문구**다.
+    await _pump(
+      tester,
+      ctl: _Ctl(),
+      workDetails: [
+        _work(wdId: 'w1', startTime: '06:00', endTime: '15:00', order: 0),
+        _work(wdId: 'w2', workType: '피킹', startTime: '09:00', endTime: '18:00', order: 1),
+        _work(wdId: 'w3', workType: '검수', startTime: '13:00', endTime: '22:00', order: 2),
+      ],
+      size: const Size(320, 2400),
+      textScale: 2.0,
+    );
+    expect(tester.takeException(), isNull);
+    final r = timeRowRects(tester, '3개 업무 (시간 상이)');
+    expect(r.text.right, lessThanOrEqualTo(r.row.right + 0.01));
+    // 세 업무가 모두 렌더된다 — 하나도 밀려나지 않는다.
+    for (final n in ['상하차', '피킹', '검수']) {
+      expect(find.text(n), findsWidgets, reason: n);
+    }
+  });
+
+  testWidgets('[AWC-4] 큰 글자에서도 업무별 지원 동작에 닿는다 — 320dp × 2.0',
+      (tester) async {
+    await _pump(tester, ctl: _Ctl(), size: const Size(320, 2400), textScale: 2.0);
+    expect(tester.takeException(), isNull);
+    // 카드의 동작 라벨이 렌더돼 있고(존재), 화면 폭 안에 있다.
+    final apply = find.text('지원');
+    expect(apply, findsWidgets, reason: '업무별 지원 동작이 사라지면 안 된다');
+    final rect = tester.getRect(apply.first);
+    expect(rect.left, greaterThanOrEqualTo(0));
+    expect(rect.right, lessThanOrEqualTo(320 + 0.01),
+        reason: '동작이 화면 밖으로 나갔다');
+  });
+
+  testWidgets('[AWC-5] 시간 문구는 줄바꿈으로 흡수한다 — 자르지 않는다',
+      (tester) async {
+    await _pump(tester, ctl: _Ctl(), size: const Size(320, 2400), textScale: 2.0);
+    expect(tester.takeException(), isNull);
+    final t = dateCardTimeText('09:00 ~ 18:00');
+    final time = tester.widget<Text>(t);
+    expect(time.maxLines, isNull, reason: 'maxLines:1 로 묶지 않는다');
+    expect(time.overflow, isNot(TextOverflow.ellipsis),
+        reason: '시간을 "09:00 ~ 1..." 로 자르지 않는다');
+    expect(time.style?.fontSize, 13, reason: '폰트를 줄여 맞추지 않는다');
+    // 한 줄에 못 들어가면 두 줄 이상이 된다 — 높이로 확인한다.
+    final h = tester.getRect(t).height;
+    expect(h, greaterThan(13 * 2.0 * 1.2),
+        reason: '줄바꿈이 일어나야 전부 읽힌다 (height=$h)');
+  });
+
+  test('[AWC-6] 시간 Text 가 Row 의 폭을 소유한다 — 구조 고정', () {
+    final src =
+        File('lib/widgets/dialogs/apply/apply_work_dialog.dart').readAsStringSync();
+    final start = src.indexOf('Widget _buildSingleDateInfo(');
+    expect(start, greaterThan(-1));
+    final end = src.indexOf('Widget _buildConflictWarningBox(', start);
+    expect(end, greaterThan(start));
+    final body = src.substring(start, end);
+    final rowAt = body.indexOf('Icons.access_time');
+    expect(rowAt, greaterThan(-1));
+    final timeRow = body.substring(body.lastIndexOf('Row(', rowAt));
+    expect(timeRow.contains('crossAxisAlignment: CrossAxisAlignment.start'), isTrue);
+    expect(timeRow.contains('Expanded('), isTrue,
+        reason: '시간 Text 가 flex 를 받지 못하면 다시 자연 폭을 요구한다');
+    for (final hide in [
+      'ClipRect', 'OverflowBox', 'FittedBox', 'Transform.scale',
+      'TextOverflow.ellipsis',
+    ]) {
+      expect(body.contains(hide), isFalse, reason: '$hide 로 가리지 않는다');
+    }
+  });
+
+  testWidgets('[AWC-7] 카드가 높아져도 스크롤 주인은 하나다', (tester) async {
+    await _pump(tester, ctl: _Ctl(), size: const Size(320, 900), textScale: 2.0);
+    expect(tester.takeException(), isNull);
+    // 중첩 스크롤을 새로 만들지 않았다 — E6C 의 single scroll owner 유지.
+    expect(find.byType(Scrollable), findsOneWidget,
+        reason: '스크롤 주인이 둘이면 제스처가 갈린다');
   });
 }

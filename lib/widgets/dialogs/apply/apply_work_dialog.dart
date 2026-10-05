@@ -930,15 +930,36 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 ),
                 if (timeText.isNotEmpty) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                  // [R7-P4.4E.6E] 시간 Text 가 flex 를 받지 못하는 child 였다.
+                  //   E6D 의 경고 Row 와 **같은 패턴, 다른 자리**다 — 부모가
+                  //   준 폭이 아니라 자기 자연 폭으로 자리를 요구했다.
+                  //
+                  //     320dp(scale 0.85) 가용 214.3
+                  //     icon 11.1 + gap 3.4 + '09:00 ~ 18:00'
+                  //     textScale 1.3 → 글자 16.9 × 13자 = 219.7 → 23 초과
+                  //     textScale 2.0 → 글자 26.0 × 13자 = 338.0 → 141 초과
+                  //
+                  //   큰 글자는 예외 상황이 아니라 정상적인 접근성 환경이다.
+                  //   그래서 폭의 소유권을 Text 에게 주고 줄바꿈으로 흡수한다 —
+                  //   시간은 지원 판단의 핵심 사실이므로 자르지 않는다.
+                  //   여러 줄이 되면 시계 아이콘은 첫 줄 옆에 있어야 한다.
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.access_time,
-                          size: ResponsiveHelper.iconSize(context, 13),
-                          color: AppColors.grey500),
+                      Padding(
+                        padding: EdgeInsets.only(
+                          top: ResponsiveHelper.spacing(context, 2),
+                        ),
+                        child: Icon(Icons.access_time,
+                            size: ResponsiveHelper.iconSize(context, 13),
+                            color: AppColors.grey500),
+                      ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                      Text(timeText,
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey600)),
+                      Expanded(
+                        child: Text(timeText,
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.grey600)),
+                      ),
                     ],
                   ),
                 ],
