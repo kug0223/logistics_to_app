@@ -321,10 +321,19 @@ void main() {
     test('NOTIF-BYPASS-01 직접 쓰는 자리는 허용 목록뿐이다', () {
       final sites = _rawNotificationWrites(raw);
       final fns = sites.map((s) => s.fn).toSet();
-      // 허용: canonical helper 자신 · FCM 플래그 update · 같은 transaction
-      // 안에서 barrier 를 읽는 세 자리.
+      // 허용: canonical helper 둘(자기 transaction 버전 · 호출자 transaction
+      // 버전) · FCM 플래그 update · 같은 transaction 안에서 barrier 를 읽는
+      // 세 자리.
+      //
+      // [R7-APPLICATION-LIFECYCLE.1E] `srvPersistNotificationInTx` 가 늘었다.
+      //   이미 transaction 안에 있는 writer(좌석 계약의 쓰기 단계)는
+      //   `srvPersistNotificationWithId` 를 쓸 수 없다 — 그것이 자기
+      //   transaction 을 열기 때문이다. 그 자리에서 컬렉션을 직접 쓰면 writer
+      //   가 다시 흩어지므로, 같은 의미의 동기 버전을 canonical 로 둔다.
+      //   barrier 는 호출자가 **읽기 구간에서** 읽는다(BYPASS-02b).
       expect(fns, {
         'srvPersistNotificationWithId',
+        'srvPersistNotificationInTx',
         'onNotificationCreated',
         'sendWorkReminders',
         'processContractRenewalChecks',
@@ -344,6 +353,33 @@ void main() {
           code, 'async function processContractRenewalChecks', 'export const');
       expect(_count(pc, 'srvDeletionBarrierExistsInTx(tx,'), 2);
       expect(pc, isNot(contains('await notifRef.create(')));
+    });
+
+    test('NOTIF-BYPASS-02b in-TX helper 의 호출자가 barrier 를 읽는다', () {
+      // helper 자신은 읽을 수 없다 — transaction 은 쓰기 뒤의 읽기를 막는다.
+      final h = _between(code, 'function srvPersistNotificationInTx(', '\n}');
+      expect(h, isNot(contains('srvDeletionBarrierExistsInTx')));
+      expect(h, isNot(contains('tx.get(')));
+      expect(h, contains('tx.set('));
+      expect(h, isNot(contains('tx.create(')));
+
+      // 그래서 호출자가 읽기 구간에서 읽는다. 현재 호출자는 좌석 계약 하나다.
+      final callers = RegExp(r'srvPersistNotificationInTx\(')
+          .allMatches(code)
+          .length;
+      expect(callers, 2, reason: '정의 1 + 호출 1 — 새 호출자는 barrier 를 증명해야 한다');
+
+      final collect = _between(
+          code, 'async function srvCollectSeatCommitOverlap(',
+          'function srvApplySeatCommitOverlap(');
+      expect(collect,
+          contains('srvDeletionBarrierExistsInTx(tx, applicantUid)'));
+      final apply = _between(
+          code, 'function srvApplySeatCommitOverlap(',
+          'export const callableReportLate');
+      expect(apply, contains('!plan.notifySuppressed'));
+      expect(_at(apply, '!plan.notifySuppressed'),
+          lessThan(_at(apply, 'srvPersistNotificationInTx(')));
     });
 
     test('NOTIF-BYPASS-03 onNotificationCreated 는 create 가 아니다', () {

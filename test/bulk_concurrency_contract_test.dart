@@ -106,12 +106,20 @@ void main() {
     });
 
     test('근로자 화면이 그 사유를 사람 말로 옮긴다', () {
+      // [R7-APPLICATION-LIFECYCLE.1E] 사전의 주인이 화면에서 모델로 옮겨졌다.
+      //   「내 지원」은 전부터 이 사유를 문장으로 말했지만, 같은 사전이 화면
+      //   안에만 있어서 canonical 라벨(`statusText`)을 쓰는 다른 화면들은
+      //   여전히 '자동 취소됨' 으로 뭉갰다. 그래서 모델로 올렸다.
+      //   문구도 원인을 말하게 바꿨다 — 알림 본문과 같은 문장이다.
+      final m = _codeOf(_src('lib/models/core/application_model.dart'));
+      expect(m.contains("case 'SCHEDULE_CONFLICT':"), true);
+      expect(m.contains('확정된 일정과 시간이 겹쳐 자동 취소됐어요'), true);
+      // 화면은 그 사전을 위임한다.
       final my = _codeOf(_src(_myAppsPath));
-      expect(my.contains("case 'SCHEDULE_CONFLICT':"), true);
-      expect(my.contains('다른 업무가 확정되어 자동 취소되었어요'), true);
+      expect(my.contains('app.workerEndReasonSentence'), true);
       // 자동취소는 근로자 귀책이 아니다 — 신뢰도 문구가 붙으면 안 된다.
-      final i = my.indexOf("case 'SCHEDULE_CONFLICT':");
-      final line = my.substring(i, i + 120);
+      final i = m.indexOf("case 'SCHEDULE_CONFLICT':");
+      final line = m.substring(i, i + 120);
       expect(RegExp('신뢰도|패널티|제재').hasMatch(line), false);
     });
   });

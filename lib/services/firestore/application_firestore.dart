@@ -1834,10 +1834,6 @@ extension ApplicationFirestore on FirestoreService {
     final appInfo = (data['appInfo'] as Map?)?.cast<String, dynamic>() ?? {};
     final toId = appInfo['toId'] as String?;
     final uid = appInfo['uid'] as String? ?? '';
-    final businessName = appInfo['businessName'] as String? ?? '';
-    final startTime = appInfo['startTime'] as String? ?? '';
-    final endTime = appInfo['endTime'] as String? ?? '';
-    final workDateMs = appInfo['workDateMs'] as int? ?? 0;
     if (toId != null) clearCache(toId: toId);
     if (uid.isNotEmpty) invalidateMyApplicationsCache(uid);
 
@@ -1860,25 +1856,21 @@ extension ApplicationFirestore on FirestoreService {
       clearCache(toId: tId);
     }
 
-    // 자동 취소된 충돌 지원서 알림
-    final fallbackDate = workDateMs > 0
-        ? DateTime.fromMillisecondsSinceEpoch(workDateMs)
-        : DateTime.now();
-    for (final detail in canceledDetails) {
-      final detailWorkDateMs = detail['workDateMs'] as int?;
-      _sendApplicationAutoCanceledNotification(
-        applicantUid: detail['uid'] as String? ?? '',
-        businessName: detail['businessName'] as String? ?? '',
-        businessId: detail['businessId'] as String? ?? '',
-        workType: detail['selectedWorkType'] as String? ?? '',
-        workDate: detailWorkDateMs != null
-            ? DateTime.fromMillisecondsSinceEpoch(detailWorkDateMs)
-            : fallbackDate,
-        applicationId: detail['id'] as String? ?? '',
-        conflictingBusinessName: businessName,
-        conflictingTime: '$startTime~$endTime',
-      );
-    }
+    // [R7-APPLICATION-LIFECYCLE.1E] 자동 취소 알림을 여기서 보내지 않는다.
+    //
+    //   예전에는 이 자리에서 `_sendApplicationAutoCanceledNotification` 으로
+    //   접힌 지원자마다 알림을 만들었다. 알림의 주인이 **확정한 관리자의
+    //   기기**였던 것이고, 그래서
+    //     · 다른 입구(검토 승인·초대 수락·재배치·연장 수락)에서는 알림이
+    //       아예 없었고,
+    //     · 다른 사업장의 지원이 접힌 경우에는 `createNotification` 이
+    //       "해당 사업장 관리자와 근무자 간 알림만 허용됩니다" 로 거부됐고,
+    //     · 관리자 앱이 응답 전에 죽으면 알림 계약도 사라졌다.
+    //
+    //   이제 서버의 좌석 계약(`srvApplySeatCommitOverlap`)이 취소와 **같은
+    //   트랜잭션**에서 알림 문서를 만든다. 여기서 또 보내면 중복이 된다.
+    //   응답의 `autoCanceledDetails` 는 그대로 받는다 — 아래 캐시 무효화가
+    //   그 값을 쓴다(구버전 클라이언트 호환을 위해 서버 응답도 유지).
 
     debugPrint('✅ 확정 완료 + ${canceledDetails.length}건 AUTO_CANCEL');
     return affectedTOIds.toList();
@@ -2012,31 +2004,10 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  Future<void> _sendApplicationAutoCanceledNotification({
-    required String applicantUid,
-    required String businessName,
-    required String businessId,
-    required String workType,
-    required DateTime workDate,
-    required String applicationId,
-    required String conflictingBusinessName,
-    required String conflictingTime,
-  }) async {
-    try {
-      await createNotification(NotificationModel.createApplicationAutoCanceled(
-        userId: applicantUid,
-        businessName: businessName,
-        businessId: businessId,
-        workType: workType,
-        workDate: workDate,
-        applicationId: applicationId,
-        conflictingBusinessName: conflictingBusinessName,
-        conflictingTime: conflictingTime,
-      ));
-    } catch (e) {
-      debugPrint('⚠️ 자동 취소 알림 전송 실패: $e');
-    }
-  }
+  // [R7-APPLICATION-LIFECYCLE.1E] `_sendApplicationAutoCanceledNotification`
+  //   을 지웠다. 일정 겹침으로 접힌 지원의 알림은 서버 좌석 계약이 취소와
+  //   같은 트랜잭션에서 만든다 — 관리자 기기가 그 계약의 주인이면 입구마다
+  //   결과가 달라지고, 다른 사업장 건은 권한 때문에 아예 발송되지 않았다.
 
   /// 특정 필드만 업데이트
   /// [APP-H2] 화이트리스트 필드만 허용 — 임의 필드 덮어쓰기 차단

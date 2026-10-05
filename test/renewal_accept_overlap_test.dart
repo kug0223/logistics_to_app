@@ -127,11 +127,20 @@ void main() {
     });
 
     test('ENGINE-06 충돌 조회는 사업장 경계를 넘는다', () {
-      final collect =
-          _fnBody(code, 'async function srvCollectSeatCommitOverlap(');
+      // [R7-APPLICATION-LIFECYCLE.1E] 경계를 조였다. `_fnBody` 는 다음
+      //   `export const` 까지 자르므로 "collect 본문"에 **쓰기 단계까지**
+      //   들어 있었다. 이 셀이 지키려는 것은 **조회 범위**이므로 읽기 단계만
+      //   본다 — 쓰기 단계가 취소 문서·알림에 businessId 를 남기는 것은
+      //   조회를 좁히는 일이 아니다.
+      final a = code.indexOf('async function srvCollectSeatCommitOverlap(');
+      final b = code.indexOf('function srvApplySeatCommitOverlap(', a);
+      expect(b, greaterThan(a));
+      final collect = code.substring(a, b);
       expect(collect.contains('.where("uid", "==", applicantUid)'), isTrue);
       expect(collect.contains('businessId'), isFalse,
           reason: 'businessId 로 좁히면 타 사업장 약속을 놓친다');
+      // 어느 쪽 쿼리에도 businessId 필터가 없다.
+      expect(collect.contains('.where("businessId"'), isFalse);
     });
 
     test('ENGINE-07 조회를 트랜잭션 안에서 한다 — read-set 직렬화', () {

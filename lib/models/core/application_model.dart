@@ -679,6 +679,12 @@ class ApplicationModel {
     if (status == 'AUTO_CANCELED' && cancelReason == 'ACCOUNT_DELETED') {
       return '탈퇴로 종료';
     }
+    // [R7-APPLICATION-LIFECYCLE.1E] 일정이 겹쳐 접힌 지원도 사건을 말한다.
+    //   `자동 취소됨` 만 보면 근로자는 자기가 무엇을 잘못했는지 짐작한다 —
+    //   실제로는 **다른 근무가 확정돼서** 접힌 것이고 불이익도 없다.
+    if (status == 'AUTO_CANCELED' && cancelReason == 'SCHEDULE_CONFLICT') {
+      return '일정 겹침으로 자동 취소';
+    }
     switch (status) {
       case 'PENDING':           return '대기 중';
       case 'CONTRACT_PENDING':  return '계약 대기';
@@ -690,6 +696,54 @@ class ApplicationModel {
       case 'EXPIRED':           return '초대 만료';
       default:                  return '알 수 없음';
     }
+  }
+
+  /// [R7-APPLICATION-LIFECYCLE.1E] 끝난 이유 한 문장 — **근로자용**.
+  ///
+  /// 같은 문구가 화면마다 복제되면 한쪽만 고쳐지는 날이 온다. 그래서 이유
+  /// 코드 → 문장의 사전을 여기 한 곳에 둔다. 모르는/legacy 코드는 generic
+  /// 문장으로 떨어진다 — 없는 사건을 지어내지 않는다.
+  ///
+  /// 관리자 화면은 이 문장을 쓰지 않는다. 근로자가 **다른 사업장**에
+  /// 확정됐다는 사실·시간은 그 사업장 관리자에게 보일 정보가 아니다
+  /// (관리자 쪽은 `일정 겹침 종료` 처럼 비민감 문구를 따로 쓴다).
+  String get workerEndReasonSentence {
+    switch (cancelReason) {
+      case 'USER_CANCELED':             return '지원이 취소되었어요';
+      case 'SAME_DAY_CANCEL':           return '당일 취소 처리된 지원이에요';
+      case 'ADMIN_CANCELED':            return '사업장 사정으로 근무가 취소되었어요';
+      case 'SCHEDULE_CONFLICT':         return '확정된 일정과 시간이 겹쳐 자동 취소됐어요';
+      // [R5.3B] 제안을 받아들인 결과다 — 취소가 아니고 불이익도 없다.
+      case 'REASSIGNMENT_ACCEPTED':     return '제안받은 다른 업무로 확정됐어요';
+      // [R7-APPLICATION-LIFECYCLE.1E] 확정 재배치(A→B)의 A 쪽 종료 코드.
+      //   DEV 실측에서 근로자 자신의 지원서에 이 코드가 남는 것을 봤는데
+      //   사전에 없어 '취소된 지원이에요' 로 떨어졌다 — 수락한 결과를
+      //   취소라고 말하는 셈이다.
+      case 'CONFIRMED_REASSIGNMENT_ACCEPTED':
+        return '같은 사업장의 다른 업무로 변경 확정됐어요';
+      case 'ACCOUNT_DELETED':           return '탈퇴 처리로 종료된 지원이에요';
+      case 'WORK_DETAIL_EXPIRED':       return '해당 업무 모집이 마감되었어요';
+      case 'SLOT_WORK_DETAIL_EXPIRED':  return '해당 업무 모집이 마감되었어요';
+      case 'TO_EXPIRED':                return '모집 기간이 종료되어 자동 취소되었어요';
+      case 'TO_DELETED':                return '공고가 삭제되어 자동 취소되었어요';
+      default:                          return '취소된 지원이에요';
+    }
+  }
+
+  /// 일정 겹침으로 접힌 지원에서, **내 다른 약속**의 맥락 한 줄.
+  ///
+  /// 근로자 자신의 일정이므로 사업장명·시간을 보여줄 수 있다. 저장된 값이
+  /// 없으면 아무것도 만들지 않는다(§70 — 없는 값을 지어내지 않는다).
+  String? get scheduleConflictContext {
+    if (cancelReason != 'SCHEDULE_CONFLICT') return null;
+    final biz = conflictingBusiness;
+    final time = conflictingTime;
+    final parts = [
+      if (biz != null && biz.isNotEmpty) biz,
+      if (time != null && time.isNotEmpty) time,
+    ];
+    if (parts.isEmpty) return null;
+    return '확정된 근무: ${parts.join(' · ')}';
   }
 
 /// 업무유형이 변경되었는지 여부

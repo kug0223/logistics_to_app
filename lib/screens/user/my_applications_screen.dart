@@ -1295,9 +1295,25 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       // ── 취소 / 자동취소 ──────────────────────────────────────────────────────
       case AppStatus.canceled:
       case AppStatus.autoCanceled:
-        return Text(
-          _cancelReasonText(app.cancelReason),
-          style: const TextStyle(fontSize: 13, color: AppColors.grey500),
+        // [R7-APPLICATION-LIFECYCLE.1E] 문구는 canonical 사전 하나에서 온다.
+        //   일정 겹침이면 **내 다른 약속**의 맥락을 한 줄 더 보여준다 —
+        //   내 일정이므로 사업장명·시간을 말할 수 있다.
+        final conflictContext = app.scheduleConflictContext;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              app.workerEndReasonSentence,
+              style: const TextStyle(fontSize: 13, color: AppColors.grey500),
+            ),
+            if (conflictContext != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                conflictContext,
+                style: const TextStyle(fontSize: 12, color: AppColors.grey400),
+              ),
+            ],
+          ],
         );
 
       // ── 초대받음 ─────────────────────────────────────────────────────────────
@@ -1550,22 +1566,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   // ─── cancelReason → 사용자 문장 ──────────────────────────────────────────────
-
-  String _cancelReasonText(String? reason) {
-    switch (reason) {
-      case 'USER_CANCELED':             return '지원이 취소되었어요';
-      case 'SAME_DAY_CANCEL':           return '당일 취소 처리된 지원이에요';
-      case 'ADMIN_CANCELED':            return '사업장 사정으로 근무가 취소되었어요';
-      case 'SCHEDULE_CONFLICT':         return '다른 업무가 확정되어 자동 취소되었어요';
-      // [R5.3B] 제안을 받아들인 결과다 — 취소가 아니고 불이익도 없다.
-      case 'REASSIGNMENT_ACCEPTED':     return '제안받은 다른 업무로 확정됐어요';
-      case 'WORK_DETAIL_EXPIRED':       return '해당 업무 모집이 마감되었어요';
-      case 'SLOT_WORK_DETAIL_EXPIRED':  return '해당 업무 모집이 마감되었어요';
-      case 'TO_EXPIRED':                return '모집 기간이 종료되어 자동 취소되었어요';
-      case 'TO_DELETED':                return '공고가 삭제되어 자동 취소되었어요';
-      default:                          return '취소된 지원이에요';
-    }
-  }
+  //
+  // [R7-APPLICATION-LIFECYCLE.1E] 이 화면에 있던 사전을 지웠다. 같은 이유
+  //   코드의 문장이 화면마다 복제되면 한쪽만 고쳐지는 날이 온다 — canonical
+  //   은 `ApplicationModel.workerEndReasonSentence` 하나다.
 
   // ─── 상태 정보 헬퍼 ──────────────────────────────────────────────────────────
 

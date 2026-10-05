@@ -290,10 +290,13 @@ void main() {
 
   group('INV-SET — source-contract approved set ↔ inventory 1:1', () {
     test('INV-SET-01 raw 쓰기 함수 집합이 정확히 일치한다', () {
-      // `NOTIF-BYPASS-01` 이 고정한 집합 = helper 자신 + fcmSent update +
+      // `NOTIF-BYPASS-01` 이 고정한 집합 = helper 둘 + fcmSent update +
       //   같은 transaction 에서 barrier 를 읽는 두 함수.
+      //   [R7-APPLICATION-LIFECYCLE.1E] in-TX helper 가 늘었다 — 근거는
+      //   `NOTIF-BYPASS-01`·`NOTIF-BYPASS-02b` 에 있다.
       final approved = {
         'srvPersistNotificationWithId',
+        'srvPersistNotificationInTx',
         'onNotificationCreated',
         'sendWorkReminders',
         'processContractRenewalChecks',
@@ -498,16 +501,28 @@ void main() {
   });
 
   group('INV-LOST — 알림이 유실돼도 domain 상태는 화면에 남는다', () {
-    test('INV-LOST-01 자동취소 세 사유가 「내 지원」에 문장으로 있다', () {
-      final s = _src('lib/screens/user/my_applications_screen.dart');
+    test('INV-LOST-01 자동취소 사유가 「내 지원」에 문장으로 있다', () {
+      // [R7-APPLICATION-LIFECYCLE.1E] 사전의 주인이 화면에서 모델로 옮겨졌다.
+      //   화면에 사본이 있으면 한쪽만 고쳐져 같은 사건이 화면마다 다르게
+      //   말한다. 그래서 canonical getter 하나를 고정하고, 화면은 그것을
+      //   위임하는지만 본다.
+      final m = _src('lib/models/core/application_model.dart');
       for (final r in [
         'WORK_DETAIL_EXPIRED',
         'SLOT_WORK_DETAIL_EXPIRED',
         'TO_EXPIRED',
+        'SCHEDULE_CONFLICT',
       ]) {
-        expect(s, contains("case '$r':"),
+        expect(m, contains("case '$r':"),
             reason: '$r 이 사용자에게 설명되지 않는다');
       }
+      expect(m, contains('String get workerEndReasonSentence'));
+
+      final s = _src('lib/screens/user/my_applications_screen.dart');
+      expect(s, contains('app.workerEndReasonSentence'),
+          reason: '화면이 canonical 사전을 쓰지 않는다');
+      expect(s, isNot(contains('String _cancelReasonText(')),
+          reason: '화면 사본이 남으면 한쪽만 고쳐진다');
     });
 
     test('INV-LOST-02 CLOSED 공고가 관리자 목록 탭에 있다', () {

@@ -22541,6 +22541,23 @@ type SeatCommitOverlapPlan = {
   startTime: string;
   endTime: string;
   businessName: string;
+  /**
+   * [R7-APPLICATION-LIFECYCLE.1E] 접힌 지원을 **알리지 않는다**는 판정.
+   *
+   *   `toCancel` 의 주인은 지금 확정되는 그 근로자 본인이다(위 두 쿼리가
+   *   `uid == applicantUid`). 그래서 수신자는 한 명이고, 탈퇴 barrier 도
+   *   한 번만 읽으면 된다.
+   *
+   *   barrier 를 **읽기 단계에서** 읽는 이유: 쓰기 단계는 동기이고, 트랜잭션은
+   *   쓰기 뒤의 읽기를 허용하지 않는다. 여기서 읽으면 그 tombstone 이 read
+   *   set 에 들어가므로, 탈퇴 freeze 가 동시에 커밋되면 이 트랜잭션이 재시도되고
+   *   재시도에서는 barrier 를 보게 된다 — `srvPersistNotificationWithId` 가
+   *   자기 트랜잭션에서 하는 것과 같은 보장이다.
+   *
+   *   suppress 는 **알림에만** 적용한다. 확정·취소·카운터는 그대로 간다 —
+   *   canonical helper 의 의미(`suppressed` = 알림을 쓰지 않았다)와 같다.
+   */
+  notifySuppressed: boolean;
 };
 
 /**
@@ -22585,7 +22602,7 @@ async function srvCollectSeatCommitOverlap(
   const endTime = (fd.endTime as string | undefined) ?? "";
   const businessName = (fd.businessName as string | undefined) ?? "";
   const empty: SeatCommitOverlapPlan = {
-    toCancel: [], startTime, endTime, businessName,
+    toCancel: [], startTime, endTime, businessName, notifySuppressed: false,
   };
 
   // R1. 이미 성립한 약속 (차단 대상)
@@ -22656,7 +22673,13 @@ async function srvCollectSeatCommitOverlap(
     if (conflictsWith(tentative.data())) toCancel.push(tentative);
   }
 
-  return {toCancel, startTime, endTime, businessName};
+  // [R7-APPLICATION-LIFECYCLE.1E] 접힐 관계가 있을 때만 barrier 를 읽는다 —
+  //   loser 가 없으면 알림도 없으므로 읽을 이유가 없고, 확정 트랜잭션마다
+  //   문서 하나를 더 읽게 만들지 않는다.
+  const notifySuppressed = toCancel.length > 0 ?
+    await srvDeletionBarrierExistsInTx(tx, applicantUid) : false;
+
+  return {toCancel, startTime, endTime, businessName, notifySuppressed};
 }
 
 /**
@@ -22703,6 +22726,62 @@ function srvApplySeatCommitOverlap(
         {
           [`workDetailCounts.${cWdId}.pendingCount`]:
             admin.firestore.FieldValue.increment(-1),
+        });
+    }
+
+    // ── [R7-APPLICATION-LIFECYCLE.1E] 접힌 관계를 **근로자에게 알린다** ──
+    //
+    //   예전에는 이 알림의 주인이 **확정한 관리자의 기기**였다.
+    //   `callableConfirmApplication` 이 `autoCanceledDetails` 를 돌려주고,
+    //   관리자 클라이언트가 그 목록을 돌며 `createNotification` 을 호출했다.
+    //   그래서 같은 사건이 입구에 따라 다르게 끝났다.
+    //
+    //     · 지원 검토 승인 · 초대 수락 · 재배치 수락 · 연장 수락 에서는
+    //       loser 가 생겨도 알림을 보내는 코드가 **아무 곳에도 없었다**.
+    //     · 직접 확정에서도, 다른 사업장의 지원이 접힌 경우에는
+    //       `createNotification` 이 "해당 사업장 관리자와 근무자 간 알림만
+    //       허용됩니다" 로 거부된다 — 1D 가 실측한 cross-business race 가
+    //       바로 그 경우다.
+    //     · 관리자 앱이 응답 전에 죽으면 알림 계약도 함께 사라졌다.
+    //
+    //   그래서 좌석 계약의 **쓰기 단계**에서 한 번만 만든다. 다섯 writer 가
+    //   모두 이 함수를 지나므로 입구에 관계없이 같은 결과가 된다.
+    //
+    //   같은 트랜잭션에 넣는 이유 — 약속과 취소가 커밋되면 알림도 커밋된다.
+    //   푸시는 기존 `onNotificationCreated` 트리거가 담당한다(네트워크 호출을
+    //   트랜잭션 안에서 하지 않는다 — 재시도 시 중복 푸시가 된다).
+    //
+    //   쓰기는 canonical in-tx writer 를 지난다. 탈퇴 barrier 는 읽기 단계에서
+    //   같은 트랜잭션으로 읽어 `plan.notifySuppressed` 로 넘어온다 —
+    //   `srvPersistNotificationWithId` 가 자기 트랜잭션에서 하는 것과 같은
+    //   보장이다(쓰기 단계는 동기라 여기서 읽을 수 없다).
+    //
+    //   수신자는 접힌 지원서의 주인이고, 그는 이 커밋의 당사자다 — 위 두
+    //   쿼리가 `uid == applicantUid` 이므로 loser 는 언제나 본인이다.
+    const loserUid = d.uid as string | undefined;
+    if (loserUid && !plan.notifySuppressed) {
+      const whenBiz = plan.businessName ? `[${plan.businessName}] ` : "";
+      const whenTime = plan.startTime && plan.endTime ?
+        ` (${plan.startTime}~${plan.endTime})` : "";
+      srvPersistNotificationInTx(
+        tx, loserUid, `schedule_conflict_autocancel_${doc.id}`, {
+          userId: loserUid,
+          // 기존 타입을 재사용한다 — 클라이언트 파서·목록 렌더가 그대로 받는다.
+          type: "confirmationCanceled",
+          category: "personal",
+          title: "지원 자동 취소",
+          body: "확정된 일정과 시간이 겹쳐 다른 지원이 자동 취소됐어요." +
+            (whenBiz || whenTime ?
+              `\n확정된 근무: ${whenBiz.trim()}${whenTime}`.trimEnd() : ""),
+          data: {
+            applicationId: doc.id,
+            action: "applicationDetail",
+            screen: "applicationDetail",
+            reason: "SCHEDULE_CONFLICT",
+            ...(d.businessId ? {businessId: d.businessId as string} : {}),
+          },
+          isRead: false,
+          createdAt: nowTs,
         });
     }
   }
@@ -43652,6 +43731,53 @@ async function srvPersistNotificationWithId(
     suppressed: !created,
     notificationId: created ? ref.id : null,
   };
+}
+
+/**
+ * [R7-APPLICATION-LIFECYCLE.1E §14·§16] **호출자의 transaction 안에서** 쓰는
+ * canonical writer.
+ *
+ *   `srvPersistNotificationWithId` 는 자기 transaction 을 연다. 그래서 이미
+ *   transaction 안에 있는 writer — 좌석 계약의 쓰기 단계처럼 — 는 그것을 쓸 수
+ *   없다. 그렇다고 그 자리에서 `collection("notifications")` 를 직접 쓰면
+ *   알림 writer 가 다시 흩어진다. 그래서 같은 의미를 동기 버전으로 둔다.
+ *
+ *   **barrier 는 호출자의 책임이다.** transaction 은 쓰기 뒤의 읽기를 허용하지
+ *   않으므로 여기서 tombstone 을 읽을 수 없다. 호출자는 **읽기 구간에서**
+ *   `srvDeletionBarrierExistsInTx` 로 수신자를 확인하고, barrier 가 서 있으면
+ *   이 함수를 부르지 않는다(좌석 계약은 `plan.notifySuppressed`).
+ *
+ *   `set` 이다. `create` 는 같은 문서가 있으면 던지므로 — 비동기 버전은 그
+ *   throw 를 중복 발송 차단으로 쓰지만 — 여기서는 호출자의 transaction 전체를
+ *   실패시킨다. 즉 선의의 재시도가 **도메인 커밋 자체**를 깨뜨린다. id 가
+ *   결정적이면 `set` 으로도 문서는 하나이므로 중복 차단은 그대로다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 진행 중인 transaction
+ * @param {string} recipientUid 수신자
+ * @param {string} notificationId 결정적 id (중복 차단의 근거)
+ * @param {Record<string, unknown>} payload 알림 문서 내용 (그대로 저장)
+ * @return {boolean} 썼는가
+ */
+function srvPersistNotificationInTx(
+  tx: FirebaseFirestore.Transaction,
+  recipientUid: string,
+  notificationId: string,
+  payload: Record<string, unknown>
+): boolean {
+  if (typeof recipientUid !== "string" || recipientUid.length === 0 ||
+      recipientUid.includes("/") || recipientUid.includes("..")) {
+    // 수신자를 특정할 수 없으면 쓰지 않는다 — 비동기 버전과 같은 판단이다.
+    return false;
+  }
+  if (typeof notificationId !== "string" || notificationId.length === 0 ||
+      notificationId.includes("/") || notificationId.includes("..")) {
+    return false;
+  }
+  tx.set(
+    db.collection("users").doc(recipientUid)
+      .collection("notifications").doc(notificationId),
+    payload);
+  return true;
 }
 
 /**

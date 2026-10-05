@@ -75,6 +75,9 @@ ApplicationModel _app({
   String workType = '상하차',
   String? cancelReason,
   String businessName = '강남 물류센터',
+  // [R7-APPLICATION-LIFECYCLE.1E] 겹침으로 접힌 건의 **내 다른 약속** 맥락.
+  String? conflictingBusiness,
+  String? conflictingTime,
 }) =>
     ApplicationModel(
       id: id,
@@ -91,6 +94,8 @@ ApplicationModel _app({
       workDate: workDate,
       appliedAt: _day(-2),
       cancelReason: cancelReason,
+      conflictingBusiness: conflictingBusiness,
+      conflictingTime: conflictingTime,
     );
 
 TOModel _to() => TOModel(
@@ -207,9 +212,33 @@ void main() {
       ]),
     );
 
-    expect(find.text('다른 업무가 확정되어 자동 취소되었어요'), findsWidgets);
+    // [R7-APPLICATION-LIFECYCLE.1E] 문구가 원인을 말하게 바뀌었다 —
+    //   알림 본문과 같은 문장이고, 사전의 주인은 ApplicationModel 이다.
+    expect(find.text('확정된 일정과 시간이 겹쳐 자동 취소됐어요'), findsWidgets);
     expect(find.text('취소된 지원이에요'), findsNothing,
         reason: '사유를 아는데 generic 문구로 말하지 않는다');
+    // 맥락 값이 없으면 지어내지 않는다.
+    expect(find.textContaining('확정된 근무:'), findsNothing);
+  });
+
+  testWidgets('MAS-2b 겹친 상대가 저장돼 있으면 그 맥락도 한 줄 보인다',
+      (tester) async {
+    await _pump(
+      tester,
+      reads: _reads([
+        _app(
+          id: 'a2b',
+          status: AppStatus.autoCanceled,
+          workDate: _day(3),
+          cancelReason: 'SCHEDULE_CONFLICT',
+          conflictingBusiness: '다른 사업장',
+          conflictingTime: '09:00~18:00',
+        ),
+      ]),
+    );
+
+    expect(find.text('확정된 일정과 시간이 겹쳐 자동 취소됐어요'), findsWidgets);
+    expect(find.text('확정된 근무: 다른 사업장 · 09:00~18:00'), findsWidgets);
   });
 
   testWidgets('MAS-3 사유를 모르는 자동취소는 지어내지 않는다(양성 대조)',

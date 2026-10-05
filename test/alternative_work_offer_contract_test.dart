@@ -525,9 +525,13 @@ void main() {
 
     test("A는 '지원 취소'가 아니라 '다른 업무로 확정됨'이다", () {
       expect(a.contains("if (isReassignedAway) return '다른 업무로 확정됨';"), true);
+      // [R7-APPLICATION-LIFECYCLE.1E] 이유 사전의 주인이 화면에서 모델로
+      //   옮겨졌다 — 같은 문장을 화면마다 복제하지 않는다.
       expect(
-          s.contains("case 'REASSIGNMENT_ACCEPTED': return '제안받은 다른 업무로 확정됐어요';"),
+          a.contains("case 'REASSIGNMENT_ACCEPTED': return '제안받은 다른 업무로 확정됐어요';"),
           true);
+      expect(s.contains('app.workerEndReasonSentence'), true,
+          reason: '「내 지원」이 canonical 사전을 위임해야 한다');
     });
 
     test('제안 카드는 무엇을 포기하는지 먼저 말한다', () {
