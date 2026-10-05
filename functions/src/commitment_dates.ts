@@ -48,7 +48,11 @@ export const KST_WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
 /** 종료일을 **모르는** 약속의 방어적 상한 — 열린 구간으로 본다. */
 export const OPEN_ENDED_DAY_NUM = 99991231;
 
-/** KST 달력일을 `YYYYMMDD` 정수로. 비교·저장에 쓰는 canonical 자(尺). */
+/**
+ * KST 달력일을 `YYYYMMDD` 정수로. 비교·저장에 쓰는 canonical 자(尺).
+ * @param {Date} d 대상 instant
+ * @return {number} KST 달력일 YYYYMMDD
+ */
 export function kstDateNum(d: Date): number {
   const kst = new Date(d.getTime() + KST_OFFSET_MS);
   return (
@@ -58,7 +62,11 @@ export function kstDateNum(d: Date): number {
   );
 }
 
-/** KST 달력일의 한글 요일. */
+/**
+ * KST 달력일의 한글 요일.
+ * @param {Date} d 대상 instant
+ * @return {string} 한글 요일
+ */
 export function kstWeekdayKo(d: Date): string {
   const kst = new Date(d.getTime() + KST_OFFSET_MS);
   return KST_WEEKDAY_KO[kst.getUTCDay()];
@@ -203,6 +211,136 @@ export function longTermCommitmentOnDay(
     dayNum,
     dayWkd
   ).eligible;
+}
+
+/**
+ * `YYYYMMDD` → 그 달력일의 UTC 자정 ms. 날짜 산술에만 쓴다.
+ * @param {number} n KST 달력일 YYYYMMDD
+ * @return {number} 그 달력일의 UTC 자정 ms
+ */
+function dayNumToUtcMs(n: number): number {
+  const y = Math.floor(n / 10000);
+  const m = Math.floor(n / 100) % 100;
+  return Date.UTC(y, m - 1, n % 100);
+}
+
+/**
+ * UTC 자정 ms → `YYYYMMDD`. 그 날의 요일은 `getUTCDay()` 가 바로 준다.
+ * @param {number} ms UTC 자정 ms
+ * @return {number} 달력일 YYYYMMDD
+ */
+function utcMsToDayNum(ms: number): number {
+  const d = new Date(ms);
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 +
+    d.getUTCDate();
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+
+/**
+ * 그 달력일의 한글 요일 — 날짜 산술용(UTC 자정 기준).
+ * @param {number} dayNum 달력일 YYYYMMDD
+ * @return {string} 한글 요일
+ */
+function wkdOfDayNum(dayNum: number): string {
+  return KST_WEEKDAY_KO[new Date(dayNumToUtcMs(dayNum)).getUTCDay()];
+}
+
+/**
+ * 지원서의 날짜 배열(`extraWorkDates`·`leaveDates`)을 KST 달력일로.
+ * @param {Record<string, unknown>} appData 지원서 문서
+ * @param {string} key 배열 필드 이름
+ * @return {number[]} KST 달력일 목록
+ */
+function overrideDayNums(
+  appData: Record<string, unknown>, key: string
+): number[] {
+  const arr = appData[key];
+  if (!Array.isArray(arr)) return [];
+  const out: number[] = [];
+  for (const t of arr as unknown[]) {
+    const d = asDate(t);
+    if (d) out.push(kstDateNum(d));
+  }
+  return out;
+}
+
+/**
+ * 두 **장기** 약속이 실제로 같은 날 겹치는가 — 겹치는 **첫 날**을 돌려준다.
+ *
+ * [R7-APPLICATION-LIFECYCLE.1C.1A]
+ *
+ * ── 왜 필요했나 ─────────────────────────────────────────────────
+ *   장기 ↔ 장기 겹침을 "기간 교집합 + 근무요일 교집합" 으로만 보고 있었다.
+ *   그런데 장기 근무의 실제 약속은 원래 근무요일만으로 결정되지 않는다 —
+ *   관리자가 승인한 **추가근무(EXTRA_WORK)** 는 비근무일을 실제 근무일로
+ *   만들고, **휴무(NO_WORK/LEAVE)** 는 근무일을 지운다. 근태·좌석·배치는
+ *   이미 그 사실을 반영하는데(`longTermEligibleOnDay`) 겹침 판정만 몰랐다.
+ *
+ *     추가근무 토요일에 겹치는 약속을 **놓치고**(이중 약속 성립)
+ *     휴무로 비워진 월요일의 정상 지원을 **막는다**(과잉 차단)
+ *
+ * ── 무한 iteration 을 하지 않는다 ───────────────────────────────
+ *   두 기간의 교집합을 수년간 하루씩 훑지 않는다. 두 축으로 나눈다.
+ *
+ *   ① 공통 근무요일 — 교집합 안에서 그 요일의 날은 **휴무가 아니면** 반드시
+ *      둘 다 근무다. 실패는 휴무로만 생기므로, 공통 요일 날짜를
+ *      `|leaveA| + |leaveB| + 1` 개만 보면 생존하는 날이 있는지 결정된다.
+ *   ② 추가근무 날짜 — 양쪽 배열의 합집합(유한)만 확인한다. 공통 요일이
+ *      아니어도 이쪽에서 잡힌다.
+ *
+ *   그래서 비용은 두 배열 크기에 비례하고 기간 길이와 무관하다.
+ *
+ * @param {Record<string, unknown>} a 기존 약속
+ * @param {Record<string, unknown>} b 후보(신규 장기)
+ * @return {{dayNum: number, wkd: string, viaOverride: boolean} | null}
+ *   겹치는 첫 날(KST YYYYMMDD)과 그 요일. 없으면 null.
+ */
+export function longTermConflictDay(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): {dayNum: number; wkd: string; viaOverride: boolean} | null {
+  const ra = longTermCommitmentRange(a);
+  const rb = longTermCommitmentRange(b);
+  const lo = Math.max(ra.startNum, rb.startNum);
+  const hi = Math.min(ra.endNum, rb.endNum);
+  if (lo > hi) return null;
+
+  const both = (dayNum: number, wkd: string): boolean =>
+    longTermCommitmentOnDay(a, dayNum, wkd) &&
+    longTermCommitmentOnDay(b, dayNum, wkd);
+
+  // ── ① 공통 근무요일 ────────────────────────────────────────────
+  const daysA = Array.isArray(a["workDays"]) ? (a["workDays"] as string[]) : [];
+  const daysB = Array.isArray(b["workDays"]) ? (b["workDays"] as string[]) : [];
+  const common = daysA.filter((d) => daysB.includes(d));
+  if (common.length > 0) {
+    const budget = overrideDayNums(a, "leaveDates").length +
+      overrideDayNums(b, "leaveDates").length + 1;
+    let seen = 0;
+    for (let ms = dayNumToUtcMs(lo);
+      ms <= dayNumToUtcMs(hi) && seen < budget;
+      ms += DAY_MS) {
+      const wkd = KST_WEEKDAY_KO[new Date(ms).getUTCDay()];
+      if (!common.includes(wkd)) continue;
+      seen++;
+      const dayNum = utcMsToDayNum(ms);
+      if (both(dayNum, wkd)) return {dayNum, wkd, viaOverride: false};
+    }
+  }
+
+  // ── ② 추가근무 날짜 ────────────────────────────────────────────
+  const extras = [
+    ...overrideDayNums(a, "extraWorkDates"),
+    ...overrideDayNums(b, "extraWorkDates"),
+  ].sort((x, y) => x - y);
+  for (const dayNum of extras) {
+    if (dayNum < lo || dayNum > hi) continue;
+    const wkd = wkdOfDayNum(dayNum);
+    if (both(dayNum, wkd)) return {dayNum, wkd, viaOverride: true};
+  }
+
+  return null;
 }
 
 /**

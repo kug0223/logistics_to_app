@@ -249,6 +249,18 @@ const app = {
   workDate: kstMidnight(2026,10,1), workEndDate: kstMidnight(2026,11,30),
   confirmedAt: kstAt(2026,10,12,2,0),
 };
+// [1C.1A] 승인된 추가근무·휴무의 날짜도 KST 달력일로 비교해야 한다 —
+//   UTC 전날 15:00 로 저장된 값이 들어온다.
+const ovA = {
+  type: 'long_term', workDays: ['월','화','수','목','금'],
+  workDate: kstMidnight(2026,10,1), workEndDate: kstMidnight(2026,11,30),
+  extraWorkDates: [{toDate: () => new Date('2026-10-09T15:00:00Z')}],
+};
+const ovB = {
+  type: 'long_term', workDays: ['토'],
+  workDate: kstMidnight(2026,10,1), workEndDate: kstMidnight(2026,11,30),
+};
+const ovHit = M.longTermConflictDay(ovA, ovB);
 console.log(JSON.stringify([
   M.kstDateNum(new Date('2026-10-04T15:00:00Z')),
   M.kstDateNum(new Date('2026-10-04T14:59:59.999Z')),
@@ -257,12 +269,15 @@ console.log(JSON.stringify([
   M.longTermCommitmentOnDay(app, 20261010, '토'),
   M.longTermCommitmentOnDay(app, 20261017, '토'),
   M.longTermCommitmentRange(app).endNum,
+  ovHit && ovHit.dayNum,
+  ovHit && ovHit.viaOverride,
 ]));
 `;
 
 t('TZ1 서버 시간대가 달라도 같은 KST 달력일을 말한다', () => {
   const expected = JSON.stringify(
-      [20261005, 20261004, '월', 20261012, false, true, 20261130]);
+      [20261005, 20261004, '월', 20261012, false, true, 20261130,
+        20261010, true]);
   for (const tz of ['UTC', 'America/New_York', 'Asia/Kolkata', 'Asia/Seoul']) {
     const out = execFileSync(process.execPath, ['-e', TZ_PROBE], {
       cwd: `${__dirname}/..`,
@@ -271,6 +286,267 @@ t('TZ1 서버 시간대가 달라도 같은 KST 달력일을 말한다', () => {
     }).trim();
     assert.strictEqual(out, expected, `TZ=${tz}`);
   }
+});
+
+// ══ [R7-APPLICATION-LIFECYCLE.1C.1A] 승인된 추가근무·휴무 ═══════════════════
+//
+//   장기 근무의 실제 약속은 "원래 근무요일" 만으로 결정되지 않는다.
+//   관리자가 승인한 EXTRA_WORK 는 비근무일을 근무일로 만들고,
+//   NO_WORK/LEAVE 는 근무일을 지운다. 겹침 판정도 그 진실을 써야 한다.
+
+/** 월~금 09:00~18:00 장기 약속. */
+const weekdayApp = (over = {}) => ({
+  type: 'long_term',
+  workDays: ['월', '화', '수', '목', '금'],
+  startTime: '09:00',
+  endTime: '18:00',
+  workDate: kstMidnight(2026, 10, 1),
+  workEndDate: kstMidnight(2026, 11, 30),
+  ...over,
+});
+
+console.log('\n[CD-OV] 추가근무·휴무 — per-day 진실');
+
+t('O1 정규 근무요일 → 약속이 있다', () => {
+  // 2026-10-12 는 월요일.
+  assert.strictEqual(wkd(2026, 10, 12), '월');
+  assert.strictEqual(onDay(weekdayApp(), 2026, 10, 12), true);
+});
+
+t('O3 비정규일(토)에 추가근무가 없으면 약속이 없다', () => {
+  assert.strictEqual(wkd(2026, 10, 10), '토');
+  assert.strictEqual(onDay(weekdayApp(), 2026, 10, 10), false);
+});
+
+t('O4 비정규일 + EXTRA_WORK → 약속이 생긴다', () => {
+  const app = weekdayApp({extraWorkDates: [kstMidnight(2026, 10, 10)]});
+  assert.strictEqual(onDay(app, 2026, 10, 10), true);
+  // 다른 토요일은 여전히 아니다.
+  assert.strictEqual(onDay(app, 2026, 10, 17), false);
+});
+
+t('O6 정규일 + LEAVE → 그 날 약속이 없다', () => {
+  const app = weekdayApp({leaveDates: [kstMidnight(2026, 10, 12)]});
+  assert.strictEqual(onDay(app, 2026, 10, 12), false);
+});
+
+t('O7 휴무 하나가 다음 정규일을 지우지 않는다', () => {
+  const app = weekdayApp({leaveDates: [kstMidnight(2026, 10, 12)]});
+  assert.strictEqual(wkd(2026, 10, 19), '월');
+  assert.strictEqual(onDay(app, 2026, 10, 19), true);
+});
+
+t('O8 효력 구간 밖의 추가근무는 약속이 아니다', () => {
+  const app = weekdayApp({
+    desiredStartDate: kstMidnight(2026, 10, 15),
+    extraWorkDates: [kstMidnight(2026, 10, 10), kstMidnight(2026, 12, 5)],
+  });
+  assert.strictEqual(onDay(app, 2026, 10, 10), false, '시작 이전');
+  assert.strictEqual(onDay(app, 2026, 12, 5), false, '종료 이후');
+  // 구간 안의 토요일 추가근무는 약속이다.
+  const app2 = weekdayApp({
+    desiredStartDate: kstMidnight(2026, 10, 15),
+    extraWorkDates: [kstMidnight(2026, 10, 17)],
+  });
+  assert.strictEqual(onDay(app2, 2026, 10, 17), true);
+});
+
+t('O9 구간 밖 휴무는 아무 것도 바꾸지 않는다', () => {
+  const app = weekdayApp({leaveDates: [kstMidnight(2026, 12, 7)]});
+  assert.strictEqual(onDay(app, 2026, 12, 7), false, '이미 종료 이후');
+  assert.strictEqual(onDay(app, 2026, 10, 12), true);
+});
+
+t('O10 퇴사일 당일의 추가근무는 약속이다 (D inclusive)', () => {
+  const app = weekdayApp({
+    actualResignDate: kstMidnight(2026, 10, 17),
+    extraWorkDates: [kstMidnight(2026, 10, 17)],
+  });
+  assert.strictEqual(onDay(app, 2026, 10, 17), true);
+});
+
+t('O11 퇴사일 다음 날의 추가근무는 약속이 아니다', () => {
+  const app = weekdayApp({
+    actualResignDate: kstMidnight(2026, 10, 17),
+    extraWorkDates: [kstMidnight(2026, 10, 18)],
+  });
+  assert.strictEqual(onDay(app, 2026, 10, 18), false);
+});
+
+t('O-PRE 추가근무·휴무가 겹치면 추가근무가 먼저다 (canonical precedence)', () => {
+  // 정상 writer 는 이 dual-state 를 만들지 않는다 — 규칙만 고정한다.
+  const app = weekdayApp({
+    extraWorkDates: [kstMidnight(2026, 10, 10)],
+    leaveDates: [kstMidnight(2026, 10, 10)],
+  });
+  assert.strictEqual(onDay(app, 2026, 10, 10), true);
+});
+
+t('O-KST 추가근무 날짜도 KST 달력일로 비교한다', () => {
+  // UTC 전날 15:00 로 저장된 10/11(일) — 로컬(UTC) 성분으로 읽으면 10/10 이다.
+  //   두 날 모두 정규 근무요일이 아니므로 추가근무만이 차이를 만든다.
+  const raw = {toDate: () => new Date('2026-10-10T15:00:00Z')};
+  const app = weekdayApp({extraWorkDates: [raw]});
+  assert.strictEqual(wkd(2026, 10, 11), '일');
+  assert.strictEqual(wkd(2026, 10, 10), '토');
+  assert.strictEqual(onDay(app, 2026, 10, 11), true);
+  assert.strictEqual(onDay(app, 2026, 10, 10), false);
+});
+
+// ── 장기 ↔ 장기 ───────────────────────────────────────────────────────────
+/** 후보 장기 — 기본은 토요일 반복. */
+const candLong = (over = {}) => ({
+  type: 'long_term',
+  workDays: ['토'],
+  workDate: kstMidnight(2026, 10, 1),
+  workEndDate: kstMidnight(2026, 11, 30),
+  ...over,
+});
+const clash = (a, b) => M.longTermConflictDay(a, b);
+
+t('O18 장기↔장기 반복 근무요일이 겹치면 충돌이다', () => {
+  const hit = clash(weekdayApp(), candLong({workDays: ['월', '토']}));
+  assert.ok(hit, '월요일에서 겹친다');
+  assert.strictEqual(hit.viaOverride, false);
+  assert.strictEqual(hit.wkd, '월');
+});
+
+t('O18b 요일 교집합이 없으면 충돌이 아니다', () => {
+  assert.strictEqual(clash(weekdayApp(), candLong()), null);
+});
+
+t('O18c 기간이 떨어져 있으면 충돌이 아니다', () => {
+  const far = candLong({
+    workDays: ['월'],
+    workDate: kstMidnight(2027, 1, 4),
+    workEndDate: kstMidnight(2027, 2, 28),
+  });
+  assert.strictEqual(clash(weekdayApp(), far), null);
+});
+
+t('O19 장기↔장기 — 추가근무 하루만으로도 충돌이다', () => {
+  const a = weekdayApp({extraWorkDates: [kstMidnight(2026, 10, 10)]});
+  const hit = clash(a, candLong()); // 후보는 토요일 반복
+  assert.ok(hit);
+  assert.strictEqual(hit.viaOverride, true);
+  assert.strictEqual(hit.dayNum, num(2026, 10, 10));
+});
+
+t('O19b 후보 쪽 추가근무로도 충돌이다 (대칭)', () => {
+  const b = candLong({
+    workDays: ['일'],
+    extraWorkDates: [kstMidnight(2026, 10, 12)], // 월요일
+  });
+  const hit = clash(weekdayApp(), b);
+  assert.ok(hit);
+  assert.strictEqual(hit.viaOverride, true);
+  assert.strictEqual(hit.dayNum, num(2026, 10, 12));
+});
+
+t('O19c 추가근무 날짜가 상대 구간 밖이면 충돌이 아니다', () => {
+  const a = weekdayApp({extraWorkDates: [kstMidnight(2026, 10, 10)]});
+  const b = candLong({
+    workDate: kstMidnight(2026, 11, 1),
+    workEndDate: kstMidnight(2026, 11, 30),
+  });
+  assert.strictEqual(clash(a, b), null);
+});
+
+t('O20 휴무 하루가 장기↔장기 충돌 전체를 지우지 않는다', () => {
+  const a = weekdayApp({leaveDates: [kstMidnight(2026, 10, 12)]});
+  const b = candLong({workDays: ['월']});
+  const hit = clash(a, b);
+  assert.ok(hit, '10/19 등 다른 월요일이 남아 있다');
+  assert.strictEqual(hit.viaOverride, false);
+  assert.notStrictEqual(hit.dayNum, num(2026, 10, 12));
+});
+
+t('O20b 겹치는 날이 하나뿐이고 그 날이 휴무면 충돌이 아니다', () => {
+  // 후보 구간을 10/12 한 주로 좁힌다 — 공통 월요일은 10/12 뿐이다.
+  const a = weekdayApp({leaveDates: [kstMidnight(2026, 10, 12)]});
+  const b = candLong({
+    workDays: ['월'],
+    workDate: kstMidnight(2026, 10, 12),
+    workEndDate: kstMidnight(2026, 10, 16),
+  });
+  assert.strictEqual(clash(a, b), null);
+});
+
+t('O20c 휴무가 여러 날이어도 생존하는 날을 찾는다 (상계 안에서)', () => {
+  const a = weekdayApp({
+    leaveDates: [
+      kstMidnight(2026, 10, 5), kstMidnight(2026, 10, 12),
+      kstMidnight(2026, 10, 19),
+    ],
+  });
+  const b = candLong({workDays: ['월']});
+  const hit = clash(a, b);
+  assert.ok(hit);
+  assert.strictEqual(hit.dayNum, num(2026, 10, 26));
+});
+
+t('O20d 양쪽 휴무가 같은 날을 지우면 그 날은 충돌이 아니다', () => {
+  const a = weekdayApp({leaveDates: [kstMidnight(2026, 10, 12)]});
+  const b = candLong({
+    workDays: ['월'],
+    workDate: kstMidnight(2026, 10, 12),
+    workEndDate: kstMidnight(2026, 10, 20),
+    leaveDates: [kstMidnight(2026, 10, 19)],
+  });
+  assert.strictEqual(clash(a, b), null);
+});
+
+t('O-WIN 공통요일 스캔은 **효력 시작 이후**부터 본다', () => {
+  // 후보 구간은 10/1~11/30 월요일, 기존 약속은 10/20 부터 효력.
+  //   창을 교집합(10/20~)이 아니라 더 이른 날부터 열면, 상계(휴무 0 → 1개)가
+  //   효력 이전의 10/5 에서 소진돼 **진짜 충돌(10/26)을 놓친다**.
+  const a = weekdayApp({desiredStartDate: kstMidnight(2026, 10, 20)});
+  const b = candLong({workDays: ['월']});
+  const hit = clash(a, b);
+  assert.ok(hit, '효력 시작 이후 첫 월요일에서 겹친다');
+  assert.strictEqual(hit.dayNum, num(2026, 10, 26));
+});
+
+t('O-CAND 후보 쪽 약속 여부도 본다 — 한쪽만 보면 과잉 차단', () => {
+  // 기존은 월요일 근무, 후보는 그 월요일이 휴무다 → 겹치지 않는다.
+  const a = weekdayApp();
+  const b = candLong({
+    workDays: ['월'],
+    workDate: kstMidnight(2026, 10, 12),
+    workEndDate: kstMidnight(2026, 10, 16),
+    leaveDates: [kstMidnight(2026, 10, 12)],
+  });
+  assert.strictEqual(clash(a, b), null);
+});
+
+t('O-OVKST 추가근무 날짜의 달력일도 KST 다 (장기↔장기)', () => {
+  // UTC 전날 15:00 로 저장된 토요일 10/10.
+  const raw = {toDate: () => new Date('2026-10-09T15:00:00Z')};
+  const a = weekdayApp({extraWorkDates: [raw]});
+  const hit = clash(a, candLong()); // 후보는 토요일 반복
+  assert.ok(hit, '로컬 성분으로 읽으면 금요일이 되어 이 충돌을 놓친다');
+  assert.strictEqual(hit.viaOverride, true);
+  assert.strictEqual(hit.dayNum, num(2026, 10, 10));
+});
+
+t('O-RANGE 장기↔장기도 효력 시작·종료를 지킨다', () => {
+  const a = weekdayApp({desiredStartDate: kstMidnight(2026, 10, 20)});
+  const b = candLong({
+    workDays: ['월'],
+    workDate: kstMidnight(2026, 10, 1),
+    workEndDate: kstMidnight(2026, 10, 15),
+  });
+  assert.strictEqual(clash(a, b), null, '후보 구간이 효력 시작 이전에 끝난다');
+});
+
+t('O-RESIGN 퇴사일 이후는 장기↔장기 충돌에서도 빠진다', () => {
+  const a = weekdayApp({actualResignDate: kstMidnight(2026, 10, 13)});
+  const b = candLong({
+    workDays: ['월'],
+    workDate: kstMidnight(2026, 10, 19),
+    workEndDate: kstMidnight(2026, 11, 30),
+  });
+  assert.strictEqual(clash(a, b), null);
 });
 
 console.log(`\n=== [CD] ${pass}/${pass + fails.length} PASS` +

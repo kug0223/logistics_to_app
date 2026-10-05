@@ -27,7 +27,7 @@ import {
   kstDateNum,
   kstWeekdayKo,
   longTermCommitmentOnDay,
-  longTermCommitmentRange,
+  longTermConflictDay,
   longTermEligibleOnDay,
   OPEN_ENDED_DAY_NUM,
   type WorkerDayReason,
@@ -272,11 +272,11 @@ const SRV_OPEN_ENDED_DAY_NUM = OPEN_ENDED_DAY_NUM;
 /** 이 지원서가 장기 약속인가. */
 const srvIsLongTermCommitment = isLongTermCommitment;
 
-/** 겹침 판정용 장기 약속 구간(KST YYYYMMDD). */
-const srvLongTermCommitmentRange = longTermCommitmentRange;
-
 /** 이 장기 약속이 그 KST 날짜를 차지하는가 — 겹침 판정용. */
 const srvLongTermCommitmentOnDay = longTermCommitmentOnDay;
+
+/** 두 장기 약속이 실제로 같은 날 겹치는가(추가근무·휴무 반영). */
+const srvLongTermConflictDay = longTermConflictDay;
 
 /** 이 장기 지원서의 근로자가 그 KST 날짜에 근무 대상인가. */
 const srvLongTermEligibleOnDay = longTermEligibleOnDay;
@@ -22310,6 +22310,7 @@ function _isConflictShortTerm(
 
 function _isConflictLongTerm(
   app: FirebaseFirestore.DocumentData,
+  cand: Record<string, unknown>,
   startDateMs: number,
   endDateMs: number,
   workDays: string[],
@@ -22322,10 +22323,10 @@ function _isConflictLongTerm(
   const candEndNum = endDateMs >= 0 ?
     srvKstDateNum(new Date(endDateMs)) : SRV_OPEN_ENDED_DAY_NUM;
   if (srvIsLongTermCommitment(app)) {
-    const r = srvLongTermCommitmentRange(app as Record<string, unknown>);
-    if (candEndNum < r.startNum || candStartNum > r.endNum) return false;
-    const aWorkDays: string[] = Array.isArray(app.workDays) ? (app.workDays as string[]) : [];
-    return aWorkDays.length > 0 && workDays.some((d) => aWorkDays.includes(d));
+    // [R7-APPLICATION-LIFECYCLE.1C.1A] 승인된 추가근무·휴무까지 반영한
+    //   per-day 진실로 본다 — Apply 와 **같은** 술어다. 한쪽만 고치면
+    //   지원은 통과하고 확정에서 막히는(또는 그 반대) 상태가 생긴다.
+    return srvLongTermConflictDay(app as Record<string, unknown>, cand) !== null;
   }
   const aTs = app.workDate as FirebaseFirestore.Timestamp | undefined;
   if (!aTs || typeof aTs.toDate !== "function") return false;
@@ -22608,8 +22609,10 @@ async function srvCollectSeatCommitOverlap(
 
   if (!startTime || !endTime) return empty;
 
-  const isLongTerm = fd.applicationType === "longTerm" ||
-    (Array.isArray(fd.workDays) && (fd.workDays as string[]).length > 0);
+  // [R7-APPLICATION-LIFECYCLE.1C.1A] 후보 분류도 같은 함수로 본다 —
+  //   예전 조건 `fd.applicationType === "longTerm"` 은 Firestore 필드가
+  //   `type` 이라 실제 문서에서 맞지 않았고 `workDays` 폴백에만 의존했다.
+  const isLongTerm = srvIsLongTermCommitment(fd);
   const workDateMs =
     (fd.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis();
   const startDateMs =
@@ -22622,7 +22625,8 @@ async function srvCollectSeatCommitOverlap(
   const conflictsWith = (other: FirebaseFirestore.DocumentData): boolean => {
     if (isLongTerm && startDateMs !== undefined) {
       return _isConflictLongTerm(
-        other, startDateMs, workEndDateMs ?? -1, workDays, startTime, endTime);
+        other, fd, startDateMs, workEndDateMs ?? -1, workDays,
+        startTime, endTime);
     }
     if (workDateMs !== undefined) {
       return _isConflictShortTerm(other, workDateMs, startTime, endTime);
@@ -37029,17 +37033,38 @@ export const callableApplyToTO = onCall(
 
       if (candIsLongTerm) {
         if (isLongTermApp) {
-          // 장기 ↔ 장기 — 구간이 겹치고 **근무요일이 하나라도** 겹쳐야 한다.
-          const r = srvLongTermCommitmentRange(app);
-          if (candEndNum! < r.startNum || candStartNum > r.endNum) continue;
+          // 장기 ↔ 장기.
+          //
+          //   [R7-APPLICATION-LIFECYCLE.1C.1A] 예전에는 "구간 교집합 +
+          //   근무요일 교집합" 으로만 봤다. 그런데 장기 근무의 실제 약속은
+          //   원래 근무요일만으로 결정되지 않는다 — 승인된 **추가근무** 는
+          //   비근무일을 근무일로 만들고 **휴무** 는 근무일을 지운다.
+          //   그래서 추가근무 토요일에 겹치는 약속을 놓치고, 휴무로 비워진
+          //   월요일의 정상 지원을 막았다. 근태·좌석은 이미 그 사실을
+          //   반영한다 — 겹침 판정도 같은 술어를 쓴다.
+          const hit = srvLongTermConflictDay(app, {
+            type: "long_term",
+            workDays: newWorkDays,
+            workDate,
+            desiredStartDate,
+            workEndDate,
+          });
+          if (!hit) continue;
 
-          const appWorkDays = (app["workDays"] as string[] | undefined) ?? [];
-          const conflictDay = newWorkDays.find((d) => appWorkDays.includes(d));
-          if (!conflictDay) continue;
-
+          // 문구는 기존 두 형태를 그대로 쓴다 — 새 error code 를 만들지 않는다.
+          //   반복 근무요일이 겹친 경우는 `매주 X요일`, 추가근무 하루 때문에
+          //   겹친 경우는 그 날짜를 말하는 쪽이 정확하다.
+          if (hit.viaOverride) {
+            const hMonth = Math.floor(hit.dayNum / 100) % 100;
+            const hDay = hit.dayNum % 100;
+            throw new HttpsError(
+              "permission-denied",
+              `${hMonth}/${hDay}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
+            );
+          }
           throw new HttpsError(
             "permission-denied",
-            `매주 ${conflictDay}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
+            `매주 ${hit.wkd}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
           );
         } else {
           // 기존 단기 vs 신규 장기 — 그 하루가 내 구간·근무요일인가.

@@ -33,6 +33,13 @@ const _kMod = 'functions/src/commitment_dates.ts';
 const _kRunner = 'functions/test/commitment_dates.test.js';
 const _kClient = 'lib/widgets/dialogs/apply/commitment_conflict.dart';
 
+/// [name] 부터 [chars] 글자. 함수 **본문만** 보기 위한 자(尺).
+String _after(String src, String name, int chars) {
+  final i = src.indexOf(name);
+  expect(i, greaterThan(-1), reason: '$name 를 찾지 못함');
+  return src.substring(i, (i + chars).clamp(0, src.length));
+}
+
 /// Policy X 의 확정 충돌 구간만 잘라낸다.
 String _policyXBlock(String src) {
   final start = src.indexOf('// ── 6. 시간 충돌 체크 (확정 지원서 조회) ──');
@@ -66,8 +73,10 @@ void main() {
     test('PXD-10 기존 장기 약속의 날짜를 canonical 술어에 위임한다', () {
       expect(block.contains('srvLongTermCommitmentOnDay('), isTrue,
           reason: '단기 후보 ↔ 장기 약속은 근무일 술어 그대로다');
-      expect(block.contains('srvLongTermCommitmentRange('), isTrue,
-          reason: '장기 후보 ↔ 장기 약속은 canonical 구간을 쓴다');
+      // [R7-APPLICATION-LIFECYCLE.1C.1A] 장기↔장기도 per-day 진실로 본다 —
+      //   구간·요일만 보면 승인된 추가근무·휴무를 놓친다.
+      expect(block.contains('srvLongTermConflictDay('), isTrue,
+          reason: '장기 후보 ↔ 장기 약속은 override-aware 술어를 쓴다');
     });
 
     test('PXD-11 workDate 를 약속 시작일로 쓰지 않는다', () {
@@ -151,10 +160,17 @@ void main() {
       for (final msg in [
         '확정된 근무가 있어 지원할 수 없습니다.',
         '이미 \${appStartTime}~\${appEndTime}에 확정된 근무가 있습니다.',
-        '매주 \${conflictDay}에 \${appStartTime}~\${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.',
+        // [R7-APPLICATION-LIFECYCLE.1C.1A] 요일은 이제 겹친 **그 날**에서
+        //   나온다(`hit.wkd`) — 문구 모양은 그대로다. 새 error code 0.
+        '매주 \${hit.wkd}에 \${appStartTime}~\${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.',
       ]) {
         expect(block.contains(msg), isTrue, reason: msg);
       }
+      // 추가근무 하루 때문에 겹친 경우는 그 날짜를 말한다 — 기존 날짜 문구다.
+      expect(
+          block.contains(
+              '\${hMonth}/\${hDay}에 \${appStartTime}~\${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.'),
+          isTrue);
     });
 
     test('PXD-25 날짜를 모르는 단기 약속을 조용히 넘기지 않는다', () {
@@ -166,8 +182,18 @@ void main() {
   group('PXD-3x 좌석 확정 엔진도 같은 식이다', () {
     test('PXD-30 엔진이 canonical 술어에 위임한다', () {
       expect(engine.contains('srvLongTermCommitmentOnDay('), isTrue);
-      expect(engine.contains('srvLongTermCommitmentRange('), isTrue);
+      expect(engine.contains('srvLongTermConflictDay('), isTrue);
       expect(engine.contains('srvIsLongTermCommitment('), isTrue);
+    });
+
+    test('PXD-34 엔진의 두 술어도 시간 겹침을 먼저 본다', () {
+      // 날짜가 맞아도 시간이 겹치지 않으면 약속이 둘일 수 없다. 이 가드가
+      //   빠지면 같은 날 다른 시간대 근무까지 막힌다.
+      final guard =
+          'if (!_hasTimeOverlap(startTime, endTime, app.startTime ?? "", app.endTime ?? "")) return false;';
+      expect(RegExp.escape(guard).isNotEmpty, isTrue);
+      expect(engine.split(guard).length - 1, 2,
+          reason: '단기·장기 술어 각각 하나');
     });
 
     test('PXD-31 raw millis 구간 비교와 로컬 달력 성분이 사라졌다', () {
@@ -245,6 +271,113 @@ void main() {
       expect(b.contains('srvNotify'), isFalse);
       expect(b.contains('FieldValue.increment'), isFalse);
       expect(b.contains('workDetailCounts'), isFalse);
+    });
+  });
+
+  // ══ [R7-APPLICATION-LIFECYCLE.1C.1A] 승인된 추가근무·휴무 ═══════════════
+  //
+  //   장기 근무의 실제 약속은 원래 근무요일만으로 결정되지 않는다.
+  //   `EXTRA_WORK` 승인은 비근무일을 근무일로 만들고 `NO_WORK/LEAVE` 는
+  //   근무일을 지운다. 겹침 판정이 그것을 모르면 추가근무 날의 이중 약속을
+  //   놓치고, 휴무로 비워진 날의 정상 지원을 막는다.
+  group('PXD-7x override-aware 겹침', () {
+    test('PXD-70 canonical 모듈이 두 배열을 모두 본다', () {
+      final mod = _read(_kMod);
+      final eligible =
+          _after(mod, 'export function longTermEligibleOnDay(', 1500);
+      expect(eligible.contains('hasDay("extraWorkDates")'), isTrue);
+      expect(eligible.contains('hasDay("leaveDates")'), isTrue);
+      // 추가근무가 휴무보다 먼저다.
+      expect(eligible.indexOf('hasDay("extraWorkDates")'),
+          lessThan(eligible.indexOf('hasDay("leaveDates")')));
+    });
+
+    test('PXD-71 장기↔장기 술어가 두 배열을 모두 본다', () {
+      final clash = _after(
+          _read(_kMod), 'export function longTermConflictDay(', 2200);
+      expect(clash.contains('overrideDayNums(a, "extraWorkDates")'), isTrue);
+      expect(clash.contains('overrideDayNums(b, "extraWorkDates")'), isTrue);
+      expect(clash.contains('overrideDayNums(a, "leaveDates")'), isTrue);
+      expect(clash.contains('overrideDayNums(b, "leaveDates")'), isTrue);
+      // 하루 단위 판정은 근무일 술어에 위임한다 — 규칙이 두 벌이 되지 않는다.
+      expect(clash.contains('longTermCommitmentOnDay(a, dayNum, wkd)'), isTrue);
+      expect(clash.contains('longTermCommitmentOnDay(b, dayNum, wkd)'), isTrue);
+      // 시간 겹침은 호출자가 먼저 본다 — 이 술어는 날짜만 답한다.
+      expect(clash.contains('hasTimeOverlap'), isFalse);
+    });
+
+    test('PXD-72 기간 전체를 하루씩 훑지 않는다 — 비용은 배열 크기에 비례', () {
+      final clash = _after(
+          _read(_kMod), 'export function longTermConflictDay(', 2200);
+      // 공통 근무요일 스캔은 휴무 개수로 상계된다.
+      expect(clash.contains('const budget = overrideDayNums(a, "leaveDates").length'),
+          isTrue);
+      expect(clash.contains('seen < budget'), isTrue);
+      // 임의 상수 cap 을 넣지 않았다.
+      for (final cap in ['365', '730', '1000']) {
+        expect(clash.contains(cap), isFalse, reason: cap);
+      }
+    });
+
+    test('PXD-73 Firestore 를 읽지 않는다 — schedule_change_requests 조회 0', () {
+      final mod = _read(_kMod);
+      expect(mod.contains('schedule_change_requests'), isFalse);
+      expect(mod.contains('db.collection'), isFalse);
+      expect(mod.contains('await '), isFalse);
+      // Policy X 쪽도 추가 조회를 만들지 않았다.
+      expect(block.contains('schedule_change_requests'), isFalse);
+    });
+
+    test('PXD-74 schedule-change writer 는 변경 0', () {
+      // 승인 writer 의 canonical 보장(dual-state 금지)이 그대로다.
+      expect(fn.contains('const extraWorkDates = parseDates("extraWorkDates").filter((ts) => !sameDay(ts));'),
+          isTrue);
+      expect(fn.contains('if (!leaveDates.some(sameDay)) leaveDates.push(scrData.targetDate as admin.firestore.Timestamp);'),
+          isTrue);
+      expect(fn.contains('if (!extraWorkDates.some(sameDay)) extraWorkDates.push(scrData.targetDate as admin.firestore.Timestamp);'),
+          isTrue);
+    });
+
+    test('PXD-75 Apply 와 좌석 확정이 같은 술어를 쓴다', () {
+      // 한쪽만 override-aware 면 지원은 통과하고 확정에서 막힌다(또는 반대).
+      expect(block.contains('srvLongTermConflictDay('), isTrue);
+      expect(engine.contains('srvLongTermConflictDay('), isTrue);
+      final defs = RegExp(r'srvLongTermConflictDay = longTermConflictDay;')
+          .allMatches(fn)
+          .length;
+      expect(defs, 1);
+    });
+
+    test('PXD-76 좌석 엔진이 후보 문서를 그대로 넘긴다 (후보 쪽 override 반영)', () {
+      final collect = _after(
+          fn, 'async function srvCollectSeatCommitOverlap(', 3000);
+      expect(collect.contains('other, fd, startDateMs'), isTrue,
+          reason: '후보의 추가근무·휴무도 판정에 들어가야 한다');
+      // 후보 분류도 canonical 함수로 — 예전 `applicationType` 조건은 없다.
+      //   주석은 그 조건을 **설명**하므로 코드 줄만 본다.
+      expect(collect.contains('srvIsLongTermCommitment(fd)'), isTrue);
+      final code = collect
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//'))
+          .join('\n');
+      expect(code.contains('fd.applicationType'), isFalse);
+    });
+
+    test('PXD-77 공용 엔진 소비자 다섯이 그대로 엔진을 지난다', () {
+      for (final name in [
+        'callableConfirmApplication',
+        'callableApproveApplicationForReview',
+        'callableAcceptTOInvitation',
+        'callableAcceptRenewalProposal',
+        'callableAcceptConfirmedReassignment',
+      ]) {
+        final i = fn.indexOf('export const $name');
+        expect(i, greaterThan(-1), reason: name);
+        // 각 함수 본문 안에 수집 호출이 있다.
+        final body = fn.substring(i, (i + 60000).clamp(0, fn.length));
+        expect(body.contains('srvCollectSeatCommitOverlap('), isTrue,
+            reason: name);
+      }
     });
   });
 
