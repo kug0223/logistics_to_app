@@ -989,8 +989,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 선택 가능 날짜 텍스트
     String selectableText = '';
     if (_firstSelectableDate != null) {
-      final dayOfWeek = FormatHelper.weekday(_firstSelectableDate!);
-      selectableText = '${_firstSelectableDate!.month}/${_firstSelectableDate!.day}($dayOfWeek)부터 선택 가능';
+      // [R7-CROSSCUT-TIME.1A] 숫자와 요일을 한 값에서 만든다.
+      //   예전에는 요일만 `FormatHelper.weekday`(KST 정규화)를 쓰고 숫자는
+      //   `.month/.day` 를 그대로 읽었다. 근무일은 KST 자정 instant 로
+      //   저장되므로 KST 서쪽 기기에서는 두 값이 다른 날을 말했다 —
+      //   `10/4(월)` 같은 자기모순 라벨이 된다(2026-10-04 는 일요일).
+      //   `formatDateCompact` 가 이미 같은 `M/D(요일)` 모양을 KST 한 축에서
+      //   만든다. 화면 전용 helper 를 새로 만들지 않는다.
+      selectableText =
+          '${FormatHelper.formatDateCompact(_firstSelectableDate!)}부터 선택 가능';
     } else {
       selectableText = '선택 가능한 날짜가 없습니다';
     }
@@ -1030,7 +1037,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           ...sortedDates.take(3).map((date) {
             // sortedDates = _conflictInfoByDate.keys — 모든 date가 맵에 존재 보장, ! 안전
             final app = _conflictInfoByDate[date]!;
-            final dayOfWeek = FormatHelper.weekday(date);
             return Padding(
               padding: EdgeInsets.only(
                 left: ResponsiveHelper.spacing(context, 26),
@@ -1049,7 +1055,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: Text(
-                      '${date.month}/${date.day}($dayOfWeek) ${app.startTime}~${app.endTime} (${app.businessName})',
+                      // [R7-CROSSCUT-TIME.1A] 숫자·요일 한 축. 시간은
+                      //   사업장 wall-clock snapshot 이므로 그대로 쓴다.
+                      '${FormatHelper.formatDateCompact(date)} ${app.startTime}~${app.endTime} (${app.businessName})',
                       style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
                     ),
                   ),
@@ -2983,10 +2991,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Future<void> _showLongTermConflictAlert() async {
     final sortedConflicts = _confirmedDatesInRange.toList()..sort();
     final conflictDatesStr = sortedConflicts.take(3).map((d) {
-      final dayOfWeek = FormatHelper.weekday(d);
       final app = _conflictInfoByDate[d];
       final timeInfo = app != null ? ' ${app.startTime}~${app.endTime}' : '';
-      return '${d.month}/${d.day}($dayOfWeek)$timeInfo';
+      // [R7-CROSSCUT-TIME.1A] 숫자·요일 한 축.
+      return '${FormatHelper.formatDateCompact(d)}$timeInfo';
     }).join('\n');
     
     final extraCount = sortedConflicts.length > 3 ? '\n외 ${sortedConflicts.length - 3}일' : '';
