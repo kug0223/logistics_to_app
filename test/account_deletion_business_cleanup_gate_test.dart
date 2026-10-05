@@ -303,25 +303,35 @@ void main() {
       );
     });
 
-    test('DEL-BIZ-32 분류의 기준선 — gate 인 cleanup 은 여덟 개다', () {
+    test('DEL-BIZ-32 분류의 기준선 — gate 인 cleanup 은 아홉 개다', () {
       // tombstone(freeze) · 도메인 잔여 · 개인 cleanup · identity 상태 cleanup ·
-      // Storage · 사업장 · 개인 잔존 확실성 · identity 잔존 확실성.
+      // Storage · 사업장 · **사업장 소유 잔존** · 개인 잔존 확실성 ·
+      // identity 잔존 확실성.
       // 이 집합이 조용히 늘거나 줄면 실패 의미가 바뀐다.
       //
       // [R7-P4.4E.11C.0C.0a.4 갱신] 6 → 8. PreData 가 책임지던 MUST_DELETE
       //   (신분증 열람요청·세무 identity·초대·identity sentinel)를 Final 이
       //   직접 정리하고 직접 잔존을 세게 됐다. PreData 는 `success: true` 를
       //   반환하므로 그 결과를 삭제 완료의 근거로 쓸 수 없었다.
+      //
+      // [R7-P4.4E.11C.1.2 갱신] 8 → 9. 사업장 정리를 **돌린 뒤** 활성으로
+      //   남는 사업장에 stale ownerId 가 없는지 다시 본다. 정리가 성공했다는
+      //   사실과 "활성 사업장에 유효한 owner/signer 가 있다"는 사실은 다르다 —
+      //   owner 가 adminIds 에 없으면 정리는 그 사업장을 아예 지나간다.
+      //   `partial: true` 는 그 gate 의 **쿼리 실패** 분기에서만 늘어난다
+      //   (정책 위반은 throw 다).
       expect(fn, contains('if (!tombstoneOk)'));
       expect(fn, contains('srvDeletionDomainCleared('));
       expect(fn, contains('if (personalCleanup.failed > 0)'));
       expect(fn, contains('if (identityCleanup.failed > 0)'));
       expect(fn, contains('srvAccountStorageCleared('));
       expect(fn, contains('if (bizCleanupFailed)'));
+      expect(fn, contains('staleOwnerResidual.queryFailed'));
+      expect(fn, contains('srvAssertNoStaleOwnerBusiness(staleOwnerResidual)'));
       expect(fn, contains('srvDeletionPersonalCleared('));
       expect(fn, contains('srvDeletionIdentityCleared('));
-      expect(_count(fn, 'partial: true'), 9,
-          reason: 'gate 8개 + user 문서 삭제 실패 1개');
+      expect(_count(fn, 'partial: true'), 10,
+          reason: 'gate 9개 + user 문서 삭제 실패 1개');
     });
   });
 

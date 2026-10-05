@@ -1561,6 +1561,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'UNSIGNED_CONTRACT' => '미서명 계약서 $n건',
               'SUBADMIN_MEMBERSHIP' => '서브관리자로 등록된 사업장 $n곳 — 탈퇴 전 해제 필요',
               'ACTIVE_CONTRACTS' => '고정계약 근로자 $n명 — 탈퇴 전 계약 종료 필요',
+              // [R7-P4.4E.11C.1.2] 관리자가 남아 사업장은 살아남지만,
+              //   계약서 사업주란과 날인은 `ownerId` 를 따른다. 그 계정이
+              //   사라지면 그 사업장은 공고·지원·확정·계약을 더 이상
+              //   진행할 수 없다.
+              //   소유권 이전 기능이 제품에 없으므로 "대표자 변경" 같은
+              //   없는 행동을 요구하지 않는다(blockNavKey 도 null 이다).
+              'BUSINESS_OWNER_SUCCESSION_REQUIRED' =>
+                '대표자로 지정된 사업장 $n곳 — 탈퇴 후에도 활성으로 남아 '
+                    '모집이 불가능해집니다. 사업장 비활성화는 고객센터 문의 필요',
               final t => t,
             };
           }

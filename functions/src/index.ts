@@ -44073,6 +44073,108 @@ async function srvCountWorkerUnpaidPayableWages(uid: string): Promise<number> {
 }
 
 /**
+ * [R7-P4.4E.11C.1.2] 탈퇴 후에도 **활성으로 남을** 사업장의 stale owner 집계.
+ *
+ *   `.11C.1` runtime 에서 실측한 상태는 이것이었다.
+ *
+ *     business 존재 · isApproved · deactivatedAt 없음
+ *     adminIds = [생존 관리자]
+ *     ownerId  = 삭제된 uid
+ *     users/{ownerId} 없음
+ *
+ *   그런데 고용주 날인 gate 는 `business.ownerId` → `users/{ownerId}.
+ *   sealBase64` 를 본다(`employerSealPresent`). 그 문서가 사라지면
+ *   `NO_EMPLOYER_SEAL` 이 되어 신규 공고·예약 게시·지원·확정·초대수락이
+ *   전부 막힌다. 사업장은 살아 있는 것처럼 보이는데 아무것도 할 수 없다.
+ *
+ *   그래서 **현재 상태가 아니라 삭제 후 상태**로 판정한다(§50).
+ *     · 이미 `deactivatedAt` → 신규 모집 능력이 없으므로 모순이 아니다
+ *     · `adminIds == [uid]` 이고 정리가 돌 role 이면 → 정리가 비활성화한다
+ *     · 그 밖에 활성으로 남는다면 → 유효한 owner/signer 없이 남는다
+ *
+ *   `adminIds` 가 아니라 **`ownerId`** 로 조회하는 이유: 삭제 정리와 preview
+ *   는 둘 다 `adminIds array-contains` 로 사업장을 찾는다. rules [SEC-100]
+ *   은 관리자가 **자기 uid 를 adminIds 에서 제거**하는 것을 허용하므로,
+ *   owner 가 adminIds 에서 빠진 사업장은 그 두 경로에 아예 보이지 않는다.
+ *   그 상태가 정확히 "정리도 preview 도 지나치는데 활성으로 남는" 경우다.
+ *
+ *   [§80] 쿼리 실패는 0 이 아니다. 모르면 막는다.
+ */
+type SrvStaleOwnerBusinesses = {
+  /** 탈퇴 후 유효한 owner/signer 없이 활성으로 남을 사업장 수. */
+  count: number;
+  /** 쿼리 실패 — "0 곳"과 구별한다. */
+  queryFailed: boolean;
+};
+
+/**
+ * [R7-P4.4E.11C.1.2 §20·§49·§50] 위 집계.
+ *
+ * @param {string} uid 삭제 대상
+ * @param {string} role 삭제 대상의 role — 사업장 정리가 도는 조건이다.
+ *   정리 블록은 `BUSINESS_ADMIN`/`SUPER_ADMIN` 에서만 실행되므로, 그 밖의
+ *   role 로는 단독 관리자 사업장도 비활성화되지 않는다.
+ * @return {Promise<SrvStaleOwnerBusinesses>} 집계
+ */
+async function srvCountStaleOwnerBusinesses(
+  uid: string, role: string
+): Promise<SrvStaleOwnerBusinesses> {
+  const out: SrvStaleOwnerBusinesses = {count: 0, queryFailed: false};
+  if (typeof uid !== "string" || uid.length === 0) {
+    out.queryFailed = true;
+    return out;
+  }
+  const cleanupWillRun = role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN";
+  try {
+    const snap = await db.collection("businesses")
+      .where("ownerId", "==", uid)
+      .get();
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      if (d["deactivatedAt"]) continue;
+      const adminIds = (d["adminIds"] as string[] | undefined) ?? [];
+      const willBeDeactivated = cleanupWillRun &&
+        adminIds.length === 1 && adminIds.includes(uid);
+      if (willBeDeactivated) continue;
+      out.count++;
+    }
+  } catch (e) {
+    out.queryFailed = true;
+    console.error(
+      "[staleOwnerBusinesses] query failed — " +
+      `code=${(e as {code?: unknown})?.code ?? "unknown"}`);
+  }
+  return out;
+}
+
+/**
+ * [R7-P4.4E.11C.1.2 §18·§19] 위 집계를 blocker 로 바꾼다.
+ *
+ *   preview 와 서버 precondition 이 **같은 문장**을 쓰게 하려고 뽑았다.
+ *
+ * @param {SrvStaleOwnerBusinesses} s 집계
+ * @return {void} 막아야 하면 throw
+ */
+function srvAssertNoStaleOwnerBusiness(s: SrvStaleOwnerBusinesses): void {
+  if (s.queryFailed) {
+    throw new HttpsError(
+      "failed-precondition",
+      "사업장 소유 정보를 확인할 수 없어 탈퇴를 진행할 수 없습니다. " +
+      "잠시 후 다시 시도해주세요."
+    );
+  }
+  if (s.count > 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      `[BUSINESS_OWNER_SUCCESSION_REQUIRED] 대표자로 지정된 사업장 ${s.count}곳이 ` +
+      "탈퇴 후에도 활성 상태로 남습니다. 그 사업장은 공고 등록·지원·확정·계약을 " +
+      "더 이상 진행할 수 없게 됩니다. 사업장 비활성화 처리가 필요하므로 " +
+      "고객센터로 문의해주세요."
+    );
+  }
+}
+
+/**
  * [R7-P4.4E.11C.0C.0a §5] 계정 삭제가 허용되는 상태인가 — 공용 precondition.
  *
  *   Final 이 들고 있던 hard precondition 을 PreData(BEGIN)와 공유한다.
@@ -44231,6 +44333,23 @@ async function srvAssertAccountDeletionAllowed(
       );
     }
   }
+
+  // [R7-P4.4E.11C.1.2 §2·§18·§36] **사업장이 살아 있으면 유효한 owner 도
+  //   살아 있어야 한다.**
+  //
+  //   role 블록 밖에 둔다. 사업장 정리는 `BUSINESS_ADMIN`/`SUPER_ADMIN`
+  //   에서만 돌지만, 그 role 이 아닌 계정이 `ownerId` 로 남아 있으면 정리가
+  //   아예 지나가므로 사업장이 활성으로 남는다 — 그 경우가 더 위험하다.
+  //
+  //   [§36] 이 검사는 freeze(`srvEnsureAccountDeletionTombstone`) 앞에
+  //   있다. 그래서 막혔을 때 tombstone 도 `accountStatus: "deleting"` 도
+  //   생기지 않고, 사용자는 정상 계정 상태에서 문제를 해소할 수 있다.
+  //
+  //   [§4·§24·§25] 남은 관리자를 자동으로 owner 로 올리지 않는다. 관리
+  //   권한은 법적 고용주·서명 authority 가 아니고, 날인은
+  //   `callableSaveSeal` 이 **본인 문서에만** 쓰는 개인 identity 다.
+  srvAssertNoStaleOwnerBusiness(
+    await srvCountStaleOwnerBusinesses(uid, role));
 }
 
 /** [§15·§16] 삭제 대상 중 아직 살아 있는 관계가 있는가. */
@@ -45416,6 +45535,24 @@ export const callableDeleteAccountFinal = onCall(
       return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
     }
 
+    // 5-A2. [R7-P4.4E.11C.1.2 §34·§35·§37·§58·§79] 정리를 **돌린 뒤** 다시 본다.
+    //
+    //   상단 precondition 이 같은 술어로 이미 막는다. 그런데 그 판정과 이
+    //   지점 사이에서 공동 관리자가 빠지거나 추가될 수 있고(§58·§59), 상단
+    //   판정이 본 것은 그때의 snapshot 이다. 그리고 이 다음 줄부터는 user
+    //   문서와 Auth 를 지운다 — 되돌릴 수 없는 지점이다.
+    //
+    //   그래서 invariant 를 파괴 직전에 한 번 더 확인한다.
+    //     활성으로 보이는 사업장 → 유효한 owner/signer 가 존재한다
+    //
+    //   [§80] 쿼리 실패는 0 이 아니다. 재시도 가능한 미완료로 남긴다.
+    const staleOwnerResidual =
+      await srvCountStaleOwnerBusinesses(uid, role);
+    if (staleOwnerResidual.queryFailed) {
+      return {success: false, partial: true, reason: "FIRESTORE_RETRYABLE"};
+    }
+    srvAssertNoStaleOwnerBusiness(staleOwnerResidual);
+
     // 5-B. [R7-P4.4E.11C.0C.0a.3 §40·§65] **잔존 확실성** — 파괴 직전 재확인.
     //
     //   "삭제 함수를 호출했다"와 "남아 있지 않다"는 다른 사실이다. cleanup 과
@@ -46107,6 +46244,29 @@ export const callableGetWithdrawBlockers = onCall(
     const hardBlocks: Array<{type: string; count: number}> = [];
     const warnings: Array<{type: string; count: number}> = [];
 
+    // [R7-P4.4E.11C.1.2 §55·§63] 서버 precondition 과 **같은 helper** 를 쓴다.
+    //
+    //   role 블록 **앞**이다. 아래 사업장 조회는 `adminIds array-contains`
+    //   이고 비어 있으면 그 자리에서 `return {hardBlocks: [], warnings: []}`
+    //   한다 — owner 가 adminIds 에서 빠진 사업장은 거기서 영원히 보이지
+    //   않는다. 그런데 그것이 정확히 막아야 하는 경우다.
+    //
+    //   [§80] 쿼리 실패는 삼키지 않는다. preview 전체가 실패하면 클라이언트는
+    //   그때 이미 탈퇴 버튼을 비활성화한다 — 기존 helper 들과 같은 계약이다.
+    const staleOwner = await srvCountStaleOwnerBusinesses(callerUid, role);
+    if (staleOwner.queryFailed) {
+      throw new HttpsError(
+        "failed-precondition",
+        "사업장 소유 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요."
+      );
+    }
+    if (staleOwner.count > 0) {
+      hardBlocks.push({
+        type: "BUSINESS_OWNER_SUCCESSION_REQUIRED",
+        count: staleOwner.count,
+      });
+    }
+
     if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
       // 관리자가 속한 모든 활성 사업장 (managedBusinessIds 아닌 Firestore 직접 쿼리)
       const bizSnap = await db.collection("businesses")
@@ -46117,7 +46277,9 @@ export const callableGetWithdrawBlockers = onCall(
         .map((d) => d.id);
 
       if (bizIds.length === 0) {
-        return {hardBlocks: [], warnings: []};
+        // [R7-P4.4E.11C.1.2] 빈 배열 리터럴을 돌려주면 위에서 담은 blocker 를
+        //   버린다. 담은 것을 그대로 돌려준다.
+        return {hardBlocks, warnings};
       }
 
       // whereIn 최대 30개 배치 처리

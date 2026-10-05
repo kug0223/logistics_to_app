@@ -347,7 +347,10 @@ void main() {
       expect(fn, contains('if (identityCleanup.failed > 0)'));
       expect(fn, contains('srvDeletionPersonalCleared('));
       expect(fn, contains('srvDeletionIdentityCleared('));
-      expect(_count(fn, 'partial: true'), 9);
+      // [R7-P4.4E.11C.1.2 갱신] 9 → 10. 사업장 소유 잔존 gate 의 쿼리 실패
+      //   분기가 하나 늘었다(정책 위반은 throw 라 partial 이 아니다).
+      //   이 셀이 고정하는 personal·identity gate 자체는 그대로다.
+      expect(_count(fn, 'partial: true'), 10);
     });
 
     test('DA-REG-03 worker_availability·세무 writer gate 가 그대로다', () {
