@@ -827,13 +827,23 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             // ✅ 장기공고: 상단에 충돌 경고 박스가 있으므로 개별 카드 충돌 메시지 숨김
             // ✅ 희망시작일 미선택 + 충돌 날짜 있으면 지원 불가
             final hasConflictAndNoDate = _confirmedDatesInRange.isNotEmpty && _desiredStartDate == null;
+            // [R7-APPLICATION-LIFECYCLE.1C] 단기는 **그 날짜의 업무별 판정**을
+            //   쓴다. 예전에는 이 자리가 `ConflictInfo.ok` 로 고정이라, 같은
+            //   시간에 확정된 근무가 있어도 카드가 `지원` 을 그렸다 — 위쪽
+            //   경고 박스는 "있다" 고 말하면서 버튼은 살아 있었고, 누르면
+            //   서버가 거부했다. 그룹 TO 목록 경로는 이미 이 캐시를 본다.
+            final cachedConflict = _isLongTerm
+                ? null
+                : _conflictCache[_dateKey(widget.mainTO.date)]?[work.id];
             final conflictInfo = hasConflictAndNoDate
                 ? ConflictInfo(
                     level: ConflictLevel.blocked,
                     message: '희망 시작일을 먼저 선택해주세요',
                   )
-                : ConflictInfo.ok;  // 장기공고는 개별 충돌 메시지 숨김
-            
+                : (cachedConflict ?? ConflictInfo.ok);
+            final blockedByConflict =
+                conflictInfo.level == ConflictLevel.blocked;
+
             // ✅ 장기공고 + 출퇴근 기록 있으면 확정취소 불가
             final canCancelConfirm = application != null && 
                 !(_isLongTerm && _hasAttendanceIds.contains(application.id));
@@ -846,7 +856,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               slotDate: widget.mainTO.date,
               isLongTerm: _isLongTerm,
               // 관계가 있으면 지원 CTA 를 주지 않는다 — 서버도 막는다.
-              onApply: (hasConflictAndNoDate ||
+              onApply: (blockedByConflict ||
                       _isSubmitting ||
                       match.relation.blocksNewApplication)
                   ? null
@@ -2445,6 +2455,30 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: to.isFlexType);
       if (ok != true || !mounted) {
         if (mounted) setState(() => _isSubmitting = false);
+        return;
+      }
+    }
+
+    // [R7-APPLICATION-LIFECYCLE.1C] 확정 일정 겹침 — 제출 직전 마지막 확인.
+    //
+    //   카드 렌더는 `_conflictCache` 를 보고 `불가` 로 바꾼다. 그런데 여러
+    //   날짜가 한 번에 보이는 경로(그룹 TO 목록)에서는 그 날짜의 충돌을 아직
+    //   읽지 않았을 수 있고, 캐시가 비면 렌더가 `ConflictInfo.ok` 로 떨어진다
+    //   — 못 읽은 것이 "겹치지 않는다"가 되어 사용자는 누르고 **서버 오류로**
+    //   알게 된다. 그래서 눌린 그 날짜만 여기서 확인한다(이미 읽은 날짜는
+    //   추가 호출이 없다).
+    if (!_isLongTerm) {
+      final targetDate = date ?? widget.mainTO.date;
+      final cacheKey = _dateKey(targetDate);
+      if (!_conflictCache.containsKey(cacheKey)) {
+        await _loadConflictsForDate(targetDate);
+        if (!mounted) return;
+      }
+      final info = _conflictCache[cacheKey]?[work.id];
+      if (info != null && info.level == ConflictLevel.blocked) {
+        if (mounted) setState(() => _isSubmitting = false);
+        ToastHelper.showWarning(
+            info.message ?? '확정된 일정과 시간이 겹쳐 지원할 수 없어요');
         return;
       }
     }

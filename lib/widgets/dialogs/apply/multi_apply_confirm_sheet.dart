@@ -203,12 +203,20 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
             }
           });
         } catch (_) {
-          // 에러 시 available로 폴백 — 서버 게이트가 최종 차단
+          // [R7-APPLICATION-LIFECYCLE.1C] 읽기 실패를 `available` 로 바꾸지
+          //   않는다. 예전에는 조용히 `지원 가능` 이 됐고, 사용자는 겹침을
+          //   모른 채 제출해 서버 거부를 받았다. 제출 자체는 막지 않는다
+          //   (서버가 최종 판정한다) — 다만 **확인하지 못했다는 사실**을
+          //   화면이 말한다.
           if (mounted) {
             setState(() {
               for (final meta in metas) {
                 if (meta.status == _ItemStatus.checking) {
-                  meta.status = _ItemStatus.available;
+                  meta.status = _ItemStatus.warning;
+                  meta.conflictInfo = const ConflictInfo(
+                    level: ConflictLevel.warning,
+                    message: '확정 일정과 겹치는지 확인할 수 없어요. 지원 후 내 지원 내역에서 확인해주세요.',
+                  );
                 }
               }
             });

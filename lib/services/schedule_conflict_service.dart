@@ -6,6 +6,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../models/core/application_model.dart';
 import '../models/core/work_detail_model.dart';
 import '../utils/format_helper.dart';
+import '../widgets/dialogs/apply/commitment_conflict.dart';
 
 // CF Timestamp 역직렬화 헬퍼 — serializeFirestoreData(_seconds/_nanoseconds) 복원
 Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
@@ -61,6 +62,14 @@ class ConflictInfo {
 
 /// 시간 충돌 체크 서비스
 class ScheduleConflictService {
+  /// [R7-APPLICATION-LIFECYCLE.1C] 약속 목록의 출처 — 테스트가 끼울 수 있는
+  ///   자리 하나. production 은 null → CF 를 그대로 쓴다.
+  ScheduleConflictService({
+    Future<List<ApplicationModel>> Function()? commitmentsSource,
+  }) : _commitmentsSource = commitmentsSource;
+
+  final Future<List<ApplicationModel>> Function()? _commitmentsSource;
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   // ═══════════════════════════════════════════════════════════
@@ -201,38 +210,57 @@ class ScheduleConflictService {
   // 내부 헬퍼 메서드
   // ═══════════════════════════════════════════════════════════
 
-  /// 해당 날짜의 확정된 근무 조회 (장기공고 포함)
-  /// [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
-  ///   → callableGetApplicationsForConflictCheck CF 경유 (uid 서버 검증)
+  /// 해당 날짜에 그 시간대를 차지하는 **내 약속**.
+  ///
+  /// [R7-APPLICATION-LIFECYCLE.1C] 출처를 바꿨다.
+  ///   예전에는 `callableGetApplicationsForConflictCheck` 를 썼는데, 그 쿼리는
+  ///   `workEndDate >= workDate` 로 걸러낸다. **단기 지원서에는 그 필드가
+  ///   없다**(`callableApplyToTO` 는 단기 재활성화에서 `workEndDate` 를
+  ///   `FieldValue.delete()` 한다). Firestore 는 필드가 없는 문서를 범위
+  ///   조건에서 제외하므로, 이 충돌 체크는 **단기 확정 근무를 아예 보지
+  ///   못했다** — 같은 날 같은 시간의 단기 확정이 있어도 지원 시트가
+  ///   `지원 가능` 이라고 말하고 서버가 거부했다(서버 Policy X 는 단기·장기를
+  ///   모두 본다).
+  ///
+  ///   그래서 공고 상세·홈과 **같은 완전한 목록**(`callableGetMyApplications`,
+  ///   statuses = CONFIRMED + CONTRACT_PENDING)을 쓴다. 날짜 커버 판정은
+  ///   공용 owner(`CommitmentConflictResolver.coversDay`)가 한다 — 화면마다
+  ///   다른 날짜 술어를 두지 않는다.
   Future<List<ApplicationModel>> _getConfirmedSchedules({
     required DateTime workDate,
   }) async {
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetApplicationsForConflictCheck',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final result = await callable.call<Map<String, dynamic>>({
-        'workDateSeconds': workDate.millisecondsSinceEpoch ~/ 1000,
-      });
-      final data = Map<String, dynamic>.from(result.data as Map? ?? {});
-      final apps = (data['applications'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) {
-            final raw = _cfHydrate(Map<String, dynamic>.from(m));
-            final id = raw.remove('id') as String? ?? '';
-            return ApplicationModel.tryFromMap(raw, id);
-          })
-          .whereType<ApplicationModel>()
+      final apps = await (_commitmentsSource ?? _fetchCommitments)();
+      final commitments = CommitmentConflictResolver.commitmentsOf(apps);
+      final onDate = commitments
+          .where((app) => CommitmentConflictResolver.coversDay(app, workDate))
           .toList();
-
-      // 해당 날짜에 근무하는 지원서만 필터링 (장기공고 포함)
-      final workingOnDate = apps.where((app) => app.isWorkingOnDate(workDate)).toList();
-      debugPrint('📅 [충돌체크] ${workDate.month}/${workDate.day} 확정 근무: ${workingOnDate.length}건');
-      return workingOnDate;
+      debugPrint('📅 [충돌체크] ${workDate.month}/${workDate.day} 확정 근무: ${onDate.length}건');
+      return onDate;
     } catch (e) {
       debugPrint('❌ 확정 스케줄 조회 실패: $e');
       rethrow;
     }
+  }
+
+  /// 내 약속 전체 — 상태 필터는 서버가 한다(uid 도 서버 검증).
+  Future<List<ApplicationModel>> _fetchCommitments() async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetMyApplications',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+    final result = await callable.call<Map<String, dynamic>>({
+      'statuses': AppStatus.confirmedStatuses,
+      'limit': 200,
+    });
+    return (result.data['applications'] as List? ?? [])
+        .whereType<Map>()
+        .map((m) {
+          final raw = _cfHydrate(Map<String, dynamic>.from(m));
+          final id = raw.remove('id') as String? ?? '';
+          return ApplicationModel.tryFromMap(raw, id);
+        })
+        .whereType<ApplicationModel>()
+        .toList();
   }
 
 /// 시간 충돌 레벨 판정
@@ -246,6 +274,16 @@ class ScheduleConflictService {
     required String newStart,
     required String newEnd,
   }) {
+    // [R7-APPLICATION-LIFECYCLE.1C] **겹침 판정은 한 벌이다.**
+    //   여기 있던 자체 구현이 `ApplicationModel.hasTimeOverlap`(공고 상세·홈·
+    //   지원 dialog·약속 resolver 가 쓰는 식)과 따로 자라면, 같은 두 시간을
+    //   놓고 화면이 서로 다르게 말하는 날이 온다. 인접(`warning`) 판정만
+    //   이 자리의 고유한 일로 남긴다.
+    if (ApplicationModel.hasTimeOverlap(
+        newStart, newEnd, existingStart, existingEnd)) {
+      return ConflictLevel.blocked;
+    }
+
     int existStartMin = _timeToMinutes(existingStart);
     int existEndMin = _timeToMinutes(existingEnd);
     int newStartMin = _timeToMinutes(newStart);
@@ -267,13 +305,7 @@ class ScheduleConflictService {
       newEndMin -= 1440;
     }
 
-    // 겹치지 않는 조건: 새 종료 <= 기존 시작 OR 기존 종료 <= 새 시작
-    final noOverlap = newEndMin <= existStartMin || existEndMin <= newStartMin;
-
-    if (!noOverlap) {
-      return ConflictLevel.blocked;
-    }
-
+    // 겹침은 위에서 공용 식이 판정했다 — 여기서는 인접만 본다.
     // 시간이 딱 붙는지 확인
     if (existEndMin == newStartMin || newEndMin == existStartMin) {
       return ConflictLevel.warning;

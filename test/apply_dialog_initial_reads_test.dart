@@ -158,6 +158,9 @@ class _Ctl {
 
   List<ApplicationModel> confirmedFixture = const [];
 
+  /// [R7-APPLICATION-LIFECYCLE.1C] 업무별 충돌 판정 결과. key = workDetail id.
+  Map<String, ConflictInfo> conflictFixture = const {};
+
   ApplyWorkReads build() => ApplyWorkReads(
         applicationsForTO: ({required String toId, required String uid}) {
           appsCalls++;
@@ -190,7 +193,7 @@ class _Ctl {
           keys.add('conf:${workDetails.map((w) => w.wdId).join(",")}');
           switch (conf) {
             case _R.ok:
-              return Future.value(<String, ConflictInfo>{});
+              return Future.value(conflictFixture);
             case _R.fail:
               return Future.error(StateError('conflicts failed'));
             case _R.pending:
@@ -739,5 +742,79 @@ void main() {
     // 중첩 스크롤을 새로 만들지 않았다 — E6C 의 single scroll owner 유지.
     expect(find.byType(Scrollable), findsOneWidget,
         reason: '스크롤 주인이 둘이면 제스처가 갈린다');
+  });
+
+  // ══ [R7-APPLICATION-LIFECYCLE.1C] 확정 일정 겹침 — 이유가 보이고 제출 불가 ══
+  //
+  //   예전에는 이 화면이 위쪽에 "확정 근무가 있다" 는 경고만 띄우고 카드의
+  //   `지원` 버튼은 그대로 살려 뒀다(개별 카드 `conflictInfo` 가
+  //   `ConflictInfo.ok` 로 고정이었다). 사용자는 눌러서 **서버 오류로**
+  //   지원할 수 없다는 사실을 알았다.
+
+  const blocked = ConflictInfo(
+    level: ConflictLevel.blocked,
+    businessName: '다른 사업장',
+    conflictTime: '09:00~18:00',
+    message: '09:00~18:00 확정 근무 (다른 사업장)와 시간 충돌',
+  );
+
+  testWidgets('[CCR-1] 겹치면 이유가 보이고 지원 버튼이 사라진다', (tester) async {
+    final ctl = _Ctl()..conflictFixture = {_work().id: blocked};
+    await _pump(tester, ctl: ctl);
+
+    expect(find.text('시간충돌'), findsOneWidget, reason: '색만으로 말하지 않는다');
+    expect(find.text('불가'), findsOneWidget);
+    expect(find.text('지원'), findsNothing, reason: '누를 수 있는 지원이 남아 있으면 안 된다');
+    // `마감` 과 다른 상태다 — 정원이 아니라 내 일정이 이유다.
+    expect(find.text('마감'), findsNothing);
+  });
+
+  testWidgets('[CCR-2] 겹치지 않으면 지원 버튼이 그대로다 (회귀)', (tester) async {
+    await _pump(tester, ctl: _Ctl());
+    expect(find.text('지원'), findsOneWidget);
+    expect(find.text('시간충돌'), findsNothing);
+    expect(find.text('불가'), findsNothing);
+  });
+
+  testWidgets('[CCR-3] 겹치는 업무만 막힌다 — 형제 업무는 지원 가능', (tester) async {
+    final a = _work(wdId: 'wd1', workType: '상하차');
+    final b = _work(
+        wdId: 'wd2', workType: '주방', startTime: '19:00', endTime: '22:00',
+        order: 1);
+    final ctl = _Ctl()..conflictFixture = {a.id: blocked};
+    await _pump(tester, ctl: ctl, workDetails: [a, b]);
+
+    expect(find.text('시간충돌'), findsOneWidget);
+    expect(find.text('불가'), findsOneWidget);
+    expect(find.text('지원'), findsOneWidget, reason: '주방은 겹치지 않는다');
+  });
+
+  testWidgets('[CCR-4] 확인할 수 없으면(경고) 제출은 열어 두고 사실을 말한다',
+      (tester) async {
+    final ctl = _Ctl()
+      ..conflictFixture = {
+        _work().id: const ConflictInfo(
+          level: ConflictLevel.warning,
+          message: '충돌 여부를 확인할 수 없습니다. 관리자에게 문의하세요.',
+        ),
+      };
+    await _pump(tester, ctl: ctl);
+
+    // 경고는 막지 않는다 — 서버가 최종 판정한다.
+    expect(find.text('지원'), findsOneWidget);
+    expect(find.text('불가'), findsNothing);
+  });
+
+  test('[CCR-5] 단기 카드가 그 날짜의 업무별 판정을 쓴다 — 구조 고정', () {
+    final src = File('lib/widgets/dialogs/apply/apply_work_dialog.dart')
+        .readAsStringSync();
+    expect(
+        src.contains(
+            '_conflictCache[_dateKey(widget.mainTO.date)]?[work.id]'),
+        isTrue);
+    // `ConflictInfo.ok` 고정으로 되돌아가지 않았다.
+    expect(src.contains(': ConflictInfo.ok;  // 장기공고는 개별 충돌 메시지 숨김'),
+        isFalse);
+    expect(src.contains('onApply: (blockedByConflict ||'), isTrue);
   });
 }

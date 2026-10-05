@@ -132,10 +132,17 @@ ApplicationModel _app({
     );
 
 /// 10/05 슬롯 — 냉장(wdA) + 냉동(wdB).
+///
+/// [distinctTimes] 면 wdB 를 **겹치지 않는 시간**(09:00~12:00)으로 둔다.
+///   [R7-APPLICATION-LIFECYCLE.1C] 기본 fixture 의 두 업무는 시간이 같다
+///   (둘 다 18:00~22:30). 그래서 하나가 **약속**이 되면 다른 하나도 서버가
+///   거부한다 — 형제가 사는 것은 "관계가 다르다" 때문이지 "시간이 겹쳐도
+///   산다" 가 아니다. 두 축을 섞지 않으려고 fixture 를 가른다.
 SlotModel _slot05({
   String status = SlotStatus.open,
   bool wdAClosed = false,
   bool wdBClosed = false,
+  bool distinctTimes = false,
   Map<String, SlotWorkTypeCount> counts = const {},
 }) =>
     _slot(
@@ -145,7 +152,13 @@ SlotModel _slot05({
       counts: counts,
       wds: [
         _wd(wdId: 'wdA', type: '냉장분류', manualClosed: wdAClosed),
-        _wd(wdId: 'wdB', type: '냉동분류', manualClosed: wdBClosed),
+        _wd(
+          wdId: 'wdB',
+          type: '냉동분류',
+          manualClosed: wdBClosed,
+          start: distinctTimes ? '09:00' : '18:00',
+          end: distinctTimes ? '12:00' : '22:30',
+        ),
       ],
     );
 
@@ -208,10 +221,15 @@ void main() {
   group('HRP-2x 상태 축 — 서버와 같다', () {
     for (final s in [AppStatus.pending, AppStatus.confirmed,
       AppStatus.contractPending, AppStatus.invited]) {
+      // [R7-APPLICATION-LIFECYCLE.1C] 형제가 사는 이유는 **관계가 다르다**는
+      //   것이다. 그런데 형제의 시간이 같으면 약속(CONFIRMED ·
+      //   CONTRACT_PENDING)과는 시간이 겹치고, 서버 `callableApplyToTO` 가
+      //   그 지원을 거부한다. 그래서 겹치지 않는 시간의 형제로 고정한다 —
+      //   같은 시간 형제는 바로 아래 HRP-24 가 따로 고정한다.
       test('HRP-20 $s 는 그 wdId 만 막는다 (형제 유지)', () {
         final p = _build(
           apps: [_app(status: s, wdId: 'wdA', day: 5)],
-          slots: {kTo: [_slot05()]},
+          slots: {kTo: [_slot05(distinctTimes: true)]},
         );
         expect(p.isRecruitable(kTo, d(5)), isTrue,
             reason: '형제 wdB 가 남아 있다');
@@ -243,6 +261,9 @@ void main() {
       });
     }
 
+    // [R7-APPLICATION-LIFECYCLE.1C] 관계 축에서는 끝난 관계다 — 그래서
+    //   그 wdId 에 **다시 지원할 수 있다**. 시간이 겹치지 않는 형제로 두어
+    //   관계 축만 본다(겹치는 경우는 HRP-24 가 본다).
     test('HRP-23 퇴사·해지 승인 완료 → 관계로 보지 않는다', () {
       final p = _build(
         apps: [
@@ -251,17 +272,47 @@ void main() {
               wdId: 'wdA',
               day: 5,
               terminationStatus: AppStatus.approved),
-          _app(
-              status: AppStatus.confirmed,
-              wdId: 'wdB',
-              day: 5,
-              type: '냉동분류',
-              terminationStatus: AppStatus.approved),
         ],
-        slots: {kTo: [_slot05()]},
+        slots: {kTo: [_slot05(distinctTimes: true)]},
       );
       expect(p.isRecruitable(kTo, d(5)), isTrue);
     });
+
+    // ── [R7-APPLICATION-LIFECYCLE.1C] 약속 축 ─────────────────────────
+    //
+    //   홈은 "그 날짜에 **지원할 수 있는** 공고" 를 말한다. 서버
+    //   `callableApplyToTO` 가 결정적으로 거부하는 관계를 세면 그 수치가
+    //   거짓이다(`[CONFIRMED-CONFLICT-ADVERTISED-AS-APPLICABLE]`).
+    for (final s in AppStatus.confirmedStatuses) {
+      test('HRP-24 $s 과 시간이 같은 형제 wdId 도 막힌다 (서버가 거부한다)', () {
+        final p = _build(
+          apps: [_app(status: s, wdId: 'wdA', day: 5)],
+          slots: {kTo: [_slot05()]}, // 두 업무 모두 18:00~22:30
+        );
+        expect(p.isRecruitable(kTo, d(5)), isFalse,
+            reason: '같은 시간이므로 형제도 지원할 수 없다');
+      });
+
+      test('HRP-25 $s 는 **다른 날짜**를 막지 않는다', () {
+        final p = _build(
+          apps: [_app(status: s, wdId: 'wdA', day: 5)],
+          slots: {kTo: [_slot05()]},
+        );
+        expect(p.isRecruitable(kTo, d(6)), isTrue);
+        expect(p.isRecruitable(kTo, d(11)), isTrue);
+      });
+    }
+
+    for (final s in [AppStatus.pending, AppStatus.invited]) {
+      test('HRP-26 $s 은 약속이 아니다 — 같은 시간 형제가 산다', () {
+        final p = _build(
+          apps: [_app(status: s, wdId: 'wdA', day: 5)],
+          slots: {kTo: [_slot05()]},
+        );
+        expect(p.isRecruitable(kTo, d(5)), isTrue,
+            reason: '지원 = 관심. 관심끼리는 겹칠 수 있다');
+      });
+    }
   });
 
   group('HRP-3x 근무 식별 — wdId 축', () {

@@ -284,12 +284,19 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     //   10/06~10/11 의 다른 날짜 모집까지 홈에서 사라졌다(DEV 실측: 6일 ×
     //   2업무 = 12건). 이제 관계가 있는 **그 wdId 만** 빠지고 형제는 산다.
     final cutoff = today.add(const Duration(days: 60));
+    //
+    // [R7-APPLICATION-LIFECYCLE.1C] 이미 확정된 근무와 시간이 겹치는 관계는
+    //   서버가 지원을 거부한다. 그래서 `지원 가능한 일자리` 수치에서도
+    //   빠져야 한다 — 추가 쿼리는 없다(`_applications` 를 그대로 쓴다).
+    //   지원 목록을 못 읽었으면(`_homeLoadFailed`) 겹침을 판정할 수 없으므로
+    //   후보를 지우지 않고, 그 사실은 기존 ERROR/PARTIAL 배너가 말한다.
     _recruitable = HomeRecruitableProjection.build(
       publishedTos: _publishedTos,
       myApplications: _applications,
       today: today,
       cutoff: cutoff,
       slotsByToId: _slotsByToId,
+      commitmentsKnown: !_homeLoadFailed,
     );
     _toDateCounts.clear();
     for (final entry in _recruitable!.byDate.entries) {

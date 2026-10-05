@@ -37,6 +37,7 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
 import '../../widgets/dialogs/apply/application_relation.dart';
+import '../../widgets/dialogs/apply/commitment_conflict.dart';
 import '../../widgets/dialogs/apply/multi_apply_confirm_sheet.dart';
 import '../../widgets/dialogs/apply/longterm_apply_sheet.dart';
 import '../../widgets/dialogs/apply/apply_summary_section.dart';
@@ -190,6 +191,21 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   //   확인 시트·서버와 **같은** 판정을 쓴다. 새 reader 도 새 identity 도
   //   만들지 않는다 — `_myApplications` + `ApplicationRelationResolver`.
 
+  /// [R7-APPLICATION-LIFECYCLE.1C] 내 지원 목록을 **읽지 못했다.**
+  ///
+  ///   예전에는 이 읽기가 실패하면 `Future.wait` 전체가 깨져 공고 자체를
+  ///   못 보여줬다. 이제 공고는 보여주고, 겹침 판정만 `unknown` 으로 둔다 —
+  ///   못 읽은 것을 "겹치는 약속이 없다" 로 바꾸지 않고, 화면이 그 사실을
+  ///   말한다(제출 직전 확인 시트가 서버 경유로 한 번 더 본다).
+  bool _myApplicationsFailed = false;
+
+  // ignore: prefer_void_to_null — Future<Null>.catchError 의 handler 계약이다.
+  Null _onMyApplicationsFailed(Object e) {
+    debugPrint('⚠️ 내 지원 목록 로드 실패: $e');
+    _myApplicationsFailed = true;
+    return null;
+  }
+
   /// 이 근무에 지금 어떤 관계가 있는가. `none` 이면 신규 지원 후보다.
   WorkApplyRelation _relationFor(WorkDetailModel work, SlotModel? slot) {
     final toId = _to?.id;
@@ -199,6 +215,35 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       toId: toId,
       slotId: slot?.id,
       work: work,
+    );
+  }
+
+  // ── [R7-APPLICATION-LIFECYCLE.1C] 확정 일정 겹침 — 같은 공용 owner ──────
+  //
+  //   `_relationFor` 는 "이 근무에 이미 내 지원이 있는가" 를 본다. 그것과
+  //   **다른 사실**이 하나 더 있다: 이 근무 시간에 내가 이미 **다른** 약속을
+  //   갖고 있으면 서버가 지원을 거부한다. 이 화면은 그 사실을 보지 않아서
+  //   겹치는 업무에도 `선택` 을 그리고 CTA 의 N 에 셌다.
+  //
+  //   두 사실을 한 enum 으로 합치지 않는다 — 이유가 다르면 문구도 다르다.
+  //   판정은 `CommitmentConflictResolver` 한 곳이고 입력은 이미 읽은
+  //   `_myApplications` 다(새 쿼리 0).
+  //
+  //   flex 만 이 자리에서 막는다. 장기·계약형은 **희망 시작일을 아직 고르지
+  //   않았다** — 시작일마다 겹침이 달라지므로 여기서 막으면 더 늦은 시작일로
+  //   지원할 수 있는 사람을 막는다. 그 판정은 날짜를 고르는 자리
+  //   (`LongtermApplySheet._isSelectable`)가 이미 한다.
+  CommitmentConflictDecision _commitmentConflictFor(
+      WorkDetailModel work, SlotModel? slot) {
+    if (!(_to?.isFlexType ?? false)) return CommitmentConflictDecision.none;
+    final date = slot?.date;
+    if (date == null) return CommitmentConflictDecision.none;
+    return CommitmentConflictResolver.forShortTerm(
+      commitments: CommitmentConflictResolver.commitmentsOf(_myApplications),
+      commitmentsKnown: !_myApplicationsFailed,
+      workDate: date,
+      startTime: work.startTime,
+      endTime: work.endTime,
     );
   }
 
@@ -215,6 +260,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         final work = slot.workDetails.where((w) => w.id == wid).firstOrNull;
         if (work == null) continue;
         if (_relationFor(work, slot).blocksNewApplication) continue;
+        // 확정 일정과 겹치는 근무는 제출 대상이 아니다 — 서버가 거부한다.
+        if (_commitmentConflictFor(work, slot).blocksNewApplication) continue;
         out.add((slot: slot, work: work));
       }
     } else {
@@ -245,6 +292,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     //   렌더에서 affordance 를 지우는 것만으로는 부족하다 — 낡은 화면에서
     //   눌리는 경로가 남으면 같은 거짓이 되돌아온다.
     if (_relationFor(work, slot).blocksNewApplication) return;
+    // [R7-APPLICATION-LIFECYCLE.1C] 확정 일정과 겹치는 근무도 들어갈 수 없다.
+    if (_commitmentConflictFor(work, slot).blocksNewApplication) return;
     if (_to?.isFlexType ?? false) {
       if (_selectedSlotDate == null) return;
       final key = _dateKey(_selectedSlotDate!);
@@ -422,7 +471,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           if (_to!.isFlexType) _loadSlots(),
           if (widget.mode == TODetailMode.applicant && _applicantUid != null)
             _reads.myApplications(_applicantUid!)
-                .then((apps) { _myApplications = apps; }),
+                .then((apps) { _myApplications = apps; })
+                .catchError(_onMyApplicationsFailed),
         ]);
         if (_business != null) await _loadWorkTypes();
       } else {
@@ -431,7 +481,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           if (_business != null) _loadWorkTypes(),
           if (widget.mode == TODetailMode.applicant && _applicantUid != null)
             _reads.myApplications(_applicantUid!)
-                .then((apps) { _myApplications = apps; }),
+                .then((apps) { _myApplications = apps; })
+                .catchError(_onMyApplicationsFailed),
         ]);
       }
     } catch (e) {
@@ -1386,6 +1437,63 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   ///   신규 지원 affordance(`선택`/`선택됨`)를 대신한다. 누를 수 없다 —
   ///   여기서 할 수 있는 일이 없기 때문이다. 상태 낱말은 새로 만들지 않고
   ///   기존 지원 UI(`WorkSelectionCard`)의 `확정` · `지원완료` 를 쓴다.
+  /// [R7-APPLICATION-LIFECYCLE.1C] 확정 일정 겹침 — 이유가 보이는 chip.
+  ///
+  ///   색만으로 상태를 말하지 않는다(문구 + 아이콘). `마감` 과 다른 상태다 —
+  ///   정원이 찬 것이 아니라 **내 일정**이 겹친 것이므로 문구도 달라야 한다.
+  ///   "이미 지원한 일정" 도 아니다 — 관심이 아니라 약속이 이유다.
+  Widget _buildConflictChip(
+      BuildContext context, CommitmentConflictDecision conflict) {
+    final unknown = conflict.isUnknown;
+    final color = unknown ? AppColors.grey600 : AppColors.errorDark;
+    final label = unknown ? '확인 필요' : '일정 겹침';
+    final icon = unknown ? Icons.help_outline : Icons.event_busy_outlined;
+
+    return Tooltip(
+      message: unknown
+          ? '내 일정을 확인할 수 없어요. 지원하기 전에 다시 확인해주세요.'
+          : _conflictReason(conflict),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 8),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 14, color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            // 좁은 폭·큰 배율에서 줄을 바꿔 전체를 보여준다.
+            Flexible(
+              child: Text(
+                label,
+                style: ResponsiveHelper.tinyStyle(context)
+                    .copyWith(color: color, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 겹침 이유 한 줄. 시간·사업장은 **근로자 자신의** 일정이다.
+  String _conflictReason(CommitmentConflictDecision conflict) {
+    final time = conflict.conflictTime;
+    final biz = conflict.conflictBusinessName;
+    if (time == null) return '확정된 일정과 시간이 겹쳐 지원할 수 없어요.';
+    if (biz == null) {
+      return '확정된 일정($time)과 시간이 겹쳐 지원할 수 없어요.';
+    }
+    return '확정된 일정($biz $time)과 시간이 겹쳐 지원할 수 없어요.';
+  }
+
   Widget _buildRelationChip(BuildContext context, WorkApplyRelation relation) {
     final (String label, IconData icon, Color color) = switch (relation) {
       WorkApplyRelation.confirmed ||
@@ -1494,13 +1602,23 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final isSelected = _isWorkSelected(work);
     // [R7-P4.4E.7A] 이미 관계가 있는 근무는 신규 선택 후보가 아니다.
     final relation = _relationFor(work, slot);
+    // [R7-APPLICATION-LIFECYCLE.1C] 확정 일정과 겹치면 선택 후보가 아니다.
+    final conflict = _commitmentConflictFor(work, slot);
     final canSelect = widget.mode == TODetailMode.applicant &&
         !isClosed &&
-        !relation.blocksNewApplication;
+        !relation.blocksNewApplication &&
+        !conflict.blocksNewApplication;
     // 업무 카드와 상세보기는 그대로 둔다 — 사용자는 한 공고에서 '이미 지원한
     // 업무' 와 '아직 지원하지 않은 업무' 를 나란히 비교해야 한다.
     final showRelation = widget.mode == TODetailMode.applicant &&
         relation.blocksNewApplication;
+    // 관계 chip 이 이미 더 정확한 사실을 말하는 자리에는 겹침을 덧붙이지
+    //   않는다(이미 지원·확정한 근무는 겹침 이전에 그 관계가 이유다).
+    //   마감도 겹침보다 앞선다 — 공개 정원 상태가 개인 상태보다 먼저다.
+    final showConflict = widget.mode == TODetailMode.applicant &&
+        !isClosed &&
+        !relation.blocksNewApplication &&
+        (conflict.blocksNewApplication || conflict.isUnknown);
 
     final availableColor = workAvailable == null
         ? AppColors.grey400
@@ -1765,6 +1883,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
                     child: _buildRelationChip(context, relation),
+                  ),
+                ],
+                // [R7-APPLICATION-LIFECYCLE.1C] 관계는 없는데 지원할 수 없는
+                //   경우 — 이 시간에 내 **다른** 약속이 있다. 이유를 말하지
+                //   않고 버튼만 지우면 사용자는 앱이 고장났다고 생각한다.
+                if (showConflict) ...[
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: _buildConflictChip(context, conflict),
                   ),
                 ],
                 if (canSelect) ...[

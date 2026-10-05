@@ -146,14 +146,18 @@ ApplicationModel _app({
   String? slotId = kSlot,
   String? resignStatus,
   String? terminationStatus,
+  // [R7-APPLICATION-LIFECYCLE.1C] 다른 공고·다른 사업장의 **약속**을 세울 수
+  //   있어야 한다 — 관계 축은 none 인데 시간은 겹치는 경우가 이 phase 의 표본이다.
+  String toId = kTo,
+  String businessName = '강남 물류센터',
 }) =>
     ApplicationModel(
-      id: 'a_$status$wdId',
+      id: 'a_$status${wdId}_$toId',
       uid: 'u1',
-      toId: kTo,
+      toId: toId,
       slotId: slotId,
       businessId: 'biz1',
-      businessName: '강남 물류센터',
+      businessName: businessName,
       toTitle: '단기 모집',
       selectedWorkType: type,
       wdId: wdId,
@@ -562,6 +566,89 @@ void main() {
       expect(find.text('선택'), findsOneWidget,
           reason: '업무명이 같아도 wdId 가 다르면 별개 근무다');
     });
+
+    // ── [R7-APPLICATION-LIFECYCLE.1C] 확정 일정 겹침 ────────────────────
+    //
+    //   관계 축은 `none` 이다(다른 공고의 약속이다). 그런데 서버
+    //   `callableApplyToTO` 는 같은 시간에 약속이 있으면 거부한다. 상세가
+    //   그 사실을 보지 않아서 겹치는 업무에도 `선택` 을 그리고 CTA 의 N 에
+    //   셌다 — `[CONFIRMED-CONFLICT-ADVERTISED-AS-APPLICABLE]`.
+    ApplicationModel commitment({
+      String status = AppStatus.confirmed,
+      String start = '09:00',
+      String end = '13:00',
+    }) =>
+        _app(
+          status: status,
+          wdId: 'wdOther',
+          start: start,
+          end: end,
+          toId: 'toOther',
+          slotId: 'slotOther',
+          businessName: '다른 사업장',
+        );
+
+    for (final s in AppStatus.confirmedStatuses) {
+      testWidgets('ARP-36 $s 과 겹치는 업무는 선택할 수 없고 이유가 보인다',
+          (tester) async {
+        await _pump(
+          tester,
+          details: [_wd(wdId: 'wdA', start: '09:00', end: '13:00')],
+          myApps: [commitment(status: s)],
+        );
+
+        expect(find.text('일정 겹침'), findsOneWidget,
+            reason: '색만으로 말하지 않는다 — 이유가 글자로 보인다');
+        expect(find.text('선택'), findsNothing);
+        expect(find.text('지원할 업무를 선택해주세요'), findsOneWidget);
+        // `마감`(정원) 과 다른 상태다.
+        expect(find.text('지원완료'), findsNothing);
+        // 업무 자체는 숨기지 않는다 — 발견은 유지한다.
+        expect(find.text('업무 자세히 보기'), findsOneWidget);
+      });
+    }
+
+    testWidgets('ARP-37 겹치는 업무만 막힌다 — 형제 업무는 선택 가능', (tester) async {
+      await _pump(
+        tester,
+        details: [
+          _wd(wdId: 'wdA', start: '09:00', end: '13:00'),
+          _wd(wdId: 'wdB', start: '14:00', end: '18:00'),
+        ],
+        myApps: [commitment()],
+      );
+
+      expect(find.text('일정 겹침'), findsOneWidget);
+      expect(find.text('선택'), findsOneWidget, reason: '14:00~18:00 은 겹치지 않는다');
+
+      await tester.tap(find.text('선택'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.textContaining('1개 업무 선택됨'), findsOneWidget);
+    });
+
+    testWidgets('ARP-38 인접(13:00 종료 → 14:00 시작)은 막지 않는다', (tester) async {
+      await _pump(
+        tester,
+        details: [_wd(wdId: 'wdA', start: '14:00', end: '18:00')],
+        myApps: [commitment(start: '09:00', end: '14:00')],
+      );
+      expect(find.text('일정 겹침'), findsNothing,
+          reason: '현재 canonical 상 인접은 겹침이 아니다 — buffer 규칙을 넣지 않는다');
+      expect(find.text('선택'), findsOneWidget);
+    });
+
+    for (final s in [AppStatus.pending, AppStatus.invited]) {
+      testWidgets('ARP-39 $s 은 약속이 아니다 — 겹쳐도 다른 공고 지원을 막지 않는다',
+          (tester) async {
+        await _pump(
+          tester,
+          details: [_wd(wdId: 'wdA', start: '09:00', end: '13:00')],
+          myApps: [commitment(status: s)],
+        );
+        expect(find.text('일정 겹침'), findsNothing);
+        expect(find.text('선택'), findsOneWidget);
+      });
+    }
   });
 
   // ══════════════════════════════════════════════════════════════
