@@ -506,18 +506,49 @@ class OcrVerificationHelper {
     //   **supporting evidence**다 — 일치하면 힘을 보태고, 못 읽으면 그것으로
     //   전체를 실패시키지 않으며, 명백히 다를 때만 불일치다.
     //
-    //   MISMATCH 판정은 보수적으로 한다: 예금주 칸을 읽어냈고, 그 값이 다르고,
-    //   기대 이름이 문서 **어디에도** 없을 때만. label 기반 추출이 엉뚱한 줄을
-    //   잡았을 수 있으므로 문서 전체를 한 번 더 본다.
+    //   MISMATCH 판정은 보수적으로 한다 — 그러나 **보수적인 것과 눈 감는 것은
+    //   다르다.**
+    //
+    //   [R7-P4.4E.9C.1] 예전 순서는 문서 전체 substring 검사를 라벨 판정보다
+    //   **앞에** 두었다. 그 의도는 false MISMATCH 방지였지만(label 추출이
+    //   엉뚱한 줄을 잡았을 수 있다), 먼저 평가되므로 결과가 뒤집혔다:
+    //
+    //     예금주: 김철수        ← 라벨에서 읽은 값
+    //     ...
+    //     홍길동                ← 메모·담당자·안내문 어디든
+    //     expectedName = 홍길동
+    //     → cleanedOcr.contains("홍길동") == true → MATCHED
+    //
+    //   즉 **명백히 다른 예금주를 읽어냈는데도** 기대 이름이 문서 아무 곳에
+    //   있다는 이유로 일치가 됐다. 그리고 그 MATCHED 는 서버에서
+    //   `bankbookMatchStatus = MATCHED` → `PR_READY_AUTO` → 급여 확정 시
+    //   계좌 snapshot 까지 이어진다. 돈이 걸린 false-ready 다.
+    //
+    //   그래서 증거 등급의 순서를 코드 순서로 만든다.
+    //
+    //     STRONG labeled holder  >  WEAK whole-document occurrence
+    //
+    //   라벨('예금주'·'계좌주') 옆에서 이름을 읽어냈다면 **그 값이 결론을
+    //   소유한다** — 같으면 일치, 다르면 불일치다. 문서 다른 곳의 등장은
+    //   그 결론을 뒤집지 못한다.
+    //
+    //   라벨 근거가 아예 없을 때만 문서 전체 등장을 weak positive 로 쓴다.
+    //   그것이 원래 의도했던 false MISMATCH 완화이고, 그 방향으로만 쓰인다 —
+    //   기대 이름이 문서에 없다는 사실은 여전히 MISMATCH 가 아니라
+    //   UNREADABLE 이다(§9).
     final DocFieldOutcome holderOutcome;
     if (expectedName == null || expectedName.isEmpty) {
       holderOutcome = DocFieldOutcome.unassessed;
-    } else if (cleanedOcr.contains(_cleanText(expectedName))) {
-      holderOutcome = DocFieldOutcome.matched;
     } else if (holderRead.labeled &&
         extractedName != null && extractedName.isNotEmpty) {
-      // 라벨 옆에서 읽은 이름이 기대와 다르다 — 이건 근거 있는 불일치다.
-      holderOutcome = DocFieldOutcome.mismatch;
+      // STRONG — 라벨 옆에서 읽은 값이 결론이다.
+      holderOutcome = _cleanText(extractedName) == _cleanText(expectedName)
+          ? DocFieldOutcome.matched
+          : DocFieldOutcome.mismatch;
+    } else if (cleanedOcr.contains(_cleanText(expectedName))) {
+      // WEAK — 라벨 근거가 없을 때만. 추측 경로로 MISMATCH 를 선언하지
+      //   않으려고 두는 완화 장치다(INV-3).
+      holderOutcome = DocFieldOutcome.matched;
     } else {
       // 못 읽었거나, 추측으로 집어온 값뿐이다 — 다르다고 말하지 않는다.
       holderOutcome = DocFieldOutcome.unreadable;
