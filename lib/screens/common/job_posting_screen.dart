@@ -749,7 +749,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                             _buildPrecautionsSection(context),
                           if (_business != null) _buildFacilitiesSection(context),
                           if (_business != null) _buildTransportSection(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 100)),
+                          // [BOTTOM-BAR-DOUBLE-COUNT] 하단 CTA 는
+                          //   `bottomNavigationBar` 라 Scaffold 가 이미 그
+                          //   높이를 본문에서 빼 준다. 여기서 100dp 를 또
+                          //   비우면 바를 두 번 피하는 셈이라, 끝까지 내렸을
+                          //   때 마지막 카드와 CTA 사이에 90px(360dp 실측)가
+                          //   남았다. 섹션 사이 간격(8dp) 리듬에 맞춘다.
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                         ],
                       ),
                     ),

@@ -1325,10 +1325,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         body: Form(
           key: _formKey,
           child: ListView(
-            // bottomNavigationBar의 SafeArea가 시스템 inset을 처리하므로
-            // paddingOf.bottom 중복 추가 없이 CTA 위 콘텐츠 여백만 확보한다.
-            // CreateTO body(bottom:108)와 동등한 clearance 적용.
-            padding: ResponsiveHelper.listPadding(context).copyWith(bottom: 108),
+            // [BOTTOM-BAR-DOUBLE-COUNT] CTA 는 `bottomNavigationBar` 이고
+            //   그 SafeArea 가 시스템 inset 을 처리한다. 거기까지는 맞는데,
+            //   바 높이는 Scaffold 가 이미 본문에서 빼 준다 — 108dp 를 또
+            //   확보하면 바를 두 번 피한다. CreateTO 와 함께 되돌린다.
+            padding: ResponsiveHelper.listPadding(context),
             children: [
               // [P4.4C.1] 예약 공개가 막혔으면 그 사실을 여기서 말한다.
               //   서버가 `tos.publishBlockedReason` 에 적어 두고, 공개에

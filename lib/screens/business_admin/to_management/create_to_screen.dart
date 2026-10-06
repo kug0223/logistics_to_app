@@ -1490,9 +1490,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         body: Form(
           key: _formKey,
           child: ListView(
-            // G: CTA가 bottomNavigationBar로 이동 → 하단 여유 확보
-            padding: ResponsiveHelper.listPadding(context)
-                .copyWith(bottom: ResponsiveHelper.spacing(context, 108)),
+            // [BOTTOM-BAR-DOUBLE-COUNT] CTA 가 `bottomNavigationBar` 로
+            //   옮겨졌기 때문에 Scaffold 가 이미 그 높이를 본문에서 빼 준다.
+            //   여기서 108dp 를 또 확보하면 바를 두 번 피하는 셈이라, 끝까지
+            //   내렸을 때 마지막 입력 칸과 CTA 사이가 비어 보인다.
+            //   listPadding 의 기본 꼬리(16 * scale)로 되돌린다.
+            padding: ResponsiveHelper.listPadding(context),
             children: [
               // [UI-COMPACT] 사업장 + 근무 유형 통합 카드 (카드 2개 → 1개)
               KeyedSubtree(

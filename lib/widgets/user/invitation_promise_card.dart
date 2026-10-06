@@ -300,7 +300,10 @@ class InvitationFallbackDetail extends StatelessWidget {
                 ],
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 100)),
+            // [BOTTOM-BAR-DOUBLE-COUNT] 아래 actions 는
+            //   `bottomNavigationBar` 로 달린다 — Scaffold 가 이미 높이를
+            //   빼 주므로 본문이 또 비울 필요가 없다.
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ],
         ),
       ),
