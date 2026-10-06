@@ -16847,36 +16847,19 @@ export const callableUpdateSlotWorkDetails = onCall(
   }
 );
 
-// ── 날짜 헬퍼 (KST 기준) ─────────────────────────────────
-// CF는 UTC 실행. Dart는 KST 자정을 Timestamp로 저장하므로
-// 날짜 산술은 KST 달력일 기준으로 처리해야 한다.
-
-const _KST_OFFSET_MS = 9 * 60 * 60 * 1000; // UTC+9
-
-/**
- * Timestamp → KST 달력 날짜(연/월/일) 추출
- * Dart Timestamp.fromDate(DateTime(y,m,d)) = UTC - 9h 저장
- * → 역변환: UTC + 9h → getUTC* 로 KST 날짜 추출
- */
-function _tsToKST(ts: admin.firestore.Timestamp): {y: number; mo: number; d: number} {
-  const kstMs = ts.toMillis() + _KST_OFFSET_MS;
-  const dt = new Date(kstMs);
-  return {y: dt.getUTCFullYear(), mo: dt.getUTCMonth(), d: dt.getUTCDate()};
-}
-
-/**
- * KST 달력 날짜 → KST 자정 UTC 밀리초 (Firestore Timestamp 저장값과 동일 포맷)
- * JS auto-overflow: d=0 → 전달 마지막날, d=32 → 다음달 등 자동 처리
- */
-function _kstToMs(y: number, mo: number, d: number): number {
-  // new Date(y, mo, d) on UTC server = 자정 UTC
-  // - KST_OFFSET_MS = KST 자정 UTC 밀리초
-  return new Date(y, mo, d).getTime() - _KST_OFFSET_MS;
-}
-
 // [DECOMMISSIONED] _addMonthsKST, _kstDaysDiff, _fmtKST, computeContractEndDateMs 제거됨
 // callableExtendTOPosting 전용 헬퍼 — 연장 기능 종료로 삭제
-// _tsToKST, _kstToMs, _KST_OFFSET_MS 는 callableBatchAdjustAttendanceTime 에서 계속 사용
+//
+// [R7-CROSSCUT-TIME.1C] `_tsToKST` · `_kstToMs` · `_KST_OFFSET_MS` 제거.
+//
+//   주석은 `callableBatchAdjustAttendanceTime` 이 쓴다고 적혀 있었지만 실제
+//   호출자는 schedule-change 승인의 범위 재검증 하나였고, 그 자리는
+//   `srvKstDateNum` 으로 바뀌었다.
+//
+//   `_kstToMs` 를 남겨 두지 않는 이유: 본문이 `new Date(y, mo, d)` — **런타임
+//   로컬 생성자**다. "UTC 서버에서는 자정 UTC" 라는 주석이 그 전제를 적어
+//   두었지만, 업무 날짜의 진실이 프로세스 시간대에 달려 있으면 안 된다.
+//   날짜 비교가 필요하면 `srvKstDateNum`, 문서 키가 필요하면 `srvKstDateKey` 다.
 
 // ── callableExtendTOPosting ──────────────────────────────
 // [DECOMMISSIONED] 게시기간 연장 기능 종료 — 동일 TO 재사용 폐기
@@ -33691,7 +33674,8 @@ export const callableGetScheduleChangeRequestsForDate = onCall(
     const endTs = admin.firestore.Timestamp.fromDate(endOfDayUTC);
 
     // 사업장별 병렬 쿼리 (복합 인덱스: businessId + targetDate + status)
-    const date = new Date(dateMs!);
+    // [R7-CROSSCUT-TIME.1C] 클라이언트가 보낸 날짜도 같은 자(尺)로 읽는다.
+    const requestedDayNum = srvKstDateNum(new Date(dateMs!));
     const snaps = await Promise.all(
       businessIds.map((bid) =>
         db.collection("schedule_change_requests")
@@ -33708,12 +33692,14 @@ export const callableGetScheduleChangeRequestsForDate = onCall(
       for (const doc of snap.docs) {
         const data = doc.data();
         // targetDate 날짜 매칭 (Firestore 쿼리에서 필터됐으나 KST 경계 이중 확인)
+        //
+        // [R7-CROSSCUT-TIME.1C] 이중 확인이 **런타임 로컬 성분**으로 되어
+        //   있었다. 위 쿼리 경계는 KST 하루로 정확히 잡아 놓고, 그 뒤의
+        //   확인이 다른 자(尺)를 쓰면 경계일의 요청이 조용히 사라진다.
+        //   쓰기 경로와 같은 `srvKstDateNum` 으로 맞춘다.
         const td = data["targetDate"] as admin.firestore.Timestamp | null | undefined;
         if (!td) continue;
-        const d = td.toDate();
-        if (d.getFullYear() === date.getFullYear() &&
-            d.getMonth() === date.getMonth() &&
-            d.getDate() === date.getDate()) {
+        if (srvKstDateNum(td.toDate()) === requestedDayNum) {
           items.push({id: doc.id, ...serializeFirestoreData(data)});
         }
       }
@@ -34256,17 +34242,23 @@ export const callableApproveScheduleChangeRequest = onCall(
           const targetTs = scrData.targetDate as admin.firestore.Timestamp;
           const effectiveStart = (appDataPre.desiredStartDate ?? appDataPre.workDate) as admin.firestore.Timestamp;
           const effectiveEnd = (appDataPre.actualResignDate ?? appDataPre.workEndDate ?? null) as admin.firestore.Timestamp | null;
-          const tKST = _tsToKST(targetTs);
-          const sKST = _tsToKST(effectiveStart);
-          const targetMs = _kstToMs(tKST.y, tKST.mo, tKST.d);
-          const startMs = _kstToMs(sKST.y, sKST.mo, sKST.d);
-          if (targetMs < startMs) {
+          // [R7-CROSSCUT-TIME.1C] 달력일 비교는 **KST 날짜 수**로 한다.
+          //
+          //   예전에는 KST 성분을 뽑은 뒤 로컬 날짜 생성자로 다시 ms 를
+          //   만들어 비교했다. 그 생성자는 **런타임 로컬** 이어서, 업무 날짜의
+          //   진실이 서버 프로세스 시간대에 달려 있었다. CF 가 UTC 로 돌 때는
+          //   답이 맞았지만 그것은 우연이다.
+          //
+          //   `srvKstDateNum` 은 instant → KST `YYYYMMDD` 정수다. 비교는
+          //   정수 하나로 끝나고 양끝 포함(inclusive) 의미도 그대로다.
+          const targetNum = srvKstDateNum(targetTs.toDate());
+          const startNum = srvKstDateNum(effectiveStart.toDate());
+          if (targetNum < startNum) {
             throw new HttpsError("failed-precondition", "targetDate가 계약 시작일 이전입니다.");
           }
           if (effectiveEnd != null) {
-            const eKST = _tsToKST(effectiveEnd);
-            const endMs = _kstToMs(eKST.y, eKST.mo, eKST.d);
-            if (targetMs > endMs) {
+            const endNum = srvKstDateNum(effectiveEnd.toDate());
+            if (targetNum > endNum) {
               throw new HttpsError("failed-precondition", "targetDate가 계약 종료일 이후입니다.");
             }
           }
@@ -34310,14 +34302,20 @@ export const callableApproveScheduleChangeRequest = onCall(
       //   CANCEL_EXTRA   → extraWorkDates 제거 (비근무일 명단 제거)
       if (action === "APPROVED" && appSnap && appRef) {
         const appData = appSnap.data()!;
-        const targetDate = (scrData.targetDate as admin.firestore.Timestamp).toDate();
+        // [R7-CROSSCUT-TIME.1C] 배열의 "같은 날" 판정도 KST 날짜 수 하나로 한다.
+        //
+        //   예전에는 `getFullYear/getMonth/getDate` 로 런타임 로컬 성분을
+        //   비교했다. 같은 순간이라도 서버 시간대가 바뀌면 다른 날이 된다.
+        //   게다가 저장 관례가 섞여 있어(UTC 자정 / KST 자정) 로컬 성분
+        //   비교는 두 관례를 같은 날로 읽지 못한다.
+        //
+        //   같은 자(尺)를 쓰는 것이 중요하다 — `targetDate` 와 배열 원소가
+        //   모두 `srvKstDateNum` 을 지난다.
+        const targetDayNum =
+          srvKstDateNum((scrData.targetDate as admin.firestore.Timestamp).toDate());
 
-        const sameDay = (ts: admin.firestore.Timestamp): boolean => {
-          const d = ts.toDate();
-          return d.getFullYear() === targetDate.getFullYear() &&
-                 d.getMonth() === targetDate.getMonth() &&
-                 d.getDate() === targetDate.getDate();
-        };
+        const sameDay = (ts: admin.firestore.Timestamp): boolean =>
+          srvKstDateNum(ts.toDate()) === targetDayNum;
 
         const parseDates = (field: string): admin.firestore.Timestamp[] => {
           const arr = appData[field];
@@ -36330,17 +36328,20 @@ export const callableCreateScheduleChangeRequest = onCall(
     const applicantUid = appData.uid as string;
     if (!applicantUid) throw new HttpsError("internal", "지원서에 applicantUid가 없습니다.");
 
-    // ── 4. 대상 날짜 계산 (UTC 자정 기준) ─────────────────
+    // ── 4. 대상 날짜 계산 ─────────────────────────────────
+    //   저장값은 클라이언트가 보낸 instant 그대로다(관례를 바꾸지 않는다).
     const targetDate = new Date(targetDateMs);
 
-    const sameDayUTC = (ts: admin.firestore.Timestamp): boolean => {
-      const d = ts.toDate();
-      return (
-        d.getUTCFullYear() === targetDate.getUTCFullYear() &&
-        d.getUTCMonth() === targetDate.getUTCMonth() &&
-        d.getUTCDate() === targetDate.getUTCDate()
-      );
-    };
+    // [R7-CROSSCUT-TIME.1C] 중복 판정도 **KST 업무일** 로 한다.
+    //
+    //   예전에는 UTC 성분을 비교했다. 런타임 시간대에 끌려가지는 않지만
+    //   **저장 관례에 끌려간다** — 같은 KST 날을 UTC 자정으로 보낸 요청과
+    //   KST 자정으로 보낸 요청이 다른 날로 읽혀 PENDING 이 둘 생긴다.
+    //   승인·취소가 쓰는 자(尺)와 같은 것으로 맞춘다.
+    const targetDayNum = srvKstDateNum(targetDate);
+
+    const sameKstDay = (ts: admin.firestore.Timestamp): boolean =>
+      srvKstDateNum(ts.toDate()) === targetDayNum;
 
     // ── 5. 트랜잭션: PENDING 중복 체크 → 신규 생성 ────────
     // [트랜잭션 규칙] 모든 read를 write 이전에 수행
@@ -36359,7 +36360,7 @@ export const callableCreateScheduleChangeRequest = onCall(
       // 동일 날짜의 PENDING이 이미 있으면 idempotent return
       const existingDoc = pendingSnap.docs.find((doc) => {
         const td = doc.data().targetDate as admin.firestore.Timestamp | undefined;
-        return td !== undefined && sameDayUTC(td);
+        return td !== undefined && sameKstDay(td);
       });
 
       if (existingDoc) {
@@ -36513,28 +36514,31 @@ export const callableCancelScheduleChangeRequest = onCall(
 
         if (appSnap.exists) {
           const appData = appSnap.data()!;
-          const toDateOnly = (ts: admin.firestore.Timestamp) => {
-            const d = ts.toDate();
-            return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-          };
-          const targetMs = new Date(
-            targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate()
-          ).getTime();
+          // [R7-CROSSCUT-TIME.1C] 승인 경로와 **같은 자(尺)** 를 쓴다.
+          //
+          //   예전에는 로컬 달력 성분으로 Date 객체를 다시 만들어 그 ms 를
+          //   비교 authority 로 썼다.
+          //   그 생성자는 런타임 로컬이고, 저장 관례가 섞인 배열(UTC 자정 /
+          //   KST 자정)에서는 같은 날을 다른 날로 읽는다. 제거가 조용히
+          //   실패해도 `tx.update` 는 성공하므로 오류조차 남지 않는다.
+          const toDayNum = (ts: admin.firestore.Timestamp) =>
+            srvKstDateNum(ts.toDate());
+          const targetDayNum = srvKstDateNum(targetDate);
 
           if (requestType === "LEAVE" || requestType === "NO_WORK") {
             // LEAVE/NO_WORK 승인 취소 → leaveDates에서 해당 날짜 제거
             const rawLeave = (appData["leaveDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
-            const filtered = rawLeave.filter((ts) => toDateOnly(ts) !== targetMs);
+            const filtered = rawLeave.filter((ts) => toDayNum(ts) !== targetDayNum);
             tx.update(appRef, {leaveDates: filtered});
           } else if (requestType === "EXTRA_WORK") {
             // EXTRA_WORK 승인 취소 → extraWorkDates에서 해당 날짜 제거
             const rawExtra = (appData["extraWorkDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
-            const filtered = rawExtra.filter((ts) => toDateOnly(ts) !== targetMs);
+            const filtered = rawExtra.filter((ts) => toDayNum(ts) !== targetDayNum);
             tx.update(appRef, {extraWorkDates: filtered});
           } else if (requestType === "CANCEL_LEAVE") {
             // CANCEL_LEAVE 승인 취소 → leaveDates에 날짜 복원
             const rawLeave = (appData["leaveDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
-            const alreadyExists = rawLeave.some((ts) => toDateOnly(ts) === targetMs);
+            const alreadyExists = rawLeave.some((ts) => toDayNum(ts) === targetDayNum);
             if (!alreadyExists) {
               rawLeave.push(admin.firestore.Timestamp.fromDate(targetDate));
             }
@@ -36542,7 +36546,7 @@ export const callableCancelScheduleChangeRequest = onCall(
           } else if (requestType === "CANCEL_EXTRA") {
             // CANCEL_EXTRA 승인 취소 → extraWorkDates에 날짜 복원
             const rawExtra = (appData["extraWorkDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
-            const alreadyExists = rawExtra.some((ts) => toDateOnly(ts) === targetMs);
+            const alreadyExists = rawExtra.some((ts) => toDayNum(ts) === targetDayNum);
             if (!alreadyExists) {
               rawExtra.push(admin.firestore.Timestamp.fromDate(targetDate));
             }
