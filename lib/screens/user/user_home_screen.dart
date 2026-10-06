@@ -1909,18 +1909,33 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         //   확정 있음: 원↓3dp 간격 → 5dp dot → 2dp 간격 → 공고수
                         //   확정 없음: 10dp 최소 간격만 (기존 12dp 슬롯 대비 간격 대폭 축소)
                         SizedBox(height: 10 * s),
-                        // 공고 수 — 작은 파란 텍스트 (없으면 높이 확보용 빈 공간)
-                        SizedBox(
-                          height: 14 * s,
-                          child: hasJobs
-                              ? Text('$count개',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.infoDark,
-                                  ))
-                              : null,
+                        // 공고 수 — 작은 파란 텍스트 (없으면 자리만 비워 둔다)
+                        //
+                        // [DATE-STRIP-COUNT-CLIP] 예전에는 `height: 14 * s` 로
+                        //   봉투를 고정해 놓고 12sp 글자를 담았다. 한글 줄 높이는
+                        //   그보다 크다 — 번들 NotoSansKR 실측 **17.0px** 이라
+                        //   봉투(11.9~14.0)보다 3.0~5.1px 커서 **아래가 잘렸다**.
+                        //   배율을 키우면 더 벌어진다(x1.3 23.0 · x2.0 35.0).
+                        //
+                        //   테스트 기본 폰트는 글자마다 정사각이라 이 글자가
+                        //   12.0px 로 잡힌다 — 그래서 렌더 테스트가 이 결함을
+                        //   구조적으로 볼 수 없었다. 실제 폰트로만 보인다.
+                        //
+                        //   높이를 다른 숫자로 바꾸지 않는다. 글자 자체가 자리를
+                        //   정하게 하고, 공고가 없는 날은 **같은 크기를 유지한 채**
+                        //   감춘다 — 그래야 일곱 칸의 기준선이 그대로다.
+                        Visibility(
+                          visible: hasJobs,
+                          maintainSize: true,
+                          maintainAnimation: true,
+                          maintainState: true,
+                          child: Text('$count개',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.infoDark,
+                              )),
                         ),
                       ],
                     ),
@@ -3615,11 +3630,26 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           borderRadius: BorderRadius.circular(14 * s),
           border: Border.all(color: AppColors.borderLight, width: 1.5),
         ),
-        child: IntrinsicHeight(
-          child: Row(
+        // [CARD-TWO-BLOCK] 카드를 **두 덩이**로 나눈다.
+        //
+        //   위: 이미지 + (제목·사업장명·날짜·지역)  — 이미지 높이는 지역 줄까지
+        //   아래: 급여 + 추천사유 + 화살표          — 카드 **전폭**
+        //
+        //   예전에는 급여 줄까지 정보 컬럼 안에 있어서 이미지가 그 높이까지
+        //   늘어났고(세로로 길쭉), 급여 줄은 이미지 폭(96s)과 간격(10s)을
+        //   빼고 남은 폭만 썼다. 전폭으로 내리면 가용 폭이
+        //     360dp 204.0 → 299.4 · 390dp 234.0 → 329.4 · 411dp 238.0 → 344.0
+        //   이 되어 급여와 추천사유가 다시 한 줄에 들어간다
+        //   (320dp 는 262.6 — 가장 긴 조합만 다음 줄).
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ── 사업장 이미지 (너비 고정·높이=텍스트 컬럼 높이) ─────
+            IntrinsicHeight(
+              child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── 사업장 이미지 (너비 고정·높이=지역 줄까지) ─────────
             ClipRRect(
               borderRadius: BorderRadius.circular(12 * s),
               child: SizedBox(
@@ -3710,43 +3740,51 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                         text: dateText,
                         s: s),
                   if (dateText.isNotEmpty) SizedBox(height: 3 * s),
-                  // 지역 행
+                  // 지역 행 — 위 덩이의 마지막. 이미지 높이가 여기까지다.
                   if (locationText.isNotEmpty)
                     _iconRow(
                         icon: Icons.location_on_outlined,
                         text: locationText,
                         s: s),
-                  SizedBox(height: 8 * s),
-                  // 구분선
-                  Divider(
-                      height: 1,
-                      thickness: 0.5,
-                      color: AppColors.borderLight),
-                  SizedBox(height: 8 * s),
-                  // 급여 범위 + 추천사유(1개) + 화살표
-                  //
-                  // [RECRUITABLE-CARD-OVERFLOW] 이 행의 세 조각에 **flex 가
-                  //   하나도 없었다.** `Spacer` 는 남는 공간을 먹는 역할이라
-                  //   공간이 모자라면 0 으로 줄고 그 뒤로는 그대로 넘쳤다.
-                  //   실측(번들 NotoSansKR, 가용 = 폭 − 섹션 20s·2 − 카드
-                  //   12s·2 − 테두리 3 − 이미지 96s − 간격 10s):
-                  //
-                  //     가용   320dp 172.5 · 360dp 204.0 · 390dp 234.0 · 411dp 238.0
-                  //     시급 12,000원 107.7 · 일급 150,000원~ 128.0
-                  //     내 업무 경험과 일치 96.5 · 내 지역 일자리 71.7
-                  //
-                  //     360dp  시급 + 업무경험  = 237.5 → **33.5px 넘침**
-                  //     390dp  일급 + 업무경험  = 257.7 → **23.7px 넘침**
-                  //            (기기에서 본 `RIGHT OVERFLOWED BY 24 PIXELS`)
-                  //     411dp  시급 + 업무경험  = 241.2 → 3.2px 넘침
-                  //
-                  //   금액은 끝자리가 잘리면 **다른 금액으로 읽힌다** — 줄이지
-                  //   않는다. 추천 사유도 줄이면 뜻이 사라진다. 그래서 둘을
-                  //   `Wrap` 에 넣어 자리가 모자라면 **다음 줄로 내려가게** 한다.
-                  //   화살표는 바깥에 고정해 오른쪽 끝을 지킨다.
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
+                ],
+              ),
+            ),
+          ],
+              ),
+            ),
+            SizedBox(height: 8 * s),
+            // 구분선
+            Divider(
+                height: 1,
+                thickness: 0.5,
+                color: AppColors.borderLight),
+            SizedBox(height: 8 * s),
+            // 급여 범위 + 추천사유(1개) + 화살표 — 카드 전폭
+            //
+            // [RECRUITABLE-CARD-OVERFLOW] 이 행의 세 조각에 **flex 가 하나도
+            //   없었다.** `Spacer` 는 남는 공간을 먹는 역할이라, 공간이
+            //   모자라면 0 으로 줄고 그 뒤로는 그대로 넘쳤다. 그때는 이 행이
+            //   정보 컬럼 안에 있어 이미지 폭(96s)과 간격(10s)까지 빼고 남은
+            //   폭만 썼다 — 실측(번들 NotoSansKR):
+            //
+            //     옛 가용  320dp 172.5 · 360dp 204.0 · 390dp 234.0 · 411dp 238.0
+            //     360dp  시급 12,000원 + 내 업무 경험과 일치 = 237.5 → 33.5px 넘침
+            //     390dp  일급 150,000원~ + 내 업무 경험과 일치 = 257.7 → 23.7px
+            //            (기기에서 본 `RIGHT OVERFLOWED BY 24 PIXELS`)
+            //
+            //   [CARD-TWO-BLOCK] 이 행을 카드 전폭으로 내린 뒤 가용 폭은
+            //     320dp 262.6 · 360dp 299.4 · 390dp 329.4 · 411dp 344.0
+            //   이다. 360dp 이상에서는 모든 급여·사유 조합이 **한 줄**이고,
+            //   320dp 만 가장 긴 조합(월급 3,000,000원~ + 내 업무 경험과 일치
+            //   = 257.8 vs 243.9)에서 다음 줄로 내려간다.
+            //
+            //   금액은 끝자리가 잘리면 **다른 금액으로 읽힌다** — 줄이지
+            //   않는다. 추천 사유도 줄이면 뜻이 사라진다. 그래서 둘을
+            //   `Wrap` 에 넣어 자리가 모자라면 **다음 줄로 내려가게** 한다.
+            //   화살표는 바깥에 고정해 오른쪽 끝을 지킨다.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
                       Expanded(
                         child: Wrap(
                           alignment: WrapAlignment.spaceBetween,
@@ -3787,12 +3825,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                           size: 18 * s, color: AppColors.grey400),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ],
+          ], // 바깥 Column.children
         ),
-        ), // IntrinsicHeight
       ),
     );
   }

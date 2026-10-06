@@ -431,6 +431,59 @@ void main() {
       }
     });
 
+    test('W6 공고수 라벨은 고정 봉투에 들어가지 않는다 — 잘림 재현', () {
+      final s12 = const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)
+          .copyWith(fontFamily: 'NKB');
+      double h(double scale) => (TextPainter(
+            text: TextSpan(text: '1개', style: s12),
+            textDirection: TextDirection.ltr,
+            textScaler: TextScaler.linear(scale),
+          )..layout())
+          .height;
+      // 실제 한글 줄 높이는 17.0px — 옛 봉투 14*s(11.9~14.0)보다 크다.
+      expect(h(1.0), greaterThan(14.0));
+      for (final w in _widths) {
+        final s = _scaleOf(w);
+        expect(h(1.0), greaterThan(14 * s),
+            reason: '${w.toInt()}dp 에서 옛 봉투가 글자를 담지 못했다');
+      }
+      // 배율이 커지면 더 벌어진다 — 고정 봉투는 배율을 못 따라간다.
+      expect(h(1.3), greaterThan(h(1.0)));
+      expect(h(2.0), greaterThan(h(1.3)));
+    });
+
+    test('W7 카드 하단을 전폭으로 내리면 가용 폭이 넓어진다', () {
+      const wages = ['시급 12,000원', '일급 53,000원~', '월급 3,000,000원~'];
+      const reasons = ['내 일정과 일치', '내 업무 경험과 일치', '내 지역 일자리'];
+      for (final w in _widths) {
+        final s = _scaleOf(w);
+        final before =
+            w - 2 * 20 * s - 2 * 12 * s - 3.0 - 96 * s - 10 * s;
+        final after = w - 2 * 20 * s - 2 * 12 * s - 3.0;
+        expect(after, greaterThan(before + 80),
+            reason: '${w.toInt()}dp 전폭 이득이 작다');
+        final wrap = after - 4 * s - 18 * s;
+        // 각 조각은 어디서도 혼자 들어간다 → 넘침 0
+        for (final wg in wages) {
+          expect(_tw(wg, payS), lessThanOrEqualTo(wrap));
+        }
+        for (final r in reasons) {
+          expect(12 * s + 3 * s + _tw(r, reasonS), lessThanOrEqualTo(wrap));
+        }
+        // 360dp 이상은 모든 조합이 한 줄이다.
+        if (w >= 360) {
+          for (final wg in wages) {
+            for (final r in reasons) {
+              final one = _tw(wg, payS) + 6 * s + 12 * s + 3 * s +
+                  _tw(r, reasonS);
+              expect(one, lessThanOrEqualTo(wrap),
+                  reason: '${w.toInt()}dp "$wg"+"$r" 가 두 줄이 된다');
+            }
+          }
+        }
+      }
+    });
+
     test('W5b 예전 구조는 네 대표 폭 전부에서 넘쳤다 — 재현', () {
       const wg = '시급 12,000원';
       const r = '내 업무 경험과 일치';
@@ -541,8 +594,8 @@ void main() {
     String cardBlock() {
       final i = src.indexOf('[RECRUITABLE-CARD-OVERFLOW]');
       expect(i, greaterThan(-1), reason: '카드 블록 마커가 없다');
-      final j = src.indexOf('), // IntrinsicHeight', i);
-      expect(j, greaterThan(i));
+      final j = src.indexOf('], // 바깥 Column.children', i);
+      expect(j, greaterThan(i), reason: '카드 하단 블록의 끝 마커가 없다');
       return src.substring(i, j);
     }
 
@@ -612,6 +665,58 @@ void main() {
         // 고정 높이로 봉투를 만들지 않는다.
         expect(RegExp(r'height:\s*\d+\s*\*\s*s\s*,\s*\)').hasMatch(b), isFalse);
       }
+    });
+
+    test('S7 공고수 라벨에 고정 높이 봉투가 없다', () {
+      // [DATE-STRIP-COUNT-CLIP] `height: 14 * s` 가 12sp 한글(17.0px)을 담아
+      //   아래가 잘렸다. 글자가 자리를 정하고, 없는 날은 같은 크기로 감춘다.
+      final i = src.indexOf('[DATE-STRIP-COUNT-CLIP]');
+      expect(i, greaterThan(-1), reason: '공고수 라벨 마커가 없다');
+      // 마커 뒤의 `Visibility(` 위젯 하나만 본다 — 이웃 코드를 먹지 않는다.
+      final v = src.indexOf('Visibility(', i);
+      expect(v, greaterThan(i), reason: 'Visibility 를 찾지 못했다');
+      final end = src.indexOf('\n                        ),', v);
+      expect(end, greaterThan(v));
+      // 마커 줄 자체가 옛 식을 인용하므로 **위젯부터** 자른다.
+      final b = src.substring(v, end);
+      expect(b.contains('Visibility('), isTrue);
+      expect(b.contains('maintainSize: true'), isTrue);
+      expect(b.contains('maintainAnimation: true'), isTrue);
+      expect(b.contains('maintainState: true'), isTrue);
+      expect(b.contains("Text('\$count개'"), isTrue);
+      // 높이를 다른 숫자로 바꿔 때우지 않았다.
+      //   설명 주석이 옛 식(`height: 14 * s`)을 인용하므로 **실행문만** 본다.
+      final code = b
+          .split(RegExp(r'\r?\n'))
+          .where((l) => !l.trimLeft().startsWith('//'))
+          .join('\n');
+      expect(RegExp(r'height:\s*\d+(\.\d+)?\s*\*\s*s').hasMatch(code), isFalse,
+          reason: '봉투 높이를 다시 박았다');
+      expect(code.contains('SizedBox('), isFalse);
+    });
+
+    test('S8 카드는 두 덩이다 — 이미지 높이가 지역 줄까지다', () {
+      final i = src.indexOf('[CARD-TWO-BLOCK]');
+      expect(i, greaterThan(-1), reason: '카드 구조 마커가 없다');
+      final b = src.substring(i, src.indexOf('], // 바깥 Column.children', i));
+      // 바깥은 Column, 위 덩이만 IntrinsicHeight 로 묶는다.
+      final colAt = b.indexOf('child: Column(');
+      final ihAt = b.indexOf('IntrinsicHeight(');
+      expect(colAt, greaterThan(-1));
+      expect(ihAt, greaterThan(colAt), reason: 'IntrinsicHeight 가 바깥에 있다');
+      // 이미지는 위 덩이 안에 있고, 급여 줄은 그 바깥이다.
+      final imgAt = b.indexOf('width: 96 * s');
+      final payAt = b.indexOf('[RECRUITABLE-CARD-OVERFLOW]');
+      expect(imgAt, greaterThan(ihAt));
+      expect(payAt, greaterThan(imgAt));
+      // 위 덩이의 마지막은 지역 행이다.
+      final locAt = b.indexOf('text: locationText');
+      expect(locAt, greaterThan(imgAt));
+      expect(locAt, lessThan(payAt));
+      // 구분선도 바깥으로 나왔다 — 정보 컬럼 안이 아니다.
+      final divAt = b.indexOf('Divider(');
+      expect(divAt, greaterThan(locAt));
+      expect(divAt, lessThan(payAt));
     });
 
     test('S5 타이포 토큰을 줄이지 않았다', () {
