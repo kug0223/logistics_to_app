@@ -39,6 +39,13 @@ import {
   scheduleConflictNotificationId as agScheduleConflictNotificationId,
 } from "./activation_generation";
 
+import {
+  sanitizeConsentEntries as tcSanitizeConsentEntries,
+  allRequiredSatisfied as tcAllRequiredSatisfied,
+  toDottedUpdate as tcToDottedUpdate,
+  type ActiveLegalItem as TcActiveLegalItem,
+} from "./terms_consent_payload";
+
 initializeApp();
 const db = getFirestore();
 
@@ -11563,31 +11570,74 @@ export const callableRecordTermsConsent = onCall(
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
     const userRef = db.collection("users").doc(callerUid);
 
+    // [R7-LEGAL.1A] 저장은 **현재 활성 약관**에 비춰서만 한다.
+    //   payload 를 그대로 믿으면 정의되지 않은 항목이 생기고, 사용자가 본
+    //   적 없는 버전이 저장된다. 활성 목록은 SUPER_ADMIN 만 쓸 수 있는
+    //   `app_settings/legal_terms` 가 유일한 출처다.
+    const legalSnap = await db.collection("app_settings")
+      .doc("legal_terms").get();
+    const rawItems = legalSnap.data()?.items;
+    const activeItems: TcActiveLegalItem[] = (Array.isArray(rawItems) ?
+      rawItems : [])
+      .filter((i): i is Record<string, unknown> =>
+        !!i && typeof i === "object" && (i as Record<string, unknown>)
+          .isActive !== false)
+      .map((i) => ({
+        id: String(i.id ?? ""),
+        version: String(i.version ?? ""),
+        isRequired: i.isRequired !== false,
+      }))
+      .filter((i) => i.id !== "" && i.version !== "");
+
+    if (activeItems.length === 0) {
+      // 활성 약관을 모르면 아무것도 저장하지 않는다. 비어 있는 기준으로
+      // 저장하면 전부 "정의되지 않음" 이 되어 조용히 지워진다.
+      throw new HttpsError(
+        "failed-precondition",
+        "TERMS_UNAVAILABLE 약관 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+      );
+    }
+
     // [TERMS-FIX] 재호출 보호 — 트랜잭션으로 전환:
     // (1) 이미 agreed=true인 항목을 agreed=false로 역설적 취소 차단
     // (2) termsConsentAt은 최초 동의 시에만 기록 — 재호출로 법적 타임스탬프 갱신 불가
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
-      const existing = (userSnap.data()?.termsConsent ?? {}) as Record<string, {agreed?: boolean}>;
+      const existing = (userSnap.data()?.termsConsent ?? {}) as
+        Record<string, {agreed?: unknown; version?: unknown}>;
       const existingConsentAt = userSnap.data()?.termsConsentAt;
 
-      const consentWithTimestamps: Record<string, unknown> = {};
-      for (const [key, value] of entries) {
-        if (typeof key !== "string" || key.length > 100) continue;
-        // 이미 동의한 항목(agreed=true)을 false로 변경 시도 시 skip
-        if (existing[key]?.agreed === true && !value.agreed) continue;
-        consentWithTimestamps[key] = {
-          agreed: !!value.agreed,
-          version: String(value.version ?? "").slice(0, 50),
-          agreedAt: serverTime,
-        };
+      const {updates, staleVersions} = tcSanitizeConsentEntries({
+        entries: entries as Array<[string, {agreed?: unknown;
+          version?: unknown}]>,
+        activeItems,
+        existing,
+      });
+
+      if (staleVersions.length > 0) {
+        // 사용자가 본 글과 지금 글이 다르다. 지금 버전으로 바꿔 저장하면
+        // 보지 않은 글에 동의한 것이 된다 — 다시 받아야 한다.
+        throw new HttpsError(
+          "failed-precondition",
+          "TERMS_VERSION_STALE 약관이 변경되었습니다. 다시 확인하고 동의해 주세요."
+        );
       }
 
-      const updateData: Record<string, unknown> = {termsConsent: consentWithTimestamps};
-      // 최초 동의 시에만 termsConsentAt 기록 — 재호출로 덮어쓰기 불가
-      if (!existingConsentAt) updateData.termsConsentAt = serverTime;
+      // [R7-LEGAL.1A] 맵을 통째로 바꾸지 않는다. 예전 writer 는
+      //   `{termsConsent: {...}}` 로 교체해서, 이번 호출에 없는 항목의
+      //   동의 기록이 사라졌다. 경로 단위로 쓰면 건드리지 않은 항목이 남는다.
+      const updateData: Record<string, unknown> =
+        tcToDottedUpdate(updates, serverTime);
 
-      tx.update(userRef, updateData);
+      // [R7-LEGAL.1A] 법적 타임스탬프는 **필수 약관이 전부 충족됐을 때만**
+      //   찍는다. 예전에는 호출이 성공하기만 하면 찍혔다 — 전부 거부해도
+      //   동의 시각이 생겼고, 외국인 가입은 그 값을 보고 active 로 올린다.
+      if (!existingConsentAt &&
+          tcAllRequiredSatisfied({activeItems, existing, updates})) {
+        updateData.termsConsentAt = serverTime;
+      }
+
+      if (Object.keys(updateData).length > 0) tx.update(userRef, updateData);
     });
 
     // [V3] 외국인 가입 완료 게이트 — registration_pending / pending 상태에서 모든 조건 충족 시 active 전환.

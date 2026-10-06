@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
-import '../../services/legal_terms_service.dart';
+import '../../utils/responsive_helper.dart';
+import '../../utils/terms_consent_plan.dart';
 import '../../utils/toast_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/auth/terms_viewer_screen.dart';
 import 'foreign_register_screen.dart';
+import 'registration_recovery_reads.dart';
 
 /// [V3 FOREIGN-DOCUMENT-FIRST] 외국인 가입 미완료 복구 화면
 ///
@@ -22,7 +22,10 @@ import 'foreign_register_screen.dart';
 /// CASE B:   fingerprint 있음, idCard 없음 → ForeignRegisterScreen으로 복귀
 /// CASE C/D: fingerprint 없음 → ForeignRegisterScreen으로 복귀 (OCR/입력 재시도)
 class RegistrationRecoveryScreen extends StatefulWidget {
-  const RegistrationRecoveryScreen({super.key});
+  const RegistrationRecoveryScreen({super.key, this.reads});
+
+  /// 테스트에서 갈아끼우는 읽기·기록 경계. 운영에서는 null.
+  final RegistrationRecoveryReads? reads;
 
   @override
   State<RegistrationRecoveryScreen> createState() =>
@@ -33,14 +36,23 @@ enum _RecoveryCase { loading, termsOnly, needForeignDoc, error }
 
 class _RegistrationRecoveryScreenState
     extends State<RegistrationRecoveryScreen> {
-  final LegalTermsService _legalTermsService = LegalTermsService();
-  final _db = FirebaseFirestore.instance;
+  late final RegistrationRecoveryReads _reads =
+      widget.reads ?? RegistrationRecoveryReads.of();
 
   _RecoveryCase _case = _RecoveryCase.loading;
   bool _isRecording = false;
   LegalTerms? _legalTerms;
   String? _errorMessage;
   UserRole _userRole = UserRole.USER;
+
+  /// 이미 받아 둔 동의. 다시 묻지도, 덮어쓰지도 않는다.
+  Map<String, StoredConsent> _stored = const {};
+
+  /// 이 화면에서 사용자가 실제로 고른 값.
+  Map<String, bool> _choices = const {};
+
+  /// 본문을 연 적 있는 항목 — 보지 않은 약관에 체크부터 하게 두지 않는다.
+  final Set<String> _viewed = <String>{};
 
   /// CASE C: fingerprint 없음 + 기존 idCard 있음
   /// ForeignRegisterScreen에 전달 → OCR 재실행으로 재업로드 불필요
@@ -59,7 +71,7 @@ class _RegistrationRecoveryScreenState
   Future<void> _detectCase() async {
     setState(() { _case = _RecoveryCase.loading; _errorMessage = null; });
 
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = _reads.currentUid();
     if (uid == null) {
       setState(() {
         _case = _RecoveryCase.error;
@@ -73,12 +85,12 @@ class _RegistrationRecoveryScreenState
       final termsFuture = _loadTerms();
 
       // Firestore 직접 읽기 (user_provider pending guard 우회)
-      final doc = await _db.collection('users').doc(uid).get();
+      final data = await _reads.userDoc(uid);
       await termsFuture;
 
       if (!mounted) return;
 
-      if (!doc.exists) {
+      if (data == null) {
         setState(() {
           _case = _RecoveryCase.error;
           _errorMessage = '계정 정보를 찾을 수 없습니다. 다시 로그인해주세요.';
@@ -86,7 +98,10 @@ class _RegistrationRecoveryScreenState
         return;
       }
 
-      final data = doc.data()!;
+      // [LEGAL-1A] 이미 받아 둔 동의를 먼저 읽는다. 이것을 모르면 다시 묻게
+      //   되고, 다시 물으면 최초 동의 시각이 지금으로 밀린다.
+      _stored = StoredConsent.parseMap(data['termsConsent']);
+
       final hasFingerprint = data['foreignIdentityFingerprint'] != null;
       final hasIdCard = data['idCardImagePath'] != null || data['idCardImageUrl'] != null;
       final roleStr = data['role'] as String?;
@@ -97,7 +112,8 @@ class _RegistrationRecoveryScreenState
       _existingIdCardPath = data['idCardImagePath'] as String?;
 
       setState(() {
-        // CASE A/E: fingerprint + idCard 완료 → 약관만 재기록
+        _seedChoices();
+        // CASE A/E: fingerprint + idCard 완료 → 약관 동의를 받는다
         // CASE B/C/D: idCard 또는 fingerprint 없음 → ForeignRegisterScreen 재진입
         _case = (hasFingerprint && hasIdCard)
             ? _RecoveryCase.termsOnly
@@ -106,18 +122,34 @@ class _RegistrationRecoveryScreenState
     } catch (e) {
       debugPrint('❌ [RecoveryScreen] 케이스 판단 실패: $e');
       if (!mounted) return;
-      // 폴백: 약관 재호출 시도 (idempotent — 이미 완료된 경우 무해)
-      setState(() => _case = _RecoveryCase.termsOnly);
+      // 폴백: 약관 동의 단계로 보낸다. 기존 동의를 읽지 못했으므로 전부
+      //   물어야 한다 — 모르는 것을 "이미 동의함"으로 그리지 않는다.
+      setState(() {
+        _stored = const {};
+        _seedChoices();
+        _case = _RecoveryCase.termsOnly;
+      });
     }
   }
 
   Future<void> _loadTerms() async {
     try {
-      final terms = await _legalTermsService.getTerms();
+      final terms = await _reads.terms();
       if (mounted) setState(() => _legalTerms = terms);
     } catch (_) {
       if (mounted) setState(() => _legalTerms = LegalTerms.defaultTerms());
     }
+  }
+
+  /// 체크박스 초기값을 세운다. `_stored` 와 `_legalTerms` 가 모두 있어야
+  /// 뜻이 생기므로 둘이 모인 뒤 한 번만 세운다.
+  void _seedChoices() {
+    final terms = _legalTerms;
+    if (terms == null) return;
+    _choices = TermsConsentPlan.initialChoices(
+      activeItems: terms.activeItems,
+      stored: _stored,
+    );
   }
 
   // ============================================================
@@ -130,30 +162,41 @@ class _RegistrationRecoveryScreenState
       ToastHelper.showWarning('약관 정보를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
       return;
     }
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = _reads.currentUid();
     if (uid == null) {
       setState(() => _errorMessage = 'Auth 세션이 만료되었습니다. 다시 로그인해주세요.');
+      return;
+    }
+
+    // [LEGAL-1A] 필수 항목을 고르지 않았으면 아무것도 보내지 않는다.
+    //   버튼이 이미 막혀 있지만, 기록 경로에서도 한 번 더 막는다 — 동의는
+    //   화면 상태가 아니라 사용자의 선택이어야 한다.
+    if (!TermsConsentPlan.allRequiredChosen(
+        activeItems: terms.activeItems, stored: _stored, choices: _choices)) {
+      setState(() => _errorMessage = '필수 약관에 동의해야 가입을 완료할 수 있습니다.');
       return;
     }
 
     setState(() { _isRecording = true; _errorMessage = null; });
 
     try {
-      final consentRecord = <String, dynamic>{};
-      for (final item in terms.activeItems) {
-        consentRecord[item.id] = {'agreed': true, 'version': item.version};
-      }
+      // 사용자가 **이 화면에서 고른 것**만 보낸다. 이미 같은 버전으로 동의한
+      //   항목은 빠진다 — 다시 보내면 최초 동의 시각이 지금으로 밀린다.
+      final consentRecord = TermsConsentPlan.buildPayload(
+        activeItems: terms.activeItems,
+        stored: _stored,
+        choices: _choices,
+      );
 
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableRecordTermsConsent',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-          .call({'consentRecord': consentRecord});
+      if (consentRecord.isNotEmpty) {
+        await _reads.recordConsent(consentRecord);
+      }
 
       if (!mounted) return;
 
       // 계정 상태 재확인 — active 전환 여부 확인
-      final doc = await _db.collection('users').doc(uid).get();
-      final newStatus = doc.data()?['accountStatus'] as String?;
+      final fresh = await _reads.userDoc(uid);
+      final newStatus = fresh?['accountStatus'] as String?;
 
       if (!mounted) return;
 
@@ -210,37 +253,150 @@ class _RegistrationRecoveryScreenState
     );
   }
 
-  // ── CASE A/E: 약관 재기록 ────────────────────────────────────
+  // ── CASE A/E: 약관 동의 ──────────────────────────────────────
+  //
+  // 예전에는 여기서 "아래 버튼을 눌러 완료해주세요" 한 줄만 보여 주고,
+  // 활성 약관 전부를 `agreed: true` 로 만들어 보냈다. 사용자는 본문도 못 보고
+  // 고르지도 못했으며, 선택 항목인 마케팅 수신까지 동의로 기록됐다.
+  // 이제 가입 화면과 같은 것을 묻는다 — 보고, 고르고, 그 선택만 보낸다.
   Widget _buildTermsStep() {
+    final terms = _legalTerms;
+    if (terms == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final items = terms.activeItems;
+    final canProceed = TermsConsentPlan.allRequiredChosen(
+        activeItems: items, stored: _stored, choices: _choices);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+            children: [
+              _buildIcon(Icons.assignment_late_outlined, Colors.orange),
+              const SizedBox(height: 20),
+              Text('약관 동의가 필요합니다',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              const Text('이전 가입에서 약관 동의가 기록되지 않았습니다.\n'
+                  '내용을 확인하고 직접 선택해주세요.'),
+              const SizedBox(height: 20),
+              for (final item in items) _buildConsentRow(item),
+              const SizedBox(height: 16),
+              _buildErrorBanner(),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+          child: Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  // 필수 항목을 고르기 전에는 진행할 수 없다.
+                  onPressed: (_isRecording || !canProceed)
+                      ? null
+                      : _recordTermsConsent,
+                  style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14)),
+                  child: _isRecording
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('동의하고 가입 완료'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildSignOutButton(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 항목 한 줄 — 필수/선택 표시 · 체크박스 · 본문 보기.
+  ///
+  /// 이미 같은 버전으로 동의한 항목은 다시 묻지 않는다(체크 고정·안내 표시).
+  /// 그 항목은 서버로도 보내지 않으므로 최초 동의 시각이 보존된다.
+  Widget _buildConsentRow(LegalTermsItem item) {
+    final settled = TermsConsentPlan.isLocked(item, _stored);
+    final checked = _choices[item.id] == true;
+
     return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
         children: [
-          _buildIcon(Icons.assignment_late_outlined, Colors.orange),
-          const SizedBox(height: 20),
-          Text('가입 완료가 필요합니다',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          const Text('이전 가입 시 약관 동의 기록이 완료되지 않았습니다.\n아래 버튼을 눌러 완료해주세요.'),
-          const SizedBox(height: 24),
-          _buildErrorBanner(),
-          const Spacer(),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isRecording ? null : _recordTermsConsent,
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-              child: _isRecording
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('가입 완료하기'),
+          Checkbox(
+            value: checked,
+            // 받아 둔 동의는 여기서 바꾸지 않는다.
+            onChanged: settled || _isRecording
+                ? null
+                : (v) {
+                    final on = v ?? false;
+                    // 보지 않은 약관에 체크부터 하게 두지 않는다 — 누르면
+                    // 본문을 먼저 연다(가입 화면과 같은 규칙).
+                    if (on && !_viewed.contains(item.id)) {
+                      _openTerms(item);
+                      return;
+                    }
+                    setState(() => _choices = {..._choices, item.id: on});
+                  },
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: item.isRequired ? AppColors.errorBg : AppColors.grey100,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              item.isRequired ? '필수' : '선택',
+              style: ResponsiveHelper.tinyStyle(
+                context,
+                color: item.isRequired ? AppColors.error : AppColors.grey500,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          _buildSignOutButton(),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              settled ? '${item.title} (동의함)' : item.title,
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: settled ? AppColors.grey500 : AppColors.grey900,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _isRecording ? null : () => _openTerms(item),
+            child: Text('보기', style: ResponsiveHelper.smallStyle(context)),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _openTerms(LegalTermsItem item) async {
+    final agreed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => TermsViewerScreen(item: item)),
+    );
+    if (!mounted) return;
+    setState(() {
+      _viewed.add(item.id);
+      // 뷰어에서 '동의하고 닫기'를 누른 경우에만 체크된다. 그냥 닫으면
+      // 선택은 그대로다 — 열람이 동의가 되지 않는다.
+      if (agreed == true) _choices = {..._choices, item.id: true};
+    });
   }
 
   // ── CASE B/C/D: 외국인등록증 재입력 ──────────────────────────

@@ -520,38 +520,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
             'version': item.version,
           };
         }
-        if (!_isKorean) {
-          // [C안] 외국인(pending) 계정은 약관 기록 필수 — 성공 전까지 재시도 다이얼로그
-          bool recorded = false;
-          while (!recorded) {
-            try {
-              await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                  .httpsCallable('callableRecordTermsConsent',
-                      options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-                  .call({'consentRecord': consentRecord});
-              recorded = true;
-            } catch (_) {
-              debugPrint('⚠️ 동의 기록 저장 실패');
-              if (!mounted) return;
-              final retry = await _showTermsConsentRetryDialog();
-              if (!retry) {
-                if (mounted) {
-                  ToastHelper.showWarning(
-                      '약관 동의 기록에 실패했습니다.\n다시 로그인하여 재시도해주세요.');
-                }
-                return;
-              }
-            }
-          }
-        } else {
-          // 한국인(active): 약관 기록 실패 허용 (PASS 인증으로 법적 동의 보완)
+        // [LEGAL-1A] 동의 기록은 국적과 무관하게 가입의 필수 단계다.
+        //
+        //   예전에는 내국인만 실패를 삼키고 "PASS 인증으로 법적 동의 보완"
+        //   이라고 적어 뒀다. PASS 는 **신원**을 증명하지 약관 동의를
+        //   증명하지 않는다 — 둘은 다른 사실이다. 기록이 실패했는데 가입을
+        //   완료했다고 말하면, 동의 증거 없는 계정이 조용히 생긴다.
+        //
+        //   성공할 때까지 재시도하거나, 사용자가 그만두기를 고른다.
+        //   그만두면 성공 토스트도 HOME 이동도 없다(아래 흐름에 닿지 않는다).
+        bool recorded = false;
+        while (!recorded) {
           try {
             await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
                 .httpsCallable('callableRecordTermsConsent',
                     options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
                 .call({'consentRecord': consentRecord});
+            recorded = true;
           } catch (_) {
-            debugPrint('⚠️ 동의 기록 저장 실패 (한국인 — 무시)');
+            debugPrint('⚠️ 동의 기록 저장 실패');
+            if (!mounted) return;
+            final retry = await _showTermsConsentRetryDialog();
+            if (!retry) {
+              if (mounted) {
+                // 각 경로에서 **실제로 참인 것**만 말한다. 외국인 계정은
+                // registration_pending 으로 남아 다시 로그인하면 복구 화면이
+                // 이어받는다. 내국인 계정은 그 경로가 없다.
+                ToastHelper.showWarning(_isKorean
+                    ? '약관 동의가 기록되지 않았습니다.\n네트워크를 확인하고 다시 시도해주세요.'
+                    : '약관 동의 기록에 실패했습니다.\n다시 로그인하여 재시도해주세요.');
+              }
+              return;
+            }
           }
         }
       }
