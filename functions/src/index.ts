@@ -46,6 +46,15 @@ import {
   type ActiveLegalItem as TcActiveLegalItem,
 } from "./terms_consent_payload";
 
+import {
+  legalRevisionId as lpRevisionId,
+  contentHashOf as lpContentHashOf,
+  evaluatePublish as lpEvaluatePublish,
+  evaluateReconsent as lpEvaluateReconsent,
+  isValidLegalToken as lpIsValidLegalToken,
+  type ProjectionItem as LpProjectionItem,
+} from "./legal_publication";
+
 initializeApp();
 const db = getFirestore();
 
@@ -11586,6 +11595,10 @@ export const callableRecordTermsConsent = onCall(
         id: String(i.id ?? ""),
         version: String(i.version ?? ""),
         isRequired: i.isRequired !== false,
+        // [LEGAL-1B] 발행본 포인터. 아직 발행 경로를 거치지 않은 legacy
+        //   항목은 (항목, 버전)으로 유도한다 — 같은 규칙이다.
+        revisionId: typeof i.revisionId === "string" && i.revisionId !== "" ?
+          i.revisionId : undefined,
       }))
       .filter((i) => i.id !== "" && i.version !== "");
 
@@ -11637,6 +11650,28 @@ export const callableRecordTermsConsent = onCall(
         updateData.termsConsentAt = serverTime;
       }
 
+      // [R7-LEGAL.1B] 증거는 **덧붙이기만** 한다.
+      //
+      //   projection(`users/{uid}.termsConsent`)은 "지금 상태"라서 재동의가
+      //   오면 덮인다. 그것이 유일한 기록이면 과거에 무엇에 동의했는지가
+      //   사라진다. 그래서 선택 하나하나를 사건으로 남긴다 — 이 컬렉션은
+      //   클라이언트가 쓸 수 없고(rules), 여기서도 `create` 로만 쓴다.
+      //
+      //   같은 transaction 안에서 쓰므로 projection 과 증거가 갈라지지 않는다.
+      for (const [itemId, value] of Object.entries(updates)) {
+        const item = activeItems.find((i) => i.id === itemId);
+        tx.create(userRef.collection("consentEvents").doc(), {
+          itemId,
+          revisionId: value.revisionId,
+          version: value.version,
+          agreed: value.agreed,
+          agreedAt: serverTime,
+          requiredAtConsentTime: item?.isRequired === true,
+          source: typeof request.data?.source === "string" ?
+            String(request.data.source).slice(0, 32) : "unspecified",
+        });
+      }
+
       if (Object.keys(updateData).length > 0) tx.update(userRef, updateData);
     });
 
@@ -11668,7 +11703,140 @@ export const callableRecordTermsConsent = onCall(
       // 조건 미충족 시: registration_pending 유지. 클라이언트가 나머지 단계 완료 후 재호출.
     }
 
-    return {success: true};
+    // [R7-LEGAL.1B] 지금 다시 받아야 하는 것이 무엇인지 그대로 돌려준다.
+    //   판정은 서버 한 곳에서만 한다 — 화면이 자기 기준을 따로 만들면
+    //   "준비됨" 의 뜻이 두 개가 된다.
+    const afterSnap = await userRef.get();
+    const verdict = lpEvaluateReconsent({
+      activeItems: activeItems.map((i): LpProjectionItem => ({
+        id: i.id,
+        version: i.version,
+        revisionId: i.revisionId,
+        isRequired: i.isRequired,
+        isActive: true,
+      })),
+      consent: (afterSnap.data()?.termsConsent ?? {}) as Record<string, {
+        agreed?: unknown; version?: unknown; revisionId?: unknown;
+      }>,
+    });
+
+    return {success: true, reconsentRequired: verdict.required,
+      optionalUnanswered: verdict.optionalUnanswered};
+  }
+);
+
+// ── callablePublishLegalRevision ─────────────────────────
+//
+// [R7-LEGAL.1B] 약관 발행의 **유일한** writer.
+//
+//   예전에는 SUPER_ADMIN 이 `app_settings/legal_terms` 를 Firestore 로 직접
+//   고쳤다. 그래서 이미 동의를 받은 version 의 본문을 그 자리에서 바꿀 수
+//   있었고, 그 순간 과거 동의 증거가 무엇을 가리키는지 알 수 없게 됐다.
+//
+//   이제 발행은 두 가지를 한 transaction 에서 한다.
+//     1. `legal_revisions/{itemId}__{version}` 을 **만든다**(고쳐 쓰지 않는다)
+//     2. 공개 중인 목록(projection)이 그 발행본을 가리키게 한다
+//
+//   같은 version 에 다른 본문을 발행하려 하면 거절한다 — 본문을 바꾸려면
+//   새 version 을 내야 한다. 그러면 "같은 version 이면 같은 글"이 시간이
+//   지나도 참이 된다.
+export const callablePublishLegalRevision = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (callerSnap.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "약관 발행 권한이 없습니다.");
+    }
+
+    const d = request.data as {
+      itemId?: unknown; version?: unknown; title?: unknown;
+      content?: unknown; isRequired?: unknown; isActive?: unknown;
+      order?: unknown;
+    };
+    const itemId = String(d.itemId ?? "");
+    const version = String(d.version ?? "");
+    const content = typeof d.content === "string" ? d.content : "";
+    const title = String(d.title ?? "").slice(0, 200);
+
+    if (!lpIsValidLegalToken(itemId) || !lpIsValidLegalToken(version)) {
+      throw new HttpsError("invalid-argument",
+        "LEGAL_INVALID_IDENTITY 항목 id 와 버전 형식을 확인해 주세요.");
+    }
+    if (content.trim() === "") {
+      throw new HttpsError("invalid-argument",
+        "LEGAL_EMPTY_CONTENT 본문이 비어 있습니다.");
+    }
+
+    const revisionId = lpRevisionId(itemId, version);
+    const revRef = db.collection("legal_revisions").doc(revisionId);
+    const termsRef = db.collection("app_settings").doc("legal_terms");
+    const hash = lpContentHashOf(content);
+
+    await db.runTransaction(async (tx) => {
+      const [revSnap, termsSnap] = await Promise.all([
+        tx.get(revRef), tx.get(termsRef),
+      ]);
+
+      const verdict = lpEvaluatePublish({
+        itemId, version, content,
+        existing: revSnap.exists ? {
+          itemId,
+          version,
+          contentHash: String(revSnap.data()?.contentHash ?? ""),
+        } : null,
+      });
+      if (!verdict.ok) {
+        if (verdict.reason === "VERSION_REUSED") {
+          throw new HttpsError("failed-precondition",
+            "LEGAL_VERSION_REUSED 이미 발행된 버전의 본문은 바꿀 수 없습니다. " +
+            "새 버전으로 발행해 주세요.");
+        }
+        throw new HttpsError("invalid-argument", `LEGAL_${verdict.reason}`);
+      }
+
+      if (verdict.reason === "CREATE") {
+        // create — 이미 있으면 실패한다. 발행본을 덮어쓰는 경로를 두지 않는다.
+        tx.create(revRef, {
+          itemId, version, title, content,
+          contentHash: hash,
+          isRequired: d.isRequired !== false,
+          publishedAt: admin.firestore.FieldValue.serverTimestamp(),
+          publishedBy: callerUid,
+        });
+      }
+
+      // projection — 공개 중인 목록. 읽는 쪽(앱·공개 페이지)의 모양은
+      //   그대로 두고 발행본 포인터만 더한다.
+      const rawItems = termsSnap.data()?.items;
+      const items: Array<Record<string, unknown>> =
+        Array.isArray(rawItems) ? rawItems.map((x) => ({...x})) : [];
+      const next = {
+        id: itemId,
+        title,
+        content,
+        isRequired: d.isRequired !== false,
+        isActive: d.isActive !== false,
+        version,
+        revisionId,
+        contentHash: hash,
+        order: typeof d.order === "number" ? d.order : items.length + 1,
+        updatedAt: admin.firestore.Timestamp.now(),
+      };
+      const at = items.findIndex((x) => String(x.id ?? "") === itemId);
+      if (at >= 0) items[at] = next; else items.push(next);
+
+      tx.set(termsRef, {
+        items,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: callerUid,
+      }, {merge: true});
+    });
+
+    return {success: true, revisionId, contentHash: hash};
   }
 );
 

@@ -187,11 +187,15 @@ t('C13-5 버전이 다른 과거 동의는 충족으로 세지 않는다', () =>
 
 // ── 맵 보존 ──────────────────────────────────────────────────────────
 t('C15-1 경로 단위로 쓴다 — 맵을 통째로 바꾸지 않는다', () => {
+  // [LEGAL-1B] 증거는 발행본(revisionId)까지 가리킨다.
   const out = M.toDottedUpdate(
-    {marketing_consent: {agreed: false, version: V}}, 'SERVER_TIME');
+    {marketing_consent: {agreed: false, version: V,
+      revisionId: 'marketing_consent__' + V}}, 'SERVER_TIME');
   assert.deepStrictEqual(Object.keys(out), ['termsConsent.marketing_consent']);
   assert.deepStrictEqual(out['termsConsent.marketing_consent'], {
-    agreed: false, version: V, agreedAt: 'SERVER_TIME',
+    agreed: false, version: V,
+    revisionId: 'marketing_consent__' + V,
+    agreedAt: 'SERVER_TIME',
   });
   // 최상위 `termsConsent` 를 통째로 넘기지 않는다.
   assert.strictEqual(out.termsConsent, undefined);

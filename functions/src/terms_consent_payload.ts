@@ -21,6 +21,8 @@ export type ActiveLegalItem = {
   id: string;
   version: string;
   isRequired: boolean;
+  /** [LEGAL-1B] 이 항목이 지금 가리키는 **발행본**. 증거가 참조할 신원이다. */
+  revisionId?: string;
 };
 
 /** 클라이언트가 보낸 한 건. 무엇이든 올 수 있다고 본다. */
@@ -30,7 +32,12 @@ export type IncomingConsent = {agreed?: unknown; version?: unknown};
 export type StoredConsent = {agreed?: unknown; version?: unknown};
 
 /** 저장이 확정된 한 건. */
-export type ConsentUpdate = {agreed: boolean; version: string};
+export type ConsentUpdate = {
+  agreed: boolean;
+  version: string;
+  /** [LEGAL-1B] 어떤 발행본에 대한 선택인가. 없으면 version 으로 유도한다. */
+  revisionId: string;
+};
 
 export type SanitizeResult = {
   /** 저장할 항목. key 는 검증된 legal item id 다. */
@@ -110,7 +117,13 @@ export function sanitizeConsentEntries(input: {
       dropped.push(rawKey);
       continue;
     }
-    updates[rawKey] = {agreed, version: item.version};
+    updates[rawKey] = {
+      agreed,
+      version: item.version,
+      // [LEGAL-1B] 증거는 버전 문자열이 아니라 **발행본**을 가리켜야 한다.
+      //   DEV 에서 한 버전 문자열을 네 항목이 공유하고 있었다.
+      revisionId: item.revisionId ?? `${item.id}__${item.version}`,
+    };
   }
 
   return {updates, dropped, staleVersions};
@@ -168,6 +181,7 @@ export function toDottedUpdate(
     out[`termsConsent.${id}`] = {
       agreed: value.agreed,
       version: value.version,
+      revisionId: value.revisionId,
       agreedAt,
     };
   }
