@@ -238,8 +238,10 @@ void main() {
 
   group('INV-5 — 처리방침이 실제와 같다 (§10~§15·§27)', () {
     final terms = _src(_terms);
-    final html = _src(_privacyHtml);
-    final both = {_terms: terms, _privacyHtml: html};
+    // [R7-LEGAL.1C] 공개 페이지는 더 이상 전문 사본을 들고 있지 않다 —
+    //   현재 발행본을 읽는다. 고지 문구의 진실은 코드 기본값 한 곳에 있고,
+    //   웹이 그것을 읽는다는 사실은 아래 28번이 지킨다.
+    final both = {_terms: terms};
 
     test('20 실제로 수집하는 것을 고지한다', () {
       for (final e in both.entries) {
@@ -385,6 +387,14 @@ void main() {
     test('32 CONFIRMED 자동 신분증 grant 재도입 없음 (§29)', () {
       expect(cf, isNot(contains('ensureIdCardGrantForConfirmedApplication')));
       expect(cf, isNot(contains('callableAdminVerifyIdCard')));
+    });
+
+    test('28 공개 고지는 canonical 발행본을 읽는다 (R7-LEGAL.1C)', () {
+      final html = _src(_privacyHtml);
+      expect(html, contains('legal-reader.js'));
+      expect(html, contains("itemId: 'privacy_policy'"));
+      // 전문이 다시 복사돼 들어오면 길이로 먼저 걸린다.
+      expect(html.length, lessThan(2500));
     });
   });
 }

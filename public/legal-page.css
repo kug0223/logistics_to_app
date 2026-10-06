@@ -1,0 +1,65 @@
+/* [R7-LEGAL.1C] 공개 법적 문서 페이지 공통 스타일.
+   두 페이지가 같은 reader 를 쓰므로 모양도 한 벌로 둔다. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+  font-size: 15px;
+  line-height: 1.75;
+  color: #1a1a1a;
+  background: #f8f9fa;
+}
+
+.header {
+  background: #1565C0;
+  color: #fff;
+  padding: 28px 24px 24px;
+}
+.header h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.header p { font-size: 13px; opacity: 0.85; }
+
+.container { max-width: 760px; margin: 0 auto; padding: 24px 20px 60px; }
+
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+}
+
+/* 긴 전문 — 줄바꿈을 보존하되 좁은 화면에서 가로로 넘치지 않게 한다. */
+.content-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #333;
+}
+
+.loading { color: #888; font-size: 14px; }
+.error { color: #c62828; font-size: 14px; }
+
+.note {
+  color: #888;
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 0 4px;
+}
+.note a { color: #1565C0; }
+
+.footer {
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e0e0;
+}
+
+@media (max-width: 420px) {
+  .header { padding: 22px 16px 18px; }
+  .container { padding: 16px 14px 48px; }
+  .card { padding: 18px 14px; }
+}

@@ -5,8 +5,17 @@
 //     앱이 보여주는 정책과 공개된 정책이 같아야 한다.
 //     앱 없이도 계정 삭제를 요청할 수 있어야 한다.
 //
-//   공개 페이지는 앱 원문에서 생성된다. 그래서 여기서는 "두 문서가 같은가"를
-//   글자 단위로 확인할 수 있다 — 버전 문자열만 맞추는 것으로는 다시 갈라진다.
+//   [R7-LEGAL.1C] parity 를 지키는 방식이 바뀌었다.
+//
+//     예전: Dart 상수 → scripts/render-privacy.js → 정적 privacy.html
+//           두 문서를 글자 단위로 비교할 수 있었다.
+//
+//     문제: 그 생성기가 읽는 것은 **Dart 폴백 상수**지 발행된 글이 아니다.
+//           슈퍼관리자가 발행하면 앱은 바뀌고 공개 페이지는 그대로였다.
+//           같은 글을 두 곳에 두는 한, 둘은 언젠가 갈라진다.
+//
+//     지금: 공개 페이지가 현재 발행본을 **읽는다**. 사본이 없으므로
+//           비교할 두 문서가 없다 — 대신 "읽는가" 를 지킨다.
 
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
@@ -54,9 +63,12 @@ void main() {
 
   // ───────────────────────────────────────────────────────────
   group('PR-1x 공개 페이지 (§19 A·B)', () {
-    test('A 공개 정책 파일이 존재한다', () {
+    test('A 공개 정책 파일이 존재한다 — 사본이 아니라 껍데기다', () {
       expect(File('public/privacy.html').existsSync(), isTrue);
-      expect(publicHtml.length, greaterThan(1000));
+      // 전문이 다시 복사돼 들어오면 길이로 먼저 걸린다.
+      expect(publicHtml.length, lessThan(2500),
+          reason: '정적 전문이 돌아왔다 — 두 번째 진실이 생긴다');
+      expect(publicHtml.contains('legal-reader.js'), isTrue);
     });
 
     test('B 제목이 개인정보 처리방침임을 분명히 한다', () {
@@ -76,32 +88,36 @@ void main() {
 
   // ───────────────────────────────────────────────────────────
   group('PR-2x 앱·웹 parity (§14·§15·§19 C)', () {
-    test('C 같은 개정 번호를 쓴다', () {
+    test('C 개정 번호는 한 곳에서만 온다', () {
       expect(dart.contains("version: kPrivacyPolicyRevision"), isTrue,
           reason: '앱 정책 항목이 상수를 쓴다');
-      expect(publicHtml.contains('content="$rev"'), isTrue);
-      expect(publicHtml.contains('개정 $rev'), isTrue);
+      // 공개 페이지는 개정 번호를 **들고 있지 않다** — 발행본이 말한다.
+      expect(publicHtml.contains(rev), isFalse,
+          reason: '개정 번호가 HTML 에 박히면 발행 때마다 어긋난다');
     });
 
-    test('C2 본문이 글자 단위로 같다 — 버전만 맞추지 않는다', () {
-      final i = publicHtml.indexOf('<div class="content-text">');
+    test('C2 공개 페이지에 본문 사본이 없다 — 현재 발행본을 읽는다', () {
+      expect(publicHtml.contains('id="content-card"'), isTrue,
+          reason: '본문이 들어갈 자리는 있어야 한다');
+      // 그 자리에 **미리 채워진 글**이 없어야 한다.
+      final i = publicHtml.indexOf('id="content-card"');
       expect(i, greaterThan(-1));
-      final s = i + '<div class="content-text">'.length;
-      final e = publicHtml.indexOf('</div>', s);
-      expect(_unesc(publicHtml.substring(s, e)), body,
-          reason: '공개 페이지는 앱 원문에서 생성된다 — 다르면 렌더러를 다시 돌려야 한다');
+      final slice = publicHtml.substring(i, publicHtml.indexOf('</div>', i));
+      expect(slice.contains('개인정보'), isFalse, reason: '전문이 미리 박혀 있다');
+      expect(publicHtml.contains("itemId: 'privacy_policy'"), isTrue);
     });
 
-    test('C3 시행일이 본문·머리글에 함께 있다', () {
+    test('C3 시행일은 본문이 말한다 — 머리글에 박지 않는다', () {
       expect(body.contains('본 처리방침은 2026년 9월 26일부터 적용됩니다'), isTrue);
-      expect(publicHtml.contains('시행일 2026년 9월 26일'), isTrue);
+      expect(RegExp(r'시행일s*d{4}년').hasMatch(publicHtml), isFalse,
+          reason: '시행일이 HTML 에 박히면 발행 때마다 어긋난다');
     });
 
-    test('생성기가 원문 한 곳만 읽는다', () {
-      final r = _read('scripts/render-privacy.js');
-      expect(r.contains('_defaultPrivacyPolicy'), isTrue);
-      expect(r.contains('kPrivacyPolicyRevision'), isTrue);
-      expect(r.contains("'public', 'privacy.html'"), isTrue);
+    test('생성기가 사라졌다 — 두 번째 진실을 만들 수단이 없다', () {
+      // 생성기를 남겨 두면 누군가 다시 돌려 정적 사본을 만든다. 그 사본은
+      // Dart 폴백 상수를 따르지 발행본을 따르지 않는다.
+      expect(File('scripts/render-privacy.js').existsSync(), isFalse,
+          reason: '정적 사본 생성기가 남아 있다');
     });
   });
 

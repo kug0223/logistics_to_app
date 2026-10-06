@@ -72,8 +72,19 @@ const _mustNotAppear = <String>[
 
 void main() {
   final terms = _src(_termsPath);
-  final html = _src(_htmlPath);
-  final both = {_termsPath: terms, _htmlPath: html};
+
+  // [R7-LEGAL.1C] 웹 축이 **텍스트 사본**에서 **읽기 계약**으로 바뀌었다.
+  //
+  //   예전에는  이 253줄 정적 전문을 들고 있어서,
+  //   같은 문구가 두 곳에 있는지 비교할 수 있었다. 그런데 그 구조는
+  //   슈퍼관리자가 발행해도 공개 페이지가 바뀌지 않는다는 뜻이기도 했다 —
+  //   고치려면 개발자가 HTML 을 다시 써야 했다.
+  //
+  //   이제 공개 페이지는 현재 발행본을 읽는다. 그래서 고지 문구의 진실은
+  //   **한 곳(코드 기본값 → 발행본)** 에만 있고, 웹 축은 "그 한 곳을
+  //   읽는가" 를 본다(아래 INV-1C). 불변식은 약해지지 않았다 — 자리를
+  //   옮겼을 뿐이다.
+  final both = {_termsPath: terms};
 
   group('INV-1 — 하는 것을 말한다', () {
     for (final e in _mustAppear.entries) {
