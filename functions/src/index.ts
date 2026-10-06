@@ -7612,7 +7612,15 @@ function srvKstMd(d: Date): string {
 }
 
 /**
- * 알림 중복 방지용 KST 날짜 키.
+ * KST 날짜 키 — `YYYYMMDD`.
+ *
+ * [R7-CROSSCUT-TIME.1B] attendance 문서 id 의 날짜 부분이기도 하다
+ * (`attendance/{applicationId}_{YYYYMMDD}`). 같은 문자열을 두 군데서 따로
+ * 만들면 한쪽만 고쳐지는 날이 온다 — 날짜 키의 주인은 이 함수다.
+ *
+ * `srvKstDateNum` 의 산술(`getUTCFullYear()*10000 + ...`)이 zero padding 을
+ * 품고 있으므로, 문자열 조립에서 `padStart` 를 잊을 자리가 없다.
+ *
  * @param {Date} d 대상 시각
  * @return {string} YYYYMMDD
  */
@@ -34268,9 +34276,12 @@ export const callableApproveScheduleChangeRequest = onCall(
         const requestTypeEarly = scrData.requestType as string;
         if (requestTypeEarly === "LEAVE" || requestTypeEarly === "NO_WORK") {
           const targetDateTs = scrData.targetDate as admin.firestore.Timestamp;
-          const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-          const targetKST = new Date(targetDateTs.toMillis() + KST_OFFSET_MS);
-          const leaveDateStr = `${targetKST.getUTCFullYear()}${String(targetKST.getUTCMonth() + 1).padStart(2, "0")}${String(targetKST.getUTCDate()).padStart(2, "0")}`;
+          // [R7-CROSSCUT-TIME.1B] 날짜 키를 여기서 다시 조립하지 않는다.
+          //   attendance writer 와 **같은 canonical owner** 를 쓴다
+          //   (`srvKstDateKey` → `srvKstDateNum`: KST 성분, instant 기반).
+          //   예전에는 오프셋 덧셈·성분 추출·자리수 채우기를 이 자리에서 직접
+          //   했다 — 식이 맞긴 했지만 writer 와 따로 사는 사본이었다.
+          const leaveDateStr = srvKstDateKey(targetDateTs.toDate());
           const attRef = db.collection("attendance").doc(`${scrData.applicationId as string}_${leaveDateStr}`);
           const attSnap = await tx.get(attRef);
           if (attSnap.exists && attSnap.data()?.checkIn != null) {

@@ -173,13 +173,13 @@ extension AttendanceFirestore on FirestoreService {
       //   전날 폴백이 서쪽으로 밀린 경우만 가려 줬을 뿐 동쪽은 그대로 놓쳤다.
       final todayStart = FormatHelper.toKstDate(DateTime.now());
 
-      String dateStr(DateTime d) =>
-          '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
-
+      // [R7-CROSSCUT-TIME.1B] 날짜 키 조립식을 복제하지 않는다 — writer 와
+      //   같은 의미를 두 군데서 따로 만들면 한쪽만 고쳐지는 날이 온다.
+      //   `formatDateStamp` 는 instant → KST 성분이므로 기기 TZ 와 무관하다.
       final yesterday = todayStart.subtract(const Duration(days: 1));
 
       for (final date in [todayStart, yesterday]) {
-        final docId = '${applicationId}_${dateStr(date)}';
+        final docId = '${applicationId}_${FormatHelper.formatDateStamp(date)}';
         final doc = await _firestore.collection('attendance').doc(docId).get();
         if (!doc.exists) continue;
         final att = AttendanceModel.tryFromFirestore(doc);
@@ -453,11 +453,22 @@ extension AttendanceFirestore on FirestoreService {
     // 출근 후 LEAVE 승인 시 application.leaveDates에는 날짜가 추가되지만
     // attendance.status는 'present'로 남아 데이터 불일치가 발생한다.
     // → 의도적 검증 예외 — try-catch 밖에서 throw하여 호출부로 전파
+    //
+    // [R7-CROSSCUT-TIME.1B] 날짜 키를 **기기 로컬 성분으로 만들지 않는다**.
+    //   attendance 문서 id 의 날짜는 서버가 KST 로 만든다
+    //   (`callableCheckIn`: `${applicationId}_${KST yyyyMMdd}`).
+    //   예전에는 `targetDate.year/.month/.day` 를 그대로 썼는데,
+    //   `ScheduleChangeRequestModel.fromMap` 이 `toLocal()` 로 파싱하므로
+    //   비-KST 기기에서는 하루 어긋난 문서를 조회한다. 그러면 "출근기록 없음"
+    //   으로 읽혀 이 차단이 그냥 통과한다.
+    //
+    //   현재 이 경로의 production 호출자는 0 이다(`createScheduleChangeRequest`
+    //   호출부 둘 모두 ADMIN · EXTRA_WORK/NO_WORK). 실제 금지 변경은
+    //   `callableApproveScheduleChangeRequest` 의 서버 재검증이 막는다.
+    //   그래도 식만 남겨 두면 지원자 LEAVE UI 가 붙는 날 조용히 되살아난다.
     if (request.requestType == RequestType.LEAVE &&
         request.requestedBy == RequesterType.APPLICANT) {
-      final t = request.targetDate;
-      final dateStr =
-          '${t.year}${t.month.toString().padLeft(2, '0')}${t.day.toString().padLeft(2, '0')}';
+      final dateStr = FormatHelper.formatDateStamp(request.targetDate);
       final attendanceDoc = await _firestore
           .collection('attendance')
           .doc('${request.applicationId}_$dateStr')
