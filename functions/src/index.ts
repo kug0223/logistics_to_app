@@ -55,6 +55,64 @@ import {
   type ProjectionItem as LpProjectionItem,
 } from "./legal_publication";
 
+import {
+  evaluateLegalReadiness as lrEvaluate,
+  allowsNewCommitment as lrAllowsNewCommitment,
+  type LegalReadiness as LrLegalReadiness,
+} from "./legal_readiness";
+
+/**
+ * [R7-LEGAL.1B.1] 법적 준비 상태를 한 곳에서 읽는다.
+ *
+ *   화면도, 다른 callable 도 스스로 버전을 비교하지 않는다 — 비교 규칙이
+ *   여러 곳에 생기면 각자 다른 답을 말하게 된다.
+ *
+ *   조회에 실패하면 **throw 한다.** 모르는 것을 "미동의" 로 바꾸지 않기
+ *   위해서다(ERROR ≠ RECONSENT_REQUIRED). 호출자가 그 구분을 한다.
+ *
+ * @param {string} uid 대상 사용자
+ * @return {Promise<LrLegalReadiness>} 판정
+ */
+async function srvLegalReadiness(uid: string): Promise<LrLegalReadiness> {
+  const [termsSnap, userSnap] = await Promise.all([
+    db.collection("app_settings").doc("legal_terms").get(),
+    db.collection("users").doc(uid).get(),
+  ]);
+
+  const rawItems = termsSnap.data()?.items;
+  const activeItems: LpProjectionItem[] = (Array.isArray(rawItems) ?
+    rawItems : [])
+    .filter((i): i is Record<string, unknown> =>
+      !!i && typeof i === "object")
+    .map((i) => ({
+      id: String(i.id ?? ""),
+      version: String(i.version ?? ""),
+      revisionId: typeof i.revisionId === "string" && i.revisionId !== "" ?
+        i.revisionId : undefined,
+      isRequired: i.isRequired !== false,
+      isActive: i.isActive !== false,
+    }))
+    .filter((i) => i.id !== "" && i.version !== "" && i.isActive);
+
+  // 발행본이 실재하는지 본다 — "새 판" 과 "옛 기록" 을 가르는 기준이다.
+  const wanted = activeItems.map((i) =>
+    i.revisionId ?? lpRevisionId(i.id, i.version));
+  const published = new Set<string>();
+  if (wanted.length > 0) {
+    const refs = wanted.map((id) => db.collection("legal_revisions").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const s of snaps) if (s.exists) published.add(s.id);
+  }
+
+  return lrEvaluate({
+    activeItems,
+    consent: (userSnap.data()?.termsConsent ?? {}) as Record<string, {
+      agreed?: unknown; version?: unknown; revisionId?: unknown;
+    }>,
+    publishedRevisionIds: published,
+  });
+}
+
 initializeApp();
 const db = getFirestore();
 
@@ -11837,6 +11895,31 @@ export const callablePublishLegalRevision = onCall(
     });
 
     return {success: true, revisionId, contentHash: hash};
+  }
+);
+
+// ── callableGetLegalReadiness ────────────────────────────
+//
+// [R7-LEGAL.1B.1] 화면이 읽는 **유일한** 법적 준비 상태.
+//
+//   화면이 `user.version != terms.version` 같은 비교를 직접 하면 정책이
+//   두 벌이 된다. 그래서 판정은 서버에만 두고 결과만 내려 준다.
+//
+//   실패는 throw 다. 호출자는 그것을 ERROR 로 그려야 하고, "동의하지
+//   않았다" 로 그리면 안 된다.
+export const callableGetLegalReadiness = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const r = await srvLegalReadiness(request.auth.uid);
+    return {
+      status: r.status,
+      reconsentRequired: r.reconsentRequired,
+      legacyUnknown: r.legacyUnknown,
+      optionalUnanswered: r.optionalUnanswered,
+    };
   }
 );
 
@@ -36926,6 +37009,31 @@ export const callableApplyToTO = onCall(
       throw new HttpsError(
         "failed-precondition", srvPayoutRegistrationMessage(applyOnbMissing));
     }
+    // [R7-LEGAL.1B.1] 새 법적 약속 직전의 경계.
+    //
+    //   지원은 "관심" 이지만 확정되면 계약으로 이어진다. 그 사슬의 입구에서
+    //   **새로 발행된 필수 약관**에 아직 동의하지 않았다면 먼저 받는다.
+    //
+    //   막는 것은 `RECONSENT_REQUIRED` 하나다. 발행본이 실재하므로 무엇에
+    //   동의해야 하는지 정확히 보여 줄 수 있다. 증명할 수 없는 옛 기록
+    //   (`LEGACY_CONSENT_UNKNOWN`)은 막지 않는다 — 사용자가 만든 상태가
+    //   아니고, 발행이 새 경로를 아직 거치지 않았다면 모든 사용자가 그
+    //   상태라 앱이 멈춘다. 그쪽은 할 일로 남겨 다음에 받는다.
+    //
+    //   조회가 실패하면 **통과시킨다.** 모르는 것을 미동의로 바꾸면, 서버
+    //   장애가 곧 전원 지원 차단이 된다(ERROR ≠ RECONSENT_REQUIRED).
+    try {
+      const applyLegal = await srvLegalReadiness(uid);
+      if (!lrAllowsNewCommitment(applyLegal.status)) {
+        throw new HttpsError(
+          "failed-precondition",
+          "LEGAL_RECONSENT_REQUIRED 변경된 약관에 동의한 뒤 지원할 수 있어요.");
+      }
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.warn(`[legal] 지원 전 약관 상태 조회 실패 — 통과시킨다: ${e}`);
+    }
+
     // [PII-B4-R1.4 §34·§39] 세무 identity 축. 수집이 꺼져 있으면 null이라
     //   기존 동작 그대로다 — 켜지는 순간부터 지원 전제로 살아난다.
     const applyTaxBlock = await srvTaxIdentityOnboardingBlock(uid, userData);

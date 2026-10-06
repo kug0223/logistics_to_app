@@ -27,6 +27,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/tour_helper.dart';
 import '../../widgets/auth/account_status_banner.dart';
+import '../../widgets/common/legal_task_card.dart';
 import '../../widgets/common/business_selector_sheet.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../widgets/user/cards/job_image_placeholder.dart';
@@ -952,6 +953,10 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         // [PII-DOC-R1.6.1] 서류 보완 할 일 — 이미 일한 급여가 막혀 있을 수
         //   있으므로 지원 준비보다 위에 둔다.
         _buildCorrectionTaskCard(context, s),
+        // [R7-LEGAL.1B.1] 약관 재동의 할 일.
+        //   새 필수 약관이 발행되면 새 지원이 막히므로 서류 준비보다 위에
+        //   둔다. 해당 없으면 스스로 사라진다.
+        LegalTaskCard(scale: s),
         // 지원 준비 Compact Card — 서류 미완료 시만 표시, 날짜 Hero 바로 위
         _buildReadinessCard(context, s, up),
         // ③ 날짜 기반 일자리 탐색 — 상시 노출 (신규/기존 회원 동일)

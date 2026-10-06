@@ -25,6 +25,7 @@ import '../../utils/work_detail_helper.dart';
 // Screens
 import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
+import '../../widgets/common/legal_task_card.dart';
 import '../../widgets/common/notification_badge.dart';
 import 'admin_contract_management_screen.dart';
 import 'payroll/payroll_payment_dashboard_screen.dart';
@@ -1150,6 +1151,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     //   하는 상태 하나를 해석한다. 준비 미완료 카드도 여기로
                     //   들어왔다(state = setup).
                     _buildAdaptiveHero(context, s, theme, up),
+                    // [R7-LEGAL.1B.1] 약관 재동의 할 일.
+                    //   약관 동의는 **개인 계정의 법적 상태**다 — 사업장
+                    //   소유 설정(등록증·인감)과 성격이 다르므로 하위관리자
+                    //   에게도 그대로 보인다. 해당 없으면 스스로 사라진다.
+                    LegalTaskCard(scale: s),
                     // [AH-V2-05B] TODAY → TASK → NEXT.
                     //   오늘 상황을 본 다음 바로 지금 처리할 일이 오고,
                     //   다음 운영 준비(향후 인력 부족)가 마지막이다.

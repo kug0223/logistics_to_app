@@ -3,11 +3,10 @@ import 'package:provider/provider.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
-import '../../utils/responsive_helper.dart';
 import '../../utils/terms_consent_plan.dart';
 import '../../utils/toast_helper.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/auth/terms_viewer_screen.dart';
+import '../../widgets/auth/legal_consent_list.dart';
 import 'foreign_register_screen.dart';
 import 'registration_recovery_reads.dart';
 
@@ -286,7 +285,16 @@ class _RegistrationRecoveryScreenState
               const Text('이전 가입에서 약관 동의가 기록되지 않았습니다.\n'
                   '내용을 확인하고 직접 선택해주세요.'),
               const SizedBox(height: 20),
-              for (final item in items) _buildConsentRow(item),
+              LegalConsentList(
+                items: items,
+                stored: _stored,
+                choices: _choices,
+                viewed: _viewed,
+                enabled: !_isRecording,
+                onChanged: (id, v) =>
+                    setState(() => _choices = {..._choices, id: v}),
+                onViewed: (id) => setState(() => _viewed.add(id)),
+              ),
               const SizedBox(height: 16),
               _buildErrorBanner(),
             ],
@@ -321,82 +329,6 @@ class _RegistrationRecoveryScreenState
         ),
       ],
     );
-  }
-
-  /// 항목 한 줄 — 필수/선택 표시 · 체크박스 · 본문 보기.
-  ///
-  /// 이미 같은 버전으로 동의한 항목은 다시 묻지 않는다(체크 고정·안내 표시).
-  /// 그 항목은 서버로도 보내지 않으므로 최초 동의 시각이 보존된다.
-  Widget _buildConsentRow(LegalTermsItem item) {
-    final settled = TermsConsentPlan.isLocked(item, _stored);
-    final checked = _choices[item.id] == true;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Checkbox(
-            value: checked,
-            // 받아 둔 동의는 여기서 바꾸지 않는다.
-            onChanged: settled || _isRecording
-                ? null
-                : (v) {
-                    final on = v ?? false;
-                    // 보지 않은 약관에 체크부터 하게 두지 않는다 — 누르면
-                    // 본문을 먼저 연다(가입 화면과 같은 규칙).
-                    if (on && !_viewed.contains(item.id)) {
-                      _openTerms(item);
-                      return;
-                    }
-                    setState(() => _choices = {..._choices, item.id: on});
-                  },
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: item.isRequired ? AppColors.errorBg : AppColors.grey100,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              item.isRequired ? '필수' : '선택',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: item.isRequired ? AppColors.error : AppColors.grey500,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              settled ? '${item.title} (동의함)' : item.title,
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: settled ? AppColors.grey500 : AppColors.grey900,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: _isRecording ? null : () => _openTerms(item),
-            child: Text('보기', style: ResponsiveHelper.smallStyle(context)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openTerms(LegalTermsItem item) async {
-    final agreed = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(builder: (_) => TermsViewerScreen(item: item)),
-    );
-    if (!mounted) return;
-    setState(() {
-      _viewed.add(item.id);
-      // 뷰어에서 '동의하고 닫기'를 누른 경우에만 체크된다. 그냥 닫으면
-      // 선택은 그대로다 — 열람이 동의가 되지 않는다.
-      if (agreed == true) _choices = {..._choices, item.id: true};
-    });
   }
 
   // ── CASE B/C/D: 외국인등록증 재입력 ──────────────────────────
