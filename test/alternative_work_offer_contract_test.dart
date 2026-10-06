@@ -208,7 +208,12 @@ void main() {
 
     test('생성과 카운터는 한 트랜잭션이다', () {
       expect(offer.contains('await db.runTransaction(async (offerTx) => {'), true);
-      expect(offer.contains('offerTx.set(targetRef, offerAppData);'), true);
+      // [R7-APPLICATION-LIFECYCLE.1E.1] 재제안은 inactive 관계 문서를 덮어쓴다 —
+      //   **새 활성화**이므로 세대를 이어 올린다. 그 값이 접힌 지원 알림의
+      //   사건 id 가 되므로, 빼먹으면 과거 사건 id 와 겹친다.
+      expect(offer.contains('offerTx.set(targetRef, { ...offerAppData, '
+          'activationGeneration: srvNextActivationGeneration(fresh), });'),
+          true);
       expect(offer.contains('pendingCount: admin.firestore.FieldValue.increment(1),'),
           true);
       expect(

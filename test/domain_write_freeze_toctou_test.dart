@@ -146,12 +146,15 @@ void main() {
       _expectFencedInTx(checkIn,
           fence: 'srvAssertAccountNotFrozenInTx(tx, callerUid, "사용자")',
           firstWrite: 'tx.set(ref, srvOmitUndefined(docData))');
+      // [R7-APPLICATION-LIFECYCLE.1E.1] 두 자리의 첫 쓰기에 활성화 세대가
+      //   붙었다(관계 문서를 덮어쓰므로 세대를 이어 올린다). fence 가 그
+      //   쓰기보다 앞이라는 계약은 그대로다.
       _expectFencedInTx(invite,
           fence: 'srvAssertAccountNotFrozenInTx(invTx, targetUid, "근로자")',
-          firstWrite: 'invTx.set(newAppRef, appData)');
+          firstWrite: 'invTx.set(newAppRef, {');
       _expectFencedInTx(offer,
           fence: 'srvAssertAccountNotFrozenInTx(offerTx, offerUid, "근로자")',
-          firstWrite: 'offerTx.set(targetRef, offerAppData)');
+          firstWrite: 'offerTx.set(targetRef, {');
       _expectFencedInTx(renewAccept,
           fence: 'srvAssertAccountNotFrozenInTx(tx, callerUid, "사용자")',
           firstWrite: 'tx.set(newRef, newData)');
@@ -414,12 +417,14 @@ void main() {
   group('TOC-NOTIF — 실패 뒤 성공 알림 0 (§20)', () {
     test('TOC-NOTIF-01 알림은 domain commit 뒤에만 쓴다', () {
       // 초대·대체제안·지원·확정 모두 TX 성공 뒤에 알림을 만든다.
+      // [R7-APPLICATION-LIFECYCLE.1E.1] 두 자리의 첫 쓰기 리터럴에 활성화
+      //   세대가 붙었다. "알림은 커밋 뒤"라는 순서 계약은 그대로다.
       expect(_at(invite, 'srvPersistNotification'),
-          greaterThan(_at(invite, 'invTx.set(newAppRef, appData)')));
+          greaterThan(_at(invite, 'invTx.set(newAppRef, {')));
       // 대체업무 제안은 알림 쓰기를 함수로 정의해 두고 **커밋된 뒤** 부른다.
       //   정의 위치가 아니라 호출 위치가 계약이다.
       expect(_at(offer, 'const notifResult = await writeOfferedNotification(offerId)'),
-          greaterThan(_at(offer, 'offerTx.set(targetRef, offerAppData)')));
+          greaterThan(_at(offer, 'offerTx.set(targetRef, {')));
       // notification architecture 는 이번 Phase 에서 바꾸지 않았다.
       expect(code, contains('async function srvPersistNotificationWithId('));
     });

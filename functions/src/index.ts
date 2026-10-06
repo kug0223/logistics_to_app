@@ -32,6 +32,12 @@ import {
   OPEN_ENDED_DAY_NUM,
   type WorkerDayReason,
 } from "./commitment_dates";
+// [R7-APPLICATION-LIFECYCLE.1E.1] 관계 사건 identity — 순수 모듈.
+import {
+  activationGeneration as agActivationGeneration,
+  nextActivationGeneration as agNextActivationGeneration,
+  scheduleConflictNotificationId as agScheduleConflictNotificationId,
+} from "./activation_generation";
 
 initializeApp();
 const db = getFirestore();
@@ -22763,8 +22769,13 @@ function srvApplySeatCommitOverlap(
       const whenBiz = plan.businessName ? `[${plan.businessName}] ` : "";
       const whenTime = plan.startTime && plan.endTime ?
         ` (${plan.startTime}~${plan.endTime})` : "";
+      // [R7-APPLICATION-LIFECYCLE.1E.1] 사건 id — 문서 identity + 활성화 세대.
+      //   세대는 **읽기 단계에서 읽은 그 snapshot** 에서 온다(`d`). 추가 조회
+      //   없고, transaction 재실행에서도 같은 값이 나온다.
       srvPersistNotificationInTx(
-        tx, loserUid, `schedule_conflict_autocancel_${doc.id}`, {
+        tx, loserUid,
+        srvScheduleConflictNotificationId(
+          doc.id, srvActivationGeneration(d)), {
           userId: loserUid,
           // 기존 타입을 재사용한다 — 클라이언트 파서·목록 렌더가 그대로 받는다.
           type: "confirmationCanceled",
@@ -37382,6 +37393,14 @@ export const callableApplyToTO = onCall(
           admin.firestore.FieldValue.delete();
         reactivateData["pendingDecrementedAt"] =
           admin.firestore.FieldValue.delete();
+        // [R7-APPLICATION-LIFECYCLE.1E.1] 되살리는 것은 **새 활성화**다.
+        //   같은 문서를 쓰더라도 이 뒤에 생기는 자동취소는 이전 것과 다른
+        //   사건이므로, 알림 identity 가 섞이지 않게 세대를 올린다.
+        //   읽은 snapshot 에서 계산하므로 transaction 재실행이 두 번 올리지
+        //   않고, 같은 호출을 다시 보내면 위 guard 가 `already-exists` 로
+        //   막으므로 callable 재시도도 두 번 올리지 않는다.
+        reactivateData["activationGeneration"] =
+          srvNextActivationGeneration(existingInTx);
         tx.update(appRef, reactivateData);
       } else {
         // [L1-FIX] businessName/toTitle: 클라이언트 제출값 대신 서버 TO 문서값 우선 사용 (텍스트 주입 차단)
@@ -37429,6 +37448,13 @@ export const callableApplyToTO = onCall(
           if (validatedWorkDays) setData["workDays"] = validatedWorkDays;
           if (desiredStartDate) setData["desiredStartDate"] = desiredStartDate;
         }
+        // [R7-APPLICATION-LIFECYCLE.1E.1] 첫 활성화는 0. 단 이 분기는 퇴사·
+        //   해지가 끝난 관계 문서를 **전체 덮어쓰기**로 재사용할 수도 있다
+        //   (위 guard 가 `isResignDone || isTermDone` 이면 통과시킨다).
+        //   그때는 이전 세대를 이어 올린다 — 그러지 않으면 세대가 0 으로
+        //   되돌아가 과거 사건 id 와 겹친다.
+        setData["activationGeneration"] =
+          srvNextActivationGeneration(existingInTx);
         tx.set(appRef, setData);
       }
 
@@ -38741,7 +38767,13 @@ export const callableInviteWorker = onCall(
         }
         // 재초대 — 그 시점 조건으로 다시 약속한다(기존 snapshot을 이어쓰지 않는다).
       }
-      invTx.set(newAppRef, appData);
+      // [R7-APPLICATION-LIFECYCLE.1E.1] 재초대도 **새 활성화**다. `set` 이
+      //   문서를 통째로 덮으므로 세대를 여기서 이어 올린다 — 안 하면 필드가
+      //   사라져 다음 사건 id 가 과거 것과 겹친다.
+      invTx.set(newAppRef, {
+        ...appData,
+        activationGeneration: srvNextActivationGeneration(existing),
+      });
       if (slotId && toId) {
         const inviteSlotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
         const inviteSlotUpdate: Record<string, unknown> = {
@@ -39262,7 +39294,11 @@ export const callableOfferAlternativeWork = onCall(
         throw new HttpsError(
           "failed-precondition", "지원 상태가 바뀌어 제안할 수 없습니다.");
       }
-      offerTx.set(targetRef, offerAppData);
+      // [R7-APPLICATION-LIFECYCLE.1E.1] 재제안도 새 활성화 — 재초대와 같은 규칙.
+      offerTx.set(targetRef, {
+        ...offerAppData,
+        activationGeneration: srvNextActivationGeneration(fresh),
+      });
       offerTx.update(offerSlotRef, {
         pendingCount: admin.firestore.FieldValue.increment(1),
         [`workDetailCounts.${targetWdId}.pendingCount`]:
@@ -41076,6 +41112,10 @@ export const callableAcceptConfirmedReassignment = onCall(
           proposalId, sourceApplicationId: acSourceId,
         }],
       };
+      // [R7-APPLICATION-LIFECYCLE.1E.1] B 자리도 재사용 가능한 관계 문서를
+      //   덮어쓴다(`CR_REUSABLE_TARGET`). 세대를 이어 올려야 그 뒤의 자동취소
+      //   사건 id 가 과거 것과 겹치지 않는다.
+      bDoc["activationGeneration"] = srvNextActivationGeneration(freshTarget);
       tx.set(acTargetRef, bDoc);
 
       // 카운터 — A의 자리가 B로 옮겨간다.
@@ -43734,13 +43774,79 @@ async function srvPersistNotificationWithId(
 }
 
 /**
+ * [R7-APPLICATION-LIFECYCLE.1E.1] 관계 문서의 **활성화 세대**.
+ *
+ *   Application 문서 identity 와 Application 사건 identity 는 다르다.
+ *   canonical Apply writer 는 inactive 관계(CANCELED·AUTO_CANCELED·REJECTED)를
+ *   **같은 결정적 docId 에서** 되살린다. 그래서 한 문서가
+ *
+ *     PENDING → 자동취소(겹침) → 재지원 → PENDING → 자동취소(겹침)
+ *
+ *   를 겪을 수 있고, 두 자동취소는 서로 다른 사건이다. docId 만으로 알림
+ *   identity 를 만들면 두 사건이 한 문서를 공유해 두 번째가 첫 번째를
+ *   덮어쓴다 — 그리고 FCM dispatcher 는 `onDocumentCreated` 이므로 덮어쓰기로는
+ *   **재발송되지 않는다**. 즉 두 번째 실제 취소가 조용히 사라진다.
+ *
+ *   세대는 "이 관계가 몇 번째로 활성화됐는가"다. 필드가 없는 legacy 문서는
+ *   0 으로 읽는다 — backfill 을 요구하지 않는다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} d 관계 문서 데이터
+ * @return {number} 활성화 세대 (없으면 0)
+ */
+function srvActivationGeneration(
+  d: FirebaseFirestore.DocumentData | undefined
+): number {
+  return agActivationGeneration(d as {activationGeneration?: unknown});
+}
+
+/**
+ * [R7-APPLICATION-LIFECYCLE.1E.1] 이 활성화가 쓸 세대.
+ *
+ *   문서가 없으면 0(첫 활성화), 있으면 이전 값 + 1. **읽은 snapshot 에서
+ *   계산한다** — `increment(1)` 이 아니다. 그래야 contention 으로 transaction
+ *   이 재실행돼도 같은 snapshot 에서 같은 값이 나오고, 알림 id 도 같다.
+ *
+ *   세대를 올리는 주인은 관계를 되살리는 네 writer 뿐이다(재지원·재초대·
+ *   재제안·확정재배치). 클라이언트는 이 필드를 쓸 수 없다(rules 는 create 를
+ *   막고, 본인 취소 경로는 `hasOnly` 로 필드 집합을 고정한다).
+ *
+ * @param {FirebaseFirestore.DocumentSnapshot | null | undefined} snap
+ *   같은 transaction 에서 읽은 관계 문서
+ * @return {number} 이번 활성화의 세대
+ */
+function srvNextActivationGeneration(
+  snap: FirebaseFirestore.DocumentSnapshot | null | undefined
+): number {
+  return agNextActivationGeneration(snap as unknown as {
+    exists: boolean; data(): {activationGeneration?: unknown} | undefined;
+  } | null | undefined);
+}
+
+/**
+ * [R7-APPLICATION-LIFECYCLE.1E.1] 일정 겹침 자동취소 알림의 **사건 id**.
+ *
+ *   문서 identity 하나로는 부족하다(위 설명). 세대를 붙여 사건마다 다른
+ *   문서가 되게 하고, 같은 사건의 재시도는 같은 문서로 수렴하게 한다.
+ *   id 구성의 주인은 이 함수 하나다 — writer 별로 문자열을 짓지 않는다.
+ *
+ * @param {string} applicationId 접힌 관계 문서 id
+ * @param {number} generation 그 관계의 활성화 세대
+ * @return {string} 결정적 알림 문서 id
+ */
+function srvScheduleConflictNotificationId(
+  applicationId: string, generation: number
+): string {
+  return agScheduleConflictNotificationId(applicationId, generation);
+}
+
+/**
  * [R7-APPLICATION-LIFECYCLE.1E §14·§16] **호출자의 transaction 안에서** 쓰는
  * canonical writer.
  *
  *   `srvPersistNotificationWithId` 는 자기 transaction 을 연다. 그래서 이미
  *   transaction 안에 있는 writer — 좌석 계약의 쓰기 단계처럼 — 는 그것을 쓸 수
- *   없다. 그렇다고 그 자리에서 `collection("notifications")` 를 직접 쓰면
- *   알림 writer 가 다시 흩어진다. 그래서 같은 의미를 동기 버전으로 둔다.
+ *   없다. 그렇다고 그 자리에서 알림 subcollection 을 직접 쓰면 알림 writer 가
+ *   다시 흩어진다. 그래서 같은 의미를 동기 버전으로 둔다.
  *
  *   **barrier 는 호출자의 책임이다.** transaction 은 쓰기 뒤의 읽기를 허용하지
  *   않으므로 여기서 tombstone 을 읽을 수 없다. 호출자는 **읽기 구간에서**
