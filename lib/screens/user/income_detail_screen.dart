@@ -12,6 +12,7 @@ import '../../utils/calendar_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/common/viewport_fill_surface.dart';
 import '../../widgets/section_header.dart';
 import 'wage_detail_screen.dart';
 
@@ -517,7 +518,12 @@ class _IncomeDetailScreenState extends State<IncomeDetailScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: _loadAll,
-        child: SingleChildScrollView(
+        // [BOTTOM-SURFACE-FILL] 이 화면은 전폭 흰 섹션 + 명시적 회색
+        //   구분선 구성이다. 내용이 짧으면(특히 빈 상태) 흰 면이 중간에서
+        //   끊기고 그 아래 회색이 드러나, 탭바까지 "무언가 들어올 자리"처럼
+        //   보였다. 면을 뷰포트 끝까지 잇는다 — 내용이 없다는 말과 자리가
+        //   비어 있다는 말은 다르다. 내용이 길면 영향이 없다.
+        child: ViewportFillSurface(
           physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics()),
           child: Column(

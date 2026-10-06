@@ -7,6 +7,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/transfer_export_plan.dart';
+import '../../widgets/common/viewport_fill_surface.dart';
 import '../common/document_management_screen.dart';
 
 /// 급여 상세 화면
@@ -174,7 +175,12 @@ class WageDetailScreen extends StatelessWidget {
           child: Container(height: 1, color: AppColors.borderLight),
         ),
       ),
-      body: SingleChildScrollView(
+      // [BOTTOM-SURFACE-FILL] 수입 현황과 같은 구성이다 — 전폭 흰 섹션 +
+      //   8px 회색 구분선. 근태가 없는 짧은 급여 상세에서는 360x800 기준
+      //   297.7px 가 회색으로 남아 "여기에 뭔가 더 있어야 한다"처럼 읽혔다.
+      //   같은 흐름(수입 → 급여 상세)에서 한쪽만 고치면 면이 끊기는 화면과
+      //   이어지는 화면이 섞인다.
+      body: ViewportFillSurface(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
