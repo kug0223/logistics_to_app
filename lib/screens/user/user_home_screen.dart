@@ -1720,63 +1720,90 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 제목 + 배지 영역
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Text('언제 일하고 싶으세요?',
-                    style: AppTextStyles.heroTitle()),
-              ),
-              // 날짜 더보기 — 캘린더 열어 현재 7일 범위 밖 날짜 선택 가능
-              GestureDetector(
-                onTap: () => _showDatePickerSheet(context, s),
-                child: Padding(
-                  padding: EdgeInsets.only(left: 8 * s),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text('날짜 더보기',
+          // [DATE-HERO-ONE-LINE] 제목은 **카드 전폭**을 쓴다.
+          //
+          //   예전에는 제목과 `날짜 더보기` 가 같은 Row 에 있었다. 더보기는
+          //   고정 폭(텍스트 57.9 + 아이콘 16s + 간격 8s ≈ 79.5px)이라 제목이
+          //   쓸 수 있는 폭을 그만큼 깎았다. 실측(번들 NotoSansKR):
+          //
+          //     제목 필요 폭 @24sp w700 = 216.0px
+          //     320dp(s=.85) 가용 180.9 → **35.1px 부족 → 2줄**
+          //     360dp(s=.90) 가용 216.3 → 여유 **0.3px** (사실상 0)
+          //     390dp(s=.90) 가용 246.3 → 여유 30.3
+          //
+          //   360dp 의 여유 0.3px 이 문제의 핵심이다. 기기 기본 한글 폰트가
+          //   번들본과 조금만 달라도, 시스템 글자 배율이 1.0 을 조금만 넘어도
+          //   줄이 꺾인다. **글자를 줄여서 맞추지 않고** 제목에서 고정 폭
+          //   형제를 치웠다 — 그러면 가용 폭이 259.2(320dp)~340.0(411dp) 이
+          //   되어 네 대표 폭 **전부 한 줄**이다(여유 43~124px).
+          //
+          //   더보기는 7일 스트립 밖 날짜를 고르는 입구다. 부제목
+          //   `일할 날짜를 선택해보세요.` 가 바로 그 안내이므로 같은 줄에
+          //   두는 것이 위계상 더 맞다.
+          Text('언제 일하고 싶으세요?', style: AppTextStyles.heroTitle()),
+          SizedBox(height: 3 * s),
+          // 부제목 + 범례(확정 근무 있을 때만) + 날짜 더보기
+          //
+          //   세 조각이 한 줄에 다 들어가지 않는 폭(≤360dp에서 범례까지 있는
+          //   경우)에서는 **다음 줄로 내려간다**. 자르거나 줄이지 않는다.
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8 * s,
+              runSpacing: 4 * s,
+              children: [
+                Text('일할 날짜를 선택해보세요.',
+                    style: AppTextStyles.heroDescription()),
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (hasConfirmedInStrip) ...[
+                    Container(
+                      width: 5 * s,
+                      height: 5 * s,
+                      decoration: const BoxDecoration(
+                        color: AppColors.successDark,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    SizedBox(width: 4 * s),
+                    // 큰 배율에서 범례+입구가 한 줄을 넘으면 범례 문구가
+                    //   먼저 흐른다 — 입구(터치 대상)는 온전히 남는다.
+                    Flexible(
+                      child: Text(
+                        '확정 근무',
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.infoDark,
-                        )),
-                    Icon(Icons.chevron_right_rounded,
-                        size: 16 * s, color: AppColors.infoDark),
-                  ]),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 3 * s),
-          // 부제목 + 범례 (확정 근무가 있을 때만 범례 표시)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Text('일할 날짜를 선택해보세요.',
-                    style: AppTextStyles.heroDescription()),
-              ),
-              if (hasConfirmedInStrip)
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  Container(
-                    width: 5 * s,
-                    height: 5 * s,
-                    decoration: const BoxDecoration(
-                      color: AppColors.successDark,
-                      shape: BoxShape.circle,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
                     ),
-                  ),
-                  SizedBox(width: 4 * s),
-                  Text(
-                    '확정 근무',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.textSecondary,
+                    SizedBox(width: 10 * s),
+                  ],
+                  // 날짜 더보기 — 캘린더 열어 현재 7일 범위 밖 날짜 선택 가능
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _showDatePickerSheet(context, s),
+                    child: Padding(
+                      // 가로는 Wrap spacing 이 맡는다 — 세로만 넓혀 터치 표적을
+                      //   키운다(폭을 다시 먹지 않는다).
+                      padding: EdgeInsets.symmetric(vertical: 4 * s),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('날짜 더보기',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.infoDark,
+                            )),
+                        Icon(Icons.chevron_right_rounded,
+                            size: 16 * s, color: AppColors.infoDark),
+                      ]),
                     ),
                   ),
                 ]),
-            ],
+              ],
+            ),
           ),
           SizedBox(height: 14 * s),
           // 날짜 스트립 — 캘린더 스타일 (구글 캘린더처럼 숫자만 원형 선택)
@@ -3697,30 +3724,65 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       color: AppColors.borderLight),
                   SizedBox(height: 8 * s),
                   // 급여 범위 + 추천사유(1개) + 화살표
+                  //
+                  // [RECRUITABLE-CARD-OVERFLOW] 이 행의 세 조각에 **flex 가
+                  //   하나도 없었다.** `Spacer` 는 남는 공간을 먹는 역할이라
+                  //   공간이 모자라면 0 으로 줄고 그 뒤로는 그대로 넘쳤다.
+                  //   실측(번들 NotoSansKR, 가용 = 폭 − 섹션 20s·2 − 카드
+                  //   12s·2 − 테두리 3 − 이미지 96s − 간격 10s):
+                  //
+                  //     가용   320dp 172.5 · 360dp 204.0 · 390dp 234.0 · 411dp 238.0
+                  //     시급 12,000원 107.7 · 일급 150,000원~ 128.0
+                  //     내 업무 경험과 일치 96.5 · 내 지역 일자리 71.7
+                  //
+                  //     360dp  시급 + 업무경험  = 237.5 → **33.5px 넘침**
+                  //     390dp  일급 + 업무경험  = 257.7 → **23.7px 넘침**
+                  //            (기기에서 본 `RIGHT OVERFLOWED BY 24 PIXELS`)
+                  //     411dp  시급 + 업무경험  = 241.2 → 3.2px 넘침
+                  //
+                  //   금액은 끝자리가 잘리면 **다른 금액으로 읽힌다** — 줄이지
+                  //   않는다. 추천 사유도 줄이면 뜻이 사라진다. 그래서 둘을
+                  //   `Wrap` 에 넣어 자리가 모자라면 **다음 줄로 내려가게** 한다.
+                  //   화살표는 바깥에 고정해 오른쪽 끝을 지킨다.
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      if (wageText.isNotEmpty)
-                        Text(
-                          wageText,
-                          style: AppTextStyles.pay(),
+                      Expanded(
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 6 * s,
+                          runSpacing: 4 * s,
+                          children: [
+                            if (wageText.isNotEmpty)
+                              Text(
+                                wageText,
+                                style: AppTextStyles.pay(),
+                              ),
+                            // 추천 사유 1개 (없으면 미표시)
+                            if (reasonLabel != null)
+                              Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(reasonIcon,
+                                    size: 12 * s, color: AppColors.infoDark),
+                                SizedBox(width: 3 * s),
+                                // 큰 배율에서는 이 칩 하나가 줄 폭을 넘을 수
+                                //   있다. 그때는 문구가 **다음 줄로 흐른다** —
+                                //   줄이거나 자르지 않는다.
+                                Flexible(
+                                  child: Text(
+                                    reasonLabel,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.infoDark,
+                                    ),
+                                  ),
+                                ),
+                              ]),
+                          ],
                         ),
-                      const Spacer(),
-                      // 추천 사유 1개 (없으면 미표시)
-                      if (reasonLabel != null) ...[
-                        Icon(reasonIcon,
-                            size: 12 * s, color: AppColors.infoDark),
-                        SizedBox(width: 3 * s),
-                        Text(
-                          reasonLabel,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.infoDark,
-                          ),
-                        ),
-                        SizedBox(width: 4 * s),
-                      ],
+                      ),
+                      SizedBox(width: 4 * s),
                       Icon(Icons.chevron_right_rounded,
                           size: 18 * s, color: AppColors.grey400),
                     ],
