@@ -77,71 +77,54 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   ];
 
   // ── 관리자 온보딩 5페이지 (기존 유지) ────────────────────────────
+  // ── 관리자 온보딩 3페이지 ─────────────────────────────────────────
+  //
+  // [R7-ONBOARDING.1] 예전에는 기능 5페이지였다 — 공고·계약서·출퇴근·급여·
+  //   리뷰를 차례로 광고했다. 처음 들어온 사람이 아직 쓸 수 없는 기능까지
+  //   먼저 소개했고, 정작 **이 제품이 무엇이고 지금 무엇을 해야 하는지**는
+  //   한 줄도 없었다.
+  //
+  //   첫 화면이 할 일은 셋이다.
+  //     1) 이 제품이 무엇을 맞춰 주는가
+  //     2) 지원과 확정이 왜 다른 말인가 — 이 앱의 규칙 대부분이 여기서 나온다
+  //     3) 그래서 첫 공고 전에 왜 준비가 필요한가
+  //
+  //   준비 상태 자체는 여기서 세지 않는다. 그건 홈의 canonical readiness 가
+  //   한다. 온보딩이 끝났다는 말은 "봤다" 이지 "준비됐다" 가 아니다.
   static const _adminPages = [
     _OnboardingPage(
-      icon: Icons.admin_panel_settings_rounded,
+      icon: Icons.calendar_month_rounded,
       color: AppColors.infoDark,
       bgColor: AppColors.infoBg,
-      tag: '알핏 관리자',
-      title: '채용부터 급여까지\n원스톱 관리',
-      description: '공고 등록 → 지원자 확정 → 계약서 → 출퇴근 → 급여까지\n모든 인력 관리를 하나의 앱에서.',
-      features: [
-        _Feature(Icons.flash_on_rounded, '빠른 공고 등록 & 공고 관리'),
-        _Feature(Icons.description_outlined, '전자 계약서 자동 발송'),
-        _Feature(Icons.account_balance_wallet_outlined, '급여 확정 & 송금 관리'),
-      ],
+      tag: '알핏',
+      title: '필요한 날,\n필요한 사람을 맞춥니다',
+      description: '사람이 필요한 날과 일하고 싶은 날을 맞춥니다.\n'
+          '확정된 근무는 계약·일정·근태·급여까지 이어집니다.',
+      features: [],
     ),
     _OnboardingPage(
-      icon: Icons.post_add_rounded,
+      icon: Icons.handshake_rounded,
       color: AppColors.purple,
       bgColor: AppColors.purpleBg,
-      tag: '공고 등록',
-      title: '공고 등록 3단계,\n지원자가 모여요',
-      description: '업종·날짜·시간·인원만 입력하고 공개하면\n지원자가 자동으로 모입니다.',
+      tag: '지원과 확정',
+      title: '지원은 관심,\n확정은 약속입니다',
+      description: '지원은 그 날 일하고 싶다는 관심 표현이에요.\n'
+          '확정하는 순간 약속이 되고 계약서가 만들어집니다.',
       features: [
-        _Feature(Icons.looks_one_rounded, '업종·날짜·시간·인원 설정'),
-        _Feature(Icons.looks_two_rounded, '공고 공개 → 지원자 수신'),
-        _Feature(Icons.looks_3_rounded, '지원자 확정 → 계약서 발송'),
+        _Feature(Icons.waving_hand_outlined, '지원 — 아직 약속이 아니에요'),
+        _Feature(Icons.verified_outlined, '확정 — 계약·일정·급여로 이어져요'),
       ],
     ),
     _OnboardingPage(
-      icon: Icons.people_alt_rounded,
-      color: AppColors.amber,
-      bgColor: AppColors.warningBg,
-      tag: '지원자 & 계약서',
-      title: '지원자 확정하면\n계약서 자동 발송',
-      description: '원하는 지원자를 확정하면 전자 계약서가\n자동으로 발송되어 앱에서 서명을 받아요.',
-      features: [
-        _Feature(Icons.how_to_reg_rounded, '지원자 확정 한 번에 처리'),
-        _Feature(Icons.description_outlined, '전자 계약서 자동 발송'),
-        _Feature(Icons.verified_outlined, '서명 완료 후 계약 확정'),
-      ],
-    ),
-    _OnboardingPage(
-      icon: Icons.how_to_reg_rounded,
-      color: AppColors.infoDark,
-      bgColor: AppColors.infoBg,
-      tag: '당일 출퇴근 관리',
-      title: '당일 출퇴근 현황을\n실시간으로 확인',
-      description: '출퇴근 현황을 한눈에 보고 시간 조정·마감을\n손쉽게 처리할 수 있어요.',
-      features: [
-        _Feature(Icons.fact_check_rounded, '실시간 출퇴근 현황 모니터링'),
-        _Feature(Icons.tune_rounded, '시간 조정 & 원본 기록 보존'),
-        _Feature(Icons.picture_as_pdf_outlined, '당일명단 PDF 내보내기'),
-      ],
-    ),
-    _OnboardingPage(
-      icon: Icons.payments_outlined,
+      icon: Icons.checklist_rounded,
       color: AppColors.successDark,
       bgColor: AppColors.successBg,
-      tag: '급여 & 리뷰',
-      title: '급여 확정부터\n송금 관리까지',
-      description: '공제 설정 후 급여를 확정하면 임금명세서가\n자동으로 공개되고, 엑셀로 일괄 이체해요.',
-      features: [
-        _Feature(Icons.receipt_long_outlined, '급여 확정 & 임금명세서 공개'),
-        _Feature(Icons.download_outlined, '은행 이체용 엑셀 내보내기'),
-        _Feature(Icons.star_rate_rounded, '월간 리뷰로 인재 평가'),
-      ],
+      tag: '첫 공고',
+      title: '첫 공고 전에\n기본 준비가 필요해요',
+      description: '확정하면 바로 계약서가 만들어지기 때문에\n'
+          '사업장·업무·계약서 양식·사업주 인감이 먼저 있어야 합니다.\n'
+          '무엇이 남았는지는 홈에서 알려드려요.',
+      features: [],
     ),
   ];
 
@@ -263,7 +246,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     } else {
       child = _buildAdminIllust(context, _pages[index]);
     }
-    return ScaleTransition(scale: _scaleAnim, child: child);
+    // [R7-ONBOARDING.1] 일러스트가 상자를 넘지 않게 한다.
+    //
+    //   지원자 일러스트는 달력·흐름도처럼 글자를 품은 구성이라 배율을 키우면
+    //   그만큼 커진다. 320dp × 2.0 에서 554px 넘쳤다. 글자를 줄이거나 눌러
+    //   담지 않는다 — 넘치는 만큼 **세로로 스크롤**해서 보게 한다.
+    //   (PageView 는 가로로 넘기므로 세로 스크롤과 부딪히지 않는다.)
+    return ScaleTransition(
+      scale: _scaleAnim,
+      child: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        child: child,
+      ),
+    );
   }
 
   // ── 관리자 일러스트 (기존 아이콘 원형 방식) ──────────────────────
@@ -865,6 +860,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [R7-ONBOARDING.1] 본문은 스크롤하고 CTA 는 고정한다.
+          //
+          //   예전에는 제목·설명·기능 목록 뒤에 `Spacer()` 를 두고 그 아래에
+          //   인디케이터와 버튼을 붙였다. 높이가 고정이라 글자 배율을 키우면
+          //   본문이 상자를 넘쳤고(320dp × 2.0), 버튼이 화면 밖으로 밀렸다.
+          //   글을 줄이는 대신 **읽을 자리를 스크롤로 돌려준다** — 시작하기
+          //   버튼은 어떤 배율에서도 제자리에 있어야 한다.
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
           // 제목
           Text(
             page.title,
@@ -917,8 +924,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   ],
                 ),
               )),
+                ],
+              ),
+            ),
+          ),
 
-          const Spacer(),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
           // 페이지 인디케이터 + CTA 버튼
           Row(

@@ -308,7 +308,17 @@ class _JobsRootScreenState extends State<JobsRootScreen>
                 child: unknown
                     ? _JobsReadinessUnknownView(snapshot: snap, scale: s)
                     : (setupRequired
-                        ? _JobsSetupRequiredView(readiness: r, scale: s)
+                        ? _JobsSetupRequiredView(
+                            readiness: r,
+                            scale: s,
+                            // [R7-ONBOARDING.1] 하위관리자는 홈으로 보내지
+                            //   않는다 — 홈에는 그 체크리스트가 없다.
+                            isSubAdmin: ctx
+                                .read<UserProvider>()
+                                .currentUser
+                                ?.isSubAdmin ==
+                                true,
+                          )
                         : WorkforceListView(targetToId: _targetToId)),
               ),
                 ],
@@ -582,10 +592,25 @@ class _JobsCreateButton extends StatelessWidget {
 ///   나열하지 않는다** — 무엇이 남았는지 짧게 말하고 Home 으로 보낸다.
 ///   Home 과 별도의 task owner 가 되면 두 곳이 서로 다른 개수를 말하게 된다.
 class _JobsSetupRequiredView extends StatelessWidget {
-  const _JobsSetupRequiredView({required this.readiness, required this.scale});
+  const _JobsSetupRequiredView({
+    required this.readiness,
+    required this.scale,
+    this.isSubAdmin = false,
+  });
 
   final FirstPostingReadiness? readiness;
   final double scale;
+
+  /// [R7-ONBOARDING.1] 하위관리자인가.
+  ///
+  ///   남은 준비(사업장 승인·등록증·계약서 양식·사업주 인감)는 **사업장
+  ///   소유자만** 할 수 있다. 그래서 홈은 하위관리자에게 그 체크리스트를
+  ///   아예 그리지 않는다. 그런데 이 화면은 "준비 단계 보기 → 홈" 으로
+  ///   보내고 있었다. 가 보면 아무것도 없다 — 막다른 길이다.
+  ///
+  ///   하위관리자에게 필요한 말은 **무엇이 몇 개 남았는지**가 아니라
+  ///   **누가 해결해야 하는지**다.
+  final bool isSubAdmin;
 
   @override
   Widget build(BuildContext context) {
@@ -623,9 +648,14 @@ class _JobsSetupRequiredView extends StatelessWidget {
             ),
             SizedBox(height: 8 * s),
             Text(
-              remaining > 0
-                  ? '$remaining가지 준비가 남아 있습니다.\n준비를 마치면 공고를 등록할 수 있어요.'
-                  : '준비 상태를 확인해 주세요.',
+              isSubAdmin
+                  // 남은 항목 개수를 말하지 않는다 — 셀 수 있어도 손댈 수
+                  // 없는 일이라 개수는 압박만 된다. 누가 해결하는지를 말한다.
+                  ? '사업장 준비가 끝나지 않아 공고를 등록할 수 없어요.\n'
+                      '사업장 관리자에게 확인해 주세요.'
+                  : (remaining > 0
+                      ? '$remaining가지 준비가 남아 있습니다.\n준비를 마치면 공고를 등록할 수 있어요.'
+                      : '준비 상태를 확인해 주세요.'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -633,21 +663,29 @@ class _JobsSetupRequiredView extends StatelessWidget {
                 color: AppColors.textSecondary,
               ),
             ),
-            SizedBox(height: 20 * s),
-            // 목적지는 Home — readiness 카드가 첫 화면 상단에 있으므로
-            // 별도 deep-link 대상을 새로 만들지 않는다(§17).
-            FilledButton(
-              onPressed: () =>
-                  AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.info,
-                padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 12 * s),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
+            // [R7-ONBOARDING.1] 하위관리자에게는 버튼을 주지 않는다.
+            //
+            //   목적지가 홈인데 홈에는 그 체크리스트가 없다(소유자 전용
+            //   설정이라 일부러 숨긴다). 누를 수 있는 버튼이 아무것도 없는
+            //   화면으로 보내는 것보다, 버튼을 두지 않는 편이 정직하다.
+            if (!isSubAdmin) ...[
+              SizedBox(height: 20 * s),
+              // 목적지는 Home — readiness 카드가 첫 화면 상단에 있으므로
+              // 별도 deep-link 대상을 새로 만들지 않는다(§17).
+              FilledButton(
+                onPressed: () =>
+                    AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.info,
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 22 * s, vertical: 12 * s),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text('준비 단계 보기',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               ),
-              child: const Text('준비 단계 보기',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-            ),
+            ],
           ],
         ),
       ),

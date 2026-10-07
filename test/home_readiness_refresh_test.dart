@@ -229,9 +229,12 @@ void main() {
       final b = src.indexOf('unawaited(_loadPostingReadiness());');
       expect(a, greaterThan(-1));
       expect(b, greaterThan(a));
-      // 투어 판정이 그 사이에 끼지 않는다 — 데이터가 투어를 기다리지 않는다.
-      final tour = src.indexOf('_reads.tourCompleted()');
-      expect(tour, greaterThan(b));
+      // [R7-ONBOARDING.1] 투어 판정 자체가 없다.
+      //   예전에는 "투어가 데이터 뒤에 오는가" 를 지켰다. 이제 자동 투어를
+      //   열지 않으므로 끼어들 것이 없다 — 더 강한 계약이다.
+      expect(src.contains('_reads.tourCompleted()'), isFalse,
+          reason: '자동 투어 판정이 돌아왔다');
+      expect(src.contains('pushTourScreen'), isFalse);
     });
   });
 

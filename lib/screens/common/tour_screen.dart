@@ -147,6 +147,7 @@ class _TourScreenState extends State<TourScreen>
   }
 
   Widget _buildIllustration(BuildContext context, TourPage page) {
+    // 배율을 키우면 일러스트도 커진다 — 글자를 눌러 담지 않고 스크롤한다.
     return ScaleTransition(
       scale: _scaleAnim,
       child: Container(
@@ -215,6 +216,13 @@ class _TourScreenState extends State<TourScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // [R7-ONBOARDING.1] 온보딩과 같은 수정 — 본문은 스크롤, 버튼은 고정.
+          //   고정 높이(Spacer)라 배율을 키우면 넘쳤다(320dp x 1.3 에서 25px).
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
           // 제목
           Text(
             page.title,
@@ -262,7 +270,12 @@ class _TourScreenState extends State<TourScreen>
                 ),
               )),
 
-          const Spacer(),
+                ],
+              ),
+            ),
+          ),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
           // 인디케이터 + 버튼
           Row(

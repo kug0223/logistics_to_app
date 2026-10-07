@@ -150,7 +150,10 @@ void main() {
     test('JOBS-VIEWER-03/04 준비 분기는 그대로다', () {
       final s = _code(_jobs());
       expect(s.contains('final setupRequired = r != null && !r.allReady;'), isTrue);
-      expect(s.contains('_JobsSetupRequiredView(readiness: r, scale: s)'), isTrue);
+      // [R7-ONBOARDING.1] 하위관리자 분기가 더해지면서 인자가 늘었다.
+      //   지켜야 하는 것은 **분기 구조**이지 인자 철자가 아니다.
+      expect(s.contains('_JobsSetupRequiredView('), isTrue);
+      expect(s.contains('readiness: r'), isTrue);
       expect(s.contains('WorkforceListView(targetToId: _targetToId)'), isTrue);
     });
 

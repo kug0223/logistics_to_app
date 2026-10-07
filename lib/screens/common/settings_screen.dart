@@ -51,7 +51,6 @@ import '../../models/core/legal_terms_model.dart';
 import '../super_admin/help_faq_management_screen.dart';
 
 // Tour
-import '../../utils/tour_helper.dart';
 import 'tour_screen.dart';
 
 // Services
@@ -678,13 +677,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: Icons.tour_outlined,
                   iconColor: AppColors.purpleDark,
                   title: '가이드 다시 보기',
+                  // [R7-ONBOARDING.1] 두 가지를 고쳤다.
+                  //
+                  //   ① `TourHelper.resetAll()` 이 **모든 역할**의 투어 기록을
+                  //      지웠다. 관리자가 가이드를 한 번 보면 지원자 홈의
+                  //      자동 투어까지 되살아났다(하위관리자는 모드 전환만으로
+                  //      그 상태를 만났다). 보는 것과 기록을 지우는 것은
+                  //      다른 일이다 — 이제 아무 플래그도 건드리지 않는다.
+                  //
+                  //   ② 지우고 나서 완료 표시를 하지 않아, 다음 홈 진입에서
+                  //      투어가 **자동으로 다시** 떴다. 자동 노출 자체를
+                  //      없앴으므로 그 경로도 사라졌다.
                   onTap: () async {
                     final role =
                         context.read<UserProvider>().currentUser?.role.name ??
                             'USER';
-                    await TourHelper.resetAll();
-                    if (!mounted) return;
-                    // ignore: use_build_context_synchronously
                     await pushTourScreen(context, role: role);
                   },
                 ),

@@ -11,8 +11,6 @@ import '../../providers/user_provider.dart';
 // Utils
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../utils/tour_helper.dart';
-import '../common/tour_screen.dart';
 
 // Services
 import '../../controllers/workforce_controller.dart';
@@ -243,18 +241,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         unawaited(_loadTodayAttendance());   // [PHASE-2C] 오늘 출근 현황
         unawaited(_loadPostingReadiness());   // [5D.2] compact setup checklist
       }
-      try {
-        final tourDone = await _reads.tourCompleted();
-        // 화면이 사라진 뒤 도착한 결과가 투어를 열지 않는다.
-        if (!tourDone && mounted) {
-          await pushTourScreen(context, role: 'BUSINESS_ADMIN');
-          if (mounted) await TourHelper.markCompleted(TourHelper.adminHome);
-        }
-      } catch (e) {
-        // 투어 판정 실패는 데이터와 무관하다. 완료로 저장하지도, 지우지도 않는다 —
-        // 다음 진입에서 다시 판정한다.
-        debugPrint('⚠️ 투어 완료 여부 확인 실패(데이터 로드에 영향 없음): $e');
-      }
+      // [R7-ONBOARDING.1] 자동 기능 투어를 띄우지 않는다.
+      //
+      //   이 투어는 가입 직후 보는 온보딩과 **같은 자산**이었다(관리자
+      //   5페이지의 제목이 글자까지 같았다). 그래서 온보딩을 끝내면
+      //   투어 플래그까지 완료로 찍어 중복을 막고 있었는데, 그건 한쪽이
+      //   불필요하다는 뜻이다.
+      //
+      //   지금 관리자가 홈에서 알아야 하는 것은 기능 목록이 아니라
+      //   **다음에 할 일**이고, 그건 바로 아래 준비 체크리스트가 말한다.
+      //   기능 설명은 설정의 '가이드 다시 보기' 에서 원할 때 본다.
+      //
+      //   TourScreen 자체는 지우지 않았다 — 자동으로 밀어 넣지 않을 뿐이다.
     });
   }
 

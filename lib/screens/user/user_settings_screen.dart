@@ -18,7 +18,7 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../common/help_screen.dart';
-import '../common/onboarding_screen.dart';
+import '../common/tour_screen.dart';
 
 /// 사용자 전용 설정 화면
 ///
@@ -347,21 +347,19 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
               icon: Icons.tour_outlined,
               iconColor: AppColors.purpleDark,
               label: '가이드 다시 보기',
+              // [R7-ONBOARDING.1] 같은 메뉴 이름이 두 화면을 열고 있었다.
+              //
+              //   관리자 경로(공용 설정)는 기능 투어를, 이 경로는 가입 때 본
+              //   소개(OnboardingScreen)를 열었다. 같은 사용자가 계약 서명
+              //   화면을 거쳐 공용 설정에 닿으면 두 가지를 다 만났다.
+              //
+              //   '가이드' 는 기능 사용법이다. 제품 소개는 가입 때 한 번
+              //   보는 것이고 다시 보기의 대상이 아니다 — 두 경로를 기능
+              //   가이드 하나로 모은다.
               onTap: () async {
                 final role =
                     context.read<UserProvider>().currentUser?.role.name ?? 'USER';
-                if (!mounted) return;
-                // ignore: use_build_context_synchronously
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    fullscreenDialog: true,
-                    builder: (_) => OnboardingScreen(
-                      role: role,
-                      onComplete: () => Navigator.pop(context),
-                    ),
-                  ),
-                );
+                await pushTourScreen(context, role: role);
               },
             ),
           ]),

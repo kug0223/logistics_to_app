@@ -351,37 +351,32 @@ void main() {
       expect(verified.toLowerCase().contains('tour'), isFalse);
     });
 
-    test('initState 는 사업장 → loader → 투어 순서이고 투어와 함께 기다리지 않는다', () {
+    test('initState 는 사업장 → loader 순서다', () {
       final init = _codeOf(_bodyOf(home, 'void initState()'));
       final bizAt = init.indexOf('await _loadApprovedBusinessStatus();');
       final loadersAt = init.indexOf('_loadCanonicalSummary()');
-      final tourAt = init.indexOf('_reads.tourCompleted()');
       expect(bizAt, isNot(-1));
       expect(bizAt, lessThan(loadersAt),
           reason: '_loadPostingReadiness 가 _businesses 를 읽으므로 이 순서가 필요하다');
-      expect(loadersAt, lessThan(tourAt),
-          reason: '투어 판정이 늦거나 던져도 수치 조회는 이미 시작돼 있어야 한다');
       expect(init.contains('Future.wait(['), isFalse,
-          reason: '투어를 데이터와 같은 wait 에 묶으면 한쪽이 멈출 때 둘 다 멈춘다');
+          reason: '한쪽이 멈추면 둘 다 멈춘다');
     });
 
-    test('투어 판정 실패는 삼키고 완료로 저장하지 않는다', () {
+    // [R7-ONBOARDING.1] 자동 기능 투어를 제거했다.
+    //
+    //   그 투어는 가입 직후 보는 온보딩과 같은 자산이었다(관리자 5페이지의
+    //   제목이 글자까지 같았다). 그래서 "투어가 데이터 조회를 지연시키지
+    //   않는가" 를 지키던 셀들이 뜻을 잃었다. 지연을 걱정하는 대신 **열지
+    //   않는다**를 지킨다 — 더 강한 계약이다.
+    test('홈이 자동으로 기능 투어를 열지 않는다', () {
       final init = _codeOf(_bodyOf(home, 'void initState()'));
-      // 실패 경로에 markCompleted 가 없다 — 완료 저장은 투어를 실제로 끝낸 뒤에만.
-      final pushAt = init.indexOf('pushTourScreen');
-      final markAt = init.indexOf('markCompleted');
-      expect(pushAt, isNot(-1));
-      expect(markAt, isNot(-1));
-      expect(pushAt, lessThan(markAt));
-      expect(init.contains('catch'), isTrue);
-      // 투어 기록을 지우는 경로를 만들지 않았다.
-      expect(home.contains('TourHelper.reset'), isFalse);
-      expect(home.contains('markCompleted(TourHelper.adminHome)'), isTrue);
-    });
-
-    test('늦게 도착한 투어 결과는 mounted 뒤에만 화면을 연다', () {
-      final init = _codeOf(_bodyOf(home, 'void initState()'));
-      expect(init.contains('if (!tourDone && mounted)'), isTrue);
+      expect(init.contains('pushTourScreen'), isFalse,
+          reason: '자동 투어가 돌아왔다');
+      expect(init.contains('tourCompleted'), isFalse);
+      expect(home.contains('markCompleted'), isFalse,
+          reason: '열지 않으면서 완료로 저장할 이유가 없다');
+      expect(home.contains('TourHelper.reset'), isFalse,
+          reason: '투어 기록을 지우는 경로를 만들지 않는다');
     });
   });
 }
