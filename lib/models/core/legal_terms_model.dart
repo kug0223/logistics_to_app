@@ -22,6 +22,10 @@ class LegalTermsItem {
   /// 버전 문자열 (예: '2024.01')
   final String version;
 
+  /// [R7-LEGAL.1B] 이 항목이 가리키는 **발행본** id. 발행 경로를 거친
+  /// 항목에만 있다. 동의 증거가 참조하는 신원이다.
+  final String? revisionId;
+
   /// 마지막 수정일
   final DateTime? updatedAt;
 
@@ -35,6 +39,7 @@ class LegalTermsItem {
     required this.isRequired,
     this.isActive = true,
     this.version = '1.0',
+    this.revisionId,
     this.updatedAt,
     this.order = 0,
   });
@@ -47,6 +52,9 @@ class LegalTermsItem {
       isRequired: map['isRequired'] as bool? ?? true,
       isActive: map['isActive'] as bool? ?? true,
       version: map['version'] as String? ?? '1.0',
+      revisionId: (map['revisionId'] as String?)?.isNotEmpty == true
+          ? map['revisionId'] as String
+          : null,
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal(),
       order: (map['order'] as num?)?.toInt() ?? 0,
     );
@@ -59,6 +67,7 @@ class LegalTermsItem {
     'isRequired': isRequired,
     'isActive': isActive,
     'version': version,
+    if (revisionId != null) 'revisionId': revisionId,
     'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
     'order': order,
   };
@@ -69,6 +78,7 @@ class LegalTermsItem {
     bool? isRequired,
     bool? isActive,
     String? version,
+    String? revisionId,
     DateTime? updatedAt,
     int? order,
   }) => LegalTermsItem(
@@ -78,6 +88,7 @@ class LegalTermsItem {
     isRequired: isRequired ?? this.isRequired,
     isActive: isActive ?? this.isActive,
     version: version ?? this.version,
+    revisionId: revisionId ?? this.revisionId,
     updatedAt: updatedAt ?? this.updatedAt,
     order: order ?? this.order,
   );

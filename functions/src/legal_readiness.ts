@@ -19,8 +19,27 @@
 //                              증명할 수 없다. 사용자 잘못이 아니다.
 //
 //   둘을 같은 문장으로 말하면 안 되고(§14), 같은 강도로 막아도 안 된다.
-//   판별 기준은 **발행본 문서가 실제로 있는가** 다. 1B 이전 항목은
-//   `legal_revisions` 에 아무 문서도 없다.
+//
+//   ── 판별 기준을 고친 이유 (R7-LEGAL.DEPLOY §12) ────────────────
+//
+//   처음에는 **발행본 문서가 있는가** 로 갈랐다. 1B 이전 항목은
+//   `legal_revisions` 에 문서가 없으니 구별된다고 봤다.
+//
+//   그 기준은 **최초 발행 전에만** 맞았다. DEV 에서 활성 5종을 발행하자마자
+//   기존 사용자 8명이 전원 `RECONSENT_REQUIRED` 로 뒤집혔고 지원이 막혔다.
+//   당연하다 — 발행본이 생겼으니 "발행본이 있다" 는 조건이 모두 참이 된다.
+//   우리가 약관을 바꾼 적이 없는데 사용자에게 "변경되었습니다" 라고 말하고
+//   길을 막은 것이다.
+//
+//   사건의 차이는 **사용자 기록 쪽**에 있다.
+//
+//     기록에 revisionId 가 있고 지금 판과 다르다  → 다른 판에 동의했다(새 판)
+//     기록에 revisionId 가 없다                   → 1B 이전 기록(증명 불가)
+//     기록이 아예 없다                            → 이 사람이 1B 이후 사람인가로 가른다
+//
+//   마지막 갈래가 필요한 이유: 새 필수 항목이 추가되면 1B 이후 사용자에게는
+//   기록이 없는 것이 정상적인 "새 항목" 이지만, 1B 이전 사용자에게는 그냥
+//   증명할 수 없는 상태다. 둘을 같게 다루면 또 전원을 막게 된다.
 //
 //   순수 모듈이다(Firestore·admin SDK 없음).
 
@@ -69,6 +88,14 @@ export function evaluateLegalReadiness(input: {
   const legacyUnknown: string[] = [];
   const optionalUnanswered: string[] = [];
 
+  /** 발행본을 가리키는 기록인가 — 무엇에 동의했는지 증명할 수 있는가. */
+  const identified = (r: {revisionId?: unknown} | undefined) =>
+    typeof r?.revisionId === "string" && r.revisionId !== "";
+
+  // 이 사람이 1B 이후에 동의한 적이 있는가. 하나라도 있으면 기록 없는
+  // 항목은 "새로 생긴 항목" 이고, 하나도 없으면 그냥 옛 사용자다.
+  const postIdentityUser = Object.values(consent).some(identified);
+
   for (const item of activeItems) {
     if (!item.isActive) continue;
     const want = item.revisionId ?? legalRevisionId(item.id, item.version);
@@ -78,9 +105,19 @@ export function evaluateLegalReadiness(input: {
 
     if (item.isRequired) {
       if (accepted) continue;
-      // 발행본이 실재하면 "새 판" 이고, 없으면 "옛 기록" 이다.
-      if (publishedRevisionIds.has(want)) reconsentRequired.push(item.id);
-      else legacyUnknown.push(item.id);
+
+      // 다른 판에 동의한 기록이 있다 — 우리가 판을 바꿨다는 뜻이다.
+      if (identified(rec)) { reconsentRequired.push(item.id); continue; }
+
+      // 기록은 있는데 어떤 판인지 모른다 — 1B 이전 기록이다.
+      if (rec !== undefined) { legacyUnknown.push(item.id); continue; }
+
+      // 기록 자체가 없다. 1B 이후 사용자에게만 "새 항목" 으로 센다.
+      if (postIdentityUser && publishedRevisionIds.has(want)) {
+        reconsentRequired.push(item.id);
+      } else {
+        legacyUnknown.push(item.id);
+      }
       continue;
     }
 

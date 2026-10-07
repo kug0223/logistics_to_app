@@ -290,6 +290,51 @@ void main() {
         reason: '거부했던 선택 항목이 다시 켜지면 안 된다');
   });
 
+  // [R7-LEGAL.DEPLOY §14] DEV 최초 발행 직후 실제로 터진 경우.
+  //
+  //   발행 전에는 항목에 발행본 id 가 없어서 version 만 맞으면 "이미 받아 둔
+  //   동의" 로 잡혔다. 발행 뒤에도 같은 규칙이면, 1B 이전 기록을 가진
+  //   사용자가 재동의 화면에서 체크가 잠긴 채 payload 가 비어 아무것도
+  //   보내지 못한다 — 할 일이 영원히 남는다.
+  test('A5-2 발행본이 생긴 뒤, 발행본 id 없는 옛 기록은 다시 받아야 한다', () {
+    final item = _item('service_terms', '서비스 이용약관', true)
+        .copyWith(revisionId: 'service_terms__$_v');
+    final stored = StoredConsent.parseMap({
+      // 1B 이전 기록 — version 은 같지만 어떤 글인지 모른다.
+      'service_terms': {'agreed': true, 'version': _v},
+    });
+
+    expect(TermsConsentPlan.isLocked(item, stored), isFalse,
+        reason: '증명할 수 없는 기록으로 체크를 잠그면 안 된다');
+    expect(
+        TermsConsentPlan.itemsNeedingChoice(
+                activeItems: [item], stored: stored)
+            .map((i) => i.id),
+        contains('service_terms'));
+    final payload = TermsConsentPlan.buildPayload(
+        activeItems: [item], stored: stored,
+        choices: {'service_terms': true});
+    expect(payload.containsKey('service_terms'), isTrue,
+        reason: '보낼 것이 없으면 재동의가 끝나지 않는다');
+  });
+
+  test('A5-3 같은 발행본을 가리키는 기록은 다시 보내지 않는다', () {
+    final item = _item('service_terms', '서비스 이용약관', true)
+        .copyWith(revisionId: 'service_terms__$_v');
+    final stored = StoredConsent.parseMap({
+      'service_terms': {
+        'agreed': true, 'version': _v, 'revisionId': 'service_terms__$_v',
+      },
+    });
+    expect(TermsConsentPlan.isLocked(item, stored), isTrue);
+    expect(
+        TermsConsentPlan.buildPayload(
+            activeItems: [item], stored: stored,
+            choices: {'service_terms': true}),
+        isEmpty,
+        reason: '같은 값을 다시 보내면 최초 동의 시각이 밀린다');
+  });
+
   test('A3-1 모양이 깨진 기록은 "동의함"으로 읽지 않는다', () {
     final stored = StoredConsent.parseMap({
       'service_terms': {'agreed': 'true', 'version': _v}, // bool 아님

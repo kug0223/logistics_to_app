@@ -23,10 +23,20 @@ import '../models/core/legal_terms_model.dart';
 
 /// `users/{uid}.termsConsent.{id}` 한 건.
 class StoredConsent {
-  const StoredConsent({required this.agreed, required this.version});
+  const StoredConsent({
+    required this.agreed,
+    required this.version,
+    this.revisionId,
+  });
 
   final bool agreed;
   final String version;
+
+  /// [R7-LEGAL.DEPLOY] 어떤 **발행본**에 대한 선택이었나.
+  ///
+  /// 1B 이전 기록에는 없다. 없으면 그 기록이 어떤 글을 가리키는지 증명할
+  /// 수 없다 — 그래서 "이미 받아 둔 동의" 로 세지 않는다.
+  final String? revisionId;
 
   /// Firestore 맵을 읽는다. 모양이 다르면 **없는 것으로 친다** —
   /// 읽지 못한 것을 동의로 해석하지 않는다.
@@ -38,9 +48,12 @@ class StoredConsent {
       final agreed = value['agreed'];
       if (agreed is! bool) return;
       final version = value['version'];
+      final revisionId = value['revisionId'];
       out[key] = StoredConsent(
         agreed: agreed,
         version: version is String ? version : '',
+        revisionId:
+            revisionId is String && revisionId.isNotEmpty ? revisionId : null,
       );
     });
     return out;
@@ -57,7 +70,17 @@ class TermsConsentPlan {
   static StoredConsent? recordFor(
       LegalTermsItem item, Map<String, StoredConsent> stored) {
     final s = stored[item.id];
-    return (s != null && s.version == item.version) ? s : null;
+    if (s == null || s.version != item.version) return null;
+    // [R7-LEGAL.DEPLOY] 항목이 발행본을 가리키면 기록도 **같은 발행본**을
+    //   가리켜야 한다.
+    //
+    //   version 만 비교하던 때, 1B 이전 기록(발행본 id 없음)이 같은 version
+    //   이라는 이유로 "이미 받아 둔 동의" 로 잡혔다. 그러면 화면이 체크를
+    //   잠그고 payload 는 비어서, 재동의 화면에 들어온 사용자가 아무것도
+    //   보내지 못한 채 할 일이 영원히 남는다. DEV 최초 발행 직후 실제로
+    //   그 상태가 됐다.
+    if (item.revisionId != null && s.revisionId != item.revisionId) return null;
+    return s;
   }
 
   /// 필수 요건을 **이미 충족한** 항목인가 — 같은 버전에 동의한 기록만.

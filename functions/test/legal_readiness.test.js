@@ -141,6 +141,58 @@ t('S7 필수를 거부했으면 충족이 아니다', () => {
   assert.strictEqual(r.status, 'RECONSENT_REQUIRED');
 });
 
+// ── 최초 발행 이후 (R7-LEGAL.DEPLOY §12 에서 실제로 터진 경우) ──────
+//
+//   DEV 에서 활성 5종을 처음 발행하자마자 기존 사용자 8명이 전원
+//   RECONSENT_REQUIRED 로 뒤집히고 지원이 막혔다. 우리가 약관을 바꾼 적이
+//   없는데 "변경되었습니다" 라고 말한 것이다. 아래 네 셀이 그 경우를 고정한다.
+t('S11 발행본이 생긴 뒤에도 revisionId 없는 옛 기록은 LEGACY 다', () => {
+  const r = R.evaluateLegalReadiness({
+    activeItems: [item('service_terms', '2026.08', true)],
+    // 1B 이전 기록 — 무엇에 동의했는지 증명할 수 없다.
+    consent: {service_terms: {agreed: true, version: '2026.08'}},
+    publishedRevisionIds: published('service_terms__2026.08'),
+  });
+  assert.strictEqual(r.status, 'LEGACY_CONSENT_UNKNOWN');
+  assert.deepStrictEqual(r.reconsentRequired, []);
+  assert.strictEqual(R.allowsNewCommitment(r.status), true,
+    '판을 바꾼 적이 없는데 길을 막으면 안 된다');
+});
+
+t('S12 기록이 아예 없는 옛 사용자도 발행 뒤에 LEGACY 다', () => {
+  const r = R.evaluateLegalReadiness({
+    activeItems: [item('service_terms', '2026.08', true)],
+    consent: {},
+    publishedRevisionIds: published('service_terms__2026.08'),
+  });
+  assert.strictEqual(r.status, 'LEGACY_CONSENT_UNKNOWN');
+  assert.strictEqual(R.allowsNewCommitment(r.status), true);
+});
+
+t('S13 1B 이후 사용자에게 새 필수 항목이 생기면 RECONSENT_REQUIRED', () => {
+  const r = R.evaluateLegalReadiness({
+    activeItems: [item('service_terms', '2026.08', true),
+      item('new_required', '2026.11', true)],
+    // 이 사람은 발행본을 가리키는 기록을 갖고 있다 — 1B 이후 사용자다.
+    consent: acc('service_terms', '2026.08'),
+    publishedRevisionIds: published('service_terms__2026.08',
+      'new_required__2026.11'),
+  });
+  assert.strictEqual(r.status, 'RECONSENT_REQUIRED');
+  assert.deepStrictEqual(r.reconsentRequired, ['new_required']);
+  assert.strictEqual(R.allowsNewCommitment(r.status), false);
+});
+
+t('S14 다른 판에 동의한 기록이 있으면 새 판으로 센다', () => {
+  const r = R.evaluateLegalReadiness({
+    activeItems: [item('service_terms', '2026.11', true)],
+    consent: acc('service_terms', '2026.08'),   // 식별 가능한 과거 동의
+    publishedRevisionIds: published('service_terms__2026.11'),
+  });
+  assert.strictEqual(r.status, 'RECONSENT_REQUIRED');
+  assert.deepStrictEqual(r.legacyUnknown, []);
+});
+
 // ── 소스 계약 ───────────────────────────────────────────────────────
 t('S8 지원 직전에 canonical 판정을 소비한다', () => {
   const s = indexSrc();
