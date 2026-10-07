@@ -34883,6 +34883,126 @@ function _processCheckout(
   };
 }
 
+/**
+ * [R7-ATTENDANCE.1] self 출퇴근의 위치·방식 검증 — **출근과 퇴근이 한 벌을 쓴다.**
+ *
+ *   이 검증은 원래 `callableCheckIn` 안에만 인라인으로 있었다. 그래서 퇴근은
+ *   좌표가 선택이고, 반경·attendanceType·method 를 **서버가 전혀 보지 않았다.**
+ *   같은 self-attendance 인데 들어올 때와 나갈 때 규칙이 달랐다.
+ *
+ *   앱은 양쪽 모두 막고 있었지만, 클라이언트에만 있는 조건은 boundary 가 아니다 —
+ *   출근을 서버로 옮긴 이유가 그것이었다. 정책을 두 벌로 복사하지 않고
+ *   여기 하나로 두고 양쪽이 부른다.
+ *
+ *   반환하는 거리는 **서버가 계산한 값**이다. 저장은 호출부가 하지만
+ *   클라이언트가 보낸 거리를 쓰지 않는다.
+ *
+ *   관리자 보정 경로(`callableBatchCheckIn/Out`·`callableBatchAdjustAttendanceTime`)는
+ *   이 함수를 쓰지 않는다 — 관리자가 현장 반경 안에 있어야 할 이유가 없다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서 데이터
+ * @param {object} input 클라이언트가 보낸 좌표·방식
+ * @param {string} label 사용자에게 보일 행위 이름 ("출근" | "퇴근")
+ * @return {{distanceMeters: number, method: string}} 서버 계산 거리와 확정된 방식
+ */
+function srvAssertSelfAttendanceLocation(
+  bizData: FirebaseFirestore.DocumentData | undefined,
+  input: {latitude?: number; longitude?: number; method?: string},
+  label: string
+): {distanceMeters: number; method: string} {
+  const {latitude, longitude, method} = input;
+  // 사업장 문서를 못 읽었으면 위치를 판정할 수 없다 — 모르는 채로 열지 않는다.
+  if (bizData == null) {
+    throw new HttpsError(
+      "failed-precondition",
+      "사업장 정보를 확인할 수 없습니다. 관리자에게 문의하세요.");
+  }
+  const serverAttendanceType =
+    (bizData["attendanceType"] as string | undefined) ?? "gps";
+  const bizLat = bizData["latitude"] as number | undefined;
+  const bizLng = bizData["longitude"] as number | undefined;
+  const rawRadius = bizData["gpsRadius"];
+  // [§12] 기본 반경은 한 곳에서만 정한다 — 출근·퇴근이 다른 값을 쓰지 않는다.
+  const bizGpsRadius =
+    typeof rawRadius === "number" && rawRadius > 0 ? rawRadius : 100;
+
+  // 0. method 입력 strict validation — 알 수 없는 method 는 gps 로 추정하지 않는다.
+  //    qr 은 구현이 없다 — 받아서 기록하면 없는 방식이 기록에 남는다.
+  const ALLOWED_SELF_ATTENDANCE_METHODS = ["gps", "beacon"];
+  if (!ALLOWED_SELF_ATTENDANCE_METHODS.includes(method as string)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `유효하지 않은 ${label} 방식입니다. GPS 또는 비콘만 허용됩니다.`);
+  }
+
+  // 0-b. attendanceType ↔ method 서버 바인딩
+  if (serverAttendanceType === "gps" && method !== "gps") {
+    throw new HttpsError(
+      "failed-precondition", `이 사업장은 GPS ${label}만 허용됩니다.`);
+  }
+  if (serverAttendanceType === "beacon" && method !== "beacon") {
+    throw new HttpsError(
+      "failed-precondition", `이 사업장은 비콘 ${label}만 허용됩니다.`);
+  }
+  if (serverAttendanceType === "both" &&
+      method !== "gps" && method !== "beacon") {
+    throw new HttpsError(
+      "failed-precondition", `이 사업장은 GPS 또는 비콘 ${label}만 허용됩니다.`);
+  }
+  const KNOWN_ATTENDANCE_TYPES = ["gps", "beacon", "both", "manual"];
+  if (!KNOWN_ATTENDANCE_TYPES.includes(serverAttendanceType) &&
+      method !== "gps") {
+    throw new HttpsError(
+      "failed-precondition", `${label} 방식이 사업장 설정과 일치하지 않습니다.`);
+  }
+
+  // 1. manual: 근로자 self 처리 불가 — 관리자 직접 처리 경로를 유지한다.
+  if (serverAttendanceType === "manual") {
+    throw new HttpsError(
+      "failed-precondition",
+      `이 사업장은 관리자가 ${label}을 직접 처리합니다. 관리자에게 문의하세요.`);
+  }
+
+  // 2. 좌표 필수 — beacon 이어도 요구한다.
+  //    `method="beacon"` 만 보내고 lat/lng=null 이면 즉시 거부한다.
+  //    (BARE_BEACON_REMOTE_CHECKIN = DENIED — 이제 **출근과 퇴근 양쪽**에 걸린다.
+  //     Play 데이터 안전성에서 위치를 Required 로 선언하는 근거다.)
+  if (latitude == null || longitude == null) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${label} 위치 정보(GPS)가 필요합니다. GPS를 활성화하고 다시 시도해주세요.`);
+  }
+
+  // 3. 좌표 범위 검증 — 임의·비현실적 값 차단
+  if (!isFinite(latitude) || latitude < -90 || latitude > 90) {
+    throw new HttpsError("invalid-argument", "유효하지 않은 위도 값입니다.");
+  }
+  if (!isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new HttpsError("invalid-argument", "유효하지 않은 경도 값입니다.");
+  }
+
+  // 4. 사업장 위치 설정 필수 — 미설정 사업장은 거리 판정이 불가능하다.
+  if (bizLat == null || bizLng == null) {
+    throw new HttpsError(
+      "failed-precondition",
+      "사업장 위치가 설정되지 않았습니다. 관리자에게 문의하세요.");
+  }
+
+  // 5. Haversine 거리 검증
+  const distM = haversineDistanceMeters(latitude, longitude, bizLat, bizLng);
+  if (distM > bizGpsRadius) {
+    throw new HttpsError(
+      "permission-denied",
+      `사업장 반경을 벗어났습니다. 현재 거리: ${Math.round(distM)}m, ` +
+      `허용 반경: ${bizGpsRadius}m`);
+  }
+
+  return {
+    distanceMeters: distM,
+    method: method === "beacon" ? "beacon" : "gps",
+  };
+}
+
 // ─── callableCheckIn ──────────────────────────────────────────────────────────
 // [B1-FIX] 근무자 개별 실시간 출근 CF 이전 — 반올림·중복체크·서버 기록 강제
 // 이전 이유:
@@ -35075,103 +35195,13 @@ export const callableCheckIn = onCall(
     }
 
     // [LOCATION-GATE] attendanceType ↔ method 서버 바인딩 + GPS 거리 검증
-    // callableCheckIn이 출근 생성 전에 server-side admission gate를 실행한다.
-    // onAttendanceCreated trigger는 post-commit 감사 로그 용도(suspicious 마킹)만 유지.
-    // 한계: GPS 좌표는 client-asserted이므로 targeted spoof(사업장 좌표 그대로 전달) 는 잔존.
-    // ATTENDANCE_TRIVIAL_REMOTE_SPOOF = CLOSED, TARGETED_GPS_SPOOF_REMAINS = YES
-    {
-      const serverAttendanceType = (bizSnap.data()?.attendanceType as string | undefined) ?? "gps";
-      const bizLat = bizSnap.data()?.latitude as number | undefined;
-      const bizLng = bizSnap.data()?.longitude as number | undefined;
-      const rawRadius = bizSnap.data()?.gpsRadius;
-      const bizGpsRadius = typeof rawRadius === "number" && rawRadius > 0 ? rawRadius : 100;
-
-      // 0. method 입력 strict validation — 알 수 없는 method는 gps fallback 금지
-      // [METHOD-BINDING] CHECKIN_METHOD_INPUT_STRICT = YES
-      // qr: 현재 미구현 (QR token CF/scanner 없음) — ATTENDANCE_L2_HARDENING_OPTION으로 deferred
-      const ALLOWED_CHECKIN_METHODS = ["gps", "beacon"];
-      if (!ALLOWED_CHECKIN_METHODS.includes(method as string)) {
-        throw new HttpsError(
-          "invalid-argument",
-          "유효하지 않은 출근 방식입니다. GPS 또는 비콘만 허용됩니다.",
-        );
-      }
-
-      // 0-b. attendanceType ↔ method 서버 바인딩
-      // [METHOD-BINDING] ATTENDANCE_METHOD_SERVER_BOUND = YES
-      // GPS_METHOD_BYPASS_ON_BEACON_BUSINESS = DENIED
-      // BEACON_METHOD_BYPASS_ON_GPS_BUSINESS = DENIED
-      if (serverAttendanceType === "gps" && method !== "gps") {
-        throw new HttpsError(
-          "failed-precondition",
-          "이 사업장은 GPS 출근만 허용됩니다.",
-        );
-      }
-      if (serverAttendanceType === "beacon" && method !== "beacon") {
-        throw new HttpsError(
-          "failed-precondition",
-          "이 사업장은 비콘 출근만 허용됩니다.",
-        );
-      }
-      if (serverAttendanceType === "both" && method !== "gps" && method !== "beacon") {
-        // both: gps 또는 beacon만 허용 (step 0에서 이미 unknown method 차단됨)
-        throw new HttpsError(
-          "failed-precondition",
-          "이 사업장은 GPS 또는 비콘 출근만 허용됩니다.",
-        );
-      }
-      // unknown attendanceType (null은 이미 "gps"로 처리됨): gps만 허용 (fail-safe)
-      const KNOWN_ATTENDANCE_TYPES = ["gps", "beacon", "both", "manual"];
-      if (!KNOWN_ATTENDANCE_TYPES.includes(serverAttendanceType) && method !== "gps") {
-        throw new HttpsError(
-          "failed-precondition",
-          "출근 방식이 사업장 설정과 일치하지 않습니다.",
-        );
-      }
-
-      // 1. manual: 근로자 self check-in 불가 — 관리자 직접 처리 경로 유지
-      if (serverAttendanceType === "manual") {
-        throw new HttpsError(
-          "failed-precondition",
-          "이 사업장은 관리자가 출근을 직접 처리합니다. 관리자에게 문의하세요.",
-        );
-      }
-
-      // 2. GPS 좌표 필수 — bare beacon/qr 원격 체크인 차단
-      //    method="beacon"만 전송 + lat/lng=null → 즉시 거부 (BARE_BEACON_REMOTE_CHECKIN = DENIED)
-      if (latitude == null || longitude == null) {
-        throw new HttpsError(
-          "invalid-argument",
-          "출근 위치 정보(GPS)가 필요합니다. GPS를 활성화하고 다시 시도해주세요.",
-        );
-      }
-
-      // 3. 좌표 범위 검증 — 임의/비현실적 값 차단
-      if (!isFinite(latitude) || latitude < -90 || latitude > 90) {
-        throw new HttpsError("invalid-argument", "유효하지 않은 위도 값입니다.");
-      }
-      if (!isFinite(longitude) || longitude < -180 || longitude > 180) {
-        throw new HttpsError("invalid-argument", "유효하지 않은 경도 값입니다.");
-      }
-
-      // 4. 사업장 위치 설정 필수 — 미설정 사업장은 GPS 검증 불가이므로 차단
-      if (bizLat == null || bizLng == null) {
-        throw new HttpsError(
-          "failed-precondition",
-          "사업장 위치가 설정되지 않았습니다. 관리자에게 문의하세요.",
-        );
-      }
-
-      // 5. Haversine 거리 검증 — 반경 초과 시 출근 생성 전 차단
-      //    (GPS_OUTSIDE_RADIUS_CHECKIN = DENIED)
-      const distM = haversineDistanceMeters(latitude, longitude, bizLat, bizLng);
-      if (distM > bizGpsRadius) {
-        throw new HttpsError(
-          "permission-denied",
-          `사업장 반경을 벗어났습니다. 현재 거리: ${Math.round(distM)}m, 허용 반경: ${bizGpsRadius}m`,
-        );
-      }
-    }
+    //   [R7-ATTENDANCE.1] 판정은 `srvAssertSelfAttendanceLocation` 한 곳에 있다 —
+    //   **퇴근도 같은 함수를 부른다.** 규칙이 두 벌로 갈리면 한쪽만 고쳐진다.
+    //   onAttendanceCreated trigger는 post-commit 감사 로그 용도(suspicious 마킹)만 유지.
+    //   한계: GPS 좌표는 client-asserted이므로 targeted spoof(사업장 좌표 그대로 전달) 는 잔존.
+    //   ATTENDANCE_TRIVIAL_REMOTE_SPOOF = CLOSED, TARGETED_GPS_SPOOF_REMAINS = YES
+    const checkInLoc = srvAssertSelfAttendanceLocation(
+      bizSnap.data(), {latitude, longitude, method}, "출근");
 
     // 3. docId: {applicationId}_{yyyyMMdd}
     const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
@@ -35224,7 +35254,7 @@ export const callableCheckIn = onCall(
         originalCheckIn: admin.firestore.Timestamp.fromDate(now),
         // [METHOD-BINDING] method는 이 시점에서 "gps" | "beacon"만 가능 (strict validation + attendanceType binding 완료)
         // qr 분기 제거 — QR 미구현 상태에서 dead code였음 (ATTENDANCE_L2_HARDENING_OPTION deferred)
-        checkInMethod: (method === "beacon") ? "beacon" : "gps",
+        checkInMethod: checkInLoc.method,
         status: isLate ? "late" : "present",
         isModified: false,
         modifyRequested: false,
@@ -35322,12 +35352,14 @@ export const callableCheckOut = onCall(
       let serverCheckoutRules: AttendanceRulesData = {};
       let serverAppStartTime: string | undefined;
       let serverAppEndTime: string | undefined;
+      let checkoutBizData: FirebaseFirestore.DocumentData | undefined;
       if (attBizId || attAppId) {
         const reads = await Promise.all([
           attBizId ? tx.get(db.collection("businesses").doc(attBizId)) : Promise.resolve(null),
           attAppId ? tx.get(db.collection("applications").doc(attAppId)) : Promise.resolve(null),
         ]);
         if (reads[0]?.exists) {
+          checkoutBizData = reads[0].data();
           serverCheckoutRules = (reads[0].data()?.attendanceRules ?? {}) as AttendanceRulesData;
         }
         if (reads[1]?.exists) {
@@ -35335,6 +35367,20 @@ export const callableCheckOut = onCall(
           serverAppEndTime = reads[1].data()?.endTime as string | undefined;
         }
       }
+
+      // [R7-ATTENDANCE.1 LOCATION-GATE] 출근과 **같은 함수**로 위치·방식을 본다.
+      //
+      //   이전에는 퇴근만 좌표가 선택이었고 반경·attendanceType·method 를 서버가
+      //   보지 않았다. 앱은 막고 있었지만 클라이언트에만 있는 조건은 boundary 가
+      //   아니다 — 출근 검증을 서버로 옮긴 이유가 그것이었다.
+      //
+      //   트랜잭션 쓰기 **이전**에 던진다. 실패하면 checkOut·originalCheckOut·
+      //   status 어느 것도 생기지 않는다(전부 아래 tx.update 한 번에 들어간다).
+      //
+      //   관리자 보정(callableBatchCheckOut·callableBatchAdjustAttendanceTime)은
+      //   이 게이트를 쓰지 않는다 — 관리자가 현장 반경 안에 있어야 할 이유가 없다.
+      const checkOutLoc = srvAssertSelfAttendanceLocation(
+        checkoutBizData, {latitude, longitude, method}, "퇴근");
       // 서버값 우선, 없으면 클라이언트 fallback (하위호환, HH:MM 이미 검증됨)
       const effCheckoutStartTime = serverAppStartTime ?? scheduledStartTime;
       const effCheckoutEndTime = serverAppEndTime ?? scheduledEndTime;
@@ -35382,7 +35428,10 @@ export const callableCheckOut = onCall(
       const update: Record<string, unknown> = {
         checkOut: admin.firestore.Timestamp.fromDate(effectiveCheckOut),
         // [BUG-L2 수정 2026-07-27] beacon 방식도 정확히 기록
-        checkOutMethod: (method === "qr") ? "qr" : (method === "beacon") ? "beacon" : "gps",
+        // [R7-ATTENDANCE.1] 공용 판정이 확정한 방식만 기록한다.
+        //   이전에는 미구현 `qr` 을 그대로 기록하고 알 수 없는 값은 조용히
+        //   `gps` 로 적었다 — 없는 방식이 기록에 남았다.
+        checkOutMethod: checkOutLoc.method,
         workHours,
         status,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -35393,8 +35442,14 @@ export const callableCheckOut = onCall(
         update.originalCheckOut = admin.firestore.Timestamp.fromDate(now);
       }
 
-      if (latitude != null) update.checkOutLat = latitude;
-      if (longitude != null) update.checkOutLng = longitude;
+      // 좌표는 게이트를 통과한 뒤이므로 항상 있다.
+      update.checkOutLat = latitude;
+      update.checkOutLng = longitude;
+      // [R7-ATTENDANCE.1 §7] 거리는 **서버가 계산한 값**을 저장한다.
+      //   출근에는 `checkInDistance` 가 있는데 퇴근에는 없어서, 관리자가
+      //   퇴근이 얼마나 떨어진 곳에서 찍혔는지 사후에 볼 수 없었다.
+      //   클라이언트가 보낸 거리는 받지 않는다(애초에 입력에 없다).
+      update.checkOutDistance = checkOutLoc.distanceMeters;
       if (workMins <= 0) update.isZeroWork = true;
 
       tx.update(ref, update);

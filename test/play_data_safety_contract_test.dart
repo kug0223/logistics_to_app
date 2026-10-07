@@ -238,8 +238,19 @@ void main() {
 
     test('DS-D3 Required 판정에 서버 근거가 있다', () {
       final cf = _read('functions/src/index.ts');
-      expect(cf, contains('출근 위치 정보(GPS)가 필요합니다'),
-          reason: '좌표 없이 출근이 통과되면 Required 가 아니다');
+      // [R7-ATTENDANCE.1] 문구가 `출근`/`퇴근` 라벨로 공용화됐다. 고정하려던 것은
+      //   특정 문구가 아니라 **좌표 없이는 통과하지 못한다**는 사실이므로,
+      //   공용 게이트의 좌표 필수 분기와 두 호출부를 함께 본다.
+      expect(cf, contains('위치 정보(GPS)가 필요합니다'),
+          reason: '좌표 없이 통과되면 Required 가 아니다');
+      expect(cf, contains('if (latitude == null || longitude == null) {'),
+          reason: '좌표 필수 분기가 살아 있어야 한다');
+      expect(
+          RegExp(r'srvAssertSelfAttendanceLocation\(')
+              .allMatches(cf)
+              .length,
+          greaterThanOrEqualTo(3),
+          reason: '정의 1 + 출근·퇴근 호출 2 — 한쪽만 걸려 있으면 Required 근거가 반쪽이다');
       expect(doc, contains('Required'));
       expect(doc, contains('index.ts:32491'));
     });
