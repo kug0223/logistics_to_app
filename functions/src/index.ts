@@ -34884,6 +34884,74 @@ function _processCheckout(
 }
 
 /**
+ * [R7-ATTENDANCE.2] 근태 문서가 있다는 것과 **출근했다는 것**은 다르다.
+ *
+ *   출근 중복 가드는 `snap.exists` 하나로 판정하고 `오늘 이미 출근하셨습니다` 를
+ *   돌려줬다. 그런데 문서는 출근하지 않은 상태에서도 존재한다 —
+ *   노쇼(자동·관리자), 결근, 미퇴근, 관리자 초기화, 노쇼 취소 뒤.
+ *   그 상태의 근로자는 찍지도 않았는데 "이미 찍었다"는 말을 듣고,
+ *   무엇을 해야 하는지도 알 수 없었다.
+ *
+ *   막는 것 자체는 옳다. 노쇼가 확정되면 좌석이 반납되고 대체 채용이 열리며
+ *   신뢰도 기록이 생긴다 — 근로자의 self 출근 한 번으로 그걸 되돌릴 수 없다.
+ *   그래서 **차단은 유지하고 이유만 나눈다.**
+ *
+ *   정책 (이 Phase 에서 확정):
+ *     checkIn 있음            → ALREADY_CHECKED_IN      이미 출근했다
+ *     status=missed_checkout  → MISSED_CHECKOUT_LOCKED   출근은 했고 퇴근이 없다
+ *     status=NO_SHOW          → NO_SHOW_LOCKED           관리자 복구만
+ *     status=absent           → ABSENT_LOCKED            관리자 복구만
+ *     그 밖(비어 있는 문서)    → RECOVERY_REQUIRED        관리자 복구만
+ *
+ *   비어 있는 문서는 `callableBatchResetAttendance` 또는
+ *   `callableBatchCancelNoShow` 가 남긴 것이다. 서버는 **그 둘을 구별할 수
+ *   없다**(남는 필드가 같다). 그래서 둘에 다른 정책을 말하지 않는다 —
+ *   구별이 필요해지면 그 writer 가 표식을 남기는 것이 먼저다.
+ *
+ *   `details` 에 코드를 함께 보낸다. 화면이 한국어 문구를 파싱해 상태를
+ *   역추론하지 않게 한다.
+ *
+ * @param {FirebaseFirestore.DocumentData} data 기존 근태 문서 데이터
+ * @return {{code: string, message: string}} 차단 사유 (문서가 있으면 항상 차단)
+ */
+function srvResolveCheckInBlock(
+  data: FirebaseFirestore.DocumentData
+): {code: string; message: string} {
+  const status = data["status"] as string | undefined;
+  // 상태 판정이 먼저다 — missed_checkout 은 checkIn 도 함께 갖고 있다.
+  if (status === "missed_checkout") {
+    return {
+      code: "MISSED_CHECKOUT_LOCKED",
+      message: "미퇴근으로 처리된 근무입니다. 관리자에게 근태 수정을 요청해 주세요.",
+    };
+  }
+  if (status === "NO_SHOW") {
+    return {
+      code: "NO_SHOW_LOCKED",
+      message: "노쇼로 처리된 근무입니다. " +
+        "출근하셨다면 관리자에게 근태 복구를 요청해 주세요.",
+    };
+  }
+  if (status === "absent") {
+    return {
+      code: "ABSENT_LOCKED",
+      message: "결근으로 처리된 근무입니다. " +
+        "출근하셨다면 관리자에게 근태 복구를 요청해 주세요.",
+    };
+  }
+  if (data["checkIn"] != null) {
+    return {
+      code: "ALREADY_CHECKED_IN",
+      message: "이미 출근 처리된 근무입니다.",
+    };
+  }
+  return {
+    code: "RECOVERY_REQUIRED",
+    message: "근태 기록이 초기화된 근무입니다. 출근 처리는 관리자에게 요청해 주세요.",
+  };
+}
+
+/**
  * [R7-ATTENDANCE.1] self 출퇴근의 위치·방식 검증 — **출근과 퇴근이 한 벌을 쓴다.**
  *
  *   이 검증은 원래 `callableCheckIn` 안에만 인라인으로 있었다. 그래서 퇴근은
@@ -35220,7 +35288,17 @@ export const callableCheckIn = onCall(
       //   commit 되면 그대로 기록됐다. 같은 TX 에서 다시 읽는다.
       await srvAssertAccountNotFrozenInTx(tx, callerUid, "사용자");
       const [snap, freshAppSnap] = await Promise.all([tx.get(ref), tx.get(checkInAppRef)]);
-      if (snap.exists) throw new HttpsError("already-exists", "오늘 이미 출근하셨습니다.");
+      // [R7-ATTENDANCE.2] 문서 존재 ≠ 출근함. 상태별로 이유와 다음 행동을 말한다.
+      //   차단 범위는 그대로다(문서가 있으면 self 출근 불가) — 노쇼 뒤 좌석 반납·
+      //   대체 채용·신뢰도 기록을 self 출근 한 번으로 되돌리지 않는다.
+      if (snap.exists) {
+        const block = srvResolveCheckInBlock(snap.data()!);
+        throw new HttpsError(
+          block.code === "ALREADY_CHECKED_IN" ?
+            "already-exists" : "failed-precondition",
+          block.message,
+          {reason: block.code});
+      }
       const freshAppStatus = (freshAppSnap.data()?.status as string | undefined) ?? "";
       if (!confirmedStatuses.includes(freshAppStatus)) {
         throw new HttpsError("failed-precondition", "확정된 지원만 출근할 수 있습니다.");

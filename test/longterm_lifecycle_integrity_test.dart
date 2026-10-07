@@ -281,8 +281,14 @@ void main() {
 
     test('05-c 중복 출근은 거절된다', () {
       final ci = _after(cf, 'export const callableCheckIn', 25000);
-      expect(ci.contains('if (snap.exists) throw new HttpsError("already-exists"'),
-          true);
+      // [R7-ATTENDANCE.2] 거절은 그대로이고 **이유만 상태별로 갈렸다**.
+      //   문서 존재 가드는 유지되고, 실제 출근 기록이 있는 경우만
+      //   `already-exists` 다(노쇼·미퇴근·초기화는 failed-precondition).
+      expect(ci.contains('if (snap.exists) {'), true,
+          reason: '문서가 있으면 self 출근은 여전히 막힌다');
+      expect(ci.contains('srvResolveCheckInBlock(snap.data()!)'), true);
+      expect(ci.contains('"already-exists"'), true,
+          reason: '이미 출근한 경우의 코드는 그대로다');
     });
 
     test('05-d 야간교대 퇴근은 다음 날 Application으로 갈라지지 않는다', () {
