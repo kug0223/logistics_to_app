@@ -29851,8 +29851,8 @@ export const callableBatchCheckIn = onCall(
     const {callerData: batchCheckInCallerData, bizData: batchCheckInBizData} =
       await assertBizAdmin(callerUid, businessId);
     // [R6.0B] 시각 경계는 사업장 규칙에서 온다 — 클라이언트 전달값은 쓰지 않는다.
-    const batchCiRules =
-      (batchCheckInBizData?.attendanceRules ?? {}) as AttendanceRulesData;
+    // [R7-PAYROLL-POLICY.3] 규칙은 **건별**로 정한다 — 확정 시 snapshot 이
+    //   있으면 그것이 우선이므로, 루프 밖에서 하나로 뽑아 쓰지 않는다.
     // [PERM-WORKERS-03] 서브어드민 canManageWorkers 세부 권한 검증 — callableBatchSetNoShow와 대칭
     const batchCheckInCallerRole = batchCheckInCallerData?.role as string | undefined;
     if (batchCheckInCallerRole !== "BUSINESS_ADMIN" && batchCheckInCallerRole !== "SUPER_ADMIN") {
@@ -29903,8 +29903,13 @@ export const callableBatchCheckIn = onCall(
             }
             // [R6.0B] 시각 권한 게이트 — 신규/기존 양쪽 경로 공통.
             //   일반 운영 버튼이 약속 밖 유급근로를 만들지 않게 한다.
+            // [R7-PAYROLL-POLICY.3] 관리자 경로도 **같은 기준**을 쓴다.
+            //   self 와 admin 이 서로 다른 정책으로 판정하면 같은 근무에
+            //   두 기준이 생긴다. 확정 시 snapshot 이 있으면 그것을 쓴다.
             const ciTimeGate = await srvBatchCheckInTimeGate(
-              applicationId, appVerifySnap.data()!, workDateMs, checkInMs, batchCiRules);
+              applicationId, appVerifySnap.data()!, workDateMs, checkInMs,
+              srvEffectiveAttendanceRules(
+                appVerifySnap.data(), batchCheckInBizData));
             if (ciTimeGate) {
               console.warn(`출근 처리 건너뜀 — ${ciTimeGate} (${applicationId})`);
               return ciTimeGate;
@@ -30794,11 +30799,28 @@ export const callableConfirmApplication = onCall(
       }
 
       // W4. Application → CONTRACT_PENDING 선점
-      tx.update(appRef, {
+      //
+      // [R7-PAYROLL-POLICY.3] 확정 = 약속이므로 **근태·급여 기준도 여기서
+      //   고정한다.** 이후 사업장이 설정을 바꿔도 이 근무의 계산 기준은 그대로다.
+      //   이미 snapshot 이 있으면 덮지 않는다 — 멱등 재호출이 약속을 바꾸면
+      //   안 된다(위 `alreadyConfirmed` 경로는 여기 오지도 않지만, 부분 실패
+      //   뒤의 재시도까지 포함해 한 번 더 막는다).
+      const cfmPolicyUpdate: Record<string, unknown> = {
         status: "CONTRACT_PENDING",
         confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
         confirmedBy: callerUid,
-      });
+      };
+      if (fd["attendancePolicySnapshot"] == null) {
+        const policySnap =
+          srvBuildAttendancePolicySnapshot(cfmBizSnap.data());
+        if (policySnap != null) {
+          cfmPolicyUpdate["attendancePolicySnapshot"] = policySnap;
+        }
+        // 규칙이 없는 사업장은 snapshot 을 만들지 않는다 — 없는 것을
+        //   기본값으로 채워 "사업장이 정한 기준"처럼 보이게 하지 않는다
+        //   (ERROR/ABSENT ≠ DEFAULT). 그 근무는 legacy fallback 으로 돈다.
+      }
+      tx.update(appRef, cfmPolicyUpdate);
 
       // 응답용 자동취소 정보 수집 (클라이언트 FCM 알림 발송에 사용)
       txAutoCanceledDetails = overlapPlan.toCancel.map((d) => {
@@ -34884,6 +34906,75 @@ function _processCheckout(
 }
 
 /**
+ * [R7-PAYROLL-POLICY.3] 확정 시점의 근태·급여 기준 snapshot.
+ *
+ *   사업장이 정책을 결정하고, ALfit 은 그 정책을 **확정 시점에 고정**한다.
+ *   `지원 = 관심 / 확정 = 약속` 이므로 근태 기준도 약속의 일부다.
+ *
+ *   이전에는 출퇴근이 `businesses.attendanceRules` 를 **live** 로 읽었다.
+ *   그래서 확정 뒤 사업장이 설정을 바꾸면 **이미 약속된 근무의 급여 계산
+ *   기준이 소급해서 달라졌다.** 임금·시간·업무를 공고 수정으로 소급 변경하지
+ *   않는 기존 원칙에서 근태 기준만 빠져 있었다.
+ *
+ *   snapshot 은 **서버가 사업장 문서를 읽어** 만든다 — 클라이언트가 보낸
+ *   정책값을 쓰지 않는다. 확정 트랜잭션의 read-set 에 사업장 문서가 들어 있어
+ *   그 사이 정책이 바뀌면 트랜잭션이 재시도되므로 어느 시점의 값인지가
+ *   결정적이다.
+ *
+ *   이 함수는 **반올림 계산을 하지 않는다.** 숫자를 그대로 복사할 뿐이다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서
+ * @return {Record<string, unknown> | null} snapshot. 규칙이 없으면 null
+ */
+function srvBuildAttendancePolicySnapshot(
+  bizData: FirebaseFirestore.DocumentData | undefined
+): Record<string, unknown> | null {
+  const raw = bizData?.["attendanceRules"];
+  if (raw == null || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const num = (k: string, dflt: number) =>
+    typeof r[k] === "number" ? (r[k] as number) : dflt;
+  // 기본값은 `AttendanceRules` (Dart) 와 같은 값을 쓴다 — 두 벌이 되면
+  //   같은 사업장에 서로 다른 정책이 적용된다.
+  return {
+    earlyWindow: num("earlyWindow", 30),
+    earlyArrivalUnit: num("earlyArrivalUnit", 30),
+    lateGrace: num("lateGrace", 5),
+    lateUnit: num("lateUnit", 30),
+    lateWindow: num("lateWindow", 30),
+    overtimeUnit: num("overtimeUnit", 10),
+    earlyLeaveUnit: num("earlyLeaveUnit", 30),
+    // 이 정책이 사업장이 고른 것인지 ALfit 기본값인지 — 책임 귀속의 근거다.
+    policySource: typeof r["policySource"] === "string" ?
+      r["policySource"] : "legacy",
+    capturedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+/**
+ * [R7-PAYROLL-POLICY.3] 이 근무에 적용할 근태 규칙 — **확정 시 약속이 우선**.
+ *
+ *   snapshot 이 있으면 그것을 쓴다. 없으면(확정 이전에 만들어진 근무)
+ *   기존 동작대로 live 사업장 규칙으로 떨어진다 — 그건 **legacy 호환이고
+ *   정책이 아니다.** 신규 확정 근무는 항상 snapshot 을 갖는다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} appData 지원서 문서
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서
+ * @return {AttendanceRulesData} 적용할 규칙
+ */
+function srvEffectiveAttendanceRules(
+  appData: FirebaseFirestore.DocumentData | undefined,
+  bizData: FirebaseFirestore.DocumentData | undefined
+): AttendanceRulesData {
+  const snap = appData?.["attendancePolicySnapshot"];
+  if (snap != null && typeof snap === "object") {
+    return snap as AttendanceRulesData;
+  }
+  // legacy fallback — snapshot 이 없는 과거 근무만 여기로 온다.
+  return (bizData?.["attendanceRules"] ?? {}) as AttendanceRulesData;
+}
+
+/**
  * [R7-ATTENDANCE.2] 근태 문서가 있다는 것과 **출근했다는 것**은 다르다.
  *
  *   출근 중복 가드는 `snap.exists` 하나로 판정하고 `오늘 이미 출근하셨습니다` 를
@@ -35224,7 +35315,9 @@ export const callableCheckIn = onCall(
     // [HIGH-1/HIGH-2 FIX] Trust Boundary Charter: 클라이언트 attendanceRules·scheduledStartTime 신뢰 금지
     // 서버에서 사업장 attendanceRules와 지원서 startTime 직접 조회 (bizSnap은 상단 Promise.all에서 조회됨)
     // attendanceRules가 없는 사업장은 기본값(default) 사용 — 클라이언트 값 fallback 금지
-    const serverRules = (bizSnap.data()?.attendanceRules ?? {}) as AttendanceRulesData;
+    // [R7-PAYROLL-POLICY.3] 확정 시 고정된 기준이 우선이다 —
+    //   같은 근무가 사업장 설정 변경으로 다른 기준으로 계산되지 않게 한다.
+    const serverRules = srvEffectiveAttendanceRules(appData, bizSnap.data());
     // [LOW-03-FIX] businessName 서버 조회 — 클라이언트 전달값 허위 사업장명 심기 차단
     const serverBusinessName = (bizSnap.data()?.name as string | undefined) ?? businessName;
     // ═══════════════════════════════════════════════════════════
@@ -35438,12 +35531,15 @@ export const callableCheckOut = onCall(
         ]);
         if (reads[0]?.exists) {
           checkoutBizData = reads[0].data();
-          serverCheckoutRules = (reads[0].data()?.attendanceRules ?? {}) as AttendanceRulesData;
         }
         if (reads[1]?.exists) {
           serverAppStartTime = reads[1].data()?.startTime as string | undefined;
           serverAppEndTime = reads[1].data()?.endTime as string | undefined;
         }
+        // [R7-PAYROLL-POLICY.3] 출근과 퇴근이 **같은 기준**을 써야 한다.
+        //   확정 시 고정된 snapshot 이 있으면 그것을, 없으면 legacy fallback.
+        serverCheckoutRules = srvEffectiveAttendanceRules(
+          reads[1]?.exists ? reads[1].data() : undefined, checkoutBizData);
       }
 
       // [R7-ATTENDANCE.1 LOCATION-GATE] 출근과 **같은 함수**로 위치·방식을 본다.

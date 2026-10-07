@@ -41,6 +41,22 @@ class AttendanceRules {
   /// 규칙 마지막 변경자 UID
   final String? rulesUpdatedBy;
 
+  /// [R7-PAYROLL-POLICY.3] 이 숫자를 **누가 정했는가**.
+  ///
+  ///   이 값들은 근태 상태 판정뿐 아니라 **급여 인정시각 계산**에 쓰인다.
+  ///   그래서 "사업장이 정한 기준" 인지 "ALfit 기본값" 인지 구별되어야
+  ///   책임이 귀속된다. 기본값을 한 번도 건드리지 않고 저장한 사업장을
+  ///   `사업장이 선택했다` 고 기록하면 그 귀속이 거짓이 된다.
+  ///
+  ///   `alfit_default` — 기본값 그대로 저장됨 (사업장 선택 아님)
+  ///   `admin_selected` — 관리자가 값을 **실제로 바꿔서** 저장함
+  ///   `legacy` — 이 필드가 생기기 전 데이터. 추정하지 않는다.
+  final String? policySource;
+
+  static const String sourceAlfitDefault = 'alfit_default';
+  static const String sourceAdminSelected = 'admin_selected';
+  static const String sourceLegacy = 'legacy';
+
   const AttendanceRules({
     this.earlyWindow      = 30,
     this.earlyArrivalUnit = 30,
@@ -51,9 +67,12 @@ class AttendanceRules {
     this.earlyLeaveUnit   = 30,
     this.rulesUpdatedAt,
     this.rulesUpdatedBy,
+    this.policySource,
   });
 
-  factory AttendanceRules.defaults() => const AttendanceRules();
+  /// ALfit 기본값 — **사업장이 고른 것이 아니다.**
+  factory AttendanceRules.defaults() =>
+      const AttendanceRules(policySource: sourceAlfitDefault);
 
   factory AttendanceRules.fromMap(Map<String, dynamic> map) {
     return AttendanceRules(
@@ -66,8 +85,22 @@ class AttendanceRules {
       earlyLeaveUnit:   (map['earlyLeaveUnit']   as num?)?.toInt().clamp(5,  60)  ?? 30,
       rulesUpdatedAt: _parseTimestamp(map['rulesUpdatedAt']),
       rulesUpdatedBy: map['rulesUpdatedBy'] as String?,
+      // 없으면 null 로 둔다 — 추정하지 않는다(읽는 쪽이 legacy 로 해석).
+      policySource: map['policySource'] as String?,
     );
   }
+
+  /// 급여에 영향하는 **7개 숫자**만 비교한다.
+  ///   감사 필드(`rulesUpdatedAt/By`·`policySource`)는 비교에서 제외한다 —
+  ///   그것까지 넣으면 저장할 때마다 "바뀌었다" 가 된다.
+  bool sameRulesAs(AttendanceRules o) =>
+      earlyWindow == o.earlyWindow &&
+      earlyArrivalUnit == o.earlyArrivalUnit &&
+      lateGrace == o.lateGrace &&
+      lateUnit == o.lateUnit &&
+      lateWindow == o.lateWindow &&
+      overtimeUnit == o.overtimeUnit &&
+      earlyLeaveUnit == o.earlyLeaveUnit;
 
   Map<String, dynamic> toMap() => {
     'earlyWindow':      earlyWindow,
@@ -80,6 +113,7 @@ class AttendanceRules {
     if (rulesUpdatedAt != null)
       'rulesUpdatedAt': Timestamp.fromDate(rulesUpdatedAt!.toUtc()),
     if (rulesUpdatedBy != null) 'rulesUpdatedBy': rulesUpdatedBy,
+    if (policySource != null) 'policySource': policySource,
   };
 
   AttendanceRules copyWith({
@@ -92,6 +126,7 @@ class AttendanceRules {
     int? earlyLeaveUnit,
     DateTime? rulesUpdatedAt,
     String? rulesUpdatedBy,
+    String? policySource,
   }) {
     return AttendanceRules(
       earlyWindow:      earlyWindow      ?? this.earlyWindow,
@@ -103,6 +138,7 @@ class AttendanceRules {
       earlyLeaveUnit:   earlyLeaveUnit   ?? this.earlyLeaveUnit,
       rulesUpdatedAt:   rulesUpdatedAt   ?? this.rulesUpdatedAt,
       rulesUpdatedBy:   rulesUpdatedBy   ?? this.rulesUpdatedBy,
+      policySource:     policySource     ?? this.policySource,
     );
   }
 

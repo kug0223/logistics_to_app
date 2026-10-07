@@ -58,9 +58,15 @@ void main() {
   final flat = _flat(code);
 
   group('반올림은 펀치 시점에 서버가 한 번만 한다', () {
-    test('규칙은 사업장 문서에서 서버가 직접 읽는다 — 클라이언트 값 불신', () {
-      expect(flat.contains('bizSnap.data()?.attendanceRules'), true,
+    test('규칙은 서버가 만든 값에서만 온다 — 클라이언트 값 불신', () {
+      // [R7-PAYROLL-POLICY.3] 규칙의 출처가 **확정 시 snapshot** 으로 바뀌었다.
+      //   snapshot 도 서버가 사업장 문서를 읽어 만든다 — 클라이언트가 보낸
+      //   정책값을 쓰지 않는다는 계약은 그대로다(오히려 확정 시점으로 고정돼
+      //   사업장이 나중에 바꿔도 소급되지 않는다).
+      expect(flat.contains('srvEffectiveAttendanceRules('), true,
           reason: '반올림 규칙을 클라이언트가 보내면 임금을 조작할 수 있다');
+      expect(flat.contains('srvBuildAttendancePolicySnapshot('), true,
+          reason: 'snapshot 도 서버가 사업장 문서에서 만들어야 한다');
       expect(flat.contains('_clampAttendanceRules('), true,
           reason: '단위 0/음수는 division-by-zero와 판정 뒤집기를 만든다');
     });

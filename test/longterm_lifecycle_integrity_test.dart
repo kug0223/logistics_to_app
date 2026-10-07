@@ -240,11 +240,15 @@ void main() {
       );
     });
 
-    test('04-d effective 시각은 서버 attendanceRules로만 만든다', () {
+    test('04-d effective 시각은 서버가 만든 규칙으로만 만든다', () {
       final ci = _after(cf, 'export const callableCheckIn', 25000);
-      // 클라이언트 rules fallback이 없다.
-      expect(ci.contains('bizSnap.data()?.attendanceRules'), true);
+      // [R7-PAYROLL-POLICY.3] 규칙은 확정 시 snapshot(서버 생성) → 없으면
+      //   live 사업장 문서. 어느 쪽이든 **서버가 만든 값**이고 클라이언트
+      //   전달값은 쓰지 않는다.
+      expect(ci.contains('srvEffectiveAttendanceRules(appData, bizSnap.data())'),
+          true);
       expect(ci.contains('_clampAttendanceRules(serverRules)'), true);
+      // 클라이언트 rules fallback이 없다.
       expect(ci.contains('request.data.attendanceRules'), false);
     });
 
