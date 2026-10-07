@@ -11131,7 +11131,21 @@ export const callableFinalizeEmployerSignature = onCall(
       const nd = notifSnap.data() ?? {};
       const notifWorkerId  = nd["workerId"]     as string | undefined;
       const notifBizId     = nd["businessId"]   as string | undefined;
-      const notifBizName   = nd["businessName"] as string | undefined;
+      // [R7-GOLDEN-PATH §D] 계약서 문서에는 top-level businessName 이 없다.
+      //   writer(ContractService 가 만드는 EmploymentContractModel.toMap)는
+      //   사업장 이름을 `snapshot.businessName` 안에만 쓴다. 그런데 이 알림은
+      //   top-level 만 읽었다 — 그래서 근로자는 어느 사업장 계약서에 서명해야
+      //   하는지 모르는 본문만 받아 왔다(DEV 실측: 본문에 사업장 이름 없음).
+      //   여러 곳에서 일하는 근로자에게는 그게 곧 "어느 걸 열어야 하나" 다.
+      //   읽는 자리를 writer 가 쓰는 자리에 맞춘다. top-level 은 혹시 채우는
+      //   경로가 생기면 그쪽을 먼저 쓰도록 남겨 둔다.
+      const notifSnapshot =
+        nd["snapshot"] as Record<string, unknown> | undefined;
+      const notifBizNameRaw =
+        nd["businessName"] ?? notifSnapshot?.["businessName"];
+      const notifBizName =
+        typeof notifBizNameRaw === "string" && notifBizNameRaw.length > 0 ?
+          notifBizNameRaw : undefined;
       const notifAppId     = nd["applicationId"] as string | undefined;
       if (notifWorkerId) {
         await srvPersistNotification(notifWorkerId, {
