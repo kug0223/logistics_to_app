@@ -726,7 +726,11 @@ void main() {
 
     test('05-d 초대 현황은 canManageTo가 있을 때만 조회한다', () {
       expect(day.contains('_canForSelectedBiz((p) => p.canManageTo)'), isTrue);
-      expect(day.contains('if (canSeeInvites) {'), isTrue);
+      // [R8-PERFORMANCE.1] 라운드를 합치면서 이 조회가 클로저 안으로 들어갔다.
+      //   게이트는 그대로다 — 권한이 없으면 호출 자체가 일어나지 않는다.
+      //   동작 자체는 `day_staffing_round_collapse_test` 의 RC-13 이
+      //   실제 화면을 띄워 확인한다(문구 고정보다 그쪽이 권위다).
+      expect(day.contains('if (!canSeeInvites) return null;'), isTrue);
     });
 
     test('05-e 사람이 아니라 모집 단위로 묶는다', () {

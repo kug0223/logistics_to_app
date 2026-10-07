@@ -395,7 +395,35 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       // [R8-P7.2] 확정자는 OrThrow 변형을 쓴다. 이 목록이 그날 누가 일하는지를
       //   말하는 자리라, 조회 실패를 "확정자 없음"으로 보여 주면 안 된다.
       //   _load() 의 catch 가 오류 토스트를 띄운다.
-      final phase1 = await Future.wait([
+      // [R2] 이 날짜의 FLEX 모집 단위 — 지원서와 별개로 slot에서 읽는다.
+      //   실패해도 지원자 명단은 유효하므로 전체를 ERROR로 만들지 않고,
+      //   충원 영역만 UNKNOWN으로 내린다 (ERROR != ZERO).
+      List<DayStaffingRow>? staffingRows;
+
+      // [R2.2] 초대 현황 — 지원자 목록과 별개로 읽는다.
+      //   실패해도 지원자 명단은 유효하므로 초대 영역만 UNKNOWN으로 내린다.
+      //
+      //   canManageTo가 없으면 아예 조회하지 않는다. 그 권한이 없는 관리자는
+      //   초대를 보낼 수도 없고(CTA도 같은 권한으로 막혀 있다), 서버도 거부한다.
+      //   권한 없음을 `확인하지 못했어요`(ERROR)로 표시하지 않기 위해
+      //   빈 목록으로 둔다 — NO_PERMISSION != ERROR.
+      List<ApplicationModel>? invitations = const [];
+      final canSeeInvites = _canForSelectedBiz((p) => p.canManageTo);
+
+      // [R8-PERFORMANCE.1] 충원·초대는 **이전 결과를 쓰지 않는다** —
+      //   필요한 입력은 사업장과 날짜뿐이다. 그런데 각자 자기 라운드를
+      //   차지하고 있어서, 지원자 목록이 돌아온 뒤에야 출발했다.
+      //   DEV 실측에서 dayStaffing 혼자 웜 920ms(이번 감사 최장)였고,
+      //   콜드에서는 함수별 콜드스타트가 라운드마다 더해졌다.
+      //
+      //   그래서 같은 라운드로 옮긴다. 다만 **실패는 합치지 않는다.**
+      //   `Future.wait` 는 하나가 던지면 나머지 성공분까지 버리므로,
+      //   둘을 각자 try/catch 를 가진 클로저로 감싸 자기 칸만 UNKNOWN 으로
+      //   내린다(급여 화면이 쓰는 것과 같은 형태).
+      //   지원자·확정자는 감싸지 않는다 — 그 둘의 실패는 지금처럼
+      //   바깥 catch 가 받아 화면 전체 ERROR 가 맞다.
+      final (dayStart, _) = FormatHelper.kstDayRange(widget.date);
+      final phase1 = await Future.wait<Object?>([
         // [R7-P1-2.2] 대기 지원자는 **검토 대상**이다 — 서버가 canManageTo 를
         //   보도록 purpose 를 넘긴다. 이 화면의 확정·거절 CTA 가 쓰는 권한과 같다.
         _reads.pendingApplications(
@@ -407,52 +435,40 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         //   여기서 canManageTo 를 요구하면 그 화면들이 함께 깨진다.
         _reads.confirmedWorkers(
             date: widget.date, businessId: bizId),
+        () async {
+          try {
+            var rows = await _reads.dayStaffing(
+              businessId: bizId,
+              dayStartMs: dayStart.millisecondsSinceEpoch,
+            );
+            if (widget.filterToId != null) {
+              rows = rows.where((r) => r.toId == widget.filterToId).toList();
+            }
+            staffingRows = rows;
+          } catch (e) {
+            debugPrint('⚠️ [DayApplicants] 인력 현황 조회 실패: $e');
+            staffingRows = null;
+          }
+          return null;
+        }(),
+        () async {
+          if (!canSeeInvites) return null;
+          try {
+            var list = await _reads.dayInvitations(
+                date: widget.date, businessId: bizId);
+            if (widget.filterToId != null) {
+              list = list.where((a) => a.toId == widget.filterToId).toList();
+            }
+            invitations = list;
+          } catch (e) {
+            debugPrint('⚠️ [DayApplicants] 초대 현황 조회 실패: $e');
+            invitations = null;
+          }
+          return null;
+        }(),
       ]);
       var pending = phase1[0] as List<ApplicationModel>;
       var confirmed = phase1[1] as List<ApplicationModel>;
-
-      // [R2] 이 날짜의 FLEX 모집 단위 — 지원서와 별개로 slot에서 읽는다.
-      //   실패해도 지원자 명단은 유효하므로 전체를 ERROR로 만들지 않고,
-      //   충원 영역만 UNKNOWN으로 내린다 (ERROR != ZERO).
-      List<DayStaffingRow>? staffingRows;
-      try {
-        final (dayStart, _) = FormatHelper.kstDayRange(widget.date);
-        staffingRows = await _reads.dayStaffing(
-          businessId: bizId,
-          dayStartMs: dayStart.millisecondsSinceEpoch,
-        );
-        if (widget.filterToId != null) {
-          staffingRows = staffingRows
-              .where((r) => r.toId == widget.filterToId)
-              .toList();
-        }
-      } catch (e) {
-        debugPrint('⚠️ [DayApplicants] 인력 현황 조회 실패: $e');
-        staffingRows = null;
-      }
-
-      // [R2.2] 초대 현황 — 지원자 목록과 별개로 읽는다.
-      //   실패해도 지원자 명단은 유효하므로 초대 영역만 UNKNOWN으로 내린다.
-      //
-      //   canManageTo가 없으면 아예 조회하지 않는다. 그 권한이 없는 관리자는
-      //   초대를 보낼 수도 없고(CTA도 같은 권한으로 막혀 있다), 서버도 거부한다.
-      //   권한 없음을 `확인하지 못했어요`(ERROR)로 표시하지 않기 위해
-      //   빈 목록으로 둔다 — NO_PERMISSION != ERROR.
-      List<ApplicationModel>? invitations = const [];
-      final canSeeInvites = _canForSelectedBiz((p) => p.canManageTo);
-      if (canSeeInvites) {
-      try {
-        invitations = await _reads.dayInvitations(
-            date: widget.date, businessId: bizId);
-        if (widget.filterToId != null) {
-          invitations =
-              invitations.where((a) => a.toId == widget.filterToId).toList();
-        }
-      } catch (e) {
-        debugPrint('⚠️ [DayApplicants] 초대 현황 조회 실패: $e');
-        invitations = null;
-      }
-      }
 
       // 특정 공고 필터 (TOGroupCard 명단 보기)
       if (widget.filterToId != null) {

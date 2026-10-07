@@ -137,8 +137,11 @@ void main() {
     });
 
     test('SAP-F3 당일 명단이 대기 지원자 조회에 applicantReview 를 넘긴다', () {
+      // [R8-PERFORMANCE.1] 라운드를 합치면서 `Future.wait<Object?>([` 로 바뀌었다.
+      //   타입 인자까지 고정하면 모양이 바뀔 때마다 이 계약이 깨진다 —
+      //   고정하려는 것은 **purpose 를 넘긴다**는 사실이다.
       final phase =
-          _slice(dayDialog, 'final phase1 = await Future.wait([', ']);');
+          _slice(dayDialog, 'final phase1 = await Future.wait', ']);');
       // [R8 O03] 화면은 경계에 purpose 를 넘기고, 경계가 그대로 전달한다.
       expect(phase, contains('_reads.pendingApplications('));
       expect(phase, contains('FirestoreService.purposeApplicantReview'));

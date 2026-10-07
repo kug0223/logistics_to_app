@@ -355,9 +355,55 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
     try {
       // ✅ 1단계: 근무자 목록과 업무유형 정보 병렬 로드
-      final step1Results = await Future.wait([
+      //
+      // [R8-P.1] 모집 단위 종료 여부와 반올림 정책도 이 라운드에서 함께 읽는다.
+      //   둘 다 **이전 결과를 쓰지 않는다** — 필요한 입력은 사업장(과 날짜)뿐인데,
+      //   예전에는 2단계가 끝난 뒤 각자 자기 라운드를 차지했다.
+      //   DEV 실측에서 dayStaffing 은 웜 920ms 로 이 감사의 최장 읽기였고,
+      //   콜드에서는 라운드마다 함수별 콜드스타트가 더해졌다.
+      //
+      //   실패는 합치지 않는다. 아래 두 클로저가 각자 try/catch 를 들고 있어
+      //   자기 칸만 모름으로 내린다 — 근태 명단은 그대로 살아 있다.
+      final bizIdForLoad = _selectedBusinessId ?? '';
+      // 반올림 정책은 사업장이 바뀐 회차에만 읽는다(기존 동작 유지).
+      final needsRules = _rulesLoadedForBusinessId != bizIdForLoad;
+
+      // [CROSS-SLICE-1A] 이 날짜 모집 단위의 종료 여부 — 지원자 화면이 쓰는
+      //   것과 같은 canonical source(callableGetDayStaffingDetail)에서 읽는다.
+      //   여기서 슬롯 상태를 따로 캐시하거나 추측하지 않는다.
+      //   실패하면 null로 둔다 — 모르는 것을 '종료됨'으로 바꾸지 않는다.
+      //   (서버가 최종 권위이고, 모르는 채로 눌러도 사유와 함께 거절된다.)
+      Map<String, bool>? closedByUnit;
+
+      final step1Results = await Future.wait<Object?>([
         _getConfirmedWorkersForDate(),  // [0] 확정 근무자
         _getWorkTypeInfo(),              // [1] 업무유형 정보
+        () async {
+          try {
+            final (dayStart, _) = FormatHelper.kstDayRange(_kstDay);
+            final rows = await _reads.dayStaffing(
+              businessId: bizIdForLoad,
+              dayStartMs: dayStart.millisecondsSinceEpoch,
+            );
+            closedByUnit = {for (final r in rows) r.wdId: r.isClosed};
+          } catch (e) {
+            debugPrint('⚠️ [당일명단] 모집 단위 종료 여부 조회 실패: $e');
+          }
+          return null;
+        }(),
+        () async {
+          if (!needsRules) return null;
+          try {
+            final business = await _reads.businessById(bizIdForLoad);
+            _attendanceRules = business?.attendanceRules;
+            // 읽은 사업장과 같은 id 로만 표식을 남긴다 — 실패하면 표식을
+            //   남기지 않아 다음 회차가 다시 읽는다(기존 동작).
+            _rulesLoadedForBusinessId = bizIdForLoad;
+          } catch (e) {
+            debugPrint('⚠️ 반올림 정책 로드 실패: $e');
+          }
+          return null;
+        }(),
       ]);
 
       final confirmedWorkers = step1Results[0] as List<ApplicationModel>;
@@ -380,34 +426,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final userMap = step2Results[1] as Map<String, UserModel>;
       final workDetailTimeMap = step2Results[2] as Map<String, dynamic>;
       final contractStatusMap = step2Results[3] as Map<String, String?>;
-
-      // [CROSS-SLICE-1A] 이 날짜 모집 단위의 종료 여부 — 지원자 화면이 쓰는
-      //   것과 같은 canonical source(callableGetDayStaffingDetail)에서 읽는다.
-      //   여기서 슬롯 상태를 따로 캐시하거나 추측하지 않는다.
-      //   실패하면 null로 둔다 — 모르는 것을 '종료됨'으로 바꾸지 않는다.
-      //   (서버가 최종 권위이고, 모르는 채로 눌러도 사유와 함께 거절된다.)
-      Map<String, bool>? closedByUnit;
-      try {
-        final (dayStart, _) = FormatHelper.kstDayRange(_kstDay);
-        final rows = await _reads.dayStaffing(
-          businessId: _selectedBusinessId ?? '',
-          dayStartMs: dayStart.millisecondsSinceEpoch,
-        );
-        closedByUnit = {for (final r in rows) r.wdId: r.isClosed};
-      } catch (e) {
-        debugPrint('⚠️ [당일명단] 모집 단위 종료 여부 조회 실패: $e');
-      }
-
-      // 사업장이 바뀐 경우에만 반올림 정책 로드 (매 refresh마다 Firestore 읽지 않음)
-      if (_rulesLoadedForBusinessId != _selectedBusinessId) {
-        try {
-          final business = await _reads.businessById(_selectedBusinessId ?? '');
-          _attendanceRules = business?.attendanceRules;
-          _rulesLoadedForBusinessId = _selectedBusinessId;
-        } catch (e) {
-          debugPrint('⚠️ 반올림 정책 로드 실패: $e');
-        }
-      }
 
       if (!mounted) return;
       setState(() {
