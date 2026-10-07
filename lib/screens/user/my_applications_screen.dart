@@ -30,6 +30,8 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../widgets/dialogs/apply/document_access_consent.dart';
 import 'apply_prerequisites_screen.dart';
+import '../../utils/period_revision_disclosure.dart';
+import '../../widgets/user/period_revision_notice_card.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_text_styles.dart';
@@ -927,6 +929,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 //   확정 표시는 그대로 둔다 — 아직 바뀐 것이 없기 때문이다.
                 //   제안은 카드 아래에 별도 줄로 붙는다.
                 _buildReassignmentBanner(app),
+
+                // [R7-CONTRACT-PERIOD-DISCLOSURE] 지원 당시 본 종료일과
+                //   적용된 종료일이 다르면 그 사실을 당사자에게 말한다.
+                //
+                //   서버는 확정할 때 이미 이것을 알고 저장했고, 관리자에게는
+                //   알려 주면서 "지원자에게 안내가 필요할 수 있습니다" 라고
+                //   적어 뒀다. 그런데 지원자 쪽 reader 가 하나도 없었다 —
+                //   날짜가 바뀐 당사자만 그 사실을 몰랐다.
+                //
+                //   공고의 **현재** 종료일을 쓰지 않는다. 지원서에 남은
+                //   snapshot 만 본다 — 공고가 나중에 수정돼도 그 사람의
+                //   약속은 그때 그대로다.
+                PeriodRevisionNoticeCard(
+                  disclosure: PeriodRevisionDisclosure.of(app),
+                ),
 
                 // ── 장기 공고 전용 섹션 ───────────────────────────────
                 if (app.isLongTermApplication &&

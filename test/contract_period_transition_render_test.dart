@@ -187,36 +187,43 @@ void main() {
   });
 
   // ══════════════════════════════════════════════════════════════
-  // CPT-C. 지원자는 변경을 보는가 — **현재 화면의 부재**
+  // CPT-C. 지원자는 변경을 보는가 — **내 지원 화면에서 본다**
   // ══════════════════════════════════════════════════════════════
   group('CPT-C. 지원자 쪽 고지 경로', () {
-    test('CPT-C1 지원자 화면 어디에도 정정 필드를 읽는 코드가 없다', () {
-      // 서버는 `workEndDatePresentedAtApply` / `workEndDateRevisedAt` 를
-      // 지원서에 남긴다. 그런데 **읽는 화면이 없다.**
-      //   이것은 "관찰하지 못했다(NOT SEEN)" 가 아니라
-      //   **지금 화면에 그 표면이 없다**는 확인된 사실이다.
+    // [R7-CONTRACT-PERIOD-DISCLOSURE] 이 그룹은 원래 **부재**를 못박고
+    //   있었다. 셀의 reason 이 직접 적어 뒀다 — "읽는 화면이 생기면 이 셀을
+    //   갱신하고 지원자 문구를 여기서 렌더한다". 생겼으므로 갱신한다.
+
+    test('CPT-C1 지원자 화면이 정정 사실을 읽는다', () {
+      // 서버가 남긴 두 필드를 읽는 경로가 **있어야** 한다.
       final hits = <String>[];
-      for (final dir in ['lib/screens', 'lib/widgets', 'lib/models']) {
+      for (final dir in ['lib/screens', 'lib/widgets', 'lib/models',
+        'lib/utils']) {
         for (final f in Directory(dir)
             .listSync(recursive: true)
             .whereType<File>()
             .where((f) => f.path.endsWith('.dart'))) {
           final s = f.readAsStringSync();
-          if (s.contains('workEndDatePresentedAtApply') ||
-              s.contains('workEndDateRevisedAt')) {
-            hits.add(f.path);
-          }
+          if (s.contains('workEndDatePresentedAtApply')) hits.add(f.path);
         }
       }
-      expect(hits, isEmpty,
-          reason: '읽는 화면이 생기면 이 셀을 갱신하고 지원자 문구를 여기서 렌더한다');
+      expect(hits, isNotEmpty, reason: '지원자 고지 경로가 사라졌다');
+      // 판정은 한 곳에서만 한다 — 화면이 날짜를 직접 비교하면 안 된다.
+      final judges = hits
+          .where((h) => h.replaceAll(r'\', '/').contains('lib/screens'))
+          .toList();
+      expect(judges, isEmpty, reason: '화면이 판정을 복제한다: $judges');
     });
 
-    test('CPT-C2 모델도 그 필드를 파싱하지 않는다', () {
+    test('CPT-C2 모델이 그 필드를 파싱하되 쓰지는 않는다', () {
       final m = _src('lib/models/core/application_model.dart');
-      expect(m.contains('workEndDatePresentedAtApply'), isFalse);
-      expect(m.contains('workEndDateRevisedAt'), isFalse);
-      // 그래서 지원자 화면이 보여 주고 싶어도 **값이 도달하지 않는다.**
+      expect(m.contains('workEndDatePresentedAtApply'), isTrue);
+      expect(m.contains('workEndDateRevisedAt'), isTrue);
+      // writer 는 CF 하나다 — toMap 에 넣지 않는다.
+      final i = m.indexOf('Map<String, dynamic> toMap()');
+      final j = m.indexOf('\n  }', i);
+      expect(m.substring(i, j).contains('workEndDatePresentedAtApply'), isFalse,
+          reason: '클라이언트가 법적 snapshot 을 쓰면 안 된다');
     });
 
     test('CPT-C3 확정 알림 본문에도 기간 변경이 없다', () {

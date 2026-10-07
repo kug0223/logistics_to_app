@@ -31,6 +31,17 @@ class ApplicationModel {
   final String toTitle; // TO 제목
   final DateTime workDate; // 근무 날짜
   final DateTime? workEndDate;       // ⭐ 종료일 (장기용)
+
+  /// [R7-CONTRACT-PERIOD-DISCLOSURE] 지원 당시 화면에 **제시된** 종료일.
+  ///
+  ///   서버가 확정할 때 적용 종료일과 다르면 그 값을 지우지 않고 함께
+  ///   남긴다. 둘이 다르면 당사자에게 그 사실을 말해야 한다.
+  ///   **읽기 전용이다** —  에 넣지 않는다. 쓰는 쪽은 CF 하나다.
+  final DateTime? workEndDatePresentedAtApply;
+
+  /// 종료일이 정정된 시각(서버 기록). 고지 판정에는 쓰지 않는다 —
+  /// 판정 기준은 두 날짜의 차이다.
+  final DateTime? workEndDateRevisedAt;
   final List<String>? workDays;      // ⭐ 근무 요일 (장기용)
   final String startTime; // 근무 시작 시간
   final String endTime; // 근무 종료 시간
@@ -274,6 +285,8 @@ class ApplicationModel {
     required this.toTitle,
     required this.workDate,
     this.workEndDate,      // ⭐ 추가
+    this.workEndDatePresentedAtApply,
+    this.workEndDateRevisedAt,
     this.workDays,         // ⭐ 추가
     required this.startTime,
     required this.endTime,
@@ -397,6 +410,10 @@ class ApplicationModel {
           ? parseTimestamp(data['workDate'])
           : (throw ArgumentError('ApplicationModel: workDate 필드 누락 (id: $documentId)')),
       workEndDate: parseTimestampNullable(data['workEndDate']),
+      workEndDatePresentedAtApply:
+          parseTimestampNullable(data['workEndDatePresentedAtApply']),
+      workEndDateRevisedAt:
+          parseTimestampNullable(data['workEndDateRevisedAt']),
       workDays: data['workDays'] != null
           ? List<String>.from(data['workDays'])
           : null,  // ⭐
@@ -768,6 +785,8 @@ class ApplicationModel {
     String? toTitle,
     DateTime? workDate,
     DateTime? workEndDate,     // ⭐
+    DateTime? workEndDatePresentedAtApply,
+    DateTime? workEndDateRevisedAt,
     List<String>? workDays,    // ⭐
     String? startTime,
     String? endTime,
@@ -870,6 +889,9 @@ class ApplicationModel {
       toTitle: toTitle ?? this.toTitle,
       workDate: workDate ?? this.workDate,
       workEndDate: workEndDate ?? this.workEndDate,     // ⭐
+      workEndDatePresentedAtApply:
+          workEndDatePresentedAtApply ?? this.workEndDatePresentedAtApply,
+      workEndDateRevisedAt: workEndDateRevisedAt ?? this.workEndDateRevisedAt,
       workDays: workDays ?? this.workDays,               // ⭐
       desiredStartDate: desiredStartDate ?? this.desiredStartDate,  // ⭐ 희망 시작일        // ⭐
       startTime: startTime ?? this.startTime,
