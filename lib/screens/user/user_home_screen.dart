@@ -182,18 +182,41 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }
     if (flexIds.isEmpty) return;
 
+    // [R8-PERFORMANCE.2] 공고마다 한 라운드씩 줄 서 있었다.
+    //
+    //   각 조회의 입력은 toId 하나뿐이고 서로의 결과를 보지 않는다. 결과도
+    //   전부 모인 뒤에 한 번 `_rebuildCaches()` 로 들어가므로 중간 결과를
+    //   화면에 먼저 반영하는 것도 아니었다 — 순서대로 기다릴 이유가 없었다.
+    //   읽기 수는 그대로다(같은 N 개). 바뀌는 것은 라운드 수뿐이다.
+    //   N 은 후보 공고 수가 아니라 **내가 활성 지원을 가진 flex 공고 수**다
+    //   (DEV 실측 최대 2). 그래서 동시 요청을 따로 제한하지 않는다.
+    //
+    //   결과는 **지역 맵에 모은 뒤** 한 번에 반영한다. 화면 필드에 바로 쓰면
+    //   낡은 회차의 응답이 새 회차가 시작된 뒤에 도착해 그 자리에 끼어든다 —
+    //   Firestore `get` 은 취소할 수 없으므로 guard 는 **적용만** 막는다.
+    //   (직렬 루프는 그 사이에 멈출 수 있었지만, 멈추기 전까지 쓴 값은
+    //    그대로 남겼다. 모아서 반영하면 그 잔재도 사라진다.)
+    //
+    //   실패는 공고별로 끊는다. 실패한 공고는 맵에 들어가지 않고, 그것은
+    //   `모집 없음`이 아니라 `모른다`로 남는다 —
+    //   `HomeRecruitableProjection._flexRecruitableOn` 이 슬롯을 모를 때
+    //   후보를 지우지 않는다. 한 공고의 실패로 다른 공고가 사라지지 않는다.
+    final loaded = <String, List<SlotModel>>{};
     for (final id in flexIds) {
       _slotFetchAttempted.add(id);
+    }
+    await Future.wait(flexIds.map((id) async {
       try {
-        final slots = await _reads.slotsForTO(id);
-        if (!mounted || superseded()) return;
-        _slotsByToId[id] = slots;
+        loaded[id] = await _reads.slotsForTO(id);
       } catch (e) {
         debugPrint('⚠️ 홈 슬롯 로드 실패($id): $e');
       }
-    }
+    }));
     if (!mounted || superseded()) return;
-    setState(_rebuildCaches);
+    setState(() {
+      _slotsByToId.addAll(loaded);
+      _rebuildCaches();
+    });
   }
 
   void _rebuildCaches() {
