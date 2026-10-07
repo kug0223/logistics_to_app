@@ -197,6 +197,97 @@ void main() {
         reason: '개수 문장이 역할 분기 밖에 있다');
   });
 
+  // ── H. 온보딩 → 홈 인계 (R7-ONBOARDING.1D §5·§6·§8) ────────────────
+  //
+  //   온보딩과 홈을 따로 재면 "각각은 맞는데 사이에서 길이 끊기는" 경우를
+  //   놓친다. 사용자가 "그래서 이제 뭘 해야 하지?" 가 되면 그 지점이 결함이다.
+
+  testWidgets('H1 마지막 페이지의 CTA 가 실제로 온보딩을 끝낸다', (t) async {
+    var done = 0;
+    t.view.physicalSize = const Size(390, 820);
+    t.view.devicePixelRatio = 1.0;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(MaterialApp(
+      home: OnboardingScreen(
+          role: 'BUSINESS_ADMIN', onComplete: () => done++),
+    ));
+    await t.pumpAndSettle();
+
+    // 마지막 페이지까지 넘긴다.
+    for (var i = 0; i < 2; i++) {
+      await t.tap(find.text('다음'));
+      await t.pumpAndSettle();
+    }
+    expect(find.text('ALfit 시작하기'), findsOneWidget,
+        reason: '마지막 페이지에 시작 CTA 가 있어야 한다');
+    await t.tap(find.text('ALfit 시작하기'));
+    await t.pump();
+    expect(done, 1, reason: '온보딩이 끝나지 않으면 홈으로 갈 수 없다');
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('H2 건너뛰기로도 갇히지 않는다', (t) async {
+    var done = 0;
+    t.view.physicalSize = const Size(390, 820);
+    t.view.devicePixelRatio = 1.0;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(MaterialApp(
+      home: OnboardingScreen(
+          role: 'BUSINESS_ADMIN', onComplete: () => done++),
+    ));
+    await t.pumpAndSettle();
+    await t.tap(find.text('건너뛰기'));
+    await t.pump();
+    expect(done, 1);
+    expect(t.takeException(), isNull);
+  });
+
+  test('H3 홈이 온보딩 문구를 되풀이하지 않는다', () {
+    final home = _code(_adminHome);
+    for (final line in [
+      '필요한 사람을 맞춥니다',
+      '지원은 관심',
+      '확정은 약속',
+      '첫 공고 전에',
+    ]) {
+      expect(home.contains(line), isFalse,
+          reason: '홈이 온보딩 설명을 반복한다: "$line"');
+    }
+    // 홈이 할 일은 설명이 아니라 **지금 남은 준비**를 말하는 것이다.
+    expect(home.contains('공고 등록까지'), isTrue,
+        reason: '홈의 다음 할 일 안내가 사라졌다');
+  });
+
+  testWidgets('H4 가이드에서 뒤로 가면 원래 화면으로 돌아온다', (t) async {
+    t.view.physicalSize = const Size(390, 820);
+    t.view.devicePixelRatio = 1.0;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (ctx) => Scaffold(
+          body: Center(
+            child: ElevatedButton(
+              onPressed: () => pushTourScreen(ctx, role: 'BUSINESS_ADMIN'),
+              child: const Text('가이드'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await t.tap(find.text('가이드'));
+    await t.pumpAndSettle();
+    expect(find.text('건너뛰기'), findsOneWidget);
+
+    // Android 뒤로가기.
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+
+    // 원래 화면으로 돌아오고, 가이드가 다시 뜨지 않는다.
+    expect(find.text('가이드'), findsOneWidget);
+    expect(find.text('건너뛰기'), findsNothing);
+    expect(t.takeException(), isNull);
+  });
+
   // ── R. 반응형 ──────────────────────────────────────────────────────
 
   testWidgets('R1 좁은 폭 × 큰 배율에서 넘치지 않는다', (t) async {
