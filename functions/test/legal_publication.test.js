@@ -98,11 +98,19 @@ t('P4 같은 본문 재발행은 무해하다 (idempotent)', () => {
   assert.deepStrictEqual(v, {ok: true, reason: 'IDENTICAL'});
 });
 
-t('P4b 공개 목록은 발행본을 가리킨다 (current pointer)', () => {
+// [R7-PAYROLL-POLICY.5A] 고정 길이 창(5000자)으로 잘라 보고 있었다.
+//   함수가 자라자 `tx.set(termsRef` 가 창 밖으로 밀려나 "projection 갱신이
+//   없다" 고 틀린 말을 했다. 다음 `export const` 까지로 자른다.
+function publishBody() {
   const s = indexSrc();
   const i = s.indexOf('export const callablePublishLegalRevision');
-  assert.ok(i > 0);
-  const body = s.slice(i, i + 5000);
+  assert.ok(i > 0, '발행 callable 을 찾지 못했다');
+  const j = s.indexOf('\nexport const ', i + 10);
+  return s.slice(i, j > 0 ? j : s.length);
+}
+
+t('P4b 공개 목록은 발행본을 가리킨다 (current pointer)', () => {
+  const body = publishBody();
   assert.ok(body.includes('tx.create(revRef'), '발행본은 create 로만 만든다');
   assert.ok(!/tx\.(set|update)\(revRef/.test(body),
     '발행본을 덮어쓰는 경로가 있다');

@@ -3,6 +3,88 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// [R7-PAYROLL-POLICY.5A] 이 약관 변경이 이용자에게 어떤 방향인가.
+///
+/// 사전고지 기간이 여기서 갈린다 — `service_terms` 제3조 ②.
+/// 판단이 갈리면 [adverse] 를 쓴다. 더 긴 기간이 안전하고, 개인정보
+/// 보호법 제30조 제3항(정보주체에게 유리한 것을 적용)과도 같은 방향이다.
+///
+/// 기간 값 자체는 **서버가** 갖는다(`LEGAL_NOTICE_DAYS`). 클라이언트가
+/// 들고 있으면 앱 버전에 따라 다른 기간을 주장할 수 있다.
+enum LegalChangeType {
+  /// 이 항목의 첫 발행. 고지할 이전 내용이 없다 — 서버가 항목 부재를
+  /// 확인한 뒤에만 허용한다.
+  initial('initial'),
+
+  /// 이용자에게 유리하거나 중립적인 변경.
+  neutral('neutral'),
+
+  /// 이용자에게 불리할 수 있는 변경.
+  adverse('adverse');
+
+  const LegalChangeType(this.wire);
+
+  /// 서버로 보내는 값. 화면 문구와 분리한다.
+  final String wire;
+
+  String get label => switch (this) {
+        LegalChangeType.initial => '첫 발행',
+        LegalChangeType.neutral => '유리하거나 중립적인 변경',
+        LegalChangeType.adverse => '이용자에게 불리할 수 있는 변경',
+      };
+}
+
+/// [R7-PAYROLL-POLICY.5A] 그 날짜의 **KST 자정**.
+///
+/// 법적 시행일은 날짜 단위다("2026년 11월 7일부터"). 서버는 시행일이 정확히
+/// KST 자정이기를 요구한다 — UTC 자정으로 만들면 국내 사용자에게 하루
+/// 어긋나기 때문이다. 변환을 여기 한 곳에만 두고, 서버의 `kstMidnightMs`
+/// 와 같은 값을 내는지는 테스트로 고정한다.
+DateTime kstMidnightOfDate(int year, int month, int day) =>
+    DateTime.utc(year, month, day).subtract(const Duration(hours: 9));
+
+/// [R7-PAYROLL-POLICY.5A] 고지됐지만 아직 시행되지 않은 발행본.
+///
+/// 발행은 "공개·고지" 이고 시행은 "적용" 이다. 그 사이 기간이
+/// `service_terms` 제3조 ② 가 약속한 사전고지 기간이다. 이 값이 있어도
+/// **지금 적용되는 약관은 base** 이고, 여기에 미리 동의를 받지도 않는다 —
+/// 서버가 예정 판 버전의 동의를 거절한다.
+class UpcomingLegalRevision {
+  const UpcomingLegalRevision({
+    required this.version,
+    required this.revisionId,
+    required this.effectiveAt,
+    this.title,
+    this.content,
+  });
+
+  final String version;
+  final String revisionId;
+
+  /// 서버가 확정한 시행 시각. 클라이언트가 계산하지 않는다.
+  final DateTime? effectiveAt;
+  final String? title;
+  final String? content;
+
+  /// 모양이 다르면 **없는 것으로 친다.** 모르는 것을 예정 변경으로 그리면
+  /// 오지 않을 변경을 예고하게 된다.
+  static UpcomingLegalRevision? tryFromMap(Object? raw) {
+    if (raw is! Map) return null;
+    final version = raw['version'];
+    final revisionId = raw['revisionId'];
+    if (version is! String || version.isEmpty) return null;
+    if (revisionId is! String || revisionId.isEmpty) return null;
+    final at = raw['effectiveAt'];
+    return UpcomingLegalRevision(
+      version: version,
+      revisionId: revisionId,
+      effectiveAt: at is Timestamp ? at.toDate().toLocal() : null,
+      title: raw['title'] is String ? raw['title'] as String : null,
+      content: raw['content'] is String ? raw['content'] as String : null,
+    );
+  }
+}
+
 class LegalTermsItem {
   /// 고정 식별자 (코드에서 참조용)
   final String id;
@@ -32,6 +114,15 @@ class LegalTermsItem {
   /// 표시 순서
   final int order;
 
+  /// [R7-PAYROLL-POLICY.5A] base 가 시행된 시각. 1B 이전 항목에는 없다.
+  final DateTime? effectiveAt;
+
+  /// [R7-PAYROLL-POLICY.5A] 고지됐지만 아직 시행되지 않은 판.
+  ///
+  /// **base 를 대체하지 않는다.** 이 값이 있어도 지금 적용되는 약관은
+  /// base 다. 시행 시각이 지나면 서버가 base 로 올린다.
+  final UpcomingLegalRevision? upcoming;
+
   const LegalTermsItem({
     required this.id,
     required this.title,
@@ -42,6 +133,8 @@ class LegalTermsItem {
     this.revisionId,
     this.updatedAt,
     this.order = 0,
+    this.effectiveAt,
+    this.upcoming,
   });
 
   factory LegalTermsItem.fromMap(Map<String, dynamic> map) {
@@ -57,6 +150,8 @@ class LegalTermsItem {
           : null,
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal(),
       order: (map['order'] as num?)?.toInt() ?? 0,
+      effectiveAt: (map['effectiveAt'] as Timestamp?)?.toDate().toLocal(),
+      upcoming: UpcomingLegalRevision.tryFromMap(map['upcoming']),
     );
   }
 
@@ -91,6 +186,8 @@ class LegalTermsItem {
     revisionId: revisionId ?? this.revisionId,
     updatedAt: updatedAt ?? this.updatedAt,
     order: order ?? this.order,
+    effectiveAt: effectiveAt,
+    upcoming: upcoming,
   );
 }
 

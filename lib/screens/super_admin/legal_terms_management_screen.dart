@@ -9,6 +9,7 @@
 // - 활성/비활성 토글
 // - 버전 관리
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/legal_terms_model.dart';
@@ -62,7 +63,7 @@ class _LegalTermsManagementScreenState
 
   Future<void> _editItem(LegalTermsItem item) async {
     if (_isLoading) return;
-    final result = await Navigator.push<LegalTermsItem>(
+    final result = await Navigator.push<_PublishDraft>(
       context,
       MaterialPageRoute(
         builder: (_) => _TermsEditScreen(item: item),
@@ -73,14 +74,60 @@ class _LegalTermsManagementScreenState
     final uid = context.read<UserProvider>().currentUser?.uid ?? '';
     setState(() => _isLoading = true);
     try {
-      await _service.updateItem(result, updatedBy: uid);
+      await _service.updateItem(result.item,
+          updatedBy: uid,
+          changeType: result.changeType,
+          effectiveAt: result.effectiveAt);
       if (!mounted) return;
-      ToastHelper.showSuccess('약관이 저장되었습니다');
+      ToastHelper.showSuccess('발행했습니다. 시행일부터 적용됩니다');
       await _loadTerms();
+    } on FirebaseFunctionsException catch (e) {
+      // [R7-PAYROLL-POLICY.5A] 왜 거절됐는지 그대로 보여 준다.
+      //   고지기간 숫자를 클라이언트가 들고 있지 않으므로, 가장 이른
+      //   시행일은 **서버가 알려 준 값**을 쓴다. 두 곳에 기간을 적어 두면
+      //   앱 버전에 따라 다른 기간을 주장하게 된다.
+      if (mounted) ToastHelper.showError(_publishFailureMessage(e));
     } catch (e) {
-      if (mounted) ToastHelper.showError('저장에 실패했습니다');
+      if (mounted) ToastHelper.showError('발행에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  String _publishFailureMessage(FirebaseFunctionsException e) {
+    final details = e.details;
+    final reason = details is Map ? details['reason'] : null;
+    final earliest = details is Map ? details['earliestEffectiveAtMs'] : null;
+    String whenEarliest() {
+      if (earliest is! int) return '';
+      final d = DateTime.fromMillisecondsSinceEpoch(earliest)
+          .add(const Duration(hours: 9));
+      return '${d.year}년 ${d.month}월 ${d.day}일';
+    }
+
+    switch (reason) {
+      case 'NOTICE_PERIOD_TOO_SHORT':
+        final w = whenEarliest();
+        return w.isEmpty
+            ? '사전고지 기간이 모자랍니다. 시행일을 뒤로 미뤄 주세요'
+            : '사전고지 기간이 모자랍니다\n가장 이른 시행일은 $w입니다';
+      case 'EFFECTIVE_AT_IMMUTABLE':
+        return '이미 발행된 버전의 시행일은 바꿀 수 없습니다\n새 버전으로 발행해 주세요';
+      case 'EFFECTIVE_AT_IN_PAST':
+        return '이미 지난 시행일로는 현재 약관을 바꿀 수 없습니다';
+      case 'INITIAL_NOT_ALLOWED':
+        return '이미 시행 중인 약관이 있어 첫 발행으로 낼 수 없습니다';
+      case 'INITIAL_REQUIRED':
+        return '아직 시행 중인 판이 없습니다. 첫 발행으로 선택해 주세요';
+      case 'INITIAL_MUST_BE_IMMEDIATE':
+        final w = whenEarliest();
+        return w.isEmpty
+            ? '첫 발행은 오늘 시행이어야 합니다'
+            : '첫 발행은 $w 시행이어야 합니다';
+      case 'EFFECTIVE_AT_NOT_KST_MIDNIGHT':
+        return '시행일을 날짜로 다시 선택해 주세요';
+      default:
+        return '발행에 실패했습니다';
     }
   }
 
@@ -301,6 +348,24 @@ class _LegalTermsManagementScreenState
 
 // ── 약관 편집 화면 ─────────────────────────────────────────────────
 
+/// [R7-PAYROLL-POLICY.5A] 발행 요청 한 건.
+///
+/// 예전에는 편집 화면이 `LegalTermsItem` 만 돌려줬다. 그 모양으로는
+/// "언제부터 적용되는가" 를 말할 수 없었고, 발행이 곧 시행이었다.
+class _PublishDraft {
+  const _PublishDraft({
+    required this.item,
+    required this.changeType,
+    required this.effectiveAt,
+  });
+
+  final LegalTermsItem item;
+  final LegalChangeType changeType;
+
+  /// KST 자정. 변환은 `kstMidnightOfDate` 한 곳에서만 한다.
+  final DateTime effectiveAt;
+}
+
 class _TermsEditScreen extends StatefulWidget {
   final LegalTermsItem item;
   const _TermsEditScreen({required this.item});
@@ -315,6 +380,14 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
   late final TextEditingController _versionCtrl;
   late bool _isRequired;
   bool _hasChanges = false;
+
+  /// [R7-PAYROLL-POLICY.5A] 변경 방향. 기본값을 두지 않는다 — 고르지
+  /// 않으면 발행할 수 없다. 기본값이 있으면 아무 생각 없이 짧은 쪽으로
+  /// 발행된다.
+  LegalChangeType? _changeType;
+
+  /// 시행일(날짜). 비어 있으면 발행할 수 없다.
+  DateTime? _effectiveDate;
 
   @override
   void initState() {
@@ -345,6 +418,74 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
     isRequired: _isRequired,
   );
 
+  String get _effectiveLabel {
+    final d = _effectiveDate;
+    if (d == null) return '시행일을 선택하세요';
+    return '${d.year}년 ${d.month}월 ${d.day}일부터 적용';
+  }
+
+  Future<void> _pickEffectiveDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _effectiveDate ?? now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 3),
+      helpText: '시행일 선택',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _effectiveDate = DateTime(picked.year, picked.month, picked.day);
+      _hasChanges = true;
+    });
+  }
+
+  Widget _buildPublicationControls() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('변경 방향',
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: AppColors.grey500)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          // 좁은 화면에서 세 칩이 한 줄에 안 들어간다 — 줄바꿈을 허용한다.
+          Wrap(
+            spacing: ResponsiveHelper.spacing(context, 8),
+            runSpacing: ResponsiveHelper.spacing(context, 8),
+            children: [
+              for (final t in LegalChangeType.values)
+                ChoiceChip(
+                  label: Text(t.label,
+                      style: ResponsiveHelper.smallStyle(context)),
+                  selected: _changeType == t,
+                  onSelected: (_) => setState(() {
+                    _changeType = t;
+                    _hasChanges = true;
+                  }),
+                ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          // 고지기간 숫자는 **서버가** 갖는다. 여기 적어 두면 앱 버전에 따라
+          // 다른 기간을 주장하게 되므로, 모자라면 서버가 알려 준다.
+          Text('사전고지 기간은 서버가 약관 제3조 ②에 따라 검사합니다',
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: AppColors.grey500)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          Text('시행일',
+              style: ResponsiveHelper.tinyStyle(context,
+                  color: AppColors.grey500)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          OutlinedButton.icon(
+            onPressed: _pickEffectiveDate,
+            icon: const Icon(Icons.event_outlined, size: 18),
+            label: Flexible(
+              child: Text(_effectiveLabel,
+                  style: ResponsiveHelper.smallStyle(context)),
+            ),
+          ),
+        ],
+      );
+
   @override
   Widget build(BuildContext context) {
     return AppPageScaffold(
@@ -361,9 +502,28 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
                 ToastHelper.showError('내용을 입력하세요');
                 return;
               }
-              Navigator.pop(context, _buildResult());
+              // [R7-PAYROLL-POLICY.5A] 발행은 시행이다 — 언제부터인지
+              //   말하지 않고 발행할 수 없다.
+              final changeType = _changeType;
+              if (changeType == null) {
+                ToastHelper.showError('변경 방향을 선택하세요');
+                return;
+              }
+              final date = _effectiveDate;
+              if (date == null) {
+                ToastHelper.showError('시행일을 선택하세요');
+                return;
+              }
+              Navigator.pop(
+                  context,
+                  _PublishDraft(
+                    item: _buildResult(),
+                    changeType: changeType,
+                    effectiveAt:
+                        kstMidnightOfDate(date.year, date.month, date.day),
+                  ));
             },
-            child: Text('저장',
+            child: Text('발행',
                 style: ResponsiveHelper.bodyStyle(context,
                     color: Colors.white, fontWeight: FontWeight.bold)),
           ),
@@ -434,6 +594,11 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
               ],
             ),
           ]),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행
+          _buildPublicationControls(),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 

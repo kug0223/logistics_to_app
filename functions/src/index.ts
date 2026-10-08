@@ -52,6 +52,11 @@ import {
   evaluatePublish as lpEvaluatePublish,
   evaluateReconsent as lpEvaluateReconsent,
   isValidLegalToken as lpIsValidLegalToken,
+  // [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행 ≠ 재동의
+  evaluateNoticePeriod as lpEvaluateNoticePeriod,
+  resolveEffectiveItem as lpResolveEffectiveItem,
+  promoteDueUpcoming as lpPromoteDueUpcoming,
+  placePublishedRevision as lpPlacePublishedRevision,
   type ProjectionItem as LpProjectionItem,
 } from "./legal_publication";
 
@@ -62,6 +67,96 @@ import {
 } from "./legal_readiness";
 
 /**
+ * [R7-PAYROLL-POLICY.5A] 저장된 시각 하나를 epoch ms 로.
+ *
+ * 변환 규칙을 여기 한 곳에만 둔다 — 시행 판정이 시각을 잘못 읽으면
+ * 아직 시행되지 않은 약관이 적용된다.
+ *
+ * @param {unknown} v Timestamp · Date · number · 그 밖의 것
+ * @return {number | null} epoch ms, 읽을 수 없으면 null
+ */
+function srvLegalTimeMs(v: unknown): number | null {
+  if (v instanceof admin.firestore.Timestamp) return v.toMillis();
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return null;
+}
+
+/** [R7-PAYROLL-POLICY.5A] 지금 시행 중인 항목과, 아직 시행 전인 예정 항목. */
+type SrvLegalProjection = {
+  /** 지금 **시행 중인** 활성 항목. 모든 판정의 기준이다. */
+  effective: LpProjectionItem[];
+  /** 고지는 됐지만 아직 시행되지 않은 것. 판정 기준이 **아니다**. */
+  upcoming: Array<{itemId: string; version: string; revisionId: string;
+    effectiveAtMs: number}>;
+};
+
+/**
+ * [R7-PAYROLL-POLICY.5A] projection 을 **서버 시각 기준**으로 해석한다.
+ *
+ *   `.5A` 이전에는 projection 항목이 곧 현재 약관이었다. 발행하는 순간
+ *   교체됐으므로 사전고지 기간을 표현할 자리가 없었다.
+ *
+ *   이제 base 는 시행 중인 판이고 `upcoming` 은 예정 판이다. 시행 시각이
+ *   지난 예정 판은 정기 reconciliation 이 base 로 올리지만, 그 사이에도
+ *   판정이 틀리면 안 되므로 읽는 쪽에서 한 번 더 해석한다.
+ *
+ *   `nowMs` 는 반드시 서버 시각이다 — 기기 시계를 쓰면 시계를 돌린
+ *   사용자에게 아직 시행되지 않은 약관이 적용된다.
+ *
+ * @param {unknown} rawItems `app_settings/legal_terms.items`
+ * @param {number} nowMs 서버 기준 현재 시각
+ * @return {SrvLegalProjection} 시행 중인 것과 예정된 것
+ */
+function srvResolveLegalProjection(
+  rawItems: unknown,
+  nowMs: number,
+): SrvLegalProjection {
+  const effective: LpProjectionItem[] = [];
+  const upcoming: SrvLegalProjection["upcoming"] = [];
+
+  for (const raw of Array.isArray(rawItems) ? rawItems : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const i = raw as Record<string, unknown>;
+    const id = String(i.id ?? "");
+    if (id === "") continue;
+    const upRaw = i.upcoming;
+    const up = upRaw != null && typeof upRaw === "object" &&
+      !Array.isArray(upRaw) ? upRaw as Record<string, unknown> : null;
+    const upEffMs = up ? srvLegalTimeMs(up.effectiveAt) : null;
+    const upRevisionId = up && typeof up.revisionId === "string" ?
+      up.revisionId : "";
+    const upVersion = up ? String(up.version ?? "") : "";
+
+    const resolved = lpResolveEffectiveItem({
+      id,
+      version: String(i.version ?? ""),
+      revisionId: typeof i.revisionId === "string" && i.revisionId !== "" ?
+        i.revisionId : undefined,
+      isRequired: i.isRequired !== false,
+      isActive: i.isActive !== false,
+      effectiveAtMs: srvLegalTimeMs(i.effectiveAt),
+      upcoming: up && upEffMs != null && upRevisionId !== "" &&
+        upVersion !== "" ?
+        {version: upVersion, revisionId: upRevisionId,
+          effectiveAtMs: upEffMs} : null,
+    }, nowMs);
+
+    const item = resolved.item;
+    if (item.version !== "" && item.isActive) effective.push(item);
+    if (resolved.pendingUpcoming) {
+      upcoming.push({
+        itemId: id,
+        version: resolved.pendingUpcoming.version,
+        revisionId: resolved.pendingUpcoming.revisionId,
+        effectiveAtMs: resolved.pendingUpcoming.effectiveAtMs,
+      });
+    }
+  }
+  return {effective, upcoming};
+}
+
+/**
  * [R7-LEGAL.1B.1] 법적 준비 상태를 한 곳에서 읽는다.
  *
  *   화면도, 다른 callable 도 스스로 버전을 비교하지 않는다 — 비교 규칙이
@@ -70,29 +165,24 @@ import {
  *   조회에 실패하면 **throw 한다.** 모르는 것을 "미동의" 로 바꾸지 않기
  *   위해서다(ERROR ≠ RECONSENT_REQUIRED). 호출자가 그 구분을 한다.
  *
+ *   [R7-PAYROLL-POLICY.5A] 기준은 **시행 중인 판**이다. 고지만 된 예정
+ *   판으로 재동의를 요구하면, 아직 효력도 없는 약관에 동의하지 않으면
+ *   앱을 못 쓰게 된다. 예정 판은 `upcoming` 으로 따로 알린다.
+ *
  * @param {string} uid 대상 사용자
- * @return {Promise<LrLegalReadiness>} 판정
+ * @return {Promise<object>} 판정과 시행 예정 안내
  */
-async function srvLegalReadiness(uid: string): Promise<LrLegalReadiness> {
+async function srvLegalReadiness(
+  uid: string,
+): Promise<LrLegalReadiness & {upcoming: SrvLegalProjection["upcoming"]}> {
   const [termsSnap, userSnap] = await Promise.all([
     db.collection("app_settings").doc("legal_terms").get(),
     db.collection("users").doc(uid).get(),
   ]);
 
-  const rawItems = termsSnap.data()?.items;
-  const activeItems: LpProjectionItem[] = (Array.isArray(rawItems) ?
-    rawItems : [])
-    .filter((i): i is Record<string, unknown> =>
-      !!i && typeof i === "object")
-    .map((i) => ({
-      id: String(i.id ?? ""),
-      version: String(i.version ?? ""),
-      revisionId: typeof i.revisionId === "string" && i.revisionId !== "" ?
-        i.revisionId : undefined,
-      isRequired: i.isRequired !== false,
-      isActive: i.isActive !== false,
-    }))
-    .filter((i) => i.id !== "" && i.version !== "" && i.isActive);
+  const nowMs = admin.firestore.Timestamp.now().toMillis();
+  const resolved = srvResolveLegalProjection(termsSnap.data()?.items, nowMs);
+  const activeItems = resolved.effective;
 
   // 발행본이 실재하는지 본다 — "새 판" 과 "옛 기록" 을 가르는 기준이다.
   const wanted = activeItems.map((i) =>
@@ -104,13 +194,16 @@ async function srvLegalReadiness(uid: string): Promise<LrLegalReadiness> {
     for (const s of snaps) if (s.exists) published.add(s.id);
   }
 
-  return lrEvaluate({
-    activeItems,
-    consent: (userSnap.data()?.termsConsent ?? {}) as Record<string, {
-      agreed?: unknown; version?: unknown; revisionId?: unknown;
-    }>,
-    publishedRevisionIds: published,
-  });
+  return {
+    ...lrEvaluate({
+      activeItems,
+      consent: (userSnap.data()?.termsConsent ?? {}) as Record<string, {
+        agreed?: unknown; version?: unknown; revisionId?: unknown;
+      }>,
+      publishedRevisionIds: published,
+    }),
+    upcoming: resolved.upcoming,
+  };
 }
 
 initializeApp();
@@ -4424,8 +4517,9 @@ export const masterScheduler = onSchedule(
       processSlotWorkDetailExpiry(timestamp),
       processTOExpiry(timestamp),
       processExpiredTOInvitations(timestamp),
+      processDueLegalRevisions(timestamp),
     ]);
-    const hourlyNames = ["예약 공개", "WorkDetail 마감", "슬롯 WorkDetail 마감", "TO 마감", "초대 만료"];
+    const hourlyNames = ["예약 공개", "WorkDetail 마감", "슬롯 WorkDetail 마감", "TO 마감", "초대 만료", "약관 시행 전환"];
     hourlyResults.forEach((r, i) => {
       if (r.status === "rejected") console.error(`❌ [${hourlyNames[i]}] 실패:`, r.reason);
       else console.log(`✅ [${hourlyNames[i]}] 완료`);
@@ -11825,22 +11919,24 @@ export const callableRecordTermsConsent = onCall(
     //   `app_settings/legal_terms` 가 유일한 출처다.
     const legalSnap = await db.collection("app_settings")
       .doc("legal_terms").get();
-    const rawItems = legalSnap.data()?.items;
-    const activeItems: TcActiveLegalItem[] = (Array.isArray(rawItems) ?
-      rawItems : [])
-      .filter((i): i is Record<string, unknown> =>
-        !!i && typeof i === "object" && (i as Record<string, unknown>)
-          .isActive !== false)
-      .map((i) => ({
-        id: String(i.id ?? ""),
-        version: String(i.version ?? ""),
-        isRequired: i.isRequired !== false,
-        // [LEGAL-1B] 발행본 포인터. 아직 발행 경로를 거치지 않은 legacy
-        //   항목은 (항목, 버전)으로 유도한다 — 같은 규칙이다.
-        revisionId: typeof i.revisionId === "string" && i.revisionId !== "" ?
-          i.revisionId : undefined,
-      }))
-      .filter((i) => i.id !== "" && i.version !== "");
+    // [R7-PAYROLL-POLICY.5A] 동의는 **시행 중인 판**에 대해서만 받는다.
+    //
+    //   고지만 된 예정 판에 미리 동의를 받으면, 그 판이 아직 당사자 간
+    //   효력이 없는 동안 "무엇에 동의한 것인가" 가 불분명해진다. 예정 판이
+    //   더 늦은 판으로 교체되면 그 동의는 어느 글도 가리키지 않는다.
+    //   그래서 기준은 시행 중인 판 하나이고, 예정 판 버전을 보내면
+    //   기존 규칙대로 `TERMS_VERSION_STALE` 로 거절된다.
+    const nowMs = admin.firestore.Timestamp.now().toMillis();
+    const activeItems: TcActiveLegalItem[] =
+      srvResolveLegalProjection(legalSnap.data()?.items, nowMs).effective
+        .map((i) => ({
+          id: i.id,
+          version: i.version,
+          isRequired: i.isRequired,
+          // [LEGAL-1B] 발행본 포인터. 아직 발행 경로를 거치지 않은 legacy
+          //   항목은 (항목, 버전)으로 유도한다 — 같은 규칙이다.
+          revisionId: i.revisionId,
+        }));
 
     if (activeItems.length === 0) {
       // 활성 약관을 모르면 아무것도 저장하지 않는다. 비어 있는 기준으로
@@ -11996,11 +12092,15 @@ export const callablePublishLegalRevision = onCall(
       itemId?: unknown; version?: unknown; title?: unknown;
       content?: unknown; isRequired?: unknown; isActive?: unknown;
       order?: unknown;
+      // [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행. 둘을 caller 가 명시한다.
+      changeType?: unknown; effectiveAt?: unknown;
     };
     const itemId = String(d.itemId ?? "");
     const version = String(d.version ?? "");
     const content = typeof d.content === "string" ? d.content : "";
     const title = String(d.title ?? "").slice(0, 200);
+    const reqEffectiveAtMs = typeof d.effectiveAt === "number" &&
+      Number.isFinite(d.effectiveAt) ? d.effectiveAt : null;
 
     if (!lpIsValidLegalToken(itemId) || !lpIsValidLegalToken(version)) {
       throw new HttpsError("invalid-argument",
@@ -12038,23 +12138,79 @@ export const callablePublishLegalRevision = onCall(
         throw new HttpsError("invalid-argument", `LEGAL_${verdict.reason}`);
       }
 
+      // ── [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행 ────────────────────────
+      //
+      //   예전에는 이 transaction 이 발행본을 만들고 projection 을 **교체**
+      //   했다. 그래서 발행하는 순간 모든 reader 가 새 판을 현재 약관으로
+      //   말하고 전원 재동의가 걸렸다. service_terms 제3조 ② 가 약속한
+      //   사전고지 기간을 표현할 자리가 아예 없었다.
+      //
+      //   이제 시행 중인 판은 base 에 남고, 새 판은 `upcoming` 에서 시행
+      //   시각을 기다린다.
+      const nowMs = admin.firestore.Timestamp.now().toMillis();
+
+      // projection — 공개 중인 목록. base 는 **시행 중인 판**이다.
+      const rawItems = termsSnap.data()?.items;
+      let items: Array<Record<string, unknown>> =
+        Array.isArray(rawItems) ? rawItems.map((x) => ({...x})) : [];
+
+      // 먼저 시행 시각이 지난 예정 판을 올린다. 그래야 "이미 시행 중인
+      // 판이 있는가" 와 다음 판의 고지기간이 같은 현재를 기준으로 계산된다.
+      items = items.map((raw) => {
+        const upRaw = raw["upcoming"];
+        const up = upRaw != null && typeof upRaw === "object" &&
+          !Array.isArray(upRaw) ? upRaw as Record<string, unknown> : null;
+        return lpPromoteDueUpcoming({
+          raw,
+          upcomingEffectiveAtMs: up ? srvLegalTimeMs(up.effectiveAt) : null,
+          nowMs,
+        }).raw;
+      });
+
+      const at = items.findIndex((x) => String(x.id ?? "") === itemId);
+      const hasExistingEffective = at >= 0 &&
+        String(items[at].version ?? "") !== "";
+
+      const notice = lpEvaluateNoticePeriod({
+        changeType: d.changeType,
+        publishedAtMs: nowMs,
+        effectiveAtMs: reqEffectiveAtMs,
+        hasExistingEffective,
+        storedEffectiveAtMs: revSnap.exists ?
+          srvLegalTimeMs(revSnap.data()?.effectiveAt) : null,
+      });
+      if (!notice.ok) {
+        const hint = notice.earliestEffectiveAtMs != null ?
+          ` earliest=${new Date(notice.earliestEffectiveAtMs).toISOString()}` :
+          notice.storedEffectiveAtMs != null ?
+            ` stored=${new Date(notice.storedEffectiveAtMs).toISOString()}` :
+            "";
+        throw new HttpsError("failed-precondition",
+          `LEGAL_${notice.reason}${hint}`,
+          {reason: notice.reason,
+            earliestEffectiveAtMs: notice.earliestEffectiveAtMs ?? null,
+            storedEffectiveAtMs: notice.storedEffectiveAtMs ?? null});
+      }
+
+      const effectiveAt =
+        admin.firestore.Timestamp.fromMillis(notice.effectiveAtMs);
+
       if (verdict.reason === "CREATE") {
         // create — 이미 있으면 실패한다. 발행본을 덮어쓰는 경로를 두지 않는다.
+        //   `effectiveAt` 도 여기서 한 번만 정해진다. 나중에 바꿀 수 있으면
+        //   고지기간 자체를 사후에 줄일 수 있다.
         tx.create(revRef, {
           itemId, version, title, content,
           contentHash: hash,
           isRequired: d.isRequired !== false,
+          changeType: notice.changeType,
+          effectiveAt,
           publishedAt: admin.firestore.FieldValue.serverTimestamp(),
           publishedBy: callerUid,
         });
       }
 
-      // projection — 공개 중인 목록. 읽는 쪽(앱·공개 페이지)의 모양은
-      //   그대로 두고 발행본 포인터만 더한다.
-      const rawItems = termsSnap.data()?.items;
-      const items: Array<Record<string, unknown>> =
-        Array.isArray(rawItems) ? rawItems.map((x) => ({...x})) : [];
-      const next = {
+      const baseFields: Record<string, unknown> = {
         id: itemId,
         title,
         content,
@@ -12063,11 +12219,33 @@ export const callablePublishLegalRevision = onCall(
         version,
         revisionId,
         contentHash: hash,
-        order: typeof d.order === "number" ? d.order : items.length + 1,
+        effectiveAt,
+        order: typeof d.order === "number" ? d.order :
+          (at >= 0 ? items[at].order : items.length + 1),
         updatedAt: admin.firestore.Timestamp.now(),
       };
-      const at = items.findIndex((x) => String(x.id ?? "") === itemId);
-      if (at >= 0) items[at] = next; else items.push(next);
+
+      // 어느 자리에 둘지는 순수 함수가 정한다 — writer 안에 인라인으로
+      //   두면 실행으로 확인할 수 없다(`.5A` 변이 M12 가 그렇게 빠져나갔다).
+      const placed = lpPlacePublishedRevision({
+        items,
+        itemId,
+        revisionId,
+        baseFields,
+        upcomingFields: {
+          version, revisionId, title, content,
+          contentHash: hash, effectiveAt,
+        },
+        effectiveAtMs: notice.effectiveAtMs,
+        nowMs,
+      });
+      if (!placed.ok) {
+        throw new HttpsError("failed-precondition",
+          "LEGAL_EFFECTIVE_AT_IN_PAST 이미 지난 시행일로는 현재 약관을 " +
+          "바꿀 수 없습니다. 새 버전을 사전고지 기간과 함께 발행해 주세요.",
+          {reason: placed.reason});
+      }
+      items = placed.items;
 
       tx.set(termsRef, {
         items,
@@ -12076,7 +12254,8 @@ export const callablePublishLegalRevision = onCall(
       }, {merge: true});
     });
 
-    return {success: true, revisionId, contentHash: hash};
+    return {success: true, revisionId, contentHash: hash,
+      effectiveAtMs: reqEffectiveAtMs};
   }
 );
 
@@ -12101,6 +12280,10 @@ export const callableGetLegalReadiness = onCall(
       reconsentRequired: r.reconsentRequired,
       legacyUnknown: r.legacyUnknown,
       optionalUnanswered: r.optionalUnanswered,
+      // [R7-PAYROLL-POLICY.5A] 고지는 됐지만 아직 시행되지 않은 판.
+      //   `status` 에 섞지 않는다 — 섞으면 "아직 효력 없는 약관에 동의하지
+      //   않으면 앱 사용 불가" 가 된다. 안내만 할 수 있게 따로 내려 준다.
+      upcoming: r.upcoming,
     };
   }
 );
@@ -39479,6 +39662,73 @@ async function srvTerminateWaitingApplicationInTx(
     });
   }
   return "done";
+}
+
+// ── processDueLegalRevisions ────────────────────────────────────────────────
+//
+// [R7-PAYROLL-POLICY.5A] 시행 시각이 지난 예정 약관을 **시행 중**으로 올린다.
+//
+//   이것은 policy engine 이 아니다. 시행 여부를 판정하는 곳은 읽는 쪽이고
+//   (`srvResolveLegalProjection`), 이 작업은 그 판정 결과를 저장 상태에
+//   반영하는 reconciliation 일 뿐이다.
+//
+//   왜 필요한가: 로그인하지 않은 가입 화면과 공개 웹 페이지는 서버 시각을
+//   알 수 없어 base 를 그대로 읽는다. base 가 낡아 있으면 그 둘만 옛 판을
+//   보여 주고, 그 판으로 동의를 보내면 서버가 거절한다(가입이 막힌다).
+//   그래서 base 가 늘 시행 중인 판이게 유지한다.
+//
+//   `effectiveAt` 을 KST 자정으로 고정했고 이 스케줄러는 매시 정시에 도니,
+//   실제 지연은 00:00 KST 직후 한 번의 실행 간격 안이다.
+//
+//   멱등하다 — 올릴 것이 없으면 아무것도 쓰지 않는다.
+/**
+ * 시행 시각이 지난 예정 약관을 base 로 승격한다.
+ *
+ * @param {admin.firestore.Timestamp} now 스케줄러 기준 시각
+ * @return {Promise<void>} 완료
+ */
+async function processDueLegalRevisions(
+  now: admin.firestore.Timestamp,
+): Promise<void> {
+  const termsRef = db.collection("app_settings").doc("legal_terms");
+  const nowMs = now.toMillis();
+  const promotedIds: string[] = [];
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(termsRef);
+    const rawItems = snap.data()?.items;
+    if (!Array.isArray(rawItems)) return;
+
+    let changed = false;
+    const items = rawItems.map((x) => {
+      if (!x || typeof x !== "object") return x;
+      const raw = {...(x as Record<string, unknown>)};
+      const upRaw = raw["upcoming"];
+      const up = upRaw != null && typeof upRaw === "object" &&
+        !Array.isArray(upRaw) ? upRaw as Record<string, unknown> : null;
+      const res = lpPromoteDueUpcoming({
+        raw,
+        upcomingEffectiveAtMs: up ? srvLegalTimeMs(up.effectiveAt) : null,
+        nowMs,
+      });
+      if (res.promoted) {
+        changed = true;
+        promotedIds.push(String(raw["id"] ?? ""));
+      }
+      return res.raw;
+    });
+
+    if (!changed) return;
+    tx.set(termsRef, {
+      items,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: "system:legal-effective",
+    }, {merge: true});
+  });
+
+  if (promotedIds.length > 0) {
+    console.log(`📜 [약관 시행 전환] ${promotedIds.join(", ")}`);
+  }
 }
 
 // ── processExpiredTOInvitations ───────────────────────────────────────────────

@@ -25,19 +25,46 @@
 개정됐다 — `service_terms`, `privacy_policy`, `privacy_third_party`,
 `location_terms`. `marketing_consent`(선택)는 본문이 바뀌지 않았다.
 
-필수 항목의 발행본이 바뀌면 `evaluateReconsent` 가 그 항목을 다시 받으라고
-판정한다. 즉 **PROD 발행 시점에 전원이 재동의 화면을 본다.** 네 항목을 한
-날짜로 묶은 이유가 이것이다 — 따로 올리면 재동의가 네 번 일어난다.
+네 항목을 한 날짜로 묶은 이유: 필수 항목의 **시행본**이 바뀌면 그 항목을
+다시 받아야 하므로, 따로 올리면 재동의가 네 번 일어난다.
 
-PROD 동기화 절차:
+### [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행 — 절차가 바뀌었다
+
+`.5` 시점에는 발행이 곧 시행이었고, 그래서 "발행 시점에 전원이 재동의
+화면을 본다" 고 적었다. `.5A` 가 그 결합을 끊었다. 발행은 **고지**이고,
+적용은 `effectiveAt` 부터다.
 
 ```
-# 1) PROD 서비스 계정 / SUPER_ADMIN 으로 전환한 뒤
+# 1) PROD SUPER_ADMIN 으로 전환한 뒤
 # 2) 약관 관리 화면에서 네 항목을 각각 발행
-#    (발행 writer 는 callablePublishLegalRevision 하나뿐이다)
-# 3) 발행 후 legal_revisions/{itemId}__2026-10-08 네 건이 생겼는지,
-#    app_settings/legal_terms 의 projection 이 그것을 가리키는지 확인
+#    · 변경 방향 = 이용자에게 불리할 수 있는 변경 (adverse)
+#    · 시행일    = 발행일 + 30일 이후의 KST 자정
+#      (service_terms 제3조 ② 의 자기약속. 서버가 강제하며, 모자라면
+#       가장 이른 시행일을 알려 준다)
+# 3) 발행 후 확인
+#    · legal_revisions/{itemId}__2026-10-08 네 건 (effectiveAt·changeType 포함)
+#    · app_settings/legal_terms 의 각 항목에서
+#        base      = 아직 옛 판 (지금 적용 중)
+#        upcoming  = 새 판 + effectiveAt
+# 4) 시행일 이후 확인 — masterScheduler(매시 정시)의 `약관 시행 전환` 이
+#    upcoming 을 base 로 올렸는지
 ```
+
+**발행 당일에는 아무도 막히지 않는다.** 고지 기간 동안 `callableApplyToTO`
+의 약관 gate 는 여전히 옛 판 기준이고, 재동의 요구는 시행 시각부터 생긴다.
+DEV 실측(읽기 전용, 2026-10-08):
+
+| 시계 | 시행 중 | 예정 | 지원 차단 |
+|---|---|---|---|
+| 고지 중(시행 1일 전) | 옛 판 | 4건 | **0 / 8** |
+| 시행 1ms 전 | 옛 판 | 4건 | **0 / 8** |
+| 시행 정각 | `2026-10-08` | 0건 | **1 / 8** |
+| 시행 +1일 | `2026-10-08` | 0건 | **1 / 8** |
+
+차단 1명은 동의 기록이 발행본을 가리키는 유일한 사용자다. 나머지 7명은
+`LEGACY_CONSENT_UNKNOWN` 으로 남아 **막히지 않는다**(soft migration).
+`.5` 가 보고한 "8/8" 은 `evaluateReconsent`(다시 받아야 하는 항목) 수치이고,
+실제 gate 는 `evaluateLegalReadiness` + `allowsNewCommitment` 다.
 
 > PROD 변경은 별도 승인 후 수행한다. 이 문서는 절차만 고정한다.
 
@@ -60,6 +87,35 @@ PROD 동기화 절차:
 사용자가 실제 값을 주면 같은 날짜 개정으로 함께 채운다. 그때까지 이 blocker
 는 CLOSED 가 아니며, `payroll_policy_terms_wording_test` 가 placeholder 와 이
 문서의 blocker 표기를 **함께** 고정한다 — 한쪽만 사라지지 않게.
+
+### [R7-PAYROLL-POLICY.5A] NEEDS OWNER INPUT — 저장소 전수 조사 결과
+
+repo 전역에서 운영주체를 찾았다(`사업자등록번호`·`대표자`·`상호`·`주식회사`
+·footer·`pubspec.yaml`·`firebase.json`·공개 HTML). 나온 것은 셋뿐이다.
+
+| 확인된 값 | 출처 |
+|---|---|
+| 서비스명 `AlFit` | `pubspec.yaml`, 공개 페이지 `<h1>`·footer |
+| 고객센터 이메일 `corebridge87@gmail.com` | 약관·처리방침·계정삭제 페이지 |
+| Firebase 프로젝트 `alfit-89567`(dev) / `alfit-prod` | `.firebaserc` |
+
+코드에 있는 `사업자등록번호`·`대표자명`·`상호명`은 모두 **고객 사업장**의
+필드다(`businesses`, `users.businessNumber`). ALfit 자신의 사업자 정보는
+저장소에 없다. 이메일 앞부분에서 회사명을 유추하지 않는다 — 그것은 추측이다.
+
+아래 값을 받아야 blocker 를 닫을 수 있다.
+
+| 필요한 값 | 들어갈 자리 | 공식 근거(검토 필요) |
+|---|---|---|
+| 상호(법인명 또는 개인사업자 명칭) | `service_terms` 제1조, `location_terms` 사업자 | 전자상거래법 제10조 적용 여부는 미확인 — 약관 당사자 특정은 그와 별개로 필요 |
+| 대표자 성명 | `service_terms` 제1조 | 같음 |
+| 사업장 소재지 | `service_terms` 제1조 · 제11조 ② 관할 | 관할 합의가 소재지를 가리킨다 |
+| 사업자등록번호 | `service_terms` 제1조 | 동일인 확인 |
+| 개인정보 보호책임자 성명·직책 | `privacy_policy` 보호책임자 | 개인정보 보호법 제31조 — 현재 "AlFit 운영팀" 으로만 적혀 있다 |
+| 위치기반서비스사업 신고 여부·신고번호 | `location_terms` | 위치정보법 제9조 제1항 — 신고 대상 여부 자체가 `[LEGAL-LOCATION-SERVICE-REGISTRATION]` |
+
+개인정보처리자와 서비스 운영주체가 **같은 entity** 인지도 함께 확인해야
+한다. 현재 두 문서 모두 `AlFit` 으로만 적혀 있어 구별되지 않는다.
 
 ## 2. 공개 페이지
 

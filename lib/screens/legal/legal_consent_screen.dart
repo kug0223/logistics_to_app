@@ -194,6 +194,54 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
         ),
       );
 
+  /// [R7-PAYROLL-POLICY.5A] 시행 예정 약관 안내 한 줄.
+  ///
+  /// 발행과 시행은 다른 사건이다. 예정 약관은 **아직 효력이 없으므로**
+  /// 여기서 동의를 받지 않는다 — 알려 주기만 한다. 동의를 받으면 그 글이
+  /// 더 늦은 판으로 교체됐을 때 그 동의가 어느 글도 가리키지 않게 된다.
+  String? get _upcomingNotice {
+    final up = _readiness.upcoming;
+    if (up.isEmpty) return null;
+    final dates = up
+        .map((u) => u.effectiveAt)
+        .whereType<DateTime>()
+        .toList()
+      ..sort();
+    if (dates.isEmpty) {
+      return '변경된 약관이 공지되어 있습니다. 시행일부터 적용됩니다.';
+    }
+    final d = dates.first;
+    final sameDay = dates.every(
+        (x) => x.year == d.year && x.month == d.month && x.day == d.day);
+    final when = '${d.year}년 ${d.month}월 ${d.day}일';
+    return sameDay
+        ? '변경된 약관이 공지되어 있습니다. $when부터 적용됩니다.'
+        : '변경된 약관이 공지되어 있습니다. 가장 이른 시행일은 $when입니다.';
+  }
+
+  Widget _buildUpcomingNotice(String notice) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.infoBg,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.event_outlined,
+                size: 16, color: AppColors.infoDark),
+            const SizedBox(width: 8),
+            // 좁은 화면에서 넘치지 않게 — 줄바꿈을 허용한다.
+            Expanded(
+              child: Text(notice,
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.infoDark)),
+            ),
+          ],
+        ),
+      );
+
   Widget _buildConsent() {
     final terms = _terms;
     if (terms == null) return const Center(child: CircularProgressIndicator());
@@ -215,6 +263,10 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
                       ?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
               Text(_body, style: ResponsiveHelper.smallStyle(context)),
+              if (_upcomingNotice case final notice?) ...[
+                const SizedBox(height: 12),
+                _buildUpcomingNotice(notice),
+              ],
               const SizedBox(height: 20),
               LegalConsentList(
                 items: items,

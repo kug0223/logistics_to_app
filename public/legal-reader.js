@@ -72,6 +72,51 @@
   }
 
   /**
+   * [R7-PAYROLL-POLICY.5A] 지금 **시행 중인** 판은 어느 것인가.
+   *
+   *   base 는 시행 중인 판이고 `upcoming` 은 아직 시행되지 않은 예정 판이다.
+   *   시행 시각이 지난 예정 판은 서버 reconciliation 이 base 로 올리는데,
+   *   그 사이 공백을 여기서 한 번 더 덮는다 — CF 쪽
+   *   `resolveEffectiveItem` 과 같은 규칙이다.
+   *
+   *   `nowMs` 는 **서버 시각**이다. 기기 시계를 쓰면 시계를 앞으로 돌린
+   *   방문자에게 아직 시행되지 않은 약관이 현재 약관으로 보인다. 그래서
+   *   서버 시각을 모를 때는 **승격하지 않는다** — base 를 그대로 둔다.
+   *   모르면 올리지 않는 쪽이 안전하다.
+   *
+   * @param {object} item projection 항목
+   * @param {number|null} nowMs 서버 기준 현재 시각 (ms) 또는 null
+   * @return {object} {effective, upcoming}
+   */
+  function resolveEffective(item, nowMs) {
+    const up = (item && item.upcoming) || null;
+    const upMs = up ? Date.parse(up.effectiveAt || '') : NaN;
+    const due = up && typeof nowMs === 'number' && isFinite(nowMs) &&
+      isFinite(upMs) && upMs <= nowMs;
+    if (due) {
+      const merged = {};
+      for (const k of Object.keys(item)) merged[k] = item[k];
+      merged.version = up.version;
+      merged.revisionId = up.revisionId;
+      merged.title = up.title || item.title;
+      merged.content = up.content || item.content;
+      merged.contentHash = up.contentHash;
+      merged.effectiveAt = up.effectiveAt;
+      merged.upcoming = null;
+      return {effective: merged, upcoming: null};
+    }
+    return {effective: item, upcoming: up};
+  }
+
+  /** 시행 예정 안내 한 줄. 예정이 없으면 빈 문자열. */
+  function upcomingLabel(view) {
+    const up = view && view.upcoming;
+    if (!up || !up.effectiveAt) return '';
+    return '시행 예정 ' + String(up.effectiveAt).slice(0, 10) +
+      ' · 버전 ' + (up.version || '(미지정)');
+  }
+
+  /**
    * 화면이 그릴 상태 하나.
    *
    *   SUCCESS_CURRENT    현재 발행본을 읽었다
@@ -87,13 +132,24 @@
         message: '현재 정책을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',
       };
     }
-    const item = pickItem(o.termsDoc, o.itemId);
-    if (!item) {
+    const picked = pickItem(o.termsDoc, o.itemId);
+    if (!picked) {
       return {
         state: 'MISSING',
         message: '현재 공개 중인 문서를 찾을 수 없습니다.',
       };
     }
+
+    // [R7-PAYROLL-POLICY.5A] 발행됐다고 해서 시행된 것이 아니다.
+    //   예정 판을 현재 약관으로 보여 주면, 방문자는 아직 효력도 없는 글을
+    //   "현재 이용약관" 으로 읽는다.
+    const res = resolveEffective(picked, o.nowMs);
+    const item = res.effective;
+    const upcoming = res.upcoming ? {
+      version: res.upcoming.version || '',
+      revisionId: res.upcoming.revisionId || null,
+      effectiveAt: res.upcoming.effectiveAt || null,
+    } : null;
 
     const revisionId = item.revisionId || null;
 
@@ -108,6 +164,7 @@
         version: item.version || '',
         revisionId: null,
         content: item.content || '',
+        upcoming: upcoming,
       };
     }
 
@@ -137,6 +194,8 @@
       revisionId: revisionId,
       content: rev.content || '',
       publishedAt: rev.publishedAt || null,
+      effectiveAt: rev.effectiveAt || item.effectiveAt || null,
+      upcoming: upcoming,
     };
   }
 
@@ -144,7 +203,9 @@
   function versionLabel(view) {
     if (!view || view.state !== 'SUCCESS_CURRENT') return '';
     let s = '버전 ' + (view.version || '(미지정)');
-    if (view.publishedAt) {
+    if (view.effectiveAt) {
+      s += ' · 시행 ' + String(view.effectiveAt).slice(0, 10);
+    } else if (view.publishedAt) {
       s += ' · 발행 ' + String(view.publishedAt).slice(0, 10);
     }
     if (!view.verified) s += ' · 발행본 미등록';
@@ -162,7 +223,14 @@
   async function fetchJson(url) {
     const r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    // [R7-PAYROLL-POLICY.5A] 응답의 `Date` 는 **서버 시각**이다. 시행
+    //   판정에 기기 시계(`Date.now()`)를 쓰면 시계를 앞으로 돌린 방문자에게
+    //   아직 시행되지 않은 약관이 현재 약관으로 보인다. 없으면 null 로 두고
+    //   승격하지 않는다 — 모르면 올리지 않는다.
+    const hdr = r.headers && r.headers.get ? r.headers.get('date') : null;
+    const ms = hdr ? Date.parse(hdr) : NaN;
+    const body = await r.json();
+    return {body: body, serverNowMs: isFinite(ms) ? ms : null};
   }
 
   async function loadAndRender(opts) {
@@ -172,31 +240,40 @@
 
     let view;
     try {
-      const cfg = await fetchJson('/__/firebase/init.json');
+      const cfgRes = await fetchJson('/__/firebase/init.json');
+      const cfg = cfgRes.body;
       const base = 'https://firestore.googleapis.com/v1/projects/' +
         cfg.projectId + '/databases/(default)/documents';
-      const termsDoc = await fetchJson(
+      const termsRes = await fetchJson(
         base + '/app_settings/legal_terms?key=' + cfg.apiKey);
+      const termsDoc = termsRes.body;
+      const nowMs = termsRes.serverNowMs;
 
       // 포인터를 먼저 보고, 가리키는 발행본이 있을 때만 한 번 더 읽는다.
-      const item = pickItem(termsDoc, itemId);
+      //   어느 판이 시행 중인지 먼저 정해야 어느 발행본을 읽을지 알 수 있다.
+      const picked = pickItem(termsDoc, itemId);
+      const item = picked ? resolveEffective(picked, nowMs).effective : null;
       let revisionDoc = null;
       if (item && item.revisionId) {
         try {
-          revisionDoc = await fetchJson(base + '/legal_revisions/' +
+          const revRes = await fetchJson(base + '/legal_revisions/' +
             encodeURIComponent(item.revisionId) + '?key=' + cfg.apiKey);
+          revisionDoc = revRes.body;
         } catch (e) {
           revisionDoc = null;   // mismatch 로 떨어진다 — 본문을 지어내지 않는다
         }
       }
       view = buildLegalView({termsDoc: termsDoc, revisionDoc: revisionDoc,
-        itemId: itemId});
+        itemId: itemId, nowMs: nowMs});
     } catch (e) {
       view = buildLegalView({fetchError: e, itemId: itemId});
     }
 
     if (view.state === 'SUCCESS_CURRENT') {
-      if (verEl) verEl.textContent = versionLabel(view);
+      if (verEl) {
+        const up = upcomingLabel(view);
+        verEl.textContent = versionLabel(view) + (up ? ' · ' + up : '');
+      }
       card.innerHTML = '<pre class="content-text">' + esc(view.content) +
         '</pre>';
     } else {
@@ -211,8 +288,10 @@
     parseValue: parseValue,
     parseDoc: parseDoc,
     pickItem: pickItem,
+    resolveEffective: resolveEffective,
     buildLegalView: buildLegalView,
     versionLabel: versionLabel,
+    upcomingLabel: upcomingLabel,
     loadAndRender: loadAndRender,
   };
 }));

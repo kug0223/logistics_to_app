@@ -27,18 +27,64 @@ enum LegalReadinessStatus {
   error,
 }
 
+/// [R7-PAYROLL-POLICY.5A] 고지는 됐지만 아직 시행되지 않은 약관 한 건.
+///
+/// 발행과 시행은 다른 사건이다. 이 값은 **안내용**이다 — 할 일도, 차단
+/// 사유도 아니다. 아직 효력이 없는 약관에 동의하지 않으면 앱을 못 쓰게
+/// 만드는 것이 `.5A` 가 고치는 결함이다.
+class UpcomingLegalItem {
+  const UpcomingLegalItem({
+    required this.itemId,
+    required this.version,
+    required this.effectiveAt,
+  });
+
+  final String itemId;
+  final String version;
+
+  /// 시행 시각. 서버가 보낸 값이다 — 기기 시계로 계산하지 않는다.
+  final DateTime? effectiveAt;
+
+  /// 모양이 다르면 **없는 것으로 친다.** 모르는 것을 시행 예정으로 그리면
+  /// 사용자에게 오지 않을 변경을 예고하게 된다.
+  static List<UpcomingLegalItem> parseList(Object? raw) {
+    if (raw is! List) return const [];
+    final out = <UpcomingLegalItem>[];
+    for (final e in raw) {
+      if (e is! Map) continue;
+      final id = e['itemId'];
+      final version = e['version'];
+      if (id is! String || id.isEmpty) continue;
+      if (version is! String || version.isEmpty) continue;
+      final ms = e['effectiveAtMs'];
+      out.add(UpcomingLegalItem(
+        itemId: id,
+        version: version,
+        effectiveAt: ms is int
+            ? DateTime.fromMillisecondsSinceEpoch(ms).toLocal()
+            : null,
+      ));
+    }
+    return out;
+  }
+}
+
 class LegalReadiness {
   const LegalReadiness({
     required this.status,
     this.reconsentRequired = const [],
     this.legacyUnknown = const [],
     this.optionalUnanswered = const [],
+    this.upcoming = const [],
   });
 
   final LegalReadinessStatus status;
   final List<String> reconsentRequired;
   final List<String> legacyUnknown;
   final List<String> optionalUnanswered;
+
+  /// 시행 예정 약관. `status` 와 섞지 않는다.
+  final List<UpcomingLegalItem> upcoming;
 
   static const loading = LegalReadiness(status: LegalReadinessStatus.loading);
   static const error = LegalReadiness(status: LegalReadinessStatus.error);
@@ -62,6 +108,7 @@ class LegalReadiness {
       reconsentRequired: list(data['reconsentRequired']),
       legacyUnknown: list(data['legacyUnknown']),
       optionalUnanswered: list(data['optionalUnanswered']),
+      upcoming: UpcomingLegalItem.parseList(data['upcoming']),
     );
   }
 

@@ -56,11 +56,25 @@ class LegalTermsService {
   ///
   /// 서버가 같은 `(id, version)` 에 다른 본문을 받으면 거절한다.
   /// 본문을 바꾸려면 버전을 올려야 한다.
-  Future<void> updateItem(LegalTermsItem item, {required String updatedBy}) =>
-      _publish(item);
+  ///
+  /// [R7-PAYROLL-POLICY.5A] 발행은 시행이 아니다. 새 본문을 발행할 때는
+  /// 변경 방향(`changeType`)과 시행일(`effectiveAt`)을 함께 보내야 하고,
+  /// 서버가 `service_terms` 제3조 ② 의 사전고지 기간을 강제한다.
+  Future<void> updateItem(
+    LegalTermsItem item, {
+    required String updatedBy,
+    required LegalChangeType changeType,
+    required DateTime effectiveAt,
+  }) =>
+      _publish(item, changeType: changeType, effectiveAtMs:
+          effectiveAt.millisecondsSinceEpoch);
 
   /// 노출 토글. 본문은 그대로 다시 발행한다 — 같은 본문이므로 서버는
   /// 발행본을 새로 만들지 않고 공개 목록만 바꾼다.
+  ///
+  /// [R7-PAYROLL-POLICY.5A] 이미 발행된 판을 **그 시행일 그대로** 다시
+  /// 보내는 경우이므로 고지기간을 다시 요구하지 않는다. 시행일을 모르면
+  /// 보낼 수 없다 — 모르는 날짜를 지어내면 그 값이 발행본과 어긋난다.
   Future<void> toggleActive(String itemId, bool isActive,
       {required String updatedBy}) async {
     final terms = await getTerms();
@@ -68,10 +82,21 @@ class LegalTermsService {
       (t) => t.id == itemId,
       orElse: () => throw StateError('약관 항목을 찾을 수 없습니다: $itemId'),
     );
-    await _publish(item.copyWith(isActive: isActive));
+    final at = item.effectiveAt;
+    if (at == null) {
+      throw StateError(
+          '이 항목은 아직 시행일 기록이 없어 노출만 바꿀 수 없습니다: $itemId');
+    }
+    await _publish(item.copyWith(isActive: isActive),
+        changeType: LegalChangeType.neutral,
+        effectiveAtMs: at.millisecondsSinceEpoch);
   }
 
-  Future<void> _publish(LegalTermsItem item) async {
+  Future<void> _publish(
+    LegalTermsItem item, {
+    required LegalChangeType changeType,
+    required int effectiveAtMs,
+  }) async {
     await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callablePublishLegalRevision',
             options:
@@ -84,6 +109,8 @@ class LegalTermsService {
       'isRequired': item.isRequired,
       'isActive': item.isActive,
       'order': item.order,
+      'changeType': changeType.wire,
+      'effectiveAt': effectiveAtMs,
     });
   }
 }
