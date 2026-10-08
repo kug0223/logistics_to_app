@@ -839,6 +839,9 @@ class FirestoreService {
   /// 구 applyToTOWithWorkType — applyToTO 위임 (toId 필수)
   Future<ApplyResult> applyToTOWithWorkType({
     required String uid,
+    /// [R7-PAYROLL-POLICY.4C] 근로자가 **본** 근태·급여 기준의 식별 토큰.
+    ///   화면이 표시한 값에서 만들어 그대로 전달한다 — 여기서 만들지 않는다.
+    required String expectedAttendancePolicy,
     required String businessId,
     required String businessName,
     required String toTitle,
@@ -866,6 +869,7 @@ class FirestoreService {
     }
     return applyToTO(
       toId: toId,
+      expectedAttendancePolicy: expectedAttendancePolicy,
       slotId: slotId,
       businessId: businessId,
       businessName: businessName,

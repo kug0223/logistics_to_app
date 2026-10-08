@@ -165,7 +165,10 @@ void main() {
     });
 
     test('MA-51 결과는 pop 한 번으로 호출자에게 넘긴다', () {
-      expect(sf, contains('MultiApplyResult( hasChanges: successCount > 0, appliedCount: successCount)'));
+      // [R7-PAYROLL-POLICY.4C] 결과에 policyChanged 가 더해졌다 — 기준 변경은
+      //   실패와 다른 상태이고 호출자가 최신 기준을 다시 읽어야 한다.
+      //   지키려던 계약은 **pop 이 한 번**이라는 것이고 그대로다.
+      expect(sf, contains('MultiApplyResult( hasChanges: successCount > 0, appliedCount: successCount, policyChanged: policyChangedCount > 0)'));
       expect("Navigator.pop(".allMatches(submit).length, 1);
     });
   });

@@ -22,6 +22,8 @@ import 'work_selection_card.dart';
 
 import 'confirm_cancel_dialog.dart';
 import 'apply_confirm_dialog.dart';
+import '../../../models/core/business_model.dart' show AttendanceRules;
+import '../../../utils/attendance_policy_disclosure.dart';
 import 'apply_work_reads.dart';
 import 'apply_work_submit.dart';
 import '../../../utils/navigation_helper.dart';
@@ -39,10 +41,15 @@ class ApplyDialogResult {
   final int appliedCount;
   final int canceledCount;
 
+  /// [R7-PAYROLL-POLICY.4C] 보는 동안 기준이 바뀌어 막힌 건이 있었는가.
+  ///   호출자가 최신 기준을 다시 읽어 보여줘야 한다 — 자동 재지원은 없다.
+  final bool policyChanged;
+
   const ApplyDialogResult({
     this.hasChanges = false,
     this.appliedCount = 0,
     this.canceledCount = 0,
+    this.policyChanged = false,
   });
 }
 
@@ -297,10 +304,42 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     await _loadInitialData();
   }
 
+  /// [R7-PAYROLL-POLICY.4C] 이 사업장의 근태·급여 처리 기준.
+  ///
+  ///   이 경로는 공고 상세를 거치지 않을 수 있다. 그래서 여기서 한 번 읽어
+  ///   확인 화면에 보여주고(`.4B` 와 같은 7항목), 그 값에서 만든 토큰을
+  ///   submit 에 함께 보낸다 — 근로자가 본 기준과 저장되는 기준이 같아진다.
+  ///   읽지 못하면 null 로 둔다(모름 ≠ 기본값).
+  AttendanceRules? _policyRules;
+
+  /// 기준을 **읽어 봤는가**. 읽기 실패와 "기준 없는 사업장"을 구별한다.
+  bool _policyLoaded = false;
+
+  /// 이 시트에서 기준 변경으로 막힌 지원이 있었는가 — 닫을 때 호출자가
+  /// 공고 화면을 새로 읽게 한다(기존 reader 재사용, 새 seam 없음).
+  bool _policyChangedDuringSubmit = false;
+
+  Future<void> _loadPolicyRules() async {
+    try {
+      final biz = await _reads.businessForPolicy(widget.mainTO.businessId);
+      if (!mounted) return;
+      setState(() {
+        _policyRules = biz?.attendanceRules;
+        _policyLoaded = true;
+      });
+    } catch (e) {
+      // 읽지 못한 것은 "기준 없음"이 아니다 — 토큰을 만들지 않아 지원이
+      //   fail-closed 된다. 확인하지 못한 조건으로 보내지 않는다.
+      debugPrint('⚠️ 근태·급여 기준 로드 실패: $e');
+    }
+  }
+
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
 
     try {
+      // [R7-PAYROLL-POLICY.4C] 기존 읽기들과 **병렬**이다 — 지연을 더하지 않는다.
+      final policyLoad = _loadPolicyRules();
       if (_isGroupTO) {
         // 그룹 TO: ✅ 모든 날짜의 지원 상태 로드 (마커 표시용)
         final allDates = widget.groupTOsByDate!.keys.toList();
@@ -326,6 +365,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           await _loadConfirmedDatesInRange();
         }
       }
+      await policyLoad;
     } catch (e) {
       debugPrint('❌ 초기 데이터 로드 실패: $e');
       if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다');
@@ -585,7 +625,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
-          Navigator.pop(context, ApplyDialogResult(hasChanges: _hasChanges));
+          Navigator.pop(context, ApplyDialogResult(hasChanges: _hasChanges,
+                  policyChanged: _policyChangedDuringSubmit));
         }
       },
       child: Container(
@@ -2289,7 +2330,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         child: ElevatedButton(
             onPressed: () => Navigator.pop(
               context,
-              ApplyDialogResult(hasChanges: _hasChanges),
+              ApplyDialogResult(hasChanges: _hasChanges,
+                  policyChanged: _policyChangedDuringSubmit),
             ),
             style: ElevatedButton.styleFrom(
               backgroundColor: theme.primaryColor,
@@ -2546,6 +2588,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       endDate: _isLongTerm ? _effectiveEndDate : null,
       workDays: _isLongTerm ? to.workDays : null,
+      policyRules: _policyRules,
+      policyLoaded: _policyLoaded,
     );
 
     if (!confirmed || !mounted) {
@@ -2573,6 +2617,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         slotId: resolvedSlotId,
         workEndDate: _isLongTerm ? _effectiveEndDate : to.endDate,
         desiredStartDate: _isLongTerm ? _desiredStartDate : null,
+        // [R7-PAYROLL-POLICY.4C] 방금 확인 화면에 **보여준 기준**의 토큰이다.
+        //   읽지 못했으면 빈 문자열을 보내 서버가 fail-closed 하게 한다 —
+        //   확인하지 못한 조건으로 지원을 만들지 않는다.
+        expectedAttendancePolicy:
+            _policyLoaded ? attendancePolicyFingerprint(_policyRules) : '',
       );
       // [R8-P3A.1] 서비스는 더 이상 Toast 를 띄우지 않는다 — 결과만 돌려준다.
       //   여기서 세 가지를 구분해서 말한다: 됐다 / 안 된 이유가 있다 / 모른다.
@@ -2596,6 +2645,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         // UNKNOWN 은 실패가 아니다 — 확인이 필요하다고 말한다.
         if (applied.isUnknown) {
           ToastHelper.showWarning('${applied.message} 내 지원 목록에서 확인해주세요.');
+        } else if (applied.isPolicyChanged) {
+          // [R7-PAYROLL-POLICY.4C] 기준이 바뀌었다 — 지원은 만들어지지 않았다.
+          //   **자동으로 새 기준으로 다시 보내지 않는다.** 최신 기준을 다시
+          //   읽어 확인 화면에 보여주고, 근로자가 다시 누르게 한다.
+          //   시트를 닫지 않으므로 날짜·업무 선택과 동의 상태는 유지된다.
+          _policyChangedDuringSubmit = true;
+          await _loadPolicyRules();
+          if (!mounted) return;
+          ToastHelper.showWarning(kAttendancePolicyChangedNote);
         } else {
           ToastHelper.showError(applied.message);
         }

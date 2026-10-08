@@ -28,6 +28,7 @@ class ApplyWorkSubmit {
     required TOModel to,
     required WorkDetailData work,
     required DateTime workDate,
+    required String expectedAttendancePolicy,
     String? slotId,
     DateTime? workEndDate,
     DateTime? desiredStartDate,
@@ -41,12 +42,14 @@ class ApplyWorkSubmit {
         required TOModel to,
         required WorkDetailData work,
         required DateTime workDate,
+        required String expectedAttendancePolicy,
         String? slotId,
         DateTime? workEndDate,
         DateTime? desiredStartDate,
       }) =>
           svc.applyToTOWithWorkType(
             uid: uid,
+            expectedAttendancePolicy: expectedAttendancePolicy,
             businessId: to.businessId,
             businessName: to.businessName,
             toTitle: to.title,

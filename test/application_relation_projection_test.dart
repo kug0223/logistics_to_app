@@ -775,6 +775,10 @@ void main() {
                       <String, ConflictInfo>{},
                   myApplicationsForTOFresh: (toId) async =>
                       const <ApplicationModel>[],
+                  // [R7-PAYROLL-POLICY.4C] 지원 시트가 근태·급여 기준을 읽는 경계.
+                  //   격리에서는 기준 없는 사업장(null)로 둔다 — 이 테스트의 관심이
+                  //   아니고, 없는 값을 기본값으로 지어내지도 않는다.
+                  businessForPolicy: (businessId) async => null,
                 ),
               ),
             ),

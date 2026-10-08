@@ -91,21 +91,30 @@ void main() {
 
     test('TIME-1 지원이 기준을 고정한다', () {
       // 금액 조건과 **같은 자리**에서 만든다 — 두 원칙이 갈라지지 않게.
+      // [R7-PAYROLL-POLICY.4C] 읽기가 트랜잭션 **안**으로 들어갔다. 비교한
+      //   값과 저장한 값이 같은 읽기에서 나와야 하기 때문이다(race 차단).
+      //   지키려던 계약은 그대로다 — 지원 시점에 서버가 고정한다.
       expect(
           apply.contains(
-              'srvBuildAttendancePolicySnapshot(applyBizSnap.data())'),
+              'srvBuildAttendancePolicySnapshot(applyTxBizSnap.data())'),
           isTrue,
           reason: '지원 시점 조건에 근태 기준이 빠지면 확정 때 바뀐 기준이 적용된다');
-      expect(apply.contains('attendancePolicySnapshot: applyPolicySnapshot'),
+      expect(apply.contains('attendancePolicySnapshot: applyTxPolicy'), isTrue);
+      // 지원 경로가 사업장 규칙을 직접 집어 쓰지 않는다 — `attendanceRules` 는
+      //   **토큰 비교용 읽기**에만 나타난다.
+      expect(
+          'attendanceRules'.allMatches(apply).length, 1,
+          reason: '정책 값을 다른 자리에서 또 집으면 출처가 둘이 된다');
+      expect(
+          apply.contains(
+              'srvAttendancePolicyFingerprint(applyTxBizSnap.data()?.["attendanceRules"])'),
           isTrue);
-      // 지원 경로가 사업장 규칙을 직접 집어 쓰지 않는다.
-      expect(apply.contains('attendanceRules'), isFalse);
     });
 
     test('TIME-2 재지원도 그 시점 기준으로 다시 고정한다', () {
       // 되살리는 분기와 새로 만드는 분기 **둘 다** 적는다.
       final occurrences =
-          'attendancePolicySnapshot: applyPolicySnapshot'.allMatches(apply);
+          'attendancePolicySnapshot: applyTxPolicy'.allMatches(apply);
       expect(occurrences.length, 2,
           reason: '재지원(update)과 신규(set) 중 하나만 적으면 경로마다 기준이 달라진다');
     });
@@ -471,8 +480,13 @@ void main() {
       // 지원 확인에도 같은 사실을 말한다.
       final confirmSheet =
           _code(_src('lib/widgets/dialogs/apply/apply_confirm_dialog.dart'));
-      expect(confirmSheet.contains('근태·급여 처리 기준'), isTrue);
-      expect(confirmSheet.contains('지원 시점의 기준이 이 지원서에 고정'), isTrue);
+      // [R7-PAYROLL-POLICY.4C] 안내 문구에서 **실제 7항목 표시**로 바뀌었다.
+      //   이 시트는 공고 상세를 거치지 않는 경로에서도 열리므로, 상세로
+      //   보내는 대신 여기서 보여준다. 계약은 더 강해졌다.
+      expect(confirmSheet.contains('kAttendancePolicyTitle'), isTrue);
+      expect(confirmSheet.contains('attendancePolicyGroups(r)'), isTrue);
+      expect(confirmSheet.contains('지원하면 이 기준이 이 지원서에 고정됩니다'),
+          isTrue);
     });
 
     test('DISC-7 관리자 근태 화면이 live 정책으로 미리보기하지 않는다', () {

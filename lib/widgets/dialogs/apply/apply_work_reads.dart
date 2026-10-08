@@ -16,6 +16,7 @@
 library;
 
 import '../../../models/core/application_model.dart';
+import '../../../models/core/business_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/schedule_conflict_service.dart';
@@ -26,6 +27,7 @@ class ApplyWorkReads {
     required this.confirmedSchedules,
     required this.conflictsForWorkDetails,
     required this.myApplicationsForTOFresh,
+    required this.businessForPolicy,
   });
 
   /// ① 이 TO 에 대한 **내** 지원서. key = toId + uid.
@@ -51,6 +53,17 @@ class ApplyWorkReads {
   final Future<List<ApplicationModel>> Function(String toId)
       myApplicationsForTOFresh;
 
+  /// ⑤ [R7-PAYROLL-POLICY.4C] 이 사업장의 **근태·급여 처리 기준**.
+  ///
+  ///   이 경로(카드 → 지원 시트)는 공고 상세를 거치지 않을 수 있어
+  ///   근로자가 기준을 본 적이 없었다. 그런데 지원하는 순간 그 기준이
+  ///   지원서에 고정된다 — 보지 못한 조건으로 약속의 씨앗이 생긴다.
+  ///
+  ///   그래서 시트가 열릴 때 **한 번** 읽어 확인 화면에 보여주고, 그 값에서
+  ///   만든 토큰을 submit 에 함께 보낸다. 상시 listener 를 만들지 않는다.
+  ///   읽지 못하면 `null` — 모름이고, 사업장 기본값으로 메우지 않는다.
+  final Future<BusinessModel?> Function(String businessId) businessForPolicy;
+
   factory ApplyWorkReads.of([
     FirestoreService? service,
     ScheduleConflictService? conflictService,
@@ -68,6 +81,7 @@ class ApplyWorkReads {
           cs.checkConflictsForWorkDetails(
               workDate: workDate, workDetails: workDetails),
       myApplicationsForTOFresh: svc.getMyApplicationsForTOFresh,
+      businessForPolicy: svc.getBusinessById,
     );
   }
 }

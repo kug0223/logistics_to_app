@@ -89,3 +89,38 @@ List<AttendancePolicyGroup> attendancePolicyGroups(AttendanceRules r) => [
 /// 그룹을 펼친 평면 목록 — 묶음 제목을 쓸 수 없는 좁은 화면·PDF 용.
 List<AttendancePolicyLine> attendancePolicyLines(AttendanceRules r) =>
     attendancePolicyGroups(r).expand((g) => g.lines).toList();
+
+/// [R7-PAYROLL-POLICY.4C] 근로자가 **본 기준**을 식별하는 토큰.
+///
+///   직접 지원 submit 에 함께 보낸다. 서버가 commit 시점 canonical 값과
+///   비교해, 보는 동안 사업장이 기준을 바꿨으면 지원을 거부한다
+///   (`ATTENDANCE_POLICY_CHANGED`).
+///
+///   이 값은 **stale 탐지 입력일 뿐**이다. 저장되는 snapshot 은 서버가 읽은
+///   사업장 문서에서 만든다 — 클라이언트가 보낸 숫자가 약속이 되지 않는다.
+///
+///   서버 `srvAttendancePolicyFingerprint` 와 **같은 필드·같은 순서·같은
+///   형식**이어야 한다. 한쪽이 항목을 빼면 그 항목의 변경을 아무도 못 잡는다.
+///   기준이 없으면 `'absent'` — 없는 것을 기본값 토큰으로 만들지 않는다.
+///
+///   주의: 모델은 [AttendanceRules.fromMap] 에서 값을 clamp 한다. 저장된 값이
+///   허용 범위를 벗어난 사업장은 서버 원값과 토큰이 달라 계속 mismatch 가
+///   된다 — 지원이 열리는 쪽이 아니라 막히는 쪽이므로 안전한 방향이다.
+String attendancePolicyFingerprint(AttendanceRules? r) {
+  if (r == null) return 'absent';
+  return 'earlyWindow=${r.earlyWindow}'
+      '|earlyArrivalUnit=${r.earlyArrivalUnit}'
+      '|lateGrace=${r.lateGrace}'
+      '|lateUnit=${r.lateUnit}'
+      '|lateWindow=${r.lateWindow}'
+      '|overtimeUnit=${r.overtimeUnit}'
+      '|earlyLeaveUnit=${r.earlyLeaveUnit}';
+}
+
+/// [R7-PAYROLL-POLICY.4C] 보는 동안 기준이 바뀌어 지원이 만들어지지 않았다.
+///
+///   법률 경고가 아니라 **상태 변경 안내**다. 무엇을 하면 되는지 말한다.
+///   서버가 자동으로 새 기준으로 다시 지원하지 않는다 — 근로자가 바뀐
+///   기준을 다시 확인해야 한다.
+const String kAttendancePolicyChangedNote =
+    '근태·급여 처리 기준이 변경됐어요.\n변경된 기준을 확인한 뒤 다시 지원해 주세요.';

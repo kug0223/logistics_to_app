@@ -161,6 +161,10 @@ class _Ctl {
           freshCalls++;
           return freshFinds ? [_landed()] : <ApplicationModel>[];
         },
+        // [R7-PAYROLL-POLICY.4C] 지원 시트가 근태·급여 기준을 읽는 경계.
+        //   격리에서는 기준 없는 사업장(null)로 둔다 — 이 테스트의 관심이
+        //   아니고, 없는 값을 기본값으로 지어내지도 않는다.
+        businessForPolicy: (businessId) async => null,
       );
 
   ApplyWorkSubmit submit() => ApplyWorkSubmit(
@@ -169,6 +173,8 @@ class _Ctl {
           required TOModel to,
           required WorkDetailData work,
           required DateTime workDate,
+          // [R7-PAYROLL-POLICY.4C] 화면이 본 기준의 토큰.
+          required String expectedAttendancePolicy,
           String? slotId,
           DateTime? workEndDate,
           DateTime? desiredStartDate,

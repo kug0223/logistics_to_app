@@ -45,6 +45,8 @@ import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/schedule_conflict_service.dart';
 import '../../../providers/user_provider.dart';
+import '../../../models/core/business_model.dart' show AttendanceRules;
+import '../../../utils/attendance_policy_disclosure.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
@@ -57,7 +59,15 @@ import 'document_access_consent.dart';
 class MultiApplyResult {
   final bool hasChanges;
   final int appliedCount;
-  const MultiApplyResult({required this.hasChanges, required this.appliedCount});
+
+  /// [R7-PAYROLL-POLICY.4C] 보는 동안 기준이 바뀌어 막힌 건이 있었는가.
+  ///   이미 성공한 건은 그대로다 — 전체를 실패로 말하지 않는다.
+  final bool policyChanged;
+  const MultiApplyResult({
+    required this.hasChanges,
+    required this.appliedCount,
+    this.policyChanged = false,
+  });
 }
 
 // ─ 내부 item 분류 ─────────────────────────────────────────────────────────────
@@ -103,11 +113,15 @@ class MultiApplyConfirmSheet extends StatefulWidget {
   final TOModel to;
   final List<ApplicationModel> myApplications;
 
+  /// [R7-PAYROLL-POLICY.4C] 공고 상세가 보여준 근태·급여 기준(새 읽기 없음).
+  final AttendanceRules? policyRules;
+
   const MultiApplyConfirmSheet({
     super.key,
     required this.items,
     required this.to,
     required this.myApplications,
+    this.policyRules,
   });
 
   @override
@@ -246,6 +260,9 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
     // Flex: slot.date / Contract: to.date (AWD의 workDate: date ?? to.date 와 동일)
     final workDate = slot?.date ?? widget.to.date;
     return _firestoreService.applyToTOWithWorkType(
+      // [R7-PAYROLL-POLICY.4C] 공고 상세가 보여준 기준의 토큰.
+      expectedAttendancePolicy:
+          attendancePolicyFingerprint(widget.policyRules),
       uid: uid,
       businessId: widget.to.businessId,
       businessName: widget.to.businessName,
@@ -292,6 +309,7 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
     //   totalPending을 올리고 관리자 알림도 함께 쓴다. 동시 요청 수를
     //   묶어두면 그 부담이 선형으로 커지지 않는다.
     //   (DEV 실측: 7건 기준 1→7544ms, 2→2888, 3→2147, 4→1553, 모두 실패 0)
+    var policyChangedCount = 0;
     var nextIndex = 0;
     Future<void> worker() async {
       for (;;) {
@@ -306,6 +324,9 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
           result = ApplyResult.unknown(_friendlyError(e));
         }
         if (result.isNewlyApplied) successCount++;
+        // [R7-PAYROLL-POLICY.4C] 기준 변경은 실패와 다른 상태다. 이 건만
+        //   막히고 **이미 성공한 건은 유지된다** — 자동 재지원도 없다.
+        if (result.isPolicyChanged) policyChangedCount++;
         // [§21] 시트를 닫아도 이미 보낸 지원은 취소되지 않는다.
         //   화면 표시만 건너뛰고 나머지 항목도 끝까지 보낸다 —
         //   중간에 멈추면 사용자가 볼 수 없는 반쪽 상태가 남는다.
@@ -375,7 +396,9 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
         Navigator.pop(
           context,
           MultiApplyResult(
-              hasChanges: successCount > 0, appliedCount: successCount),
+              hasChanges: successCount > 0,
+              appliedCount: successCount,
+              policyChanged: policyChangedCount > 0),
         );
       }
     }
@@ -868,6 +891,10 @@ class _MultiApplyConfirmSheetState extends State<MultiApplyConfirmSheet> {
               hasChanges: targets.any((m) => m.outcome == ApplyOutcome.success),
               appliedCount:
                   targets.where((m) => m.outcome == ApplyOutcome.success).length,
+              // [R7-PAYROLL-POLICY.4C] 결과 화면을 닫을 때도 알린다 —
+              //   공고 화면이 최신 기준을 다시 읽어 보여준다.
+              policyChanged: targets
+                  .any((m) => m.outcome == ApplyOutcome.policyChanged),
             ),
           ),
         ),

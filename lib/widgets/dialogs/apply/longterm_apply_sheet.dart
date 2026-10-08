@@ -9,6 +9,8 @@ import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/application_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
+import '../../../models/core/business_model.dart' show AttendanceRules;
+import '../../../utils/attendance_policy_disclosure.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -29,12 +31,16 @@ class LongTermApplySheet extends StatefulWidget {
   final String businessName;
   final List<ApplicationModel> myApplications;
 
+  /// [R7-PAYROLL-POLICY.4C] 공고 상세가 보여준 근태·급여 기준(새 읽기 없음).
+  final AttendanceRules? policyRules;
+
   const LongTermApplySheet({
     super.key,
     required this.to,
     required this.selectedWorks,
     required this.businessName,
     required this.myApplications,
+    this.policyRules,
     this.commitmentsSource,
   });
 
@@ -48,6 +54,8 @@ class LongTermApplySheet extends StatefulWidget {
     required List<WorkDetailModel> selectedWorks,
     required String businessName,
     List<ApplicationModel>? myApplications,
+    /// [R7-PAYROLL-POLICY.4C] 공고 상세가 보여준 근태·급여 기준. 새 읽기 없음.
+    AttendanceRules? policyRules,
   }) {
     return DialogHelper.showSheet<ApplyDialogResult>(
       context,
@@ -57,6 +65,7 @@ class LongTermApplySheet extends StatefulWidget {
         selectedWorks: selectedWorks,
         businessName: businessName,
         myApplications: myApplications ?? [],
+        policyRules: policyRules,
       ),
     );
   }
@@ -314,6 +323,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       // [R8-P3A.1] 단건·다건이 같은 결과 계약을 쓴다 — 첫 실패 사유를 남긴다.
       String? firstProblem;
       var anyUnknown = false;
+      // [R7-PAYROLL-POLICY.4C] 기준 변경은 실패와 다른 상태다.
+      var anyPolicyChanged = false;
       for (final work in widget.selectedWorks) {
         final result = await _firestoreService.applyToTOWithWorkType(
           uid: _currentUserId!,
@@ -336,10 +347,14 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
           toId: widget.to.id,
           slotId: null,
           desiredStartDate: effectiveDesiredStart,
+          // [R7-PAYROLL-POLICY.4C] 공고 상세에서 보여준 기준의 토큰.
+          expectedAttendancePolicy:
+              attendancePolicyFingerprint(widget.policyRules),
         );
         if (result.isNewlyApplied) appliedCount++;
         if (!result.isApplied) {
           if (result.isUnknown) anyUnknown = true;
+          if (result.isPolicyChanged) anyPolicyChanged = true;
           firstProblem ??= result.message;
         }
       }
@@ -348,13 +363,19 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       // 결과를 모르는 건은 실패라고 말하지 않는다 — 확인이 필요하다고 말한다.
       if (anyUnknown) {
         ToastHelper.showWarning('일부 지원 결과를 확인하지 못했어요. 내 지원 목록에서 확인해주세요.');
+      } else if (anyPolicyChanged) {
+        // 자동으로 새 기준으로 다시 보내지 않는다 — 공고 화면이 최신 기준을
+        //   다시 읽어 보여주고, 근로자가 확인한 뒤 다시 누른다.
+        ToastHelper.showWarning(kAttendancePolicyChangedNote);
       } else if (firstProblem != null && appliedCount == 0) {
         ToastHelper.showError(firstProblem);
       }
       Navigator.pop(
         context,
         ApplyDialogResult(
-            hasChanges: appliedCount > 0, appliedCount: appliedCount),
+            hasChanges: appliedCount > 0,
+            appliedCount: appliedCount,
+            policyChanged: anyPolicyChanged),
       );
     } catch (e) {
       if (mounted) {

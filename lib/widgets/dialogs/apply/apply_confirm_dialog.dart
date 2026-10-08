@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 import '../../../models/core/work_detail_model.dart';
+import '../../../models/core/business_model.dart' show AttendanceRules;
+import '../../../utils/attendance_policy_disclosure.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -21,6 +23,12 @@ class ApplyConfirmDialog extends StatelessWidget {
   final DateTime? endDate;
   final List<String>? workDays;
 
+  /// [R7-PAYROLL-POLICY.4C] 지원 시 고정될 근태·급여 기준. 읽지 못했으면 null.
+  final AttendanceRules? policyRules;
+
+  /// 기준을 **읽어 봤는가**. 읽기 실패와 "기준 없는 사업장"을 구별한다.
+  final bool policyLoaded;
+
   const ApplyConfirmDialog({
     super.key,
     required this.businessName,
@@ -30,6 +38,8 @@ class ApplyConfirmDialog extends StatelessWidget {
     this.desiredStartDate,
     this.endDate,
     this.workDays,
+    this.policyRules,
+    this.policyLoaded = false,
   });
 
   static Future<bool> show({
@@ -41,6 +51,8 @@ class ApplyConfirmDialog extends StatelessWidget {
     DateTime? desiredStartDate,
     DateTime? endDate,
     List<String>? workDays,
+    AttendanceRules? policyRules,
+    bool policyLoaded = false,
   }) async {
     final result = await DialogHelper.showSheet<bool>(
       context,
@@ -53,6 +65,8 @@ class ApplyConfirmDialog extends StatelessWidget {
         desiredStartDate: desiredStartDate,
         endDate: endDate,
         workDays: workDays,
+        policyRules: policyRules,
+        policyLoaded: policyLoaded,
       ),
     );
     return result ?? false;
@@ -95,16 +109,14 @@ class ApplyConfirmDialog extends StatelessWidget {
                   ),
                 // [DOCUMENT-CONSENT] 서류 접근 사전동의 안내 (V3: 신분증+급여계좌+통장사본)
                 // [LEGAL-REVIEW-ID-CONSENT] 동의 문구 및 방식의 법적 적절성은 별도 법무 검토 필요
-                // [R7-PAYROLL-POLICY.4 §34] 지원하는 순간 고정되는 조건에
-                //   **근태·급여 처리 기준**이 포함된다는 사실을 말한다.
-                //   숫자는 공고 상세에 있다 — 여기서 사업장 문서를 다시 읽지
-                //   않는다(지원 경로에 왕복을 더하지 않는다).
+                // [R7-PAYROLL-POLICY.4C] `.4` 는 "공고 상세에서 보라"고만 했다.
+                //   그런데 이 시트는 공고 상세를 거치지 않는 경로(카드 →
+                //   지원)에서도 열리고, 지원하는 순간 그 기준이 지원서에
+                //   고정된다 — 보지 못한 조건으로 약속의 씨앗이 생긴다.
+                //   그래서 **여기서 7항목을 보여준다.** 값은 전달받은 것만
+                //   쓴다(이 위젯이 사업장 문서를 읽지 않는다).
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                StyledDialogInfoCard.info(
-                  '출퇴근 시각은 이 사업장의 근태·급여 처리 기준에 따라 인정 시간으로 '
-                  '계산됩니다. 지원 시점의 기준이 이 지원서에 고정되며, 자세한 기준은 '
-                  '공고 상세의 "근태·급여 처리 기준"에서 확인할 수 있습니다.',
-                ),
+                _policyCard(context),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 DocumentAccessConsent.card(businessName),
               ],
@@ -272,6 +284,74 @@ class ApplyConfirmDialog extends StatelessWidget {
                   ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [R7-PAYROLL-POLICY.4C] 지원하면 이 지원서에 고정되는 근태·급여 기준.
+  ///
+  ///   항목·문구는 `.4B` 의 공용 formatter 에서 온다 — 초대 수락·계약서와
+  ///   같은 목록이다. 읽지 못했으면(`policyRules == null` + 미로딩) 그 사실을
+  ///   말한다. 사업장 현재 설정으로 메우지 않는다.
+  Widget _policyCard(BuildContext context) {
+    final r = policyRules;
+    if (r == null) {
+      return StyledDialogInfoCard.info(
+        policyLoaded
+            ? kAttendancePolicyUnknownNote
+            : '근태·급여 처리 기준을 확인하지 못했어요.\n잠시 후 다시 시도해 주세요.',
+      );
+    }
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(kAttendancePolicyTitle,
+              style: ResponsiveHelper.smallStyle(context)
+                  .copyWith(fontWeight: FontWeight.bold)),
+          for (final g in attendancePolicyGroups(r)) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            Text(g.title,
+                style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey600)
+                    .copyWith(fontWeight: FontWeight.w600)),
+            for (final line in g.lines)
+              Padding(
+                padding: EdgeInsets.only(
+                    top: ResponsiveHelper.spacing(context, 2)),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: ResponsiveHelper.spacing(context, 80),
+                      child: Text(line.label,
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey700)),
+                    ),
+                    Expanded(
+                      child: Text(line.value,
+                          style: ResponsiveHelper.smallStyle(context)
+                              .copyWith(fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '지원하면 이 기준이 이 지원서에 고정됩니다. '
+            '사업장이 이후에 기준을 바꿔도 적용되지 않습니다.',
+            style:
+                ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
           ),
         ],
       ),

@@ -35235,6 +35235,37 @@ function srvAssertAttendancePolicyConfirmed(
 }
 
 /**
+ * [R7-PAYROLL-POLICY.4C] 근로자가 **본 기준**을 식별하는 토큰.
+ *
+ *   직접 지원에는 race 가 있었다:
+ *     근로자가 공고 상세에서 기준 A 를 본다 → 사업장이 B 로 바꾼다 →
+ *     근로자가 지원 버튼을 누른다 → 서버가 fresh 로 읽어 **B 를 고정한다.**
+ *   확인한 조건과 저장된 조건이 달라진다.
+ *
+ *   그래서 클라이언트가 "내가 본 기준" 을 토큰으로 함께 보내고, 서버가
+ *   commit 시점 canonical 값과 비교한다. 이 토큰은 **stale 탐지 입력**일
+ *   뿐이고 저장되는 값의 출처가 아니다 — snapshot 은 언제나 서버가 읽은
+ *   사업장 문서에서 만든다.
+ *
+ *   비교 도메인은 **급여에 영향하는 7개 숫자뿐**이다. 확인 기록·출처·감사
+ *   필드가 바뀌었다고 지원이 깨지면, 근로자에게 아무 변화가 없는 일로
+ *   재지원을 요구하게 된다.
+ *
+ *   규칙이 없는 사업장은 `"absent"` 다. 없는 것을 기본값 토큰으로 만들지
+ *   않는다 — 모름과 기본값은 다르다.
+ *
+ * @param {unknown} rules 사업장 `attendanceRules` (없으면 null/undefined)
+ * @return {string} 식별 토큰
+ */
+function srvAttendancePolicyFingerprint(rules: unknown): string {
+  if (rules == null || typeof rules !== "object") return "absent";
+  const r = rules as Record<string, unknown>;
+  return ATTENDANCE_POLICY_MATERIAL_FIELDS
+    .map((k) => `${k}=${srvAttendancePolicyValue(r, k)}`)
+    .join("|");
+}
+
+/**
  * [R7-PAYROLL-POLICY.4A] 어떤 확인 기록이 **이 7개 숫자**를 덮는가.
  *
  *   사업장 확인(`attendancePolicyConfirmation`)과 지원서별 확인
@@ -37653,10 +37684,15 @@ export const callableApplyToTO = onCall(
       // 서버 최신 버전을 무조건 쓰지 않는다 — 아래 resolveDocumentAccessConsentVersion 참조.
       documentAccessConsentVersion?: string;
       documentAccessConsentGiven?: boolean;
+      // [R7-PAYROLL-POLICY.4C] 근로자가 **본** 근태·급여 기준의 식별 토큰.
+      //   stale 탐지 입력일 뿐이고 저장되는 값의 출처가 아니다.
+      //   `srvAttendancePolicyFingerprint` 와 같은 형식이어야 한다.
+      expectedAttendancePolicy?: string;
     };
 
     // ── 1. 입력값 검증 ──
     const toId = data.toId;
+    const expectedAttendancePolicy = data.expectedAttendancePolicy;
     const slotId = data.slotId ?? null;
     const businessId = data.businessId;
     const businessName = data.businessName ?? "";
@@ -38044,8 +38080,10 @@ export const callableApplyToTO = onCall(
     //   읽으면, 지원자가 보고 지원한 조건과 실제 약속이 달라진다.
     //   그래서 같은 자리에서 같은 원칙으로 고정한다 — 사업장이 그 뒤에 기준을
     //   바꿔도 이 지원서의 계산 기준은 지원한 그날의 것이다.
-    const applyPolicySnapshot =
-      srvBuildAttendancePolicySnapshot(applyBizSnap.data());
+    //
+    // [R7-PAYROLL-POLICY.4C] snapshot 은 **트랜잭션 안에서** 다시 읽어 만든다.
+    //   여기(트랜잭션 밖) 읽기로 만들면 비교를 통과한 뒤 commit 사이에 기준이
+    //   바뀌어도 그대로 저장된다. 아래 트랜잭션의 `applyTxPolicy` 를 쓴다.
     // [R5-R0.1 §3] 금액과 같은 출처, 같은 엄격함.
     //   이전에는 서버 값이 없으면 클라이언트 값을, 그것도 없으면 "hourly"를
     //   적었다. 클라이언트는 무엇을 고를지 정하는 쪽이지 무엇이 약속인지
@@ -38324,6 +38362,47 @@ export const callableApplyToTO = onCall(
       }
       isReactivation = txIsReactivation; // 트랜잭션 성공 후 반환값에 반영
 
+      // [R7-PAYROLL-POLICY.4C] 근로자가 **본 기준**과 지금 기준이 같은가.
+      //
+      //   위치가 계약이다. 위 중복 guard **뒤**에 둔다 — 첫 요청이 성공하고
+      //   응답만 유실된 뒤 사업장이 기준을 바꿨다면, 재시도는 "이미 지원함"
+      //   으로 끝나야 한다. 비교를 먼저 하면 실제로는 지원된 상태인데
+      //   기준 변경이라고 말하게 된다.
+      //
+      //   읽기는 **이 트랜잭션 안**이다. 그래서 사업장 문서가 read-set 에
+      //   들어가고, 비교와 commit 사이에 기준이 바뀌면 Firestore 가 재시도해
+      //   fresh 값으로 다시 평가한다. 저장되는 snapshot 도 이 읽기에서 만든다 —
+      //   비교한 값과 저장한 값이 같은 읽기에서 나온다.
+      //
+      //   클라이언트가 보낸 토큰은 **stale 탐지 입력일 뿐**이다. 그 값으로
+      //   snapshot 을 만들지 않는다.
+      const applyTxBizSnap =
+        await tx.get(db.collection("businesses").doc(businessId));
+      const applyFreshFp =
+        srvAttendancePolicyFingerprint(applyTxBizSnap.data()?.["attendanceRules"]);
+      if (expectedAttendancePolicy == null ||
+          typeof expectedAttendancePolicy !== "string" ||
+          expectedAttendancePolicy.length === 0) {
+        // 이 경로가 기준을 보여주지 않았다는 뜻이다 — 확인하지 않은 조건으로
+        //   약속의 씨앗을 만들지 않는다(fail closed).
+        throw new HttpsError(
+          "failed-precondition",
+          "근태·급여 처리 기준을 확인한 뒤 지원할 수 있습니다. " +
+            "앱을 최신 버전으로 업데이트해 주세요.",
+          {reason: "ATTENDANCE_POLICY_NOT_DISCLOSED"}
+        );
+      }
+      if (expectedAttendancePolicy !== applyFreshFp) {
+        throw new HttpsError(
+          "failed-precondition",
+          "근태·급여 처리 기준이 변경되었습니다. " +
+            "변경된 기준을 확인한 뒤 다시 지원해 주세요.",
+          {reason: "ATTENDANCE_POLICY_CHANGED"}
+        );
+      }
+      const applyTxPolicy =
+        srvBuildAttendancePolicySnapshot(applyTxBizSnap.data());
+
       // [CONTRACT-DATE-GUARD FIX] contract TO 지원 시 서버 fresh rangeStart/rangeEnd를 canonical workDate로 사용
       // !slotRef(else) 분기에서 freshToData.rangeStart/rangeEnd로 재설정 — 클라이언트 stale 값 무시
       // DATE_FIRST_APPLY_USES_FRESH_TO_RANGE = YES 보장
@@ -38428,8 +38507,8 @@ export const callableApplyToTO = onCall(
           ...compensationSnapshot,
           // [R7-PAYROLL-POLICY.4] 재지원은 **새 관심 표현**이므로 그 시점
           //   기준으로 다시 고정한다(임금·시간과 같은 규칙).
-          ...(applyPolicySnapshot != null && {
-            attendancePolicySnapshot: applyPolicySnapshot,
+          ...(applyTxPolicy != null && {
+            attendancePolicySnapshot: applyTxPolicy,
           }),
           startTime, endTime,
           statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
@@ -38509,8 +38588,8 @@ export const callableApplyToTO = onCall(
           // [POSTING-V2-03I.3] 금액과 같은 정의의 산정 조건
           ...compensationSnapshot,
           // [R7-PAYROLL-POLICY.4] 근태 반올림 기준도 같은 약속의 일부다.
-          ...(applyPolicySnapshot != null && {
-            attendancePolicySnapshot: applyPolicySnapshot,
+          ...(applyTxPolicy != null && {
+            attendancePolicySnapshot: applyTxPolicy,
           }),
           startTime, endTime,
           status: "PENDING",

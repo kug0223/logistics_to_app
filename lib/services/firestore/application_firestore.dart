@@ -20,6 +20,13 @@ enum ApplyOutcome {
 
   /// 기록됐는지 알 수 없다. 실패라고 단정하면 안 된다.
   unknown,
+
+  /// [R7-PAYROLL-POLICY.4C] 보는 동안 근태·급여 처리 기준이 바뀌었다.
+  ///
+  ///   `failed` 와 분리한다. 정원 마감·권한·서류와 달리 **근로자가 할 일이
+  ///   정해져 있다** — 바뀐 기준을 확인한 뒤 다시 지원하는 것이다.
+  ///   `unknown` 과도 분리한다: 지원은 **확실히 만들어지지 않았다**.
+  policyChanged,
 }
 
 /// 서버의 대답을 못 들은 것으로 보는 CF 오류 코드.
@@ -27,6 +34,16 @@ enum ApplyOutcome {
 ///   명시적 도메인 코드(already-exists / failed-precondition / permission-denied
 ///   / invalid-argument / resource-exhausted / not-found)는 여기 들어가지 않는다.
 ///   그것들은 서버가 **판단해서 돌려준 답**이다.
+/// [R7-PAYROLL-POLICY.4C] CF 가 실어 보낸 `details.reason` 을 읽는다.
+///
+///   서버 문구를 비교해 분기하지 않는다 — 문구가 바뀌면 조용히 틀린다.
+///   형태를 모르면 `null` 이고, 모르는 것을 특정 이유로 단정하지 않는다.
+String? _reasonOf(FirebaseFunctionsException e) {
+  final d = e.details;
+  if (d is Map && d['reason'] is String) return d['reason'] as String;
+  return null;
+}
+
 const Set<String> _kApplyUncertainCodes = {
   'deadline-exceeded', // 시간 안에 답이 안 왔다 — 커밋됐을 수 있다
   'unavailable', // 서버에 닿지 못했다
@@ -61,6 +78,13 @@ class ApplyResult {
 
   factory ApplyResult.unknown(String message, {String? code}) =>
       ApplyResult._(ApplyOutcome.unknown, message, code: code);
+
+  /// [R7-PAYROLL-POLICY.4C] 기준이 바뀌어 지원이 **만들어지지 않았다.**
+  factory ApplyResult.policyChanged(String message, {String? code}) =>
+      ApplyResult._(ApplyOutcome.policyChanged, message, code: code);
+
+  /// 기준이 바뀌어 막힌 것인가 — 화면이 재확인 흐름으로 보낸다.
+  bool get isPolicyChanged => outcome == ApplyOutcome.policyChanged;
 
   /// 지원이 canonical 하게 성립한 상태인가 — 새로 기록했든, 이미 있었든.
   bool get isApplied =>
@@ -522,6 +546,12 @@ extension ApplicationFirestore on FirestoreService {
   /// [A02-FIX] 복합 docId: CF에서 동일하게 계산 — 동시 지원 시 트랜잭션 충돌로 하나만 성공
   Future<ApplyResult> applyToTO({
     required String toId,
+    /// [R7-PAYROLL-POLICY.4C] 근로자가 **본** 근태·급여 기준의 식별 토큰.
+    ///
+    ///   `attendancePolicyFingerprint` 로 만든다. 서버가 commit 시점 canonical
+    ///   값과 비교해, 보는 동안 사업장이 바꿨으면 거부한다. 저장되는 값의
+    ///   출처가 아니다 — snapshot 은 서버가 읽은 사업장 문서에서 만든다.
+    required String expectedAttendancePolicy,
     String? slotId,
     required String businessId,
     required String businessName,
@@ -588,6 +618,8 @@ extension ApplicationFirestore on FirestoreService {
         // 서버는 이 값을 기록한다 — 배포 시점의 최신 버전을 쓰지 않는다.
         // 따라서 Functions가 앱보다 먼저 배포돼도 동의 의미가 바뀌지 않는다.
         'documentAccessConsentVersion': DocumentAccessConsent.version,
+        // [R7-PAYROLL-POLICY.4C] 내가 본 기준 — stale 탐지 입력이다.
+        'expectedAttendancePolicy': expectedAttendancePolicy,
       });
       final data = result.data;
       final isReactivation = data['isReactivation'] as bool? ?? false;
@@ -616,6 +648,14 @@ extension ApplicationFirestore on FirestoreService {
       }
       if (e.code == 'already-exists') {
         return ApplyResult.alreadyApplied(msg);
+      }
+      // [R7-PAYROLL-POLICY.4C] 기준 변경은 실패와 다른 상태다 — 근로자가 할
+      //   일이 정해져 있고, 지원은 **확실히 만들어지지 않았다**.
+      //   `details.reason` 으로 판정한다(문구 비교가 아니다).
+      final reason = _reasonOf(e);
+      if (reason == 'ATTENDANCE_POLICY_CHANGED' ||
+          reason == 'ATTENDANCE_POLICY_NOT_DISCLOSED') {
+        return ApplyResult.policyChanged(msg, code: reason);
       }
       return ApplyResult.failed(msg, code: e.code);
     } on TimeoutException catch (e) {

@@ -436,6 +436,22 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
   // ── Data ─────────────────────────────────────
 
+  /// [R7-PAYROLL-POLICY.4C §15] 기준이 바뀌어 지원이 막힌 뒤 **최신 기준을
+  /// 다시 보여준다.**
+  ///
+  ///   별도 policy reader 를 만들지 않는다 — 이 화면의 기존 `_loadData` 가
+  ///   사업장을 다시 읽고 `[상세 기준]` 이 그 값을 쓴다. 서버 응답에 정책을
+  ///   실어 보내 두 번째 truth source 를 만들지도 않는다.
+  ///
+  ///   다시 읽기가 실패하면 `_loadData` 의 기존 오류 처리가 ERROR 로 말한다 —
+  ///   "기준 없음" 으로 바꾸지 않는다(ERROR ≠ EMPTY). 그 상태에서 자동으로
+  ///   다시 지원하지 않는다.
+  Future<void> _refreshAfterPolicyChange() async {
+    await _loadData();
+    if (!mounted) return;
+    ToastHelper.showWarning(kAttendancePolicyChangedNote);
+  }
+
   Future<void> _loadData() async {
     _applicantUid = widget.mode == TODetailMode.applicant
         ? context.read<UserProvider>().currentUser?.uid
@@ -3117,7 +3133,17 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           selectedWorks: works,
           businessName: _to!.businessName,
           myApplications: _myApplications,
+          // [R7-PAYROLL-POLICY.4C] 이 화면이 `[상세 기준]` 으로 보여준 그 값.
+          //   새로 읽지 않는다 — 보여준 것과 보내는 것이 같아야 한다.
+          policyRules: _business?.attendanceRules,
         );
+        // 기준이 바뀌어 막혔으면 **닫지 않고** 이 화면을 다시 읽는다. 그러면
+        //   `[상세 기준]` 이 최신 값을 보여주고, 근로자가 확인한 뒤 다시
+        //   지원할 수 있다(자동 재지원 없음).
+        if (result?.policyChanged == true && mounted) {
+          await _refreshAfterPolicyChange();
+          return;
+        }
         if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
         return;
       }
@@ -3135,8 +3161,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           items: items,
           to: _to!,
           myApplications: _myApplications,
+          // [R7-PAYROLL-POLICY.4C] 이 화면이 보여준 그 값(새 읽기 없음).
+          policyRules: _business?.attendanceRules,
         ),
       );
+      if (result?.policyChanged == true && mounted) {
+        await _refreshAfterPolicyChange();
+        return;
+      }
       if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
     } finally {
       if (mounted) setState(() => _isApplying = false);
