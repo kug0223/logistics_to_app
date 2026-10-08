@@ -4,6 +4,7 @@ import '../../models/core/legal_terms_model.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/terms_consent_plan.dart';
+import '../../services/legal_terms_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/auth/legal_consent_list.dart';
@@ -40,7 +41,8 @@ class _RegistrationRecoveryScreenState
 
   _RecoveryCase _case = _RecoveryCase.loading;
   bool _isRecording = false;
-  LegalTerms? _legalTerms;
+  // [R7-PAYROLL-POLICY.5B] 서버가 판정한 시행 중 약관.
+  EffectiveLegalTerms? _legalTerms;
   String? _errorMessage;
   UserRole _userRole = UserRole.USER;
 
@@ -131,12 +133,23 @@ class _RegistrationRecoveryScreenState
     }
   }
 
-  Future<void> _loadTerms() async {
+  /// [R7-PAYROLL-POLICY.5B] 서버가 판정한 시행 중 약관만 쓴다.
+  ///
+  /// 실패하면 **null 로 둔다.** 예전에는 코드 기본값으로 대체했고, 그러면
+  /// 발행되지 않은 글을 보여 준 뒤 동의를 받는다. null 이면
+  /// `_recordTermsConsent` 가 먼저 막는다.
+  Future<void> _loadTerms({bool resetChoices = false}) async {
     try {
       final terms = await _reads.terms();
-      if (mounted) setState(() => _legalTerms = terms);
-    } catch (_) {
-      if (mounted) setState(() => _legalTerms = LegalTerms.defaultTerms());
+      if (!mounted) return;
+      setState(() {
+        _legalTerms = terms.hasRequiredItems ? terms : null;
+        if (resetChoices) _choices = const {};
+      });
+      if (resetChoices) _seedChoices();
+    } catch (e) {
+      debugPrint('⚠️ [RecoveryScreen] 시행 중 약관 조회 실패: $e');
+      if (mounted) setState(() => _legalTerms = null);
     }
   }
 
@@ -214,6 +227,20 @@ class _RegistrationRecoveryScreenState
         ToastHelper.showWarning('추가 정보 등록이 필요합니다.');
       }
     } catch (e) {
+      // [R7-PAYROLL-POLICY.5B] 약관이 바뀐 것은 통신 실패가 아니다.
+      //   같은 payload 로 다시 눌러도 영원히 실패한다. 새 글을 가져와
+      //   보여 주고, 고른 것을 지우고, 다시 고르게 한다.
+      if (LegalTermsService.isTermsVersionStale(e)) {
+        debugPrint('⚠️ [RecoveryScreen] 동의 제출 중 약관 시행본이 바뀌었다');
+        await _loadTerms(resetChoices: true);
+        if (mounted) {
+          setState(() {
+            _isRecording = false;
+            _errorMessage = '약관이 변경되었습니다.\n변경된 내용을 확인하고 다시 동의해 주세요.';
+          });
+        }
+        return;
+      }
       debugPrint('❌ [RecoveryScreen] 약관 동의 기록 실패: $e');
       if (mounted) {
         setState(() {

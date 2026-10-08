@@ -33,10 +33,16 @@ LegalTermsItem _item(String id, String title, bool required_,
       order: 1,
     );
 
-LegalTerms _terms() => LegalTerms(items: [
+// [R7-PAYROLL-POLICY.5B] 경계는 LegalTerms 가 아니라 서버가 판정한
+//   EffectiveLegalTerms 다 — 화면이 base 를 스스로 해석하지 않는다.
+EffectiveLegalTerms _terms() => EffectiveLegalTerms(
+      serverNow: DateTime.utc(2026, 10, 8),
+      upcoming: const [],
+      items: [
       _item('service_terms', '서비스 이용약관', true),
       _item('marketing_consent', '마케팅 정보 수신 동의 (선택)', false),
-    ]);
+      ],
+    );
 
 LegalReadiness _r(LegalReadinessStatus s,
         {List<String> req = const [], List<String> legacy = const []}) =>

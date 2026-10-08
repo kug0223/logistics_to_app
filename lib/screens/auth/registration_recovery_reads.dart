@@ -29,7 +29,9 @@ class RegistrationRecoveryReads {
   /// 실패는 throw 로 알린다.
   final Future<Map<String, dynamic>?> Function(String uid) userDoc;
 
-  final Future<LegalTerms> Function() terms;
+  /// [R7-PAYROLL-POLICY.5B] 서버가 판정한 **시행 중** 약관. 실패는 throw —
+  /// 기본값으로 대체하면 사용자가 보지 않은 글에 동의한 기록이 생긴다.
+  final Future<EffectiveLegalTerms> Function() terms;
 
   /// 동의 기록. 실패는 throw — 호출자가 성공으로 바꾸지 않는다.
   final Future<void> Function(Map<String, dynamic> consentRecord) recordConsent;
@@ -43,7 +45,7 @@ class RegistrationRecoveryReads {
         final snap = await db.collection('users').doc(uid).get();
         return snap.exists ? snap.data() : null;
       },
-      terms: service.getTerms,
+      terms: service.fetchEffectiveTerms,
       recordConsent: (record) async {
         await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
             .httpsCallable('callableRecordTermsConsent',

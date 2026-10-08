@@ -21,6 +21,7 @@ import '../../models/core/legal_readiness.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../services/legal_terms_service.dart';
 import '../../utils/terms_consent_plan.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/auth/legal_consent_list.dart';
@@ -40,7 +41,8 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
   late final LegalConsentReads _reads = widget.reads ?? LegalConsentReads.of();
 
   LegalReadiness _readiness = LegalReadiness.loading;
-  LegalTerms? _terms;
+  // [R7-PAYROLL-POLICY.5B] 서버가 판정한 시행 중 약관.
+  EffectiveLegalTerms? _terms;
   Map<String, StoredConsent> _stored = const {};
   Map<String, bool> _choices = const {};
   final Set<String> _viewed = <String>{};
@@ -66,8 +68,14 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
       ]);
       if (!mounted) return;
       final readiness = results[0] as LegalReadiness;
-      final terms = results[1] as LegalTerms;
+      final terms = results[1] as EffectiveLegalTerms;
       final stored = StoredConsent.parseMap(results[2]);
+      // [R7-PAYROLL-POLICY.5B] 필수 항목이 없는 응답을 "동의할 것이 없다"
+      //   로 읽지 않는다 — 부분 응답을 정상으로 위장하지 않는다.
+      if (!terms.hasRequiredItems) {
+        setState(() => _readiness = LegalReadiness.error);
+        return;
+      }
       setState(() {
         _readiness = readiness;
         _terms = terms;
@@ -117,6 +125,22 @@ class _LegalConsentScreenState extends State<LegalConsentScreen> {
         if (mounted) Navigator.of(context).pop(true);
       }
     } catch (e) {
+      // [R7-PAYROLL-POLICY.5B] 고르는 사이에 약관이 시행되면 서버가 거절한다.
+      //   그것을 평범한 저장 실패로 보여 주면 사용자는 같은 버튼을 계속
+      //   누르고 계속 실패한다. 새 글을 다시 불러와 보여 주고, 고른 것을
+      //   지우고, 사용자가 **다시** 고르게 한다 — 자동 승격하지 않는다.
+      if (LegalTermsService.isTermsVersionStale(e)) {
+        debugPrint('⚠️ 동의 제출 중 약관 시행본이 바뀌었다 — 재확인 요구');
+        if (!mounted) return;
+        setState(() => _submitting = false);
+        await _load();
+        if (!mounted) return;
+        setState(() {
+          _viewed.clear();
+          _errorMessage = '약관이 변경되었습니다.\n변경된 내용을 확인하고 다시 동의해 주세요.';
+        });
+        return;
+      }
       debugPrint('⚠️ 약관 동의 기록 실패: $e');
       if (!mounted) return;
       setState(() {

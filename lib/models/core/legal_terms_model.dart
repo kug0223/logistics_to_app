@@ -85,6 +85,118 @@ class UpcomingLegalRevision {
   }
 }
 
+/// [R7-PAYROLL-POLICY.5B] 서버가 "지금 시행 중" 이라고 답한 한 벌.
+///
+/// `LegalTerms` 와 모양이 비슷하지만 출처가 다르다. `LegalTerms` 는
+/// `app_settings/legal_terms` 를 그대로 읽은 것(base 기준)이고, 이것은
+/// `callableGetEffectiveLegalTerms` 가 **서버 시각으로 판정한** 결과다.
+/// 동의를 받는 화면은 이쪽만 쓴다.
+class EffectiveLegalTerms {
+  const EffectiveLegalTerms({
+    required this.items,
+    required this.upcoming,
+    required this.serverNow,
+  });
+
+  /// 지금 시행 중인 항목. 순서는 `order` 로 정렬돼 있다.
+  final List<LegalTermsItem> items;
+
+  /// 고지됐지만 아직 시행 전인 것. 안내용이며 동의를 받지 않는다.
+  final List<UpcomingLegalItemInfo> upcoming;
+
+  /// 서버가 판정에 쓴 시각. 기기 시계가 아니다.
+  final DateTime serverNow;
+
+  List<LegalTermsItem> get activeItems {
+    final list = items.where((i) => i.isActive).toList()
+      ..sort((a, b) => a.order.compareTo(b.order));
+    return list;
+  }
+
+  /// 필수 항목이 하나도 없으면 **정상 상태가 아니다.**
+  ///
+  /// 약관 없이 받은 동의는 무엇에 대한 동의인지 말할 수 없다. 응답이
+  /// 비었거나 필수 항목이 빠진 것을 "동의할 것이 없다" 로 읽지 않는다.
+  bool get hasRequiredItems => activeItems.any((i) => i.isRequired);
+
+  /// 서버 응답 해석. 모양이 다르면 **throw** 한다 — 부분 응답을 정상으로
+  /// 위장하지 않는다(ERROR ≠ EMPTY).
+  factory EffectiveLegalTerms.fromServer(Map<dynamic, dynamic>? data) {
+    if (data == null) {
+      throw const FormatException('약관 응답이 비어 있습니다');
+    }
+    final rawItems = data['effectiveItems'];
+    final nowMs = data['serverNowMs'];
+    if (rawItems is! List || nowMs is! int) {
+      throw const FormatException('약관 응답의 모양이 다릅니다');
+    }
+    final items = <LegalTermsItem>[];
+    for (final e in rawItems) {
+      if (e is! Map) continue;
+      final id = e['itemId'];
+      final version = e['version'];
+      if (id is! String || id.isEmpty) continue;
+      if (version is! String || version.isEmpty) continue;
+      final at = e['effectiveAtMs'];
+      items.add(LegalTermsItem(
+        id: id,
+        title: e['title'] is String ? e['title'] as String : '',
+        content: e['content'] is String ? e['content'] as String : '',
+        isRequired: e['isRequired'] != false,
+        isActive: e['isActive'] != false,
+        version: version,
+        revisionId: e['revisionId'] is String &&
+                (e['revisionId'] as String).isNotEmpty
+            ? e['revisionId'] as String
+            : null,
+        order: e['order'] is int ? e['order'] as int : 0,
+        effectiveAt: at is int
+            ? DateTime.fromMillisecondsSinceEpoch(at).toLocal()
+            : null,
+      ));
+    }
+    return EffectiveLegalTerms(
+      items: items,
+      upcoming: UpcomingLegalItemInfo.parseList(data['upcomingItems']),
+      serverNow: DateTime.fromMillisecondsSinceEpoch(nowMs).toLocal(),
+    );
+  }
+}
+
+/// [R7-PAYROLL-POLICY.5B] 시행 예정 한 건 — 안내용.
+class UpcomingLegalItemInfo {
+  const UpcomingLegalItemInfo({
+    required this.itemId,
+    required this.version,
+    required this.effectiveAt,
+  });
+
+  final String itemId;
+  final String version;
+  final DateTime? effectiveAt;
+
+  static List<UpcomingLegalItemInfo> parseList(Object? raw) {
+    if (raw is! List) return const [];
+    final out = <UpcomingLegalItemInfo>[];
+    for (final e in raw) {
+      if (e is! Map) continue;
+      final id = e['itemId'];
+      final version = e['version'];
+      if (id is! String || id.isEmpty) continue;
+      if (version is! String || version.isEmpty) continue;
+      final at = e['effectiveAtMs'];
+      out.add(UpcomingLegalItemInfo(
+        itemId: id,
+        version: version,
+        effectiveAt: at is int
+            ? DateTime.fromMillisecondsSinceEpoch(at).toLocal()
+            : null,
+      ));
+    }
+    return out;
+  }
+}
+
 class LegalTermsItem {
   /// 고정 식별자 (코드에서 참조용)
   final String id;

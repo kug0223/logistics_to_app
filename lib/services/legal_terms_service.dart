@@ -31,13 +31,38 @@ class LegalTermsService {
       .collection(_collection)
       .doc(_docId);
 
-  /// 약관 로드.
+  /// [R7-PAYROLL-POLICY.5B] **지금 시행 중인 약관.** 동의를 받는 모든
+  /// 화면이 쓰는 유일한 경로다.
+  ///
+  /// 어느 판이 시행 중인지는 서버가 정한다 — 발행과 시행이 분리된 뒤로는
+  /// `app_settings/legal_terms` 의 base 만 읽으면 안 된다. base 는 시행
+  /// 시각이 지나도 정기 정합화가 올려 주기 전까지 낡아 있을 수 있고, 비로그인
+  /// 가입 화면은 서버 시각을 알 수 없어 스스로 판정할 수도 없다.
+  ///
+  /// **실패하면 throw 한다.** 기본값으로 대체하지 않는다 — 발행되지 않은
+  /// 글을 현재 약관인 것처럼 보여 주고 동의를 받으면, 사용자가 보지 않은
+  /// 글에 동의한 기록이 생긴다. 모르는 것은 모르는 것이다.
+  Future<EffectiveLegalTerms> fetchEffectiveTerms() async {
+    final res = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetEffectiveLegalTerms',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+        .call<Map<dynamic, dynamic>>();
+    return EffectiveLegalTerms.fromServer(res.data);
+  }
+
+  /// 편집용 약관 로드 — **슈퍼관리자 발행 화면 전용.**
   ///
   /// 문서가 없으면 Dart 기본값을 **메모리로만** 돌려준다. 예전에는 여기서
   /// Firestore 에 기본값을 써 넣었는데, 그것은 발행이다 — 발행은 CF 를
   /// 거쳐야 하고 발행본을 함께 남겨야 한다. 클라이언트가 조용히 약관을
   /// 만들어 두면 그 글은 아무 발행 이력도 갖지 못한다.
-  Future<LegalTerms> getTerms() async {
+  ///
+  /// [R7-PAYROLL-POLICY.5B] 이 기본값 대체가 **동의 화면에 쓰이면 안 되는
+  /// 이유**로 이름을 바꿨다. 가입 화면이 이 경로를 쓰고 있었고, 조회가
+  /// 실패하면 발행되지 않은 코드 기본값을 현재 약관으로 보여 준 뒤 동의를
+  /// 받았다. 그 동의는 사용자가 본 글을 가리키지 않는다.
+  /// 동의를 받는 화면은 [fetchEffectiveTerms] 를 쓴다.
+  Future<LegalTerms> getTermsForEditing() async {
     try {
       final snap = await _ref.get();
       if (!snap.exists || snap.data() == null) {
@@ -50,6 +75,18 @@ class LegalTermsService {
       debugPrint('⚠️ 약관 로드 실패, 기본값 사용: $e');
       return LegalTerms.defaultTerms();
     }
+  }
+
+  /// [R7-PAYROLL-POLICY.5B] 이 실패가 "동의하는 사이에 약관이 바뀌었다"
+  /// 인가.
+  ///
+  /// 판별을 한 곳에 둔다. 화면마다 문자열을 다시 비교하면 한쪽이 이것을
+  /// 평범한 오류로 보고 같은 payload 로 재시도하게 된다 — 그 재시도는
+  /// 영원히 실패한다. 실제로 가입 화면이 그랬다.
+  static bool isTermsVersionStale(Object error) {
+    if (error is! FirebaseFunctionsException) return false;
+    final msg = error.message ?? '';
+    return msg.contains('TERMS_VERSION_STALE');
   }
 
   /// 항목 발행 — 생성·수정 공용.
@@ -77,7 +114,7 @@ class LegalTermsService {
   /// 보낼 수 없다 — 모르는 날짜를 지어내면 그 값이 발행본과 어긋난다.
   Future<void> toggleActive(String itemId, bool isActive,
       {required String updatedBy}) async {
-    final terms = await getTerms();
+    final terms = await getTermsForEditing();
     final item = terms.items.firstWhere(
       (t) => t.id == itemId,
       orElse: () => throw StateError('약관 항목을 찾을 수 없습니다: $itemId'),

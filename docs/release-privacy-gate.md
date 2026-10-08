@@ -66,6 +66,35 @@ DEV 실측(읽기 전용, 2026-10-08):
 `.5` 가 보고한 "8/8" 은 `evaluateReconsent`(다시 받아야 하는 항목) 수치이고,
 실제 gate 는 `evaluateLegalReadiness` + `allowsNewCommitment` 다.
 
+### [R7-PAYROLL-POLICY.5B] 시행 경계 — 세 표면이 같은 판을 말한다
+
+`.5A` 가 발행과 시행을 분리하고 나서 남은 구멍이 있었다. 앱은
+`app_settings/legal_terms` 의 base 를 직접 읽었고, 비로그인 가입 화면은
+서버 시각을 알 수 없어 스스로 판정할 수도 없었다. 시행 정각부터 정기
+정합화까지 앱은 옛 판을, 서버는 새 판을 말했고, 가입 화면은 같은 동의
+payload 로 **영원히 실패하는 재시도**를 반복했다.
+
+이제 "어느 판이 시행 중인가" 는 서버가 답한다 —
+`callableGetEffectiveLegalTerms`(비인증, App Check 강제)가
+`resolveProjectionItems` 로 판정해 내려 준다. readiness·동의 writer·공개
+웹과 **같은 해석기**이므로 어긋날 수 없다.
+
+| 상태 | 공개 웹 | 앱 | 서버 readiness | 동의 writer |
+|---|---|---|---|---|
+| 시행 1ms 전 | A | A | A | A |
+| 시행 정각 | B | B | B | B |
+| 스케줄러 지연(base 아직 A) | B | B | B | B |
+| 스케줄러 완료 | B | B | B | B |
+| 조회 실패 | 오류 표시 | 오류 표시 + 동의 차단 | ERROR | 기록 거부 |
+
+조회 실패는 **기본값으로 대체하지 않는다.** 예전 가입 화면은
+`LegalTerms.defaultTerms()` 를 현재 약관처럼 보여 준 뒤 동의까지 받았다 —
+그 동의는 사용자가 본 글을 가리키지 않는다.
+
+고르는 사이에 약관이 시행되면 서버가 `TERMS_VERSION_STALE` 로 거절하고,
+클라이언트는 **새 글을 다시 불러와 보여 주고 고른 것을 지우고 사용자가
+다시 고르게** 한다. 이전 동의를 새 판 동의로 승격하지 않는다.
+
 > PROD 변경은 별도 승인 후 수행한다. 이 문서는 절차만 고정한다.
 
 ## 1-B. [R7-PAYROLL-POLICY.5] 약관이 아직 말할 수 없는 것 — RELEASE BLOCKER

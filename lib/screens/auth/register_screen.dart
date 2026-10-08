@@ -72,8 +72,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _lastSentPhone = ''; // 발송한 번호 추적 (번호 변경 시 재인증)
 
   // 법적 동의 — Firestore 약관 기반 동적 관리
-  LegalTerms? _legalTerms;
+  // [R7-PAYROLL-POLICY.5B] 가입 화면이 보여 주는 것은 **서버가 지금 시행
+  //   중이라고 답한** 약관이다. 예전에는 `app_settings/legal_terms` 의 base
+  //   를 직접 읽었고, 조회가 실패하면 코드 기본값으로 대체했다. 그러면
+  //   발행되지도 않은 글을 현재 약관으로 보여 준 뒤 동의를 받는다.
+  EffectiveLegalTerms? _legalTerms;
   bool _isTermsLoading = false;
+
+  /// 조회 실패 사유. null 이 아니면 **동의할 수 없다** — 기본값으로
+  /// 대체하지 않는다(ERROR ≠ EMPTY).
+  String? _termsError;
   // itemId → 동의 여부 (ValueNotifier로 동의 섹션만 재빌드)
   final _consentNotifier = ValueNotifier<Map<String, bool>>({});
   Map<String, bool> get _consentMap => _consentNotifier.value;
@@ -113,27 +121,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
     // 사업자등록번호 의존 UI는 ValueListenableBuilder로 격리 — 전체 rebuild 불필요
   }
 
-  Future<void> _loadTerms() async {
-    setState(() => _isTermsLoading = true);
+  /// 시행 중 약관을 불러온다.
+  ///
+  /// [resetChoices] 가 true 면 이미 고른 동의를 모두 지운다 — 약관이 바뀐
+  /// 뒤에는 이전 선택이 다른 글에 대한 것이므로 그대로 쓸 수 없다.
+  Future<void> _loadTerms({bool resetChoices = false}) async {
+    setState(() {
+      _isTermsLoading = true;
+      _termsError = null;
+    });
     try {
-      final terms = await _legalTermsService.getTerms();
+      final terms = await _legalTermsService.fetchEffectiveTerms();
       if (!mounted) return;
-      final map = <String, bool>{};
-      for (final item in terms.activeItems) {
-        map[item.id] = false;
+      if (!terms.hasRequiredItems) {
+        // 필수 항목이 하나도 없다 — "동의할 것이 없다" 가 아니라 데이터가
+        // 불완전한 것이다. 이 상태로 가입시키면 동의 증거가 없는 계정이 생긴다.
+        setState(() {
+          _legalTerms = null;
+          _isTermsLoading = false;
+          _termsError = '약관 정보가 완전하지 않습니다.\n잠시 후 다시 시도해 주세요.';
+        });
+        return;
       }
-      _consentNotifier.value = {..._consentNotifier.value, ...map};
+      final map = <String, bool>{for (final i in terms.activeItems) i.id: false};
+      _consentNotifier.value =
+          resetChoices ? map : {..._consentNotifier.value, ...map};
       setState(() { _legalTerms = terms; _isTermsLoading = false; });
     } catch (e) {
-      debugPrint('⚠️ 약관 로드 실패, 기본값 사용: $e');
-      final defaults = LegalTerms.defaultTerms();
+      // [R7-PAYROLL-POLICY.5B] 기본값으로 대체하지 않는다. 예전에는
+      //   `LegalTerms.defaultTerms()` 를 현재 약관처럼 보여 주고 동의까지
+      //   받았다 — 그 동의는 사용자가 본 글을 가리키지 않는다.
+      debugPrint('⚠️ 시행 중 약관 조회 실패: $e');
       if (!mounted) return;
-      final map = <String, bool>{};
-      for (final item in defaults.activeItems) {
-        map[item.id] = false;
-      }
-      _consentNotifier.value = {..._consentNotifier.value, ...map};
-      setState(() { _legalTerms = defaults; _isTermsLoading = false; });
+      setState(() {
+        _legalTerms = null;
+        _isTermsLoading = false;
+        _termsError = '약관을 불러오지 못했어요.\n네트워크를 확인하고 다시 시도해 주세요.';
+      });
     }
   }
 
@@ -537,7 +561,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
                 .call({'consentRecord': consentRecord});
             recorded = true;
-          } catch (_) {
+          } catch (e) {
+            // [R7-PAYROLL-POLICY.5B] "동의하는 사이에 약관이 바뀌었다" 는
+            //   네트워크 오류가 아니다. 같은 payload 로 재시도하면 **영원히**
+            //   실패한다 — 예전 코드가 그 무한 재시도였다.
+            //
+            //   사용자의 A 동의를 B 동의로 올려 주지도 않는다. 새 글을 보여
+            //   주고, 고른 것을 지우고, 다시 고르게 한다. 입력한 가입 정보는
+            //   그대로 둔다.
+            if (LegalTermsService.isTermsVersionStale(e)) {
+              debugPrint('⚠️ 동의 제출 중 약관 시행본이 바뀌었다 — 재확인 요구');
+              if (!mounted) return;
+              await _loadTerms(resetChoices: true);
+              if (!mounted) return;
+              ToastHelper.showWarning(
+                  '약관이 변경되었습니다.\n변경된 내용을 확인하고 다시 동의해 주세요.');
+              return;
+            }
             debugPrint('⚠️ 동의 기록 저장 실패');
             if (!mounted) return;
             final retry = await _showTermsConsentRetryDialog();
@@ -1655,6 +1695,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: CircularProgressIndicator(
                 strokeWidth: 2, color: theme.primaryColor),
           ),
+        ),
+      );
+    }
+
+    // [R7-PAYROLL-POLICY.5B] 못 읽었으면 못 읽었다고 말한다. 체크박스를
+    //   그리지 않으므로 동의 자체가 불가능하고, 입력한 내용은 그대로 남는다.
+    if (_termsError case final message?) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 16)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Divider(),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.cloud_off_outlined,
+                    size: 18, color: AppColors.textTertiary),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                // 좁은 화면에서 넘치지 않게 — 줄바꿈을 허용한다.
+                Expanded(
+                  child: Text(message,
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.textSecondary)),
+                ),
+              ],
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            OutlinedButton.icon(
+              onPressed: () => _loadTerms(),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('다시 시도'),
+            ),
+          ],
         ),
       );
     }

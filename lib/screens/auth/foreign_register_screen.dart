@@ -128,8 +128,12 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   final _ocrFormKey = GlobalKey<FormState>();
 
   // ── finalSetup: 약관 동의 ────────────────────────────────────
-  LegalTerms? _legalTerms;
+  // [R7-PAYROLL-POLICY.5B] 서버가 판정한 시행 중 약관.
+  EffectiveLegalTerms? _legalTerms;
   bool _termsLoading = false;
+
+  /// 조회 실패 사유. null 이 아니면 동의할 수 없다(ERROR ≠ EMPTY).
+  String? _termsError;
   final _consentMap = <String, bool>{};
   final _viewedTermIds = <String>{}; // 열람한 약관 ID — '보기 *' ↔ '다시보기' 표시 구분
 
@@ -169,28 +173,41 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     super.dispose();
   }
 
-  Future<void> _loadTerms() async {
-    setState(() => _termsLoading = true);
+  /// [R7-PAYROLL-POLICY.5B] 서버가 **지금 시행 중**이라고 답한 약관만 쓴다.
+  ///
+  /// 실패하면 기본값으로 대체하지 않는다 — 발행되지 않은 글을 현재 약관처럼
+  /// 보여 주고 동의를 받으면, 그 동의는 사용자가 본 글을 가리키지 않는다.
+  Future<void> _loadTerms({bool resetChoices = false}) async {
+    setState(() {
+      _termsLoading = true;
+      _termsError = null;
+    });
     try {
-      final terms = await _legalTermsService.getTerms();
+      final terms = await _legalTermsService.fetchEffectiveTerms();
       if (!mounted) return;
+      if (!terms.hasRequiredItems) {
+        setState(() {
+          _legalTerms = null;
+          _termsLoading = false;
+          _termsError = '약관 정보가 완전하지 않습니다.\n잠시 후 다시 시도해 주세요.';
+        });
+        return;
+      }
       setState(() {
         _legalTerms = terms;
+        if (resetChoices) _consentMap.clear();
         for (final item in terms.activeItems) {
           _consentMap[item.id] = false;
         }
         _termsLoading = false;
       });
     } catch (e) {
-      debugPrint('⚠️ [ForeignReg] 약관 로드 실패, 기본값 사용: $e');
+      debugPrint('⚠️ [ForeignReg] 시행 중 약관 조회 실패: $e');
       if (!mounted) return;
-      final defaults = LegalTerms.defaultTerms();
       setState(() {
-        _legalTerms = defaults;
-        for (final item in defaults.activeItems) {
-          _consentMap[item.id] = false;
-        }
+        _legalTerms = null;
         _termsLoading = false;
+        _termsError = '약관을 불러오지 못했어요.\n네트워크를 확인하고 다시 시도해 주세요.';
       });
     }
   }
@@ -872,7 +889,20 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
                 options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
             .call({'consentRecord': consentRecord});
         recorded = true;
-      } catch (_) {
+      } catch (e) {
+        // [R7-PAYROLL-POLICY.5B] 약관이 바뀐 것은 네트워크 오류가 아니다.
+        //   같은 payload 로 재시도하면 영원히 실패한다. 새 글을 보여 주고
+        //   고른 것을 지우고 다시 고르게 한다 — 자동 승격하지 않는다.
+        if (LegalTermsService.isTermsVersionStale(e)) {
+          debugPrint('⚠️ [ForeignReg] 동의 제출 중 약관 시행본이 바뀌었다');
+          if (!mounted) return;
+          await _loadTerms(resetChoices: true);
+          if (!mounted) return;
+          setState(() => _isBusy = false);
+          ToastHelper.showWarning(
+              '약관이 변경되었습니다.\n변경된 내용을 확인하고 다시 동의해 주세요.');
+          return;
+        }
         if (!mounted) return;
         final retry = await _showTermsRetryDialog();
         if (!retry) {
@@ -1669,9 +1699,28 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       // 약관 동의 섹션
       if (_termsLoading)
         const Center(child: CircularProgressIndicator())
+      // [R7-PAYROLL-POLICY.5B] 못 읽었으면 못 읽었다고 말하고 다시 시도할
+      //   길을 준다. 체크박스를 그리지 않으므로 동의가 불가능하고, 지금까지
+      //   입력한 가입 정보는 그대로 남는다.
       else if (_legalTerms == null)
-        Text('약관 정보를 불러올 수 없습니다.',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500))
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(Icons.cloud_off_outlined, size: 18, color: AppColors.grey500),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                  _termsError ?? '약관 정보를 불러올 수 없습니다.',
+                  style: ResponsiveHelper.bodyStyle(context,
+                      color: AppColors.grey500)),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => _loadTerms(),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('다시 시도'),
+          ),
+        ])
       else
         _buildConsentSection(),
     ]);

@@ -24,7 +24,9 @@ class LegalConsentReads {
   /// 서버 판정. 실패는 throw — 호출자가 ERROR 로 그린다.
   final Future<LegalReadiness> Function() readiness;
 
-  final Future<LegalTerms> Function() terms;
+  /// [R7-PAYROLL-POLICY.5B] 서버가 판정한 **시행 중** 약관. 실패는 throw —
+  /// 화면이 ERROR 로 그린다. 기본값으로 대체하지 않는다.
+  final Future<EffectiveLegalTerms> Function() terms;
 
   /// `users/{uid}.termsConsent` 원본.
   final Future<Map<String, dynamic>> Function() storedConsent;
@@ -43,7 +45,7 @@ class LegalConsentReads {
             .call<Map<dynamic, dynamic>>();
         return LegalReadiness.fromServer(res.data);
       },
-      terms: LegalTermsService().getTerms,
+      terms: LegalTermsService().fetchEffectiveTerms,
       storedConsent: () async {
         final uid = FirebaseAuth.instance.currentUser?.uid;
         if (uid == null) return <String, dynamic>{};

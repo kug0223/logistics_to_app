@@ -37,12 +37,18 @@ LegalTermsItem _item(String id, String title, bool required_,
       order: 1,
     );
 
-LegalTerms _terms({String marketingVersion = _v}) => LegalTerms(items: [
+// [R7-PAYROLL-POLICY.5B] 서버가 판정한 시행 중 약관을 흉내낸다.
+EffectiveLegalTerms _terms({String marketingVersion = _v}) =>
+    EffectiveLegalTerms(
+      serverNow: DateTime.utc(2026, 10, 8),
+      upcoming: const [],
+      items: [
       _item('service_terms', '서비스 이용약관', true),
       _item('privacy_policy', '개인정보 처리방침', true),
       _item('marketing_consent', '마케팅 정보 수신 동의 (선택)', false,
           version: marketingVersion),
-    ]);
+      ],
+    );
 
 class _FakeApp extends Fake
     with MockPlatformInterfaceMixin
@@ -82,7 +88,7 @@ Future<void> _pump(
   WidgetTester t, {
   required Map<String, dynamic> userDoc,
   required _Recorder recorder,
-  LegalTerms? terms,
+  EffectiveLegalTerms? terms,
   Size size = const Size(400, 900),
 }) async {
   t.view.physicalSize = size;

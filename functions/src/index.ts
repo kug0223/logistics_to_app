@@ -54,7 +54,9 @@ import {
   isValidLegalToken as lpIsValidLegalToken,
   // [R7-PAYROLL-POLICY.5A] 발행 ≠ 시행 ≠ 재동의
   evaluateNoticePeriod as lpEvaluateNoticePeriod,
-  resolveEffectiveItem as lpResolveEffectiveItem,
+  // [R7-PAYROLL-POLICY.5B] 공개 목록 해석과 내보낼 모양도 순수 모듈에 둔다.
+  resolveProjectionItems as lpResolveProjectionItems,
+  composeEffectiveLegalItem as lpComposeEffectiveLegalItem,
   promoteDueUpcoming as lpPromoteDueUpcoming,
   placePublishedRevision as lpPlacePublishedRevision,
   type ProjectionItem as LpProjectionItem,
@@ -86,6 +88,16 @@ function srvLegalTimeMs(v: unknown): number | null {
 type SrvLegalProjection = {
   /** 지금 **시행 중인** 활성 항목. 모든 판정의 기준이다. */
   effective: LpProjectionItem[];
+  /**
+   * [R7-PAYROLL-POLICY.5B] 시행 중인 항목의 **저장된 자리들**.
+   *
+   *   순서가 `effective` 와 같다. 제목·본문·순서는 판정에 쓰이지 않지만
+   *   화면에 보여 줘야 하고, 그것을 또 다른 곳에서 다시 해석하면 "어느 판이
+   *   시행 중인가" 의 답이 두 벌이 된다. 그래서 같은 해석에서 함께 꺼낸다.
+   *
+   *   승격이 적용된 경우 `upcoming` 쪽 제목·본문이 들어 있다.
+   */
+  effectiveRaw: Array<Record<string, unknown>>;
   /** 고지는 됐지만 아직 시행되지 않은 것. 판정 기준이 **아니다**. */
   upcoming: Array<{itemId: string; version: string; revisionId: string;
     effectiveAtMs: number}>;
@@ -112,48 +124,11 @@ function srvResolveLegalProjection(
   rawItems: unknown,
   nowMs: number,
 ): SrvLegalProjection {
-  const effective: LpProjectionItem[] = [];
-  const upcoming: SrvLegalProjection["upcoming"] = [];
-
-  for (const raw of Array.isArray(rawItems) ? rawItems : []) {
-    if (!raw || typeof raw !== "object") continue;
-    const i = raw as Record<string, unknown>;
-    const id = String(i.id ?? "");
-    if (id === "") continue;
-    const upRaw = i.upcoming;
-    const up = upRaw != null && typeof upRaw === "object" &&
-      !Array.isArray(upRaw) ? upRaw as Record<string, unknown> : null;
-    const upEffMs = up ? srvLegalTimeMs(up.effectiveAt) : null;
-    const upRevisionId = up && typeof up.revisionId === "string" ?
-      up.revisionId : "";
-    const upVersion = up ? String(up.version ?? "") : "";
-
-    const resolved = lpResolveEffectiveItem({
-      id,
-      version: String(i.version ?? ""),
-      revisionId: typeof i.revisionId === "string" && i.revisionId !== "" ?
-        i.revisionId : undefined,
-      isRequired: i.isRequired !== false,
-      isActive: i.isActive !== false,
-      effectiveAtMs: srvLegalTimeMs(i.effectiveAt),
-      upcoming: up && upEffMs != null && upRevisionId !== "" &&
-        upVersion !== "" ?
-        {version: upVersion, revisionId: upRevisionId,
-          effectiveAtMs: upEffMs} : null,
-    }, nowMs);
-
-    const item = resolved.item;
-    if (item.version !== "" && item.isActive) effective.push(item);
-    if (resolved.pendingUpcoming) {
-      upcoming.push({
-        itemId: id,
-        version: resolved.pendingUpcoming.version,
-        revisionId: resolved.pendingUpcoming.revisionId,
-        effectiveAtMs: resolved.pendingUpcoming.effectiveAtMs,
-      });
-    }
-  }
-  return {effective, upcoming};
+  // [R7-PAYROLL-POLICY.5B] 해석 자체는 순수 모듈에 있다. 예전에는 이 함수
+  //   안에 있었고, 그래서 시각 변환·예정 판 유효성·어느 쪽 본문을 쓸지가
+  //   실행으로 확인되지 않았다(변이 B7·B8 이 그 자리로 빠져나갔다).
+  //   여기 남는 것은 **저장된 시각을 읽는 방법**을 넘겨 주는 일뿐이다.
+  return lpResolveProjectionItems({rawItems, nowMs, toMs: srvLegalTimeMs});
 }
 
 /**
@@ -12256,6 +12231,81 @@ export const callablePublishLegalRevision = onCall(
 
     return {success: true, revisionId, contentHash: hash,
       effectiveAtMs: reqEffectiveAtMs};
+  }
+);
+
+// ── callableGetEffectiveLegalTerms ───────────────────────
+//
+// [R7-PAYROLL-POLICY.5B] **어느 판이 시행 중인가**를 서버가 답한다.
+//
+//   `.5A` 가 발행과 시행을 분리하고 나서 남은 구멍이 이것이었다.
+//
+//     앱은 `app_settings/legal_terms` 를 직접 읽었다. 비로그인 가입 화면도
+//     그 경로를 쓰므로 **서버 시각을 알 수 없고**, 그래서 base 를 그대로
+//     현재 약관으로 썼다. base 는 정기 reconciliation 이 올려 주기 전까지
+//     낡아 있을 수 있다.
+//
+//     그 결과 시행 정각부터 스케줄러 실행까지 앱은 옛 판 A 를 보여 주고,
+//     서버는 B 를 요구한다. 사용자가 A 에 동의하면
+//     `TERMS_VERSION_STALE` 로 거절되고, 가입 화면은 같은 payload 로
+//     재시도를 반복한다 — 영원히 실패한다.
+//
+//   그래서 판정을 서버로 옮긴다. 이 함수가 돌려주는 것은
+//   `srvResolveLegalProjection` 의 결과 그대로다 — readiness·동의 writer 와
+//   **같은 해석기**이므로 세 표면이 어긋날 수 없다.
+//
+//   본문은 **발행본에서** 가져온다. projection 의 content 는 포인터가
+//   가리키는 글의 사본일 뿐이고, 증거는 고쳐 쓸 수 없는 쪽에 있다. 공개
+//   웹(`legal-reader.js`)도 같은 규칙을 쓰므로 앱과 웹이 같은 글을 본다.
+//
+//   ── 인증을 요구하지 않는 이유 ─────────────────────────────────
+//   회원가입 중에는 계정이 없다. 그런데 가입하려면 **지금 시행 중인 약관**을
+//   보고 동의해야 한다. 공개되는 것은 이미 `legal_revisions` 와
+//   `app_settings/legal_terms` 에서 비인증으로 읽을 수 있는 법적 문서뿐이고,
+//   사용자별 동의 이력은 여기서 돌려주지 않는다(그쪽은
+//   `callableGetLegalReadiness` 가 인증을 요구한다).
+//   App Check 는 그대로 강제한다.
+export const callableGetEffectiveLegalTerms = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async () => {
+    const termsSnap = await db.collection("app_settings")
+      .doc("legal_terms").get();
+    const nowMs = admin.firestore.Timestamp.now().toMillis();
+    const resolved = srvResolveLegalProjection(termsSnap.data()?.items, nowMs);
+
+    // 발행본을 한 번에 읽는다 — 항목마다 따로 읽지 않는다.
+    const revIds = resolved.effective
+      .map((i) => i.revisionId)
+      .filter((x): x is string => typeof x === "string" && x !== "");
+    const revs = new Map<string, Record<string, unknown>>();
+    if (revIds.length > 0) {
+      const snaps = await db.getAll(
+        ...revIds.map((id) => db.collection("legal_revisions").doc(id)));
+      for (const s of snaps) {
+        if (s.exists) revs.set(s.id, s.data() as Record<string, unknown>);
+      }
+    }
+
+    // 어느 글을 내보낼지는 순수 함수가 정한다 — 발행본과 사본 중 무엇을
+    //   쓰는지가 실행으로 확인돼야 한다.
+    const effectiveItems = resolved.effective.map((item, idx) =>
+      lpComposeEffectiveLegalItem({
+        item,
+        raw: resolved.effectiveRaw[idx] ?? {},
+        revision: item.revisionId ? revs.get(item.revisionId) : undefined,
+      }));
+
+    return {
+      effectiveItems,
+      // 안내용이다 — 동의를 받지 않는다.
+      upcomingItems: resolved.upcoming.map((u) => ({
+        itemId: u.itemId,
+        version: u.version,
+        revisionId: u.revisionId,
+        effectiveAtMs: u.effectiveAtMs,
+      })),
+      serverNowMs: nowMs,
+    };
   }
 );
 

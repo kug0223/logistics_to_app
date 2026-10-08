@@ -52,7 +52,10 @@ class _LegalTermsManagementScreenState
   Future<void> _loadTerms() async {
     setState(() => _isLoading = true);
     try {
-      final terms = await _service.getTerms();
+      // [R7-PAYROLL-POLICY.5B] 발행 화면은 **편집용** 경로를 쓴다.
+      //   아직 발행되지 않은 항목도 기본값으로 꺼내 편집해야 하기 때문이다.
+      //   동의를 받는 화면은 fetchEffectiveTerms() 를 쓴다.
+      final terms = await _service.getTermsForEditing();
       if (mounted) setState(() { _terms = terms; });
     } catch (e) {
       if (mounted) ToastHelper.showError('약관을 불러오는데 실패했습니다');

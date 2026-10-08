@@ -509,6 +509,162 @@ export function placePublishedRevision(input: {
   return {ok: true, items, placed: "upcoming"};
 }
 
+/** [R7-PAYROLL-POLICY.5B] 저장된 시각 하나를 epoch ms 로. caller 가 준다. */
+export type LegalTimeReader = (v: unknown) => number | null;
+
+export type ResolvedProjection = {
+  /** 지금 **시행 중인** 활성 항목. 모든 판정의 기준이다. */
+  effective: ProjectionItem[];
+  /**
+   * 시행 중인 항목의 제목·본문·순서. 순서가 `effective` 와 같다.
+   *
+   * 승격이 적용됐으면 **예정 판 쪽** 값이 들어 있다 — 버전만 바꾸고 본문을
+   * 남기면 어느 글에도 해당하지 않는 조합이 된다.
+   */
+  effectiveRaw: Array<Record<string, unknown>>;
+  /** 고지는 됐지만 아직 시행되지 않은 것. 판정 기준이 **아니다**. */
+  upcoming: Array<{itemId: string; version: string; revisionId: string;
+    effectiveAtMs: number}>;
+};
+
+/**
+ * [R7-PAYROLL-POLICY.5B] 공개 목록 전체를 **서버 시각 기준**으로 해석한다.
+ *
+ *   `.5A` 에서는 이 일이 `index.ts` 안에 있었다. `resolveEffectiveItem`
+ *   하나만 순수했고, 그것을 감싸 저장 모양을 읽는 부분(시각 변환, 예정 판
+ *   유효성, 어느 쪽 본문을 쓸지)은 실행으로 확인할 수 없었다. `.5B` 변이
+ *   B7·B8 이 바로 그 자리로 빠져나갔다 — 예정 판 버전을 시행 중으로
+ *   올려도, 본문을 발행본 대신 사본에서 가져와도 아무 테스트가 깨지지
+ *   않았다. 그래서 꺼냈다.
+ *
+ *   `toMs` 를 받는 이유: 이 모듈은 admin SDK 를 쓰지 않는다(순수). 저장된
+ *   `Timestamp` 를 읽는 방법은 caller 가 넘긴다.
+ *
+ * @param {object} input 입력
+ * @param {unknown} input.rawItems `app_settings/legal_terms.items`
+ * @param {number} input.nowMs 서버 기준 현재 시각
+ * @param {LegalTimeReader} input.toMs 저장된 시각을 ms 로 바꾸는 함수
+ * @return {ResolvedProjection} 시행 중인 것과 예정된 것
+ */
+export function resolveProjectionItems(input: {
+  rawItems: unknown;
+  nowMs: number;
+  toMs: LegalTimeReader;
+}): ResolvedProjection {
+  const {rawItems, nowMs, toMs} = input;
+  const effective: ProjectionItem[] = [];
+  const effectiveRaw: Array<Record<string, unknown>> = [];
+  const upcoming: ResolvedProjection["upcoming"] = [];
+
+  for (const raw of Array.isArray(rawItems) ? rawItems : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const i = raw as Record<string, unknown>;
+    const id = String(i["id"] ?? "");
+    if (id === "") continue;
+
+    const upRaw = i["upcoming"];
+    const up = upRaw != null && typeof upRaw === "object" &&
+      !Array.isArray(upRaw) ? upRaw as Record<string, unknown> : null;
+    const upEffMs = up ? toMs(up["effectiveAt"]) : null;
+    const upRevisionId = up && typeof up["revisionId"] === "string" ?
+      up["revisionId"] : "";
+    const upVersion = up ? String(up["version"] ?? "") : "";
+
+    const resolved = resolveEffectiveItem({
+      id,
+      version: String(i["version"] ?? ""),
+      revisionId: typeof i["revisionId"] === "string" &&
+        i["revisionId"] !== "" ? i["revisionId"] : undefined,
+      isRequired: i["isRequired"] !== false,
+      isActive: i["isActive"] !== false,
+      effectiveAtMs: toMs(i["effectiveAt"]),
+      // 모양이 깨진 예정 판은 **없는 것으로 친다** — 모르는 것을 시행
+      // 중으로 올리지 않는다.
+      upcoming: up && upEffMs != null && upRevisionId !== "" &&
+        upVersion !== "" ?
+        {version: upVersion, revisionId: upRevisionId,
+          effectiveAtMs: upEffMs} : null,
+    }, nowMs);
+
+    const item = resolved.item;
+    if (item.version !== "" && item.isActive) {
+      effective.push(item);
+      const src = resolved.promoted && up ? up : i;
+      effectiveRaw.push({
+        title: src["title"] ?? i["title"],
+        content: src["content"] ?? i["content"],
+        contentHash: src["contentHash"] ?? i["contentHash"],
+        order: i["order"],
+      });
+    }
+    if (resolved.pendingUpcoming) {
+      upcoming.push({
+        itemId: id,
+        version: resolved.pendingUpcoming.version,
+        revisionId: resolved.pendingUpcoming.revisionId,
+        effectiveAtMs: resolved.pendingUpcoming.effectiveAtMs,
+      });
+    }
+  }
+  return {effective, effectiveRaw, upcoming};
+}
+
+export type EffectiveLegalItem = {
+  itemId: string;
+  version: string;
+  revisionId: string | null;
+  title: string;
+  content: string;
+  contentHash: string;
+  verified: boolean;
+  isRequired: boolean;
+  isActive: boolean;
+  order: number;
+  effectiveAtMs: number | null;
+};
+
+/**
+ * [R7-PAYROLL-POLICY.5B] 시행 중인 항목 하나를 앱·웹에 내보낼 모양으로.
+ *
+ *   본문은 **발행본에서** 온다. 공개 목록의 `content` 는 포인터가 가리키는
+ *   글의 사본일 뿐이고, 증거는 고쳐 쓸 수 없는 쪽에 있다. 공개 웹
+ *   (`legal-reader.js`)도 같은 규칙을 쓰므로 앱과 웹이 같은 글을 본다.
+ *
+ *   포인터가 가리키는 발행본이 **이 항목·이 버전**인지 확인한다. 어긋나면
+ *   그 글을 쓰지 않고, 사본을 쓰되 `verified: false` 로 말한다 — 포인터만
+ *   믿고 아무 글을 현재 약관으로 내지 않는다.
+ *
+ * @param {object} input 입력
+ * @param {ProjectionItem} input.item 해석된 시행 중 항목
+ * @param {Record<string, unknown>} input.raw 그 항목의 제목·본문·순서
+ * @param {Record<string, unknown> | undefined} input.revision 발행본
+ * @return {EffectiveLegalItem} 내보낼 한 건
+ */
+export function composeEffectiveLegalItem(input: {
+  item: ProjectionItem;
+  raw: Record<string, unknown>;
+  revision: Record<string, unknown> | undefined;
+}): EffectiveLegalItem {
+  const {item, raw, revision} = input;
+  const matched = revision != null &&
+    String(revision["itemId"] ?? "") === item.id &&
+    String(revision["version"] ?? "") === item.version;
+  const src = matched ? revision : raw;
+  return {
+    itemId: item.id,
+    version: item.version,
+    revisionId: item.revisionId ?? null,
+    title: String(src["title"] ?? ""),
+    content: String(src["content"] ?? ""),
+    contentHash: String(src["contentHash"] ?? ""),
+    verified: matched,
+    isRequired: item.isRequired,
+    isActive: item.isActive,
+    order: typeof raw["order"] === "number" ? raw["order"] : 0,
+    effectiveAtMs: item.effectiveAtMs ?? null,
+  };
+}
+
 export type ReconsentVerdict = {
   /** 다시 받아야 하는 **필수** 항목. 비어 있으면 READY. */
   required: string[];

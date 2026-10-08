@@ -1373,7 +1373,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       BuildContext ctx, String termId, String fallbackTitle) async {
     LegalTermsItem? item;
     try {
-      final terms = await LegalTermsService().getTerms();
+      final terms = await LegalTermsService().fetchEffectiveTerms();
       item = terms.items.where((t) => t.id == termId).firstOrNull;
     } catch (_) {
       item = null;

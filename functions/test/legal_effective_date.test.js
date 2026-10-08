@@ -348,8 +348,9 @@ t('E6-3 예정 판이 없으면 멱등하다', () => {
 t('E7-1 projection 해석기가 하나다 — 각자 계산하지 않는다', () => {
   const s = indexSrc();
   const uses = (s.match(/srvResolveLegalProjection\(/g) || []).length;
-  // 정의 1 + readiness 1 + 동의 writer 1
-  assert.strictEqual(uses, 3,
+  // [R7-PAYROLL-POLICY.5B] 정의 1 + readiness 1 + 동의 writer 1
+  //   + 비인증 시행-약관 조회 1
+  assert.strictEqual(uses, 4,
     `해석기 사용처가 ${uses}곳이다 — 새 reader 가 자기 규칙을 만들었는지 확인`);
   const i = s.indexOf('async function srvLegalReadiness');
   const body = s.slice(i, i + 1600);
@@ -739,6 +740,267 @@ t('E10-3 분류에 "오탈자" 류가 없다 — 우회 구멍을 만들지 않�
   for (const k of ['neutral', 'adverse']) {
     assert.ok(M.LEGAL_NOTICE_DAYS[k] >= 7, k);
   }
+});
+
+// ══════════════════════════════════════════════════════════════════
+// E-12  [R7-PAYROLL-POLICY.5B] 비인증 시행-약관 조회
+//
+//   앱이 projection base 를 직접 읽던 구멍을 막는다. 판정은 서버가 하고,
+//   readiness·동의 writer 와 **같은 해석기**를 쓴다.
+// ══════════════════════════════════════════════════════════════════
+
+/** 해당 callable 본문만 떼어 낸다. */
+function callableBody(name) {
+  const s = indexSrc();
+  const i = s.indexOf('export const ' + name);
+  assert.ok(i > 0, name + ' 을 찾지 못했다');
+  const j = s.indexOf('\nexport const ', i + 10);
+  return s.slice(i, j > 0 ? j : s.length);
+}
+
+t('E12-1 같은 해석기를 쓰고 서버 시각으로 판정한다', () => {
+  const body = callableBody('callableGetEffectiveLegalTerms');
+  assert.ok(body.includes('srvResolveLegalProjection('),
+    '자기 규칙으로 시행 판을 고르고 있다');
+  assert.ok(body.includes('Timestamp.now().toMillis()'),
+    '서버 시각을 쓰지 않는다');
+  // 해석기 사용처 — 정의 1 + readiness 1 + 동의 writer 1 + 이 callable 1
+  const uses = (indexSrc().match(/srvResolveLegalProjection\(/g) || []).length;
+  assert.strictEqual(uses, 4,
+    `해석기 사용처가 ${uses}곳이다 — 새 reader 가 자기 규칙을 만들었는지 확인`);
+});
+
+t('E12-2 인증은 요구하지 않고 App Check 는 강제한다', () => {
+  const body = callableBody('callableGetEffectiveLegalTerms');
+  // 가입 중에는 계정이 없다 — 인증을 요구하면 약관을 볼 수 없다.
+  assert.ok(!body.includes('request.auth'),
+    '가입 화면이 쓸 수 없게 인증을 요구한다');
+  assert.ok(body.includes('enforceAppCheck: true'), 'App Check 가 꺼졌다');
+  assert.ok(body.includes('region: "asia-northeast3"'));
+});
+
+t('E12-3 사용자별 동의 이력을 돌려주지 않는다', () => {
+  const body = callableBody('callableGetEffectiveLegalTerms');
+  for (const leak of ['termsConsent', 'consentEvents', 'collection("users")']) {
+    assert.ok(!body.includes(leak), `비인증 응답에 ${leak} 가 섞였다`);
+  }
+  // 그쪽은 인증을 요구하는 readiness 가 담당한다.
+  assert.ok(callableBody('callableGetLegalReadiness').includes('request.auth'));
+});
+
+t('E12-4 발행본을 한 번에 읽고, 글 고르기는 순수 함수에 맡긴다', () => {
+  const body = callableBody('callableGetEffectiveLegalTerms');
+  assert.ok(body.includes('collection("legal_revisions")'),
+    '발행본을 읽지 않는다 — projection 사본만 믿고 있다');
+  assert.ok(body.includes('db.getAll('), '항목마다 따로 읽고 있다');
+  // 어느 글을 쓸지·검증 여부는 `composeEffectiveLegalItem` 이 정한다
+  // (행동은 E13-7 / E13-8 이 본다).
+  assert.ok(body.includes('lpComposeEffectiveLegalItem('),
+    '글 고르기를 callable 안에서 다시 하고 있다');
+});
+
+t('E12-5 응답 모양이 앱 계약과 같다', () => {
+  const body = callableBody('callableGetEffectiveLegalTerms');
+  for (const k of ['effectiveItems', 'upcomingItems', 'serverNowMs']) {
+    assert.ok(body.includes(k), `응답에 ${k} 가 없다`);
+  }
+  // 항목 한 건의 자리들은 순수 함수가 만든다 — 실제로 만들어 보고 본다.
+  const one = M.composeEffectiveLegalItem({
+    item: {id: 'service_terms', version: '2026.08',
+      revisionId: 'service_terms__2026.08',
+      isRequired: true, isActive: true, effectiveAtMs: 1},
+    raw: {title: 't', content: 'c', contentHash: 'h', order: 2},
+    revision: undefined,
+  });
+  for (const k of ['itemId', 'version', 'revisionId', 'title', 'content',
+    'contentHash', 'verified', 'isRequired', 'isActive', 'order',
+    'effectiveAtMs']) {
+    assert.ok(k in one, `항목에 ${k} 가 없다`);
+  }
+  // 앱이 읽는 쪽도 같은 이름을 쓴다.
+  const dart = fs.readFileSync(
+    path.join(ROOT, 'lib', 'models', 'core', 'legal_terms_model.dart'), 'utf8');
+  for (const k of ['effectiveItems', 'upcomingItems', 'serverNowMs',
+    // `contentHash` 는 서버가 증거로 함께 내려 주지만, 앱에는 비교할 두
+    //   번째 사본이 없으므로 읽지 않는다 — 여기서 요구하지 않는다.
+    'effectiveAtMs', 'isRequired', 'order', 'revisionId']) {
+    assert.ok(dart.includes("'" + k + "'"), `앱이 ${k} 를 읽지 않는다`);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+// E-13  공개 목록 해석 — 행동
+//
+//   변이 B7(예정 판을 시행 중으로 올림)·B8(발행본 대신 사본 사용)이
+//   소스 핀만 보던 자리로 빠져나갔다. 순수 함수로 꺼내 직접 본다.
+// ══════════════════════════════════════════════════════════════════
+
+/** 저장 모양 그대로 — 시각은 ISO 문자열, 숫자 모두 들어올 수 있다. */
+const toMs = (v) => {
+  if (v == null) return null;
+  if (typeof v === 'number' && isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Date.parse(v);
+    return isFinite(n) ? n : null;
+  }
+  if (v instanceof Date) return v.getTime();
+  return null;
+};
+
+const EFF3 = Date.UTC(2026, 10, 7, 15, 0, 0);
+const rawProjection = () => [
+  {
+    id: 'service_terms', title: 'A 제목', content: 'A 본문',
+    contentHash: 'hashA', version: '2026.08',
+    revisionId: 'service_terms__2026.08',
+    isRequired: true, isActive: true, order: 1,
+    effectiveAt: Date.UTC(2026, 7, 1),
+    upcoming: {
+      version: '2026-11-08', revisionId: 'service_terms__2026-11-08',
+      title: 'B 제목', content: 'B 본문', contentHash: 'hashB',
+      effectiveAt: EFF3,
+    },
+  },
+  {
+    id: 'marketing_consent', title: '마케팅', content: '마케팅 본문',
+    version: '2026.08', revisionId: 'marketing_consent__2026.08',
+    isRequired: false, isActive: true, order: 5, upcoming: null,
+  },
+];
+
+t('E13-1 시행 전 — 현재는 A, 예정은 B, 본문도 A', () => {
+  const r = M.resolveProjectionItems({
+    rawItems: rawProjection(), nowMs: EFF3 - 1, toMs,
+  });
+  assert.strictEqual(r.effective.length, 2);
+  assert.strictEqual(r.effective[0].version, '2026.08');
+  assert.strictEqual(r.effectiveRaw[0].content, 'A 본문');
+  assert.strictEqual(r.upcoming.length, 1);
+  assert.strictEqual(r.upcoming[0].version, '2026-11-08');
+});
+
+t('E13-2 시행 정각 — 현재가 B 가 되고 본문도 B', () => {
+  const r = M.resolveProjectionItems({
+    rawItems: rawProjection(), nowMs: EFF3, toMs,
+  });
+  assert.strictEqual(r.effective[0].version, '2026-11-08');
+  assert.strictEqual(r.effective[0].revisionId,
+    'service_terms__2026-11-08');
+  assert.strictEqual(r.effectiveRaw[0].title, 'B 제목');
+  assert.strictEqual(r.effectiveRaw[0].content, 'B 본문',
+    '버전만 바꾸고 본문을 남기면 어느 글도 아니게 된다');
+  assert.strictEqual(r.effectiveRaw[0].contentHash, 'hashB');
+  assert.strictEqual(r.upcoming.length, 0);
+  // 항목 자체의 순서는 base 것을 쓴다.
+  assert.strictEqual(r.effectiveRaw[0].order, 1);
+});
+
+t('E13-3 예정 판 버전이 현재 목록에 새지 않는다', () => {
+  // 변이 B7 이 노린 자리다.
+  const r = M.resolveProjectionItems({
+    rawItems: rawProjection(), nowMs: EFF3 - 1, toMs,
+  });
+  for (const e of r.effective) {
+    assert.notStrictEqual(e.version, '2026-11-08',
+      '아직 시행되지 않은 버전이 시행 중으로 나왔다');
+  }
+});
+
+t('E13-4 모양이 깨진 예정 판은 없는 것으로 친다', () => {
+  const bads = [
+    {version: 'x'},                                    // revisionId 없음
+    {revisionId: 'y', effectiveAt: EFF3},              // version 없음
+    {version: 'x', revisionId: 'y'},                   // 시각 없음
+    {version: 'x', revisionId: 'y', effectiveAt: 'soon'},
+    {version: '', revisionId: 'y', effectiveAt: EFF3},
+  ];
+  for (const bad of bads) {
+    const items = rawProjection();
+    items[0].upcoming = bad;
+    const r = M.resolveProjectionItems({
+      rawItems: items, nowMs: EFF3 + 999 * 86400000, toMs,
+    });
+    assert.strictEqual(r.effective[0].version, '2026.08',
+      JSON.stringify(bad));
+    assert.strictEqual(r.upcoming.length, 0, JSON.stringify(bad));
+  }
+});
+
+t('E13-5 비활성·id 없는 항목은 목록에서 빠진다', () => {
+  const items = rawProjection();
+  items[1].isActive = false;
+  items.push({id: '', version: 'v'});
+  items.push('junk');
+  items.push(null);
+  const r = M.resolveProjectionItems({rawItems: items, nowMs: EFF3 - 1, toMs});
+  assert.deepStrictEqual(r.effective.map((e) => e.id), ['service_terms']);
+  assert.strictEqual(r.effectiveRaw.length, 1, 'raw 와 effective 가 어긋났다');
+});
+
+t('E13-6 목록이 아니면 빈 결과다 — 던지지 않는다', () => {
+  for (const bad of [null, undefined, 'x', 42, {}]) {
+    const r = M.resolveProjectionItems({rawItems: bad, nowMs: 0, toMs});
+    assert.strictEqual(r.effective.length, 0, String(bad));
+    assert.strictEqual(r.upcoming.length, 0, String(bad));
+  }
+});
+
+t('E13-7 내보낼 본문은 발행본에서 온다', () => {
+  // 변이 B8 이 노린 자리다.
+  const item = {
+    id: 'service_terms', version: '2026.08',
+    revisionId: 'service_terms__2026.08',
+    isRequired: true, isActive: true, effectiveAtMs: 1000,
+  };
+  const out = M.composeEffectiveLegalItem({
+    item,
+    raw: {title: '사본 제목', content: '사본 본문', contentHash: 'copy',
+      order: 3},
+    revision: {itemId: 'service_terms', version: '2026.08',
+      title: '발행본 제목', content: '발행본 본문', contentHash: 'pub'},
+  });
+  assert.strictEqual(out.title, '발행본 제목',
+    '사본을 쓰면 고쳐 쓸 수 있는 쪽이 증거가 된다');
+  assert.strictEqual(out.content, '발행본 본문');
+  assert.strictEqual(out.contentHash, 'pub');
+  assert.strictEqual(out.verified, true);
+  assert.strictEqual(out.order, 3, '순서는 공개 목록 것이다');
+  assert.strictEqual(out.effectiveAtMs, 1000);
+});
+
+t('E13-8 발행본이 어긋나면 사본을 쓰되 검증되지 않았다고 말한다', () => {
+  const item = {
+    id: 'service_terms', version: '2026.08',
+    revisionId: 'service_terms__2026.08',
+    isRequired: true, isActive: true, effectiveAtMs: null,
+  };
+  const raw = {title: '사본 제목', content: '사본 본문', contentHash: 'copy'};
+  // 다른 항목 / 다른 버전 / 아예 없음
+  for (const rev of [
+    {itemId: 'privacy_policy', version: '2026.08', content: '엉뚱한 글'},
+    {itemId: 'service_terms', version: '2026-11-08', content: '예정 글'},
+    undefined,
+  ]) {
+    const out = M.composeEffectiveLegalItem({item, raw, revision: rev});
+    assert.strictEqual(out.verified, false, JSON.stringify(rev));
+    assert.strictEqual(out.content, '사본 본문', JSON.stringify(rev));
+    assert.strictEqual(out.revisionId, 'service_terms__2026.08');
+    assert.strictEqual(out.effectiveAtMs, null);
+  }
+});
+
+t('E13-9 writer 가 두 함수를 쓴다 — 인라인 해석을 다시 만들지 않았다', () => {
+  const s = indexSrc();
+  const i = s.indexOf('function srvResolveLegalProjection');
+  const body = s.slice(i, s.indexOf('\n}', i));
+  assert.ok(body.includes('lpResolveProjectionItems('),
+    '해석을 다시 index.ts 에 들여왔다');
+  assert.ok(!body.includes('effectiveRaw.push('), '자리 선택이 다시 들어왔다');
+  const cb = callableBody('callableGetEffectiveLegalTerms');
+  assert.ok(cb.includes('lpComposeEffectiveLegalItem('),
+    '내보낼 모양을 다시 인라인으로 만들었다');
+  assert.ok(!cb.includes('verified: matched'),
+    '검증 판단이 다시 callable 안으로 들어왔다');
 });
 
 console.log(`\n${pass} passed, ${fails.length} failed`);
