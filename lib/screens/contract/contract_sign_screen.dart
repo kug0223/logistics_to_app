@@ -830,6 +830,28 @@ class ContractTemplateWidget extends StatelessWidget {
                 label: '공제 방식',
                 value: InsuranceRateModel.typeLabel(snapshot.taxDeductionType),
               ),
+            // [R7-PAYROLL-POLICY.4] 임금 계산의 **시간 기준**도 임금 조건이다.
+            //   근로자가 이 숫자를 계약서에서 확인할 수 없으면, 지각 1분이
+            //   30분 공제가 되는 이유를 알 수 없다.
+            //   값은 Application snapshot 에서만 온다 — 없으면 적지 않는다.
+            if (snapshot.attendancePolicy != null) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _InfoRow(
+                  label: '지각 유예',
+                  value: '${snapshot.attendancePolicy!.lateGrace}분'),
+              _InfoRow(
+                  label: '지각 처리',
+                  value: '${snapshot.attendancePolicy!.lateUnit}분 단위'),
+              _InfoRow(
+                  label: '조퇴 처리',
+                  value: '${snapshot.attendancePolicy!.earlyLeaveUnit}분 단위'),
+              _InfoRow(
+                  label: '연장 처리',
+                  value: '${snapshot.attendancePolicy!.overtimeUnit}분 단위'),
+              _InfoRow(
+                  label: '조출 인정',
+                  value: '${snapshot.attendancePolicy!.earlyWindow}분 이내 정시'),
+            ],
           ]),
 
           // 템플릿 조항 (관리자가 설정한 자유 조항)

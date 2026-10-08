@@ -887,6 +887,11 @@ class ContractService {
       payScheduleDay: workDetail.payScheduleDay,
       payScheduleTime: workDetail.payScheduleTime,
       taxDeductionType: workDetail.taxDeductionType,
+      // [R7-PAYROLL-POLICY.4] 출처는 **Application 의 canonical snapshot**
+      //   하나다. `business.attendanceRules` 를 여기서 읽지 않는다 — 그러면
+      //   계약서가 말하는 기준과 서버가 적용하는 기준이 갈라진다.
+      //   없으면 계약서에도 적지 않는다(기본값을 합의 내용으로 만들지 않는다).
+      attendancePolicy: application.attendancePolicySnapshot,
     );
   }
 

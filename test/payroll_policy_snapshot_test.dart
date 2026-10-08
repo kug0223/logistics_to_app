@@ -138,11 +138,20 @@ void main() {
     });
 
     test('SNAP-2 7개 숫자를 그대로 복사한다', () {
+      // [R7-PAYROLL-POLICY.4] 항목 목록이 **한 벌**로 빠졌다. 그래서 builder
+      //   안에 이름이 하나하나 적혀 있지 않다 — 대신 그 한 벌을 돌며 복사한다.
+      //   지키려던 것은 "7개를 빠짐없이 복사한다" 이므로, 이제 그 목록 선언을
+      //   고정하고 builder 가 그것을 쓰는지 고정한다.
+      expect(builder.contains('for (const k of ATTENDANCE_POLICY_MATERIAL_FIELDS)'),
+          isTrue);
+      expect(builder.contains('srvAttendancePolicyValue(r, k)'), isTrue);
+      final fields = _code(_slice(
+          cfRaw, 'const ATTENDANCE_POLICY_MATERIAL_FIELDS = [', '] as const;'));
       for (final k in [
         'earlyWindow', 'earlyArrivalUnit', 'lateGrace', 'lateUnit',
         'lateWindow', 'overtimeUnit', 'earlyLeaveUnit',
       ]) {
-        expect(builder.contains('$k:'), isTrue, reason: '$k 누락');
+        expect(fields.contains('"$k",'), isTrue, reason: '$k 누락');
       }
       // 계산하지 않는다 — 복사만 한다.
       for (final forbidden in ['Math.ceil', 'Math.floor', 'Math.trunc']) {

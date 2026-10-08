@@ -23,6 +23,18 @@ enum PostingNotReadyReason {
   noActiveWorkType,
   noContractTemplate,
   noEmployerSeal,
+
+  /// [R7-PAYROLL-POLICY.4] 근태·급여 처리 기준 자체가 저장되지 않았다.
+  ///
+  ///   서버가 기본값을 만들어 채우지 않는다 — 없는 것을 사업장 정책처럼
+  ///   생성하면 그 정책의 책임이 사업장에 귀속되지 않는다.
+  noAttendancePolicy,
+
+  /// 기준은 있으나 사업장이 **확인하지 않았다**(또는 확인 뒤 값이 바뀌었다).
+  ///
+  ///   `policySource` 는 값의 출처일 뿐 확인 행위가 아니다. ALfit 기본값을
+  ///   그대로 쓰기로 한 것도 사업장의 결정이므로 별도 확인 증거가 필요하다.
+  attendancePolicyNotConfirmed,
 }
 
 class PostingNotReady {
@@ -40,6 +52,12 @@ class PostingNotReady {
         PostingNotReadyReason.noContractTemplate =>
           FirstPostingTask.contractTemplate,
         PostingNotReadyReason.noEmployerSeal => FirstPostingTask.seal,
+        // [R7-PAYROLL-POLICY.4] 근태·급여 기준은 **사업장 설정** 안에 있다.
+        //   새 체크리스트 칸을 만들지 않는다 — 가야 할 곳이 사업장 설정이므로
+        //   '사업장' 칸이 그대로 owner 다.
+        PostingNotReadyReason.noAttendancePolicy ||
+        PostingNotReadyReason.attendancePolicyNotConfirmed =>
+          FirstPostingTask.business,
       };
 
   /// 사용자에게 보여줄 문장. **서버 문구를 그대로 쓰지 않는다** —
@@ -54,6 +72,12 @@ class PostingNotReady {
           '계약서 템플릿을 먼저 등록해주세요\n확정된 근로자와 바로 계약할 수 있어야 해요',
         PostingNotReadyReason.noEmployerSeal =>
           '사업주 인감 또는 서명을 먼저 등록해주세요\n확정된 근로자와 바로 계약할 수 있어야 해요',
+        PostingNotReadyReason.noAttendancePolicy =>
+          '사업장 설정에서 근태·급여 처리 기준을 먼저 저장해주세요\n'
+              '이 기준이 근태 판정과 급여 계산에 사용돼요',
+        PostingNotReadyReason.attendancePolicyNotConfirmed =>
+          '사업장 설정에서 근태·급여 처리 기준을 확인해주세요\n'
+              '이 기준이 근태 판정과 급여 계산에 사용돼요',
       };
 
   /// [R7-P4.4C.1] 예약 공개가 막혔을 때 **운영자에게** 보여줄 문장.
@@ -76,6 +100,9 @@ class PostingNotReady {
       PostingNotReadyReason.noActiveWorkType => '업무 등록',
       PostingNotReadyReason.noContractTemplate => '계약서 템플릿',
       PostingNotReadyReason.noEmployerSeal => '사업주 인감 또는 서명',
+      PostingNotReadyReason.noAttendancePolicy ||
+      PostingNotReadyReason.attendancePolicyNotConfirmed =>
+        '근태·급여 처리 기준 확인',
     };
     if (!canSetUp) {
       return '$what 준비가 끝나지 않아 예약 공개되지 않았어요\n'
@@ -104,6 +131,9 @@ class PostingNotReady {
       PostingNotReadyReason.noActiveWorkType => '업무 등록',
       PostingNotReadyReason.noContractTemplate => '계약서 템플릿',
       PostingNotReadyReason.noEmployerSeal => '사업주 인감 또는 서명',
+      PostingNotReadyReason.noAttendancePolicy ||
+      PostingNotReadyReason.attendancePolicyNotConfirmed =>
+        '근태·급여 처리 기준 확인',
     };
     if (!canSetUp) {
       return '$what 준비가 완료되지 않아 확정할 수 없어요\n'
@@ -138,6 +168,11 @@ class PostingNotReady {
         const PostingNotReady(PostingNotReadyReason.noContractTemplate),
       'NO_EMPLOYER_SEAL' =>
         const PostingNotReady(PostingNotReadyReason.noEmployerSeal),
+      'NO_ATTENDANCE_POLICY' =>
+        const PostingNotReady(PostingNotReadyReason.noAttendancePolicy),
+      'ATTENDANCE_POLICY_NOT_CONFIRMED' =>
+        const PostingNotReady(
+            PostingNotReadyReason.attendancePolicyNotConfirmed),
       _ => null,
     };
   }

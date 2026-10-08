@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'business_model.dart' show AttendanceRules;
 import 'contract_template_model.dart';
 import 'insurance_rate_model.dart';
 import '../../utils/firestore_helper.dart';
@@ -151,6 +152,16 @@ class ContractSnapshot {
   /// 공제 방식
   final String taxDeductionType;
 
+  /// [R7-PAYROLL-POLICY.4] 이 계약에 적용되는 **근태·급여 처리 기준**.
+  ///
+  /// 출처는 **Application 의 canonical snapshot** 하나다. 사업장의 현재
+  /// 설정(`businesses.attendanceRules`)을 계약 시점에 다시 읽지 않는다 —
+  /// 그러면 같은 근무에 대해 계약서와 실제 계산이 다른 기준을 말한다.
+  ///
+  /// `null` 은 이 제도 이전 계약이다. 없는 값을 기본값으로 채워 계약서에
+  /// 적지 않는다 — 합의하지 않은 조건을 계약 내용으로 만들지 않는다.
+  final AttendanceRules? attendancePolicy;
+
   const ContractSnapshot({
     required this.businessName,
     required this.businessNumber,
@@ -179,6 +190,7 @@ class ContractSnapshot {
     this.payScheduleDay,
     this.payScheduleTime,
     this.taxDeductionType = InsuranceRateModel.typeNone,
+    this.attendancePolicy,
   });
 
   Map<String, dynamic> toMap() => {
@@ -209,6 +221,10 @@ class ContractSnapshot {
     if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
     if (payScheduleTime != null) 'payScheduleTime': payScheduleTime,
     if (taxDeductionType != InsuranceRateModel.typeNone) 'taxDeductionType': taxDeductionType,
+    // [R7-PAYROLL-POLICY.4] 없으면 쓰지 않는다 — 기본값을 합의 내용으로
+    //   만들지 않기 위해서다.
+    if (attendancePolicy != null)
+      'attendancePolicy': attendancePolicy!.toMap(),
   };
 
   factory ContractSnapshot.fromMap(Map<String, dynamic> m) => ContractSnapshot(
@@ -239,6 +255,10 @@ class ContractSnapshot {
     payScheduleDay: (m['payScheduleDay'] as num?)?.toInt(),
     payScheduleTime: m['payScheduleTime'] as String?,
     taxDeductionType: m['taxDeductionType'] as String? ?? InsuranceRateModel.typeNone,
+    attendancePolicy: m['attendancePolicy'] is Map
+        ? AttendanceRules.fromMap(
+            Map<String, dynamic>.from(m['attendancePolicy'] as Map))
+        : null,
   );
 
   // ── 표시용 헬퍼 ─────────────────────────────────────────────

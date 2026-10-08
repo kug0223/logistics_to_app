@@ -95,6 +95,16 @@ class ApplyConfirmDialog extends StatelessWidget {
                   ),
                 // [DOCUMENT-CONSENT] 서류 접근 사전동의 안내 (V3: 신분증+급여계좌+통장사본)
                 // [LEGAL-REVIEW-ID-CONSENT] 동의 문구 및 방식의 법적 적절성은 별도 법무 검토 필요
+                // [R7-PAYROLL-POLICY.4 §34] 지원하는 순간 고정되는 조건에
+                //   **근태·급여 처리 기준**이 포함된다는 사실을 말한다.
+                //   숫자는 공고 상세에 있다 — 여기서 사업장 문서를 다시 읽지
+                //   않는다(지원 경로에 왕복을 더하지 않는다).
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                StyledDialogInfoCard.info(
+                  '출퇴근 시각은 이 사업장의 근태·급여 처리 기준에 따라 인정 시간으로 '
+                  '계산됩니다. 지원 시점의 기준이 이 지원서에 고정되며, 자세한 기준은 '
+                  '공고 상세의 "근태·급여 처리 기준"에서 확인할 수 있습니다.',
+                ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 DocumentAccessConsent.card(businessName),
               ],

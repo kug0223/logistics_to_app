@@ -10009,6 +10009,94 @@ export const callableGetEmployerSealReadiness = onCall(
   }
 );
 
+// ── callableConfirmAttendancePolicy ──────────────────────
+//
+// [R7-PAYROLL-POLICY.4] 사업장이 근태·급여 처리 기준을 **자기 기준으로
+// 확인했다**는 증거를 남긴다.
+//
+//   왜 CF 인가: 이 기록은 "이 정책을 정한 책임이 누구에게 있는가" 의 근거다.
+//   클라이언트가 직접 쓰면 actor 와 시각을 임의로 적을 수 있고, 값을 바꾼
+//   뒤에도 과거 확인을 그대로 남겨 둘 수 있다. 그래서 확인 기록은
+//   `attendancePolicyConfirmation` 하나로 모으고 CF 만 쓴다
+//   (firestore.rules 에서 클라이언트 쓰기 차단).
+//
+//   **확인한 7개 숫자를 함께 적는다.** 그래서 나중에 값이 바뀌면 기록이
+//   저절로 낡아 미확인으로 떨어진다 — 별도 revision 시스템 없이
+//   "변경마다 새 확인" 을 보장한다.
+//
+//   `policySource` 는 **건드리지 않는다.** 기본값을 그대로 확인한 것을
+//   `admin_selected` 로 바꾸면 출처를 위조하는 것이다.
+//   `alfit_default` + 확인 기록 = "ALfit 기본값을 사업장이 확인하여 채택" 이고,
+//   `legacy` + 확인 기록 = "과거 값을 지금 시점부터 확인했다" 다.
+//
+// Input:  { businessId: string }
+// Output: { confirmed: true, policySource: string }
+export const callableConfirmAttendancePolicy = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const callerUid = request.auth.uid;
+    const {businessId} = request.data as {businessId?: string};
+    if (!businessId || typeof businessId !== "string" ||
+        businessId.length > 100) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    const [callerSnap, bizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("businesses").doc(businessId).get(),
+    ]);
+    if (!bizSnap.exists) {
+      throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+    }
+    const bizData = bizSnap.data()!;
+    const callerRole = callerSnap.data()?.role as string | undefined;
+    // 정책을 **수정할 수 있는 사람**과 같은 경계다(firestore.rules `isAdminOf`).
+    //   SubAdmin 에게 새 권한을 주지 않는다 — 기준 수정 권한이 없는 사람이
+    //   기준을 확인하면 그 확인이 책임 근거가 되지 못한다.
+    const bizAdminIds = (bizData["adminIds"] as string[] | undefined) ?? [];
+    const bizOwnerId = bizData["ownerId"] as string | undefined;
+    if (callerRole !== "SUPER_ADMIN" &&
+        !bizAdminIds.includes(callerUid) && bizOwnerId !== callerUid) {
+      throw new HttpsError(
+        "permission-denied", "사업장 관리자만 기준을 확인할 수 있습니다.");
+    }
+
+    // [§28 Option A] 기준이 없으면 **서버가 기본값을 만들어 주지 않는다.**
+    //   없는 것을 사업장 정책처럼 생성하면 ownership 증거가 다시 무너진다.
+    const raw = bizData["attendanceRules"];
+    if (raw == null || typeof raw !== "object") {
+      throw new HttpsError(
+        "failed-precondition",
+        "POSTING_NOT_READY:NO_ATTENDANCE_POLICY " +
+          postingNotReadyMessage("NO_ATTENDANCE_POLICY"),
+        {reason: "NO_ATTENDANCE_POLICY"}
+      );
+    }
+    const r = raw as Record<string, unknown>;
+
+    const confirmation: Record<string, unknown> = {
+      confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+      confirmedBy: callerUid,
+    };
+    // 지금 저장된 값을 **그대로** 적는다. 클라이언트가 보낸 값을 쓰지 않는다 —
+    //   표시한 값과 저장된 값이 다르면 확인 기록이 거짓이 된다.
+    for (const k of ATTENDANCE_POLICY_MATERIAL_FIELDS) {
+      confirmation[k] = srvAttendancePolicyValue(r, k);
+    }
+
+    await bizSnap.ref.update({attendancePolicyConfirmation: confirmation});
+
+    return {
+      confirmed: true,
+      policySource: typeof r["policySource"] === "string" ?
+        r["policySource"] : "legacy",
+    };
+  }
+);
+
 // ── callableSaveUserSignature ────────────────────────────
 // 근무자 사전 등록 서명 저장/삭제 — Admin SDK 경유로 signatureBase64 필드를 저장.
 // firestore.rules에서 클라이언트 직접 쓰기를 차단하므로 반드시 이 CF 경유 필요.
@@ -24439,7 +24527,16 @@ async function evaluatePostingReadinessFirestore(
   );
   if (wtSnap.empty) return "NO_ACTIVE_WORK_TYPE";
 
-  return evaluateContractCapability(bizId, bizData, reader);
+  const contractReason =
+    await evaluateContractCapability(bizId, bizData, reader);
+  if (contractReason) return contractReason;
+
+  // [R7-PAYROLL-POLICY.4] 공고는 **근태·급여 기준이 확인된 뒤** 낸다.
+  //   이 기준은 지원자의 인정 근로시간과 금액을 결정한다. 사업장이 자기
+  //   기준으로 확인하지 않은 값으로 모집을 시작하면, 그 정책의 책임이
+  //   누구에게도 귀속되지 않은 상태로 약속이 만들어진다.
+  //   **기존 공고와 기존 약속은 건드리지 않는다** — 새로 내는 것만 막는다.
+  return srvAttendancePolicyBlock(bizData);
 }
 /**
  * [P4.4C.2] 이 사업장이 **새 지원을 받아도 되는 상태**인가.
@@ -24564,6 +24661,11 @@ function postingNotReadyMessage(reason: string): string {
     NO_ACTIVE_WORK_TYPE: "사업장 업무를 먼저 등록해 주세요.",
     NO_CONTRACT_TEMPLATE: "계약서 템플릿을 먼저 등록해 주세요.",
     NO_EMPLOYER_SEAL: "사업주 인감 또는 서명을 먼저 등록해 주세요.",
+    // [R7-PAYROLL-POLICY.4] 기준이 없는 것과 확인되지 않은 것은 다른 상태다.
+    NO_ATTENDANCE_POLICY:
+      "사업장 설정에서 근태·급여 처리 기준을 먼저 저장해 주세요.",
+    ATTENDANCE_POLICY_NOT_CONFIRMED:
+      "사업장의 근태·급여 처리 기준 확인이 필요합니다.",
   };
   return messages[reason] ?? "공고 등록 조건을 확인해 주세요.";
 }
@@ -30660,9 +30762,23 @@ export const callableConfirmApplication = onCall(
         throw new HttpsError(
           "failed-precondition",
           "POSTING_NOT_READY:" + cfmBlocked +
-            " 사업장 계약 준비가 완료되지 않아 확정할 수 없습니다."
+            " 사업장 계약 준비가 완료되지 않아 확정할 수 없습니다.",
+          {reason: cfmBlocked}
         );
       }
+
+      // [R7-PAYROLL-POLICY.4] 확정 = 약속이다. 그 약속의 **급여 계산 기준**이
+      //   사업장이 확인하지 않은 값이면 약속을 만들지 않는다.
+      //
+      //   첫 공고 gate 만으로는 부족하다 — 이미 열려 있는 공고와 대기 중인
+      //   지원서가 있기 때문이다(이 배포 시점에 반드시 있다). 그래서 새
+      //   약속을 만드는 canonical writer 가 직접 본다. 같은 transaction 의
+      //   read-set 에 사업장 문서가 있으므로 확인과 commit 사이에 정책이
+      //   바뀌면 재시도된다.
+      //
+      //   이미 CONFIRMED/CONTRACT_PENDING 인 약속은 위에서 early-return 하므로
+      //   **기존 근무의 출퇴근·계약·급여는 이 gate 에 걸리지 않는다.**
+      srvAssertAttendancePolicyConfirmed(cfmBizSnap.data());
 
       // R2. 직렬화 lock 문서 읽기 (같은 uid에 대한 동시 확정 트랜잭션 serialization)
       //     이 문서를 트랜잭션 읽기 집합에 포함하면 동일 uid 두 트랜잭션이 contention 발생
@@ -34905,6 +35021,119 @@ function _processCheckout(
   };
 }
 
+// [R7-PAYROLL-POLICY.4] 급여에 실제로 영향하는 근태 기준 — 이 7개가 전부다.
+//
+//   조출·지각·연장·조퇴 반올림은 모두 **인정 근로시간**을 바꾸고 그대로
+//   금액이 된다. 그래서 이 숫자들은 운영 설정이 아니라 **임금 산정 조건**이다
+//   (`buildCompensationSnapshot` 의 휴게·야간·통상시급과 같은 분류).
+//
+//   목록과 기본값을 한 곳에만 둔다 — snapshot 을 만드는 쪽과 확인 여부를
+//   판정하는 쪽이 다른 집합을 보면 "확인된 정책" 과 "적용된 정책" 이 갈라진다.
+const ATTENDANCE_POLICY_MATERIAL_FIELDS = [
+  "earlyWindow",
+  "earlyArrivalUnit",
+  "lateGrace",
+  "lateUnit",
+  "lateWindow",
+  "overtimeUnit",
+  "earlyLeaveUnit",
+] as const;
+
+/** Dart `AttendanceRules` 와 같은 기본값. 두 벌이 되면 정책이 갈라진다. */
+const ATTENDANCE_POLICY_DEFAULTS: Record<string, number> = {
+  earlyWindow: 30,
+  earlyArrivalUnit: 30,
+  lateGrace: 5,
+  lateUnit: 30,
+  lateWindow: 30,
+  overtimeUnit: 10,
+  earlyLeaveUnit: 30,
+};
+
+/**
+ * 저장된 규칙에서 한 항목의 **유효값**을 읽는다(없으면 ALfit 기본값).
+ * @param {Record<string, unknown>} rules 사업장 `attendanceRules`
+ * @param {string} key 항목 이름
+ * @return {number} 유효값
+ */
+function srvAttendancePolicyValue(
+  rules: Record<string, unknown>,
+  key: string
+): number {
+  const v = rules[key];
+  return typeof v === "number" ? v : ATTENDANCE_POLICY_DEFAULTS[key];
+}
+
+/**
+ * [R7-PAYROLL-POLICY.4] 사업장이 이 기준을 **자기 기준으로 확인했는가.**
+ *
+ *   `policySource` 는 값의 **출처**일 뿐 확인 행위가 아니다. ALfit 기본값을
+ *   그대로 쓰기로 한 것도 사업장의 결정이므로, 출처와 별개로 확인 증거가
+ *   있어야 그 정책의 책임이 사업장에 귀속된다.
+ *
+ *   확인 기록은 **확인한 7개 숫자를 함께 담는다.** 그래서 나중에 값이
+ *   바뀌면(어떤 경로로 바뀌든) 기록이 저절로 낡아 미확인으로 떨어진다 —
+ *   과거의 확인을 새 정책의 확인으로 재사용하지 않는다. 별도 revision
+ *   시스템을 만들지 않고도 같은 보장을 얻는다.
+ *
+ *   `null` 은 통과다. 두 이유를 구별해 돌려준다:
+ *     `NO_ATTENDANCE_POLICY`            — 기준 자체가 없다
+ *     `ATTENDANCE_POLICY_NOT_CONFIRMED` — 기준은 있으나 확인되지 않았거나
+ *                                          확인 이후 값이 바뀌었다
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서
+ * @return {string | null} 막힌 이유 코드, 통과면 null
+ */
+function srvAttendancePolicyBlock(
+  bizData: FirebaseFirestore.DocumentData | undefined
+): string | null {
+  const raw = bizData?.["attendanceRules"];
+  if (raw == null || typeof raw !== "object") return "NO_ATTENDANCE_POLICY";
+
+  const cfm = bizData?.["attendancePolicyConfirmation"];
+  if (cfm == null || typeof cfm !== "object") {
+    return "ATTENDANCE_POLICY_NOT_CONFIRMED";
+  }
+  const c = cfm as Record<string, unknown>;
+  const by = c["confirmedBy"];
+  if (c["confirmedAt"] == null ||
+      typeof by !== "string" || by.length === 0) {
+    return "ATTENDANCE_POLICY_NOT_CONFIRMED";
+  }
+
+  // 확인한 값과 지금 값이 같은가 — 하나라도 다르면 그 확인은 이 정책의
+  //   확인이 아니다.
+  const r = raw as Record<string, unknown>;
+  for (const k of ATTENDANCE_POLICY_MATERIAL_FIELDS) {
+    if (c[k] !== srvAttendancePolicyValue(r, k)) {
+      return "ATTENDANCE_POLICY_NOT_CONFIRMED";
+    }
+  }
+  return null;
+}
+
+/**
+ * [R7-PAYROLL-POLICY.4] **새 약속을 만드는 writer** 가 쓰는 fail-closed gate.
+ *
+ *   관리자에게는 무엇을 해야 하는지 말한다 — generic internal error 로
+ *   덮지 않는다. 근로자가 호출자인 경로(초대 수락 등)는 이 함수를 쓰지 않고
+ *   고용주 설정 내부를 감춘 문구를 따로 쓴다.
+ *
+ * @param {FirebaseFirestore.DocumentData | undefined} bizData 사업장 문서
+ * @return {void} 미확인이면 throw
+ */
+function srvAssertAttendancePolicyConfirmed(
+  bizData: FirebaseFirestore.DocumentData | undefined
+): void {
+  const reason = srvAttendancePolicyBlock(bizData);
+  if (!reason) return;
+  throw new HttpsError(
+    "failed-precondition",
+    "POSTING_NOT_READY:" + reason + " " + postingNotReadyMessage(reason),
+    {reason}
+  );
+}
+
 /**
  * [R7-PAYROLL-POLICY.3] 확정 시점의 근태·급여 기준 snapshot.
  *
@@ -34932,23 +35161,17 @@ function srvBuildAttendancePolicySnapshot(
   const raw = bizData?.["attendanceRules"];
   if (raw == null || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  const num = (k: string, dflt: number) =>
-    typeof r[k] === "number" ? (r[k] as number) : dflt;
-  // 기본값은 `AttendanceRules` (Dart) 와 같은 값을 쓴다 — 두 벌이 되면
-  //   같은 사업장에 서로 다른 정책이 적용된다.
-  return {
-    earlyWindow: num("earlyWindow", 30),
-    earlyArrivalUnit: num("earlyArrivalUnit", 30),
-    lateGrace: num("lateGrace", 5),
-    lateUnit: num("lateUnit", 30),
-    lateWindow: num("lateWindow", 30),
-    overtimeUnit: num("overtimeUnit", 10),
-    earlyLeaveUnit: num("earlyLeaveUnit", 30),
-    // 이 정책이 사업장이 고른 것인지 ALfit 기본값인지 — 책임 귀속의 근거다.
-    policySource: typeof r["policySource"] === "string" ?
-      r["policySource"] : "legacy",
-    capturedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
+  const out: Record<string, unknown> = {};
+  // [R7-PAYROLL-POLICY.4] 급여에 영향하는 숫자 목록·기본값은 **한 벌**이다.
+  //   확인 판정(`srvAttendancePolicyBlock`)이 보는 것과 같은 것을 복사한다.
+  for (const k of ATTENDANCE_POLICY_MATERIAL_FIELDS) {
+    out[k] = srvAttendancePolicyValue(r, k);
+  }
+  // 이 정책이 사업장이 고른 것인지 ALfit 기본값인지 — 책임 귀속의 근거다.
+  out["policySource"] = typeof r["policySource"] === "string" ?
+    r["policySource"] : "legacy";
+  out["capturedAt"] = admin.firestore.FieldValue.serverTimestamp();
+  return out;
 }
 
 /**
@@ -37540,6 +37763,15 @@ export const callableApplyToTO = onCall(
     const effectiveWage = serverWage;
     // [POSTING-V2-03I.3] 금액과 함께 산정 조건도 지금 고정한다.
     const compensationSnapshot = buildCompensationSnapshot(promisedWD);
+    // [R7-PAYROLL-POLICY.4] 근태 반올림 기준도 **임금 산정 조건**이다.
+    //
+    //   조출·지각·연장·조퇴 단위는 인정 근로시간을 바꾸고 그대로 금액이 된다.
+    //   휴게·야간·통상시급을 지원 시점에 고정하면서 이 숫자만 확정 시점에
+    //   읽으면, 지원자가 보고 지원한 조건과 실제 약속이 달라진다.
+    //   그래서 같은 자리에서 같은 원칙으로 고정한다 — 사업장이 그 뒤에 기준을
+    //   바꿔도 이 지원서의 계산 기준은 지원한 그날의 것이다.
+    const applyPolicySnapshot =
+      srvBuildAttendancePolicySnapshot(applyBizSnap.data());
     // [R5-R0.1 §3] 금액과 같은 출처, 같은 엄격함.
     //   이전에는 서버 값이 없으면 클라이언트 값을, 그것도 없으면 "hourly"를
     //   적었다. 클라이언트는 무엇을 고를지 정하는 쪽이지 무엇이 약속인지
@@ -37920,6 +38152,11 @@ export const callableApplyToTO = onCall(
           wage: effectiveWage, wageType: effectiveWageType,
           // [POSTING-V2-03I.3] 재지원도 그 시점 조건으로 약속
           ...compensationSnapshot,
+          // [R7-PAYROLL-POLICY.4] 재지원은 **새 관심 표현**이므로 그 시점
+          //   기준으로 다시 고정한다(임금·시간과 같은 규칙).
+          ...(applyPolicySnapshot != null && {
+            attendancePolicySnapshot: applyPolicySnapshot,
+          }),
           startTime, endTime,
           statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
           canceledAt: null, cancelReason: null,
@@ -37997,6 +38234,10 @@ export const callableApplyToTO = onCall(
           wage: effectiveWage, wageType: effectiveWageType,
           // [POSTING-V2-03I.3] 금액과 같은 정의의 산정 조건
           ...compensationSnapshot,
+          // [R7-PAYROLL-POLICY.4] 근태 반올림 기준도 같은 약속의 일부다.
+          ...(applyPolicySnapshot != null && {
+            attendancePolicySnapshot: applyPolicySnapshot,
+          }),
           startTime, endTime,
           status: "PENDING",
           type: isContract ? "long_term" : "short",
@@ -38940,6 +39181,12 @@ export const callableInviteWorker = onCall(
       if (!memberPermsForInv.canManageTo) throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
     }
 
+    // [R7-PAYROLL-POLICY.4] 초대도 근로자에게 가는 **조건 제시**다.
+    //   근태·급여 기준이 확인되지 않은 상태로 초대를 보내면, 근로자는 수락
+    //   단계에서 이유를 알 수 없는 거부를 만난다(그 경로는 고용주 설정
+    //   내부를 알려주지 않는다). 보내는 쪽에서 막고 관리자에게 말한다.
+    srvAssertAttendancePolicyConfirmed(invBizData);
+
     // ── 2. 자기 자신 초대 차단 (서버 재검증) ────────────────────────────────
     if (targetUid === callerUid) {
       throw new HttpsError("invalid-argument", "자기 자신에게는 초대를 보낼 수 없습니다.");
@@ -39284,6 +39531,12 @@ export const callableInviteWorker = onCall(
       ...(derivedWageType !== undefined && {wageType: derivedWageType}),
       // [POSTING-V2-03I.3] 금액과 같은 정의의 산정 조건
       ...buildCompensationSnapshot(inviteMatchedWD),
+      // [R7-PAYROLL-POLICY.4] 근태 반올림 기준도 같은 약속의 일부다 —
+      //   직접 지원과 초대가 같은 시점에 같은 것을 고정한다.
+      ...(() => {
+        const s = srvBuildAttendancePolicySnapshot(invBizData);
+        return s != null ? {attendancePolicySnapshot: s} : {};
+      })(),
       // [Phase 8.1E.2] wdId — immutable workDetail canonical identity
       ...(inviteResolvedWdId && {wdId: inviteResolvedWdId}),
       invitedBy:       callerUid,
@@ -40127,10 +40380,15 @@ export const callableAcceptTOInvitation = onCall(
       const invBlocked = await evaluateContractCapability(
         invBizId, invBizSnap.data(), txReadinessReader(tx)
       );
-      if (invBlocked) {
+      // [R7-PAYROLL-POLICY.4] 근태·급여 기준 확인도 같은 자리에서 본다 —
+      //   초대 수락이 새 약속을 만드는 두 번째 canonical writer 이기 때문이다.
+      //   문구는 근로자 쪽이다(고용주 설정 내부를 알려주지 않는다).
+      const invPolicyBlocked =
+        invBlocked ?? srvAttendancePolicyBlock(invBizSnap.data());
+      if (invPolicyBlocked) {
         console.warn(
           "[acceptInvitation] 수락 차단 biz=" + invBizId +
-            " reason=" + invBlocked
+            " reason=" + invPolicyBlocked
         );
         throw new HttpsError(
           "failed-precondition",
@@ -40506,6 +40764,17 @@ export const callableAcceptTOInvitation = onCall(
       // 사용자가 실제로 본 문구의 버전만 기록한다(없으면 쓰지 않는다).
       if (acceptConsentVersion !== null) {
         acceptUpdate["documentAccessConsentVersion"] = acceptConsentVersion;
+      }
+      // [R7-PAYROLL-POLICY.4] 초대 시점에 이미 찍혀 있으면 **그대로 둔다.**
+      //   근로자가 보고 수락한 조건이 그것이기 때문이다. 없는 경우(이 배포
+      //   이전에 보낸 초대)만 지금 찍는다 — 신규 약속에 snapshot 이 없는
+      //   상태로 남겨 두지 않는다.
+      if (freshData["attendancePolicySnapshot"] == null) {
+        const acceptPolicySnap =
+          srvBuildAttendancePolicySnapshot(invBizSnap.data());
+        if (acceptPolicySnap != null) {
+          acceptUpdate["attendancePolicySnapshot"] = acceptPolicySnap;
+        }
       }
       tx.update(appRef, acceptUpdate);
 
@@ -41671,6 +41940,14 @@ export const callableAcceptConfirmedReassignment = onCall(
         nightIncluded: acTargetPromise["nightIncluded"] ?? false,
         ...(acTargetPromise["taxDeductionType"] != null ?
           {taxDeductionType: acTargetPromise["taxDeductionType"]} : {}),
+        // [R7-PAYROLL-POLICY.4] 근태 기준은 **원래 약속(A)의 것을 그대로**
+        //   물려받는다. 재배치는 업무를 바꾸는 것이고 급여 계산 기준을
+        //   다시 정하는 일이 아니다. 여기서 사업장 현재 설정을 읽으면 이미
+        //   성립한 약속의 계산 기준이 재배치를 계기로 바뀐다.
+        //   A 에 없으면(이 배포 이전 약속) B 에도 없다 — A 와 같은 상태를
+        //   유지한다. 없는 것을 새로 만들어 조건을 바꾸지 않는다.
+        ...(srcData["attendancePolicySnapshot"] != null ?
+          {attendancePolicySnapshot: srcData["attendancePolicySnapshot"]} : {}),
         appliedAt: acNow,
         confirmedAt: acNow,
         invitedBy: p.createdBy,

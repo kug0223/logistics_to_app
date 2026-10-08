@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/firestore_helper.dart';
 import '../ui/invite_capacity_state.dart';
+import 'business_model.dart' show AttendanceRules;
 
 /// [R2.2.1 CORRECTION] 서버가 실어 준 capacity 상태를 읽는다.
 ///
@@ -95,6 +96,25 @@ class ApplicationModel {
   /// 없어 공고의 현재 조건으로 계산할 수밖에 없다 — 그 경로는
   /// `WorkDetailHelper`에 legacy compatibility로 명시돼 있다.
   bool get hasCompensationSnapshot => nightAllowanceApplied != null;
+
+  /// [R7-PAYROLL-POLICY.4] 이 약속에 적용되는 **근태·급여 처리 기준**.
+  ///
+  /// 조출·지각·연장·조퇴 반올림 단위는 인정 근로시간을 바꾸고 그대로 금액이
+  /// 된다. 그래서 휴게·야간과 같은 분류의 임금 산정 조건이고, 지원/초대
+  /// 시점에 고정된다. 사업장이 그 뒤에 기준을 바꿔도 이 지원서에는
+  /// 소급되지 않는다.
+  ///
+  /// `null` 은 이 제도가 생기기 전 지원서다 — 그 근무는 사업장의 현재
+  /// 기준으로 계산된다(legacy 호환이고 정책이 아니다).
+  final AttendanceRules? attendancePolicySnapshot;
+
+  /// 이 근무에 **실제로 적용되는** 기준. 서버 `srvEffectiveAttendanceRules`
+  /// 와 같은 순서다 — snapshot 이 있으면 그것, 없으면 사업장 현재 기준.
+  ///
+  /// 화면이 사업장 현재 설정을 그대로 보여 주면, 이미 확정된 근무에 대해
+  /// 서버가 적용하는 것과 **다른 기준**을 말하게 된다.
+  AttendanceRules? effectiveAttendanceRules(AttendanceRules? businessRules) =>
+      attendancePolicySnapshot ?? businessRules;
 
   /// 이 지원서가 **실제로 알고 있는** 약속 조건. 항상 비어 있지 않다.
   ///
@@ -306,6 +326,7 @@ class ApplicationModel {
     this.nightAllowanceApplied,
     this.nightIncluded,
     this.taxDeductionType,
+    this.attendancePolicySnapshot,
     this.workTypeIcon,
     this.workTypeColor,
     this.workTypeBackgroundColor,
@@ -436,6 +457,12 @@ class ApplicationModel {
       nightAllowanceApplied: data['nightAllowanceApplied'] as bool?,
       nightIncluded: data['nightIncluded'] as bool?,
       taxDeductionType: data['taxDeductionType'] as String?,
+      // [R7-PAYROLL-POLICY.4] 없으면 null — 사업장 현재 기준으로 계산되는
+      //   레거시 근무다. 기본값으로 채워 "약속된 기준" 처럼 만들지 않는다.
+      attendancePolicySnapshot: data['attendancePolicySnapshot'] is Map
+          ? AttendanceRules.fromMap(Map<String, dynamic>.from(
+              data['attendancePolicySnapshot'] as Map))
+          : null,
       workTypeIcon: data['workTypeIcon'],
       workTypeColor: data['workTypeColor'],
       workTypeBackgroundColor: data['workTypeBackgroundColor'],
@@ -587,6 +614,10 @@ class ApplicationModel {
         'nightAllowanceApplied': nightAllowanceApplied,
       if (nightIncluded != null) 'nightIncluded': nightIncluded,
       if (taxDeductionType != null) 'taxDeductionType': taxDeductionType,
+      // [R7-PAYROLL-POLICY.4] 서버(지원·초대 writer)만 쓴다 — 클라이언트가
+      //   보내는 값은 CF 가 읽지 않는다. 왕복 보존용으로만 포함한다.
+      if (attendancePolicySnapshot != null)
+        'attendancePolicySnapshot': attendancePolicySnapshot!.toMap(),
       'workTypeIcon': workTypeIcon,
       'workTypeColor': workTypeColor,
       'workTypeBackgroundColor': workTypeBackgroundColor,
@@ -806,6 +837,7 @@ class ApplicationModel {
     bool? nightAllowanceApplied,
     bool? nightIncluded,
     String? taxDeductionType,
+    AttendanceRules? attendancePolicySnapshot,
     String? workTypeIcon,
     String? workTypeColor,
     String? workTypeBackgroundColor,
@@ -913,6 +945,8 @@ class ApplicationModel {
           nightAllowanceApplied ?? this.nightAllowanceApplied,
       nightIncluded: nightIncluded ?? this.nightIncluded,
       taxDeductionType: taxDeductionType ?? this.taxDeductionType,
+      attendancePolicySnapshot:
+          attendancePolicySnapshot ?? this.attendancePolicySnapshot,
       workTypeIcon: workTypeIcon ?? this.workTypeIcon,
       workTypeColor: workTypeColor ?? this.workTypeColor,
       workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,

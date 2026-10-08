@@ -22,6 +22,7 @@ import '../../utils/business_location_status.dart';
 import '../../services/storage_service.dart';
 
 // Utils
+import '../../utils/attendance_rounding_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
@@ -132,6 +133,20 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // 근태 반올림 규칙
   AttendanceRules _attendanceRules = AttendanceRules.defaults();
 
+  /// [R7-PAYROLL-POLICY.3] 화면에 들어왔을 때의 기준값.
+  ///   저장 시 이 값과 비교해 **실제로 바뀌었는지**를 판정한다.
+  ///   저장 버튼을 눌렀다는 사실만으로 "사업장이 선택했다" 고 기록하지 않는다.
+  AttendanceRules _initialAttendanceRules = AttendanceRules.defaults();
+
+  /// [R7-PAYROLL-POLICY.4] 들어왔을 때 이미 확인된 기준이었는가.
+  ///   `policySource` 와 다른 질문이다 — 저쪽은 값의 출처, 이쪽은 확인 행위.
+  bool _policyAlreadyConfirmed = false;
+
+  /// 값을 바꾸지 않은 상태에서 **지금 확인하겠다**는 명시적 표시.
+  ///   값을 실제로 바꿔 저장하는 경우는 저장 자체가 채택이므로
+  ///   이 체크를 반복해서 요구하지 않는다.
+  bool _confirmPolicyNow = false;
+
   @override
   void initState() {
     super.initState();
@@ -221,6 +236,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
     // 근태 반올림 규칙
     _attendanceRules = business.attendanceRules ?? AttendanceRules.defaults();
+    // 비교 기준을 같은 값으로 고정한다 — 편집 전 상태다.
+    _initialAttendanceRules = _attendanceRules;
+    // [R7-PAYROLL-POLICY.4] 서버 판정과 같은 술어다(값 일치 + 증거 존재).
+    _policyAlreadyConfirmed = business.isAttendancePolicyConfirmed;
   }
 
 
@@ -1136,15 +1155,19 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
         SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
-        // 근태 반올림 규칙
+        // [R7-PAYROLL-POLICY.4] 이름이 급여 영향을 숨기고 있었다.
+        //   '근태 반올림 규칙' 은 운영 설정처럼 들리지만, 이 숫자들은 인정
+        //   근로시간을 바꾸고 그대로 지급액이 된다. 그래서 '급여' 를 이름에
+        //   넣는다 — 관리자가 무엇을 정하는지 알고 정해야 한다.
         CommonWidgets.sectionHeader(
           context: context,
-          title: '근태 반올림 규칙',
+          title: '근태 및 급여 처리 기준',
           icon: Icons.tune_outlined,
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         Text(
-          'GPS/비콘 체크 시각에 자동 적용할 반올림 규칙입니다. 기본값으로 대부분의 사업장에 적합합니다.',
+          'GPS/비콘 체크 시각에 자동 적용됩니다. '
+          '이 기준은 근태 판정과 급여 계산에 사용됩니다.',
           style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1273,7 +1296,217 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             ],
           ),
         ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildPolicyImpactPreview(context),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildPolicyConfirmationCard(context),
       ],
+    );
+  }
+
+  /// [R7-PAYROLL-POLICY.4 §20] 이 기준이 **실제로 무엇을 바꾸는가**.
+  ///
+  ///   예시를 손으로 적지 않는다 — 서버가 쓰는 것과 같은 계산 helper
+  ///   (`processCheckin`/`processCheckout`)에 현재 슬라이더 값을 넣어
+  ///   결과를 만든다. 문구와 알고리즘이 갈라질 수 없다.
+  Widget _buildPolicyImpactPreview(BuildContext context) {
+    // 09:00~18:00 을 기준 예시로 쓴다. 날짜는 결과에 영향을 주지 않는다.
+    final day = DateTime(2026, 1, 1);
+    final start = contractStartAt(day, '09:00');
+    final end = contractEndAt(day, '09:00', '18:00');
+    String hhmm(DateTime t) =>
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    String inAt(int offset) => hhmm(processCheckin(
+          offsetMinutes: offset,
+          referenceAt: start,
+          rules: _attendanceRules,
+        ).roundedAt);
+    String outAt(int offset) => hhmm(processCheckout(
+          offsetMinutes: offset,
+          referenceAt: end,
+          rules: _attendanceRules,
+        ).roundedAt);
+
+    final grace = _attendanceRules.lateGrace;
+    final window = _attendanceRules.lateWindow;
+    final lines = <String>[
+      '09:${grace.toString().padLeft(2, '0')} 출근 → ${inAt(grace)} 부터 인정',
+      '09:${(grace + 1).toString().padLeft(2, '0')} 출근 → ${inAt(grace + 1)} 부터 인정',
+      '${hhmm(end.add(Duration(minutes: window + 1)))} 퇴근 → ${outAt(window + 1)} 까지 인정',
+      '17:59 퇴근 → ${outAt(-1)} 까지 인정',
+    ];
+
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: CommonWidgets.cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '예시 — 09:00~18:00 근무',
+            style: ResponsiveHelper.smallStyle(context)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          for (final line in lines)
+            Padding(
+              padding: EdgeInsets.only(
+                  bottom: ResponsiveHelper.spacing(context, 3)),
+              child: Text(
+                line,
+                style:
+                    ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+              ),
+            ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '인정 시간이 급여 계산의 기준이 됩니다.',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [R7-PAYROLL-POLICY.4] 기준 확인 증거를 서버에 기록한다.
+  ///
+  ///   언제 부르는가:
+  ///     · 값을 **실제로 바꿔** 저장했다 → 저장이 곧 채택이다(§18).
+  ///     · 값은 그대로지만 관리자가 **확인에 체크**했다 → 그 행위가 확인이다.
+  ///   둘 다 아니면 부르지 않는다 — 저장했다는 사실만으로 확인이 되지 않는다.
+  ///
+  ///   실패해도 사업장 저장을 되돌리지 않는다. 그 경우 상태는 '미확인' 으로
+  ///   남고 공고·확정 gate 가 그 사실을 정확히 말한다(fail-closed). 조용히
+  ///   확인된 것처럼 만들지 않는 쪽이 옳은 방향이다.
+  Future<void> _recordPolicyConfirmationIfNeeded(
+      String businessId, bool policyChanged) async {
+    if (!policyChanged && !_confirmPolicyNow) return;
+    try {
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableConfirmAttendancePolicy')
+          .call<Map<dynamic, dynamic>>({'businessId': businessId});
+    } catch (e) {
+      debugPrint('⚠️ 근태·급여 기준 확인 기록 실패: $e');
+      if (mounted) {
+        ToastHelper.showError('근태·급여 기준 확인이 기록되지 않았습니다.\n'
+            '사업장 정보에서 다시 확인해 주세요.');
+      }
+    }
+  }
+
+  /// [R7-PAYROLL-POLICY.4 §19] 사업장이 이 기준을 **확인했다**는 증거.
+  ///
+  ///   면책 문구를 쓰지 않는다 — 목적은 정책 확인이고 책임 전가가 아니다.
+  ///   세 상태를 구별한다:
+  ///     · 이미 확인됨          → 상태만 보여준다
+  ///     · 값을 바꿨다          → 저장이 곧 채택이다(체크를 반복하지 않는다)
+  ///     · 값을 안 바꿨고 미확인 → 명시적 확인을 요청한다
+  Widget _buildPolicyConfirmationCard(BuildContext context) {
+    final changed = !_attendanceRules.sameRulesAs(_initialAttendanceRules);
+    final confirmed = _policyAlreadyConfirmed && !changed;
+
+    if (confirmed) {
+      final at = widget.business?.attendancePolicyConfirmation?.confirmedAt;
+      return Container(
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          color: AppColors.successBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.verified_outlined,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: AppColors.successDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: Text(
+                at != null
+                    ? '${FormatHelper.formatDate(at)}에 사업장 기준으로 확인됨'
+                    : '사업장 기준으로 확인됨',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.successDark),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (changed) {
+      return Container(
+        padding: ResponsiveHelper.cardPadding(context),
+        decoration: BoxDecoration(
+          color: AppColors.infoBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.save_outlined,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: AppColors.infoDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: Text(
+                '저장하면 이 기준을 사업장의 근태·급여 처리 기준으로 '
+                '확인한 것으로 기록됩니다.',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.infoDark),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: ResponsiveHelper.cardPadding(context),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '공고를 등록하기 전에 이 기준 확인이 필요합니다.',
+            style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.warningDark)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '사업장은 근로계약·취업규칙 및 관련 법령에 맞는 기준을 설정해야 합니다.',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          InkWell(
+            onTap: () => setState(() => _confirmPolicyNow = !_confirmPolicyNow),
+            borderRadius: BorderRadius.circular(8),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: _confirmPolicyNow,
+                  onChanged: (v) =>
+                      setState(() => _confirmPolicyNow = v ?? false),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                Expanded(
+                  child: Text(
+                    '위 기준을 우리 사업장의 근태·급여 처리 기준으로 확인합니다',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.warningDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2718,10 +2951,29 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         }
       }
 
-      // 저장 시점의 타임스탬프/변경자 주입 — 감사 이력
+      // [R7-PAYROLL-POLICY.3] 이 숫자는 급여 인정시각까지 결정한다.
+      //   그래서 **누가 정했는지**를 구별해 둔다.
+      //
+      //   이전에는 저장할 때마다 `rulesUpdatedBy: ownerId` 를 넣었다. 두 가지가
+      //   틀렸다. ① 실제 편집자가 아니라 **소유자 uid** 라서 공동관리자가
+      //   바꿔도 소유자가 바꾼 것으로 남았다. ② 기본값을 한 번도 건드리지
+      //   않고 저장해도 "변경됨" 으로 기록돼, ALfit 기본값과 사업장의 선택을
+      //   구별할 수 없었다. 그러면 그 정책의 책임이 사업장에 귀속되지 않는다.
+      //
+      //   판정은 **값이 실제로 달라졌는가** 하나로 한다(§7 Option A).
+      //   저장 버튼을 눌렀다는 사실만으로 선택이라고 보지 않는다.
+      final policyChanged = !_attendanceRules.sameRulesAs(_initialAttendanceRules);
       _attendanceRules = _attendanceRules.copyWith(
-        rulesUpdatedAt: DateTime.now(),
-        rulesUpdatedBy: ownerId,
+        // 바뀌지 않았으면 이전 기록을 그대로 둔다 — 없던 변경을 만들지 않는다.
+        rulesUpdatedAt: policyChanged ? DateTime.now() : null,
+        rulesUpdatedBy: policyChanged ? user.uid : null,
+        policySource: policyChanged
+            ? AttendanceRules.sourceAdminSelected
+            // 신규 등록이면 ALfit 기본값, 기존 사업장이면 기록을 유지한다.
+            : (_attendanceRules.policySource ??
+                (widget.business == null
+                    ? AttendanceRules.sourceAlfitDefault
+                    : null)),
       );
 
       final businessData = {
@@ -2815,6 +3067,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           }
         }
 
+        // [R7-PAYROLL-POLICY.4] 기준 확인 증거는 **서버가** 적는다.
+        //   저장 batch 에 넣을 수 없다 — actor·시각·확인한 값을 클라이언트가
+        //   쓰면 ownership 증거가 성립하지 않기 때문이다(rules 에서 차단).
+        await _recordPolicyConfirmationIfNeeded(
+            widget.business!.id, policyChanged);
+
         await userProvider.refreshCurrentUser();
         if (!mounted) return;
 
@@ -2845,6 +3103,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         //   사업장 정보 수정에서 언제든 다시 올릴 수 있다. 되돌리면 사용자가
         //   처음부터 다시 입력해야 하는데, 잃는 것이 얻는 것보다 크다.
         final finalized = await _uploadDeferredImages(uploadBizId);
+
+        // [R7-PAYROLL-POLICY.4] 신규 사업장은 기본값 상태로 시작한다.
+        //   관리자가 값을 바꿨거나 명시적으로 확인한 경우에만 증거를 남긴다 —
+        //   저장했다는 사실만으로 "사업장이 이 기준을 확인했다" 고 적지 않는다.
+        await _recordPolicyConfirmationIfNeeded(uploadBizId, policyChanged);
 
         await userProvider.refreshCurrentUser();
         if (!mounted) return;

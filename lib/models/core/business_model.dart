@@ -147,6 +147,79 @@ class AttendanceRules {
       '출근 $earlyWindow분 이내 정시 · 지각 유예 $lateGrace분 · $lateUnit분 단위 처리';
 }
 
+/// [R7-PAYROLL-POLICY.4] 사업장이 근태·급여 기준을 **확인했다**는 증거.
+///
+///   [AttendanceRules.policySource] 는 값의 **출처**일 뿐 확인 행위가 아니다.
+///   ALfit 기본값을 그대로 쓰기로 한 것도 사업장의 결정이므로, 출처와 별개로
+///   "이 값을 우리 기준으로 확인했다" 는 기록이 있어야 책임이 귀속된다.
+///
+///   기록은 **확인한 7개 숫자를 함께 담는다.** 그래서 값이 바뀌면 기록이
+///   저절로 낡아 미확인으로 떨어진다 — 과거 확인을 새 정책의 확인으로
+///   재사용하지 않는다. 별도 revision 시스템이 필요하지 않다.
+///
+///   쓰기는 `callableConfirmAttendancePolicy` 전용이다(firestore.rules 에서
+///   클라이언트 직접 쓰기 차단). 이 클래스는 읽기 전용 표현이다.
+///
+///   판정의 최종 권위는 서버다 — 이 클래스는 UI 표시와 사전 안내용이다.
+@immutable
+class AttendancePolicyConfirmation {
+  const AttendancePolicyConfirmation({
+    required this.earlyWindow,
+    required this.earlyArrivalUnit,
+    required this.lateGrace,
+    required this.lateUnit,
+    required this.lateWindow,
+    required this.overtimeUnit,
+    required this.earlyLeaveUnit,
+    this.confirmedAt,
+    this.confirmedBy,
+  });
+
+  final int earlyWindow;
+  final int earlyArrivalUnit;
+  final int lateGrace;
+  final int lateUnit;
+  final int lateWindow;
+  final int overtimeUnit;
+  final int earlyLeaveUnit;
+
+  /// 서버 시각. 클라이언트가 적을 수 없다.
+  final DateTime? confirmedAt;
+
+  /// 실제 확인한 관리자 uid. 소유자 uid 가 아니다.
+  final String? confirmedBy;
+
+  static AttendancePolicyConfirmation? fromMap(Map<String, dynamic>? map) {
+    if (map == null) return null;
+    int v(String k, int dflt) => (map[k] as num?)?.toInt() ?? dflt;
+    return AttendancePolicyConfirmation(
+      earlyWindow: v('earlyWindow', 30),
+      earlyArrivalUnit: v('earlyArrivalUnit', 30),
+      lateGrace: v('lateGrace', 5),
+      lateUnit: v('lateUnit', 30),
+      lateWindow: v('lateWindow', 30),
+      overtimeUnit: v('overtimeUnit', 10),
+      earlyLeaveUnit: v('earlyLeaveUnit', 30),
+      confirmedAt: _parseTimestamp(map['confirmedAt']),
+      confirmedBy: map['confirmedBy'] as String?,
+    );
+  }
+
+  /// 확인 행위 자체가 성립했는가 — 시각과 행위자가 모두 있어야 한다.
+  bool get hasEvidence =>
+      confirmedAt != null && (confirmedBy?.isNotEmpty ?? false);
+
+  /// 이 기록이 **지금 이 기준**의 확인인가. 하나라도 다르면 아니다.
+  bool matches(AttendanceRules rules) =>
+      earlyWindow == rules.earlyWindow &&
+      earlyArrivalUnit == rules.earlyArrivalUnit &&
+      lateGrace == rules.lateGrace &&
+      lateUnit == rules.lateUnit &&
+      lateWindow == rules.lateWindow &&
+      overtimeUnit == rules.overtimeUnit &&
+      earlyLeaveUnit == rules.earlyLeaveUnit;
+}
+
 class BusinessModel {
   final String id;
   final String businessNumber;  // 사업자등록번호
@@ -226,6 +299,21 @@ class BusinessModel {
   /// null이면 AttendanceRules.defaults() 로 폴백
   final AttendanceRules? attendanceRules;
 
+  /// [R7-PAYROLL-POLICY.4] 이 기준을 사업장이 확인했다는 증거. CF 전용 필드.
+  final AttendancePolicyConfirmation? attendancePolicyConfirmation;
+
+  /// 지금 저장된 기준이 **확인된 기준**인가.
+  ///
+  ///   기준 자체가 없으면 확인할 대상이 없으므로 false 다 — 없는 것을
+  ///   기본값으로 채워 확인된 것처럼 보이게 하지 않는다.
+  ///   서버가 최종 권위다(`srvAttendancePolicyBlock`). 이 값은 UI 표시용이다.
+  bool get isAttendancePolicyConfirmed {
+    final rules = attendanceRules;
+    final cfm = attendancePolicyConfirmation;
+    if (rules == null || cfm == null) return false;
+    return cfm.hasEvidence && cfm.matches(rules);
+  }
+
   // ── 사업자 서류 ────────────────────────────────────────────
   /// 사업자등록증 이미지 URL (business-owned, 신규 등록 필수)
   /// businesses/{id}/businessLicenseImageUrl 경로 기준
@@ -285,6 +373,7 @@ class BusinessModel {
     this.sealType = 'stamp',
     this.deactivatedAt,
     this.attendanceRules,
+    this.attendancePolicyConfirmation,
     this.businessLicenseImageUrl,
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
            ? adminIds
@@ -357,6 +446,10 @@ class BusinessModel {
       attendanceRules: map['attendanceRules'] != null
           ? AttendanceRules.fromMap(
               Map<String, dynamic>.from(map['attendanceRules'] as Map))
+          : null,
+      attendancePolicyConfirmation: map['attendancePolicyConfirmation'] is Map
+          ? AttendancePolicyConfirmation.fromMap(Map<String, dynamic>.from(
+              map['attendancePolicyConfirmation'] as Map))
           : null,
       businessLicenseImageUrl: map['businessLicenseImageUrl'] as String?,
     );
@@ -432,6 +525,8 @@ class BusinessModel {
       'sealType': sealType,
       'deactivatedAt': deactivatedAt != null ? Timestamp.fromDate(deactivatedAt!) : null,
       if (attendanceRules != null) 'attendanceRules': attendanceRules!.toMap(),
+      // [R7-PAYROLL-POLICY.4] attendancePolicyConfirmation 은 **쓰지 않는다** —
+      //   CF 전용 필드이고 rules 가 클라이언트 쓰기를 차단한다. 읽기만 한다.
       if (businessLicenseImageUrl != null) 'businessLicenseImageUrl': businessLicenseImageUrl,
     };
   }
@@ -493,6 +588,7 @@ class BusinessModel {
     DateTime? deactivatedAt,
     bool clearDeactivatedAt = false,
     AttendanceRules? attendanceRules,
+    AttendancePolicyConfirmation? attendancePolicyConfirmation,
     String? businessLicenseImageUrl,
     bool clearBusinessLicenseImageUrl = false,
   }) {
@@ -543,6 +639,8 @@ class BusinessModel {
       beaconRssiThreshold: beaconRssiThreshold ?? this.beaconRssiThreshold,
       deactivatedAt: clearDeactivatedAt ? null : (deactivatedAt ?? this.deactivatedAt),
       attendanceRules: attendanceRules ?? this.attendanceRules,
+      attendancePolicyConfirmation:
+          attendancePolicyConfirmation ?? this.attendancePolicyConfirmation,
       businessLicenseImageUrl: clearBusinessLicenseImageUrl
           ? null
           : (businessLicenseImageUrl ?? this.businessLicenseImageUrl),

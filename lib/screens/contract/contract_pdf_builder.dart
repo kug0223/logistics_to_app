@@ -106,6 +106,20 @@ class ContractPdfBuilder {
             _row('지급 일정', snapshot.payScheduleLabel, baseStyle, boldStyle),
             if (snapshot.taxDeductionType != InsuranceRateModel.typeNone)
               _row('공제 방식', InsuranceRateModel.typeLabel(snapshot.taxDeductionType), baseStyle, boldStyle),
+            // [R7-PAYROLL-POLICY.4] 화면과 PDF 가 같은 것을 말해야 한다 —
+            //   서명된 문서가 화면보다 적게 적혀 있으면 안 된다.
+            if (snapshot.attendancePolicy != null) ...[
+              _row('지각 유예', '${snapshot.attendancePolicy!.lateGrace}분',
+                  baseStyle, boldStyle),
+              _row('지각 처리', '${snapshot.attendancePolicy!.lateUnit}분 단위',
+                  baseStyle, boldStyle),
+              _row('조퇴 처리', '${snapshot.attendancePolicy!.earlyLeaveUnit}분 단위',
+                  baseStyle, boldStyle),
+              _row('연장 처리', '${snapshot.attendancePolicy!.overtimeUnit}분 단위',
+                  baseStyle, boldStyle),
+              _row('조출 인정', '${snapshot.attendancePolicy!.earlyWindow}분 이내 정시',
+                  baseStyle, boldStyle),
+            ],
           ], fontBold),
           // 템플릿 조항 동적 렌더링
           ...articles.map((a) => pw.Column(children: [

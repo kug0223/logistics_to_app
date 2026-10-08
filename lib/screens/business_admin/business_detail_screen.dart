@@ -537,9 +537,10 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // [R7-PAYROLL-POLICY.4] 급여 영향이 드러나는 이름으로 통일한다.
         CommonWidgets.sectionHeader(
           context: context,
-          title: '근태 반올림 규칙',
+          title: '근태 및 급여 처리 기준',
           icon: Icons.tune_outlined,
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -588,7 +589,59 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
             ],
           ),
         ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        // [R7-PAYROLL-POLICY.4] 값의 출처와 **확인 행위**는 다른 사실이다.
+        //   기본값을 그대로 쓰기로 한 것도 사업장의 결정이므로 확인 증거가
+        //   따로 필요하다. 미확인이면 공고·확정이 막히므로 여기서 말해 둔다.
+        _buildPolicyConfirmationStatus(context),
       ],
+    );
+  }
+
+  Widget _buildPolicyConfirmationStatus(BuildContext context) {
+    final confirmed = _currentBusiness.isAttendancePolicyConfirmed;
+    final at = _currentBusiness.attendancePolicyConfirmation?.confirmedAt;
+    final hasRules = _currentBusiness.attendanceRules != null;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: confirmed ? AppColors.successBg : AppColors.warningBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: (confirmed ? AppColors.success : AppColors.warning)
+              .withValues(alpha: 0.3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            confirmed ? Icons.verified_outlined : Icons.error_outline,
+            size: ResponsiveHelper.iconSize(context, 15),
+            color: confirmed ? AppColors.successDark : AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              confirmed
+                  ? (at != null
+                      ? '${FormatHelper.formatDate(at)}에 사업장 기준으로 확인됨'
+                      : '사업장 기준으로 확인됨')
+                  : hasRules
+                      ? '이 기준이 아직 확인되지 않았습니다.\n'
+                          '사업장 정보 수정에서 확인해 주세요 (공고 등록·근무 확정에 필요)'
+                      : '근태·급여 처리 기준이 저장되지 않았습니다.\n'
+                          '사업장 정보 수정에서 저장 후 확인해 주세요',
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: confirmed ? AppColors.successDark : AppColors.warningDark,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

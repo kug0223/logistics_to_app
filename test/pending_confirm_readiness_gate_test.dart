@@ -110,7 +110,18 @@ void main() {
       final i = s.indexOf('async function evaluatePostingReadinessFirestore(');
       final end = s.indexOf('/** [P4.4C.1] `db` 와 `transaction`', i);
       final posting = s.substring(i, end);
-      expect(posting.contains('return evaluateContractCapability('), isTrue);
+      // [R7-PAYROLL-POLICY.4] 공고 쪽에 **근태·급여 기준 확인** 축이 하나 더
+      //   붙었다. 그래서 `return evaluateContractCapability(...)` 가
+      //   `await` + 이유 전달로 바뀌었다. 지키려던 계약은 그대로다 —
+      //   계약 능력 판정을 **복제하지 않고 재사용한다**.
+      expect(posting.contains('await evaluateContractCapability('), isTrue);
+      expect(posting.contains('if (contractReason) return contractReason;'),
+          isTrue, reason: '계약 능력 이유를 삼키면 안 된다');
+      // 정책 확인 축도 공용 판정 함수를 쓴다 — 여기서 다시 판정하지 않는다.
+      expect(posting.contains('return srvAttendancePolicyBlock(bizData);'),
+          isTrue);
+      expect(posting.contains('attendancePolicyConfirmation'), isFalse,
+          reason: '확인 판정이 두 벌로 복제되면 gate 마다 다른 말을 한다');
       // 공고 쪽만 업무 축을 더한다.
       expect(posting.contains('NO_ACTIVE_WORK_TYPE'), isTrue);
       // 템플릿·날인 검사가 두 벌로 복제되지 않았다.

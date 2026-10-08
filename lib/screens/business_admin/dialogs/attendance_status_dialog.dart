@@ -3696,6 +3696,19 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                   ),
                 ),
 
+                // [R7-PAYROLL-POLICY.4] 대상자마다 **약속된 기준이 다를 수
+                //   있다** — 지원 시점 기준이 지원서에 고정되기 때문이다.
+                //   사업장 현재 설정 하나로 안내하면 관리자가 착각한다.
+                if (_batchTargetsHaveMixedPolicy(targets)) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
+                  Text(
+                    '대상자마다 적용되는 근태 기준이 다릅니다.\n'
+                    '각 근무에 약속된 기준으로 처리됩니다.',
+                    style: ResponsiveHelper.tinyStyle(ctx,
+                        color: AppColors.warningDark),
+                  ),
+                ],
+
                 // 반올림 정책 토글 (정책 설정된 사업장에서만 표시)
                 if (_attendanceRules != null) ...[
                   SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
@@ -3728,7 +3741,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
                           Expanded(
                             child: Text(
-                              '사업장 반올림 정책 적용',
+                              // [R7-PAYROLL-POLICY.4] 적용되는 것은 **이 근무에
+                              //   약속된 기준**이다. 확정 뒤 설정을 바꾼
+                              //   사업장에서 '사업장 정책' 은 틀린 말이 된다.
+                              '근태 기준 반올림 적용',
                               style: ResponsiveHelper.smallStyle(ctx).copyWith(
                                 fontWeight: FontWeight.w600,
                                 color: dialogApplyRounding ? AppColors.infoDark : AppColors.grey700,
@@ -4628,9 +4644,29 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     return ms;
   }
 
+  /// [R7-PAYROLL-POLICY.4] 일괄 대상자들의 적용 기준이 서로 다른가.
+  ///
+  ///   지원 시점 기준이 지원서에 고정되므로, 사업장이 그 사이 기준을 바꿨다면
+  ///   같은 날 같은 사업장 안에서도 근무마다 기준이 다를 수 있다.
+  ///   읽기를 추가하지 않는다 — 이미 들고 있는 지원서와 사업장 설정만 쓴다.
+  bool _batchTargetsHaveMixedPolicy(List<ApplicationModel> targets) {
+    if (targets.length < 2) return false;
+    final first = targets.first.effectiveAttendanceRules(_attendanceRules);
+    if (first == null) return false;
+    return targets.skip(1).any((app) {
+      final r = app.effectiveAttendanceRules(_attendanceRules);
+      return r == null || !r.sameRulesAs(first);
+    });
+  }
+
   /// 출근 반올림 — 정책 미설정 시 입력값 그대로 반환
+  ///
+  /// [R7-PAYROLL-POLICY.4] 기준은 **이 근무의 약속**에서 온다.
+  ///   사업장 현재 설정으로 미리보기를 만들면, 확정 뒤 설정이 바뀐 근무에서
+  ///   화면이 말하는 처리 시각과 서버가 실제로 적용하는 시각이 달라진다
+  ///   (서버는 `srvEffectiveAttendanceRules` — snapshot 우선).
   String _roundedCheckIn(ApplicationModel app, String rawTime) {
-    final rules = _attendanceRules;
+    final rules = app.effectiveAttendanceRules(_attendanceRules);
     if (rules == null) return rawTime;
     final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
     final contractStart = contractStartAt(_kstDay, startTime);
@@ -4644,8 +4680,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   /// 퇴근 반올림 — 정책 미설정 시 입력값 그대로 반환
+  ///
+  /// [R7-PAYROLL-POLICY.4] 출근과 같은 출처를 쓴다 — 한 근무에 두 기준이
+  ///   생기면 안 된다.
   String _roundedCheckOut(ApplicationModel app, DateTime checkInDt, String rawCheckOutTime) {
-    final rules = _attendanceRules;
+    final rules = app.effectiveAttendanceRules(_attendanceRules);
     if (rules == null) return rawCheckOutTime;
     final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
     final endTimeStr = app.endTime.isNotEmpty ? app.endTime : rawCheckOutTime;

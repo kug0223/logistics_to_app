@@ -213,8 +213,14 @@ void _runToIsClosedTests() {
       test('A4-05 type=contract, deadline=now-1sec → isClosed=true', () {
         expect(_to(type: 'contract', applicationDeadline: _now.subtract(const Duration(seconds: 1))).isClosed, isTrue);
       });
-      test('A4-06 type=contract, deadline=now+1sec → isClosed=false', () {
-        expect(_to(type: 'contract', applicationDeadline: _now.add(const Duration(seconds: 1))).isClosed, isFalse);
+      // [R7-PAYROLL-POLICY.4] 시한부 fixture 정정.
+      //   `_now` 는 **파일 로드 시각**이다. 이 그룹 앞에 247개 테스트가 먼저
+      //   돌아 수 초가 지나므로, `_now + 1초` 는 실행 시점엔 이미 과거다 —
+      //   `isClosed` 가 true 가 되어 간헐적으로 실패했다(실측).
+      //   고정하려는 것은 "마감이 아직 지나지 않았다" 이고 1초라는 숫자가
+      //   아니다. 이웃 경계 테스트들과 같은 여유(1분)로 맞춘다.
+      test('A4-06 type=contract, deadline=now+1min → isClosed=false', () {
+        expect(_to(type: 'contract', applicationDeadline: _now.add(const Duration(minutes: 1))).isClosed, isFalse);
       });
     });
 

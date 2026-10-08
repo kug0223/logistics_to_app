@@ -744,6 +744,11 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                               currentToId: _to?.id,
                             ),
                           ),
+                          // [R7-PAYROLL-POLICY.4 §33] 근태 기준은 급여 금액을
+                          //   바꾼다 — 지원 전에 확인할 수 있어야 한다.
+                          //   숫자 7개를 카드에 펼치지 않고 한 줄 + 상세로 둔다.
+                          if (_business != null)
+                            _buildAttendancePolicyDisclosure(context),
                           if (_business?.precautions != null &&
                               _business!.precautions!.isNotEmpty)
                             _buildPrecautionsSection(context),
@@ -1945,6 +1950,113 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   }
 
   // ── 5. 준비사항 (칩 형태) ─────────────────────
+
+  /// [R7-PAYROLL-POLICY.4 §33] 근태·급여 처리 기준 고지.
+  ///
+  ///   근로자 화면에 숫자 7개를 모두 펼치지 않는다 — 한 줄로 **존재와 영향**을
+  ///   말하고, 실제 숫자는 상세에서 본다.
+  ///
+  ///   여기 표시하는 값은 이 사업장의 **현재 기준**이다. 지원하면 그 시점의
+  ///   기준이 지원서에 고정되고(서버가 `attendancePolicySnapshot` 으로 적는다),
+  ///   사업장이 그 뒤에 기준을 바꿔도 이미 한 지원에는 소급되지 않는다.
+  ///   읽기를 새로 하지 않는다 — 이미 불러온 사업장 문서를 쓴다.
+  Widget _buildAttendancePolicyDisclosure(BuildContext context) {
+    final rules = _business!.attendanceRules;
+    final s = ResponsiveHelper.spacing(context, 16);
+    return Container(
+      color: Colors.white,
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      padding: EdgeInsets.all(s),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.schedule_outlined,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                  color: AppColors.infoDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Expanded(
+                child: Text(
+                  '근태·급여 처리 기준',
+                  style: ResponsiveHelper.subtitleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (rules != null)
+                TextButton(
+                  onPressed: () => _showAttendancePolicyDetail(context, rules),
+                  child: Text('상세 기준',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.infoDark)),
+                ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            rules != null
+                ? '출퇴근 시각은 이 사업장의 처리 기준에 따라 인정 시간으로 '
+                    '계산되고, 그 인정 시간이 급여 기준이 됩니다.'
+                : '출퇴근 시각은 사업장의 처리 기준에 따라 계산됩니다.',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAttendancePolicyDetail(
+      BuildContext context, AttendanceRules rules) async {
+    final rows = <(String, String)>[
+      ('지각 유예', '${rules.lateGrace}분'),
+      ('지각 처리', '${rules.lateUnit}분 단위'),
+      ('조퇴 처리', '${rules.earlyLeaveUnit}분 단위'),
+      ('연장 처리', '${rules.overtimeUnit}분 단위'),
+      ('조출 인정 범위', '${rules.earlyWindow}분'),
+      ('조출 처리', '${rules.earlyArrivalUnit}분 단위'),
+      ('정시 퇴근 인정 범위', '${rules.lateWindow}분'),
+    ];
+    await DialogHelper.showSheet<void>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 20)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('근태·급여 처리 기준',
+                style: ResponsiveHelper.subtitleStyle(ctx)
+                    .copyWith(fontWeight: FontWeight.bold)),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
+            for (final r in rows)
+              Padding(
+                padding:
+                    EdgeInsets.only(bottom: ResponsiveHelper.spacing(ctx, 8)),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(r.$1,
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: AppColors.grey700)),
+                    ),
+                    Text(r.$2,
+                        style: ResponsiveHelper.smallStyle(ctx)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 4)),
+            Text(
+              '지원하면 이 기준이 지원 시점 조건으로 고정됩니다. '
+              '사업장이 이후에 기준을 바꿔도 이미 한 지원에는 적용되지 않습니다.',
+              style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.grey600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildPrecautionsSection(BuildContext context) {
     final s = ResponsiveHelper.spacing(context, 16);
