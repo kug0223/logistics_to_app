@@ -108,7 +108,10 @@ void main() {
     });
 
     test('C3 시행일은 본문이 말한다 — 머리글에 박지 않는다', () {
-      expect(body.contains('본 처리방침은 2026년 9월 26일부터 적용됩니다'), isTrue);
+      // [R7-PAYROLL-POLICY.5] 날짜를 손으로 박지 않는다 — 개정 번호에서 받는다.
+      final d = DateTime.parse(rev);
+      expect(body.contains('본 처리방침은 ${d.year}년 ${d.month}월 ${d.day}일부터 적용됩니다'),
+          isTrue);
       expect(RegExp(r'시행일s*d{4}년').hasMatch(publicHtml), isFalse,
           reason: '시행일이 HTML 에 박히면 발행 때마다 어긋난다');
     });
@@ -420,11 +423,19 @@ void main() {
     });
 
     test('1A-C 개정 표기가 미래처럼 읽히지 않는다 (§6)', () {
-      expect(rev, '2026-09-26', reason: '시행일과 같은 날짜여야 한다');
-      expect(dart.contains('(개정 2026-09-26)'), isTrue);
-      expect(dart.contains("kPrivacyPolicyRevision = '2026.10'"), isFalse,
-          reason: '월 단위 표기는 시행일보다 나중처럼 읽힌다');
-      expect(publicHtml.contains('개정 2026.10'), isFalse);
+      // [R7-PAYROLL-POLICY.5] 날짜를 박지 않고 **모양**을 고정한다 —
+      //   개정할 때마다 이 테스트를 고치게 만들면 핀이 낡는다.
+      expect(RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(rev), isTrue,
+          reason: '월 단위 표기는 시행일보다 나중처럼 읽힌다: $rev');
+      final d = DateTime.parse(rev);
+      expect(dart.contains('(개정 $rev)'), isTrue);
+      // 본문 시행일과 개정 번호가 같은 날을 가리킨다.
+      expect(body.contains('${d.year}년 ${d.month}월 ${d.day}일부터 적용됩니다'),
+          isTrue);
+      expect(RegExp(r"kPrivacyPolicyRevision = '\d{4}\.\d{2}'").hasMatch(dart),
+          isFalse, reason: '월 단위 표기 금지');
+      expect(publicHtml.contains('개정'), isFalse,
+          reason: '개정 표기가 HTML 에 박히면 발행 때마다 어긋난다');
     });
 
     test('1A-H 근거 없는 고정 처리기한을 약속하지 않는다 (§7)', () {

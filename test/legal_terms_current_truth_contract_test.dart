@@ -136,10 +136,18 @@ void main() {
     test('06 시행일이 개정본과 같다', () {
       // [PRIVACY-REWRITE.1] 외부 계정삭제 경로 고지로 개정됐다.
       //   이전 시행일도 본문에 남겨 어떤 판이 바뀌었는지 알 수 있게 한다.
+      // [R7-PAYROLL-POLICY.5] 근무시간 인정·임금 계산 목적을 추가해 다시 개정.
+      //   날짜를 손으로 두 번 적지 않는다 — 상수에서 받아 본문과 맞춘다.
+      final d = DateTime.parse(
+          RegExp(r"const kPrivacyPolicyRevision = '([^']+)';")
+              .firstMatch(terms)!
+              .group(1)!);
+      final line = '본 처리방침은 ${d.year}년 ${d.month}월 ${d.day}일부터 적용됩니다';
       for (final f in both.entries) {
-        expect(f.value, contains('본 처리방침은 2026년 9월 26일부터 적용됩니다'),
-            reason: f.key);
+        expect(f.value, contains(line), reason: f.key);
       }
+      expect(terms, contains('이전 시행일: 2026년 9월 26일'),
+          reason: '어떤 판이 바뀌었는지 본문이 말해야 한다');
     });
   });
 
@@ -165,12 +173,22 @@ void main() {
       final pp = _sliceOf(terms, "id: 'privacy_policy'", 'order: 2');
       // [PRIVACY-REWRITE.1] 개정 번호는 상수 한 곳에만 둔다.
       expect(pp, contains('version: kPrivacyPolicyRevision'));
-      expect(terms, contains("const kPrivacyPolicyRevision = '2026-09-26';"));
-      for (final other in ['service_terms', 'privacy_third_party',
-        'location_terms', 'marketing_consent']) {
-        final s = _sliceOf(terms, "id: '$other'", 'updatedAt: now');
-        expect(s, contains("version: '2026.08'"), reason: other);
+      expect(terms, contains("const kPrivacyPolicyRevision = '2026-10-08';"));
+      // [R7-PAYROLL-POLICY.5] 같은 개정에서 함께 고친 필수 항목 셋은
+      //   같은 날짜를 쓴다 — 날짜를 복제하지 않고 상수를 가리킨다.
+      expect(terms,
+          contains('const kLegalPolicyRevision = kPrivacyPolicyRevision;'),
+          reason: '두 날짜가 갈라지는 경로를 만들지 않는다');
+      for (final revised in ['service_terms', 'privacy_third_party',
+        'location_terms']) {
+        final s = _sliceOf(terms, "id: '$revised'", 'updatedAt: now');
+        expect(s, contains('version: kLegalPolicyRevision'), reason: revised);
       }
+      // 본문이 바뀌지 않은 항목은 버전을 올리지 않는다 — 올리면 선택 항목까지
+      // 다시 고르게 만든다.
+      final mk = _sliceOf(terms, "id: 'marketing_consent'", 'updatedAt: now');
+      expect(mk, contains("version: '2026.08'"),
+          reason: '마케팅 동의 본문은 이번 개정에서 바뀌지 않았다');
     });
 
     test('10 항목은 5개 그대로다', () {
@@ -206,7 +224,14 @@ void main() {
       expect(resolved.activeItems.length, 5, reason: '활성 항목');
       final pp = resolved.activeItems.firstWhere((i) => i.id == 'privacy_policy');
 
-      expect(pp.version, '2026.09');
+      // [R7-PAYROLL-POLICY.5] 런타임 축의 기대값을 코드 상수에서 받는다.
+      //   예전에는 '2026.09' / '2026년 9월 20일' 이 손으로 박혀 있어서
+      //   코드가 두 번 개정된 뒤에도 이 그룹이 skip 이라 드러나지 않았다.
+      final rev = RegExp(r"const kPrivacyPolicyRevision = '([^']+)';")
+          .firstMatch(terms)!
+          .group(1)!;
+      final d = DateTime.parse(rev);
+      expect(pp.version, rev);
       for (final e in _mustAppear.entries) {
         expect(pp.content, contains(e.value), reason: '런타임: ${e.key}');
       }
@@ -214,7 +239,8 @@ void main() {
         expect(pp.content, isNot(contains(banned)), reason: '런타임: "$banned"');
       }
       expect(pp.content, contains('■ 처리방침의 개정'));
-      expect(pp.content, contains('2026년 9월 20일부터 적용됩니다'));
+      expect(pp.content,
+          contains('${d.year}년 ${d.month}월 ${d.day}일부터 적용됩니다'));
     });
 
     test('12 런타임 본문이 코드 기본값과 같다 (§11 parity)', () {

@@ -1,6 +1,6 @@
 # 출시 전 개인정보 게이트
 
-최종 수정 2026-09-26 · 기준 개정 `2026-09-26`
+최종 수정 2026-10-08 · 기준 개정 `2026-10-08`
 
 출시 빌드를 올리기 전에 반드시 통과해야 하는 항목이다. 하나라도 남아 있으면
 `[PLAY-BLOCKER-PRIVACY-POLICY-STALE]` 는 **CLOSED 가 아니다.**
@@ -14,30 +14,61 @@
 
 | 대상 | 상태 |
 |---|---|
-| 앱 코드 원문 (`legal_terms_model.dart`) | 개정 `2026-09-26` |
-| 공개 웹 (`/privacy`) | 개정 `2026-09-26` (원문에서 생성) |
+| 앱 코드 원문 (`legal_terms_model.dart`) | 개정 `2026-10-08` |
+| 공개 웹 (`/privacy`, `/terms`) | 현재 발행본을 **읽는다** (사본 없음) |
 | DEV `app_settings/legal_terms` | **동기화 완료** |
 | PROD `app_settings/legal_terms` | **PENDING — 출시 전 필수** |
+
+### [R7-PAYROLL-POLICY.5] 이번 개정이 건드리는 항목
+
+`privacy_policy` 하나가 아니다. **필수 항목 네 개**가 같은 날짜로 함께
+개정됐다 — `service_terms`, `privacy_policy`, `privacy_third_party`,
+`location_terms`. `marketing_consent`(선택)는 본문이 바뀌지 않았다.
+
+필수 항목의 발행본이 바뀌면 `evaluateReconsent` 가 그 항목을 다시 받으라고
+판정한다. 즉 **PROD 발행 시점에 전원이 재동의 화면을 본다.** 네 항목을 한
+날짜로 묶은 이유가 이것이다 — 따로 올리면 재동의가 네 번 일어난다.
 
 PROD 동기화 절차:
 
 ```
-# 1) PROD 서비스 계정으로 전환한 뒤
-node scripts/render-privacy.js --check     # 원문↔공개 웹 일치 확인
-# 2) PROD app_settings/legal_terms 의 privacy_policy 항목만
-#    원문 content/version 으로 갱신 (다른 약관 항목은 건드리지 않는다)
-# 3) 갱신 후 version 이 2026-09-26 인지, 본문에 account-deletion 이
-#    포함되는지 확인
+# 1) PROD 서비스 계정 / SUPER_ADMIN 으로 전환한 뒤
+# 2) 약관 관리 화면에서 네 항목을 각각 발행
+#    (발행 writer 는 callablePublishLegalRevision 하나뿐이다)
+# 3) 발행 후 legal_revisions/{itemId}__2026-10-08 네 건이 생겼는지,
+#    app_settings/legal_terms 의 projection 이 그것을 가리키는지 확인
 ```
 
 > PROD 변경은 별도 승인 후 수행한다. 이 문서는 절차만 고정한다.
+
+## 1-B. [R7-PAYROLL-POLICY.5] 약관이 아직 말할 수 없는 것 — RELEASE BLOCKER
+
+`[LEGAL-BLOCKER-BUSINESS-IDENTITY-PLACEHOLDER]`
+
+`service_terms` 제1조와 `location_terms` 의 사업자 정보가 아직
+`[... 기재 필요]` placeholder 다. 실제 상호·대표자명·소재지·사업자등록번호를
+**추측해서 채우지 않았다.** 약관이 당사자를 특정하지 못하면 제11조의 관할
+합의도 특정되지 않는다.
+
+| 자리 | 현재 값 |
+|---|---|
+| `service_terms` 제1조 대표자 | `[대표자명 기재 필요]` |
+| `service_terms` 제1조 사업장 소재지 | `[사업장 주소 기재 필요]` |
+| `service_terms` 제1조 사업자등록번호 | `[사업자등록번호 기재 필요]` |
+| `location_terms` 위치기반서비스사업자 | `[회사명 기재 필요]` |
+
+사용자가 실제 값을 주면 같은 날짜 개정으로 함께 채운다. 그때까지 이 blocker
+는 CLOSED 가 아니며, `payroll_policy_terms_wording_test` 가 placeholder 와 이
+문서의 blocker 표기를 **함께** 고정한다 — 한쪽만 사라지지 않게.
 
 ## 2. 공개 페이지
 
 - `https://alfit-89567.web.app/privacy` — 200, 인증 없음
 - `https://alfit-89567.web.app/account-deletion` — 200, 인증 없음
 - 두 페이지가 서로 링크된다
-- 방침을 고쳤다면 `node scripts/render-privacy.js` 후 hosting 재배포
+- 방침을 고쳤다면 **발행**만 하면 된다. 공개 페이지는 현재 발행본을 읽으므로
+  hosting 재배포가 필요하지 않다 (옛 `scripts/render-privacy.js` 는 두 번째
+  진실을 만들기 때문에 제거됐다)
 
 ## 3. Play Console 제출 항목
 
@@ -64,6 +95,28 @@ node scripts/render-privacy.js --check     # 원문↔공개 웹 일치 확인
 | 재가입 제한 식별자 | 부정가입 방지 | 30일 | 소스 확정 | 확정 |
 | 서비스 접속·이용 로그 | 보안·오류 분석·부정이용 방지 | 목적만 기술(기간·법률명 없음) | 통신비밀보호법 적용 대상 미확인 | **COUNSEL** |
 | ~~계약/청약철회·소비자 불만~~ | — | **삭제됨** | 전자상거래법 적용 근거 없음 | **REMOVED** |
+
+### [R7-PAYROLL-POLICY.5] 확인한 법령 원문 (확인일 2026-10-08)
+
+기억으로 조문 번호를 고정하지 않았다. 아래는 국가법령정보센터·고용노동부
+원문을 직접 열어 확인한 것이다.
+
+| 법령 / 조문 | 확인한 내용 | 공식 URL |
+|---|---|---|
+| 근로기준법 제42조 (계약 서류의 보존) | "사용자는 근로자 명부와 대통령령으로 정하는 근로계약에 관한 중요한 서류를 **3년간** 보존하여야 한다." | https://www.law.go.kr/LSW/lsLawLinkInfo.do?lsJoLnkSeq=1012792795&chrClsCd=010202 |
+| 근로기준법 시행령 제22조 제1항 | 보존 대상에 **제3호 "임금의 결정·지급방법과 임금계산의 기초에 관한 서류"** 포함. 같은 조 제2항 제8호: 그 밖의 서류는 완결한 날부터 기산 | https://www.law.go.kr/LSW/lumLsLinkPop.do?lspttninfSeq=70870&chrClsCd=010202 |
+| 근로기준법 제17조 (근로조건의 명시) | 명시·서면 교부 의무 주체는 **"사용자"**. 서면에 「전자문서 및 전자거래 기본법」 제2조제1호 전자문서 포함 | https://www.law.go.kr/lsLawLinkInfo.do?chrClsCd=010201&lsJoLnkSeq=1015677481 |
+| 근로기준법 제43조 제1항 (임금 지급) | "임금은 통화로 직접 근로자에게 **그 전액을** 지급하여야 한다." | https://www.law.go.kr/lsLinkCommonInfo.do?lsJoLnkSeq=1007688469 |
+| 근로기준법 제48조 (임금대장 및 임금명세서) | 제2항 — 사용자는 임금 지급 시 구성항목·계산방법·공제내역을 적은 임금명세서를 서면(전자문서 포함)으로 교부 | https://law.go.kr/lsLinkCommonInfo.do?lsJoLnkSeq=1012793113 |
+| 약관의 규제에 관한 법률 제7조 (면책조항의 금지) | **4개 호**. 제1호 — 사업자·이행보조자·피고용자의 **고의 또는 중대한 과실**로 인한 법률상 책임을 배제하는 조항은 **무효**. 제2호 — 상당한 이유 없이 손해배상 범위를 제한하거나 사업자가 부담할 위험을 고객에게 떠넘기는 조항도 무효 | https://www.law.go.kr/lsLawLinkInfo.do?lsJoLnkSeq=1000526556&chrClsCd=010202 |
+| 위치정보법 제9조 제1항 | 위치기반서비스사업(개인위치정보를 대상으로 하지 아니하는 것은 제외)을 하려는 자는 방송미디어통신위원회에 **신고** | https://www.law.go.kr/LSW//lsSideInfoP.do?lsiSeq=277359&joNo=0009&joBrNo=00&docCls=jo&urlMode=lsScJoRltInfoR |
+| 직업안정법 제2조의2 (정의) | 제2호 "직업소개" = 구인·구직 신청을 받아 탐색·모집하여 **고용계약이 성립되도록 알선**. 제5호 유료직업소개사업 = 무료가 아닌 직업소개사업. 제8호 직업정보제공사업 = 간행물·방송·컴퓨터통신 등으로 구인·구직 정보를 제공하는 사업 | https://law.go.kr/LSW/lsLawLinkInfo.do?lsJoLnkSeq=1000770093&chrClsCd=010202 |
+| 직업안정법 제19조 제1항 | 국내 유료직업소개사업은 주된 사업소 소재지 관할 시장·군수·구청장에게 **등록** | https://www.law.go.kr/LSW//lsSideInfoP.do?lsiSeq=259231&joNo=0019&joBrNo=00&docCls=jo&urlMode=lsScJoRltInfoR |
+| 고용노동부 빠른인터넷상담 (상담 ID 201410010910037831000) | "노동관계법에는 연장근로수당을 지급할 때, 10분 단위로 계산을 해야하는지, 1분 단위로 계산을 해야 하는지에 대한 규정은 없습니다. 다만, 상기의 규정에 의하여 **1분 단위로 계산을 하는 것이 바람직**할 것으로 사료됩니다." (근거로 든 조문: 근로기준법 제43조) | https://www.moel.go.kr/minwon/fastcounsel/fastcounselView.do?inetDcssMngId=201410010910037831000 |
+
+> 마지막 항목은 **빠른인터넷상담 답변**이다. 공식 질의회시(행정해석)나 판례가
+> 아니므로 그 등급으로 쓴다. 그래도 "분 단위 절사·반올림을 허용한다"는
+> 근거로는 쓸 수 없다는 점은 분명하다.
 
 ### 통신비밀보호법 3개월 제거 근거
 

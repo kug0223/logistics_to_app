@@ -330,10 +330,19 @@ void main() {
       // [PRIVACY-REWRITE.1] 개정 번호를 상수로 옮겼다 — 앱·공개 웹이 같은
       //   값을 보여야 하고, 두 군데에 적어 두면 다시 갈라진다.
       expect(privacyItem, contains('version: kPrivacyPolicyRevision'));
-      expect(terms, contains("const kPrivacyPolicyRevision = '2026-09-26';"));
-      // 내용이 바뀌지 않은 항목은 그대로다.
+      // [R7-PAYROLL-POLICY.5] 날짜를 박지 않는다 — 모양만 고정한다.
+      //   이 파일이 지키는 것은 "개정 번호가 상수 한 곳에서 온다" 이고,
+      //   값 자체는 개정마다 바뀐다.
+      expect(RegExp(r"const kPrivacyPolicyRevision = '\d{4}-\d{2}-\d{2}';")
+          .hasMatch(terms), isTrue);
+      // [R7-PAYROLL-POLICY.5] service_terms 도 함께 개정됐다 — 제6조(서비스의
+      //   내용)를 실제 기능대로 고치고 제8·9조를 신설했다. 더 이상 '2026.08'
+      //   이 아니며, 같은 개정의 필수 항목들과 같은 날짜를 가리킨다.
       final serviceItem = _sliceOf(terms, "id: 'service_terms'", 'order: 1');
-      expect(serviceItem, contains("version: '2026.08'"));
+      expect(serviceItem, contains('version: kLegalPolicyRevision'));
+      // 내용이 바뀌지 않은 선택 항목은 그대로다.
+      final marketing = _sliceOf(terms, "id: 'marketing_consent'", 'order: 5');
+      expect(marketing, contains("version: '2026.08'"));
     });
   });
 
