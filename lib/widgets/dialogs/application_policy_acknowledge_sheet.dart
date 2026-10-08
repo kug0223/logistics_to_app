@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/attendance_policy_disclosure.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -47,16 +48,6 @@ class ApplicationPolicyAcknowledgeSheet {
     return result ?? false;
   }
 }
-
-/// 급여에 영향하는 항목만 보여준다 — 7개를 전부 늘어놓지 않는다.
-///   조출 관련 두 항목은 지각·조퇴·연장만큼 자주 문제가 되지 않아 접는다.
-List<(String, String)> _rows(AttendanceRules r) => [
-      ('지각 유예', '${r.lateGrace}분'),
-      ('지각 처리', '${r.lateUnit}분 단위'),
-      ('조퇴 처리', '${r.earlyLeaveUnit}분 단위'),
-      ('연장 처리', '${r.overtimeUnit}분 단위'),
-      ('조출 인정', '${r.earlyWindow}분 이내 정시'),
-    ];
 
 class _Sheet extends StatefulWidget {
   const _Sheet({
@@ -212,20 +203,26 @@ class _SheetState extends State<_Sheet> {
                 color: highlight ? AppColors.brand : AppColors.grey500),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-          for (final r in _rows(rules))
+          // [R7-PAYROLL-POLICY.4B] 근로자 화면·계약서와 **같은 목록**을 쓴다.
+          //   관리자가 확인하는 것이 근로자가 본 것과 달라서는 안 된다.
+          for (final line in attendancePolicyLines(rules))
             Padding(
               padding:
                   EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 3)),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(r.$1,
+                  SizedBox(
+                    width: ResponsiveHelper.spacing(context, 80),
+                    child: Text(line.label,
                         style: ResponsiveHelper.smallStyle(context,
                             color: AppColors.grey700)),
                   ),
-                  Text(r.$2,
-                      style: ResponsiveHelper.smallStyle(context)
-                          .copyWith(fontWeight: FontWeight.w600)),
+                  Expanded(
+                    child: Text(line.value,
+                        style: ResponsiveHelper.smallStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                  ),
                 ],
               ),
             ),

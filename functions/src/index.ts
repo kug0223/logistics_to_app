@@ -10053,16 +10053,10 @@ export const callableConfirmAttendancePolicy = onCall(
     }
     const bizData = bizSnap.data()!;
     const callerRole = callerSnap.data()?.role as string | undefined;
-    // 정책을 **수정할 수 있는 사람**과 같은 경계다(firestore.rules `isAdminOf`).
-    //   SubAdmin 에게 새 권한을 주지 않는다 — 기준 수정 권한이 없는 사람이
-    //   기준을 확인하면 그 확인이 책임 근거가 되지 못한다.
-    const bizAdminIds = (bizData["adminIds"] as string[] | undefined) ?? [];
-    const bizOwnerId = bizData["ownerId"] as string | undefined;
-    if (callerRole !== "SUPER_ADMIN" &&
-        !bizAdminIds.includes(callerUid) && bizOwnerId !== callerUid) {
-      throw new HttpsError(
-        "permission-denied", "사업장 관리자만 기준을 확인할 수 있습니다.");
-    }
+    // [R7-PAYROLL-POLICY.4B] 사업장 측 행위자만 — 지원서 확인 writer 와
+    //   **같은 helper** 를 쓴다. 두 writer 가 다른 경계를 가지면 "사업장이
+    //   확인했다" 는 말의 뜻이 두 가지가 된다.
+    srvAssertBusinessPolicyActor(callerUid, callerRole, bizData);
 
     // [§28 Option A] 기준이 없으면 **서버가 기본값을 만들어 주지 않는다.**
     //   없는 것을 사업장 정책처럼 생성하면 ownership 증거가 다시 무너진다.
@@ -10080,6 +10074,9 @@ export const callableConfirmAttendancePolicy = onCall(
     const confirmation: Record<string, unknown> = {
       confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
       confirmedBy: callerUid,
+      // [R7-PAYROLL-POLICY.4B] 위 `srvAssertBusinessPolicyActor` 가 검증한
+      //   사실을 기록에 남긴다 — 문서만 보고도 사업장 측 확인임을 알 수 있다.
+      actorRole: POLICY_ACTOR_BUSINESS_ADMIN,
     };
     // 지금 저장된 값을 **그대로** 적는다. 클라이언트가 보낸 값을 쓰지 않는다 —
     //   표시한 값과 저장된 값이 다르면 확인 기록이 거짓이 된다.
@@ -10146,14 +10143,9 @@ export const callableAcknowledgeApplicationPolicy = onCall(
     }
     const bizData = bizSnap.data()!;
     const callerRole = callerSnap.data()?.role as string | undefined;
-    const ackAdminIds = (bizData["adminIds"] as string[] | undefined) ?? [];
-    const ackOwnerId = bizData["ownerId"] as string | undefined;
-    if (callerRole !== "SUPER_ADMIN" &&
-        !ackAdminIds.includes(callerUid) && ackOwnerId !== callerUid) {
-      throw new HttpsError(
-        "permission-denied",
-        "사업장 관리자만 기준을 확인할 수 있습니다.");
-    }
+    // [R7-PAYROLL-POLICY.4B] 사업장 기준 확인과 **같은 actor 경계**다.
+    //   이것도 "사업장이 이 약속의 기준을 채택했다" 는 기록이기 때문이다.
+    srvAssertBusinessPolicyActor(callerUid, callerRole, bizData);
     // 소속이 다른 지원서의 존재 여부를 알려주지 않는다 — 기존 경로와 같은 규칙.
     if (!appSnap.exists ||
         (appSnap.data()?.["businessId"] as string | undefined) !== businessId) {
@@ -35147,6 +35139,16 @@ const ATTENDANCE_POLICY_MATERIAL_FIELDS = [
   "earlyLeaveUnit",
 ] as const;
 
+/**
+ * [R7-PAYROLL-POLICY.4B] 정책 확인 기록의 **행위자 종류**.
+ *
+ *   사업장 소유자/공동관리자(`businesses.ownerId` · `adminIds`)만 사업장의
+ *   정책 채택을 결정할 수 있다. 값이 하나뿐인 enum 인 이유는, 지금
+ *   **인정되는 종류가 하나**라는 사실 자체가 계약이기 때문이다. 다른 종류를
+ *   추가하려면 gate 를 함께 고쳐야 하고, 그때 이 상수가 그 자리를 보여준다.
+ */
+const POLICY_ACTOR_BUSINESS_ADMIN = "business_admin";
+
 /** Dart `AttendanceRules` 와 같은 기본값. 두 벌이 되면 정책이 갈라진다. */
 const ATTENDANCE_POLICY_DEFAULTS: Record<string, number> = {
   earlyWindow: 30,
@@ -35258,6 +35260,18 @@ function srvPolicyEvidenceCovers(
   if (e[atKey] == null || typeof by !== "string" || by.length === 0) {
     return false;
   }
+  // [R7-PAYROLL-POLICY.4B] **사업장 측 행위자**의 확인만 인정한다.
+  //
+  //   "이 기능을 실행할 수 있다" 와 "사업장이 이 정책을 채택했다" 는 다른
+  //   사실이다. 플랫폼 운영자(SUPER_ADMIN)가 기술적으로 호출할 수 있다는
+  //   이유로 그 행위를 사업장의 선택으로 읽으면 책임 귀속이 위조된다.
+  //   계약서 날인이 **누가 발송했는지가 아니라 사업장 사업주의 것**이어야
+  //   하는 것과 같은 규칙이다(P4.4C-SIGNER-01).
+  //
+  //   그래서 기록 자체가 행위자의 **종류**를 담고, gate 는 그것을 본다.
+  //   이 필드가 없는 기록(이 Phase 이전에 쓰인 것)은 행위자가 사업장 측
+  //   이었음을 증명할 수 없으므로 인정하지 않는다 — 다시 확인하면 된다.
+  if (e["actorRole"] !== POLICY_ACTOR_BUSINESS_ADMIN) return false;
   for (const k of ATTENDANCE_POLICY_MATERIAL_FIELDS) {
     if (e[k] !== srvAttendancePolicyValue(target, k)) return false;
   }
@@ -35346,7 +35360,52 @@ function srvBuildPolicyAcknowledgement(
   }
   out["acknowledgedAt"] = admin.firestore.FieldValue.serverTimestamp();
   out["acknowledgedBy"] = actorUid;
+  // [R7-PAYROLL-POLICY.4B] 이 기록을 만든 사람이 **사업장 측**이라는 사실.
+  //   이 writer 들은 호출 전에 `srvAssertBusinessPolicyActor` 로 그것을
+  //   검증한다 — 검증 없이 이 값을 적는 경로를 만들지 않는다.
+  out["actorRole"] = POLICY_ACTOR_BUSINESS_ADMIN;
   return out;
+}
+
+/**
+ * [R7-PAYROLL-POLICY.4B] 정책 채택을 결정할 수 있는 **사업장 측 행위자**인가.
+ *
+ *   두 writer(사업장 기준 확인 · 지원서 기준 확인)가 같은 경계를 쓴다.
+ *   하나만 넓어지면 "사업장이 확인했다" 는 말의 뜻이 두 가지가 된다.
+ *
+ *   경계는 firestore.rules `isAdminOf` 와 같다 — `ownerId` 또는 `adminIds`.
+ *   · SubAdmin 제외: 기준을 **수정**할 수 없는 사람의 확인은 책임 근거가
+ *     되지 못한다. 새 capability 도 만들지 않는다.
+ *   · SUPER_ADMIN 제외: 플랫폼 운영자다. 운영지원·복구 권한이 있다는 것과
+ *     사업장을 대신해 정책을 채택한다는 것은 다르다. 위임 근거가 제품에
+ *     없으므로(현행 writer 중 사업장 identity 를 운영자로 대체하는 것이
+ *     하나도 없다) 같은 의미로 취급하지 않는다. 막힌 사업장의 복구 경로는
+ *     **관리자를 복구하는 것**이고, 그 뒤 사업장이 직접 확인한다.
+ *
+ * @param {string} callerUid 호출자
+ * @param {string | undefined} callerRole 호출자 role
+ * @param {FirebaseFirestore.DocumentData} bizData 사업장 문서
+ * @return {void} 사업장 측 행위자가 아니면 throw
+ */
+function srvAssertBusinessPolicyActor(
+  callerUid: string,
+  callerRole: string | undefined,
+  bizData: FirebaseFirestore.DocumentData
+): void {
+  const adminIds = (bizData["adminIds"] as string[] | undefined) ?? [];
+  const ownerId = bizData["ownerId"] as string | undefined;
+  if (adminIds.includes(callerUid) || ownerId === callerUid) return;
+  if (callerRole === "SUPER_ADMIN") {
+    // 운영자에게 "권한이 없다" 고만 말하면 버그로 읽힌다 — 왜인지 말한다.
+    throw new HttpsError(
+      "permission-denied",
+      "근태·급여 기준 확인은 사업장 관리자만 할 수 있습니다. " +
+        "플랫폼 운영자 확인은 사업장의 정책 채택으로 기록되지 않습니다.",
+      {reason: "PLATFORM_ACTOR_NOT_BUSINESS_ACKNOWLEDGEMENT"}
+    );
+  }
+  throw new HttpsError(
+    "permission-denied", "사업장 관리자만 기준을 확인할 수 있습니다.");
 }
 
 /**

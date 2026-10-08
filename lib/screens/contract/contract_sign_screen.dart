@@ -16,6 +16,7 @@ import '../../models/core/insurance_rate_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/contract_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/attendance_policy_disclosure.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/contract/signature_pad_widget.dart';
@@ -834,23 +835,13 @@ class ContractTemplateWidget extends StatelessWidget {
             //   근로자가 이 숫자를 계약서에서 확인할 수 없으면, 지각 1분이
             //   30분 공제가 되는 이유를 알 수 없다.
             //   값은 Application snapshot 에서만 온다 — 없으면 적지 않는다.
-            if (snapshot.attendancePolicy != null) ...[
+            // [R7-PAYROLL-POLICY.4B] 다섯 줄에서 **7개 전부**로. 빠져 있던
+            //   조출 단위·늦게 퇴근 인정 범위도 지급액을 바꾼다.
+            //   항목·문구는 근로자 수락 화면·PDF 와 같은 곳에서 온다.
+            if (snapshot.attendancePolicy case final policy?) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              _InfoRow(
-                  label: '지각 유예',
-                  value: '${snapshot.attendancePolicy!.lateGrace}분'),
-              _InfoRow(
-                  label: '지각 처리',
-                  value: '${snapshot.attendancePolicy!.lateUnit}분 단위'),
-              _InfoRow(
-                  label: '조퇴 처리',
-                  value: '${snapshot.attendancePolicy!.earlyLeaveUnit}분 단위'),
-              _InfoRow(
-                  label: '연장 처리',
-                  value: '${snapshot.attendancePolicy!.overtimeUnit}분 단위'),
-              _InfoRow(
-                  label: '조출 인정',
-                  value: '${snapshot.attendancePolicy!.earlyWindow}분 이내 정시'),
+              for (final line in attendancePolicyLines(policy))
+                _InfoRow(label: line.label, value: line.value),
             ],
           ]),
 

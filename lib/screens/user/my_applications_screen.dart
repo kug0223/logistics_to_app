@@ -9,6 +9,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart' show AttendanceRules;
+import '../../utils/attendance_policy_disclosure.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/monthly_review_model.dart';
@@ -1902,14 +1903,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   ///
   /// 값을 모르면 **비워 둔다**. 모르는 조건을 `-`나 `0원`으로 채우면
   /// 근로자가 없는 사실을 근거로 고르게 된다.
-  /// [R7-PAYROLL-POLICY.4A §30] 이 약속에 고정된 근태·급여 기준 한 칸.
-  Widget _attendancePolicyBlock(AttendanceRules rules) {
-    final rows = <(String, String)>[
-      ('지각 유예', '${rules.lateGrace}분'),
-      ('지각 처리', '${rules.lateUnit}분 단위'),
-      ('조퇴 처리', '${rules.earlyLeaveUnit}분 단위'),
-      ('연장 처리', '${rules.overtimeUnit}분 단위'),
-    ];
+  /// [R7-PAYROLL-POLICY.4B] 이 약속에 고정된 근태·급여 기준 — **7개 전부**.
+  ///
+  ///   `.4A` 는 네 항목만 보여줬다. 그런데 급여에 영향하는 숫자는 7개이고,
+  ///   빠진 셋(일찍 도착·조출 단위·늦게 퇴근 인정 범위)도 실제 지급액을
+  ///   바꾼다. 항목·문구는 `attendance_policy_disclosure` 한 곳에서 온다 —
+  ///   계약서·PDF·관리자 확인 시트가 같은 목록을 쓴다.
+  ///
+  ///   값은 전달받은 snapshot 만 쓴다. 사업장 문서를 다시 읽지 않는다.
+  Widget _attendancePolicyBlock(AttendanceRules? rules) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -1921,32 +1923,49 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('근태·급여 처리 기준',
+          const Text(kAttendancePolicyTitle,
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          for (final r in rows)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(r.$1,
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.grey700)),
-                  ),
-                  Text(r.$2,
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w600)),
-                ],
+          // 기록이 없으면 **사업장 현재 기준으로 채우지 않는다.**
+          if (rules == null)
+            const Text(kAttendancePolicyUnknownNote,
+                style: TextStyle(fontSize: 12, color: AppColors.grey700))
+          else ...[
+            for (final g in attendancePolicyGroups(rules)) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 2),
+                child: Text(g.title,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.grey600)),
               ),
-            ),
-          const SizedBox(height: 2),
-          // 근로자에게 가는 문구다 — 폰트 하한(12px)을 지킨다.
-          const Text(
-            '이 기준은 이 근무에 고정됩니다. 사업장이 이후에 기준을 바꿔도 '
-            '적용되지 않습니다.',
-            style: TextStyle(fontSize: 12, color: AppColors.grey600),
-          ),
+              for (final line in g.lines)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 78,
+                        child: Text(line.label,
+                            style: const TextStyle(
+                                fontSize: 12, color: AppColors.grey700)),
+                      ),
+                      Expanded(
+                        child: Text(line.value,
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            const SizedBox(height: 4),
+            // 근로자에게 가는 문구다 — 폰트 하한(12px)을 지킨다.
+            const Text(kAttendancePolicyFrozenNote,
+                style: TextStyle(fontSize: 12, color: AppColors.grey600)),
+          ],
         ],
       ),
     );
@@ -2119,10 +2138,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           //   초대·제안을 보낸 시점의 기준이고, 사업장이 그 뒤에 기준을 바꿔도
           //   이 약속에는 적용되지 않는다. 지원서 문서에 이미 있으므로
           //   사업장 문서를 다시 읽지 않는다.
-          if (offerApp.attendancePolicySnapshot case final snap?) ...[
-            const SizedBox(height: 12),
-            _attendancePolicyBlock(snap),
-          ],
+          // [R7-PAYROLL-POLICY.4B] 기록이 없어도 **그 사실을 말한다** —
+          //   아무것도 보여주지 않으면 근로자는 기준이 없는지 화면이 빠뜨린
+          //   것인지 알 수 없고, 사업장 현재 설정으로 대신 채우는 것은 금지다.
+          const SizedBox(height: 12),
+          _attendancePolicyBlock(offerApp.attendancePolicySnapshot),
           const SizedBox(height: 12),
           DocumentAccessConsent.card(item.application.businessName),
         ],

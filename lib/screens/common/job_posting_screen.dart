@@ -24,6 +24,7 @@ import '../../models/core/slot_model.dart';
 import '../../models/core/application_model.dart';
 
 // Utils
+import '../../utils/attendance_policy_disclosure.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -2005,17 +2006,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     );
   }
 
+  /// [R7-PAYROLL-POLICY.4B] 항목·문구는 근로자 수락 화면·계약서와 같은 곳에서
+  ///   온다. 여기만 다른 라벨을 쓰면 지원 전과 지원 후가 다른 말을 한다.
+  ///
+  ///   단 **값의 출처는 다르다** — 여기는 지원 전이므로 사업장의 현재 기준이고
+  ///   (§27), 지원·초대 이후 화면은 그 약속에 고정된 snapshot 이다.
   Future<void> _showAttendancePolicyDetail(
       BuildContext context, AttendanceRules rules) async {
-    final rows = <(String, String)>[
-      ('지각 유예', '${rules.lateGrace}분'),
-      ('지각 처리', '${rules.lateUnit}분 단위'),
-      ('조퇴 처리', '${rules.earlyLeaveUnit}분 단위'),
-      ('연장 처리', '${rules.overtimeUnit}분 단위'),
-      ('조출 인정 범위', '${rules.earlyWindow}분'),
-      ('조출 처리', '${rules.earlyArrivalUnit}분 단위'),
-      ('정시 퇴근 인정 범위', '${rules.lateWindow}분'),
-    ];
     await DialogHelper.showSheet<void>(
       context,
       isScrollControlled: true,
@@ -2025,32 +2022,46 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('근태·급여 처리 기준',
+            Text(kAttendancePolicyTitle,
                 style: ResponsiveHelper.subtitleStyle(ctx)
                     .copyWith(fontWeight: FontWeight.bold)),
             SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-            for (final r in rows)
-              Padding(
-                padding:
-                    EdgeInsets.only(bottom: ResponsiveHelper.spacing(ctx, 8)),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(r.$1,
-                          style: ResponsiveHelper.smallStyle(ctx,
-                              color: AppColors.grey700)),
-                    ),
-                    Text(r.$2,
-                        style: ResponsiveHelper.smallStyle(ctx)
-                            .copyWith(fontWeight: FontWeight.w600)),
-                  ],
+            for (final g in attendancePolicyGroups(rules)) ...[
+              Text(g.title,
+                  style: ResponsiveHelper.smallStyle(ctx,
+                          color: AppColors.grey600)
+                      .copyWith(fontWeight: FontWeight.w600)),
+              SizedBox(height: ResponsiveHelper.spacing(ctx, 6)),
+              for (final line in g.lines)
+                Padding(
+                  padding:
+                      EdgeInsets.only(bottom: ResponsiveHelper.spacing(ctx, 8)),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: ResponsiveHelper.spacing(ctx, 84),
+                        child: Text(line.label,
+                            style: ResponsiveHelper.smallStyle(ctx,
+                                color: AppColors.grey700)),
+                      ),
+                      Expanded(
+                        child: Text(line.value,
+                            style: ResponsiveHelper.smallStyle(ctx)
+                                .copyWith(fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            SizedBox(height: ResponsiveHelper.spacing(ctx, 4)),
+            ],
+            Text(kAttendancePolicyEffectNote,
+                style: ResponsiveHelper.smallStyle(ctx,
+                    color: AppColors.grey700)),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 6)),
             Text(
               '지원하면 이 기준이 지원 시점 조건으로 고정됩니다. '
               '사업장이 이후에 기준을 바꿔도 이미 한 지원에는 적용되지 않습니다.',
-              style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.grey600),
+              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
             ),
           ],
         ),

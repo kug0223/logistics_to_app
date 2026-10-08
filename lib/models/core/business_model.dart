@@ -173,7 +173,11 @@ class AttendancePolicyConfirmation {
     required this.earlyLeaveUnit,
     this.confirmedAt,
     this.confirmedBy,
+    this.actorRole,
   });
+
+  /// [R7-PAYROLL-POLICY.4B] 사업장 측 행위자 — 유일하게 인정되는 종류.
+  static const String actorBusinessAdmin = 'business_admin';
 
   final int earlyWindow;
   final int earlyArrivalUnit;
@@ -188,6 +192,14 @@ class AttendancePolicyConfirmation {
 
   /// 실제 확인한 관리자 uid. 소유자 uid 가 아니다.
   final String? confirmedBy;
+
+  /// [R7-PAYROLL-POLICY.4B] 이 기록을 만든 행위자의 **종류**.
+  ///
+  ///   "이 기능을 실행할 수 있다" 와 "사업장이 이 정책을 채택했다" 는 다른
+  ///   사실이다. 플랫폼 운영자의 행위를 사업장의 선택으로 읽으면 책임 귀속이
+  ///   위조되므로, 기록이 종류를 담고 판정이 그것을 본다.
+  ///   값이 없으면(이 Phase 이전 기록) 사업장 측이었음을 증명할 수 없다.
+  final String? actorRole;
 
   /// [R7-PAYROLL-POLICY.4A] 지원서별 확인 기록 — 같은 모양, 다른 키 이름.
   ///
@@ -216,12 +228,16 @@ class AttendancePolicyConfirmation {
       earlyLeaveUnit: v('earlyLeaveUnit', 30),
       confirmedAt: _parseTimestamp(map['confirmedAt']),
       confirmedBy: map['confirmedBy'] as String?,
+      actorRole: map['actorRole'] as String?,
     );
   }
 
-  /// 확인 행위 자체가 성립했는가 — 시각과 행위자가 모두 있어야 한다.
+  /// 확인 행위 자체가 성립했는가 — 시각·행위자·**행위자 종류**가 모두 있어야
+  /// 한다. 서버 `srvPolicyEvidenceCovers` 와 같은 술어다.
   bool get hasEvidence =>
-      confirmedAt != null && (confirmedBy?.isNotEmpty ?? false);
+      confirmedAt != null &&
+      (confirmedBy?.isNotEmpty ?? false) &&
+      actorRole == actorBusinessAdmin;
 
   /// 이 기록이 **지금 이 기준**의 확인인가. 하나라도 다르면 아니다.
   bool matches(AttendanceRules rules) =>

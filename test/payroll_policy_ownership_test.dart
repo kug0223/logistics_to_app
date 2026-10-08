@@ -263,8 +263,13 @@ void main() {
 
     test('OWN-11 확인 권한은 수정 권한과 같다 — SubAdmin 제외', () {
       // firestore.rules 의 `isAdminOf` 와 같은 경계다.
-      expect(cfm.contains('bizAdminIds.includes(callerUid)'), isTrue);
-      expect(cfm.contains('bizOwnerId !== callerUid'), isTrue);
+      // [R7-PAYROLL-POLICY.4B] 경계가 공용 helper 로 빠졌고, 플랫폼 운영자도
+      //   제외됐다 — 지원서 확인 writer 와 **같은 함수**를 쓴다.
+      expect(cfm.contains('srvAssertBusinessPolicyActor('), isTrue);
+      final actorGate = _code(
+          _slice(cfRaw, 'function srvAssertBusinessPolicyActor(', '\n/**'));
+      expect(actorGate.contains('adminIds.includes(callerUid)'), isTrue);
+      expect(actorGate.contains('ownerId === callerUid'), isTrue);
       // assertBizAdmin 은 SubAdmin 까지 통과시키므로 쓰지 않는다.
       expect(cfm.contains('assertBizAdmin('), isFalse,
           reason: '기준을 수정할 수 없는 사람의 확인은 책임 근거가 되지 못한다');
@@ -443,12 +448,18 @@ void main() {
     test('DISC-5 화면과 PDF 가 같은 것을 말한다', () {
       final sign = _code(_src('lib/screens/contract/contract_sign_screen.dart'));
       final pdf = _code(_src('lib/screens/contract/contract_pdf_builder.dart'));
+      // [R7-PAYROLL-POLICY.4B] 라벨이 **공용 formatter** 로 빠졌다. 지키려던
+      //   것은 둘이 같은 것을 말한다는 것이고, 이제 같은 목록을 쓰므로
+      //   한쪽만 달라질 수 없다. 항목 자체는 그 formatter 쪽에서 고정한다.
       for (final body in [sign, pdf]) {
-        expect(body.contains('snapshot.attendancePolicy != null'), isTrue,
-            reason: '없는 값을 기본값으로 채워 계약 내용으로 만들지 않는다');
-        for (final label in ['지각 유예', '지각 처리', '조퇴 처리', '연장 처리']) {
-          expect(body.contains(label), isTrue, reason: '$label 누락');
-        }
+        expect(body.contains('snapshot.attendancePolicy case final policy?'),
+            isTrue, reason: '없는 값을 기본값으로 채워 계약 내용으로 만들지 않는다');
+        expect(body.contains('attendancePolicyLines(policy)'), isTrue);
+      }
+      for (final label in ['지각 유예', '지각 처리', '조퇴 처리', '연장 인정']) {
+        expect(
+            _src('lib/utils/attendance_policy_disclosure.dart').contains(label),
+            isTrue, reason: '$label 누락');
       }
     });
 

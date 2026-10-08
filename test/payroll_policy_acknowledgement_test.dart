@@ -73,9 +73,12 @@ String _callable(String ts, String name) =>
     _slice(ts, 'export const $name = onCall(', '\nexport const ');
 
 /// 7개 숫자가 같은 확인 기록을 만든다.
+/// [R7-PAYROLL-POLICY.4B] 확인 기록에 **행위자 종류**가 들어갔다.
+///   사업장 측 확인만 인정되므로 유효 기록은 그 값을 갖는다.
 AttendancePolicyConfirmation _evidenceFor(AttendanceRules r,
         {String by = 'admin-1'}) =>
     AttendancePolicyConfirmation(
+      actorRole: AttendancePolicyConfirmation.actorBusinessAdmin,
       earlyWindow: r.earlyWindow,
       earlyArrivalUnit: r.earlyArrivalUnit,
       lateGrace: r.lateGrace,
@@ -242,8 +245,13 @@ void main() {
     });
 
     test('OWN-18 확인 권한은 기준 수정 권한과 같다', () {
-      expect(ackCf.contains('ackAdminIds.includes(callerUid)'), isTrue);
-      expect(ackCf.contains('ackOwnerId !== callerUid'), isTrue);
+      // [R7-PAYROLL-POLICY.4B] 경계가 **공용 helper** 로 빠졌다. 지키려던
+      //   계약은 그대로다 — 두 writer 가 같은 경계를 쓰고, SubAdmin 은 제외다.
+      expect(ackCf.contains('srvAssertBusinessPolicyActor('), isTrue);
+      final actorGate = _code(
+          _slice(cfRaw, 'function srvAssertBusinessPolicyActor(', '\n/**'));
+      expect(actorGate.contains('adminIds.includes(callerUid)'), isTrue);
+      expect(actorGate.contains('ownerId === callerUid'), isTrue);
       expect(ackCf.contains('assertBizAdmin('), isFalse,
           reason: 'SubAdmin 은 기준을 수정할 수 없으므로 채택 결정도 할 수 없다');
       // 클라이언트가 확인할 값을 보내지 않는다 — 서버가 지원서에서 읽는다.
@@ -385,13 +393,23 @@ void main() {
   group('disclosure', () {
     test('DISC-8 근로자 수락 화면이 고정된 기준을 보여준다', () {
       final mine = _code(_src('lib/screens/user/my_applications_screen.dart'));
-      expect(mine.contains('offerApp.attendancePolicySnapshot case final snap?'),
+      // [R7-PAYROLL-POLICY.4B] 기록이 없을 때도 **그 사실을 말한다** —
+      //   조건부로 감추는 대신 항상 그리고, null 이면 안내를 보여준다.
+      expect(
+          mine.contains(
+              '_attendancePolicyBlock(offerApp.attendancePolicySnapshot)'),
           isTrue);
-      expect(mine.contains('_attendancePolicyBlock(snap)'), isTrue);
+      expect(mine.contains('attendancePolicyGroups('), isTrue,
+          reason: '7개 전부를 공용 formatter 에서 받는다');
       // 사업장 문서를 다시 읽지 않는다.
       expect(mine.contains('getBusinessById'), isFalse,
           reason: '이미 지원서에 있는 값을 위해 왕복을 더하지 않는다');
-      expect(mine.contains('이 기준은 이 근무에 고정됩니다'), isTrue);
+      // [R7-PAYROLL-POLICY.4B] 고정 안내 문구도 공용 상수로 빠졌다.
+      expect(mine.contains('kAttendancePolicyFrozenNote'), isTrue);
+      expect(
+          _src('lib/utils/attendance_policy_disclosure.dart')
+              .contains('이 기준은 이 근무에 고정됩니다'),
+          isTrue);
     });
 
     test('DISC-9 관리자 확정 차단이 그 지원자에서 해결된다', () {

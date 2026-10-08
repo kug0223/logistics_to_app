@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../../models/core/contract_template_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/insurance_rate_model.dart';
+import '../../utils/attendance_policy_disclosure.dart';
 
 /// PDF 빌드 — 쌍방 서명 완료 시 호출
 class ContractPdfBuilder {
@@ -108,18 +109,12 @@ class ContractPdfBuilder {
               _row('공제 방식', InsuranceRateModel.typeLabel(snapshot.taxDeductionType), baseStyle, boldStyle),
             // [R7-PAYROLL-POLICY.4] 화면과 PDF 가 같은 것을 말해야 한다 —
             //   서명된 문서가 화면보다 적게 적혀 있으면 안 된다.
-            if (snapshot.attendancePolicy != null) ...[
-              _row('지각 유예', '${snapshot.attendancePolicy!.lateGrace}분',
-                  baseStyle, boldStyle),
-              _row('지각 처리', '${snapshot.attendancePolicy!.lateUnit}분 단위',
-                  baseStyle, boldStyle),
-              _row('조퇴 처리', '${snapshot.attendancePolicy!.earlyLeaveUnit}분 단위',
-                  baseStyle, boldStyle),
-              _row('연장 처리', '${snapshot.attendancePolicy!.overtimeUnit}분 단위',
-                  baseStyle, boldStyle),
-              _row('조출 인정', '${snapshot.attendancePolicy!.earlyWindow}분 이내 정시',
-                  baseStyle, boldStyle),
-            ],
+            // [R7-PAYROLL-POLICY.4B] 그래서 항목 목록을 손으로 적지 않고
+            //   화면과 **같은 formatter** 에서 받는다. 한쪽만 7개가 되는 일이
+            //   구조적으로 생기지 않는다.
+            if (snapshot.attendancePolicy case final policy?)
+              ...attendancePolicyLines(policy).map(
+                  (line) => _row(line.label, line.value, baseStyle, boldStyle)),
           ], fontBold),
           // 템플릿 조항 동적 렌더링
           ...articles.map((a) => pw.Column(children: [
