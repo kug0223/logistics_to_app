@@ -189,6 +189,20 @@ class AttendancePolicyConfirmation {
   /// 실제 확인한 관리자 uid. 소유자 uid 가 아니다.
   final String? confirmedBy;
 
+  /// [R7-PAYROLL-POLICY.4A] 지원서별 확인 기록 — 같은 모양, 다른 키 이름.
+  ///
+  ///   `attendancePolicyAcknowledgement` 는 "관리자가 **이 지원서의** 기준을
+  ///   확인했다" 는 기록이다. 담는 그릇이 다르므로 actor·시각 이름도 다르다.
+  ///   비교 로직([matches])은 같은 것을 쓴다.
+  static AttendancePolicyConfirmation? acknowledgementFromMap(
+      Map<String, dynamic>? map) {
+    if (map == null) return null;
+    final normalized = Map<String, dynamic>.from(map);
+    normalized['confirmedAt'] = map['acknowledgedAt'];
+    normalized['confirmedBy'] = map['acknowledgedBy'];
+    return fromMap(normalized);
+  }
+
   static AttendancePolicyConfirmation? fromMap(Map<String, dynamic>? map) {
     if (map == null) return null;
     int v(String k, int dflt) => (map[k] as num?)?.toInt() ?? dflt;

@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../models/core/application_model.dart';
+import '../../models/core/business_model.dart' show AttendanceRules;
 import '../../models/core/attendance_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/monthly_review_model.dart';
@@ -1901,6 +1902,56 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   ///
   /// 값을 모르면 **비워 둔다**. 모르는 조건을 `-`나 `0원`으로 채우면
   /// 근로자가 없는 사실을 근거로 고르게 된다.
+  /// [R7-PAYROLL-POLICY.4A §30] 이 약속에 고정된 근태·급여 기준 한 칸.
+  Widget _attendancePolicyBlock(AttendanceRules rules) {
+    final rows = <(String, String)>[
+      ('지각 유예', '${rules.lateGrace}분'),
+      ('지각 처리', '${rules.lateUnit}분 단위'),
+      ('조퇴 처리', '${rules.earlyLeaveUnit}분 단위'),
+      ('연장 처리', '${rules.overtimeUnit}분 단위'),
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('근태·급여 처리 기준',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          for (final r in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(r.$1,
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.grey700)),
+                  ),
+                  Text(r.$2,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          const SizedBox(height: 2),
+          // 근로자에게 가는 문구다 — 폰트 하한(12px)을 지킨다.
+          const Text(
+            '이 기준은 이 근무에 고정됩니다. 사업장이 이후에 기준을 바꿔도 '
+            '적용되지 않습니다.',
+            style: TextStyle(fontSize: 12, color: AppColors.grey600),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _offerComparisonRow({
     required String label,
     required String workType,
@@ -1983,6 +2034,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       if (!ok || !mounted) return;
     }
 
+    // [R7-PAYROLL-POLICY.4A §30] 이 약속에 **고정된** 근태·급여 기준.
+    //
+    //   숫자를 전부 늘어놓지 않는다 — 급여에 가장 자주 영향하는 네 항목만
+    //   보여주고, 그 기준이 이 약속에 묶여 있다는 사실을 말한다.
+    //   값의 출처는 `Application.attendancePolicySnapshot` 하나다.
+    //   사업장의 현재 설정을 읽어 보여주면 수락 뒤 실제 계산과 달라진다.
+
     // [CROSS-DOMAIN-R5.3B] 제안이면 A와 B를 **나란히** 보여주고 고르게 한다.
     //   "업무를 바로 변경합니다"가 아니다 — 근로자가 B를 확정하고 A를 접는 것이다.
     //   A는 같은 목록에 PENDING으로 함께 있다. 못 찾으면 비교를 생략하되
@@ -2056,6 +2114,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             ),
           ] else
             const Text('이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.'),
+          // [R7-PAYROLL-POLICY.4A §22·§23·§30] 수락 전에 **이 약속에 고정된**
+          //   근태·급여 기준을 볼 수 있어야 한다. 사업장의 현재 설정이 아니다 —
+          //   초대·제안을 보낸 시점의 기준이고, 사업장이 그 뒤에 기준을 바꿔도
+          //   이 약속에는 적용되지 않는다. 지원서 문서에 이미 있으므로
+          //   사업장 문서를 다시 읽지 않는다.
+          if (offerApp.attendancePolicySnapshot case final snap?) ...[
+            const SizedBox(height: 12),
+            _attendancePolicyBlock(snap),
+          ],
           const SizedBox(height: 12),
           DocumentAccessConsent.card(item.application.businessName),
         ],

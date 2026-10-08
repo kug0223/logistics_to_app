@@ -148,9 +148,15 @@ void main() {
       final builder = _code(_slice(
           cfRaw, 'function srvBuildAttendancePolicySnapshot(', '\n/**'));
       expect(builder.contains('ATTENDANCE_POLICY_MATERIAL_FIELDS'), isTrue);
+      // [R7-PAYROLL-POLICY.4A] 확인 판정이 비교 helper 로 한 번 더 빠졌다.
+      //   사업장 확인과 지원서 확인이 같은 비교를 쓴다 — 목록을 보는 곳이
+      //   `srvPolicyEvidenceCovers` 하나로 좁아졌다.
       final block =
           _code(_slice(cfRaw, 'function srvAttendancePolicyBlock(', '\n/**'));
-      expect(block.contains('ATTENDANCE_POLICY_MATERIAL_FIELDS'), isTrue);
+      expect(block.contains('srvPolicyEvidenceCovers('), isTrue);
+      final covers =
+          _code(_slice(cfRaw, 'function srvPolicyEvidenceCovers(', '\n/**'));
+      expect(covers.contains('ATTENDANCE_POLICY_MATERIAL_FIELDS'), isTrue);
       // 숫자 목록은 소스에 **한 번만** 선언된다.
       expect('const ATTENDANCE_POLICY_MATERIAL_FIELDS'.allMatches(cf).length, 1);
       expect('const ATTENDANCE_POLICY_DEFAULTS'.allMatches(cf).length, 1);
@@ -185,8 +191,12 @@ void main() {
 
     test('OWN-8 값이 바뀌면 과거 확인이 무효가 된다', () {
       // 7개 중 하나라도 다르면 미확인이다 — 별도 revision 시스템 없이 보장.
+      // [R7-PAYROLL-POLICY.4A] 비교가 `srvPolicyEvidenceCovers` 로 빠졌다.
+      //   지키려던 계약은 그대로다 — 값이 다르면 그 확인은 무효다.
       expect(block.contains('ATTENDANCE_POLICY_NOT_CONFIRMED'), isTrue);
-      expect(block.contains('if (c[k] !== srvAttendancePolicyValue(r, k))'),
+      final covers =
+          _code(_slice(cfRaw, 'function srvPolicyEvidenceCovers(', '\n/**'));
+      expect(covers.contains('if (e[k] !== srvAttendancePolicyValue(target, k)) return false;'),
           isTrue, reason: '값 비교가 없으면 낡은 확인이 새 정책의 동의로 재사용된다');
 
       // Dart 쪽 표현도 같은 술어여야 한다.
@@ -219,9 +229,15 @@ void main() {
       });
       expect(noActor!.hasEvidence, isFalse);
       // 시각·행위자 둘 다 있어야 한다.
-      expect(block.contains('c["confirmedAt"] == null'), isTrue);
-      expect(block.contains('typeof by !== "string" || by.length === 0'),
+      // [R7-PAYROLL-POLICY.4A] 판정이 공용 helper 로 옮겨졌다 — 키 이름은
+      //   호출자가 넘긴다(사업장은 confirmedAt/By, 지원서는 acknowledgedAt/By).
+      final covers =
+          _code(_slice(cfRaw, 'function srvPolicyEvidenceCovers(', '\n/**'));
+      expect(covers.contains('e[atKey] == null'), isTrue);
+      expect(covers.contains('typeof by !== "string" || by.length === 0'),
           isTrue);
+      expect(block.contains('"confirmedAt", "confirmedBy"'), isTrue,
+          reason: '사업장 확인의 키 이름이 그대로여야 한다');
     });
 
     test('OWN-9 서버가 출처를 바꾸지 않는다', () {
@@ -284,9 +300,12 @@ void main() {
 
     test('GATE-2 확정이 미확인 기준을 거부한다', () {
       final confirm = _code(_callable(cfRaw, 'callableConfirmApplication'));
+      // [R7-PAYROLL-POLICY.4A] 판정 대상이 **사업장 현재 기준**에서
+      //   **이 지원서에 고정된 기준**으로 좁아졌다. 지키려던 계약은 그대로다 —
+      //   확정은 확인된 기준에서만 일어난다. 더 강해졌을 뿐이다.
       expect(
           confirm.contains(
-              'srvAssertAttendancePolicyConfirmed(cfmBizSnap.data())'),
+              'srvApplicationPolicyOwnership(fd, cfmBizSnap.data())'),
           isTrue,
           reason: '첫 공고 gate 만으로는 이미 열린 공고의 대기 지원서를 막지 못한다');
       // 트랜잭션 안에서 읽은 사업장 문서를 쓴다 — 확인과 commit 사이가 결정적이다.
@@ -303,9 +322,12 @@ void main() {
 
     test('GATE-4 초대 수락도 거부하되 설정 내부를 알리지 않는다', () {
       final accept = _code(_callable(cfRaw, 'callableAcceptTOInvitation'));
+      // [R7-PAYROLL-POLICY.4A] 판정 대상이 사업장 현재 기준 → 이 초대에
+      //   고정된 기준으로 바뀌었다. 초대를 보낸 행위가 그 기준의 확인이므로
+      //   사업장이 그 뒤 기준을 바꿨다는 이유로 수락이 막히지 않는다.
       expect(
           accept.contains(
-              'invBlocked ?? srvAttendancePolicyBlock(invBizSnap.data())'),
+              'srvApplicationPolicyOwnership(freshData, invBizSnap.data())'),
           isTrue);
       // 근로자 문구는 기존 그대로 — 고용주 설정 내부를 노출하지 않는다.
       expect(accept.contains('지금은 수락할 수 없는 초대예요'), isTrue);
@@ -343,7 +365,8 @@ void main() {
       // 이미 CONFIRMED / CONTRACT_PENDING 은 gate 앞에서 돌아간다.
       final iAlready = confirm.indexOf('alreadyConfirmed = true;');
       final iRetry = confirm.indexOf('isContractPendingRetry = true;');
-      final iGate = confirm.indexOf('srvAssertAttendancePolicyConfirmed(');
+      final iGate = confirm.indexOf('srvApplicationPolicyOwnership(');
+      expect(iGate, greaterThan(-1));
       expect(iAlready, greaterThan(-1));
       expect(iAlready, lessThan(iGate),
           reason: '기존 약속의 후속 처리가 막히면 출퇴근·계약·급여가 멈춘다');
@@ -354,8 +377,10 @@ void main() {
         'callableCheckOut',
         'callableConfirmFinalWage',
       ]) {
-        expect(_code(_callable(cfRaw, name))
-            .contains('srvAssertAttendancePolicyConfirmed('), isFalse,
+        final body = _code(_callable(cfRaw, name));
+        expect(body.contains('srvAssertAttendancePolicyConfirmed('), isFalse,
+            reason: '$name 이 막히면 이미 약속된 근무의 이행이 멈춘다');
+        expect(body.contains('srvApplicationPolicyOwnership('), isFalse,
             reason: '$name 이 막히면 이미 약속된 근무의 이행이 멈춘다');
       }
     });
@@ -474,12 +499,20 @@ void main() {
     test('MUT-1 확인 판정이 항상 통과하도록 바뀌지 않았다', () {
       final block =
           _code(_slice(cfRaw, 'function srvAttendancePolicyBlock(', '\n/**'));
-      // 세 거부 경로가 모두 살아 있어야 한다.
+      // [R7-PAYROLL-POLICY.4A] 세 갈래 반복이 공용 비교 helper 로 접혀
+      //   거부 경로가 하나로 모였다. 지키려던 것은 **fail-closed** 다 —
+      //   통과는 확인 기록이 값을 덮을 때 **한 번만** 일어난다.
       expect('return "ATTENDANCE_POLICY_NOT_CONFIRMED"'.allMatches(block).length,
-          3);
+          1);
       expect('return "NO_ATTENDANCE_POLICY"'.allMatches(block).length, 1);
-      expect(block.trimRight().endsWith('return null;\n}'), isTrue,
-          reason: '통과는 마지막 한 줄이어야 한다');
+      expect('return null;'.allMatches(block).length, 1,
+          reason: '통과 경로가 둘이 되면 어느 쪽으로 열렸는지 알 수 없다');
+      expect(
+          block.trimRight().endsWith(
+              'return "ATTENDANCE_POLICY_NOT_CONFIRMED";\n}'),
+          isTrue, reason: '마지막은 거부여야 한다 (fail-closed)');
+      expect(block.contains('if (srvPolicyEvidenceCovers('), isTrue,
+          reason: '통과는 확인 기록이 값을 덮을 때만이다');
     });
 
     test('MUT-2 저장만으로 확인되지 않는다', () {

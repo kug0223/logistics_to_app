@@ -34,6 +34,7 @@ import '../../../models/ui/invite_capacity_state.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/posting_readiness_reason.dart';
+import '../../../widgets/dialogs/application_policy_acknowledge_sheet.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/week_helper.dart';
 import '../../../widgets/app_select_field.dart';
@@ -3593,6 +3594,27 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       //   샌다. 지원은 취소되지 않았다는 사실도 같이 말한다.
       if (mounted) {
         if (PostingNotReady.parse(e) case final blocked?) {
+          // [R7-PAYROLL-POLICY.4A §12] 이 이유만은 **그 지원자**에서 해결된다.
+          //   사업장 설정으로 보내는 대신 지원 당시 기준을 보여 주고 확인을
+          //   받는다. 확인하면 조건을 바꾸지 않고 그대로 확정한다.
+          if (blocked.reason ==
+              PostingNotReadyReason.applicationPolicyNotAcknowledged) {
+            final acked = await ApplicationPolicyAcknowledgeSheet.show(
+              context,
+              application: app,
+              workerName: _userMap[app.uid]?.name ?? '근무자',
+              currentBusinessRules: widget.businesses
+                  .where((b) => b.id == app.businessId)
+                  .firstOrNull
+                  ?.attendanceRules,
+            );
+            if (acked && mounted) {
+              setState(() => _isProcessing = false);
+              await _approveApp(app);
+              return;
+            }
+            return;
+          }
           final canSetUp = !context.read<UserProvider>().isSubAdmin;
           ToastHelper.showError(
               blocked.confirmBlockedNotice(canSetUp: canSetUp));

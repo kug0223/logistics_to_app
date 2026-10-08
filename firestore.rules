@@ -1168,9 +1168,15 @@ service cloud.firestore {
       //
       //   여기서 바꾸는 것은 identity key 하나뿐이다. 지원서 상태 전이 정책은
       //   그대로다.
+      // [R7-PAYROLL-POLICY.4A] attendancePolicySnapshot / Acknowledgement —
+      //   이 약속의 급여 계산 기준과 그것을 사업장이 확인했다는 증거.
+      //   클라이언트가 쓸 수 있으면 조건 소급변경과 증거 위조가 모두 가능하다.
+      //   callableApplyToTO / InviteWorker / OfferAlternativeWork /
+      //   ConfirmApplication / AcknowledgeApplicationPolicy CF 전용.
       allow update: if isLoggedIn() &&
                     !request.resource.data.diff(resource.data).affectedKeys()
-                      .hasAny(['uid']) && (
+                      .hasAny(['uid', 'attendancePolicySnapshot',
+                               'attendancePolicyAcknowledgement']) && (
                       // 지원 취소 (본인 PENDING → CANCELED): status/canceledAt/statusHistory만 허용
                       // [036] CONTRACT_PENDING 상태에서 취소 불가 — 관리자 개입 필요
                       (isOwner(resource.data.uid) &&

@@ -135,6 +135,18 @@ class _DecisionSheet extends StatelessWidget {
                 ),
               ),
             ],
+            const SizedBox(height: 10),
+            // [R7-PAYROLL-POLICY.4A §25·§27A] 이 제안이 바꾸는 것은 업무·시간·
+            //   임금이다(위 두 칸이 그것만 비교한다). 근태·급여 처리 기준은
+            //   지금 확정된 근무의 것이 그대로 따라간다 — 사업장이 그 사이
+            //   기준을 바꿨더라도 이 변경을 계기로 적용되지 않는다.
+            //   그래서 숫자를 다시 보여주지 않고 **바뀌지 않는다는 사실**을
+            //   말한다(값을 위해 문서를 더 읽지도 않는다).
+            Text(
+              '근태·급여 처리 기준은 지금 확정된 근무와 동일하게 유지됩니다.',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey700),
+            ),
             const SizedBox(height: 16),
             Text(
               '변경을 수락하면 지금 확정된 근무는 ‘다른 업무로 변경 확정’으로 '

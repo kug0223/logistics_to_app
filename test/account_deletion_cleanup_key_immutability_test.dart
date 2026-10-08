@@ -90,7 +90,13 @@ void main() {
     });
 
     test('CK-SRC-05 applications.uid', () {
-      expectKeysImmutable('match /applications/{applicationId}', "['uid']");
+      // [R7-PAYROLL-POLICY.4A] 같은 불변 조건에 근태 기준 snapshot·확인 기록이
+      //   함께 들어갔다(그 둘도 CF 전용이다). 지키려던 것은 **`uid` 가 그
+      //   목록에 있고 분기보다 앞이라는 것**이므로 목록이 길어진 사실만
+      //   반영한다 — 한 글자도 바꾸지 않은 계약이다.
+      expectKeysImmutable('match /applications/{applicationId}',
+          "['uid', 'attendancePolicySnapshot', "
+              "'attendancePolicyAcknowledgement']");
     });
 
     test('CK-SRC-06 attendance.userId', () {

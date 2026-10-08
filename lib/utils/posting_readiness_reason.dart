@@ -35,6 +35,13 @@ enum PostingNotReadyReason {
   ///   `policySource` 는 값의 출처일 뿐 확인 행위가 아니다. ALfit 기본값을
   ///   그대로 쓰기로 한 것도 사업장의 결정이므로 별도 확인 증거가 필요하다.
   attendancePolicyNotConfirmed,
+
+  /// [R7-PAYROLL-POLICY.4A] 사업장 기준은 확인됐지만 **이 지원서의 기준**이
+  /// 그것과 다르다 — 변경 전 기준으로 지원한 사람이다.
+  ///
+  ///   해결은 사업장 설정이 아니라 **그 지원자**에게 있다. 지원 당시 기준을
+  ///   확인하면 확정할 수 있다. 조건을 바꾸는 것이 아니다.
+  applicationPolicyNotAcknowledged,
 }
 
 class PostingNotReady {
@@ -58,6 +65,11 @@ class PostingNotReady {
         PostingNotReadyReason.noAttendancePolicy ||
         PostingNotReadyReason.attendancePolicyNotConfirmed =>
           FirstPostingTask.business,
+        // [R7-PAYROLL-POLICY.4A] 이 이유는 사업장 설정이 아니라 그 지원자에서
+        //   해결된다. 체크리스트 칸으로 보내면 엉뚱한 곳을 고치게 된다 —
+        //   가장 가까운 칸을 쓰되, 안내 문구가 실제 행동을 말한다.
+        PostingNotReadyReason.applicationPolicyNotAcknowledged =>
+          FirstPostingTask.business,
       };
 
   /// 사용자에게 보여줄 문장. **서버 문구를 그대로 쓰지 않는다** —
@@ -78,6 +90,9 @@ class PostingNotReady {
         PostingNotReadyReason.attendancePolicyNotConfirmed =>
           '사업장 설정에서 근태·급여 처리 기준을 확인해주세요\n'
               '이 기준이 근태 판정과 급여 계산에 사용돼요',
+        PostingNotReadyReason.applicationPolicyNotAcknowledged =>
+          '이 지원자는 변경 전 근태·급여 기준으로 지원했어요\n'
+              '지원 당시 기준을 확인하면 확정할 수 있어요',
       };
 
   /// [R7-P4.4C.1] 예약 공개가 막혔을 때 **운영자에게** 보여줄 문장.
@@ -103,6 +118,8 @@ class PostingNotReady {
       PostingNotReadyReason.noAttendancePolicy ||
       PostingNotReadyReason.attendancePolicyNotConfirmed =>
         '근태·급여 처리 기준 확인',
+      PostingNotReadyReason.applicationPolicyNotAcknowledged =>
+        '지원 당시 근태·급여 기준 확인',
     };
     if (!canSetUp) {
       return '$what 준비가 끝나지 않아 예약 공개되지 않았어요\n'
@@ -134,6 +151,8 @@ class PostingNotReady {
       PostingNotReadyReason.noAttendancePolicy ||
       PostingNotReadyReason.attendancePolicyNotConfirmed =>
         '근태·급여 처리 기준 확인',
+      PostingNotReadyReason.applicationPolicyNotAcknowledged =>
+        '지원 당시 근태·급여 기준 확인',
     };
     if (!canSetUp) {
       return '$what 준비가 완료되지 않아 확정할 수 없어요\n'
@@ -173,6 +192,9 @@ class PostingNotReady {
       'ATTENDANCE_POLICY_NOT_CONFIRMED' =>
         const PostingNotReady(
             PostingNotReadyReason.attendancePolicyNotConfirmed),
+      'APPLICATION_POLICY_NOT_ACKNOWLEDGED' =>
+        const PostingNotReady(
+            PostingNotReadyReason.applicationPolicyNotAcknowledged),
       _ => null,
     };
   }

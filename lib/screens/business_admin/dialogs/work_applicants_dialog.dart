@@ -18,6 +18,7 @@ import '../../../providers/user_provider.dart';
 import '../../../utils/person_label.dart';
 import '../../../utils/loading_state_mixin.dart';
 import '../../../utils/posting_readiness_reason.dart';
+import '../../../widgets/dialogs/application_policy_acknowledge_sheet.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
@@ -3026,6 +3027,23 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       //   무엇을 고쳐야 하는지 알 수 없었다.
       if (mounted) {
         if (PostingNotReady.parse(e) case final blocked?) {
+          // [R7-PAYROLL-POLICY.4A §12] 이 이유만은 **그 지원자**에서 해결된다.
+          //   이 화면은 사업장 문서를 들고 있지 않다 — 비교용 현재 기준 없이
+          //   지원 당시 기준만 보여 준다. 읽기를 더하지 않는다(§31).
+          if (blocked.reason ==
+              PostingNotReadyReason.applicationPolicyNotAcknowledged) {
+            final acked = await ApplicationPolicyAcknowledgeSheet.show(
+              context,
+              application: app,
+              workerName: _personLabelOf(user, '지원자'),
+            );
+            if (acked && mounted) {
+              setState(() => _isProcessing = false);
+              await _approveApplication(item);
+              return;
+            }
+            return;
+          }
           final canSetUp = !context.read<UserProvider>().isSubAdmin;
           ToastHelper.showError(
               blocked.confirmBlockedNotice(canSetUp: canSetUp));

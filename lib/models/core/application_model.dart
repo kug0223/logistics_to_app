@@ -3,7 +3,8 @@ import 'package:flutter/foundation.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/firestore_helper.dart';
 import '../ui/invite_capacity_state.dart';
-import 'business_model.dart' show AttendanceRules;
+import 'business_model.dart'
+    show AttendanceRules, AttendancePolicyConfirmation, BusinessModel;
 
 /// [R2.2.1 CORRECTION] 서버가 실어 준 capacity 상태를 읽는다.
 ///
@@ -107,6 +108,32 @@ class ApplicationModel {
   /// `null` 은 이 제도가 생기기 전 지원서다 — 그 근무는 사업장의 현재
   /// 기준으로 계산된다(legacy 호환이고 정책이 아니다).
   final AttendanceRules? attendancePolicySnapshot;
+
+  /// [R7-PAYROLL-POLICY.4A] 관리자가 **이 지원서의 기준**을 확인한 기록.
+  ///
+  /// 초대·대체근무 제안은 관리자가 그 조건을 제시하는 행위이므로 보낼 때
+  /// 기록된다. 직접 지원은 기록이 없고, 그 기준이 사업장이 지금 확인한
+  /// 기준과 같다는 사실로 증명된다([isAttendancePolicyOwned]).
+  ///
+  /// 쓰기는 CF 전용이다(firestore.rules 차단). 읽기 전용 표현이다.
+  final AttendancePolicyConfirmation? attendancePolicyAcknowledgement;
+
+  /// 이 약속의 근태 기준이 **사업장이 확인한 기준**인가.
+  ///
+  /// 서버 `srvApplicationPolicyOwnership` 와 같은 순서다.
+  ///   ① 이 지원서에 대한 확인 기록이 그 기준을 덮는다, 또는
+  ///   ② 그 기준이 사업장이 지금 확인한 기준과 같다.
+  ///
+  /// 서버가 최종 권위다 — 이 값은 확정 버튼 앞에서 무엇을 안내할지 정하는 데
+  /// 쓴다. snapshot 이 없으면 사업장 현재 기준 확인 여부로 떨어진다.
+  bool isAttendancePolicyOwned(BusinessModel? business) {
+    final snap = attendancePolicySnapshot;
+    if (snap == null) return business?.isAttendancePolicyConfirmed ?? false;
+    final ack = attendancePolicyAcknowledgement;
+    if (ack != null && ack.hasEvidence && ack.matches(snap)) return true;
+    final cfm = business?.attendancePolicyConfirmation;
+    return cfm != null && cfm.hasEvidence && cfm.matches(snap);
+  }
 
   /// 이 근무에 **실제로 적용되는** 기준. 서버 `srvEffectiveAttendanceRules`
   /// 와 같은 순서다 — snapshot 이 있으면 그것, 없으면 사업장 현재 기준.
@@ -327,6 +354,7 @@ class ApplicationModel {
     this.nightIncluded,
     this.taxDeductionType,
     this.attendancePolicySnapshot,
+    this.attendancePolicyAcknowledgement,
     this.workTypeIcon,
     this.workTypeColor,
     this.workTypeBackgroundColor,
@@ -463,6 +491,12 @@ class ApplicationModel {
           ? AttendanceRules.fromMap(Map<String, dynamic>.from(
               data['attendancePolicySnapshot'] as Map))
           : null,
+      attendancePolicyAcknowledgement:
+          data['attendancePolicyAcknowledgement'] is Map
+              ? AttendancePolicyConfirmation.acknowledgementFromMap(
+                  Map<String, dynamic>.from(
+                      data['attendancePolicyAcknowledgement'] as Map))
+              : null,
       workTypeIcon: data['workTypeIcon'],
       workTypeColor: data['workTypeColor'],
       workTypeBackgroundColor: data['workTypeBackgroundColor'],
@@ -838,6 +872,7 @@ class ApplicationModel {
     bool? nightIncluded,
     String? taxDeductionType,
     AttendanceRules? attendancePolicySnapshot,
+    AttendancePolicyConfirmation? attendancePolicyAcknowledgement,
     String? workTypeIcon,
     String? workTypeColor,
     String? workTypeBackgroundColor,
@@ -947,6 +982,8 @@ class ApplicationModel {
       taxDeductionType: taxDeductionType ?? this.taxDeductionType,
       attendancePolicySnapshot:
           attendancePolicySnapshot ?? this.attendancePolicySnapshot,
+      attendancePolicyAcknowledgement: attendancePolicyAcknowledgement ??
+          this.attendancePolicyAcknowledgement,
       workTypeIcon: workTypeIcon ?? this.workTypeIcon,
       workTypeColor: workTypeColor ?? this.workTypeColor,
       workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,
