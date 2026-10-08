@@ -298,11 +298,13 @@ class ApplyConfirmDialog extends StatelessWidget {
   Widget _policyCard(BuildContext context) {
     final r = policyRules;
     if (r == null) {
-      return StyledDialogInfoCard.info(
-        policyLoaded
-            ? kAttendancePolicyUnknownNote
-            : '근태·급여 처리 기준을 확인하지 못했어요.\n잠시 후 다시 시도해 주세요.',
-      );
+      // [R7-PAYROLL-POLICY.4D] 세 상태를 섞지 않는다.
+      //   · 읽지 못했다(ERROR)  → 다시 시도
+      //   · 기준이 없다(ABSENT) → 사업장이 준비해야 한다(지원 불가)
+      //   ERROR 를 "기준 없음" 으로 위조하지 않는다.
+      return StyledDialogInfoCard.info(policyLoaded
+          ? kAttendancePolicyUnavailableNote
+          : kAttendancePolicyLoadFailedNote);
     }
     return Container(
       width: double.infinity,

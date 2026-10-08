@@ -50,6 +50,32 @@ const String kAttendancePolicyUnknownNote =
     '이 근무의 근태·급여 처리 기준이 기록되어 있지 않습니다.\n'
     '사업장에 확인해 주세요.';
 
+/// [R7-PAYROLL-POLICY.4D] 사업장에 적용할 기준 **자체가 없다** — 새 지원을
+/// 만들 수 없다.
+///
+///   근로자가 할 수 있는 일이 없는 상태다. "근태 기준을 입력해 주세요" 처럼
+///   근로자 잘못으로 읽히는 문구를 쓰지 않는다 — 입력 권한이 없다.
+///
+///   영구 거부도 아니다. 사업장이 기준을 저장하면 그때부터 지원할 수 있으므로
+///   "지원할 수 없습니다" 가 아니라 **준비 중**으로 말한다.
+const String kAttendancePolicyUnavailableNote =
+    '사업장의 근태·급여 기준이 아직 준비되지 않았어요.\n'
+    '기준이 준비되면 지원할 수 있습니다.';
+
+/// 기준을 **읽지 못한** 상태 — 없는 것과 다르다(ERROR ≠ ABSENT).
+const String kAttendancePolicyLoadFailedNote =
+    '근태·급여 처리 기준을 확인하지 못했어요.\n잠시 후 다시 시도해 주세요.';
+
+/// [R7-PAYROLL-POLICY.4D] 이 기준으로 **새 지원을 만들 수 있는가.**
+///
+///   `null` 은 적용할 조건이 없다는 뜻이므로 새 약속의 씨앗을 만들 수 없다.
+///   `'absent'` 토큰은 진단·표시용이고 **지원 성공 토큰이 아니다**.
+///
+///   최종 판정은 서버다(`srvHasCanonicalAttendancePolicy`). 이 함수는 화면이
+///   보낼 수 없는 요청을 보내지 않게 하는 사전 판단일 뿐 — 클라이언트 차단만
+///   으로 무결성을 삼지 않는다.
+bool canApplyWithAttendancePolicy(AttendanceRules? r) => r != null;
+
 /// 인정 시간이 급여 기준이 된다는 사실.
 const String kAttendancePolicyEffectNote = '인정된 시간이 급여 계산의 기준이 됩니다.';
 

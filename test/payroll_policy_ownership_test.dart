@@ -101,13 +101,17 @@ void main() {
           reason: '지원 시점 조건에 근태 기준이 빠지면 확정 때 바뀐 기준이 적용된다');
       expect(apply.contains('attendancePolicySnapshot: applyTxPolicy'), isTrue);
       // 지원 경로가 사업장 규칙을 직접 집어 쓰지 않는다 — `attendanceRules` 는
-      //   **토큰 비교용 읽기**에만 나타난다.
+      //   **트랜잭션 안 읽기 한 줄**에만 나타난다.
+      // [R7-PAYROLL-POLICY.4D] 그 값을 `applyTxRules` 로 한 번 꺼내 canonical
+      //   판정·토큰 비교·snapshot 이 전부 같은 값을 쓴다.
       expect(
           'attendanceRules'.allMatches(apply).length, 1,
           reason: '정책 값을 다른 자리에서 또 집으면 출처가 둘이 된다');
       expect(
           apply.contains(
-              'srvAttendancePolicyFingerprint(applyTxBizSnap.data()?.["attendanceRules"])'),
+              'const applyTxRules = applyTxBizSnap.data()?.["attendanceRules"];'),
+          isTrue);
+      expect(apply.contains('srvAttendancePolicyFingerprint(applyTxRules)'),
           isTrue);
     });
 

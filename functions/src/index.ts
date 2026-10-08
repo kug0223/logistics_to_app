@@ -35235,6 +35235,34 @@ function srvAssertAttendancePolicyConfirmed(
 }
 
 /**
+ * [R7-PAYROLL-POLICY.4D] 이 사업장에 **적용할 수 있는 근태·급여 기준이
+ * 실제로 있는가.**
+ *
+ *   `srvAttendancePolicyValue` 는 없는 항목을 ALfit 기본값으로 메운다. 그건
+ *   계산 경로의 legacy 호환이고(이미 성립한 근무가 멈추지 않게 하는 것),
+ *   **새 약속을 만드는 자리의 판정이 될 수 없다.** 메워서 만든 값은 저장된
+ *   정책보다 더 완전해서, 근로자가 확인할 수 없었던 숫자가 약속에 들어간다.
+ *
+ *   그래서 여기서는 **원값만** 본다. 7개가 전부 숫자로 저장돼 있어야 canonical
+ *   정책이다. 객체가 없거나 한 항목이라도 비어 있으면 없는 것으로 취급한다 —
+ *   부분 정책을 완전한 정책처럼 쓰지 않는다.
+ *
+ *   서버가 기본값을 **생성하지도** 않는다. 없는 것을 사업장 정책으로 만들면
+ *   그 정책의 책임이 누구에게도 귀속되지 않는다.
+ *
+ * @param {unknown} rules 사업장 `attendanceRules`
+ * @return {boolean} 7개가 전부 저장돼 있으면 true
+ */
+function srvHasCanonicalAttendancePolicy(rules: unknown): boolean {
+  if (rules == null || typeof rules !== "object") return false;
+  const r = rules as Record<string, unknown>;
+  for (const k of ATTENDANCE_POLICY_MATERIAL_FIELDS) {
+    if (typeof r[k] !== "number") return false;
+  }
+  return true;
+}
+
+/**
  * [R7-PAYROLL-POLICY.4C] 근로자가 **본 기준**을 식별하는 토큰.
  *
  *   직접 지원에는 race 가 있었다:
@@ -38378,8 +38406,31 @@ export const callableApplyToTO = onCall(
       //   snapshot 을 만들지 않는다.
       const applyTxBizSnap =
         await tx.get(db.collection("businesses").doc(businessId));
-      const applyFreshFp =
-        srvAttendancePolicyFingerprint(applyTxBizSnap.data()?.["attendanceRules"]);
+      const applyTxRules = applyTxBizSnap.data()?.["attendanceRules"];
+
+      // [R7-PAYROLL-POLICY.4D] 기준 **자체가 없으면** 새 지원을 만들지 않는다.
+      //
+      //   `.4C` 는 "근로자가 본 것" 과 "지금 값" 이 같은지만 봤다. 그래서
+      //   둘 다 없는 경우(`absent == absent`)가 통과했다 — 근로자가 확인한
+      //   임금조건이 **없는 상태로** 지원서가 생겼다. 그 지원서를 나중에
+      //   확정하면, 지원 당시 볼 수 없었던 숫자가 약속에 들어간다.
+      //
+      //   정상 신규 사업장은 이 상태가 될 수 없다(사업장 폼이 언제나 7개를
+      //   쓴다). 여기 걸리는 것은 legacy·손상 데이터이고, 공고를 새로 내는
+      //   길은 이미 `NO_ATTENDANCE_POLICY` readiness 가 막고 있다. 이 gate 는
+      //   **이미 열려 있는 공고**에 대한 마지막 방어선이다.
+      //
+      //   영구 거부가 아니다 — 사업장이 기준을 저장하면 다시 지원할 수 있다.
+      if (!srvHasCanonicalAttendancePolicy(applyTxRules)) {
+        throw new HttpsError(
+          "failed-precondition",
+          "사업장의 근태·급여 처리 기준이 아직 준비되지 않았습니다. " +
+            "기준이 준비되면 지원할 수 있습니다.",
+          {reason: "ATTENDANCE_POLICY_UNAVAILABLE"}
+        );
+      }
+
+      const applyFreshFp = srvAttendancePolicyFingerprint(applyTxRules);
       if (expectedAttendancePolicy == null ||
           typeof expectedAttendancePolicy !== "string" ||
           expectedAttendancePolicy.length === 0) {

@@ -27,6 +27,13 @@ enum ApplyOutcome {
   ///   정해져 있다** — 바뀐 기준을 확인한 뒤 다시 지원하는 것이다.
   ///   `unknown` 과도 분리한다: 지원은 **확실히 만들어지지 않았다**.
   policyChanged,
+
+  /// [R7-PAYROLL-POLICY.4D] 사업장에 적용할 근태·급여 기준 **자체가 없다**.
+  ///
+  ///   바뀐 것이 아니라 없다. 최신 기준을 다시 읽어도 해결되지 않고,
+  ///   사업장이 기준을 저장해야 한다. 근로자가 할 수 있는 일이 없으므로
+  ///   안내도 다르다 — 기다리는 상태다.
+  policyUnavailable,
 }
 
 /// 서버의 대답을 못 들은 것으로 보는 CF 오류 코드.
@@ -85,6 +92,12 @@ class ApplyResult {
 
   /// 기준이 바뀌어 막힌 것인가 — 화면이 재확인 흐름으로 보낸다.
   bool get isPolicyChanged => outcome == ApplyOutcome.policyChanged;
+
+  /// [R7-PAYROLL-POLICY.4D] 사업장에 기준 자체가 없어 막혔다.
+  factory ApplyResult.policyUnavailable(String message, {String? code}) =>
+      ApplyResult._(ApplyOutcome.policyUnavailable, message, code: code);
+
+  bool get isPolicyUnavailable => outcome == ApplyOutcome.policyUnavailable;
 
   /// 지원이 canonical 하게 성립한 상태인가 — 새로 기록했든, 이미 있었든.
   bool get isApplied =>
@@ -653,6 +666,11 @@ extension ApplicationFirestore on FirestoreService {
       //   일이 정해져 있고, 지원은 **확실히 만들어지지 않았다**.
       //   `details.reason` 으로 판정한다(문구 비교가 아니다).
       final reason = _reasonOf(e);
+      // [R7-PAYROLL-POLICY.4D] 기준이 **없는** 것과 **바뀐** 것을 합치지
+      //   않는다 — 근로자가 할 일이 다르다(기다린다 vs 다시 확인한다).
+      if (reason == 'ATTENDANCE_POLICY_UNAVAILABLE') {
+        return ApplyResult.policyUnavailable(msg, code: reason);
+      }
       if (reason == 'ATTENDANCE_POLICY_CHANGED' ||
           reason == 'ATTENDANCE_POLICY_NOT_DISCLOSED') {
         return ApplyResult.policyChanged(msg, code: reason);

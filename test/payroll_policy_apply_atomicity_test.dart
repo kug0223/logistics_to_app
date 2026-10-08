@@ -83,9 +83,15 @@ void main() {
               '        await tx.get(db.collection("businesses").doc(businessId));'),
           isTrue);
       // 비교도, 저장할 snapshot 도 **그 읽기**에서 만든다.
+      // [R7-PAYROLL-POLICY.4D] 그 읽기를 한 번만 꺼내 `applyTxRules` 로 두고
+      //   canonical 판정·토큰 비교·snapshot 이 전부 그 값을 쓴다.
       expect(
           apply.contains(
-              'srvAttendancePolicyFingerprint(applyTxBizSnap.data()?.["attendanceRules"])'),
+              'const applyTxRules = applyTxBizSnap.data()?.["attendanceRules"];'),
+          isTrue);
+      expect(apply.contains('srvAttendancePolicyFingerprint(applyTxRules)'),
+          isTrue);
+      expect(apply.contains('srvHasCanonicalAttendancePolicy(applyTxRules)'),
           isTrue);
       expect(
           apply.contains(
@@ -371,12 +377,12 @@ void main() {
       // 비교를 상수로 꺾지 않았다.
       expect(apply.contains('expectedAttendancePolicy !== applyFreshFp'), isTrue);
       expect(apply.contains('expectedAttendancePolicy === applyFreshFp'), isFalse);
-      // 두 거부가 모두 살아 있다.
+      // [R7-PAYROLL-POLICY.4D] 거부가 셋이 됐다 — 기준 없음·미고지·변경.
       expect('throw new HttpsError('
               .allMatches(_slice(apply, 'const applyTxBizSnap =',
                   'const applyTxPolicy ='))
               .length,
-          2);
+          3);
       // 반올림 산술 변경 0.
       final ci = _code(_slice(cfRaw, 'function _processCheckin(', '\n/**'));
       expect(ci.contains('Math.ceil(offsetMinutes / lateUnit) * lateUnit'),

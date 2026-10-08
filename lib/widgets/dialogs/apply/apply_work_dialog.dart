@@ -2576,6 +2576,20 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         }
       }
     }
+    // [R7-PAYROLL-POLICY.4D §24] 기준이 **없으면** 지원 자체를 보내지 않는다.
+    //   서버가 거부할 요청을 왕복시키지 않는다. 다만 무결성은 서버 gate 가
+    //   가진다 — 여기 차단은 사전 안내일 뿐이다(§17).
+    //   읽기 실패(ERROR)와 기준 없음(ABSENT)을 구별해 다른 말을 한다.
+    if (!_policyLoaded) {
+      setState(() => _isSubmitting = false);
+      ToastHelper.showWarning(kAttendancePolicyLoadFailedNote);
+      return;
+    }
+    if (!canApplyWithAttendancePolicy(_policyRules)) {
+      setState(() => _isSubmitting = false);
+      ToastHelper.showWarning(kAttendancePolicyUnavailableNote);
+      return;
+    }
     // (H-01-FIX: _isSubmitting은 이미 메서드 진입 시 true로 설정됨)
 
     // ✅ 지원 확인 팝업
@@ -2645,6 +2659,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         // UNKNOWN 은 실패가 아니다 — 확인이 필요하다고 말한다.
         if (applied.isUnknown) {
           ToastHelper.showWarning('${applied.message} 내 지원 목록에서 확인해주세요.');
+        } else if (applied.isPolicyUnavailable) {
+          // [R7-PAYROLL-POLICY.4D] 기준이 **없다** — 다시 읽어도 해결되지
+          //   않는다. 근로자 잘못이 아니고 영구 거부도 아니므로 "준비 중"
+          //   으로 말한다. 자동 재지원도, 자동 재조회도 하지 않는다.
+          ToastHelper.showWarning(kAttendancePolicyUnavailableNote);
         } else if (applied.isPolicyChanged) {
           // [R7-PAYROLL-POLICY.4C] 기준이 바뀌었다 — 지원은 만들어지지 않았다.
           //   **자동으로 새 기준으로 다시 보내지 않는다.** 최신 기준을 다시

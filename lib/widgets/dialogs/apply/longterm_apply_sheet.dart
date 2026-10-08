@@ -325,6 +325,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       var anyUnknown = false;
       // [R7-PAYROLL-POLICY.4C] 기준 변경은 실패와 다른 상태다.
       var anyPolicyChanged = false;
+      // [R7-PAYROLL-POLICY.4D] 기준 **없음**은 변경과도 다른 상태다.
+      var anyPolicyUnavailable = false;
       for (final work in widget.selectedWorks) {
         final result = await _firestoreService.applyToTOWithWorkType(
           uid: _currentUserId!,
@@ -355,6 +357,8 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
         if (!result.isApplied) {
           if (result.isUnknown) anyUnknown = true;
           if (result.isPolicyChanged) anyPolicyChanged = true;
+          // [R7-PAYROLL-POLICY.4D] 기준 없음은 변경과 다른 상태다.
+          if (result.isPolicyUnavailable) anyPolicyUnavailable = true;
           firstProblem ??= result.message;
         }
       }
@@ -363,6 +367,9 @@ class _LongTermApplySheetState extends State<LongTermApplySheet> {
       // 결과를 모르는 건은 실패라고 말하지 않는다 — 확인이 필요하다고 말한다.
       if (anyUnknown) {
         ToastHelper.showWarning('일부 지원 결과를 확인하지 못했어요. 내 지원 목록에서 확인해주세요.');
+      } else if (anyPolicyUnavailable) {
+        // [R7-PAYROLL-POLICY.4D] 기준이 없다 — 다시 읽어도 해결되지 않는다.
+        ToastHelper.showWarning(kAttendancePolicyUnavailableNote);
       } else if (anyPolicyChanged) {
         // 자동으로 새 기준으로 다시 보내지 않는다 — 공고 화면이 최신 기준을
         //   다시 읽어 보여주고, 근로자가 확인한 뒤 다시 누른다.

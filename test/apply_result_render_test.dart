@@ -17,6 +17,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ALfit/models/core/application_model.dart';
+import 'package:ALfit/models/core/business_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
 import 'package:ALfit/models/core/user_model.dart';
 import 'package:ALfit/models/core/work_detail_data.dart';
@@ -161,10 +162,11 @@ class _Ctl {
           freshCalls++;
           return freshFinds ? [_landed()] : <ApplicationModel>[];
         },
-        // [R7-PAYROLL-POLICY.4C] 지원 시트가 근태·급여 기준을 읽는 경계.
-        //   격리에서는 기준 없는 사업장(null)로 둔다 — 이 테스트의 관심이
-        //   아니고, 없는 값을 기본값으로 지어내지도 않는다.
-        businessForPolicy: (businessId) async => null,
+        // [R7-PAYROLL-POLICY.4D] 지원 시트가 근태·급여 기준을 읽는 경계.
+        //   **정상 상태는 기준이 있는 사업장**이다 —  이후 기준 없는
+        //   사업장에서는 신규 지원이 아예 막히므로, 지원 흐름을 보는 이
+        //   테스트는 기준 있는 사업장을 써야 한다.
+        businessForPolicy: (businessId) async => _policyBusiness(),
       );
 
   ApplyWorkSubmit submit() => ApplyWorkSubmit(
@@ -407,3 +409,17 @@ void main() {
     await _drain(tester);
   });
 }
+
+/// [R7-PAYROLL-POLICY.4D] 기준이 있는 사업장 — 지원이 가능한 정상 상태.
+///   값은 ALfit 기본값이고, 이 테스트의 관심은 기준 숫자가 아니다.
+BusinessModel _policyBusiness() => BusinessModel(
+      id: 'b1',
+      businessNumber: '1234567890',
+      name: '사업장',
+      category: 'c',
+      subCategory: 's',
+      address: '주소',
+      ownerId: 'owner',
+      createdAt: DateTime(2026, 1, 1),
+      attendanceRules: AttendanceRules.defaults(),
+    );
