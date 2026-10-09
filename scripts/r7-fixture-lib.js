@@ -199,6 +199,8 @@ function kstWeekday(offsetDays = 0) {
 
 module.exports = {
   admin, db, callAs,
+  // rules 가 평가되는 경로(Firestore REST)로 쓰기 위해 필요하다.
+  idTokenFor,
   kstMidnightMs, kstDateKey, kstWeekday,
   EXPECTED_PROJECT,
   STORAGE_BUCKET, devBucket,

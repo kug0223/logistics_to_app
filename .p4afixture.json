@@ -1,0 +1,14 @@
+{
+  "businessId": "GlyuWgjOxmlY0wSCAG6H",
+  "adminUid": "n5QtJIiJQNWiWORjIb7U1leMqB63",
+  "uidA": "p6F61gBL0ubaGGFjFmuGb9fH1kX2",
+  "uidB": "pXr1U9cIrNQgmA1Wd63cg5zYf3v2",
+  "appA": "GtYlNrFgIpz4wN1s4q3T_pHvojlGSwMFy1pIsuffm_FgSKT49bLmVI7Ic89MSA_p6F61gBL0ubaGGFjFmuGb9fH1kX2",
+  "appB": "GtYlNrFgIpz4wN1s4q3T_pHvojlGSwMFy1pIsuffm_m1pfGxyJ01brQ2gzr4R3_pXr1U9cIrNQgmA1Wd63cg5zYf3v2",
+  "targetId": "OgGCT7d3VV911Hiv4W2Z_miB4POGopLGD5AynX5cX_JJk9YIQNdoT2kOnW7uQx_p6F61gBL0ubaGGFjFmuGb9fH1kX2",
+  "srcApp": "OgGCT7d3VV911Hiv4W2Z_miB4POGopLGD5AynX5cX_uceFkuUt7jIK7d5yBhTF_p6F61gBL0ubaGGFjFmuGb9fH1kX2",
+  "toIds": [
+    "GtYlNrFgIpz4wN1s4q3T",
+    "OgGCT7d3VV911Hiv4W2Z"
+  ]
+}

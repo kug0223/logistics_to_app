@@ -1,0 +1,21 @@
+{
+  "toId": "yCvImRWwCbi1h231ywAB",
+  "businessId": "GlyuWgjOxmlY0wSCAG6H",
+  "adminUid": "n5QtJIiJQNWiWORjIb7U1leMqB63",
+  "slotId": "ljOuqb7R7uJ3KWmUNVfv",
+  "wdId": "MM6TuPUx414cmxQXy3fP",
+  "workType": "냉동분류",
+  "dateStr": "2026-10-07",
+  "wage": 12000,
+  "startTime": "14:00",
+  "endTime": "18:00",
+  "workDateMs": 1791298800000,
+  "slotStatus": "open",
+  "applicantUid": "6lJF4KlIxegixhixxyTyz80rc573",
+  "applicationId": "yCvImRWwCbi1h231ywAB_ljOuqb7R7uJ3KWmUNVfv_MM6TuPUx414cmxQXy3fP_6lJF4KlIxegixhixxyTyz80rc573",
+  "docReviewReady": true,
+  "appStatusAfterConfirm": "CONTRACT_PENDING",
+  "contractId": "Ik1N3kgWzhhMe3iDC1E3",
+  "attendanceId": "yCvImRWwCbi1h231ywAB_ljOuqb7R7uJ3KWmUNVfv_MM6TuPUx414cmxQXy3fP_6lJF4KlIxegixhixxyTyz80rc573_20261007",
+  "wageStatus": "transferred"
+}
