@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:ALfit/services/tax_identity_service.dart';
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/employment_contract_model.dart';
 import 'package:ALfit/models/core/to_model.dart';
@@ -137,6 +138,8 @@ MyApplicationsReads _reads(
         return const <EmploymentContractModel>[];
       },
       autoExpirePending: (uid) async {},
+      // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 세무 축이 읽기 경계로 옮겨졌다.
+      taxStatus: () async => const TaxIdentityStatus.unknown(),
     );
 
 Future<void> _pump(

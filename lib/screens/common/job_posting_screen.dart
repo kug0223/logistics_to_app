@@ -2032,7 +2032,18 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     await DialogHelper.showSheet<void>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => Padding(
+      // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 이 시트에 스크롤이 없었다.
+      //
+      //   7개 기준 + 효과 설명 + 고정 안내가 `Column(mainAxisSize: min)` 에
+      //   그대로 쌓여 있었고, 접근성 배율 2.0 에서 바닥으로 넘쳤다
+      //   (실측 320dp 836px · 360dp 620px · 411dp 522px). 넘친 만큼은
+      //   **읽을 수 없는 고지**다 — 지원 전에 확인해야 하는 임금 조건이
+      //   화면 밖에 있었다.
+      //
+      //   항목을 빼거나 글자를 줄이지 않는다. 내용은 그대로 두고 **스크롤
+      //   소유권**을 준다. 이 시트는 DraggableScrollableSheet 가 아니므로
+      //   이 하나가 유일한 스크롤 주인이다.
+      builder: (ctx) => SingleChildScrollView(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 20)),
         child: Column(
           mainAxisSize: MainAxisSize.min,

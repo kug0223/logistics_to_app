@@ -753,11 +753,15 @@ class DialogHelper {
                         color: AppColors.warning,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(dialogContext, 8)),
-                      Text(
-                        '미등록 항목:',
-                        style: ResponsiveHelper.bodyStyle(dialogContext).copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.warning,
+                      // 같은 이유 — 배율이 커지면 머리글도 좁은 폭을 넘긴다.
+                      Expanded(
+                        child: Text(
+                          '미등록 항목:',
+                          style:
+                              ResponsiveHelper.bodyStyle(dialogContext).copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.warning,
+                          ),
                         ),
                       ),
                     ],
@@ -769,18 +773,34 @@ class DialogHelper {
                           top: ResponsiveHelper.spacing(dialogContext, 4),
                         ),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(
-                              Icons.circle,
-                              size: ResponsiveHelper.iconSize(dialogContext, 6),
-                              color: AppColors.warning,
+                            Padding(
+                              padding: EdgeInsets.only(
+                                  top: ResponsiveHelper.spacing(
+                                      dialogContext, 6)),
+                              child: Icon(
+                                Icons.circle,
+                                size:
+                                    ResponsiveHelper.iconSize(dialogContext, 6),
+                                color: AppColors.warning,
+                              ),
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(dialogContext, 8)),
-                            Text(
-                              doc,
-                              style: ResponsiveHelper.bodyStyle(
-                                dialogContext,
-                                color: AppColors.warning,
+                            // [R7-PREDEVICE-DISCLOSURE-RENDER.1A] 서류 이름이
+                            //   자리를 양보한다. 맨 `Text` 였고, Row 는 자식에게
+                            //   무한 폭을 주므로 긴 이름('통장 사본 (급여 계좌와
+                            //   예금주가 같아야 합니다)')이 줄바꿈하지 못해
+                            //   오른쪽으로 넘쳤다 — 실측 모든 폭·배율 조합에서
+                            //   161~282px. 이름을 잘라내면 어떤 서류인지 알 수
+                            //   없으므로 줄바꿈으로 푼다.
+                            Expanded(
+                              child: Text(
+                                doc,
+                                style: ResponsiveHelper.bodyStyle(
+                                  dialogContext,
+                                  color: AppColors.warning,
+                                ),
                               ),
                             ),
                           ],
@@ -870,14 +890,27 @@ class DialogHelper {
               ),
             ),
             // 본문
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                ResponsiveHelper.spacing(context, 20),
-                ResponsiveHelper.spacing(context, 16),
-                ResponsiveHelper.spacing(context, 20),
-                ResponsiveHelper.spacing(context, 4),
+            //
+            // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 본문에 스크롤 주인이
+            //   없었다. 이 셸은 `Column(mainAxisSize: min)` 이라 본문이
+            //   길면 그만큼 그대로 넘쳤다 — 초대 수락 확인창의 근태·급여
+            //   기준 고지가 실측에서 바닥으로 78~3,347px 넘쳤다(폭·배율
+            //   조합별). 넘친 만큼은 읽을 수 없는 고지다.
+            //
+            //   `Flexible` + 스크롤로 **본문만** 접히게 한다. 헤더와 버튼
+            //   행은 고정이므로 배율을 키워도 확인·취소 CTA 에 계속 닿는다.
+            //   내용이 공간보다 짧으면 예전과 똑같이 그려진다(스크롤 뷰는
+            //   내용 크기로 접힌다).
+            Flexible(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 16),
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 4),
+                ),
+                child: body,
               ),
-              child: body,
             ),
             // 버튼 행 — 구분선 제거, 여백만으로 콘텐츠와 분리
             Padding(

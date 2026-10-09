@@ -14,6 +14,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:ALfit/services/tax_identity_service.dart';
 import 'package:ALfit/models/core/application_model.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/models/ui/invite_capacity_state.dart';
@@ -286,6 +287,10 @@ MyApplicationsReads _workerReads(List<ApplicationModel> apps) =>
       toOrFailure: (toId) async => (to: _to(), failed: false),
       contractsByWorker: (uid) async => const [],
       autoExpirePending: (uid) async {},
+      // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 수락이 지나는 세무 축이
+      //   읽기 경계로 옮겨졌다. production 실패 경로와 같은 "모름" 을 준다
+      //   (`loadFailed` 이므로 판정이 막지 않는다).
+      taxStatus: () async => const TaxIdentityStatus.unknown(),
     );
 
 Future<void> _pumpWorker(

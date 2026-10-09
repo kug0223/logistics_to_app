@@ -23,7 +23,6 @@ import '../../screens/common/job_posting_screen.dart';
 import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/monthly_review_service.dart';
-import '../../services/tax_identity_service.dart';
 import '../../widgets/dialogs/business_review_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -2044,7 +2043,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
     // [PII-B4-R1.4 §39] 지원·수락 모든 진입점이 같은 축을 본다.
-    final acceptTax = await TaxIdentityService.loadStatus();
+    // [R7-PREDEVICE-DISCLOSURE-RENDER.1] 읽기 경계 경유 — 판정은 그대로다.
+    final acceptTax = await _reads.taxStatus();
     if (!mounted) return;
     if (!meetsApplyPrerequisites(user,
         isFlexType: isFlex, taxStatus: acceptTax)) {
