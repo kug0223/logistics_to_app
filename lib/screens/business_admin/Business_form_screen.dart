@@ -1165,9 +1165,17 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           icon: Icons.tune_outlined,
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        // [R7-PAYROLL-DISCLOSURE.1] 관리자가 가장 먼저 묻는 것을 적는다 —
+        //   "바꾸면 지난 근무도 다시 계산되나?" 답은 아니다. 지원·초대 시점의
+        //   기준이 그 근무에 고정되므로(Application snapshot) 기준을 바꿔도
+        //   이미 확정된 근무의 계산은 바뀌지 않는다. 이 사실이 어디에도
+        //   적혀 있지 않아, 관리자는 과거 급여가 흔들릴까 두려워 기준을
+        //   고치지 못하거나 반대로 소급된다고 오해할 수 있었다.
         Text(
           'GPS/비콘 체크 시각에 자동 적용됩니다. '
-          '이 기준은 근태 판정과 급여 계산에 사용됩니다.',
+          '이 기준은 근태 판정과 급여 계산에 사용됩니다.\n'
+          '기준을 바꾸면 이후의 새 지원·초대부터 적용되고, '
+          '이미 확정된 근무는 그 당시 기준으로 계산됩니다.',
           style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1200,16 +1208,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 ],
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              // [R7-PAYROLL-DISCLOSURE.1] 경계를 한 칸 틀리게 말하고 있었다.
+              //   코드는 `offset < -earlyWindow` — **정확히 N분 일찍**은 아직
+              //   조출이 아니고 정시로 처리된다. "N분 이상 일찍" 은 그 한 칸을
+              //   반대로 말한다. 근로자 고지 문구("시작 N분 전까지는 정시
+              //   처리")와도 같은 말이 되게 맞춘다.
               _buildRuleSlider(context, theme,
                 label: '조출 인정 범위',
-                description: '정시보다 N분 이상 일찍 도착하면 조출 처리',
+                description: '정시 N분 전까지는 정시 처리, 넘겨서 도착하면 조출 인정',
                 value: _attendanceRules.earlyWindow,
                 min: 0, max: 120, divisions: 24, unit: '분',
                 onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(earlyWindow: v),
               ),
+              // [R7-PAYROLL-DISCLOSURE.1] 다른 단위 항목은 모두 **시간** 기준
+              //   으로 적혀 있는데 이것만 **시각** 기준이었다("도착 시각을
+              //   올림"). 같은 연산이지만 관리자가 읽는 효과가 뒤집혀 보인다 —
+              //   47분 일찍 도착하면 조출로 인정되는 시간은 30분으로 줄어든다.
               _buildRuleSlider(context, theme,
                 label: '조출 반올림 단위',
-                description: '조출 도착 시각을 N분 단위로 올림 처리',
+                description: '조출 시간을 N분 단위로 내림 처리',
                 value: _attendanceRules.earlyArrivalUnit,
                 min: 5, max: 60, divisions: 11, unit: '분',
                 onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(earlyArrivalUnit: v),
@@ -1263,9 +1280,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 min: 5, max: 30, divisions: 5, unit: '분',
                 onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(overtimeUnit: v),
               ),
+              // [R7-PAYROLL-DISCLOSURE.1] 방향이 반대로 적혀 있었다.
+              //   코드는 조퇴 시간을 ceil 한다 — 30분 단위에서 10분 조퇴는
+              //   **30분 조퇴**로 인정된다(근로자에게 불리한 방향). "내림"
+              //   이라고 읽은 관리자는 10분만 깎인다고 생각하게 된다.
               _buildRuleSlider(context, theme,
                 label: '조퇴 반올림 단위',
-                description: '조퇴 시간을 N분 단위로 내림 처리',
+                description: '조퇴 시간을 N분 단위로 올림 처리',
                 value: _attendanceRules.earlyLeaveUnit,
                 min: 5, max: 60, divisions: 11, unit: '분',
                 onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(earlyLeaveUnit: v),
@@ -1311,30 +1332,17 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   ///   결과를 만든다. 문구와 알고리즘이 갈라질 수 없다.
   Widget _buildPolicyImpactPreview(BuildContext context) {
     // 09:00~18:00 을 기준 예시로 쓴다. 날짜는 결과에 영향을 주지 않는다.
+    // [R7-PAYROLL-DISCLOSURE.1] 줄 생성도 계산 모듈에 있다. 화면 안에
+    //   있던 동안에는 한 줄을 손으로 적은 값으로 바꿔도 아무 테스트가
+    //   깨지지 않았다(변이 D4).
     final day = DateTime(2026, 1, 1);
     final start = contractStartAt(day, '09:00');
     final end = contractEndAt(day, '09:00', '18:00');
-    String hhmm(DateTime t) =>
-        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    String inAt(int offset) => hhmm(processCheckin(
-          offsetMinutes: offset,
-          referenceAt: start,
-          rules: _attendanceRules,
-        ).roundedAt);
-    String outAt(int offset) => hhmm(processCheckout(
-          offsetMinutes: offset,
-          referenceAt: end,
-          rules: _attendanceRules,
-        ).roundedAt);
-
-    final grace = _attendanceRules.lateGrace;
-    final window = _attendanceRules.lateWindow;
-    final lines = <String>[
-      '09:${grace.toString().padLeft(2, '0')} 출근 → ${inAt(grace)} 부터 인정',
-      '09:${(grace + 1).toString().padLeft(2, '0')} 출근 → ${inAt(grace + 1)} 부터 인정',
-      '${hhmm(end.add(Duration(minutes: window + 1)))} 퇴근 → ${outAt(window + 1)} 까지 인정',
-      '17:59 퇴근 → ${outAt(-1)} 까지 인정',
-    ];
+    final lines = attendancePolicyPreviewLines(
+      _attendanceRules,
+      start: start,
+      end: end,
+    );
 
     return Container(
       padding: ResponsiveHelper.cardPadding(context),

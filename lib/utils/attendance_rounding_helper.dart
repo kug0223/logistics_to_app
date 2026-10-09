@@ -175,6 +175,44 @@ RoundingResult processCheckout({
 AttendanceRules resolveRules(AttendanceRules? rules) =>
     rules ?? AttendanceRules.defaults();
 
+/// [R7-PAYROLL-DISCLOSURE.1] 설정 화면 미리보기 네 줄.
+///
+///   관리자가 고른 숫자가 **실제로 무엇을 바꾸는가**를 보여준다.
+///
+///   왜 여기 있나: 예전에는 설정 화면의 private 메서드가 이 줄들을 만들었다.
+///   그래서 한 줄을 손으로 적은 값으로 바꿔도 아무 테스트가 깨지지 않았다
+///   (`.DISCLOSURE.1` 변이 D4). 계산과 같은 모듈에 두고 실행으로 확인한다.
+///
+///   네 줄은 **경계**를 보여준다 — 유예 안/밖, 정시 인정 안/밖.
+///   예시 근무는 09:00~18:00 이고 날짜는 결과에 영향을 주지 않는다.
+List<String> attendancePolicyPreviewLines(
+  AttendanceRules rules, {
+  required DateTime start,
+  required DateTime end,
+}) {
+  String hhmm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  String inAt(int offset) => hhmm(processCheckin(
+        offsetMinutes: offset,
+        referenceAt: start,
+        rules: rules,
+      ).roundedAt);
+  String outAt(int offset) => hhmm(processCheckout(
+        offsetMinutes: offset,
+        referenceAt: end,
+        rules: rules,
+      ).roundedAt);
+
+  final grace = rules.lateGrace;
+  final window = rules.lateWindow;
+  return <String>[
+    '${hhmm(start.add(Duration(minutes: grace)))} 출근 → ${inAt(grace)} 부터 인정',
+    '${hhmm(start.add(Duration(minutes: grace + 1)))} 출근 → ${inAt(grace + 1)} 부터 인정',
+    '${hhmm(end.add(Duration(minutes: window + 1)))} 퇴근 → ${outAt(window + 1)} 까지 인정',
+    '${hhmm(end.subtract(const Duration(minutes: 1)))} 퇴근 → ${outAt(-1)} 까지 인정',
+  ];
+}
+
 /// 디버그 전용 — 규칙 적용 결과 로그
 void debugLogRounding({
   required String label,

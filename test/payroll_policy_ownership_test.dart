@@ -415,10 +415,17 @@ void main() {
     });
 
     test('DISC-2 영향 예시는 실제 계산 helper 로 만든다', () {
-      expect(form.contains('processCheckin('), isTrue);
-      expect(form.contains('processCheckout('), isTrue);
-      expect(form.contains('rules: _attendanceRules'), isTrue,
+      // [R7-PAYROLL-DISCLOSURE.1] 줄 생성이 화면 private 메서드에 있던 동안은
+      //   한 줄을 손으로 적은 값으로 바꿔도 아무 테스트가 깨지지 않았다
+      //   (변이 D4). 계산 모듈의 `attendancePolicyPreviewLines` 로 옮겼고,
+      //   그 동작은 `attendance_rule_wording_contract_test` 가 본다.
+      //   여기서는 **화면이 그것을 쓰는가**만 고정한다.
+      expect(form.contains('attendancePolicyPreviewLines('), isTrue,
           reason: '하드코딩한 예시는 알고리즘과 갈라진다');
+      expect(form.contains('_attendanceRules,'), isTrue,
+          reason: '미리보기가 현재 슬라이더 값을 받아야 한다');
+      expect(form.contains('processCheckin('), isFalse,
+          reason: '화면이 다시 계산하면 두 곳이 갈라진다');
 
       // 예시가 실제 알고리즘과 1:1 인지 직접 확인한다.
       //   grace 이내는 정시, grace+1 은 지각 단위로 올림.
