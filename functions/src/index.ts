@@ -57,6 +57,10 @@ import {
   // [R7-PAYROLL-POLICY.5B] 공개 목록 해석과 내보낼 모양도 순수 모듈에 둔다.
   resolveProjectionItems as lpResolveProjectionItems,
   composeEffectiveLegalItem as lpComposeEffectiveLegalItem,
+  // [R7-PAYROLL-POLICY.5B.1] 발행본 출처 분류·필수 항목 무결성
+  evaluateRequiredIntegrity as lpEvaluateRequiredIntegrity,
+  requiredRevisionPointers as lpRequiredRevisionPointers,
+  gateRequiredRevisions as lpGateRequiredRevisions,
   promoteDueUpcoming as lpPromoteDueUpcoming,
   placePublishedRevision as lpPlacePublishedRevision,
   type ProjectionItem as LpProjectionItem,
@@ -11922,6 +11926,46 @@ export const callableRecordTermsConsent = onCall(
       );
     }
 
+    // ── [R7-PAYROLL-POLICY.5B.1] 발행본을 **여기서도** 확인한다 ──────
+    //
+    //   `.5B` 까지 이 writer 는 `legal_revisions` 를 한 번도 읽지 않았다.
+    //   공개 목록의 버전 문자열만 비교했으므로, 포인터가 가리키는 발행본이
+    //   사라졌거나 다른 항목·다른 버전을 가리켜도 동의가 그대로 기록됐다.
+    //   그 기록의 `revisionId` 는 **존재하지 않는 글**을 가리킨다 — 사용자가
+    //   무엇에 동의했는지 영구히 말할 수 없게 된다.
+    //
+    //   클라이언트가 막는 것으로는 부족하다. 동의는 법적 기록이고, 그
+    //   기록을 만드는 쪽이 스스로 확인해야 한다.
+    //
+    //   읽는 것은 **필수 항목 중 포인터가 있는 것**뿐이다(최소 read).
+    //   포인터가 없는 1B 이전 항목은 확인할 대상이 없으므로 통과시킨다 —
+    //   막으면 옛 사용자 전원이 멈추고, 그 상태는 사용자가 만든 것이 아니다.
+    //   읽을 대상과 판정은 모두 순수 함수가 정한다 — writer 안에 인라인으로
+    //   두면 조건 하나를 `false` 로 바꿔도 아무 테스트가 깨지지 않는다.
+    const requiredPointers = lpRequiredRevisionPointers(activeItems);
+    const requiredRevisions = new Map<string, Record<string, unknown>>();
+    if (requiredPointers.length > 0) {
+      const revSnaps = await db.getAll(...requiredPointers.map((p) =>
+        db.collection("legal_revisions").doc(p.revisionId)));
+      for (const s of revSnaps) {
+        if (s.exists) {
+          requiredRevisions.set(s.id, s.data() as Record<string, unknown>);
+        }
+      }
+    }
+    const revisionGate = lpGateRequiredRevisions({
+      pointers: requiredPointers,
+      revisions: requiredRevisions,
+    });
+    if (!revisionGate.ok) {
+      // mutation 0 — transaction 에 들어가기도 전에 멈춘다.
+      throw new HttpsError(
+        "failed-precondition",
+        "LEGAL_REQUIRED_REVISION_MISMATCH 약관 원문을 확인할 수 없습니다. " +
+        "잠시 후 다시 시도해 주세요.",
+        {reason: revisionGate.reason, itemIds: revisionGate.itemIds});
+    }
+
     // [TERMS-FIX] 재호출 보호 — 트랜잭션으로 전환:
     // (1) 이미 agreed=true인 항목을 agreed=false로 역설적 취소 차단
     // (2) termsConsentAt은 최초 동의 시에만 기록 — 재호출로 법적 타임스탬프 갱신 불가
@@ -12295,8 +12339,20 @@ export const callableGetEffectiveLegalTerms = onCall(
         revision: item.revisionId ? revs.get(item.revisionId) : undefined,
       }));
 
+    // [R7-PAYROLL-POLICY.5B.1] 필수 약관을 지금 동의받을 수 있는가.
+    //   앱이 `verified` 를 읽지 않아 `verified:false` 인 필수 약관도 평범한
+    //   약관으로 표시됐다. 판정을 서버가 내려 주고, 앱은 그것을 그린다 —
+    //   화면이 자기 규칙으로 무결성을 판단하지 않는다.
+    const integrity = lpEvaluateRequiredIntegrity(effectiveItems);
+
     return {
       effectiveItems,
+      // 필수 약관 무결성 — ok:false 면 동의를 받을 수 없다.
+      requiredIntegrity: {
+        ok: integrity.ok,
+        mismatchedItemIds: integrity.mismatched,
+        emptyItemIds: integrity.empty,
+      },
       // 안내용이다 — 동의를 받지 않는다.
       upcomingItems: resolved.upcoming.map((u) => ({
         itemId: u.itemId,

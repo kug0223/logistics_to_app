@@ -609,6 +609,47 @@ export function resolveProjectionItems(input: {
   return {effective, effectiveRaw, upcoming};
 }
 
+/**
+ * [R7-PAYROLL-POLICY.5B.1] 이 항목의 글이 **어디서 왔는가**.
+ *
+ *   `.5B` 까지는 `verified: boolean` 하나였다. 그래서 성질이 전혀 다른 두
+ *   상태가 같은 값으로 뭉개졌다.
+ *
+ *     `legacy`    포인터 자체가 없다(1B 이전 항목). 지금 공개 중인 글은
+ *                 맞지만 그 글이 고쳐지지 않았다는 증거가 없다. **정상
+ *                 호환 상태**이고 막으면 모든 옛 사용자가 멈춘다.
+ *     `mismatch`  포인터는 있는데 가리키는 발행본이 없거나 다른 항목·다른
+ *                 버전이다. **무결성 실패**다 — 사용자가 본 글과 동의
+ *                 기록이 가리키는 글이 같다고 말할 수 없다.
+ *
+ *   둘을 한 값으로 두면 "막아야 하는 것" 과 "막으면 안 되는 것" 을 구별할
+ *   수 없다. 실제로 `.5B.1` 재현에서 양쪽 다 동의가 성공했다.
+ */
+export type RevisionProvenance = "published" | "legacy" | "mismatch";
+
+/**
+ * 포인터가 가리키는 발행본이 **이 항목·이 버전**인가.
+ *
+ * @param {object} input 입력
+ * @param {object} input.item 항목(id·version·revisionId)
+ * @param {Record<string, unknown> | undefined} input.revision 읽어 온 발행본
+ * @return {RevisionProvenance} 분류
+ */
+export function classifyRevisionProvenance(input: {
+  item: {id: string; version: string; revisionId?: string | null};
+  revision: Record<string, unknown> | undefined;
+}): RevisionProvenance {
+  const {item, revision} = input;
+  const pointer = typeof item.revisionId === "string" &&
+    item.revisionId !== "" ? item.revisionId : null;
+  // 포인터가 없으면 1B 이전 항목이다 — 확인할 대상 자체가 없다.
+  if (pointer == null) return "legacy";
+  if (revision == null) return "mismatch";
+  if (String(revision["itemId"] ?? "") !== item.id) return "mismatch";
+  if (String(revision["version"] ?? "") !== item.version) return "mismatch";
+  return "published";
+}
+
 export type EffectiveLegalItem = {
   itemId: string;
   version: string;
@@ -616,12 +657,62 @@ export type EffectiveLegalItem = {
   title: string;
   content: string;
   contentHash: string;
+  /** `provenance === "published"` 와 같다. 공개 웹 계약 호환으로 남긴다. */
   verified: boolean;
+  /** [R7-PAYROLL-POLICY.5B.1] 글의 출처. 막을지 말지는 이 값으로 가른다. */
+  provenance: RevisionProvenance;
   isRequired: boolean;
   isActive: boolean;
   order: number;
   effectiveAtMs: number | null;
 };
+
+export type RequiredIntegrityVerdict = {
+  /** 발행본이 어긋난 **필수** 항목. 하나라도 있으면 동의를 받을 수 없다. */
+  mismatched: string[];
+  /** 본문이 비어 있는 **필수** 항목. 읽을 수 없는 글에 동의받지 않는다. */
+  empty: string[];
+  ok: boolean;
+};
+
+/**
+ * [R7-PAYROLL-POLICY.5B.1] 필수 약관을 **지금 동의받을 수 있는가**.
+ *
+ *   보는 것은 "필수가 하나라도 있는가" 가 아니다. 들어온 필수 항목이
+ *   **빠짐없이 쓸 수 있는 상태인가** 다.
+ *
+ *   `legacy` 는 통과시킨다 — 1B 이전 항목을 막으면 옛 사용자 전원이
+ *   멈추고, 그 상태는 사용자가 만든 것이 아니다(기존 soft migration
+ *   계약과 같은 판단). 막는 것은 `mismatch` 와 빈 본문이다.
+ *
+ *   선택 항목은 전체를 막지 않는다. 선택은 선택이고, 그 하나가 깨졌다고
+ *   필수 동의까지 못 하게 하면 가입이 멈춘다. 다만 화면은 그 항목을
+ *   정상으로 그리지 않는다(클라이언트 쪽 계약).
+ *
+ * @param {Array<object>} items 서버가 내보낼 시행 중 항목들
+ * @return {RequiredIntegrityVerdict} 판정
+ */
+export function evaluateRequiredIntegrity(items: Array<{
+  itemId: string;
+  isRequired: boolean;
+  provenance: RevisionProvenance;
+  content: string;
+}>): RequiredIntegrityVerdict {
+  const mismatched: string[] = [];
+  const empty: string[] = [];
+  for (const i of items) {
+    if (!i.isRequired) continue;
+    if (i.provenance === "mismatch") {
+      mismatched.push(i.itemId);
+      continue;
+    }
+    if (typeof i.content !== "string" || i.content.trim() === "") {
+      empty.push(i.itemId);
+    }
+  }
+  return {mismatched, empty,
+    ok: mismatched.length === 0 && empty.length === 0};
+}
 
 /**
  * [R7-PAYROLL-POLICY.5B] 시행 중인 항목 하나를 앱·웹에 내보낼 모양으로.
@@ -646,10 +737,12 @@ export function composeEffectiveLegalItem(input: {
   revision: Record<string, unknown> | undefined;
 }): EffectiveLegalItem {
   const {item, raw, revision} = input;
-  const matched = revision != null &&
-    String(revision["itemId"] ?? "") === item.id &&
-    String(revision["version"] ?? "") === item.version;
-  const src = matched ? revision : raw;
+  const provenance = classifyRevisionProvenance({item, revision});
+  const matched = provenance === "published";
+  // `published` 면 revision 이 반드시 있다(분류의 정의) — 그래도 타입으로
+  // 증명되지 않으므로 여기서 한 번 더 고른다.
+  const src: Record<string, unknown> =
+    matched && revision != null ? revision : raw;
   return {
     itemId: item.id,
     version: item.version,
@@ -658,11 +751,85 @@ export function composeEffectiveLegalItem(input: {
     content: String(src["content"] ?? ""),
     contentHash: String(src["contentHash"] ?? ""),
     verified: matched,
+    provenance,
     isRequired: item.isRequired,
     isActive: item.isActive,
     order: typeof raw["order"] === "number" ? raw["order"] : 0,
     effectiveAtMs: item.effectiveAtMs ?? null,
   };
+}
+
+/** [R7-PAYROLL-POLICY.5B.1] 발행본을 확인해야 하는 필수 항목 포인터. */
+export type RequiredRevisionPointer = {
+  id: string;
+  version: string;
+  revisionId: string;
+};
+
+/**
+ * 동의를 받기 전에 **발행본을 읽어 봐야 하는** 항목들.
+ *
+ *   필수이고, 포인터가 있는 것만이다. 선택 항목은 전체를 막지 않으므로
+ *   읽지 않고, 포인터가 없는 1B 이전 항목은 확인할 대상 자체가 없다.
+ *   그래서 추가 read 가 최소로 유지된다.
+ *
+ * @param {Array<object>} activeItems 시행 중인 활성 항목
+ * @return {RequiredRevisionPointer[]} 읽어야 할 포인터들
+ */
+export function requiredRevisionPointers(activeItems: Array<{
+  id: string;
+  version: string;
+  isRequired: boolean;
+  revisionId?: string | null;
+}>): RequiredRevisionPointer[] {
+  const out: RequiredRevisionPointer[] = [];
+  for (const i of activeItems) {
+    if (!i.isRequired) continue;
+    if (typeof i.revisionId !== "string" || i.revisionId === "") continue;
+    out.push({id: i.id, version: i.version, revisionId: i.revisionId});
+  }
+  return out;
+}
+
+export type RequiredRevisionGate =
+  | {ok: true}
+  | {ok: false; reason: "LEGAL_REQUIRED_REVISION_MISMATCH"; itemIds: string[]};
+
+/**
+ * [R7-PAYROLL-POLICY.5B.1] 이 동의를 기록해도 되는가 — **writer 쪽 확인**.
+ *
+ *   `.5B` 까지 동의 writer 는 `legal_revisions` 를 한 번도 읽지 않았다.
+ *   공개 목록의 버전 문자열만 비교했으므로, 포인터가 가리키는 발행본이
+ *   사라졌거나 다른 항목·다른 버전을 가리켜도 동의가 그대로 기록됐다.
+ *   그 기록의 `revisionId` 는 **존재하지 않는 글**을 가리킨다.
+ *
+ *   클라이언트가 막는 것으로는 부족하다. 동의는 법적 기록이고, 그 기록을
+ *   만드는 쪽이 스스로 확인해야 한다.
+ *
+ *   판단을 순수 함수로 두는 이유: writer 안에 인라인으로 있으면 조건 하나를
+ *   `false` 로 바꿔도 아무 테스트가 깨지지 않는다(`.5B.1` 변이 I5·I10 이
+ *   그렇게 빠져나갔다).
+ *
+ * @param {object} input 입력
+ * @param {RequiredRevisionPointer[]} input.pointers 확인 대상
+ * @param {object} input.revisions 읽어 온 발행본들 (id → 문서)
+ * @return {RequiredRevisionGate} 판정
+ */
+export function gateRequiredRevisions(input: {
+  pointers: RequiredRevisionPointer[];
+  revisions: {get(id: string): Record<string, unknown> | undefined};
+}): RequiredRevisionGate {
+  const itemIds: string[] = [];
+  for (const p of input.pointers) {
+    const provenance = classifyRevisionProvenance({
+      item: {id: p.id, version: p.version, revisionId: p.revisionId},
+      revision: input.revisions.get(p.revisionId),
+    });
+    if (provenance === "mismatch") itemIds.push(p.id);
+  }
+  return itemIds.length === 0 ?
+    {ok: true} :
+    {ok: false, reason: "LEGAL_REQUIRED_REVISION_MISMATCH", itemIds};
 }
 
 export type ReconsentVerdict = {

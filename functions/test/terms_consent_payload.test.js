@@ -230,8 +230,13 @@ t('C15-3 활성 약관은 app_settings/legal_terms 에서만 온다', () => {
   const src = fs.readFileSync(require('path')
     .join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const i = src.indexOf('export const callableRecordTermsConsent');
+  // [R7-PAYROLL-POLICY.5B.1] 고정 길이 창(4000자)으로 잘라 보고 있었다.
+  //   발행본 확인이 들어오면서 함수가 자라자 `TERMS_VERSION_STALE` 이 창
+  //   밖으로 밀려나 "버전 불일치를 조용히 저장한다" 고 틀린 말을 했다.
+  //   다음 `export const` 까지로 자른다.
+  const end = src.indexOf('\nexport const ', i + 10);
   // 주석에 적어 둔 "예전에는 이랬다" 가 계약 판정을 흔들지 않게 코드만 본다.
-  const body = src.slice(i, i + 4000)
+  const body = src.slice(i, end > 0 ? end : src.length)
     .split('\n').filter((l) => !l.trimStart().startsWith('//')).join('\n');
   assert.ok(body.includes('.doc("legal_terms")'),
     '활성 약관 출처가 있어야 한다');

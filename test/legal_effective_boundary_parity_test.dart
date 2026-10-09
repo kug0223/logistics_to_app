@@ -181,6 +181,13 @@ void main() {
         {'effectiveItems': <Object>[], 'serverNowMs': 'now'},
         {'serverNowMs': 1},
         {'effectiveItems': <Object>[]},
+        // [R7-PAYROLL-POLICY.5B.1] 무결성 판정이 없으면 "문제 없음" 이
+        //   아니다 — 검사가 조용히 꺼지면 안 된다.
+        {'effectiveItems': <Object>[], 'serverNowMs': 1},
+        {'effectiveItems': <Object>[], 'serverNowMs': 1,
+          'requiredIntegrity': 'x'},
+        {'effectiveItems': <Object>[], 'serverNowMs': 1,
+          'requiredIntegrity': {'ok': 'yes'}},
       ]) {
         expect(() => EffectiveLegalTerms.fromServer(bad),
             throwsA(isA<FormatException>()),
@@ -191,6 +198,7 @@ void main() {
     test('08 필수 항목이 없으면 정상 상태가 아니다', () {
       final none = EffectiveLegalTerms.fromServer({
         'effectiveItems': <Object>[],
+        'requiredIntegrity': {'ok': true},
         'serverNowMs': 0,
       });
       expect(none.hasRequiredItems, isFalse);
@@ -203,6 +211,7 @@ void main() {
             'isRequired': false,
           },
         ],
+        'requiredIntegrity': {'ok': true},
         'serverNowMs': 0,
       });
       expect(onlyOptional.hasRequiredItems, isFalse,
@@ -211,18 +220,30 @@ void main() {
       expect(_terms().hasRequiredItems, isTrue);
     });
 
-    test('09 모양이 깨진 항목은 버리고, 남은 것만 쓴다', () {
-      final t = EffectiveLegalTerms.fromServer({
-        'effectiveItems': [
-          'junk',
-          {'itemId': '', 'version': 'v'},
-          {'itemId': 'a', 'version': ''},
-          {'itemId': 'service_terms', 'version': '2026.08'},
-        ],
-        'serverNowMs': 1700000000000,
-      });
-      expect(t.items, hasLength(1));
-      expect(t.items.first.id, 'service_terms');
+    // [R7-PAYROLL-POLICY.5B.1] 정책이 뒤집혔다. 예전에는 깨진 항목을
+    //   버리고 남은 것만 썼다 — 서버가 보낸 필수 약관 하나가 전송 중
+    //   망가져도 앱은 정상 화면을 그렸다. PARTIAL != SUCCESS.
+    test('09 모양이 깨진 항목이 있으면 전체가 ERROR 다', () {
+      for (final broken in <Object>[
+        'junk',
+        42,
+        {'itemId': '', 'version': 'v'},
+        {'itemId': 'a', 'version': ''},
+        {'version': 'v'},
+        {'itemId': 'a'},
+      ]) {
+        expect(
+            () => EffectiveLegalTerms.fromServer({
+                  'effectiveItems': [
+                    {'itemId': 'service_terms', 'version': '2026.08'},
+                    broken,
+                  ],
+                  'requiredIntegrity': {'ok': true},
+                  'serverNowMs': 1700000000000,
+                }),
+            throwsA(isA<FormatException>()),
+            reason: '$broken 를 조용히 버렸다');
+      }
     });
 
     test('10 화면들이 조회 실패를 상태로 들고 있다', () {
@@ -233,6 +254,109 @@ void main() {
       // 재동의 화면은 기존 ERROR 상태를 쓴다.
       expect(_code('lib/screens/legal/legal_consent_screen.dart')
           .contains('LegalReadiness.error'), isTrue);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────
+  group('BP-7 필수 발행본 무결성 — 동의 차단', () {
+    EffectiveLegalTerms withIntegrity(RequiredLegalIntegrity i) =>
+        EffectiveLegalTerms(
+          serverNow: DateTime.utc(2026, 10, 9),
+          upcoming: const [],
+          integrity: i,
+          items: [
+            _item('service_terms', '서비스 이용약관', true),
+            _item('marketing_consent', '마케팅 수신 동의 (선택)', false),
+          ],
+        );
+
+    test('22 판정이 false 면 필수 완전성이 깨진다', () {
+      expect(
+          withIntegrity(const RequiredLegalIntegrity(ok: true))
+              .hasRequiredItems,
+          isTrue);
+      expect(
+          withIntegrity(const RequiredLegalIntegrity(
+                  ok: false, mismatchedItemIds: ['service_terms']))
+              .hasRequiredItems,
+          isFalse,
+          reason: '발행본이 어긋난 필수 약관으로 동의를 받을 수 없다');
+      expect(
+          withIntegrity(const RequiredLegalIntegrity(
+                  ok: false, emptyItemIds: ['service_terms']))
+              .hasRequiredItems,
+          isFalse,
+          reason: '본문이 비어 있는 필수 약관으로 동의를 받을 수 없다');
+    });
+
+    test('23 서버 응답의 판정을 그대로 읽는다', () {
+      final t = EffectiveLegalTerms.fromServer({
+        'effectiveItems': [
+          {'itemId': 'service_terms', 'version': '2026.08'},
+        ],
+        'requiredIntegrity': {
+          'ok': false,
+          'mismatchedItemIds': ['service_terms', 'junk', 42],
+          'emptyItemIds': ['privacy_policy'],
+        },
+        'serverNowMs': 1700000000000,
+      });
+      expect(t.integrity.ok, isFalse);
+      expect(t.integrity.mismatchedItemIds, ['service_terms', 'junk']);
+      expect(t.integrity.emptyItemIds, ['privacy_policy']);
+      expect(t.hasRequiredItems, isFalse);
+    });
+
+    test('24 판정이 없으면 "문제 없음" 으로 읽지 않는다', () {
+      // 검사가 조용히 꺼지는 경로를 만들지 않는다.
+      for (final bad in <Object?>[
+        null,
+        'x',
+        42,
+        <String, Object?>{},
+        {'ok': 'yes'},
+        {'mismatchedItemIds': <String>[]},
+      ]) {
+        expect(() => RequiredLegalIntegrity.parse(bad),
+            throwsA(isA<FormatException>()),
+            reason: '$bad');
+      }
+    });
+
+    testWidgets('25 무결성 실패면 재동의 화면이 체크박스를 그리지 않는다',
+        (t) async {
+      t.view.physicalSize = const Size(400, 900);
+      t.view.devicePixelRatio = 1.0;
+      addTearDown(t.view.reset);
+      final sent = <Map<String, dynamic>>[];
+      final reads = LegalConsentReads(
+        readiness: () async => _reconsent(),
+        terms: () async => withIntegrity(const RequiredLegalIntegrity(
+            ok: false, mismatchedItemIds: ['service_terms'])),
+        storedConsent: () async => <String, dynamic>{},
+        recordConsent: (r) async => sent.add(r),
+      );
+      await t.pumpWidget(MaterialApp(home: LegalConsentScreen(reads: reads)));
+      for (var i = 0; i < 10; i++) {
+        await t.pump(const Duration(milliseconds: 60));
+      }
+      expect(find.textContaining('약관 상태를 확인하지 못했어요'), findsOneWidget);
+      expect(find.byType(Checkbox), findsNothing,
+          reason: '발행본을 확인할 수 없는 필수 약관으로 동의를 받지 않는다');
+      expect(sent, isEmpty);
+    });
+
+    test('26 네 동의 화면이 모두 같은 술어로 막는다', () {
+      // `hasRequiredItems` 하나에 판정이 묶여 있으므로, 그것을 보는 화면은
+      // 전부 자동으로 막힌다. 보지 않는 화면이 생기면 여기서 깨진다.
+      for (final p in <String>[
+        'lib/screens/auth/register_screen.dart',
+        'lib/screens/auth/foreign_register_screen.dart',
+        'lib/screens/auth/registration_recovery_screen.dart',
+        'lib/screens/legal/legal_consent_screen.dart',
+      ]) {
+        expect(_code(p).contains('hasRequiredItems'), isTrue, reason: p);
+      }
     });
   });
 
@@ -461,6 +585,7 @@ void main() {
           'junk',
           {'itemId': '', 'version': 'x'},
         ],
+        'requiredIntegrity': {'ok': true},
         'serverNowMs': 1700000000000,
       });
       expect(t.upcoming, hasLength(1));

@@ -91,12 +91,61 @@ class UpcomingLegalRevision {
 /// `app_settings/legal_terms` 를 그대로 읽은 것(base 기준)이고, 이것은
 /// `callableGetEffectiveLegalTerms` 가 **서버 시각으로 판정한** 결과다.
 /// 동의를 받는 화면은 이쪽만 쓴다.
+/// [R7-PAYROLL-POLICY.5B.1] 필수 약관을 지금 동의받을 수 있는가.
+///
+/// 판정은 서버가 한다 — 화면이 자기 규칙으로 무결성을 판단하면 서버와
+/// 다른 답을 말하게 된다. 앱은 이 값을 **그리기만** 한다.
+class RequiredLegalIntegrity {
+  const RequiredLegalIntegrity({
+    required this.ok,
+    this.mismatchedItemIds = const [],
+    this.emptyItemIds = const [],
+  });
+
+  /// 필수 약관 전부가 쓸 수 있는 상태인가.
+  final bool ok;
+
+  /// 포인터가 가리키는 발행본이 없거나 어긋난 필수 항목.
+  final List<String> mismatchedItemIds;
+
+  /// 본문이 비어 있는 필수 항목.
+  final List<String> emptyItemIds;
+
+  /// 응답에 판정이 없으면 **없는 것으로 치지 않는다.**
+  ///
+  /// 옛 서버와 새 앱이 만나는 구간에서 판정이 빠질 수 있다. 그때
+  /// "문제 없음" 으로 읽으면 무결성 검사가 조용히 꺼진다. 모르는 것은
+  /// 모르는 것이므로 [fromServer] 가 throw 한다.
+  static RequiredLegalIntegrity parse(Object? raw) {
+    if (raw is! Map) {
+      throw const FormatException('약관 무결성 판정이 응답에 없습니다');
+    }
+    final ok = raw['ok'];
+    if (ok is! bool) {
+      throw const FormatException('약관 무결성 판정의 모양이 다릅니다');
+    }
+    List<String> ids(Object? v) => v is List
+        ? v.whereType<String>().toList(growable: false)
+        : const <String>[];
+    return RequiredLegalIntegrity(
+      ok: ok,
+      mismatchedItemIds: ids(raw['mismatchedItemIds']),
+      emptyItemIds: ids(raw['emptyItemIds']),
+    );
+  }
+}
+
 class EffectiveLegalTerms {
   const EffectiveLegalTerms({
     required this.items,
     required this.upcoming,
     required this.serverNow,
+    this.integrity = const RequiredLegalIntegrity(ok: true),
   });
+
+  /// 필수 약관 무결성 판정. 기본값은 테스트 fixture 편의용이고, 서버
+  /// 응답에서는 [fromServer] 가 반드시 읽어 온다.
+  final RequiredLegalIntegrity integrity;
 
   /// 지금 시행 중인 항목. 순서는 `order` 로 정렬돼 있다.
   final List<LegalTermsItem> items;
@@ -117,10 +166,22 @@ class EffectiveLegalTerms {
   ///
   /// 약관 없이 받은 동의는 무엇에 대한 동의인지 말할 수 없다. 응답이
   /// 비었거나 필수 항목이 빠진 것을 "동의할 것이 없다" 로 읽지 않는다.
-  bool get hasRequiredItems => activeItems.any((i) => i.isRequired);
+  /// 필수 약관을 지금 동의받을 수 있는가.
+  ///
+  /// [R7-PAYROLL-POLICY.5B.1] 예전에는 "필수가 **하나라도** 있는가"(any)
+  /// 였다. 필수 3개 중 1개만 와도 정상으로 읽혔다. 그리고 발행본이 어긋난
+  /// 필수 약관도 평범한 약관으로 그려졌다 — 서버가 verified:false 로
+  /// 말했지만 앱이 그 필드를 읽지 않았다.
+  ///
+  /// 이제 보는 것은 둘이다.
+  ///   · 필수 항목이 하나라도 있는가 (빈 응답을 "동의할 것 없음" 으로
+  ///     읽지 않기 위해)
+  ///   · 서버가 그 필수 항목들을 **쓸 수 있다고 판정했는가**
+  bool get hasRequiredItems =>
+      integrity.ok && activeItems.any((i) => i.isRequired);
 
   /// 서버 응답 해석. 모양이 다르면 **throw** 한다 — 부분 응답을 정상으로
-  /// 위장하지 않는다(ERROR ≠ EMPTY).
+  /// 위장하지 않는다(ERROR ≠ EMPTY, PARTIAL ≠ SUCCESS).
   factory EffectiveLegalTerms.fromServer(Map<dynamic, dynamic>? data) {
     if (data == null) {
       throw const FormatException('약관 응답이 비어 있습니다');
@@ -132,11 +193,21 @@ class EffectiveLegalTerms {
     }
     final items = <LegalTermsItem>[];
     for (final e in rawItems) {
-      if (e is! Map) continue;
+      // [R7-PAYROLL-POLICY.5B.1] 깨진 항목을 **버리지 않는다.**
+      //   예전에는 continue 로 넘겨서, 서버가 보낸 필수 약관 하나가 전송
+      //   중 망가져도 앱은 남은 것만 그리고 정상 화면을 만들었다. 항목
+      //   하나를 읽지 못한 것은 "그 항목이 없다" 가 아니다.
+      if (e is! Map) {
+        throw const FormatException('약관 항목의 모양이 다릅니다');
+      }
       final id = e['itemId'];
       final version = e['version'];
-      if (id is! String || id.isEmpty) continue;
-      if (version is! String || version.isEmpty) continue;
+      if (id is! String || id.isEmpty) {
+        throw const FormatException('약관 항목에 식별자가 없습니다');
+      }
+      if (version is! String || version.isEmpty) {
+        throw const FormatException('약관 항목에 버전이 없습니다');
+      }
       final at = e['effectiveAtMs'];
       items.add(LegalTermsItem(
         id: id,
@@ -157,6 +228,8 @@ class EffectiveLegalTerms {
     }
     return EffectiveLegalTerms(
       items: items,
+      // 판정이 없으면 "문제 없음" 으로 읽지 않는다 — parse 가 throw 한다.
+      integrity: RequiredLegalIntegrity.parse(data['requiredIntegrity']),
       upcoming: UpcomingLegalItemInfo.parseList(data['upcomingItems']),
       serverNow: DateTime.fromMillisecondsSinceEpoch(nowMs).toLocal(),
     );
@@ -179,6 +252,8 @@ class UpcomingLegalItemInfo {
     if (raw is! List) return const [];
     final out = <UpcomingLegalItemInfo>[];
     for (final e in raw) {
+      // 예정 안내는 **막지 않는다.** 모양이 깨진 예정 항목 하나 때문에
+      //   동의 자체가 불가능해지면 안 된다 — 시행 중 약관과 성질이 다르다.
       if (e is! Map) continue;
       final id = e['itemId'];
       final version = e['version'];
