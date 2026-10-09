@@ -213,6 +213,37 @@ List<String> attendancePolicyPreviewLines(
   ];
 }
 
+/// [R7-PREDEVICE-STABILIZATION.1A] 근로자 고지의 **사례 숫자**는 여기서 온다.
+///
+///   `.1` 에서 근로자 문구에 "1분 늦어도 N분" 을 적었는데, 그것은
+///   `lateGrace` 를 무시한 거짓이었다 — 유예 5분인 사업장에서 1분 지각은
+///   **정시로 처리**되고 아무것도 차감되지 않는다. 또 `lateGrace + 1` 이
+///   `lateUnit` 보다 크면 차감이 `lateUnit` 과도 다르다
+///   (유예 5 · 단위 5 → 6분 지각은 **10분** 차감).
+///
+///   그래서 문구가 쓸 숫자를 formatter 가 짐작하지 않고 **실제 계산을
+///   돌려** 얻는다. 식이 바뀌면 문구도 같이 바뀐다.
+///
+///   날짜·시각은 결과에 영향을 주지 않으므로 고정 기준점을 쓴다.
+final DateTime _exampleRef = DateTime.utc(2026, 1, 1, 9);
+
+/// 지각으로 **처음 인정되는** 도착 분 — 유예를 1분 넘긴 시점.
+int firstLateOffsetMinutes(AttendanceRules rules) => rules.lateGrace + 1;
+
+/// 그때 실제로 차감되는 분.
+int firstLateDeductionMinutes(AttendanceRules rules) => processCheckin(
+      offsetMinutes: firstLateOffsetMinutes(rules),
+      referenceAt: _exampleRef,
+      rules: rules,
+    ).roundedOffset;
+
+/// 1분 일찍 퇴근했을 때 실제로 차감되는 분. 조퇴에는 유예가 없다.
+int firstEarlyLeaveDeductionMinutes(AttendanceRules rules) => -processCheckout(
+      offsetMinutes: -1,
+      referenceAt: _exampleRef,
+      rules: rules,
+    ).roundedOffset;
+
 /// 디버그 전용 — 규칙 적용 결과 로그
 void debugLogRounding({
   required String label,

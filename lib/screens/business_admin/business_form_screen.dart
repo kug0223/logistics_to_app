@@ -368,6 +368,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           if (i.isOdd) {
             final isCompleted = i ~/ 2 < _currentStep;
             return Expanded(
+              // 연결선은 남는 폭만 가져간다 — 라벨이 먼저 자리를 받는다.
+              flex: 1,
               child: Container(
                 height: 2,
                 color: isCompleted ? theme.primaryColor : AppColors.grey200,
@@ -377,7 +379,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           final stepIndex = i ~/ 2;
           final isCompleted = stepIndex < _currentStep;
           final isCurrent = stepIndex == _currentStep;
-          return Column(
+          // [R7-PREDEVICE-STABILIZATION.1] 단계 칸이 맨 `Column` 이었다.
+          //
+          //   Row 는 자식에게 무한 폭을 주므로 라벨('업종 선택' 등)이
+          //   줄바꿈하지 못했고, 배율 2.0 에서 세 칸 합이 가용폭을 넘겨
+          //   320dp 에서 오른쪽 78px · 360dp 에서 40px 넘쳤다.
+          //   칸을 `Expanded` 로 만들면 라벨은 **줄바꿈**하고 표시기는
+          //   세로로 늘어난다 — 어느 단계인지 잘리지 않는다.
+          return Expanded(
+            flex: 3,
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedContainer(
@@ -406,6 +417,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 4)),
               Text(
                 stepLabels[stepIndex],
+                textAlign: TextAlign.center,
                 style: ResponsiveHelper.tinyStyle(context).copyWith(
                   color: isCurrent ? theme.primaryColor : AppColors.grey500,
                   fontWeight:
@@ -413,6 +425,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 ),
               ),
             ],
+            ),
           );
         }),
       ),
@@ -929,7 +942,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           },
           child: Container(
             width: double.infinity,
-            height: 160,
+            // [R7-PREDEVICE-STABILIZATION.1] 고정 높이 봉투였다.
+            //
+            //   `height: 160` 안에 아이콘(40) + 안내 2줄이 들어 있었다.
+            //   배율 2.0 에서 내용이 174px 가 되어 바닥으로 14px 넘쳤다
+            //   (신규 등록 경로 실측). 상자를 고정하고 내용을 키우면 넘치는
+            //   것은 당연하므로, **내용이 높이를 정하게** 바꾼다.
+            //   160 은 이제 하한이다 — 작은 배율에서 보이던 크기는 그대로다.
+            constraints: const BoxConstraints(minHeight: 160),
             decoration: BoxDecoration(
               color: AppColors.grey200,
               borderRadius: BorderRadius.circular(16),
@@ -1636,10 +1656,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                         size: ResponsiveHelper.iconSize(context, 18),
                         color: theme.primaryColor),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Text('GPS 허용 반경',
-                        style: ResponsiveHelper.bodyStyle(context)
-                            .copyWith(fontWeight: FontWeight.bold)),
-                    const Spacer(),
+                    // [R7-PREDEVICE-STABILIZATION.1] `Spacer` 는 **남는** 공간을
+                    //   나눌 뿐 **모자란** 공간을 만들지 못한다. 배율 2.0 에서
+                    //   제목과 값 칩이 가용폭을 넘겨 오른쪽으로 넘쳤다.
+                    //   제목에 남은 폭을 주면 긴 제목은 줄바꿈하고, 값 칩은
+                    //   Spacer 없이도 오른쪽 끝에 남는다.
+                    Expanded(
+                      child: Text('GPS 허용 반경',
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.bold)),
+                    ),
                     Container(
                       padding: EdgeInsets.symmetric(
                         horizontal: ResponsiveHelper.spacing(context, 10),
@@ -1676,12 +1702,30 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 Padding(
                   padding: EdgeInsets.symmetric(
                       horizontal: ResponsiveHelper.spacing(context, 8)),
+                  // [R7-PREDEVICE-STABILIZATION.1] `spaceBetween` 은 남는
+                  //   공간을 나눌 뿐 모자란 공간을 만들지 못한다 — 배율 2.0
+                  //   에서 세 눈금이 15px 넘쳤다. 세 칸이 폭을 나눠 갖고
+                  //   양끝·가운데로 정렬하면 간격 모양은 그대로다.
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('30m', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
-                      Text('100m', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
-                      Text('500m', style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                      Expanded(
+                        child: Text('30m',
+                            textAlign: TextAlign.start,
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.grey400)),
+                      ),
+                      Expanded(
+                        child: Text('100m',
+                            textAlign: TextAlign.center,
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.grey400)),
+                      ),
+                      Expanded(
+                        child: Text('500m',
+                            textAlign: TextAlign.end,
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.grey400)),
+                      ),
                     ],
                   ),
                 ),
@@ -2101,14 +2145,24 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   Widget _buildAdditionalImagesSection(BuildContext context, ThemeData theme) {
     final totalImages = _additionalImages.length + _additionalImageUrls.length;
 
-    return SizedBox(
-      height: 100,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: totalImages + (totalImages < 5 ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index < _additionalImageUrls.length) {
-            return _buildImageThumbnail(
+    // [R7-PREDEVICE-STABILIZATION.1] 고정 높이 봉투를 없앴다.
+    //
+    //   `SizedBox(height: 100)` + 수평 `ListView` 였다. '사진 추가' 타일의
+    //   아이콘·캡션은 접근성 배율과 함께 커지는데 봉투는 100 에 고정이어서
+    //   배율 2.0 에서 바닥으로 70px 넘쳤다. 이제 **내용이 높이를 정한다** —
+    //   썸네일은 자기 정사각(100)을 갖고, 추가 타일은 하한 100 에서 늘어난다.
+    //
+    //   `ListView.builder` 는 높이가 묶여 있어야 하므로 수평
+    //   `SingleChildScrollView` + `Row` 로 바꿨다. 최대 6칸이라 lazy 빌드가
+    //   필요하지 않다. 제거 콜백이 쓰는 인덱스는 각 리스트 안의 위치
+    //   그대로여서 의미가 바뀌지 않는다.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var index = 0; index < _additionalImageUrls.length; index++)
+            _buildImageThumbnail(
               context,
               networkUrl: _additionalImageUrls[index],
               onRemove: () {
@@ -2117,12 +2171,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                   _additionalImageUrls.removeAt(index);
                 });
               },
-            );
-          }
-
-          final fileIndex = index - _additionalImageUrls.length;
-          if (fileIndex < _additionalImages.length) {
-            return _buildImageThumbnail(
+            ),
+          for (var fileIndex = 0;
+              fileIndex < _additionalImages.length;
+              fileIndex++)
+            _buildImageThumbnail(
               context,
               file: _additionalImages[fileIndex],
               onRemove: () {
@@ -2130,11 +2183,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                 _additionalImages[fileIndex].delete().ignore();
                 setState(() => _additionalImages.removeAt(fileIndex));
               },
-            );
-          }
-
-          return _buildAddImageButton(context);
-        },
+            ),
+          if (totalImages < 5) _buildAddImageButton(context),
+        ],
       ),
     );
   }
@@ -2147,6 +2198,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }) {
     return Container(
       width: 100,
+      // [R7-PREDEVICE-STABILIZATION.1] 예전에는 높이가 없었고 바깥
+      //   `SizedBox(height: 100)` 에 의존했다. 그 봉투를 없애면서(배율에서
+      //   넘쳤다) 썸네일이 자기 크기를 직접 갖는다. 사진에는 글자가 없으므로
+      //   접근성 배율과 함께 커질 이유가 없다 — 정사각을 유지한다.
+      height: 100,
       margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 12)),
       child: Stack(
         children: [
@@ -2186,6 +2242,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       onTap: () => _pickAdditionalImages(),
       child: Container(
         width: 100,
+        // [R7-PREDEVICE-STABILIZATION.1] 아이콘 + 캡션 2줄이 배율 2.0 에서
+        //   170px 가 되어 고정 100 봉투 바닥으로 70px 넘쳤다. 100 은 하한이고
+        //   내용이 더 필요하면 세로로 늘어난다.
+        constraints: const BoxConstraints(minHeight: 100),
         decoration: BoxDecoration(
           color: AppColors.grey200,
           borderRadius: BorderRadius.circular(12),
@@ -2227,14 +2287,17 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 사진 (최대 5장)
-          SizedBox(
-            height: 100,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: totalImages + (totalImages < 5 ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index < _transportImageUrls.length) {
-                  return _buildImageThumbnail(
+          // [R7-PREDEVICE-STABILIZATION.1] 추가사진 섹션과 같은 고정 높이
+          //   봉투였다 — 같은 방식으로 내용이 높이를 정하게 바꾼다.
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var index = 0;
+                    index < _transportImageUrls.length;
+                    index++)
+                  _buildImageThumbnail(
                     context,
                     networkUrl: _transportImageUrls[index],
                     onRemove: () {
@@ -2243,25 +2306,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                         _transportImageUrls.removeAt(index);
                       });
                     },
-                  );
-                }
-
-                final fileIndex = index - _transportImageUrls.length;
-                if (fileIndex < _transportImages.length) {
-                  return _buildImageThumbnail(
+                  ),
+                for (var fileIndex = 0;
+                    fileIndex < _transportImages.length;
+                    fileIndex++)
+                  _buildImageThumbnail(
                     context,
                     file: _transportImages[fileIndex],
                     onRemove: () {
                       _transportImages[fileIndex].delete().ignore();
                       setState(() => _transportImages.removeAt(fileIndex));
                     },
-                  );
-                }
-
-                return GestureDetector(
+                  ),
+                if (totalImages < 5) GestureDetector(
                   onTap: _pickTransportImages,
                   child: Container(
                     width: 100,
+                    // [R7-PREDEVICE-STABILIZATION.1] 추가사진 타일과 같은
+                    //   고정 높이 넘침 — 같은 방식으로 하한만 둔다.
+                    constraints: const BoxConstraints(minHeight: 100),
                     decoration: BoxDecoration(
                       color: AppColors.grey200,
                       borderRadius: BorderRadius.circular(12),
@@ -2289,8 +2352,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                       ],
                     ),
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),

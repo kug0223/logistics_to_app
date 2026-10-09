@@ -135,11 +135,18 @@ class CommonWidgets {
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   ],
-                  Text(
-                    text,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: isDisabled ? AppColors.grey500 : Colors.white,
-                      fontWeight: FontWeight.bold,
+                  // [R7-PREDEVICE-STABILIZATION.1] 라벨이 자리를 양보한다.
+                  //   아이콘 + 라벨이 배율 2.0 에서 버튼 폭을 넘겼다(실측
+                  //   3.5px). `Flexible` 이면 자리가 있을 때는 지금처럼
+                  //   가운데 정렬이고, 모자랄 때만 줄바꿈한다.
+                  Flexible(
+                    child: Text(
+                      text,
+                      textAlign: TextAlign.center,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: isDisabled ? AppColors.grey500 : Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -188,11 +195,16 @@ class CommonWidgets {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 ],
-                Text(
-                  text,
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: buttonColor,
-                    fontWeight: FontWeight.bold,
+                // [R7-PREDEVICE-STABILIZATION.1] primaryButton 과 같은 이유 —
+                //   같은 Row 에 나란히 놓이는 버튼이라 한쪽만 고치면 갈린다.
+                Flexible(
+                  child: Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: buttonColor,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -301,10 +313,22 @@ class CommonWidgets {
           ),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-        Text(
-          title,
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
+        // [R7-PREDEVICE-STABILIZATION.1] 제목이 자리를 양보한다.
+        //
+        //   예전에는 맨 Text 였다. Row 는 자식에게 무한 폭을 주므로 제목이
+        //   줄바꿈하지 못하고, 접근성 배율 2.0 에서 아이콘 상자(배율에 따라
+        //   같이 커진다)와 합쳐 가용폭을 넘겼다 — 사업장 폼 실측에서
+        //   오른쪽 40~78px 넘침. `Expanded` 로 남은 폭을 주면 긴 제목은
+        //   **자연스럽게 줄바꿈**하고 헤더가 세로로 늘어난다.
+        //
+        //   줄 수 고정·말줄임·글자를 물리적으로 눌러 담는 우회는 쓰지
+        //   않는다 — 섹션 제목을 잘라내면 그 섹션이 무엇인지 알 수 없다.
+        Expanded(
+          child: Text(
+            title,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
       ],

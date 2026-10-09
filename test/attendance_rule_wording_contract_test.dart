@@ -14,6 +14,7 @@
 import 'dart:io';
 
 import 'package:ALfit/models/core/business_model.dart';
+import 'package:ALfit/utils/attendance_policy_disclosure.dart';
 import 'package:ALfit/utils/attendance_rounding_helper.dart';
 import 'package:ALfit/utils/contract_period.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -248,15 +249,21 @@ void main() {
       expect(around.contains('maxLines'), isFalse);
     });
 
-    test('16 근로자 고지 문구는 바꾸지 않았다 — 계약서가 같은 글을 쓴다', () {
-      // 공용 formatter 는 계약서·PDF 와 공유된다. 이번 Phase 에서 건드리면
-      //   이미 서명된 계약과 새 계약이 같은 숫자를 다른 말로 적게 된다.
+    test('16 근로자 고지의 **경계 문구**는 그대로다 — 설정 화면과 같은 말을 쓴다', () {
+      // [R7-PREDEVICE-STABILIZATION.1] 이 테스트는 원래 "근로자 문구를
+      //   전혀 바꾸지 않았다" 를 지켰다. 그 Phase 에서는 단위 설명의 방향을
+      //   근로자에게 말하지 않기로 **미뤘기** 때문이다.
+      //
+      //   이번 Phase 가 그 미룬 항목을 처리했다(아래 RW-5). 그래서 지키는
+      //   대상을 좁힌다 — **경계** 문구(이내/넘겨)는 설정 화면 문구와 쌍을
+      //   이루므로 여전히 고정이고, **단위** 문구는 방향을 더해 바뀌었다.
       final d = _read('lib/utils/attendance_policy_disclosure.dart');
       expect(d.contains('시작 \${r.earlyWindow}분 전까지는 정시 처리'), isTrue);
-      expect(d.contains('\${r.earlyWindow}분을 넘겨 도착하면 \${r.earlyArrivalUnit}분 단위'),
-          isTrue);
       expect(d.contains('\${r.lateGrace}분까지는 정시 처리'), isTrue);
       expect(d.contains('종료 후 \${r.lateWindow}분까지는 정시 처리'), isTrue);
+      // 경계 자체는 "이상" 이 아니라 "넘겨/넘기면" 이다.
+      expect(d.contains('\${r.earlyWindow}분을 넘겨 도착하면'), isTrue);
+      expect(d.contains('\${r.lateWindow}분을 넘기면'), isTrue);
     });
 
     test('14 미리보기 네 줄이 실제 계산과 같은 값이다', () {
@@ -272,6 +279,131 @@ void main() {
           _end.add(Duration(minutes: ((window + 1) ~/ r.overtimeUnit) * r.overtimeUnit)));
       expect(_out(-1, r).roundedAt,
           _end.subtract(Duration(minutes: r.earlyLeaveUnit)));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // [R7-PREDEVICE-STABILIZATION.1] 근로자가 **방향**을 안다
+  //
+  //   네 단위 항목은 모두 근로자에게 불리한 한 방향으로 끊는다. 그런데
+  //   근로자가 보던 문장은 "N분 단위" 뿐이었다 — 중립 반올림으로 읽힌다.
+  //   여기서는 문장이 **주장하는 것**을 실제 계산으로 검증한다. 문구만
+  //   고정하면 계산이 바뀌어도 아무도 모른다.
+  // ═══════════════════════════════════════════════════════════
+  group('RW-5 근로자 고지가 방향을 말한다', () {
+    /// 근로자가 실제로 보는 한 줄을 라벨로 찾는다.
+    String line(AttendanceRules r, String label) {
+      final hit = attendancePolicyLines(r).where((l) => l.label == label);
+      expect(hit, isNotEmpty, reason: '"$label" 줄이 없다');
+      return hit.first.value;
+    }
+
+    test('19 지각 — "올려서 차감" 이 실제 계산과 같다', () {
+      // [R7-PREDEVICE-STABILIZATION.1A] `.1` 은 여기서 "1분 늦어도 30분" 을
+      //   핀했다. 유예 5분이면 1분 지각은 **정시**이므로 거짓이었고, 이
+      //   테스트는 계산을 `grace + 1` 로 확인하면서 문구는 "1분" 으로
+      //   핀해 둘이 어긋난 것을 잡지 못했다. 이제 같은 수를 본다.
+      final r = _rules(lateUnit: 30, lateGrace: 5);
+      final v = line(r, '지각 처리');
+      expect(v.contains('올려서 차감'), isTrue, reason: '방향을 말해야 한다: $v');
+      // 유예 5분 + 단위 30분 → 첫 지각은 6분, 차감은 30분이다.
+      expect(v.contains('6분 늦으면 30분'), isTrue, reason: v);
+      expect(v.contains('1분 늦어도'), isFalse,
+          reason: '유예를 무시한 거짓 사례가 돌아왔다: $v');
+      // 그 약속이 사실인가.
+      expect(_in(6, r).roundedAt, _start.add(const Duration(minutes: 30)),
+          reason: '6분 지각은 30분 차감된다 — 문구와 같아야 한다');
+      // 그리고 1분 지각은 정말로 차감이 없다.
+      expect(_in(1, r).roundedAt, _start,
+          reason: '유예 안이면 정시 처리다');
+    });
+
+    test('20 조퇴 — "올려서 차감" 이 실제 계산과 같다', () {
+      final r = _rules(earlyLeaveUnit: 30);
+      final v = line(r, '조퇴 처리');
+      expect(v.contains('올려서 차감'), isTrue, reason: v);
+      expect(v.contains('1분 일찍 가도 30분'), isTrue, reason: v);
+      expect(_out(-1, r).roundedAt,
+          _end.subtract(const Duration(minutes: 30)),
+          reason: '1분 일찍 퇴근해도 30분 차감된다');
+    });
+
+    test('21 연장 — "남는 시간은 인정되지 않아요" 가 실제 계산과 같다', () {
+      final r = _rules(lateWindow: 30, overtimeUnit: 30);
+      final v = line(r, '연장 인정');
+      expect(v.contains('남는 시간은 인정되지 않아요'), isTrue, reason: v);
+      // 59분 더 일해도 30분만 인정된다 — 남는 29분이 사라진다.
+      expect(_out(59, r).roundedAt, _end.add(const Duration(minutes: 30)),
+          reason: '내림이므로 29분이 인정되지 않는다');
+    });
+
+    test('22 조출 — "남는 시간은 인정되지 않아요" 가 실제 계산과 같다', () {
+      final r = _rules(earlyWindow: 30, earlyArrivalUnit: 30);
+      final v = line(r, '조출 인정');
+      expect(v.contains('남는 시간은 인정되지 않아요'), isTrue, reason: v);
+      // 47분 일찍 와도 30분만 조출로 인정된다.
+      expect(_in(-47, r).roundedAt,
+          _start.subtract(const Duration(minutes: 30)),
+          reason: '시작 쪽으로 끊으므로 17분이 인정되지 않는다');
+    });
+
+    test('23 네 줄 모두 방향을 말한다 — 중립 반올림으로 읽히지 않는다', () {
+      final r = _rules();
+      for (final label in const ['조출 인정', '지각 처리', '연장 인정', '조퇴 처리']) {
+        final v = line(r, label);
+        final saysDirection = v.contains('올려서 차감') ||
+            v.contains('남는 시간은 인정되지 않아요');
+        expect(saysDirection, isTrue,
+            reason: '"$label" 이 방향 없이 "$v" 라고만 말한다');
+      }
+    });
+
+    test('24 방향 문구가 7개 숫자 고지를 깨지 않았다', () {
+      // 줄 수(7)와 "한 항목만 바꿔도 문장이 달라진다" 는 성질을 유지한다.
+      const base = AttendanceRules();
+      String render(AttendanceRules r) => attendancePolicyLines(r)
+          .map((l) => '${l.label}=${l.value}')
+          .join('|');
+      expect(attendancePolicyLines(base).length, 7);
+      final variants = <String, AttendanceRules>{
+        'earlyWindow': base.copyWith(earlyWindow: 45),
+        'earlyArrivalUnit': base.copyWith(earlyArrivalUnit: 15),
+        'lateGrace': base.copyWith(lateGrace: 9),
+        'lateUnit': base.copyWith(lateUnit: 15),
+        'lateWindow': base.copyWith(lateWindow: 45),
+        'overtimeUnit': base.copyWith(overtimeUnit: 25),
+        'earlyLeaveUnit': base.copyWith(earlyLeaveUnit: 15),
+      };
+      final baseText = render(base);
+      variants.forEach((k, v) {
+        expect(render(v) == baseText, isFalse,
+            reason: '$k 변경이 근로자 문장에 나타나지 않는다');
+      });
+      // 내부 필드 이름을 노출하지 않는다.
+      for (final bad in ['earlyWindow', 'lateUnit', 'overtimeUnit']) {
+        expect(baseText.contains(bad), isFalse);
+      }
+    });
+
+    test('25 계약서·PDF·공고도 같은 문장을 쓴다 — 복제하지 않았다', () {
+      // 방향 문구를 한 곳에서만 고쳤는데 어떤 화면이 자기 목록을 따로
+      //   들고 있으면, 그 화면만 방향을 말하지 않는 상태로 남는다.
+      for (final p in const [
+        'lib/screens/contract/contract_pdf_builder.dart',
+        'lib/screens/contract/contract_sign_screen.dart',
+        'lib/screens/user/my_applications_screen.dart',
+        'lib/screens/common/job_posting_screen.dart',
+        'lib/widgets/dialogs/application_policy_acknowledge_sheet.dart',
+        'lib/widgets/dialogs/apply/apply_confirm_dialog.dart',
+      ]) {
+        final s = _read(p);
+        final usesShared = s.contains('attendancePolicyLines(') ||
+            s.contains('attendancePolicyGroups(');
+        expect(usesShared, isTrue, reason: '$p 가 공용 목록을 쓰지 않는다');
+        // 자기 라벨 목록을 만들지 않는다.
+        expect(s.contains("AttendancePolicyLine('"), isFalse,
+            reason: '$p 가 고지 줄을 직접 만든다 — 방향이 갈린다');
+      }
     });
   });
 }

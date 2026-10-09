@@ -9,7 +9,6 @@ import '../../models/core/business_model.dart';
 import '../../providers/user_provider.dart';
 
 // Services
-import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 
 // Utils
@@ -25,6 +24,7 @@ import '../../utils/navigation_helper.dart';
 // Screen
 import 'business_detail_screen.dart';
 import 'business_form_screen.dart';
+import 'business_list_reads.dart';
 import 'to_management/create_to_screen.dart';
 import '../../widgets/common/app_menu_sheet.dart';
 import '../../theme/app_colors.dart';
@@ -36,16 +36,28 @@ import '../common/notification_screen.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
 class BusinessListScreen extends StatefulWidget {
-  const BusinessListScreen({super.key});
+  const BusinessListScreen({super.key, this.reads});
+
+  /// [R7-PREDEVICE-STABILIZATION.1A] 읽기 경계. production 은 null —
+  ///   기존 서비스 호출을 그대로 쓴다. 테스트만 주입해 **실패와 0개**를
+  ///   각각 재현한다.
+  final BusinessListReads? reads;
 
   @override
   State<BusinessListScreen> createState() => _BusinessListScreenState();
 }
 
 class _BusinessListScreenState extends State<BusinessListScreen> {
-  final FirestoreService _firestoreService = FirestoreService();
+  // 읽기는 전부 이 경계를 지난다 — 화면이 서비스를 직접 쥐지 않는다.
+  late final BusinessListReads _reads =
+      widget.reads ?? BusinessListReads.of();
   List<BusinessModel> _businesses = [];
   bool _isLoading = true; // 첫 빌드부터 로딩 표시 — 빈 상태 flash 방지
+
+  /// [R7-PREDEVICE-STABILIZATION.1A] 조회 **실패**와 사업장 **0개**는 다르다.
+  ///   이 값이 없던 동안 읽기 실패는 "등록된 사업장이 없습니다" 로 보였고,
+  ///   SubAdmin 에게는 거기에 등록 CTA 까지 붙어 있었다.
+  bool _loadFailed = false;
   bool _isDeleting = false;
   bool _fetchInProgress = false; // 중복 호출 방지 (_isLoading과 분리)
 
@@ -66,26 +78,44 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final ownerId = userProvider.currentUser?.uid;
 
       if (ownerId == null) {
+        // [R7-PREDEVICE-STABILIZATION.1A] 로그인 정보를 읽지 못한 것은
+        //   "사업장 0개" 가 아니다. 예전에는 그냥 return 해서 빈 상태가
+        //   그려졌고, 화면은 "등록된 사업장이 없습니다" 라고 말했다.
+        if (mounted) setState(() => _loadFailed = true);
         return;
       }
 
       List<BusinessModel> businesses;
 
       // SubAdmin은 adminIds에 없으므로 effectiveBusinessId로 직접 조회
+      //
+      // [R7-PREDEVICE-STABILIZATION.1A] `OrThrow` 변형을 쓴다.
+      //   `getBusinessById`/`getBusinessesByIds` 는 실패를 각각 null·빈
+      //   목록으로 바꿔 삼킨다. 그래서 조회가 깨져도 catch 가 돌지 않고,
+      //   토스트조차 뜨지 않은 채 "사업장 없음" 이 그려졌다 — 읽기 실패가
+      //   전혀 다른 사실로 번지는 경로다. 서비스 주석도 "실패와 0개를
+      //   구분해야 하는 호출부는 OrThrow 를 쓴다" 고 적어 두었다.
       final effectiveBizId = userProvider.effectiveBusinessId;
       if (userProvider.isSubAdmin && effectiveBizId != null) {
-        final biz = await _firestoreService.getBusinessById(effectiveBizId);
+        // null 은 **부재**다(문서 없음) — 실패는 throw 로 올라온다.
+        final biz = await _reads.businessById(effectiveBizId);
         businesses = biz != null ? [biz] : [];
       } else {
         final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
-        businesses = await _firestoreService.getBusinessesByIds(managedIds);
+        businesses = await _reads.businessesByIds(managedIds);
       }
 
       if (!mounted) return;
-      setState(() => _businesses = businesses);
+      setState(() {
+        _businesses = businesses;
+        _loadFailed = false;
+      });
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
-      if (mounted) ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
+      if (mounted) {
+        setState(() => _loadFailed = true);
+        ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
+      }
     } finally {
       _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
@@ -185,16 +215,60 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           ),
         ),
       ],
+      // [R7-PREDEVICE-STABILIZATION.1A] ERROR → SUCCESS_ZERO → 목록 순서.
+      //   실패를 먼저 가려내야 "없음" 이 **정말 없음** 을 뜻한다.
       body: _isLoading
           ? const LoadingWidget()
-          : _businesses.isEmpty
-              ? _buildEmptyState(context)
-              : _buildBusinessList(context, theme, isSubAdmin),
+          : _loadFailed
+              ? _buildErrorState(context)
+              : _businesses.isEmpty
+                  ? _buildEmptyState(context, isSubAdmin)
+                  : _buildBusinessList(context, theme, isSubAdmin),
+    );
+  }
+
+  /// 조회 실패 — 역할과 무관하다. 다시 시도할 수 있게 해 준다.
+  ///
+  ///   여기서 역할별로 다른 말을 하지 않는다. 실패는 권한 문제일 수도
+  ///   있지만 네트워크일 수도 있고, 화면은 그 둘을 구별할 수 없다.
+  ///   **모르는 것을 아는 척하지 않는다.**
+  Widget _buildErrorState(BuildContext context) {
+    return AppEmptyState(
+      icon: Icons.cloud_off_outlined,
+      iconColor: AppColors.warning,
+      title: '사업장 목록을 불러오지 못했어요',
+      subtitle: '잠시 후 다시 시도해 주세요',
+      action: CommonWidgets.primaryButton(
+        context: context,
+        text: '다시 시도',
+        icon: Icons.refresh,
+        onPressed: () => _loadBusinesses(forceServer: true),
+      ),
     );
   }
 
   /// 빈 상태
-  Widget _buildEmptyState(BuildContext context) {
+  ///
+  /// [R7-PREDEVICE-STABILIZATION.1] SubAdmin 에게 사업장 등록 CTA 를 보여주고
+  ///   있었다. 눌러서 양식을 끝까지 채워도 저장되지 않는다 —
+  ///   `firestore.rules` 의 `businesses` create 는 `isBusinessAdmin()`,
+  ///   update 는 `isAdminOf()` 를 요구하므로 SubAdmin 은 서버에서 거부된다.
+  ///   나머지 네 진입구(목록 추가 타일·카드 수정 메뉴·상세 수정·홈 STATE A
+  ///   배너·홈 설정 타일)는 이미 `isSubAdmin` 으로 막혀 있었고 이 빈 상태만
+  ///   빠져 있었다.
+  ///
+  ///   SubAdmin 이 빈 상태에 도달하는 경로는 셋이다 — 배정이 없음, 배정된
+  ///   사업장이 사라짐, **조회 실패**(`_loadBusinesses` catch 는 `_businesses`
+  ///   를 비운 채로 둔다). 어느 쪽이든 할 수 있는 일이 "사업장 등록" 은
+  ///   아니므로, 권한을 준 관리자에게 확인하라고 말한다.
+  Widget _buildEmptyState(BuildContext context, bool isSubAdmin) {
+    if (isSubAdmin) {
+      return const AppEmptyState(
+        icon: Icons.business_outlined,
+        title: '배정된 사업장이 없습니다',
+        subtitle: '권한을 부여한 관리자에게 사업장 배정을 확인해 주세요',
+      );
+    }
     return AppEmptyState(
       icon: Icons.business_outlined,
       title: '등록된 사업장이 없습니다',

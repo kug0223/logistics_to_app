@@ -18,6 +18,9 @@
 //   · 각 줄은 **효과**를 말한다. 숫자만 나열하면 이해할 수 없다.
 //   · 법적 보증·면책 문구를 쓰지 않는다. 이건 조건 고지다.
 import '../models/core/business_model.dart';
+// [R7-PREDEVICE-STABILIZATION.1A] 고지의 사례 숫자는 계산 모듈에서 온다.
+//   순환 없음 — rounding_helper 는 이 파일을 모른다.
+import 'attendance_rounding_helper.dart';
 
 /// 근태·급여 기준 한 줄 — 라벨과 값.
 class AttendancePolicyLine {
@@ -94,21 +97,56 @@ const String kAttendancePolicyEffectNote = '인정된 시간이 급여 계산의
 ///                    즉 그만큼 더 있어도 **연장으로 인정되지 않는다.**
 ///   overtimeUnit     연장으로 인정될 때 그 시간을 이 단위로 내려 끊는다.
 ///   earlyLeaveUnit   조퇴일 때 이 단위로 올려 인정 종료 시각을 앞당긴다.
+/// [R7-PREDEVICE-STABILIZATION.1] "N분 단위" 는 **방향을 말하지 않았다.**
+///
+///   네 개의 단위 항목은 모두 근로자에게 **불리한 쪽**으로 끊는다
+///   (위 `processCheckin`/`processCheckout` 실측 · 기본값 유예 5분·단위 30분):
+///     · 조출   남는 시간을 버린다        47분 일찍 → 30분만 인정
+///     · 지각   올려서 차감한다            6분 늦음  → 30분 차감
+///     · 연장   남는 시간을 버린다        59분 연장 → 30분만 인정
+///     · 조퇴   올려서 차감한다            1분 일찍  → 30분 차감
+///
+///   그런데 근로자가 보던 문장은 "30분 단위" 뿐이었다. 이것은 **반올림**
+///   으로 읽힌다 — 어떤 때는 유리하고 어떤 때는 불리한 중립 연산. 실제로는
+///   네 항목 전부가 한 방향이고, 그 방향이 지급액을 줄인다. 방향을 적지
+///   않으면 근로자는 자기 임금이 어떻게 계산되는지 알 수 없다.
+///
+///   그래서 각 줄에 **방향과 구체적 경계 사례**를 같이 적는다. "올림"
+///   같은 용어만으로는 효과가 전달되지 않으므로 "6분 늦으면 30분" 처럼
+///   실제로 일어나는 일을 쓴다.
+///
+///   [R7-PREDEVICE-STABILIZATION.1A] 사례의 **두 숫자는 설정에 따라 다르다.**
+///   지각은 유예를 넘겨야 시작되고(유예 5분이면 1분 지각은 정시), 유예+1 이
+///   단위보다 크면 차감도 단위와 다르다(유예 5·단위 5 → 6분 지각은 10분).
+///   그래서 숫자를 문장에 적지 않고 계산 모듈에서 받는다.
 List<AttendancePolicyGroup> attendancePolicyGroups(AttendanceRules r) => [
       AttendancePolicyGroup('출근', [
         AttendancePolicyLine(
             '일찍 도착', '시작 ${r.earlyWindow}분 전까지는 정시 처리'),
-        AttendancePolicyLine(
-            '조출 인정', '${r.earlyWindow}분을 넘겨 도착하면 ${r.earlyArrivalUnit}분 단위'),
+        AttendancePolicyLine('조출 인정',
+            '${r.earlyWindow}분을 넘겨 도착하면 ${r.earlyArrivalUnit}분 단위로 인정'
+            ' (남는 시간은 인정되지 않아요)'),
         AttendancePolicyLine('지각 유예', '${r.lateGrace}분까지는 정시 처리'),
-        AttendancePolicyLine('지각 처리', '${r.lateUnit}분 단위'),
+        // [R7-PREDEVICE-STABILIZATION.1A] 사례 숫자를 짐작하지 않는다.
+        //   `.1` 은 "1분 늦어도 N분" 이라고 적었는데 유예가 있는 사업장에서
+        //   거짓이다(유예 5분이면 1분 지각은 정시). 또 유예+1 이 단위보다
+        //   크면 차감도 단위와 다르다. 둘 다 실제 계산에서 가져온다.
+        AttendancePolicyLine('지각 처리',
+            '${r.lateUnit}분 단위로 올려서 차감'
+            ' (${firstLateOffsetMinutes(r)}분 늦으면'
+            ' ${firstLateDeductionMinutes(r)}분)'),
       ]),
       AttendancePolicyGroup('퇴근', [
         AttendancePolicyLine(
             '늦게 퇴근', '종료 후 ${r.lateWindow}분까지는 정시 처리'),
-        AttendancePolicyLine(
-            '연장 인정', '${r.lateWindow}분을 넘기면 ${r.overtimeUnit}분 단위'),
-        AttendancePolicyLine('조퇴 처리', '${r.earlyLeaveUnit}분 단위'),
+        AttendancePolicyLine('연장 인정',
+            '${r.lateWindow}분을 넘기면 ${r.overtimeUnit}분 단위로 인정'
+            ' (남는 시간은 인정되지 않아요)'),
+        // 조퇴에는 유예가 없다 — 1분이 그대로 첫 사례다. 그래도 차감 분은
+        //   단위와 같다고 **짐작하지 않고** 계산에서 가져온다.
+        AttendancePolicyLine('조퇴 처리',
+            '${r.earlyLeaveUnit}분 단위로 올려서 차감'
+            ' (1분 일찍 가도 ${firstEarlyLeaveDeductionMinutes(r)}분)'),
       ]),
     ];
 

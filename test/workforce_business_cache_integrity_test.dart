@@ -313,8 +313,37 @@ void main() {
           isTrue);
     });
 
-    test('GMB-7b OrThrow 는 Workforce 밖으로 번지지 않았다', () {
-      // 범위를 넓히지 않았다는 확인 — 이번 Phase 는 근무 관리 경로만이다.
+    test('GMB-7b OrThrow 사용처는 허용 목록 안에만 있다', () {
+      // [R8P7.5] 원래 이 검사는 "사용처 1곳(근무 관리)" 을 고정했다. 그
+      //   Phase 의 범위가 근무 관리였고, 모르는 사이 번지는 것을 막으려는
+      //   울타리였다.
+      //
+      // [R7-PREDEVICE-STABILIZATION.1A] 사업장 **목록** 화면이 같은 결함을
+      //   갖고 있었다 — 삼키는 변형 때문에 조회 실패가 "등록된 사업장이
+      //   없습니다" 로 보였고, SubAdmin 에게는 거기에 등록 CTA 까지 붙었다.
+      //   그래서 그 화면의 읽기 경계도 OrThrow 로 옮겼다.
+      //
+      //   울타리의 목적은 그대로다 — **아무도 모르게** 번지면 안 된다.
+      //   그래서 개수가 아니라 **허용 목록**으로 바꾼다. 새 사용처가
+      //   생기면 여기에 이유와 함께 적어야 통과한다.
+      //
+      //   탐지 범위도 넓혔다. 예전에는 `getMyBusinessOrThrow` 와
+      //   `getBusinessByIdOrThrow` 만 봤기 때문에
+      //   `getBusinessesByIdsOrThrow` 를 쓰는 **선재 사용처 2곳**
+      //   (관리자 홈·사업장 선택기)이 울타리에 보이지 않았다. 셋 다 본다.
+      const allowed = <String, String>{
+        'workforce_operational_view.dart':
+            '[R8P7.5] 근무 관리 — 사업장 목록이 그 아래 모든 조회의 전제다',
+        'admin_home_reads.dart':
+            '[선재·AH-V2] 관리자 홈 읽기 경계 — 실패를 요약 0 으로 접지 않는다',
+        'business_picker_helper.dart':
+            '[선재] 사업장 선택기 — 실패를 "사업장이 사라졌다" 로 읽으면 '
+                '관리자가 다시 만들려 한다',
+        'business_list_reads.dart':
+            '[R7-PREDEVICE-STABILIZATION.1A] 사업장 목록 — 실패를 "0개" 로 '
+                '말하면 SubAdmin 이 만들 수 없는 사업장 등록을 권하게 된다',
+      };
+
       final dir = Directory('lib');
       final users = <String>[];
       for (final f in dir.listSync(recursive: true)) {
@@ -324,12 +353,25 @@ void main() {
         }
         final s = f.readAsStringSync();
         if (s.contains('getMyBusinessOrThrow') ||
-            s.contains('getBusinessByIdOrThrow')) {
+            s.contains('getBusinessByIdOrThrow') ||
+            s.contains('getBusinessesByIdsOrThrow')) {
           users.add(f.path.replaceAll('\\', '/'));
         }
       }
-      expect(users.length, 1, reason: '사용처: $users');
-      expect(users.first.endsWith('workforce_operational_view.dart'), isTrue);
+
+      for (final u in users) {
+        final base = u.split('/').last;
+        expect(allowed.containsKey(base), isTrue,
+            reason: '허용 목록에 없는 OrThrow 사용처: $u\n'
+                '— 의도한 확장이면 이유와 함께 allowed 에 적는다');
+      }
+      // 반대 방향도 본다 — 목록에 적어 둔 곳이 사라지면 그 화면이 다시
+      //   실패를 삼키기 시작한 것이다.
+      for (final base in allowed.keys) {
+        expect(users.any((u) => u.endsWith(base)), isTrue,
+            reason: '$base 가 OrThrow 를 더는 쓰지 않는다 — 실패가 다시 '
+                '"없음" 으로 접힌다');
+      }
     });
   });
 
