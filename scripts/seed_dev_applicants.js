@@ -105,7 +105,20 @@ function decryptField(stored) {
 // ── fixture 정의 ──────────────────────────────────────────────────
 //   계좌번호는 DEV synthetic. 주민번호는 **저장하지 않는다**
 //   (현재 세무 수집이 꺼져 있어 지원 게이트가 묻지 않는다 — 아래 검증에서 재확인).
+// [R7-SECURITY-P0] 비밀번호는 **환경변수에서만** 온다.
+//
+//   공개 저장소다. 평문 기본값을 두면 그 값이 그대로 공개되고, 그 비밀번호로
+//   만들어진 계정이 DEV 에 남는다. 빈 문자열 폴백도 안전하지 않다 — Firebase 가
+//   거절하는 자리까지 가서야 실패하므로, 무엇이 빠졌는지 그때 알게 된다.
+//   여기서 멈추고 무엇을 넣어야 하는지 말한다. 계정은 하나도 만들지 않는다.
 const PASSWORD = process.env.SEED_PASSWORD || '';
+if (PASSWORD.length < 8) {
+  console.error(
+    'SEED_PASSWORD 가 필요하다 (8자 이상). 저장소에 비밀번호를 적지 않는다.\n' +
+    '  PowerShell:  $env:SEED_PASSWORD="..." ; node scripts/seed_dev_applicants.js\n' +
+    '  bash      :  SEED_PASSWORD="..." node scripts/seed_dev_applicants.js');
+  process.exit(1);
+}
 const ACCOUNTS = [
   {loginId: 'test1', name: '테스트하나', account: '000000000001'},
   {loginId: 'test2', name: '테스트둘', account: '000000000002'},

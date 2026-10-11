@@ -48,7 +48,12 @@ async function createSuperAdminFirestoreDoc() {
     console.log(`UID: ${uid}`);
     console.log(`아이디: ${username}`);
     console.log(`이메일: ${email}`);
-    console.log(`비밀번호: super_admin123!@#`);
+    // [R7-SECURITY-P0-CONTAINMENT] 비밀번호를 여기서 말하지 않는다.
+    //   이 파일은 공개 저장소에 추적된다. 과거 이 자리에 평문이 있었고,
+    //   익명 raw 조회로 누구나 읽을 수 있었다(2026-06-22 ~ 2026-10-11).
+    //   그 값은 폐기한다 — 어디로도 옮기지 않는다.
+    //   이 스크립트는 **역할 문서만** 만든다. 계정 비밀번호는 다루지 않는다.
+    console.log('비밀번호는 이 스크립트가 다루지 않습니다 (운영자가 별도 설정)');
   } catch (e) {
     console.error('❌ 오류:', e.message);
   }
