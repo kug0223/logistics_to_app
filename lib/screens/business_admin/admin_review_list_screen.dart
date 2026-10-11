@@ -848,6 +848,14 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final reviewer = userProvider.currentUser;
     if (reviewer == null) return;
 
+    // [R7-RER.2 §5] 급여 마감을 되돌린 달은 근거가 없다 — 폼을 열지 않는다.
+    //   관리자 자신이 마감을 취소한 경우도 포함된다. 영구 차단이 아니라
+    //   보류이므로 복구 경로를 함께 말한다. canonical 경계는 서버다.
+    if (req.isEligibilitySuspended) {
+      ToastHelper.showInfo(MonthlyReviewService.eligibilitySuspendedMessage);
+      return;
+    }
+
     // worker 성별/나이 + 실제 근무일 수 병렬 조회
     String? workerGender;
     int? workerAge;

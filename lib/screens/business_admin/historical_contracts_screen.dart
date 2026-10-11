@@ -4,6 +4,7 @@ import '../../models/core/historical_contract_summary.dart';
 import '../../services/historical_contract_service.dart';
 import 'historical_contract_detail_screen.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/contract_status_visual.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -265,19 +266,12 @@ class _HistoricalContractCard extends StatelessWidget {
     }
   }
 
-  // 상태 배지 색상
+  // 상태 배지 색상 — [R8-INTEGRATED §7] 소유자는 contract_status_visual 이다.
+  //   이 화면은 두 대기 상태를 **같은 주황**으로 묶고 있었다. 그러면
+  //   "내가 서명할 차례" 와 "상대를 기다린다" 가 구별되지 않는다.
   ({Color bg, Color fg}) _statusColors() {
-    switch (summary.status) {
-      case 'completed':
-        return (bg: AppColors.successBg, fg: AppColors.successDark);
-      case 'pending_employer':
-      case 'pending_worker':
-        return (bg: AppColors.warningBg, fg: AppColors.warningDark);
-      case 'voided':
-        return (bg: AppColors.grey100, fg: AppColors.grey600);
-      default:
-        return (bg: AppColors.grey100, fg: AppColors.grey600);
-    }
+    final c = contractStatusColorsOf(summary.status);
+    return (bg: c.bg, fg: c.fg);
   }
 
   @override

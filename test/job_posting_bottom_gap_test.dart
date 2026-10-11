@@ -239,14 +239,36 @@ void main() {
   });
 
   testWidgets('JPB-02 화면 높이가 달라져도 빈 띠가 늘지 않는다', (t) async {
+    // [R8-INTEGRATED §H] 이 셀이 묻는 것은 "**내용이 넘칠 때** 꼬리 여백이
+    // 화면 높이를 따라 늘어나는가" 다. 내용보다 화면이 크면 스크롤 자체가
+    // 없고(maxScrollExtent == 0) 남는 자리는 이중 계산이 아니라 그냥 빈
+    // 아래쪽이다 — 이 fixture 는 공고 1개뿐이어서 900dp 에서 그렇게 된다.
+    // 그 높이까지 같은 잣대를 대면 멀쩡한 화면을 결함으로 읽는다.
+    var scrolledHeights = 0;
     for (final h in [640.0, 780.0, 900.0]) {
       await _pump(t, size: Size(360, h));
       await _toBottom(t);
+      final pos = t
+          .state<ScrollableState>(find
+              .descendant(
+                  of: find.byType(CustomScrollView),
+                  matching: find.byType(Scrollable))
+              .first)
+          .position;
+      if (pos.maxScrollExtent <= 0) {
+        expect(t.takeException(), isNull,
+            reason: '화면 높이 ${h.toStringAsFixed(0)} — 스크롤 없음');
+        continue;
+      }
+      scrolledHeights++;
       final gap = _viewportBottom(t) - _lastPanelBottom(t);
       expect(gap, lessThanOrEqualTo(24.0),
           reason: '화면 높이 ${h.toStringAsFixed(0)}');
       expect(t.takeException(), isNull);
     }
+    // 전부 건너뛰면 아무것도 묻지 않은 셀이 된다.
+    expect(scrolledHeights, greaterThanOrEqualTo(2),
+        reason: '내용이 넘치는 높이가 더는 없다 — fixture 를 다시 봐야 한다');
   });
 
   testWidgets('JPB-03 하단 시스템 inset — 여백을 두 번 먹지 않는다', (t) async {

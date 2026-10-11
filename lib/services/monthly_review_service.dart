@@ -38,6 +38,15 @@ class MonthlyReviewService {
 
   static const int _reviewWindowDays = 14;
 
+  /// [R7-RER.2 §5] 자격 보류 안내 — 내부 상태가 아니라 복구 경로를 말한다.
+  ///
+  /// 리뷰 요청은 발급 시점의 근무 자격을 담은 토큰이고, 관리자가 급여 마감을
+  /// 취소하면 그 달의 근거가 사라진다. 영구 차단이 아니라 보류이므로
+  /// "다시 확정되면 작성할 수 있다"까지 함께 말해야 복구 경로가 전달된다.
+  static const String eligibilitySuspendedMessage =
+      '현재 근무 정산이 다시 확인 중이어서 리뷰를 작성할 수 없습니다. '
+      '정산이 확정되면 다시 작성할 수 있습니다.';
+
   // ═══════════════════════════════════════════════════════════
   // 리뷰 요청 (review_requests)
   // ═══════════════════════════════════════════════════════════
@@ -51,6 +60,24 @@ class MonthlyReviewService {
     } catch (e) {
       debugPrint('❌ 리뷰 요청 조회 실패: $e');
       return null;
+    }
+  }
+
+  /// [R7-RER.2 §5] 해당 리뷰 요청이 자격 보류 상태인지 확인.
+  ///
+  /// 읽기 실패와 "보류가 아니다"를 구별한다 — 읽지 못했다는 이유로
+  /// 보류라고 단정하지 않는다(false 반환 → 일반 실패 문구 유지).
+  Future<bool> _isEligibilitySuspended(String? requestId) async {
+    if (requestId == null) return false;
+    try {
+      final doc =
+          await _db.collection('review_requests').doc(requestId).get();
+      if (!doc.exists) return false;
+      final data = doc.data() as Map<String, dynamic>? ?? {};
+      return data['eligibilitySuspendedAt'] != null;
+    } catch (e) {
+      debugPrint('⚠️ 리뷰 자격 보류 확인 실패: $e');
+      return false;
     }
   }
 
@@ -233,6 +260,13 @@ class MonthlyReviewService {
                 plugin: 'firestore', code: 'already-exists',
                 message: 'review_request_already_submitted');
           }
+          // [R7-RER.2 §3B·§4] 자격 보류 — canonical 경계는 Rules·onReviewCreated.
+          //   여기서 먼저 걸러 정상 경로에 복구 가능한 안내를 돌려준다.
+          if (reqData['eligibilitySuspendedAt'] != null) {
+            throw FirebaseException(
+                plugin: 'firestore', code: 'failed-precondition',
+                message: 'review_eligibility_suspended');
+          }
           final deadline =
               (reqData['deadline'] as Timestamp?)?.toDate();
           if (deadline != null && DateTime.now().isAfter(deadline)) {
@@ -273,6 +307,15 @@ class MonthlyReviewService {
       }
       if (e.code == 'deadline-exceeded') {
         return (reviewId: null, error: '리뷰 작성 기한이 지났습니다.');
+      }
+      if (e.code == 'failed-precondition' ||
+          e.message == 'review_eligibility_suspended') {
+        return (reviewId: null, error: eligibilitySuspendedMessage);
+      }
+      // [R7-RER.2 §4·§5] 지원자 경로와 같은 이유 — Rules 거부의 원인을 확인한다.
+      if (e.code == 'permission-denied' &&
+          await _isEligibilitySuspended(requestId)) {
+        return (reviewId: null, error: eligibilitySuspendedMessage);
       }
       debugPrint('❌ 리뷰 작성 실패: $e');
       return (reviewId: null, error: '리뷰 작성에 실패했습니다.');
@@ -343,6 +386,22 @@ class MonthlyReviewService {
         if (existing.exists) {
           throw FirebaseException(plugin: 'firestore', code: 'already-exists');
         }
+
+        // [R7-RER.2 §3B·§4] 지원자 쪽에도 같은 자격 보류를 적용한다.
+        //   이 경로는 지금까지 review_requests 를 읽지 않고 merge 쓰기만 했다.
+        //   canonical 경계는 Rules(isReviewRequestOwnedBy)와 onReviewCreated 지만,
+        //   여기서 먼저 읽어야 정상 경로에 복구 가능한 안내를 줄 수 있다.
+        if (requestId != null) {
+          final reqSnap =
+              await tx.get(_db.collection('review_requests').doc(requestId));
+          final reqData = reqSnap.data() as Map<String, dynamic>? ?? {};
+          if (reqSnap.exists && reqData['eligibilitySuspendedAt'] != null) {
+            throw FirebaseException(
+                plugin: 'firestore', code: 'failed-precondition',
+                message: 'review_eligibility_suspended');
+          }
+        }
+
         // [TS-FIX 2026-07-16] createdAt 서버타임스탬프 강제 — 법적 감사 기록 시각 위조 차단
         tx.set(docRef, {
           ...review.toMap(),
@@ -362,6 +421,18 @@ class MonthlyReviewService {
     } on FirebaseException catch (e) {
       if (e.code == 'already-exists') {
         return (reviewId: null, error: '이번 달 리뷰는 이미 작성되었습니다.');
+      }
+      if (e.code == 'failed-precondition' ||
+          e.message == 'review_eligibility_suspended') {
+        return (reviewId: null, error: eligibilitySuspendedMessage);
+      }
+      // [R7-RER.2 §4·§5] Rules 가 막은 것이 자격 보류인지 확인한다.
+      //   보류 쓰기와 Rules 평가가 겹치면 TX 내 선행 읽기는 통과하고
+      //   Rules 에서 거부될 수 있다. 그 경우 "실패했습니다"가 아니라
+      //   복구 경로를 말해야 한다.
+      if (e.code == 'permission-denied' &&
+          await _isEligibilitySuspended(requestId)) {
+        return (reviewId: null, error: eligibilitySuspendedMessage);
       }
       debugPrint('❌ 사업장 리뷰 작성 실패: $e');
       return (reviewId: null, error: '리뷰 작성에 실패했습니다.');

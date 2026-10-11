@@ -421,11 +421,19 @@ void main() {
       // 검토 탭이 좁아지면 노쇼 대상도 함께 좁아진다.
       final flat = dialog.replaceAll(RegExp(r'\s+'), ' ');
       expect(flat.contains('final noShowTargets = _currentTabIndex == 0'), isTrue);
+      // [R8-INTEGRATED] 문장 전체를 고정하면 조건이 **더 좁아질 때도** 깨진다.
+      //   묻는 것은 두 가지다: 모집단이 검토 탭(tabWorkers)이고, 미출근만이다.
+      //   R7-NOSHOW-ADMIN-ELIGIBILITY 가 `_noShowJudgeable` 로 시작 전 인원을
+      //   추가로 제외했다 — 계약을 좁혔으므로 위반이 아니다.
+      expect(flat.contains('? tabWorkers.where((a) =>'), isTrue,
+          reason: '노쇼 대상은 검토 탭 모집단에서만 나온다');
       expect(
-        flat.contains(
-            "? tabWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'pending').toList()"),
+        flat.contains("_getAttendanceStatus(a)['status'] == 'pending'"),
         isTrue,
+        reason: '미출근만 대상이다',
       );
+      expect(flat.contains('_noShowJudgeable(a)'), isTrue,
+          reason: '시작 전 인원은 제외된다 (서버 경계와 같은 규칙)');
       final t = _bodyOf(dialog, 'List<ApplicationModel> _workersByTab(');
       expect(t.contains('case 0: return needsReview;'), isTrue);
     });

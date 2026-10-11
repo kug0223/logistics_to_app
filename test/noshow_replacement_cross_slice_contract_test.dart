@@ -82,7 +82,15 @@ void main() {
           reason: '반납 표식을 문서에서 직접 읽어야 한다');
       expect(fnsFlat.contains('"type", "workEndDate", "actualResignDate"'), true,
           reason: '기간이 끝난 좌석도 같은 읽기에서 걸러진다');
-      expect(fnsFlat.contains('const confirmedCount = seats.bySlot.get(slotId) ?? 0;'), true);
+      // [R8-INTEGRATED] 슬롯 단위 확정 수의 **소유자가 바뀌었다.**
+      //   예전에는 집계 밖에서 `seats.bySlot.get(slotId)` 로 꺼내 슬롯 status
+      //   까지 계산했다. 그 값은 트랜잭션 밖 스냅샷이라 낡은 실행이 최신
+      //   상태를 덮었다(R7-SLOT-STATUS-OWNER). 이제 카운터 트랜잭션이 직접
+      //   세고, 반납 표식은 그 안에서 걸러진다 — 지키려던 것은 그대로다.
+      expect(fnsFlat.contains('if (d.get("staffingReleasedAt") != null) return;'), true,
+          reason: '카운터 트랜잭션도 반납된 좌석을 세지 않는다');
+      expect(fnsFlat.contains('confirmed++;'), true,
+          reason: '슬롯 확정 수는 그 트랜잭션이 직접 센다');
       expect(fnsFlat.contains('const flexConfirmedCnt = seats.to;'), true);
       expect(fnsFlat.contains('const confirmedCnt = seats.to;'), true);
     });

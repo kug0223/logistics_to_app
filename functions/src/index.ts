@@ -5070,15 +5070,277 @@ async function srvHasActualWorkInMonth(
   workerId: string,
   yearMonth: string
 ): Promise<boolean> {
-  const snap = await db.collection("attendance")
+  return (await srvFindFinalizedWorkDocId(
+    businessId, workerId, yearMonth)) != null;
+}
+
+/**
+ * [R7-RER.2 §4] 같은 술어, **근거 문서의 id 까지** 돌려준다.
+ *
+ *   `srvHasActualWorkInMonth` 는 boolean 만 주므로 "자격이 있다"를 쓰는 쪽이
+ *   그 근거를 transaction 안에서 다시 확인할 수 없다. 질의 결과는 읽은 순간의
+ *   사실이고, 그 사이에 마감 취소가 커밋될 수 있다.
+ *
+ *   그래서 자격을 **복구**하는 자리는 이 id 로 attendance 문서를 transaction
+ *   안에서 직접 읽어 다시 판정한다. 마감 취소도 같은 문서를 transaction 안에서
+ *   쓰므로, 두 쓰기는 Firestore 가 직렬화한다 — 늦게 도착한 복구가 이미
+ *   취소된 근무를 근거로 토큰을 되살리는 일이 없다.
+ *
+ *   질의 자체는 한 벌이다(위 함수가 이것을 쓴다) — 술어 중복을 만들지 않는다.
+ *
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {string} yearMonth "YYYY-MM"
+ * @return {Promise<string|null>} 확정된 실제 근무 문서 id, 없으면 null
+ */
+async function srvFindFinalizedWorkDocId(
+  businessId: string,
+  workerId: string,
+  yearMonth: string
+): Promise<string | null> {
+  const snap = await srvMonthWorkQuery(businessId, workerId, yearMonth).get();
+  const hit = snap.docs.find((d) =>
+    srvIsActualFinalizedWork(d.get("status"), d.get("wageStatus"))
+  );
+  return hit ? hit.id : null;
+}
+
+/**
+ * [R7-RER.2A §2] 월 근무 질의 — **한 벌**. 모양이 갈라지면 판정이 갈라진다.
+ *
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {string} yearMonth "YYYY-MM"
+ * @return {FirebaseFirestore.Query} status·wageStatus 만 담은 질의
+ */
+function srvMonthWorkQuery(
+  businessId: string,
+  workerId: string,
+  yearMonth: string
+): FirebaseFirestore.Query {
+  return db.collection("attendance")
     .where("userId", "==", workerId)
     .where("businessId", "==", businessId)
     .where("yearMonth", "==", yearMonth)
-    .select("status", "wageStatus")
-    .get();
+    .select("status", "wageStatus");
+}
+
+/**
+ * [R7-RER.2A §4] 월 자격을 **transaction 안에서** 센다.
+ *
+ *   `tx.get(query)` 는 일치 문서에 읽기 잠금을 건다. 그래서 이 판정은
+ *   마감 취소의 문서별 transaction 과 직렬화된다 — 질의와 쓰기 사이에
+ *   취소가 끼어들어 판정이 뒤집히는 구간이 없다.
+ *
+ * @param {FirebaseFirestore.Transaction} tx 호출자의 transaction
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {string} yearMonth "YYYY-MM"
+ * @return {Promise<boolean>} 실제 근무가 1건 이상 확정됐으면 true
+ */
+async function srvHasActualWorkInMonthTx(
+  tx: FirebaseFirestore.Transaction,
+  businessId: string,
+  workerId: string,
+  yearMonth: string
+): Promise<boolean> {
+  const snap = await tx.get(
+    srvMonthWorkQuery(businessId, workerId, yearMonth));
   return snap.docs.some((d) =>
     srvIsActualFinalizedWork(d.get("status"), d.get("wageStatus"))
   );
+}
+
+/**
+ * [R7-RER.2 §3B·§4] 리뷰 자격 **보류** — 쓰기가 먼저다.
+ *
+ *   마감 취소보다 **먼저** 토큰을 보류한다. 순서가 반대면, 근무가 이미
+ *   calculated 로 떨어진 뒤 토큰이 아직 살아 있는 구간이 생기고 그 구간의
+ *   제출은 막을 근거가 없다. 먼저 보류하면 반대 방향으로만 틀린다 —
+ *   아직 자격이 있는데 잠깐 막는 것이고, 그것은 같은 호출의 복구 단계가
+ *   되돌린다.
+ *
+ *   이미 공개된 요청과 양쪽 제출이 끝난 요청은 건드리지 않는다. 제출된
+ *   리뷰는 이 Phase 에서 삭제·수정 대상이 아니다(§3D).
+ *
+ * @param {Set<string>} requestKeys 보류할 review_requests 문서 id 집합
+ * @return {Promise<string[]>} 실제로 보류된 문서 id 목록
+ */
+async function srvSuspendReviewEligibility(
+  requestKeys: Set<string>
+): Promise<string[]> {
+  const suspended: string[] = [];
+  for (const key of requestKeys) {
+    const ref = db.collection("review_requests").doc(key);
+    try {
+      const didSuspend = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return false;
+        const d = snap.data()!;
+        if (d.isPublished === true) return false;
+        // 양쪽 모두 제출 완료 → 보류할 미제출 권한이 없다.
+        if (d.adminStatus === "submitted" && d.workerStatus === "submitted") {
+          return false;
+        }
+        if (d.eligibilitySuspendedAt) return false;
+        tx.update(ref, {eligibilitySuspendedAt: Timestamp.now()});
+        return true;
+      });
+      if (didSuspend) suspended.push(key);
+    } catch (e) {
+      // 보류 실패는 조용히 넘기지 않는다 — 막지 못한 창이 남는다.
+      console.error(`[리뷰 자격 보류] 실패 (${key}):`, e);
+      throw e;
+    }
+  }
+  return suspended;
+}
+
+/**
+ * [R7-RER.2 §3C·§4] 리뷰 자격 **복구** — 근거 문서를 transaction 안에서 다시 읽는다.
+ *
+ *   `attendanceId` 는 "이 달에 확정된 실제 근무"라고 질의가 지목한 문서다.
+ *   그 사실을 transaction 안에서 한 번 더 확인한 뒤에만 보류를 푼다.
+ *   마감 취소가 같은 문서를 transaction 으로 쓰므로 둘은 직렬화된다.
+ *
+ *   deadline 은 건드리지 않는다(§3C). 탈퇴 barrier 가 있으면 복구하지 않는다 —
+ *   지울 주인이 없는 리뷰 기회를 되살리지 않는다(§4).
+ *
+ * @param {string} requestKey review_requests 문서 id
+ * @param {string} attendanceId 자격 근거 attendance 문서 id
+ * @param {string} workerId 근로자 uid (탈퇴 barrier 확인용)
+ * @return {Promise<boolean>} 보류가 풀렸으면 true
+ */
+async function srvRestoreReviewEligibility(
+  requestKey: string,
+  attendanceId: string,
+  workerId: string
+): Promise<boolean> {
+  const reqRef = db.collection("review_requests").doc(requestKey);
+  const attRef = db.collection("attendance").doc(attendanceId);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const reqSnap = await tx.get(reqRef);
+      if (!reqSnap.exists) return false;
+      if (!reqSnap.data()?.eligibilitySuspendedAt) return false;
+      // 근거 재확인 — 이 읽기가 마감 취소와의 직렬화 지점이다.
+      const attSnap = await tx.get(attRef);
+      if (!attSnap.exists) return false;
+      const att = attSnap.data()!;
+      if (!srvIsActualFinalizedWork(att.status, att.wageStatus)) return false;
+      if (await srvDeletionBarrierExistsInTx(tx, workerId)) return false;
+      tx.update(reqRef, {
+        eligibilitySuspendedAt: admin.firestore.FieldValue.delete(),
+      });
+      return true;
+    });
+  } catch (e) {
+    console.error(`[리뷰 자격 복구] 실패 (${requestKey}):`, e);
+    return false;
+  }
+}
+
+/**
+ * [R7-RER.2 §3C] 월 단위 복구 — 보류된 요청만 대상으로 한다.
+ *
+ *   요청 문서를 먼저 1건 읽어 보류 여부를 본다. 보류가 아니면 attendance
+ *   질의를 하지 않는다 — 정상 경로의 읽기를 늘리지 않는다.
+ *
+ * @param {string} requestKey review_requests 문서 id
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {string} yearMonth "YYYY-MM"
+ * @return {Promise<boolean>} 보류가 풀렸으면 true
+ */
+async function srvRestoreReviewEligibilityByMonth(
+  requestKey: string,
+  businessId: string,
+  workerId: string,
+  yearMonth: string
+): Promise<boolean> {
+  try {
+    const reqSnap = await db.collection("review_requests")
+      .doc(requestKey).get();
+    if (!reqSnap.exists) return false;
+    if (!reqSnap.data()?.eligibilitySuspendedAt) return false;
+    const survivorId = await srvFindFinalizedWorkDocId(
+      businessId, workerId, yearMonth);
+    if (!survivorId) return false;
+    return await srvRestoreReviewEligibility(requestKey, survivorId, workerId);
+  } catch (e) {
+    console.error(`[리뷰 자격 복구-월] 실패 (${requestKey}):`, e);
+    return false;
+  }
+}
+
+/**
+ * [R7-RER.2A §2] 사후 **재집계** — 풀기만 하지 않고, 필요하면 세운다.
+ *
+ *   사전 보류는 **쓸 토큰이 있을 때만** 유효하다. 그 달에 리뷰 요청이 아직
+ *   없으면 세울 곳이 없고, 그 틈에 지연된 `onWageConfirmed` 가 도착해 토큰을
+ *   새로 만들면 보류 표시가 없는 **활성 토큰**이 남는다. 사후 단계가 보류를
+ *   풀기만 하면 그 토큰은 영원히 활성이다 — 근거가 된 근무는 이미 취소됐는데도.
+ *
+ *   그래서 사후 단계는 "다시 센 결과를 상태에 맞춘다":
+ *     확정 근무가 남아 있으면 → 보류 해제(근거 문서를 tx 안에서 재확인)
+ *     하나도 없으면         → 보류
+ *
+ *   이것이 성립하는 이유는 **직렬화**다. 토큰을 만드는 transaction 은
+ *   `attendance/{id}` 를 읽고, 마감 취소 transaction 은 같은 문서를 쓴다.
+ *     · 생성이 먼저 커밋 → 취소 루프가 끝나기 전에 토큰이 존재하므로
+ *       루프 **뒤**에 도는 이 재집계가 반드시 그것을 본다.
+ *     · 취소가 먼저 커밋 → 생성 transaction 의 재확인이 calculated 를 보고
+ *       토큰을 만들지 않는다.
+ *   어느 순서든 근거 없는 활성 토큰은 남지 않는다.
+ *
+ * @param {string} requestKey review_requests 문서 id
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {string} yearMonth "YYYY-MM"
+ * @return {Promise<"restored"|"suspended"|"unchanged">} 수렴한 방향
+ */
+async function srvReconcileReviewEligibility(
+  requestKey: string,
+  businessId: string,
+  workerId: string,
+  yearMonth: string
+): Promise<"restored" | "suspended" | "unchanged"> {
+  const survivorId = await srvFindFinalizedWorkDocId(
+    businessId, workerId, yearMonth);
+  if (survivorId) {
+    const restored = await srvRestoreReviewEligibility(
+      requestKey, survivorId, workerId);
+    return restored ? "restored" : "unchanged";
+  }
+  // 확정 근무가 하나도 없다 — 토큰이 살아 있으면 보류한다.
+  const suspended = await srvSuspendReviewEligibility(new Set([requestKey]));
+  return suspended.length > 0 ? "suspended" : "unchanged";
+}
+
+/**
+ * [R7-RER.2 §3B] requestKey 계산 — 생성 쪽과 **같은 식**을 쓴다.
+ *
+ *   `onWageConfirmed`·`createPendingReviewRequests` 가 쓰는 식은
+ *   `${businessId}_${workerId}_${year}_${month}` 이고 연·월은 workDate 의
+ *   KST 성분이다. 보류 쪽이 다른 식을 쓰면 엉뚱한 토큰을 막는다.
+ *
+ * @param {string} businessId 사업장 ID
+ * @param {string} workerId 근로자 uid
+ * @param {Date} workDate 근무일
+ * @return {{requestKey: string, yearMonth: string}} 토큰 id 와 "YYYY-MM"
+ */
+function srvReviewRequestKeyOf(
+  businessId: string,
+  workerId: string,
+  workDate: Date
+): {requestKey: string; yearMonth: string} {
+  const kst = new Date(workDate.getTime() + 9 * 60 * 60 * 1000);
+  const year = kst.getUTCFullYear();
+  const month = kst.getUTCMonth() + 1;
+  return {
+    requestKey: `${businessId}_${workerId}_${year}_${month}`,
+    yearMonth: `${year}-${String(month).padStart(2, "0")}`,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5235,6 +5497,16 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
             //   transaction 밖 precheck 는 freeze-first race 를 닫지 못한다.
             const skippedByBarrier = await db.runTransaction(async (tx) => {
               if (await srvDeletionBarrierExistsInTx(tx, workerId)) return true;
+              // [R7-RER.2B §4] 위(5478)의 자격 질의는 transaction **밖**이다.
+              //   그래서 질의와 create 사이에 관리자가 마감을 취소하면,
+              //   이 transaction 의 read-set 에는 근태가 없어 재시도도 일어나지
+              //   않고 **낡은 eligible=true 로 활성 토큰**이 만들어졌다.
+              //   barrier 가 이미 같은 이유로 transaction 안에 들어와 있다 —
+              //   자격도 같은 경계에 있어야 한다. 공용 tx 판정을 재사용한다.
+              if (!(await srvHasActualWorkInMonthTx(
+                tx, businessId, workerId, ymKey))) {
+                return true;
+              }
               tx.create(requestRef, {
                 requestKey,
                 businessId,
@@ -5278,6 +5550,12 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
                 await requestRef.update({ workerName });
               }
             } catch (e) { console.warn("[createPendingReviewRequests] 단기 workerName 업데이트 실패 (무시):", e); }
+            // [R7-RER.2 §3C] scheduler 는 복구 역할이다. 마감 취소 호출이
+            //   복구 단계 전에 죽으면 자격이 있는 달이 보류된 채 남는다 —
+            //   그 상태를 여기서 되돌린다. 보류된 문서가 아니면 질의도 하지
+            //   않는다(읽기 증가 없음).
+            await srvRestoreReviewEligibilityByMonth(
+              requestKey, businessId, workerId, ymKey);
             return false;
           }
         })
@@ -5328,6 +5606,11 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
             //   barrier read 와 create 가 같은 transaction 안이다.
             const skippedByBarrier = await db.runTransaction(async (tx) => {
               if (await srvDeletionBarrierExistsInTx(tx, workerId)) return true;
+              // [R7-RER.2B §4] 단기와 같은 계약 — 자격도 같은 경계 안에서 본다.
+              if (!(await srvHasActualWorkInMonthTx(
+                tx, businessId, workerId, endYmKey))) {
+                return true;
+              }
               tx.create(requestRef, {
                 requestKey,
                 businessId,
@@ -5367,6 +5650,9 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
                 await requestRef.update({ workerName });
               }
             } catch (e) { console.warn("[createPendingReviewRequests] 장기 workerName 업데이트 실패 (무시):", e); }
+            // [R7-RER.2 §3C] 단기와 같은 복구 — 보류된 기존 요청을 되살린다.
+            await srvRestoreReviewEligibilityByMonth(
+              requestKey, businessId, workerId, endYmKey);
             return false;
           }
         })
@@ -5580,6 +5866,39 @@ export const onReviewCreated = onDocumentCreated(
         return;
       }
 
+      // [R7-RER.2 §4] 자격 보류 — rules 와 **같은 토큰**을 서버에서 한 번 더 본다.
+      //
+      //   rules 의 get() 은 보류 쓰기와 직렬화된다고 보장되지 않는다. 그래서
+      //   토큰이 보류되는 순간에 출발한 제출이 rules 를 통과할 수 있다.
+      //   이 읽기는 transaction 안이고 보류 쓰기도 transaction 이므로, 그
+      //   경합의 결과는 둘 중 하나로 수렴한다 — 통과했더라도 여기서 걸린다.
+      //
+      //   blocked 은 생성된 리뷰 문서를 삭제한다. 삭제 대상은 자격 없이
+      //   방금 들어온 리뷰뿐이다 — 이 트리거는 create 에만 발화하므로
+      //   이전에 제출된 리뷰는 영향을 받지 않는다(§3D).
+      if (req.eligibilitySuspendedAt) {
+        blocked = true;
+        return;
+      }
+
+      // [R7-RER.2A §2·§4] 최종 권위는 **보류 쓰기가 도착했는지**에 걸려
+      //   있으면 안 된다. 사후 재집계가 실패하면 토큰이 낡은 상태로
+      //   남을 수 있고, 그때 이 트리거가 유일한 방어다.
+      //
+      //   그래서 월 자격을 **이 transaction 안에서** 다시 센다.
+      //   `tx.get(query)` 는 일치한 문서들에 읽기 잠금을 걸므로, 마감 취소의
+      //   문서별 transaction 과 직렬화된다 — 취소가 먼저면 여기서 보이고,
+      //   여기가 먼저면 취소가 기다린다. 어느 쪽이든 판정과 쓰기가 갈라지지
+      //   않는다. 연·월은 **요청 문서**의 값을 쓴다(클라이언트 입력 아님).
+      const ymKeyForReview =
+        `${req.reviewYear}-${String(req.reviewMonth).padStart(2, "0")}`;
+      if (!(await srvHasActualWorkInMonthTx(
+        tx, req.businessId as string, req.workerId as string,
+        ymKeyForReview))) {
+        blocked = true;
+        return;
+      }
+
       if (req.isPublished) return;
 
       tx.update(reqRef, {
@@ -5599,7 +5918,9 @@ export const onReviewCreated = onDocumentCreated(
       try { await event.data?.ref.delete(); } catch (e) {
         console.error(`[가짜 리뷰 차단] workerId 불일치 삭제 실패 (reviewId=${reviewId}):`, e);
       }
-      console.log(`❌ [가짜 리뷰 차단] review_request 미존재 또는 workerId 불일치 → 삭제: ${reviewId}`);
+      console.log(
+        "❌ [가짜 리뷰 차단] review_request 미존재·workerId 불일치·기한 경과·" +
+        `자격 보류·월 확정근무 0건 중 하나 → 삭제: ${reviewId}`);
       return;
     }
 
@@ -5731,6 +6052,24 @@ export const onWageConfirmed = onDocumentUpdated(
       //   barrier read 와 create 가 같은 transaction 안이다(§6·§44).
       const skippedByBarrier = await db.runTransaction(async (tx) => {
         if (await srvDeletionBarrierExistsInTx(tx, workerId)) return true;
+        // [R7-RER.2 §4] 근거를 transaction 안에서 다시 읽는다.
+        //
+        //   이 트리거는 event 가 들고 온 "confirmed" 를 근거로 요청을
+        //   만든다. 그런데 event 는 과거의 사실이고, 그 사이에 관리자가
+        //   마감을 취소했을 수 있다. 마감 취소는 **먼저** 보류를 세우지만,
+        //   아직 요청이 없던 달에는 세울 토큰이 없다 — 그래서 늦게 도착한
+        //   이 트리거가 근거 없는 토큰을 새로 만들 수 있었다.
+        //
+        //   같은 attendance 문서를 transaction 안에서 읽으면 마감 취소의
+        //   문서별 transaction 과 직렬화된다. 취소가 먼저 커밋됐으면
+        //   여기서 보고 만들지 않는다. 자격이 돌아오면 scheduler 가 만든다.
+        const attSnap = await tx.get(
+          db.collection("attendance").doc(event.params.attendanceId));
+        const attNow = attSnap.exists ? attSnap.data()! : null;
+        if (!attNow ||
+            !srvIsActualFinalizedWork(attNow.status, attNow.wageStatus)) {
+          return true;
+        }
         tx.create(requestRef, {
           requestKey,
           businessId,
@@ -5752,8 +6091,9 @@ export const onWageConfirmed = onDocumentUpdated(
       });
       if (skippedByBarrier) {
         // [§7] 삭제 중/삭제된 계정 — 재시도하지 않는다. trigger 는 no-op 성공.
+        // [R7-RER.2 §4] 또는 그 사이 마감이 취소돼 근거가 사라진 경우.
         console.log(
-          "[임금 확정] 탈퇴 barrier — 리뷰 요청 생성 생략");
+          "[임금 확정] 탈퇴 barrier 또는 근거 소멸 — 리뷰 요청 생성 생략");
         return;
       }
       await Promise.all([
@@ -5773,6 +6113,20 @@ export const onWageConfirmed = onDocumentUpdated(
       if ((e as any)?.code !== 6) throw e;
       // 이미 존재 (동일 월 중복 마감 처리 또는 CF 재시도)
       console.log(`  ℹ️ [임금 확정] 리뷰 요청 이미 존재: ${requestKey}`);
+      // [R7-RER.2 §3C] 재확정이면 **기존 요청을 되살린다**.
+      //
+      //   월별 key 는 하나다. 마감 취소로 보류된 요청이 남아 있는데
+      //   "이미 존재한다"는 이유로 지나가면, 급여를 다시 확정해도 그 달의
+      //   리뷰 기회가 영구히 닫힌다. 새 요청을 만들지 않고 보류만 푼다 —
+      //   deadline·제출 상태는 그대로다.
+      //
+      //   근거는 방금 confirmed 된 이 문서이고, 복구 transaction 이 그것을
+      //   다시 읽어 판정한다.
+      const restored = await srvRestoreReviewEligibility(
+        requestKey, event.params.attendanceId, workerId);
+      if (restored) {
+        console.log(`  ↩️ [임금 확정] 리뷰 자격 보류 해제: ${requestKey}`);
+      }
     }
   }
 );
@@ -19852,9 +20206,38 @@ async function srvSyncSlotCountersTx(
         `[srvSyncSlotCountersTx] 슬롯 ${slotId}: unresolved/ambiguous 지원서 존재 ` +
         "→ workDetailCounts 미갱신 (fail-closed)");
     }
+    // [R7-SLOT-STATUS-OWNER] 슬롯의 모집 상태는 **이 트랜잭션**이 정한다.
+    //
+    //   이전에는 _syncTOCounters가 집계를 끝낸 뒤 별도 트랜잭션에서 status를
+    //   썼다. 그 판단의 근거는 트랜잭션 **밖에서** 읽은 스냅샷이었고, TO 합계
+    //   쓰기에는 낡은 스냅샷 fence(srvCommitToTotals)가 있었지만 슬롯 status
+    //   쓰기에는 없었다. 그래서 트리거가 두 번 겹칠 때:
+    //
+    //     run A(최신 읽기) → 합계 1, TO FULL, slot full
+    //     run B(더 이른 읽기) → 합계는 fence가 막고, **slot status만** open으로 덮음
+    //
+    //   DEV 실측(TO-I): `TO.status=FULL / slot.status=open / confirmed 1 = 필요 1`.
+    //   로그에 `[srvCommitToTotals] 낡은 스냅샷 — 건너뜀`이 남아 있었다.
+    //   그 상태로 남으면 날짜 칩이 '모집중'으로 보인다(SlotModel.isFull 경유).
+    //
+    //   같은 트랜잭션에서 센 confirmed로 같은 순간에 status를 정하면, 카운터와
+    //   상태가 서로 다른 시점을 말할 수 없다. 판정식은 기존과 같다 —
+    //   callableConfirmApplication·callableReopenSlots와 같은 한 벌이다.
+    //   사람이 마감한 슬롯은 건드리지 않는다(기존 가드 유지). 인원 충족은
+    //   모집의 끝이지 근무의 끝이 아니므로 closed로 바꾸지 않는다.
+    const slotRequired = rawSlotWds.reduce(
+      (acc, wd) => acc + ((wd["requiredCount"] as number | undefined) ?? 0), 0);
+    const curSlotStatus = slotDoc.get("status") as string | undefined;
+    const slotManualClosed = slotDoc.get("isManualClosed") === true;
+    const nextSlotStatus = confirmed >= slotRequired ? "full" : "open";
+    const slotStatusUpdate =
+      (!slotManualClosed && curSlotStatus !== "closed" && slotRequired > 0 &&
+        curSlotStatus !== nextSlotStatus) ?
+        {status: nextSlotStatus} : {};
     tx.update(slotRef, {
       pendingCount: pendingDocs.size,
       confirmedCount: confirmed,
+      ...slotStatusUpdate,
       ...srvBuildWdCountsUpdate(rawSlotWds, tally, failClosed),
     });
     return {pending: pendingDocs.size, confirmed};
@@ -19989,8 +20372,6 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   }
 
   // flex TO: TO + 슬롯 집계 전체 병렬 실행 후 배치 쓰기
-  const slotRef = toRef.collection("slots").doc(slotId);
-
   // [R7-7] 슬롯 범위 카운터는 **transaction 안에서 다시 세어** 쓴다.
   //
   //   6차에는 여기서 문서를 읽어 batch 로 함께 썼다. 그 모양은 읽은 뒤
@@ -19999,18 +20380,12 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   //   공고 단위 합계는 아래에 남는다(범위가 공고 전체라 비용이 다르다).
   await srvSyncSlotCountersTx(toRef, slotId, occupiesSeatToday);
 
-  const [seats, toPendingSnap, slotDoc] = await Promise.all([
+  // [R7-SLOT-STATUS-OWNER] 슬롯 범위 값(카운터·status)은 위 트랜잭션이 모두 썼다.
+  //   여기서 읽는 것은 **공고 단위** 합계뿐이다.
+  const [seats, toPendingSnap] = await Promise.all([
     countCommittedSeats(),
     appsRef.where("status", "in", PENDING_STATUSES).count().get(),
-    slotRef.get(),
   ]);
-  const confirmedCount = seats.bySlot.get(slotId) ?? 0;
-  // 슬롯 문서는 workDetails[].requiredCount 합계로 총 필요 인원 계산
-  const workDetails =
-    (slotDoc.data()?.workDetails as
-      Array<{workType?: string; requiredCount?: number}> | undefined) ?? [];
-  const required = workDetails.reduce((acc, d) => acc + (d.requiredCount ?? 0), 0);
-  const newStatus = required > 0 && confirmedCount >= required ? "full" : "open";
   // [Phase 8.1E.5] workTypeCountsUpdate 제거 — workTypeCounts 더 이상 재계산하지 않음
 
   const flexToData = toSnap.data();
@@ -20032,24 +20407,10 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   if (flexApplied) {
     await srvSyncToStatusSafely(toRef, flexTotalRequired, flexConfirmedCnt);
   }
-  // [CROSS-DOMAIN-R5.3D.1] 슬롯 status도 TO와 같은 이유로 트랜잭션에서 정한다.
-  //   [BUG-E-01]의 수동 마감 가드가 **집계 시작 때 읽은** slotDoc 기준이라,
-  //   그 사이에 관리자가 마감하면 배치가 open으로 되돌렸다.
-  if (slotDoc.exists) {
-    try {
-      await db.runTransaction(async (tx) => {
-        const freshSlot = await tx.get(slotRef);
-        if (!freshSlot.exists) return;
-        const d = freshSlot.data() ?? {};
-        // 지금 이 순간 사람이 마감한 슬롯이면 손대지 않는다.
-        if (d["isManualClosed"] === true || d["status"] === "closed") return;
-        if (d["status"] === newStatus) return;
-        tx.update(slotRef, {status: newStatus});
-      });
-    } catch (e) {
-      console.warn("[syncTOStats] slot status 교정 실패:", slotId, e);
-    }
-  }
+  // [R7-SLOT-STATUS-OWNER] 슬롯 status는 srvSyncSlotCountersTx가 카운터와 같은
+  //   트랜잭션에서 이미 정했다. 여기서 다시 쓰지 않는다 — 이 지점의 판단 근거는
+  //   트랜잭션 **밖에서** 읽은 스냅샷이고, 그래서 낡은 트리거 실행이 최신 상태를
+  //   open으로 덮었다(TO 합계는 fence가 막는데 이 쓰기만 막히지 않았다).
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -28888,6 +29249,88 @@ interface NoShowEntry {
   attendanceId?: string;
 }
 
+/**
+ * [R7-NOSHOW-ADMIN-ELIGIBILITY] 관리자가 **미출근**을 확정할 수 있는 가장 이른 시각.
+ *
+ *   근로자의 직전 취소 정책(`callableCancelConfirmedApplication`: 예정 시작 5분
+ *   **전**부터의 취소를 `SAME_DAY_CANCEL`로 분류하고, `callableApplyNoShowPenalty`가
+ *   그 뒤 TrustScore를 매긴다)과 **다른 사건이다.** 그 쪽은 "약속을 스스로 깼다"를
+ *   보고, 이 쪽은 "오기로 한 시간에 오지 않았다"를 본다.
+ *
+ *   앞선 수정은 그 5분 전 기준을 이 경로에 그대로 재사용했다 — 그러면 아직
+ *   시작하지도 않은 근무를 관리자가 미출근으로 확정할 수 있다. 사건이 다르므로
+ *   기준도 따로 둔다.
+ *
+ *   기준은 새로 만들지 않고 사업장이 이미 정한 **지각 유예(`lateGrace`)** 를 쓴다.
+ *   유예 안에 도착하면 지각조차 아니다 — 그 시간 안에서는 "오지 않았다"가 아직
+ *   성립하지 않는다. 규칙은 건별로 해석한다(`srvEffectiveAttendanceRules`:
+ *   확정 시 snapshot 우선, 없으면 live 사업장 규칙).
+ *
+ * @param {number} startMs 예정 시작 절대시각(ms)
+ * @param {Record<string, unknown>} rules 이 근무에 적용할 근태 규칙
+ * @return {number} 이 시각 이후에만 수동 NO_SHOW 가 가능하다
+ */
+function srvNoShowJudgeableFromMs(
+  startMs: number,
+  rules: Record<string, unknown>
+): number {
+  return startMs + srvAttendancePolicyValue(rules, "lateGrace") * 60000;
+}
+
+/**
+ * "HH:MM" + 근무일(KST 자정 기준 ms) → 예정 시작 절대시각(ms).
+ *
+ * @param {number} workDateMs 근무일 KST 자정의 epoch ms
+ * @param {unknown} startTime "HH:MM" 문자열로 기대되는 값
+ * @return {number | null} 해석 실패 시 null
+ */
+function srvShiftStartMsFrom(workDateMs: number, startTime: unknown): number | null {
+  if (typeof startTime !== "string" || !/^\d{1,2}:\d{2}$/.test(startTime)) return null;
+  const [hh, mm] = startTime.split(":").map(Number);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return workDateMs + (hh * 60 + mm) * 60000;
+}
+
+/**
+ * 한 지원서의 그 날 예정 시작 시각을 서버 권위 자료에서 해석한다.
+ *
+ *   우선순위는 callableCancelConfirmedApplication의 scheduled start resolution과 같다 —
+ *   wdId exact match → workDetailId composite exact match. 둘 다 못 맞추면
+ *   지원서에 snapshot된 startTime(근로자에게 제시된 그 시간)을 쓴다.
+ *   "첫 번째 workDetail" 같은 추측은 하지 않는다.
+ *
+ * @param {FirebaseFirestore.DocumentData} appData 지원서 데이터
+ * @param {number} workDateMs 판정 대상 근무일(KST 자정 ms)
+ * @return {Promise<number | null>} 확정 못하면 null
+ */
+async function srvResolveShiftStartMs(
+  appData: FirebaseFirestore.DocumentData,
+  workDateMs: number
+): Promise<number | null> {
+  const toId = appData["toId"] as string | undefined;
+  const slotId = appData["slotId"] as string | undefined;
+  if (toId && slotId) {
+    const slotSnap = await db.collection("tos").doc(toId)
+      .collection("slots").doc(slotId).get();
+    if (slotSnap.exists) {
+      const wds = (slotSnap.data()?.["workDetails"] as Array<Record<string, unknown>>
+        | undefined) ?? [];
+      const appWdId = appData["wdId"] as string | undefined;
+      const appWorkDetailId = appData["workDetailId"] as string | undefined;
+      let matched: Record<string, unknown> | undefined;
+      if (appWdId) matched = wds.find((wd) => wd["wdId"] === appWdId);
+      if (!matched && appWorkDetailId) {
+        matched = wds.find((wd) =>
+          `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === appWorkDetailId);
+      }
+      const fromWd = matched ?
+        srvShiftStartMsFrom(workDateMs, matched["startTime"]) : null;
+      if (fromWd != null) return fromWd;
+    }
+  }
+  return srvShiftStartMsFrom(workDateMs, appData["startTime"]);
+}
+
 // 노쇼 배치 처리 — 관리자가 미출근 근무자를 일괄 노쇼로 표시
 export const callableBatchSetNoShow = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -28942,6 +29385,59 @@ export const callableBatchSetNoShow = onCall(
       if (workDateMs > todayKSTStartMs) {
         skippedSet.add(resolvedId);
         return undefined;
+      }
+
+      // [R7-NOSHOW-ADMIN-ELIGIBILITY] 아직 오지 않은 근무는 미출근이 아니다.
+      //
+      //   위의 날짜 guard는 **날짜**만 본다. 클라이언트의 노쇼 칩 노출 조건도
+      //   `!_kstDay.isAfter(_todayKst)`로 날짜 단위였다. 그래서 근무일 00:00
+      //   이후면 시작 전에도 노쇼를 확정할 수 있었다 — DEV 실측에서 23:50~23:59
+      //   근무를 23:01에 NO_SHOW + finalWage 0으로 썼다(49분 전).
+      //
+      //   판정 시각은 `srvNoShowJudgeableFromMs` 한 곳에 있다 — 예정 시작 +
+      //   사업장 지각 유예. 근로자 직전 취소의 5분 전 기준과는 다른 사건이므로
+      //   그 값을 빌려 쓰지 않는다. 자동 노쇼(processAutoNoShow)는 06:00에
+      //   전날만 훑으므로 처음부터 이 경계 안에 있었다 — 수동 경로만 밖에 있었다.
+      //
+      //   판정은 쓰기 전에 끝낸다. 시작 시각을 **확정할 수 없으면 처리하지
+      //   않는다**(skip) — 모르는 시각을 유효하다고 보면 이 경계가 추측 위에
+      //   서게 되고, 그 대가는 근로자의 급여 0·신뢰도·좌석이다. 배치의 나머지
+      //   정상 항목은 계속 처리한다. 그런 기록은 다음날 06:00 자동 노쇼가
+      //   같은 결과를 만든다(그 경로는 시작 시각을 요구하지 않는다).
+      {
+        let gateStartMs: number | null = null;
+        let gateFrom: number | null = null;
+        try {
+          const gateAppSnap = applicationId ?
+            await db.collection("applications").doc(applicationId).get() : null;
+          if (gateAppSnap && gateAppSnap.exists) {
+            const gateAppData = gateAppSnap.data()!;
+            gateStartMs = await srvResolveShiftStartMs(gateAppData, workDateMs);
+            if (gateStartMs != null) {
+              gateFrom = srvNoShowJudgeableFromMs(
+                gateStartMs,
+                srvEffectiveAttendanceRules(gateAppData, nsBizData) as
+                  Record<string, unknown>);
+            }
+          }
+        } catch (gateErr) {
+          console.warn("[batchSetNoShow] 시작 시각 확인 실패:", gateErr);
+        }
+        if (gateFrom == null || Date.now() < gateFrom) {
+          skippedSet.add(resolvedId);
+          console.warn("[batchSetNoShow] 미출근 확정 불가:", JSON.stringify({
+            event: gateFrom == null ?
+              "noShowStartTimeUnknown" : "noShowBeforeJudgeable",
+            applicationId,
+            businessId,
+            startAtKst: gateStartMs != null ?
+              new Date(gateStartMs + KST_OFFSET_MS).toISOString() : null,
+            judgeableFromKst: gateFrom != null ?
+              new Date(gateFrom + KST_OFFSET_MS).toISOString() : null,
+            nowKst: new Date(Date.now() + KST_OFFSET_MS).toISOString(),
+          }));
+          return undefined;
+        }
       }
 
       try {
@@ -30024,6 +30520,41 @@ export const callableCancelFinalConfirmation = onCall(
     let successCount = 0;
     const skipped: string[] = [];
 
+    // [R7-RER.2 §3B·§4] 마감 취소보다 **먼저** 리뷰 자격을 보류한다.
+    //
+    //   리뷰 요청은 발급 시점의 자격을 담은 토큰이고, 발급 뒤 자격을 다시
+    //   확인하는 자리는 없었다. 그래서 그 달의 마지막 확정 근무를 여기서
+    //   되돌리면 근거 없는 리뷰가 그대로 제출될 수 있었다.
+    //
+    //   순서가 핵심이다. 취소를 먼저 하면 "근무는 이미 풀렸는데 토큰은 살아
+    //   있는" 구간이 남고 그 구간의 제출은 막을 근거가 없다. 먼저 보류하면
+    //   반대 방향으로만 틀린다 — 아직 자격이 있는 달을 잠깐 막는 것이고,
+    //   아래 복구 단계가 같은 호출 안에서 되돌린다.
+    //
+    //   보류 대상은 **실제 근무로 세어지던 건**뿐이다. NO_SHOW·결근은
+    //   confirmed 라도 자격에 들어가지 않았으므로 취소해도 자격이 변하지 않는다.
+    const eligibilityTargets = new Map<string,
+      {businessId: string; workerId: string; yearMonth: string}>();
+    for (let gi = 0; gi < attendanceIds.length; gi += 100) {
+      const refs = attendanceIds.slice(gi, gi + 100)
+        .map((id) => db.collection("attendance").doc(id));
+      const snaps = await db.getAll(...refs);
+      for (const snap of snaps) {
+        if (!snap.exists) continue;
+        const d = snap.data()!;
+        if (d.businessId !== businessId) continue;
+        if (!srvIsActualFinalizedWork(d.status, d.wageStatus)) continue;
+        const workerId = (d.userId as string | undefined) ?? "";
+        const workDate = (d.workDate as Timestamp | undefined)?.toDate();
+        if (!workerId || !workDate) continue;
+        const {requestKey, yearMonth} =
+          srvReviewRequestKeyOf(businessId, workerId, workDate);
+        eligibilityTargets.set(requestKey, {businessId, workerId, yearMonth});
+      }
+    }
+    // 보류에 실패하면 취소를 시작하지 않는다 — 막지 못한 창을 만들지 않는다.
+    await srvSuspendReviewEligibility(new Set(eligibilityTargets.keys()));
+
     // [PERF-2026-07-16] attendance 항목별 독립 트랜잭션 → chunk-20 병렬화
     // runTransaction: 읽기-쓰기 원자성 보장 — 동시 transferred 전환 경합 방어 (변경 없음)
     const CHUNK = 20;
@@ -30107,6 +30638,36 @@ export const callableCancelFinalConfirmation = onCall(
           skipped.push(chunk[j]);
         }
       });
+    }
+
+    // [R7-RER.2 §3B·§3C] 취소가 끝난 뒤 **다시 센다**.
+    //
+    //   같은 달에 다른 확정 근무가 남아 있으면 자격은 유지돼야 한다(§3B).
+    //   위에서 보류를 먼저 했으므로 여기서 풀어 주지 않으면 정상 월이
+    //   막힌 채 남는다. 복구는 근거 attendance 문서를 transaction 안에서
+    //   다시 읽고 판정한다 — 늦게 도착한 복구가 이미 취소된 근무를 근거로
+    //   토큰을 되살리지 않는다.
+    //
+    //   deadline 은 그대로 둔다(§3C) — 자격이 돌아왔다는 것이 기한이
+    //   늘어난다는 뜻은 아니다.
+    //
+    //   [R7-RER.2A §2] **풀기만 하면 안 된다.** 사전 보류는 쓸 토큰이 있을
+    //   때만 유효하고, 토큰이 없던 달에 지연된 생성 트리거가 끼어들면 보류
+    //   표시 없는 활성 토큰이 남는다. 그래서 여기서 다시 세고 양방향으로
+    //   맞춘다 — 근거가 남았으면 풀고, 하나도 없으면 세운다.
+    for (const [requestKey, t] of eligibilityTargets) {
+      try {
+        await srvReconcileReviewEligibility(
+          requestKey, t.businessId, t.workerId, t.yearMonth);
+      } catch (e) {
+        // 취소는 이미 커밋됐다 — 되돌리지 않는다. 다만 조용히 넘기지 않는다:
+        //   이 쓰기를 잃으면 토큰이 낡은 상태로 남는다. 그 경우의 최종
+        //   권위는 `onReviewCreated` 의 월 자격 재확인이다(§4) — 응답
+        //   형태는 기존 계약 그대로 두고, 사실은 로그에 남긴다.
+        console.error(
+          `[리뷰 자격 재집계] 실패 — 토큰 상태가 낡을 수 있다 (${requestKey}):`,
+          e);
+      }
     }
 
     // [R8-P3B.2 §20] 취소는 이미 커밋됐다 — 알림 실패가 되돌리지 않는다.
@@ -31919,6 +32480,23 @@ export const callableBatchAdjustAttendanceTime = onCall(
                 updates["modifyReason"] = adjReason.slice(0, ADJUST_REASON_MAX);
               }
               if (workHours != null) updates["workHours"] = workHours;
+              // [R7-ATTENDANCE-SHORT-SHIFT-BOUNDARY.2] 정정이 `isZeroWork` 를
+              //   같이 갱신한다.
+              //
+              //   `callableCheckOut` 은 정책 보정이 역전될 때 보정 퇴근을
+              //   출근으로 clamp 하고 `isZeroWork = true` 를 남긴다. 관리자가
+              //   실제 시각으로 고치면 인정 시간이 양수가 되는데, 이 필드를
+              //   그대로 두면 `workHours > 0` 인 기록에 "0분" 표식이 남는다.
+              //   근로자 안내(`attendance_check_screen`)가 이 값을 읽으므로
+              //   낡은 true 는 사실과 다른 말이 된다.
+              //
+              //   원본 증거(`originalCheckOut`)는 건드리지 않는다 — 여기서
+              //   바뀌는 것은 **보정 결과에 대한 표식**뿐이다.
+              if (checkInMs != null && checkOutMs != null) {
+                updates["isZeroWork"] = checkOutMs <= checkInMs;
+              } else if (workHours != null) {
+                updates["isZeroWork"] = workHours <= 0;
+              }
               if (effectiveResetWageDetail) {
                 updates["wageStatus"] = "pending";
                 updates["wageDetail"] = admin.firestore.FieldValue.delete();
@@ -36335,6 +36913,10 @@ export const callableCheckOut = onCall(
 
     const ref = db.collection("attendance").doc(attendanceId);
 
+    // [R7-ATTENDANCE-SHORT-SHIFT-BOUNDARY.2] 트랜잭션 밖에서 결과를 받는다.
+    //   재시도되면 마지막 실행 값이 남는다 — 같은 입력이면 같은 값이다.
+    let zeroWorkResult = false;
+
     await db.runTransaction(async (tx) => {
       // [HIGH-1/MEDIUM-2 FIX] 모든 read를 write 이전에 수행 + 서버 권위 데이터 조회
       const snap = await tx.get(ref);
@@ -36429,14 +37011,45 @@ export const callableCheckOut = onCall(
         checkInAt = (data.checkIn as admin.firestore.Timestamp).toDate();
       }
 
-      // [BUG-M4 수정 2026-07-27] effectiveCheckOut < checkInAt (늦은 체크인 + 반올림으로 퇴근 시각이 출근 전으로 역전)
-      // 이 경우 workMins=0을 묵살하지 않고 에러 반환 → 관리자 수동 처리 경로로 유도
-      if (effectiveCheckOut.getTime() <= checkInAt.getTime()) {
-        throw new HttpsError(
-          "failed-precondition",
-          "퇴근 처리 불가: 계산된 퇴근 시각이 출근 시각보다 이릅니다. 관리자에게 수동 수정을 요청하세요."
-        );
-      }
+      // [BUG-M4 2026-07-27] effectiveCheckOut <= checkInAt — 보정 퇴근이 보정
+      //   출근 이하로 역전된다. 원인은 둘이고 **모두 허용된 설정**이다:
+      //     · earlyLeaveUnit 이 남은 근무보다 크다 (20분 근무 · 단위 30)
+      //     · lateUnit 반올림이 보정 출근을 예정 종료 뒤로 밀어낸다
+      //       (유예 초과 지각 + 정시 퇴근 · 단위 30)
+      //   기본 설정(30/30)에서 **30분 이하 근무가 해당**된다.
+      //
+      // [R7-ATTENDANCE-SHORT-SHIFT-BOUNDARY.2] 예전에는 여기서 throw 했다.
+      //   0분을 묵살하지 않으려는 의도는 옳았지만, throw 가 유일한 쓰기
+      //   (아래 tx.update) 보다 앞이라 **실제 퇴근 증거가 함께 버려졌다** —
+      //   originalCheckOut·checkOutLat/Lng·checkOutDistance 가 하나도 남지
+      //   않았고, 근로자는 퇴근을 끝낼 방법이 없었다. 관리자가 나중에 적는
+      //   시각은 증거가 아니라 사후 재구성이다.
+      //
+      //   그래서 **기록과 계산을 분리한다**:
+      //     · 원본 펀치와 위치 증거는 아래에서 그대로 저장한다
+      //     · 보정 퇴근은 출근 시각으로 clamp 한다 → 인정 0분
+      //       (음수·역전 구간을 정상 근무시간으로 저장하지 않는다)
+      //     · `isZeroWork = true` 로 표시한다
+      //
+      //   "0분이니 정상 완료" 가 아니다. 이 기록은 `checkIn != null` 이고
+      //   보정 퇴근이 예정 종료보다 이르거나(조퇴) 보정 출근이 지각이므로
+      //   기존 canonical 판정 `AttendanceReviewHelper.requiresReviewNow` 가
+      //   **그대로 검토 대상으로 잡는다** — 관리자 Home 의 `근태 확인` 과
+      //   근태 다이얼로그 검토 탭이 같은 술어를 쓴다([AH-V2-04A]).
+      //   새 status·새 필드를 만들지 않는 이유가 이것이다.
+      //
+      //   급여는 자동으로 확정되지 않는다. `callableConfirmFinalWage` 는
+      //   `wageStatus === "calculated"` 만 받고, 계산은 관리자가 실제 시각을
+      //   입력해야 시작된다([DESIGN-F-M1]).
+      //
+      //   `checkOut` 을 null 로 두지 않는 것이 중요하다 —
+      //   `processMissedCheckouts` 가 `checkOut == null` 만 보고 자정에
+      //   `missed_checkout` 으로 재분류하기 때문이다. 실제로 퇴근한 사람을
+      //   미퇴근으로 되돌리지 않는다.
+      const reversedByPolicy =
+        effectiveCheckOut.getTime() <= checkInAt.getTime();
+      if (reversedByPolicy) effectiveCheckOut = checkInAt;
+
       const workMins = Math.floor((effectiveCheckOut.getTime() - checkInAt.getTime()) / 60000);
       const workHours = workMins / 60;
 
@@ -36472,9 +37085,14 @@ export const callableCheckOut = onCall(
       if (workMins <= 0) update.isZeroWork = true;
 
       tx.update(ref, update);
+      // [R7-ATTENDANCE-SHORT-SHIFT-BOUNDARY.2] 근로자에게 **두 사실을 구분**해
+      //   알리기 위해 응답에 담는다 — "실제 퇴근은 기록됐다" 와 "인정 시간이
+      //   0분이어서 관리자 확인이 필요하다" 는 다른 말이다. 예전에는 호출이
+      //   아예 실패했으므로 구분할 것도 없었다.
+      zeroWorkResult = workMins <= 0;
     });
 
-    return {success: true};
+    return {success: true, isZeroWork: zeroWorkResult};
   }
 );
 

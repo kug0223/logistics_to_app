@@ -651,11 +651,36 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       if (success && mounted) {
         final uid = context.read<UserProvider>().currentUser?.uid;
         if (uid != null) _firestoreService.invalidateMyAttendanceCache(uid);
-        ToastHelper.showSuccess('퇴근이 완료되었습니다!');
         AnalyticsService.logCheckOut(method: usedMethod);
         await _loadTodayWorks();
         if (!mounted) return;
-        _showRoundingFeedback(work.id, isCheckIn: false);
+
+        // [R7-ATTENDANCE-SHORT-SHIFT-BOUNDARY.2] 두 사실을 구분해 말한다.
+        //
+        //   사업장의 계산 단위가 남은 근무보다 크면 인정 시간이 0분이 된다
+        //   (20분 근무 · 조퇴 단위 30분, 또는 유예 초과 지각 · 지각 단위 30분).
+        //   예전에는 이 경우 퇴근 요청이 **실패**해서 근로자가 근무를 끝낼 수
+        //   없었고 실제 퇴근 증거도 남지 않았다. 이제 증거는 기록되지만,
+        //   그것을 "퇴근이 완료되었습니다" 로만 말하면 인정 0분과 관리자
+        //   확인이 필요하다는 사실이 가려진다.
+        //
+        //   근로자 잘못이 아니므로 그렇게 읽히는 문구를 쓰지 않는다.
+        final att = _attendanceMap[work.id];
+        if (att?.isZeroWork == true) {
+          await DialogHelper.showAlert(
+            context,
+            title: '퇴근 시각은 기록됐어요',
+            message: '퇴근하신 시각은 그대로 저장됐습니다.\n\n'
+                '다만 이 사업장의 근태 계산 기준으로는 인정 근무시간이 '
+                '0분으로 계산돼, 관리자 확인이 필요합니다.\n'
+                '관리자가 근태를 확인하면 급여가 계산됩니다.',
+            icon: Icons.schedule,
+            iconColor: AppColors.warning,
+          );
+        } else {
+          ToastHelper.showSuccess('퇴근이 완료되었습니다!');
+          _showRoundingFeedback(work.id, isCheckIn: false);
+        }
       }
     } catch (e) {
       debugPrint('❌ 퇴근 체크 실패: $e');

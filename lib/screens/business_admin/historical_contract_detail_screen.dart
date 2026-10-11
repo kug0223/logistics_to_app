@@ -6,6 +6,7 @@ import '../../models/core/historical_contract_detail.dart';
 import '../../models/core/insurance_rate_model.dart';
 import '../../services/historical_contract_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/contract_status_visual.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
@@ -503,18 +504,11 @@ class _HistoricalContractDetailScreenState
     }
   }
 
+  // [R8-INTEGRATED §7] 목록 화면과 **같은 표**를 쓴다. 상세로 들어갔을 때
+  //   배지 색이 바뀌면 같은 계약이 다른 상태처럼 읽힌다.
   ({Color bg, Color fg}) _statusColors(String? status) {
-    switch (status) {
-      case 'completed':
-        return (bg: AppColors.successBg, fg: AppColors.successDark);
-      case 'pending_employer':
-      case 'pending_worker':
-        return (bg: AppColors.warningBg, fg: AppColors.warningDark);
-      case 'voided':
-        return (bg: AppColors.grey100, fg: AppColors.grey600);
-      default:
-        return (bg: AppColors.grey100, fg: AppColors.grey600);
-    }
+    final c = contractStatusColorsOf(status);
+    return (bg: c.bg, fg: c.fg);
   }
 
   String _noPdfCopy(HistoricalContractDetail detail) {

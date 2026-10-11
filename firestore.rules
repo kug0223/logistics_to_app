@@ -235,10 +235,16 @@ service cloud.firestore {
     //   onDocumentCreated에서 auth context 없어 CF 검증 불가 → rules 레벨 강제
     // [H-1 수정 2026-07-17] bizId 파라미터 추가 — requestId.businessId 교차검증
     //   이전: workerId만 검증 → 근무자가 A사 requestId + businessId=B로 리뷰 생성 시 B사 평점 오염 가능
+    // [R7-RER.2 §3B·§4] 자격 보류 토큰도 **같은 get() 안에서** 본다.
+    //   리뷰 요청은 발급 시점의 자격을 담은 토큰이다. 그 뒤 관리자가 급여
+    //   마감을 취소해 그 달의 마지막 확정 근무가 사라지면, 토큰은 남아 있지만
+    //   근거가 없다. 서버가 `eligibilitySuspendedAt` 을 세우고, 여기서 막는다.
+    //   필드가 없는 기존 문서는 `null` 기본값으로 통과한다 — migration 불필요.
     function isReviewRequestOwnedBy(requestId, uid, bizId) {
       let rrDoc = get(/databases/$(database)/documents/review_requests/$(requestId));
       let rr = rrDoc != null && rrDoc.data != null ? rrDoc.data : null;
-      return rr != null && rr.get('workerId', '') == uid && rr.get('businessId', '') == bizId;
+      return rr != null && rr.get('workerId', '') == uid && rr.get('businessId', '') == bizId &&
+        rr.get('eligibilitySuspendedAt', null) == null;
     }
 
     // [REVIEW-BINDING 2026-09-08] ADMIN_TO_USER 리뷰 생성 시 review_requests binding 강제.
@@ -252,7 +258,9 @@ service cloud.firestore {
         rr.get('workerId', '') == targetUserId &&
         rr.get('businessId', '') == businessId &&
         rr.get('adminStatus', '') == 'pending' &&
-        rr.get('deadline', request.time) >= request.time;
+        rr.get('deadline', request.time) >= request.time &&
+        // [R7-RER.2 §3B] 자격 보류 — 관리자 쪽도 같은 토큰을 쓴다.
+        rr.get('eligibilitySuspendedAt', null) == null;
     }
 
     // 멤버 초대 유효성 검증: pending 상태 + 대상 일치 + 30일 이내

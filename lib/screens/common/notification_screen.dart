@@ -291,7 +291,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label),
+          // [R8-HYGIENE §4] 제약 없는 `Text` 였다. SubAdmin 3탭에 미읽음 배지가
+          //   함께 붙으면 360dp 에서 3px 넘쳤다(실측). 넘친 쪽은 배지이고,
+          //   배지는 숫자라 줄일 수 없다 — 줄여야 하는 쪽은 라벨이다.
+          //   배지가 없을 때의 모양은 그대로다(Flexible 은 내용 크기로 접힌다).
+          Flexible(
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
           if (unreadCount > 0) ...[
             const SizedBox(width: 4),
             Container(
@@ -1709,6 +1715,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (alreadySubmitted) {
         if (navReview.canPop()) navReview.pop();
         if (context.mounted) ToastHelper.showInfo('이미 작성한 리뷰입니다.');
+        return;
+      }
+
+      // [R7-RER.2 §5] 알림은 자격을 보장하지 않는다.
+      //   알림이 발송된 뒤 관리자가 급여 마감을 취소하면 그 달의 근거가
+      //   사라진다. 오래된 알림으로 들어온 경우 빈 폼을 열지 않고
+      //   복구 경로를 말한다. 서버(Rules·onReviewCreated)가 canonical 경계다.
+      if (req.isEligibilitySuspended) {
+        if (navReview.canPop()) navReview.pop();
+        if (context.mounted) {
+          ToastHelper.showInfo(
+              MonthlyReviewService.eligibilitySuspendedMessage);
+        }
         return;
       }
 

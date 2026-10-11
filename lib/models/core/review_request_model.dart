@@ -41,6 +41,14 @@ class ReviewRequestModel {
   final DateTime? publishedAt;
   final DateTime createdAt;
 
+  /// [R7-RER.2 §3B] 자격 보류 시각 (서버 전용 쓰기)
+  ///
+  /// 리뷰 요청은 발급 시점의 근무 자격을 담은 토큰이다. 발급 뒤 관리자가
+  /// 급여 마감을 취소해 그 달의 마지막 확정 근무가 사라지면 서버가 이 값을
+  /// 세우고, Firestore Rules 가 미제출 리뷰 생성을 막는다.
+  /// 급여가 다시 확정되면 서버가 이 값을 지운다 — deadline 은 그대로다.
+  final DateTime? eligibilitySuspendedAt;
+
   const ReviewRequestModel({
     required this.id,
     required this.requestKey,
@@ -58,6 +66,7 @@ class ReviewRequestModel {
     required this.isPublished,
     this.publishedAt,
     required this.createdAt,
+    this.eligibilitySuspendedAt,
   });
 
   static String generateKey({
@@ -99,6 +108,8 @@ class ReviewRequestModel {
       isPublished: data['isPublished'] ?? false,
       publishedAt: (data['publishedAt'] as Timestamp?)?.toDate().toLocal(),
       createdAt: createdAt,
+      eligibilitySuspendedAt:
+          (data['eligibilitySuspendedAt'] as Timestamp?)?.toDate().toLocal(),
     );
   }
 
@@ -133,6 +144,8 @@ class ReviewRequestModel {
         isPublished: data['isPublished'] ?? false,
         publishedAt: parseTimestampNullable(data['publishedAt']),
         createdAt: parseTimestamp(data['createdAt']),
+        eligibilitySuspendedAt:
+            parseTimestampNullable(data['eligibilitySuspendedAt']),
       );
     } catch (e, st) {
       debugPrint('[ReviewRequestModel] tryFromMap 실패 id=$docId: $e\n$st');
@@ -140,6 +153,10 @@ class ReviewRequestModel {
     }
   }
 
+  // [R7-RER.2 §4] `eligibilitySuspendedAt` 은 **의도적으로 toMap 에 없다**.
+  //   이 값은 서버(Admin SDK)만 쓰고, Firestore Rules 는 클라이언트 update 의
+  //   affectedKeys 를 제출 필드로만 제한한다. toMap 으로 흘러나가면 보류를
+  //   클라이언트가 지우는 모양의 쓰기가 만들어질 수 있다.
   Map<String, dynamic> toMap() => {
         'requestKey': requestKey,
         'businessId': businessId,
@@ -168,6 +185,11 @@ class ReviewRequestModel {
       workerStatus == ReviewPartyStatus.submitted;
 
   bool get isDeadlinePassed => DateTime.now().isAfter(deadline);
+
+  /// [R7-RER.2 §3B·§5] 근무 정산이 다시 확인 중이어서 리뷰 작성이 보류된 상태.
+  ///
+  /// 영구 차단이 아니다 — 급여가 다시 확정되면 서버가 보류를 푼다.
+  bool get isEligibilitySuspended => eligibilitySuspendedAt != null;
 
   bool get adminPending => adminStatus == ReviewPartyStatus.pending;
   bool get workerPending => workerStatus == ReviewPartyStatus.pending;

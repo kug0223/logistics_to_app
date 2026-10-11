@@ -936,6 +936,16 @@
       "collectionGroup": "applications",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "reconfirmStatus", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "workDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "businessId", "order": "ASCENDING" },
         { "fieldPath": "appliedAt", "order": "DESCENDING" }
       ]

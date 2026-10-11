@@ -2324,6 +2324,14 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         ).then((a) => attendances = a),
       ]);
       if (!mounted) return;
+
+      // [R7-RER.2 §5] 자격 보류 중이면 빈 폼을 열지 않는다.
+      //   요청을 못 읽은 경우(null)는 보류가 아니다 — 기존 동작을 유지한다.
+      if (reviewRequest?.isEligibilitySuspended == true) {
+        ToastHelper.showInfo(MonthlyReviewService.eligibilitySuspendedMessage);
+        return;
+      }
+
       final workDaysInMonth = attendances
           .where((a) =>
               a.businessId == app.businessId &&

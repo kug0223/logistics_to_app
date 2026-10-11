@@ -108,7 +108,15 @@ class _Applicant extends UserProvider {
 
 const kTo = 'to1';
 const kSlot = 'slot1';
-final kDate = DateTime(2026, 10, 10);
+/// 공용 근무일. **날짜를 못 박으면 그날이 지나는 순간 셀이 썩는다** —
+/// 하루만 지나도 `isDatePast → isEffectivelyClosed` 로 업무 목록이 아예
+/// 렌더되지 않아, 제품은 멀쩡한데 ARP-3x 가 한꺼번에 깨졌다(실측 8건).
+/// 그래서 아래 `kFutureDate` 와 같이 오늘 기준 상대값으로 둔다.
+final kDate = DateTime(
+  DateTime.now().year,
+  DateTime.now().month,
+  DateTime.now().day,
+).add(const Duration(days: 3));
 
 /// 미래 근무일 — 과거면 마감 경로로 빠져 카드가 덮인다.
 final kFutureDate = DateTime(

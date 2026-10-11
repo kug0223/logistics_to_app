@@ -2500,6 +2500,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
     if (!mounted) return;
 
+    // [R7-RER.2 §5] 급여 마감을 되돌린 달은 작성 폼을 열지 않는다.
+    //   요청을 못 읽은 경우(null)는 보류가 아니다 — 기존 동작 유지.
+    if (reviewRequest?.isEligibilitySuspended == true) {
+      ToastHelper.showInfo(MonthlyReviewService.eligibilitySuspendedMessage);
+      return;
+    }
+
     // 기작성 리뷰 확인: monthly_reviews 직접 조회 (review_requests.adminStatus 갱신 여부 무관)
     final reviewKey = MonthlyReviewModel.generateKeyForUser(
       businessId: widget.businessId!,

@@ -507,12 +507,19 @@ void main() {
       //   그대로 보정 요청으로 전송되므로 기준이 틀리면 금액이 틀린다.
       // 출근·퇴근 **둘 다** 같은 출처를 쓴다. 대입 형태까지 고정한다 —
       //   호출만 남기고 값을 live 로 바꾸는 변형이 `.3` 에서 실제로 빠져나갔다.
+      // [R8-INTEGRATED] 소비자가 셋이 됐다 — 출근 미리보기 · 퇴근 미리보기 ·
+      //   노쇼 칩 경계(`_noShowJudgeable`, R7-NOSHOW-ADMIN-ELIGIBILITY).
+      //   세 번째도 **같은 건별 출처**를 쓴다. 칩이 서버보다 먼저 말하지 않게
+      //   하려면 서버와 같은 규칙(예정 시작 + 지각 유예)을 봐야 하고, 그
+      //   유예는 이 근무의 약속에서 와야 한다. 숫자를 늘린 것이 아니라
+      //   같은 출처를 쓰는 곳이 늘었다. 대입 형태 고정은 그대로 둔다 —
+      //   호출만 남기고 값을 live 로 바꾸는 변형을 막기 위해서다.
       expect(
           'final rules = app.effectiveAttendanceRules(_attendanceRules);'
               .allMatches(dlg)
               .length,
-          2,
-          reason: '출근·퇴근 둘 다 같은 출처를 써야 한다');
+          3,
+          reason: '출근·퇴근 미리보기와 노쇼 칩 경계가 같은 출처를 써야 한다');
       // 대상자별 기준이 다를 수 있다는 사실도 같은 술어로 판정한다.
       expect(dlg.contains('bool _batchTargetsHaveMixedPolicy('), isTrue);
       expect(dlg.contains('final rules = _attendanceRules;'), isFalse,

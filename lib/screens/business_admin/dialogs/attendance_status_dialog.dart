@@ -1344,8 +1344,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
     // 탭별 조건부 칩
     final tabWorkers = _tabWorkers[_currentTabIndex];
+    // [R7-NOSHOW-ADMIN-ELIGIBILITY] 버튼이 서버보다 먼저 말하지 않게 한다.
+    //   서버는 예정 시작 + 지각 유예 이후에만 미출근을 확정한다. 이전에는 이
+    //   칩이 근무일 00:00부터 떠서, 시작 전에 눌러도 되는 것처럼 보였다.
+    //   판정식을 새로 만들지 않고 서버와 같은 규칙 해석을 쓴다
+    //   (`effectiveAttendanceRules` = snapshot 우선, 서버 srvEffectiveAttendanceRules).
     final noShowTargets = _currentTabIndex == 0
-        ? tabWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'pending').toList()
+        ? tabWorkers.where((a) =>
+            _getAttendanceStatus(a)['status'] == 'pending' && _noShowJudgeable(a)).toList()
         : <ApplicationModel>[];
     final cancelNoShowTargets = _currentTabIndex == 3
         ? tabWorkers.where((a) => _attendanceMap[a.id]?.status == AttendanceModel.statusNoShow).toList()
@@ -3396,13 +3402,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }).toList();
 
     try {
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableBatchSetNoShow')
           .call({'businessId': _selectedBusinessId, 'entries': entries});
       // TrustScore noShowCount/trustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       if (!mounted) return;
       _hasChanges = true;
-      ToastHelper.showSuccess('노쇼 처리 완료 (${targets.length}명)');
+      // [R7-NOSHOW-START-BOUNDARY] 서버가 건너뛴 건을 성공으로 말하지 않는다.
+      //   서버는 근무 시작 전·급여 확정·이미 출근한 건을 skip으로 돌려준다.
+      //   이전에는 응답을 읽지 않고 항상 `완료 (N명)`을 띄웠다 — 아무것도
+      //   처리되지 않아도 같은 문구였다. 노쇼취소 쪽은 이미 skipped를 읽는다.
+      final processed = result.data['processed'] as int? ?? targets.length;
+      final skippedCount = (result.data['skipped'] as List?)?.length ?? 0;
+      if (processed > 0) ToastHelper.showSuccess('노쇼 처리 완료 ($processed명)');
+      if (skippedCount > 0) {
+        ToastHelper.showWarning('$skippedCount명 제외 — 아직 미출근으로 확정할 '
+            '시각이 아니거나, 이미 출근·급여 처리된 건입니다');
+      }
       // [R8-P1C] 서버가 바꾼 것은 근태 문서뿐이다 (노쇼).
       await _refreshAttendanceOnly();
     } catch (e) {
@@ -4657,6 +4673,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final r = app.effectiveAttendanceRules(_attendanceRules);
       return r == null || !r.sameRulesAs(first);
     });
+  }
+
+  /// 지금 이 근무를 '미출근'으로 확정할 수 있는가 — 서버와 같은 경계.
+  ///
+  /// [R7-NOSHOW-ADMIN-ELIGIBILITY] 서버 `srvNoShowJudgeableFromMs` 와 같은 식:
+  ///   예정 시작 + 지각 유예. 유예 안에 도착하면 지각조차 아니므로 그 시간
+  ///   안에서는 "오지 않았다"가 아직 성립하지 않는다. 근로자의 직전 취소
+  ///   정책(시작 5분 **전**)과는 다른 사건이라 그 값을 빌려 쓰지 않는다.
+  ///   규칙이 없으면 서버가 메우는 기본값(5분)과 같은 값을 쓴다.
+  bool _noShowJudgeable(ApplicationModel app) {
+    final rules = app.effectiveAttendanceRules(_attendanceRules);
+    final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+    final judgeableFrom = contractStartAt(_kstDay, startTime)
+        .add(Duration(minutes: rules?.lateGrace ?? 5));
+    return !DateTime.now().isBefore(judgeableFrom);
   }
 
   /// 출근 반올림 — 정책 미설정 시 입력값 그대로 반환

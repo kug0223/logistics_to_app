@@ -1186,9 +1186,15 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               size: ResponsiveHelper.iconSize(context, 18),
               color: AppColors.grey400),
           SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-          Text(
-            '현재 선택 가능한 근무 날짜가 없습니다.',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+          // [R8-INTEGRATED §8] 제약 없는 Text 가 Row 를 넘겼다 — 360dp 에서 30px.
+          //   아래 `_buildSlotLoadErrorMessage` 는 같은 구조에 Expanded 를
+          //   쓰고 있었다. 같은 컨테이너의 두 문장이 다른 규칙을 쓰고 있었다.
+          Expanded(
+            child: Text(
+              '현재 선택 가능한 근무 날짜가 없습니다.',
+              style:
+                  ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
+            ),
           ),
         ],
       ),

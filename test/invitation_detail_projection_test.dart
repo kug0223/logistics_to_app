@@ -496,10 +496,21 @@ void main() {
     });
 
     test('슬롯 status도 같은 규칙이다', () {
-      expect(
-          cf.contains('if (d["isManualClosed"] === true || d["status"] === "closed") return;'),
-          true);
-      expect(cf.contains('const freshSlot = await tx.get(slotRef);'), true);
+      // [R8-INTEGRATED] 가드의 **위치**가 바뀌었다. 묻는 것은 그대로다 —
+      //   집계가 사람이 정한 마감을 덮지 않는다.
+      //
+      //   예전에는 집계가 끝난 뒤 별도 트랜잭션에서 status 를 썼고 그 안에
+      //   가드가 있었다. 그 쓰기는 트랜잭션 **밖에서** 읽은 스냅샷으로
+      //   판단했기 때문에 낡은 트리거 실행이 최신 FULL 을 open 으로 덮었다
+      //   (R7-SLOT-STATUS-OWNER, DEV 실측). 이제 카운터를 센 그 트랜잭션이
+      //   같은 가드를 들고 status 까지 쓴다.
+      expect(cf.contains('const slotManualClosed = slotDoc.get("isManualClosed") === true;'),
+          true,
+          reason: '수동 마감 가드가 카운터 트랜잭션 안에 있다');
+      expect(cf.contains('!slotManualClosed && curSlotStatus !== "closed"'), true,
+          reason: '사람이 닫은 슬롯은 집계가 열지 않는다');
+      expect(cf.contains('tx.get(slotRef),'), true,
+          reason: '판단 근거를 같은 트랜잭션에서 읽는다');
     });
 
     test('status 교정 실패가 카운터를 되돌리지 않는다', () {

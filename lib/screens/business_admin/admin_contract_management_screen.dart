@@ -13,6 +13,7 @@ import '../../models/core/work_detail_data.dart';
 import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/contract_status_visual.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -1092,31 +1093,12 @@ class _ContractCard extends StatelessWidget {
     return FormatHelper.formatDateDot(c.createdAt);
   }
 
-  Color _statusColor(ContractStatus s) {
-    switch (s) {
-      case ContractStatus.pendingEmployer:
-        return AppColors.warning;
-      case ContractStatus.pendingWorker:
-        return AppColors.info;
-      case ContractStatus.completed:
-        return AppColors.success;
-      case ContractStatus.voided:
-        return AppColors.grey500;
-    }
-  }
+  // [R8-INTEGRATED §7] 상태 색은 `ContractStatusVisual.badgeColors` 가 소유한다.
+  //   같은 사건을 지난 계약 화면군과 다른 색으로 말하고 있었다
+  //   (`pending_worker`: 여기 파랑 / 거기 주황). 라벨처럼 색도 한 곳에서 온다.
+  Color _statusColor(ContractStatus s) => s.badgeColors.fg;
 
-  Color _statusBg(ContractStatus s) {
-    switch (s) {
-      case ContractStatus.pendingEmployer:
-        return AppColors.warningBg;
-      case ContractStatus.pendingWorker:
-        return AppColors.infoBg;
-      case ContractStatus.completed:
-        return AppColors.successBg;
-      case ContractStatus.voided:
-        return AppColors.grey100;
-    }
-  }
+  Color _statusBg(ContractStatus s) => s.badgeColors.bg;
 }
 
 // ─── 서명 진행 표시 (한 줄) ──────────────────────────────────────
